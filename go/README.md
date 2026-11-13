@@ -9,6 +9,8 @@ amendment 2 allows, and nothing here ships.
 - `lib/storage/`: the SQLite storage engine (Decision 2): the single
   writer with group commit, the checkpointer that bounds the WAL, paced
   snapshots, metrics.
+- `lib/diskprobe/`: the fsync probe (Decision 2's disk requirement, p99
+  under 10 ms) that setup, `varlatch doctor` and the G9a harness run.
 - `cmd/varlatch/`, `lib/` and everything else: Apache-2.0. No Apache-2.0
   package may depend on an AGPL-3.0-or-later one; `licensing_test.go`
   enforces it.
