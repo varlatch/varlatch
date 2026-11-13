@@ -447,6 +447,36 @@ func TestTransactionControlRefused(t *testing.T) {
 	}
 }
 
+// Pragmas that only read work in jobs, with arguments and in both syntaxes.
+func TestReadPragmasAllowed(t *testing.T) {
+	db := open(t, Options{})
+	for _, q := range []string{
+		`PRAGMA table_info(item)`, `PRAGMA table_xinfo(item)`, `PRAGMA index_list(item)`,
+		`PRAGMA foreign_key_list(item)`, `PRAGMA foreign_key_check(item)`, `PRAGMA table_list`,
+		`PRAGMA integrity_check(5)`, `PRAGMA quick_check`, `PRAGMA page_count`, `PRAGMA synchronous`,
+		`SELECT * FROM pragma_table_info('item')`, `SELECT * FROM pragma_index_list('item')`,
+	} {
+		if err := db.Write(context.Background(), func(tx *Tx) error {
+			rows, err := tx.QueryContext(bg, q)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+			}
+			return errors.Join(rows.Err(), rows.Close())
+		}); err != nil {
+			t.Errorf("%s: %v", q, err)
+		}
+	}
+	var cols int
+	mustWrite(t, db, func(tx *Tx) error {
+		return tx.QueryRowContext(bg, `SELECT count(*) FROM pragma_table_info('item')`).Scan(&cols)
+	})
+	if cols != 3 {
+		t.Fatalf("pragma_table_info saw %d columns", cols)
+	}
+}
+
 // An error that fails the batch fails it even when the job meets it through
 // a query whose rows it then ignores.
 func TestSwallowedQueryErrorFailsBatch(t *testing.T) {

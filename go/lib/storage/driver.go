@@ -86,12 +86,22 @@ func (s *writerState) authorize(action sqlite.AuthorizerActionCode, arg1, arg2, 
 		return sqlite.AuthorizerDeny
 	case sqlite.AuthPragma:
 		// Reading a pragma is fine; setting one could change durability
-		// (synchronous, journal_mode) or checks (foreign_keys).
-		if arg2 != "" {
+		// (synchronous, journal_mode) or checks (foreign_keys). SQLite gives
+		// the argument of a read (table_info(t)) the same way as an assigned
+		// value, so pragmas that only read take arguments from a list.
+		if arg2 != "" && !readOnlyPragmas[strings.ToLower(arg1)] {
 			return sqlite.AuthorizerDeny
 		}
 	}
 	return sqlite.AuthorizerOK
+}
+
+// readOnlyPragmas take an argument but change nothing.
+var readOnlyPragmas = map[string]bool{
+	"table_info": true, "table_xinfo": true, "table_list": true,
+	"index_info": true, "index_xinfo": true, "index_list": true,
+	"foreign_key_list": true, "foreign_key_check": true,
+	"integrity_check": true, "quick_check": true,
 }
 
 func (s *writerState) onCommit() int32 {
