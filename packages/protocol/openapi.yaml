@@ -3951,6 +3951,16 @@ paths:
         refused, nothing is kept, and the answer says where to delete it
         (ADR-0047, amendment 2026-10-09). If GitHub cannot be reached, the
         state is released for another attempt.
+
+        Registration is staged (ADR-0054 amendment D): GitHub's answer is
+        stored as a pending conversion on the registration, then attached
+        in the same request when no approval is needed. When the
+        Organization's admin-step-up control asks for one, the answer is
+        STEP_UP_REQUIRED for the registration (github_app.register), its
+        details naming `registrationId`; the client repeats the attachment
+        (`…/registrations/{registration}/attach`) with the approval, never
+        this callback. A repeat of the callback answers CONSUMED with
+        `registrationId` and `pending` in its details.
       parameters: [{ $ref: "#/components/parameters/org" }]
       requestBody:
         required: true
@@ -3976,6 +3986,63 @@ paths:
                 oneOf:
                   - { $ref: "#/components/schemas/GitHubAppRegistrationRefused" }
                   - { $ref: "#/components/schemas/GitHubAppRegistrationFailed" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/github-app/registrations/{registration}/attach:
+    post:
+      tags: [sync]
+      operationId: attachGitHubAppRegistration
+      summary: >
+        Attach a pending registration (ADR-0054 amendment D): the App GitHub
+        handed over is stored for the Organization and the pending key is
+        deleted. A protected operation, github_app.register: under
+        admin-step-up's enforce it needs the caller's approval, bound to the
+        registration and the App's id, slug, client id and owner. Only the
+        person who started the registration may attach it; for anyone else
+        it is not found. A pending conversion that expired, was discarded or
+        already ended, an Organization that got another App, or an App
+        another Organization uses end the registration: its key is deleted
+        and the answer is the refusal. Calls nothing outside Varlatch.
+      parameters:
+        - { $ref: "#/components/parameters/org" }
+        - { name: registration, in: path, required: true, schema: { type: string } }
+      responses:
+        "201":
+          description: Attached (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubAppRegistrationRegistered" }
+        "200":
+          description: Refused (Cache-Control no-store); the pending key was deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubAppRegistrationRefused" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/github-app/registrations/{registration}:
+    delete:
+      tags: [sync]
+      operationId: discardGitHubAppRegistration
+      summary: >
+        Discard a pending registration: its key is deleted and
+        sync.github_app_registration_abandoned recorded. The App stays on
+        GitHub; `deleteUrl` is where its owner deletes it. One that is no
+        longer pending changes nothing (`discarded: false`). Only the person
+        who started it may discard it.
+      parameters:
+        - { $ref: "#/components/parameters/org" }
+        - { name: registration, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Discarded, or nothing to discard
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [discarded, deleteUrl]
+                properties:
+                  discarded: { type: boolean }
+                  deleteUrl: { type: [string, "null"] }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/import:
@@ -6645,7 +6712,7 @@ components:
         id: { type: string }
         operation:
           type: string
-          enum: [security_control.change, passkey.remove, organization.unfreeze, requirement.update, requirement.revoke, identity.create, credential.issue, identity.reactivate, oidc_binding.create, oidc_binding.delete, grant.create, grant.replace, grant.revoke, role.create, role.update, role.delete, group.create, group.update, group.delete, group.member_add, group.member_remove, team.create, team.update, team.delete, team.member_add, team.member_remove, team.project_add, team.project_remove, member.invite_admin, member.promote, member.demote, member.remove]
+          enum: [security_control.change, passkey.remove, organization.unfreeze, requirement.update, requirement.revoke, identity.create, credential.issue, identity.reactivate, oidc_binding.create, oidc_binding.delete, grant.create, grant.replace, grant.revoke, role.create, role.update, role.delete, group.create, group.update, group.delete, group.member_add, group.member_remove, team.create, team.update, team.delete, team.member_add, team.member_remove, team.project_add, team.project_remove, member.invite_admin, member.promote, member.demote, member.remove, webhook.create, webhook.update, webhook.delete, connection.create, connection.replace_credential, connection.delete, github_app.register, github_app.import, github_app.replace_key, github_app.remove]
           description: The semantic operation, not the HTTP route.
         organization:
           description: The Organization it acts in; null for an account operation such as passkey.remove.
@@ -6880,8 +6947,9 @@ components:
 
     GitHubAppRegistrationStart:
       type: object
-      required: [state, action, manifest, account, expiresAt]
+      required: [id, state, action, manifest, account, expiresAt]
       properties:
+        id: { type: string, description: "The registration's stable id: what an attachment's approval is bound to (ADR-0054 amendment D)" }
         state: { type: string, description: Single-use; only its hash is stored }
         action: { type: string, format: uri, description: Where the browser posts the manifest }
         manifest:
@@ -6905,12 +6973,15 @@ components:
         outcome: { type: string, enum: [refused] }
         reason:
           type: string
-          enum: [owner-mismatch, organization-has-app, app-in-use]
+          enum: [owner-mismatch, organization-has-app, app-in-use, expired, registration-ended]
           description: >
             owner-mismatch: GitHub created the App on another account (the
             person's own, when they may not register Apps on the intended
             one). organization-has-app: the Organization got an App
             meanwhile. app-in-use: another Organization has this App.
+            expired: a pending conversion was not attached within its hour
+            (ADR-0054 amendment D). registration-ended: the registration was
+            already attached, discarded or refused.
         app:
           type: object
           required: [githubAppId, slug, owner]
@@ -6919,7 +6990,13 @@ components:
             slug: { type: string }
             owner: { $ref: "#/components/schemas/GitHubAccount" }
         account: { $ref: "#/components/schemas/GitHubAccount" }
-        deleteUrl: { type: string, format: uri, description: Where the App's owner deletes it on GitHub }
+        deleteUrl:
+          type: [string, "null"]
+          format: uri
+          description: >
+            Where the App's owner deletes it on GitHub. Null for
+            registration-ended: its App may be the one this Organization
+            attached (an attachment repeated after a lost answer).
         message: { type: string }
 
     GitHubAppRegistrationFailed:

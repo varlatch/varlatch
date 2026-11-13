@@ -20,6 +20,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { Dialog, useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { useOrgName } from "../projects/hooks";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 import { AccessCheckNotice } from "./AccessCheckNotice";
 import { PlatformTile } from "./TargetCard";
 import type { EnvironmentRef } from "./useOrgEnvironments";
@@ -71,7 +72,12 @@ function ExternalAnchor({ href, children, testId }: { href: string; children: Re
   );
 }
 
-const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+/**
+ * An error for the person. With admin-step-up enforced (ADR-0054), every
+ * GitHub App change needs an approval: a step-up not given, or one the
+ * server refused, gets its own words.
+ */
+const errorText = (err: unknown) => approvalOutcomeMessage(err) ?? (err instanceof Error ? err.message : String(err));
 
 // ---------------------------------------------------------------------------
 // The panel on the Connections page
@@ -359,7 +365,24 @@ export function GitHubAppCallbackPage() {
   // what to say. A refresh after a successful registration lands here too,
   // and must not send anyone to delete the App that works.
   const errorCode = complete.error instanceof VarlatchApiError ? complete.error.code : undefined;
-  const needsAppCheck = errorCode === "CONSUMED" || errorCode === "EXPIRED";
+  // A conversion waiting to be attached (ADR-0054 amendment D): the
+  // approval was not given, did not fit, or this is a later visit. The
+  // attachment is repeated on its own route, never the callback.
+  const details = complete.error instanceof VarlatchApiError ? complete.error.details : undefined;
+  const pendingId =
+    typeof details?.registrationId === "string" &&
+    (errorCode === "STEP_UP_REQUIRED" || errorCode === "APPROVAL_INVALID" || (errorCode === "CONSUMED" && details.pending === true))
+      ? details.registrationId
+      : null;
+  const attach = useMutation({
+    mutationFn: () => api.attachGitHubAppRegistration(org, pendingId!),
+    onSuccess: (result) => {
+      if (result.outcome === "registered") void qc.invalidateQueries({ queryKey: githubAppKey(org) });
+    },
+  });
+  const discard = useMutation({ mutationFn: () => api.discardGitHubAppRegistration(org, pendingId!) });
+  const result = attach.data ?? complete.data;
+  const needsAppCheck = pendingId === null && (errorCode === "CONSUMED" || errorCode === "EXPIRED");
   const current = useGitHubApp(org, needsAppCheck);
   // Once per visit: the state is single-use.
   const ran = useRef(false);
@@ -388,7 +411,44 @@ export function GitHubAppCallbackPage() {
         GitHub sends you to this page after you create a GitHub App. Start from Connections.
       </Callout>
     );
-  } else if (complete.isPending || (!complete.data && !complete.error)) {
+  } else if (pendingId !== null && !attach.data) {
+    body = discard.data ? (
+      <Callout tone="neutral" title="Registration discarded" actions={back} data-testid="github-app-callback" data-status="discarded">
+        Varlatch deleted the key GitHub handed over. The App stays on GitHub
+        {discard.data.deleteUrl ? (
+          <>
+            {": "}
+            <ExternalAnchor href={discard.data.deleteUrl} testId="github-app-delete">delete it there</ExternalAnchor>.
+          </>
+        ) : (
+          "."
+        )}
+      </Callout>
+    ) : (
+      <Callout
+        tone="warn"
+        title="The GitHub App is waiting for your approval"
+        data-testid="github-app-callback"
+        data-status="pending-attachment"
+        actions={
+          <>
+            <Button size="sm" onClick={() => attach.mutate()} disabled={attach.isPending || discard.isPending} data-testid="github-app-attach">
+              Approve and attach
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => discard.mutate()} disabled={attach.isPending || discard.isPending} data-testid="github-app-discard">
+              Discard
+            </Button>
+          </>
+        }
+      >
+        GitHub handed over the App. This organization's security controls need your approval with a trusted passkey before Varlatch keeps it.
+        Without it, Varlatch deletes the App's key within the hour.
+        {(attach.error || discard.error) && (
+          <span className="mt-1 block text-deny">{errorText(attach.error ?? discard.error)}</span>
+        )}
+      </Callout>
+    );
+  } else if (!attach.data && (complete.isPending || (!complete.data && !complete.error))) {
     body = (
       <Callout tone="neutral" icon={<Spinner />} title="Finishing the registration with GitHub" data-testid="github-app-callback" data-status="pending">
         Varlatch asks GitHub for the App it just created.
@@ -433,7 +493,7 @@ export function GitHubAppCallbackPage() {
         </Callout>
       );
     }
-  } else if (complete.error) {
+  } else if (complete.error && !attach.data) {
     body = (
       <Callout tone="danger" title="The registration did not finish" actions={back} data-testid="github-app-callback" data-status={errorCode ?? "error"}>
         {errorCode === "RESOURCE_NOT_FOUND"
@@ -442,42 +502,49 @@ export function GitHubAppCallbackPage() {
       </Callout>
     );
   } else {
-    const result = complete.data!;
-    if (result.outcome === "registered") {
+    const done = result!;
+    if (done.outcome === "registered") {
       body = (
         <Callout
           tone="success"
-          title={`GitHub App ${result.app.slug} registered`}
+          title={`GitHub App ${done.app.slug} registered`}
           actions={back}
           data-testid="github-app-callback"
           data-status="registered"
         >
-          Next, <ExternalAnchor href={installUrl(result.app.slug)} testId="github-app-install">install it on GitHub</ExternalAnchor>, choosing
+          Next, <ExternalAnchor href={installUrl(done.app.slug)} testId="github-app-install">install it on GitHub</ExternalAnchor>, choosing
           the repositories Varlatch should push to. Then connect the installation from Connections.
         </Callout>
       );
-    } else if (result.outcome === "refused") {
+    } else if (done.outcome === "refused") {
       body = (
         <Callout
           tone="danger"
           title={
-            result.reason === "owner-mismatch"
+            done.reason === "owner-mismatch"
               ? "GitHub created the App on another account"
-              : result.reason === "organization-has-app"
+              : done.reason === "organization-has-app"
                 ? "This organization already has a GitHub App"
-                : "Another organization uses this App"
+                : done.reason === "expired"
+                  ? "This registration expired"
+                  : done.reason === "registration-ended"
+                    ? "This registration already ended"
+                    : "Another organization uses this App"
           }
           actions={back}
           data-testid="github-app-callback"
-          data-status={result.reason}
+          data-status={done.reason}
         >
-          {result.message}{" "}
-          <ExternalAnchor href={result.deleteUrl} testId="github-app-delete">
-            Delete {result.app.slug} on GitHub
-          </ExternalAnchor>
+          {done.message}{" "}
+          {/* No delete link for a registration that already ended: its App may be the one attached. */}
+          {done.deleteUrl && (
+            <ExternalAnchor href={done.deleteUrl} testId="github-app-delete">
+              Delete {done.app.slug} on GitHub
+            </ExternalAnchor>
+          )}
         </Callout>
       );
-    } else if (result.retryable) {
+    } else if ("retryable" in done && done.retryable) {
       body = (
         <Callout
           tone="warn"
@@ -490,13 +557,13 @@ export function GitHubAppCallbackPage() {
             </Button>
           }
         >
-          {result.message}
+          {done.message}
         </Callout>
       );
     } else {
       body = (
         <Callout tone="danger" title="The registration did not finish" actions={back} data-testid="github-app-callback" data-status="failed">
-          {result.message}
+          {"message" in done ? done.message : null}
           {recovery}
         </Callout>
       );

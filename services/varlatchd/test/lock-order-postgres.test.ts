@@ -15,6 +15,7 @@ import { ledgerSet, recordDrift, recordFailure } from "../src/domain/syncdeliver
 import { applyChangeSet, beginRotation, setValue } from "../src/domain/values.js";
 import { recordAuditEvents } from "../src/audit/events.js";
 import { buildApp } from "../src/http/app.js";
+import { personGate } from "./helpers/gates.js";
 
 /**
  * The one lock order (ADR-0054 amendment E) against the interleavings that
@@ -187,7 +188,7 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
     project = await getProject(ctx, org.id, projectId);
     env = await getEnvironment(ctx, project.id, "dev");
     await setValue(ctx, org, project, env, "API_KEY", { value: "first" }, identityId);
-    connectionId = (await createConnection(ctx, org, { platform: "github-actions", baseIdentity: "acme", name: "GitHub", credential: "ghp_first" }, identityId)).id;
+    connectionId = (await createConnection(ctx, personGate(identityId), org, { platform: "github-actions", baseIdentity: "acme", name: "GitHub", credential: "ghp_first" })).id;
   });
 
   afterEach(async () => {
@@ -236,7 +237,7 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
     expect(await race(
       CONNECTION_LOCK,
       () => createTarget(pctx, org, project.id, env.id, { connectionId, destination: { repo: "api" }, mapping: { kind: "wildcard" }, removeOrphans: false, redeploy: false }, {}, identityId),
-      () => protectedly((c) => revokeConnection(c, org, connectionId, identityId)),
+      () => protectedly((c) => revokeConnection(c, personGate(identityId), org, connectionId)),
     )).toEqual(["ok", "ok"]);
   });
 

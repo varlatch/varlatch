@@ -257,6 +257,16 @@ describe("words", () => {
     expect(changeValue("role", "admin")).toBe("admin");
     expect(changeValue("role", null)).toBe("none");
   });
+
+  it("names the fields of an integration's approval, and shows a secret's placeholder as it is (admin-step-up)", () => {
+    expect(fieldLabel("url")).toBe("Address");
+    expect(fieldLabel("eventTypes")).toBe("Events");
+    expect(fieldLabel("baseIdentity")).toBe("Base identity");
+    expect(fieldLabel("credential")).toBe("Credential");
+    expect(fieldLabel("privateKey")).toBe("Private key");
+    expect(fieldLabel("installationId")).toBe("Installation");
+    expect(changeValue("credential", "a new value (not shown)")).toBe("a new value (not shown)");
+  });
 });
 
 describe("the inline approval dialog", () => {

@@ -16,6 +16,7 @@ import {
 } from "../src/domain/sync.js";
 import { buildApp } from "../src/http/app.js";
 import { fakeGitHubApps } from "./helpers/fake-github-app.js";
+import { personGate } from "./helpers/gates.js";
 
 /**
  * ADR-0047 Decision 5's lock order on real PostgreSQL: every path that
@@ -114,8 +115,8 @@ describe.skipIf(!url)("GitHub App lock order on real PostgreSQL", () => {
        VALUES ($1, $2, 5254113, 'varlatch-test', 'Iv23lock', 'acme', 1, 'organization', $3, $4)`,
       [appRowId, o.id, JSON.stringify(encryptGitHubAppKey(orgKekOf(ctx, o), o.id, appRowId, pem)), identityId],
     );
-    appConnectionId = (await createAppConnection(ctx, o, { installationId, name: "App" }, identityId, null, github.fetchImpl)).id;
-    tokenConnectionId = (await createConnection(ctx, o, { platform: "github-actions", baseIdentity: "acme", name: "Token", credential: "ghp_x" }, identityId)).id;
+    appConnectionId = (await createAppConnection(ctx, personGate(identityId), o, { installationId, name: "App" }, null, github.fetchImpl)).id;
+    tokenConnectionId = (await createConnection(ctx, personGate(identityId), o, { platform: "github-actions", baseIdentity: "acme", name: "Token", credential: "ghp_x" })).id;
   });
   afterEach(async () => {
     await db?.end();
@@ -150,7 +151,7 @@ describe.skipIf(!url)("GitHub App lock order on real PostgreSQL", () => {
   it("revoking an App Connection waits on the App before it locks the Connection or its Targets", async () => {
     const t = await createTarget(ctx, await org(), projectId, environmentId, targetInput(appConnectionId), {}, identityId);
     const release = await holdApp();
-    const revoking = revokeConnection(ctx, await org(), appConnectionId, identityId);
+    const revoking = revokeConnection(ctx, personGate(identityId), await org(), appConnectionId);
     await waitingOnLock();
     await probe("platform_connections", [appConnectionId]);
     await probe("sync_targets", [t.id]);
@@ -161,7 +162,7 @@ describe.skipIf(!url)("GitHub App lock order on real PostgreSQL", () => {
 
   it("creating an App Connection waits on the App", async () => {
     const release = await holdApp();
-    const creating = createAppConnection(ctx, await org(), { installationId, name: "Second" }, identityId, null, github.fetchImpl);
+    const creating = createAppConnection(ctx, personGate(identityId), await org(), { installationId, name: "Second" }, null, github.fetchImpl);
     await waitingOnLock();
     await release();
     await expect(creating).resolves.toMatchObject({ credential_kind: "github-app" });

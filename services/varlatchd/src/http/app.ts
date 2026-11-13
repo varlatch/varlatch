@@ -110,7 +110,9 @@ import {
 import { liveRunStarts } from "../domain/syncdelivery.js";
 import {
   GITHUB_WEB,
+  attachRegistration,
   completeRegistration,
+  discardRegistration,
   getGitHubApp,
   importGitHubApp,
   listAppInstallations,
@@ -159,6 +161,7 @@ import {
   parseApprovalId,
   startApproval,
   withApproval,
+  ApprovalNeeded,
   type ProtectedGate,
   type Requester,
 } from "../domain/approvals.js";
@@ -3370,6 +3373,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   const policyManageIn = (c: Context, principal: Principal, organizationId: string) => async (db: Querier) => {
     await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId }, { hideExistence: true });
   };
+  /**
+   * An action rechecked inside a protected operation's transaction, once its
+   * approval was consumed (ADR-0054 Decision 3).
+   */
+  const actionIn = (c: Context, principal: Principal, organizationId: string, action: Action) => async (db: Querier) => {
+    await authorize({ ...ctx, db }, c, principal, action, { organizationId }, { hideExistence: true });
+  };
   /** A protected operation's gate (ADR-0054): the header is read only when a control at enforce asks for an approval. */
   const approvalGate = <T>(c: Context, run: (gate: ProtectedGate) => Promise<T>) =>
     withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, run);
@@ -4063,7 +4073,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }),
       await c.req.json(),
     );
-    const { webhook, secret } = await createWebhook(ctx, org, body, principal.identity.id);
+    // A protected operation (ADR-0054): admin-step-up at enforce asks for the
+    // requester's approval (webhook.create); organization.manage is
+    // rechecked once it is consumed.
+    const { webhook, secret } = await approvalGate(c, (gate) =>
+      createWebhook(ctx, gate, org, body, { authorizeIn: actionIn(c, principal, org.id, "organization.manage") }));
     c.header("Cache-Control", "no-store");
     return c.json({ ...serializeWebhook(webhook), secret }, 201);
   });
@@ -4089,12 +4103,19 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH webhooks ${c.req.param("webhook")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
-      status: 200,
-      payload: serializeWebhook(
-        await updateWebhook(ctx, org.id, c.req.param("webhook"), body, principal.identity.id),
-      ),
-    }));
+    // A protected operation (ADR-0054): admin-step-up at enforce asks for the
+    // requester's approval (webhook.update). The Idempotency-Key claim
+    // (step 2.5) holds the requester FOR UPDATE when the request carries an
+    // approval, and rolls back with a STEP_UP_REQUIRED answer.
+    const { status, payload } = await approvalGate(c, (gate) =>
+      withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: claimPeople(c, principal) }, async (ctx) => ({
+        status: 200,
+        payload: serializeWebhook(
+          await updateWebhook(ctx, gate, org.id, c.req.param("webhook"), body, {
+            authorizeIn: actionIn(c, principal, org.id, "organization.manage"),
+          }),
+        ),
+      })));
     return c.json(payload as Record<string, unknown>, status as 200);
   });
 
@@ -4102,7 +4123,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
-    await revokeWebhook(ctx, org.id, c.req.param("webhook"), principal.identity.id);
+    // A protected operation (ADR-0054): webhook.delete. Refused while the
+    // Organization is frozen for an incident (not a recovery operation).
+    await approvalGate(c, (gate) =>
+      revokeWebhook(ctx, gate, org.id, c.req.param("webhook"), { authorizeIn: actionIn(c, principal, org.id, "organization.manage") }));
     return c.body(null, 204);
   });
 
@@ -4250,7 +4274,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         }),
         raw,
       );
-      const connection = await createAppConnection(ctx, org, appBody, principal.identity.id, syncEnabled.adapters, options.syncFetch);
+      // A protected operation (ADR-0054): connection.create on the App.
+      // Under enforce, GitHub is asked for the installation only after the
+      // precheck found an approved intent (amendment D).
+      const connection = await approvalGate(c, (gate) =>
+        createAppConnection(ctx, gate, org, appBody, syncEnabled.adapters, options.syncFetch, {
+          authorizeIn: actionIn(c, principal, org.id, "config.sync.manage"),
+        }));
       c.header("Cache-Control", "no-store");
       return c.json(serializeConnection(connection), 201);
     }
@@ -4270,7 +4300,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         "This Installation does not allow the requested platform adapter",
       );
     }
-    const connection = await createConnection(ctx, org, body, principal.identity.id);
+    // A protected operation (ADR-0054): connection.create, bound to the
+    // credential itself (the intent keeps only its keyed hash).
+    const connection = await approvalGate(c, (gate) =>
+      createConnection(ctx, gate, org, body, { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
     c.header("Cache-Control", "no-store");
     return c.json(serializeConnection(connection), 201);
   });
@@ -4386,19 +4419,22 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // Replacement is a new disclosure grant for every non-revoked
     // referencing Target at once, atomically (§2): each Target's write-time
     // gate must pass for THIS actor, or the whole replacement is refused.
-    const connection = await replaceConnectionCredential(
-      ctx,
-      org,
-      c.req.param("connection"),
-      body,
-      reauthorizationGate(
-        c,
-        principal,
+    // A protected operation (ADR-0054): connection.replace_credential.
+    const connection = await approvalGate(c, (gate) =>
+      replaceConnectionCredential(
+        ctx,
+        gate,
         org,
-        "Replacing this credential re-authorizes every referencing Sync Target; you lack disclosure authority for at least one",
-      ),
-      principal.identity.id,
-    );
+        c.req.param("connection"),
+        body,
+        reauthorizationGate(
+          c,
+          principal,
+          org,
+          "Replacing this credential re-authorizes every referencing Sync Target; you lack disclosure authority for at least one",
+        ),
+        { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") },
+      ));
     c.header("Cache-Control", "no-store");
     return c.json(serializeConnection(connection));
   });
@@ -4407,7 +4443,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
-    await revokeConnection(ctx, org, c.req.param("connection"), principal.identity.id);
+    // A protected operation (ADR-0054): connection.delete. A recovery
+    // operation during an incident freeze (ADR-0055), where its approval
+    // may still be asked for.
+    await approvalGate(c, (gate) =>
+      revokeConnection(ctx, gate, org, c.req.param("connection"), { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
     return c.body(null, 204);
   });
 
@@ -4481,12 +4521,57 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       z.object({ state: z.string().min(1).max(200), code: z.string().min(1).max(200) }),
       await c.req.json(),
     );
-    const result = await completeRegistration(ctx, org, body, principal.identity.id, options.syncFetch);
+    // The callback (amendment D): conversion, then the attachment
+    // (github_app.register) in the same request. Its gate never carries an
+    // approval: the callback is never repeated. When the attachment needs
+    // one, the answer is STEP_UP_REQUIRED for the registration, which names
+    // it, and the client repeats the attachment on its own route.
+    let registrationId: string | null = null;
+    const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: null, publicUrl: options.publicUrl }, (gate) =>
+      completeRegistration(ctx, gate, org, body, options.syncFetch, {
+        authorizeIn: actionIn(c, principal, org.id, "config.sync.manage"),
+      }).catch((err: unknown) => {
+        // The attachment's binding targets the registration.
+        if (err instanceof ApprovalNeeded) registrationId = err.binding.target.registrationId ?? null;
+        throw err;
+      })).catch((err: unknown) => {
+      if (err instanceof DomainError && err.code === "STEP_UP_REQUIRED" && registrationId !== null) {
+        throw new DomainError(err.code, err.message, { ...(err.details ?? {}), registrationId });
+      }
+      throw err;
+    });
     c.header("Cache-Control", "no-store");
+    return registrationAnswer(c, result);
+  });
+
+  const registrationAnswer = (c: Context, result: Awaited<ReturnType<typeof attachRegistration>>) => {
     if (result.outcome === "registered") {
       return c.json({ outcome: "registered", app: serializeGitHubApp(result.app) }, 201);
     }
     return c.json(result);
+  };
+
+  // The attachment of a pending registration (amendment D step 3):
+  // github_app.register, protected. Only the person who started it may
+  // attach it; anyone else gets not-found.
+  app.post("/v1/organizations/:org/github-app/registrations/:registration/attach", async (c) => {
+    assertSyncEnabled();
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    assertGitHubAppsAllowed();
+    const result = await approvalGate(c, (gate) =>
+      attachRegistration(ctx, gate, org, c.req.param("registration"), { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
+    c.header("Cache-Control", "no-store");
+    return registrationAnswer(c, result);
+  });
+
+  // Discarding a pending registration: its key is deleted; the App stays on GitHub.
+  app.delete("/v1/organizations/:org/github-app/registrations/:registration", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    return c.json(await discardRegistration(ctx, org, c.req.param("registration"), principal.identity.id));
   });
 
   app.post("/v1/organizations/:org/github-app/import", async (c) => {
@@ -4502,7 +4587,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }),
       await c.req.json(),
     );
-    const result = await importGitHubApp(ctx, org, body, principal.identity.id, options.syncFetch);
+    // A protected operation (ADR-0054): github_app.import. Under enforce the
+    // key goes to GitHub only after the precheck found an approved intent.
+    const result = await approvalGate(c, (gate) =>
+      importGitHubApp(ctx, gate, org, body, options.syncFetch, undefined, { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
     c.header("Cache-Control", "no-store");
     if (result.outcome === "registered") {
       return c.json({ outcome: "registered", app: serializeGitHubApp(result.app) }, 201);
@@ -4520,19 +4608,24 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       z.object({ privateKey: z.string().min(1).max(10_000), expectedVersion: z.number().int().min(1) }),
       await c.req.json(),
     );
-    const result = await rotateGitHubAppKey(
-      ctx,
-      org,
-      body,
-      reauthorizationGate(
-        c,
-        principal,
+    // A protected operation (ADR-0054): github_app.replace_key. Under
+    // enforce the key goes to GitHub only after the precheck.
+    const result = await approvalGate(c, (gate) =>
+      rotateGitHubAppKey(
+        ctx,
+        gate,
         org,
-        "Rotating the GitHub App's key re-authorizes every Sync Target on its Connections; you lack disclosure authority for at least one",
-      ),
-      principal.identity.id,
-      options.syncFetch,
-    );
+        body,
+        reauthorizationGate(
+          c,
+          principal,
+          org,
+          "Rotating the GitHub App's key re-authorizes every Sync Target on its Connections; you lack disclosure authority for at least one",
+        ),
+        options.syncFetch,
+        undefined,
+        { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") },
+      ));
     c.header("Cache-Control", "no-store");
     return result.outcome === "rotated" ? c.json({ outcome: "rotated", app: serializeGitHubApp(result.app) }) : c.json(result);
   });
@@ -4542,7 +4635,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
     const { appId } = parseBody(z.object({ appId: z.string().min(1).max(100) }), { appId: c.req.query("appId") });
-    await removeGitHubApp(ctx, org, appId, principal.identity.id);
+    // A protected operation (ADR-0054): github_app.remove.
+    await approvalGate(c, (gate) =>
+      removeGitHubApp(ctx, gate, org, appId, { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
     return c.body(null, 204);
   });
 

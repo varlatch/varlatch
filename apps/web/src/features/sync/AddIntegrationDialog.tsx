@@ -16,6 +16,7 @@ import { checkPasses, fixStep } from "./accessCheck";
 import { connectionLabel, platformMeta } from "./platform-meta";
 import { hostOf } from "./status";
 import { PlatformTile } from "./TargetCard";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 
 /**
  * Add an integration in four steps: connection, destination, items, and a
@@ -267,7 +268,7 @@ export function AddIntegrationDialog({
       toast.success("Integration created", { description: `The first push to ${destLabel} starts in a moment.` });
       onCreated();
     },
-    onError: (err) => toast.error("Could not create the integration", { description: err instanceof Error ? err.message : String(err) }),
+    onError: (err) => toast.error("Could not create the integration", { description: approvalOutcomeMessage(err) ?? (err instanceof Error ? err.message : String(err)) }),
   });
 
   const next = () => {

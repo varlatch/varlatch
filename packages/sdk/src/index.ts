@@ -1385,12 +1385,51 @@ export class VarlatchClient {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations`, { account });
   }
 
-  /** Complete it with the state and GitHub's code. */
-  completeGitHubAppRegistration(
+  /**
+   * Complete it with the state and GitHub's code. The callback is never
+   * repeated: when the attachment needs a step-up approval (ADR-0054
+   * amendment D), the server answers STEP_UP_REQUIRED naming the
+   * registration, and once onStepUp resolves true, the attachment is
+   * repeated on its own route with the approval. Without a handler, or when
+   * it resolves false, the STEP_UP_REQUIRED error surfaces, its details
+   * naming `registrationId` for attachGitHubAppRegistration.
+   */
+  async completeGitHubAppRegistration(
     org: string,
     input: { state: string; code: string },
   ): Promise<GitHubAppRegistrationRegistered | GitHubAppRegistrationRefused | GitHubAppRegistrationFailed> {
-    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/complete`, input);
+    const path = `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/complete`;
+    try {
+      // Never with an approval, and never repeated by the step-up handler.
+      return await this.requestRiding("POST", path, input, {});
+    } catch (err) {
+      const approval = stepUpApproval(err);
+      const registrationId = (err as VarlatchApiError).details?.registrationId;
+      if (!approval || !this.onStepUp || typeof registrationId !== "string") throw err;
+      if (!(await this.onStepUp(approval))) throw err;
+      return this.request("POST", this.attachPath(org, registrationId), undefined, { [APPROVAL_HEADER]: approval.id });
+    }
+  }
+
+  private attachPath(org: string, registrationId: string): string {
+    return `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/${encodeURIComponent(registrationId)}/attach`;
+  }
+
+  /**
+   * Attach a pending registration (ADR-0054 amendment D): after an
+   * approval was not given at completion, or to try again after a
+   * transient failure. Asks for its own approval when one is needed.
+   */
+  attachGitHubAppRegistration(
+    org: string,
+    registrationId: string,
+  ): Promise<GitHubAppRegistrationRegistered | GitHubAppRegistrationRefused> {
+    return this.request("POST", this.attachPath(org, registrationId));
+  }
+
+  /** Discard a pending registration: its key is deleted; the App stays on GitHub. */
+  discardGitHubAppRegistration(org: string, registrationId: string): Promise<{ discarded: boolean; deleteUrl: string | null }> {
+    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/${encodeURIComponent(registrationId)}`);
   }
 
   importGitHubApp(org: string, input: { appId: number; privateKey: string }): Promise<GitHubAppRegistrationRegistered | GitHubAppImportFailed> {

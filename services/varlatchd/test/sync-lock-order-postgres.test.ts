@@ -16,6 +16,7 @@ import {
   type SyncTargetRow,
 } from "../src/domain/sync.js";
 import { buildApp } from "../src/http/app.js";
+import { personGate } from "./helpers/gates.js";
 
 /**
  * Lock order of Target edits against Connection credential replacement and
@@ -115,7 +116,7 @@ describe.skipIf(!url)("Target edits and Connection replacement or revocation on 
     const projectId = (await post("/v1/organizations/test/projects", { slug: "api", name: "API", contractAuthority: "managed" })).id;
     const environmentId = (await post("/v1/organizations/test/projects/api/environments", { name: "dev", tier: "development" })).id;
     const o = await org();
-    connectionId = (await createConnection(ctx, o, { platform: "github-actions", baseIdentity: "acme", name: "GitHub", credential: "ghp_first" }, identityId)).id;
+    connectionId = (await createConnection(ctx, personGate(identityId), o, { platform: "github-actions", baseIdentity: "acme", name: "GitHub", credential: "ghp_first" })).id;
     target = await createTarget(
       ctx,
       o,
@@ -136,7 +137,7 @@ describe.skipIf(!url)("Target edits and Connection replacement or revocation on 
 
   it("a Target edit that arrives while a credential replacement holds the Connection waits, and both complete", async () => {
     const pause = paused.pauseAfter(/FROM platform_connections\s+WHERE id = \$1 AND organization_id = \$2 AND revoked_at IS NULL FOR UPDATE/);
-    const replacing = replaceConnectionCredential(pctx, await org(), connectionId, { credential: "ghp_second", expectedVersion: 1 }, async () => {}, identityId);
+    const replacing = replaceConnectionCredential(pctx, personGate(identityId), await org(), connectionId, { credential: "ghp_second", expectedVersion: 1 }, async () => {});
     await pause.reached;
     const editing = edit();
     await waitingOnLock();
@@ -150,7 +151,7 @@ describe.skipIf(!url)("Target edits and Connection replacement or revocation on 
     const pause = paused.pauseAfter(/FROM sync_targets WHERE id = \$1 AND revoked_at IS NULL FOR UPDATE/);
     const editing = edit();
     await pause.reached;
-    const replacing = replaceConnectionCredential(pctx, await org(), connectionId, { credential: "ghp_second", expectedVersion: 1 }, async () => {}, identityId);
+    const replacing = replaceConnectionCredential(pctx, personGate(identityId), await org(), connectionId, { credential: "ghp_second", expectedVersion: 1 }, async () => {});
     await waitingOnLock();
     pause.release();
     const [edited, replaced] = await Promise.allSettled([editing, replacing]);
@@ -160,7 +161,7 @@ describe.skipIf(!url)("Target edits and Connection replacement or revocation on 
 
   it("a Target edit that arrives while the Connection is being revoked waits, then is refused as stale, never as a deadlock", async () => {
     const pause = paused.pauseAfter(/UPDATE platform_connections SET revoked_at/);
-    const revoking = revokeConnection(pctx, await org(), connectionId, identityId);
+    const revoking = revokeConnection(pctx, personGate(identityId), await org(), connectionId);
     await pause.reached;
     const editing = edit();
     await waitingOnLock();
@@ -177,7 +178,7 @@ describe.skipIf(!url)("Target edits and Connection replacement or revocation on 
     const pause = paused.pauseAfter(/FROM sync_targets WHERE id = \$1 AND revoked_at IS NULL FOR UPDATE/);
     const editing = edit();
     await pause.reached;
-    const revoking = revokeConnection(pctx, await org(), connectionId, identityId);
+    const revoking = revokeConnection(pctx, personGate(identityId), await org(), connectionId);
     await waitingOnLock();
     pause.release();
     const [edited, revoked] = await Promise.allSettled([editing, revoking]);

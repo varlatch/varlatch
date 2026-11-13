@@ -26,6 +26,7 @@ import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { checkTrace } from "./helpers/lock-trace.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
+import { personGate } from "./helpers/gates.js";
 
 /**
  * The incident freeze (ADR-0055), on PGlite under the lock-order check
@@ -449,7 +450,7 @@ describe("outside /v1/organizations/:org", () => {
     // like a dead one, as during a deletion, and nothing tells them why.
     expect(await domainError(consumeSetupGrant(ctx, grant.token, {}))).toBe("INVALID_CREDENTIAL");
     const org = await getOrganization(ctx, "acme");
-    expect(await domainError(completeRegistration(ctx, org, { state: "s", code: "c" }, admin.id))).toBe("ORGANIZATION_FROZEN");
+    expect(await domainError(completeRegistration(ctx, personGate(admin.id), org, { state: "s", code: "c" }))).toBe("ORGANIZATION_FROZEN");
     expectFrozen(await call("POST", `${ORG}/identities/${agent.id}/credentials`, broker.credential, { ttlSeconds: 60 }));
     // Not consumed: it works after the lift.
     await liftByApproval(admin, id);
