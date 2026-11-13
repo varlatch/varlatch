@@ -4,6 +4,7 @@ import type { ResolvedContext } from "@varlatch/context";
 import type { EffectiveConfiguration } from "@varlatch/protocol";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
 import { AdapterError, getAdapter, type PlatformAdapter, type UsageReport } from "@varlatch/sync";
+import { printable, rememberSecret, safeApiCode, serverMessage } from "./safeText.js";
 
 /**
  * `varlatch sync check` (ADR-0044): does a platform hold the values the
@@ -251,6 +252,8 @@ export async function runSyncCheck(api: VarlatchClient, ctx: ResolvedContext, in
   } else {
     const credential = io.env[input.tokenEnv];
     if (!credential) return result(keySet, [], `no platform credential in $${input.tokenEnv} (choose the variable with --token-env)`);
+    // A platform echoing the credential back gets it masked (issue #119).
+    rememberSecret(credential);
     try {
       platform = await adapter.readValues({ baseIdentity: base, destination, credential, ...(io.fetchImpl ? { fetchImpl: io.fetchImpl } : {}) });
     } catch (err) {
@@ -290,7 +293,7 @@ export async function runSyncCheck(api: VarlatchClient, ctx: ResolvedContext, in
       for (const i of disclosed.items) if (varlatch.has(i.name)) varlatch.set(i.name, i.value);
     } catch (err) {
       if (!(err instanceof VarlatchApiError) || (err.code !== "PERMISSION_DENIED" && !err.code.startsWith("TAILNET_"))) throw err;
-      notices.push(`secrets not disclosed (${err.code}): Secrets the platform holds cannot be compared`);
+      notices.push(`secrets not disclosed (${safeApiCode(err)}): Secrets the platform holds cannot be compared`);
     }
   }
   return result(keySet, compareKeys(pairs, varlatch, platform));
@@ -341,7 +344,7 @@ export function describeUsage(note: UsageNote): string {
     case "generated-once":
       return `${note.name}: generated once by the platform; a database may read it only on first start`;
     case "usage-unchecked":
-      return `usage not checked: ${note.reason ?? "unknown"}`;
+      return `usage not checked: ${note.reason ? serverMessage(note.reason) : "unknown"}`;
   }
 }
 
@@ -351,7 +354,7 @@ export function formatSyncCheck(r: SyncCheckResult): { stdout: string[]; stderr:
   const stderr = [...r.notices.map((n) => `varlatch: ${n}`), ...r.usage.map((u) => `varlatch: usage: ${describeUsage(u)}`)];
   if (r.unchecked !== undefined) {
     stderr.push(`varlatch: could not check ${where} against ${r.environment}: ${r.unchecked}`);
-    return { stdout: [], stderr };
+    return { stdout: [], stderr: stderr.map(printable) };
   }
   const width = Math.max(0, ...r.keys.map((k) => LABEL[k.status].length));
   const stdout = [`${where} against ${r.environment}:`];
@@ -362,7 +365,8 @@ export function formatSyncCheck(r: SyncCheckResult): { stdout: string[]; stderr:
   const count = (s: CheckStatus) => r.keys.filter((k) => k.status === s).length;
   const tally = `${count("match")} match, ${count("differs")} differ, ${count("missing-on-platform")} missing on the platform, ${count("extra-on-platform")} extra on the platform, ${count("unreadable")} not compared`;
   stdout.push(r.exitCode === SYNC_CHECK_EXIT.match ? `in sync: ${tally}` : r.exitCode === SYNC_CHECK_EXIT.drift ? `DRIFT: ${tally}` : `INCOMPLETE: ${tally}`);
-  return { stdout, stderr };
+  // Names from the server and the platform: escaped (issue #119).
+  return { stdout: stdout.map(printable), stderr: stderr.map(printable) };
 }
 
 /** The machine form (`--json`): names, statuses, and counts; never a value. */

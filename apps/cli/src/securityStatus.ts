@@ -16,6 +16,7 @@ import {
 import type { Requirement } from "@varlatch/protocol";
 import { enforceable, lifetime } from "./securityControls.js";
 import { ago, expiryLine, usagePolicyLine } from "./securityReport.js";
+import { printable, safeTime, safeVersion, serverMessage } from "./safeText.js";
 import { statusLines as auditExportLines } from "./auditExport.js";
 
 /**
@@ -162,7 +163,7 @@ export async function fetchSecurityStatus(api: SecurityStatusApi, organization: 
   const meta = await api.meta();
   if (!meta.capabilities.includes("security.controls")) {
     throw new SecurityStatusUnsupportedError(
-      `varlatch security status: this server (${meta.serverVersion}) has no security controls ` +
+      `varlatch security status: this server (${safeVersion(meta.serverVersion) ?? "an older release"}) has no security controls ` +
         "(it lacks the security.controls capability); upgrade the server.",
     );
   }
@@ -277,7 +278,7 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
   if (s.incidentFreeze) {
     const f = s.incidentFreeze;
     lines.push(
-      `FROZEN for an incident since ${f.frozenAt} by ${f.frozenBy.name ?? f.frozenBy.id}: ${f.reason}`,
+      `FROZEN for an incident since ${safeTime(f.frozenAt)} by ${f.frozenBy.name ?? f.frozenBy.id}: ${serverMessage(f.reason)}`,
       `  Every read and write is refused except inspection, audit and recovery. Lift it: varlatch org unfreeze ${s.organization}`,
     );
   }
@@ -342,7 +343,7 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
     if (expiry) {
       lines.push(`  ${expiryLine(expiry)}`);
       for (const c of expiry.items) {
-        const when = !c.expiresAt ? "" : c.state === "expired" ? `expired ${ago(c.expiresAt, now)}` : `expires ${until(c.expiresAt, now)} (${c.expiresAt})`;
+        const when = !c.expiresAt ? "" : c.state === "expired" ? `expired ${ago(c.expiresAt, now)}` : `expires ${until(c.expiresAt, now)} (${safeTime(c.expiresAt)})`;
         lines.push(`  ${c.id}  ${c.name ?? "unnamed"}  for ${c.identity.name}: ${when}`);
       }
     }
@@ -397,5 +398,6 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
       );
     }
   }
-  return lines;
+  // Every line holds names, IDs, reasons and counts from the server: escaped (issue #119).
+  return lines.map(printable);
 }

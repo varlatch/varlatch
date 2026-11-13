@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { StoredCredential } from "@varlatch/context";
 import { VarlatchApiError } from "@varlatch/sdk";
+import { safeApiCode } from "./safeText.js";
 
 /**
  * Server-side revocation of a stored credential (ADR-0032), shared by
@@ -18,7 +19,7 @@ export async function revokeStoredCredential(
     await revoke(credential.credentialId);
     return null;
   } catch (err) {
-    if (err instanceof VarlatchApiError) return err.code;
+    if (err instanceof VarlatchApiError) return safeApiCode(err);
     return err instanceof Error ? err.message : String(err);
   }
 }

@@ -36,6 +36,19 @@ import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedac
 import { STRICT_EXIT } from "./strictRun.js";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
 import { passkeyVerificationLines } from "./passkeyVerification.js";
+import {
+  UNRECOGNIZED_VERSION,
+  apiErrorLine,
+  printable,
+  rememberSecret,
+  requestNote,
+  safe,
+  safeApiCode,
+  safeApiMajor,
+  safeTime,
+  safeVersion,
+  serverMessage,
+} from "./safeText.js";
 import { USAGE, commandHelp } from "./usage.js";
 import { OptionsError, parseOptions, type OptionSpec, type ParsedOptions } from "./options.js";
 import {
@@ -420,6 +433,8 @@ function connectClient(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
     );
   }
   warnIfExpiring(ctx.server);
+  // A server echoing the bearer back in an error message gets it masked (issue #119).
+  rememberSecret(token);
   // Polls and cancels approvals: the same credential, without the step-up
   // handling or the resumed approval of the command's own client.
   let poller: VarlatchClient | null = null;
@@ -469,7 +484,7 @@ async function probeServer(
       organization: organization ? { id: organization.id, slug: organization.slug, name: organization.name } : null,
     };
   } catch (err) {
-    if (err instanceof VarlatchApiError) return { state: "invalid", detail: err.code };
+    if (err instanceof VarlatchApiError) return { state: "invalid", detail: safeApiCode(err) };
     return { state: "unreachable", detail: err instanceof Error ? err.message : String(err) };
   }
 }
@@ -565,7 +580,7 @@ async function valuePresence(api: VarlatchClient, ctx: ResolvedContext, item: st
     const found = (effective.items ?? []).find((i) => i.name === item);
     return found === undefined ? "absent" : found.source === "parent" ? "inherited" : "present";
   } catch (err) {
-    if (err instanceof VarlatchApiError) return { unknown: `${err.status} ${err.code}` };
+    if (err instanceof VarlatchApiError) return { unknown: `${err.status} ${safeApiCode(err)}` };
     throw err;
   }
 }
@@ -806,7 +821,7 @@ async function projectDelete(args: string[], assisted: AssistedMode): Promise<vo
   const api = client(target);
   const meta = await api.meta();
   if (!meta.capabilities.includes(PROJECT_DELETION_CAPABILITY)) {
-    fail(`This server (${meta.serverVersion ?? "an older release"}) cannot delete projects; that needs Varlatch 0.20.0 or later. Nothing was deleted.`);
+    fail(`This server (${safeVersion(meta.serverVersion) ?? "an older release"}) cannot delete projects; that needs Varlatch 0.20.0 or later. Nothing was deleted.`);
   }
   const deleted = await api.deleteProject(target.organization, slug);
   for (const line of projectDeletionLines(deleted, target.organization)) console.log(line);
@@ -869,7 +884,7 @@ async function orgDeletion(sub: "delete" | "deletion", args: string[], assisted:
   const api = client(requiredTarget(parsed, slug));
   const meta = await api.meta();
   if (!meta.capabilities.includes(ORGANIZATION_DELETION_CAPABILITY)) {
-    fail(`This server (${meta.serverVersion ?? "an older release"}) cannot delete organizations; that needs Varlatch 0.20.0 or later. Nothing was changed.`);
+    fail(`This server (${safeVersion(meta.serverVersion) ?? "an older release"}) cannot delete organizations; that needs Varlatch 0.20.0 or later. Nothing was changed.`);
   }
   if (mode === null) {
     const open = await api.organizationDeletion(slug);
@@ -994,11 +1009,13 @@ async function auditExportCommand(args: string[], assisted: AssistedMode): Promi
     }
   }
   const credential = withKey ? { accessKeyId: parsed.values.get("--access-key-id")!, secretAccessKey: secretAccessKey! } : undefined;
+  // A server echoing the key back in an error message gets it masked (issue #119).
+  rememberSecret(secretAccessKey);
   const target = requiredTarget(parsed, parsed.values.get("--org"));
   const api = client(target);
   const meta = await api.meta();
   if (!meta.capabilities.includes(ae.AUDIT_EXPORT_CAPABILITY)) {
-    fail(`This server (${meta.serverVersion ?? "an older release"}) has no audit export to object storage; upgrade the server. Nothing was changed.`);
+    fail(`This server (${safeVersion(meta.serverVersion) ?? "an older release"}) has no audit export to object storage; upgrade the server. Nothing was changed.`);
   }
   const org = target.organization;
   const json = parsed.booleans.has("--json");
@@ -1043,20 +1060,20 @@ async function auditExportCommand(args: string[], assisted: AssistedMode): Promi
     if (change!.kind === "key") {
       const replaced = await api.replaceAuditExportCredential(org, { expectedVersion: current.version, credential: credential! });
       if (json) printJson({ organization: org, export: replaced });
-      else console.log(`The key of the audit export of ${org} was replaced; delivery continues with it (version ${replaced.version}).`);
+      else console.log(safe`The key of the audit export of ${org} was replaced; delivery continues with it (version ${replaced.version}).`);
       return;
     }
     const result = await api.changeAuditExport(org, ae.changeInput(change!, current));
     if (json) printJson({ organization: org, ...result });
     else if (!result.changed) console.log(`The audit export of ${org} already has these settings. Nothing was changed.`);
     else {
-      console.log(`The audit export of ${org} was changed (version ${result.export.version})${result.loosened ? "; your approval was used" : ""}.`);
-      if (result.export.streamId !== current.streamId) console.log(`It now writes a new stream, ${result.export.streamId}, from position ${result.export.cursor}; the old bucket keeps what it received.`);
+      console.log(`${safe`The audit export of ${org} was changed (version ${result.export.version})`}${result.loosened ? "; your approval was used" : ""}.`);
+      if (result.export.streamId !== current.streamId) console.log(safe`It now writes a new stream, ${result.export.streamId}, from position ${result.export.cursor}; the old bucket keeps what it received.`);
     }
   } catch (err) {
     if (err instanceof ae.AuditExportError) fail(`varlatch audit-export ${sub}: ${err.message}`);
     if (err instanceof VarlatchApiError && err.code === "VERSION_CONFLICT") {
-      fail(`varlatch audit-export ${sub}: the export changed while this ran: ${err.message}. Nothing was changed; run the command again.`);
+      fail(`varlatch audit-export ${sub}: the export changed while this ran: ${serverMessage(err.message)}. Nothing was changed; run the command again.`);
     }
     throw err;
   }
@@ -1104,7 +1121,7 @@ async function orgFreeze(sub: "freeze" | "unfreeze", args: string[], assisted: A
   const api = client(requiredTarget(parsed, slug));
   const meta = await api.meta();
   if (!meta.capabilities.includes(INCIDENT_FREEZE_CAPABILITY)) {
-    fail(`This server (${meta.serverVersion ?? "an older release"}) has no incident freeze; upgrade the server. Nothing was changed.`);
+    fail(`This server (${safeVersion(meta.serverVersion) ?? "an older release"}) has no incident freeze; upgrade the server. Nothing was changed.`);
   }
   if (sub === "freeze") {
     const freeze = await api.freezeOrganization(slug, reason);
@@ -1158,11 +1175,11 @@ async function credentialIssue(args: string[], assisted: AssistedMode): Promise<
   const limits = [
     issued.expiresAt
       ? // No --ttl, yet an expiry: the organization's credential-lifetime default (ADR-0054).
-        `expires ${issued.expiresAt}${ttlSeconds === undefined ? " (the organization's default lifetime for machine credentials)" : ""}`
+        `expires ${safeTime(issued.expiresAt)}${ttlSeconds === undefined ? " (the organization's default lifetime for machine credentials)" : ""}`
       : "no expiry: revoke it when nothing uses it",
-    ...(issued.maxUses ? [`${issued.maxUses} use${issued.maxUses === 1 ? "" : "s"}`] : []),
+    ...(issued.maxUses ? [`${printable(String(issued.maxUses))} use${issued.maxUses === 1 ? "" : "s"}`] : []),
   ].join(", ");
-  console.log(`Issued credential ${issued.id} (${issued.name}) for ${identityId}; ${limits}.`);
+  console.log(`${safe`Issued credential ${issued.id} (${issued.name}) for ${identityId}`}; ${limits}.`);
   console.log(`The token is in ${file}, readable by you only, and is never shown again.`);
   if (assisted.on) console.log("The file holds a credential: do not print or read it; give its path to the program that uses it.");
 }
@@ -1314,6 +1331,7 @@ async function main(): Promise<void> {
           if (/\s/.test(piped)) usageError("varlatch login: the credential on stdin contains whitespace; give one credential on one line");
           token = piped;
         }
+        rememberSecret(token);
         // Issuance metadata (ADR-0032): stored so expiry is knowable offline.
         // Explicit --token has none — its entry stays metadata-free.
         let issuedMeta: { id: string; expiresAt: string } | undefined;
@@ -1326,6 +1344,7 @@ async function main(): Promise<void> {
             explicitToken: login.values.get("--oidc-token"),
             audience: login.values.get("--audience"),
           });
+          rememberSecret(idToken);
           const anonymous = new VarlatchClient({ onMaintenance: maintenanceNotice, server, userAgent: cliUserAgent() });
           const issued = await anonymous.exchangeOidcToken({
             token: idToken,
@@ -1333,8 +1352,9 @@ async function main(): Promise<void> {
             ...(ttlFlag ? { ttlSeconds: Number(ttlFlag) } : {}),
           });
           token = issued.token;
+          rememberSecret(token);
           issuedMeta = issued;
-          console.log(`OIDC exchange succeeded (credential expires ${issued.expiresAt}).`);
+          console.log(`OIDC exchange succeeded (credential expires ${safeTime(issued.expiresAt)}).`);
         }
         if (!token) {
           // Browser handoff (ADR-0017): loopback listener + passkey sign-in.
@@ -1342,14 +1362,16 @@ async function main(): Promise<void> {
           // immediately for a longer-lived CLI credential (ADR-0024; the
           // bearer is revoked server-side by the exchange).
           const handoff = await browserLogin(server);
+          rememberSecret(handoff);
           // The CLI's User-Agent lets the server label the credential
           // ("varlatch CLI 0.14.0 on Linux"); it stores only that summary.
           const issued = await new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: handoff, userAgent: cliUserAgent() }).exchangeCliCredential(
             ttlFlag ? { ttlSeconds: Number(ttlFlag) } : {},
           );
           token = issued.token;
+          rememberSecret(token);
           issuedMeta = issued;
-          console.log(`Issued CLI credential (expires ${issued.expiresAt}).`);
+          console.log(`Issued CLI credential (expires ${safeTime(issued.expiresAt)}).`);
         }
         const probe = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
         const meta = await probe.meta();
@@ -1360,7 +1382,12 @@ async function main(): Promise<void> {
           issuedAt: new Date().toISOString(),
           ...(issuedMeta ? { expiresAt: issuedMeta.expiresAt, credentialId: issuedMeta.id } : {}),
         });
-        console.log(`Logged in to ${server} (server ${meta.serverVersion}, API v${meta.apiMajor}).`);
+        // Only fields of the expected shape (issue #119): a server could put anything in them.
+        const apiMajor = safeApiMajor(meta.apiMajor);
+        console.log(
+          `Logged in to ${server} (server ${safeVersion(meta.serverVersion) ?? UNRECOGNIZED_VERSION}, ` +
+            `${apiMajor === undefined ? "an unrecognized API version" : `API v${apiMajor}`}).`,
+        );
         noteDefaultServer(server, (line) => console.error(line));
         if (replaced) {
           // Revoke only after the new credential is verified and stored: a
@@ -1373,7 +1400,7 @@ async function main(): Promise<void> {
           } else {
             console.error(
               `varlatch: previous credential not revoked (${failure}) — it may remain live` +
-                `${replaced.expiresAt ? ` until ${replaced.expiresAt}` : ""}.`,
+                `${replaced.expiresAt ? ` until ${safeTime(replaced.expiresAt)}` : ""}.`,
             );
           }
         }
@@ -1614,7 +1641,7 @@ async function main(): Promise<void> {
           } else {
             console.log(
               `${server}: removed locally; server revocation failed (${revokeFailure}) — the credential may remain live` +
-                `${credential.expiresAt ? ` until ${credential.expiresAt}` : ""}.`,
+                `${credential.expiresAt ? ` until ${safeTime(credential.expiresAt)}` : ""}.`,
             );
           }
         }
@@ -1688,7 +1715,7 @@ async function main(): Promise<void> {
         console.log(`Project       ${ctx.project}`);
         console.log(`Environment   ${ctx.environment}`);
         console.log(`Source        ${ctx.environmentSource}`);
-        if (repo.tier) console.log(`Tier          ${repo.tier} (cached ${repo.tierCachedAt})`);
+        if (repo.tier) console.log(safe`Tier          ${repo.tier} (cached ${repo.tierCachedAt})`);
         console.log(`Repo root     ${ctx.repoRoot}`);
         if (agentRun) console.log(`Agent run     ${agentRun.id} (Placeholders: ${agentRun.placeholders.join(", ") || "none"})`);
         return;
@@ -1725,7 +1752,7 @@ async function main(): Promise<void> {
             state.tierCachedAt = new Date().toISOString();
           }
           saveLocalState(root, state);
-          console.log(`Selected ${name} for this repository${tier ? ` (tier ${tier})` : ""}.`);
+          console.log(`Selected ${name} for this repository${tier ? safe` (tier ${tier})` : ""}.`);
           return;
         }
         const ctx = context(args);
@@ -1749,7 +1776,7 @@ async function main(): Promise<void> {
             const marks = [e.tier, e.kind, e.name === ctx.environment ? "selected" : null]
               .filter(Boolean)
               .join(", ");
-            console.log(`${e.name}  (${marks})`);
+            console.log(safe`${e.name}  (${marks})`);
           }
           return;
         }
@@ -1990,7 +2017,7 @@ async function main(): Promise<void> {
             }
           } catch (err) {
             if (err instanceof VarlatchApiError && (err.code === "PERMISSION_DENIED" || err.code.startsWith("TAILNET_"))) {
-              console.error(`varlatch: secrets not disclosed (${err.code}); continuing with non-sensitive values`);
+              console.error(`varlatch: secrets not disclosed (${safeApiCode(err)}); continuing with non-sensitive values`);
             } else {
               throw err;
             }
@@ -2004,7 +2031,7 @@ async function main(): Promise<void> {
           : (await read()).result;
         const withheld = withheldItems(effective, omitted);
         if (withheld.length > 0) {
-          console.error(`varlatch: ${withheld.length} value(s) withheld by policy: ${withheld.join(", ")}`);
+          console.error(`varlatch: ${withheld.length} value(s) withheld by policy: ${printable(withheld.join(", "))}`);
         }
         const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
         const env = buildEnv(process.env, effective, omitted);
@@ -2035,8 +2062,9 @@ async function main(): Promise<void> {
           if (outcome.exitCode !== 0) process.exit(outcome.exitCode);
           return;
         }
-        for (const line of outcome.stdout) console.log(line);
-        for (const line of outcome.stderr) console.error(line);
+        // Item names and reasons from the server, one line each: escaped (issue #119).
+        for (const line of outcome.stdout) console.log(printable(line));
+        for (const line of outcome.stderr) console.error(printable(line));
         if (outcome.exitCode !== 0) process.exit(outcome.exitCode);
         return;
       }
@@ -2127,14 +2155,16 @@ async function main(): Promise<void> {
           // How to rotate this credential, from the Contract: before the value is
           // asked for or sent (the steps may come first) and again after.
           const hint = sub === "rotate" ? await rotationHintOf(api, ctx, item) : undefined;
-          if (hint !== undefined) console.error(`How to rotate ${item} (from the Contract): ${hint}`);
+          if (hint !== undefined) console.error(`How to rotate ${item} (from the Contract): ${serverMessage(hint)}`);
           const obtained = await obtainValue(source, item);
           // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
           if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
+          // A server echoing the value back in an error message gets it masked (issue #119).
+          rememberSecret(obtained.value);
           const how = obtained.generated ? ` to a generated value (${describeGenerated(obtained.generated)}; not shown)` : "";
           if (sub === "set") {
             const version = await api.setValue(ctx.organization, ctx.project, ctx.environment, item, { value: obtained.value });
-            console.log(`${item} set (version ${version.versionId})${how}.`);
+            console.log(`${item} set (version ${printable(version.versionId)})${how}.`);
             return;
           }
           const rot = await api.beginRotation(ctx.organization, ctx.project, ctx.environment, item, {
@@ -2142,9 +2172,9 @@ async function main(): Promise<void> {
             ...(grace !== undefined ? { graceSeconds: Number(grace) } : {}),
           });
           console.log(
-            `${item} rotating${how} — new primary ${rot.primaryVersionId}, previous value valid until ${rot.rotationDeadline}. Run "varlatch values rotate-complete ${item}" once consumers have migrated.`,
+            `${item} rotating${how} — new primary ${printable(rot.primaryVersionId)}, previous value valid until ${safeTime(rot.rotationDeadline)}. Run "varlatch values rotate-complete ${item}" once consumers have migrated.`,
           );
-          if (hint !== undefined) console.error(`Remaining steps for ${item} (from the Contract): ${hint}`);
+          if (hint !== undefined) console.error(`Remaining steps for ${item} (from the Contract): ${serverMessage(hint)}`);
           return;
         }
         if (sub === "delete") {
@@ -2198,7 +2228,7 @@ async function main(): Promise<void> {
             return;
           }
           for (const i of effective.items ?? []) {
-            console.log(`${i.name}  (${i.sensitive ? "secret" : "plain"}, ${i.source})`);
+            console.log(safe`${i.name}  (${i.sensitive ? "secret" : "plain"}, ${i.source})`);
           }
           // The human format stays as it is; an active rotation is a note on
           // stderr, with the command that completes it where it lives. An
@@ -2221,7 +2251,8 @@ async function main(): Promise<void> {
                 ? `${i.name} is inherited from ${parent ?? "the parent environment"}, where it is rotating`
                 : `${i.name} is rotating`;
             const command = owner ? ` (varlatch values rotate-complete ${i.name} ${contextOptions(args, { ...ctx, environment: owner })})` : "";
-            console.error(`${subject}: its previous value still works until the rotation completes${command}.`);
+            // One line of names from the server and the CLI's own words: escaped as a whole.
+            console.error(printable(`${subject}: its previous value still works until the rotation completes${command}.`));
           }
           return;
         }
@@ -2370,7 +2401,7 @@ async function main(): Promise<void> {
             throw err;
           }
           if (opts.booleans.has("--json")) {
-            for (const notice of checked.notices) console.error(`varlatch: ${notice}`);
+            for (const notice of checked.notices) console.error(`varlatch: ${printable(notice)}`);
             printJson(syncCheckDocument(checked));
           } else {
             const out = formatSyncCheck(checked);
@@ -2441,7 +2472,7 @@ async function main(): Promise<void> {
             if (!supported) fail("This server does not support Contract Semantics versions; it needs 0.11.0 or later.");
             const version = semantics === "latest" ? Math.max(...supported) : Number(semantics);
             if (!supported.includes(version)) {
-              usageError(`--semantics must be latest or one of this server's versions: ${supported.join(", ")}`);
+              usageError(`--semantics must be latest or one of this server's versions: ${printable(supported.join(", "))}`);
             }
             contract = { ...(contract as object), semanticsVersion: version };
           }
@@ -2481,9 +2512,9 @@ async function main(): Promise<void> {
             });
             return;
           }
-          console.log(`Revision ${revision.id} (${revision.contentHash})${revision.active ? " [active]" : ""}`);
-          console.log(`Contract Semantics version ${revision.semanticsVersion}`);
-          if (!revision.active) console.log(`Activate with: varlatch contract activate ${revision.id}`);
+          console.log(`${safe`Revision ${revision.id} (${revision.contentHash})`}${revision.active ? " [active]" : ""}`);
+          console.log(safe`Contract Semantics version ${revision.semanticsVersion}`);
+          if (!revision.active) console.log(safe`Activate with: varlatch contract activate ${revision.id}`);
           return;
         }
         if (sub === "activate") {
@@ -2533,8 +2564,8 @@ async function main(): Promise<void> {
         const ctx = context(args);
         const invite = await client(ctx).createInvitation(ctx.organization, { name, role });
         console.log(`Hand this one-time enrollment link to ${name} (${role}):`);
-        console.log(`  ${ctx.server}/enroll#${invite.token}`);
-        console.log(`Expires: ${invite.expiresAt}. They will create a passkey — no email involved.`);
+        console.log(`  ${ctx.server}/enroll#${printable(invite.token)}`);
+        console.log(`Expires: ${safeTime(invite.expiresAt)}. They will create a passkey — no email involved.`);
         return;
       }
 
@@ -2563,7 +2594,7 @@ async function main(): Promise<void> {
             },
           });
           console.log(
-            `Tailnet Requirement ${created.id}: ${tier}-tier retrieval now requires ` +
+            `Tailnet Requirement ${printable(created.id)}: ${tier}-tier retrieval now requires ` +
               `trusted Tailnet Context from ${tailnet}. Requests outside it fail closed.`,
           );
           return;
@@ -2575,7 +2606,7 @@ async function main(): Promise<void> {
             return;
           }
           for (const r of page.items) {
-            console.log(`${r.id}  ${JSON.stringify(r.target)}  ${JSON.stringify(r.selector)}`);
+            console.log(safe`${r.id}  ${JSON.stringify(r.target)}  ${JSON.stringify(r.selector)}`);
           }
           if (page.items.length === 0) console.log("(none)");
           return;
@@ -2614,7 +2645,7 @@ async function main(): Promise<void> {
           }
           for (const e of page.items) {
             console.log(
-              `${e.occurredAt}  ${e.decision}  ${e.eventType}  actor=${e.actorIdentityId ?? "-"}`,
+              safe`${safeTime(e.occurredAt)}  ${e.decision}  ${e.eventType}  actor=${e.actorIdentityId ?? "-"}`,
             );
           }
           return;
@@ -2649,7 +2680,7 @@ async function main(): Promise<void> {
             printJson({ organizations: page.items.map((o) => ({ id: o.id, slug: o.slug, name: o.name })) });
             return;
           }
-          for (const o of page.items) console.log(`${o.slug}  (${o.name})`);
+          for (const o of page.items) console.log(safe`${o.slug}  (${o.name})`);
           if (page.items.length === 0) console.log("(none — create one with: varlatch org create <slug> <name>)");
           return;
         }
@@ -2657,7 +2688,7 @@ async function main(): Promise<void> {
           const slug = args[1] ?? usageError("Usage: varlatch org create <slug> [name]");
           const name = positional(args, 2) ?? slug;
           const org = await api.createOrganization({ slug, name });
-          console.log(`Organization ${org.slug} created (${org.id}). You are its admin.`);
+          console.log(safe`Organization ${org.slug} created (${org.id}). You are its admin.`);
           return;
         }
         usageError("Usage: varlatch org <list|create|delete|deletion|freeze|unfreeze>");
@@ -2682,8 +2713,8 @@ async function main(): Promise<void> {
             name: positional(args, 2) ?? slug,
             contractAuthority: has(args, "--managed") ? "managed" : "git",
           });
-          console.log(`Project ${project.slug} created in ${org} (${project.contractAuthority} contract authority).`);
-          console.log(`Set up a repo with: varlatch init --org ${org} --project ${project.slug} --server ${server}`);
+          console.log(safe`Project ${project.slug} created in ${org} (${project.contractAuthority} contract authority).`);
+          console.log(safe`Set up a repo with: varlatch init --org ${org} --project ${project.slug} --server ${server}`);
           return;
         }
         const ctx = context(args);
@@ -2698,7 +2729,7 @@ async function main(): Promise<void> {
             });
             return;
           }
-          for (const p of page.items) console.log(`${p.slug}  (${p.name}, ${p.contractAuthority})`);
+          for (const p of page.items) console.log(safe`${p.slug}  (${p.name}, ${p.contractAuthority})`);
           return;
         }
         if (sub === "rename") {
@@ -2706,7 +2737,7 @@ async function main(): Promise<void> {
           const name = positional(args, 2) ?? usageError("Provide the new name");
           const ctx = context(args);
           const renamed = await client(ctx).renameProject(ctx.organization, slug, name);
-          console.log(`Project ${renamed.slug} renamed to ${renamed.name}. Its slug, grants and contracts are unaffected; the rename is audited.`);
+          console.log(safe`Project ${renamed.slug} renamed to ${renamed.name}. Its slug, grants and contracts are unaffected; the rename is audited.`);
           return;
         }
         usageError("Usage: varlatch project <create|list|rename|delete>");
@@ -2731,7 +2762,7 @@ async function main(): Promise<void> {
           input.tier = tier as "development" | "staging" | "production";
         }
         const env = await api.createEnvironment(ctx.organization, ctx.project, input);
-        console.log(`Environment ${env.name} created (${env.kind}, tier ${env.tier}).`);
+        console.log(safe`Environment ${env.name} created (${env.kind}, tier ${env.tier}).`);
         return;
       }
 
@@ -2746,10 +2777,10 @@ async function main(): Promise<void> {
         // ADR-0025: production-tier roots get client-side friction — the
         // deletion must repeat the environment name explicitly.
         if (env.tier === "production" && !env.parentEnvironmentId && flag(args, "--confirm") !== env.name) {
-          usageError(`${env.name} is production-tier; re-type the name to confirm: varlatch env-delete ${env.name} --confirm ${env.name}`);
+          usageError(safe`${env.name} is production-tier; re-type the name to confirm: varlatch env-delete ${env.name} --confirm ${env.name}`);
         }
         await api.deleteEnvironment(ctx.organization, ctx.project, env.name);
-        console.log(`Environment ${env.name} deleted (${env.kind}, tier ${env.tier}). The name is free for reuse; grants and mappings never transfer to a successor.`);
+        console.log(safe`Environment ${env.name} deleted (${env.kind}, tier ${env.tier}). The name is free for reuse; grants and mappings never transfer to a successor.`);
         return;
       }
 
@@ -2766,7 +2797,7 @@ async function main(): Promise<void> {
           const api = client(ctx);
           const meta = await api.meta();
           if (!meta.capabilities.includes(REACH_CAPABILITY)) {
-            fail(`This server (${meta.serverVersion ?? "an older release"}) cannot show a machine's reach; that needs Varlatch 0.21.0 or later.`);
+            fail(`This server (${safeVersion(meta.serverVersion) ?? "an older release"}) cannot show a machine's reach; that needs Varlatch 0.21.0 or later.`);
           }
           // An identity ID goes to the server as it is; only a name is
           // resolved, through the identity listing.
@@ -2807,7 +2838,7 @@ async function main(): Promise<void> {
           for (const i of page.items) {
             const state = i.disabled ? "retired" : "active";
             console.log(
-              `${i.id}  ${i.name}  (${i.kind}, ${state}, last seen ${i.lastSeenAt ?? "never"})`,
+              safe`${i.id}  ${i.name}  (${i.kind}, ${state}, last seen ${safeTime(i.lastSeenAt) ?? "never"})`,
             );
           }
           if (page.items.length === 0) console.log("(none)");
@@ -2817,7 +2848,7 @@ async function main(): Promise<void> {
           const id = args[1] ?? usageError("Usage: varlatch identity rename <identity-id> <new-name>");
           const name = positional(args, 2) ?? usageError("Provide the new name");
           const renamed = await api.renameIdentity(ctx.organization, id, name);
-          console.log(`Identity ${renamed.id} renamed to ${renamed.name}. Grants and credentials are unaffected; the rename is audited.`);
+          console.log(safe`Identity ${renamed.id} renamed to ${renamed.name}. Grants and credentials are unaffected; the rename is audited.`);
           return;
         }
         if (sub === "retire") {
@@ -2827,16 +2858,16 @@ async function main(): Promise<void> {
           // ADR-0034: retirement revokes every credential; mirror env-delete's
           // ADR-0025 friction — the retirement must repeat the identity name.
           if (flag(args, "--confirm") !== identity.name) {
-            usageError(`Retiring ${identity.name} revokes ALL of its credentials; re-type the name to confirm: varlatch identity retire ${identity.id} --confirm ${identity.name}`);
+            usageError(safe`Retiring ${identity.name} revokes ALL of its credentials; re-type the name to confirm: varlatch identity retire ${identity.id} --confirm ${identity.name}`);
           }
           await api.retireIdentity(ctx.organization, identity.id);
-          console.log(`Identity ${identity.name} retired — disabled and every credential revoked. Reactivation restores no credentials.`);
+          console.log(safe`Identity ${identity.name} retired — disabled and every credential revoked. Reactivation restores no credentials.`);
           return;
         }
         if (sub === "reactivate") {
           const id = args[1] ?? usageError("Usage: varlatch identity reactivate <identity-id>");
           const identity = await api.reactivateIdentity(ctx.organization, id);
-          console.log(`Identity ${identity.id} reactivated. It has zero working credentials until you issue one.`);
+          console.log(safe`Identity ${identity.id} reactivated. It has zero working credentials until you issue one.`);
           return;
         }
         usageError("Usage: varlatch identity <list|reach|rename|retire|reactivate>");
@@ -2882,8 +2913,8 @@ async function main(): Promise<void> {
             return;
           }
           for (const p of people) {
-            const state = p.removedAt ? `former member, left ${p.removedAt}` : (p.orgRole ?? "no role");
-            console.log(`${p.id}  ${p.name}  (${state}, last seen ${p.lastSeenAt ?? "never"})`);
+            const state = p.removedAt ? `former member, left ${safeTime(p.removedAt)}` : (p.orgRole ?? "no role");
+            console.log(safe`${p.id}  ${p.name}  (${state}, last seen ${safeTime(p.lastSeenAt) ?? "never"})`);
           }
           if (people.length === 0) console.log("(none)");
           return;
@@ -2893,7 +2924,7 @@ async function main(): Promise<void> {
           const target = parsed.positionals[1] ?? usageError(usage);
           const meta = await api.meta();
           if (!meta.capabilities.includes(MEMBERS_CAPABILITY)) {
-            fail(`This server (${meta.serverVersion ?? "an older release"}) has no exposure report; that needs Varlatch 0.20.0 or later.`);
+            fail(`This server (${safeVersion(meta.serverVersion) ?? "an older release"}) has no exposure report; that needs Varlatch 0.20.0 or later.`);
           }
           // An identity ID (or "me") goes to the report as it is: the server
           // checks it, and reading the report needs only audit.read. Only a
@@ -2972,7 +3003,7 @@ async function main(): Promise<void> {
         }
         const meta = await api.meta();
         if (!meta.capabilities.includes(MEMBERS_CAPABILITY)) {
-          fail(`This server (${meta.serverVersion ?? "an older release"}) cannot remove members or change their role; that needs Varlatch 0.20.0 or later. Nothing was changed.`);
+          fail(`This server (${safeVersion(meta.serverVersion) ?? "an older release"}) cannot remove members or change their role; that needs Varlatch 0.20.0 or later. Nothing was changed.`);
         }
         if (sub === "leave") {
           const removal = await api.removeMember(ctx.organization, "me");
@@ -2994,12 +3025,12 @@ async function main(): Promise<void> {
         const role = parsed.positionals[2] as "admin" | "member";
         const changed = await api.changeMemberRole(ctx.organization, member.id, role);
         if (changed.previousRole === changed.role) {
-          console.log(`${member.name} is already ${role === "admin" ? "an admin" : "a member"} of ${ctx.organization}. Nothing was changed.`);
+          console.log(`${printable(member.name)} is already ${role === "admin" ? "an admin" : "a member"} of ${ctx.organization}. Nothing was changed.`);
         } else if (role === "admin") {
-          console.log(`${member.name} is now an admin of ${ctx.organization}.`);
+          console.log(`${printable(member.name)} is now an admin of ${ctx.organization}.`);
         } else {
           console.log(
-            `${member.name} is now a member of ${ctx.organization}. Grants given to them directly or through groups stay; ` +
+            `${printable(member.name)} is now a member of ${ctx.organization}. Grants given to them directly or through groups stay; ` +
               `review them in the dashboard's Access page.`,
           );
         }
@@ -3036,14 +3067,14 @@ async function main(): Promise<void> {
             const marks = [
               c.kind,
               c.name,
-              `created ${c.createdAt}`,
-              c.expiresAt ? `expires ${c.expiresAt}` : null,
-              c.revokedAt ? `revoked ${c.revokedAt}` : null,
-              `last used ${c.lastUsedAt ?? "never"}`,
+              `created ${safeTime(c.createdAt)}`,
+              c.expiresAt ? `expires ${safeTime(c.expiresAt)}` : null,
+              c.revokedAt ? `revoked ${safeTime(c.revokedAt)}` : null,
+              `last used ${safeTime(c.lastUsedAt) ?? "never"}`,
             ]
               .filter(Boolean)
               .join(", ");
-            console.log(`${c.id}  (${marks})`);
+            console.log(safe`${c.id}  (${marks})`);
           }
           if (page.items.length === 0) console.log("(none)");
           return;
@@ -3119,10 +3150,10 @@ async function main(): Promise<void> {
             if (err instanceof controls.SecurityUsageError) usageError(`varlatch security set: ${err.message}\n${usage}`);
             if (err instanceof controls.SecurityControlsError) fail(err.message);
             if (err instanceof VarlatchApiError && err.code === "CONTROL_MODE_UNAVAILABLE") {
-              fail(`varlatch security set: ${err.message}. Nothing was changed. (request ${err.requestId})`);
+              fail(`varlatch security set: ${serverMessage(err.message)}. Nothing was changed.${requestNote(err)}`);
             }
             if (err instanceof VarlatchApiError && err.code === "VERSION_CONFLICT") {
-              fail(`varlatch security set: the control changed while this ran: ${err.message}. Nothing was changed; run the command again.`);
+              fail(`varlatch security set: the control changed while this ran: ${serverMessage(err.message)}. Nothing was changed; run the command again.`);
             }
             throw err;
           }
@@ -3423,18 +3454,22 @@ async function main(): Promise<void> {
     if (err instanceof Error && err.name === "ExportContextError") fail(`varlatch: ${err.message}. Nothing was started.`);
     if (err instanceof ContextError) fail(err.message);
     if (err instanceof EnvSchemaParseError || err instanceof UnknownEnvironmentNameError) fail(err.message);
-    if (err instanceof ApprovalError) fail(err.message, err.exit);
+    // Its message names the approval by the id the server gave: escaped (issue #119).
+    if (err instanceof ApprovalError) fail(printable(err.message), err.exit);
     const pending = stepUpApproval(err);
     if (pending) {
-      fail([...approvalLines(pending), `Error STEP_UP_REQUIRED: ${(err as Error).message}`].join("\n"), EXIT.denied);
+      fail([...approvalLines(pending), `Error STEP_UP_REQUIRED: ${serverMessage((err as Error).message)}`].join("\n"), EXIT.denied);
     }
     const verification = passkeyVerificationLines(err);
     if (verification) fail(verification.join("\n"), EXIT.denied);
     if (err instanceof VarlatchApiError && err.code === "MAINTENANCE") {
-      fail(`The installation is still in maintenance (restore or upgrade); try again later. (request ${err.requestId})`, EXIT.unavailable);
+      fail(`The installation is still in maintenance (restore or upgrade); try again later.${requestNote(err)}`, EXIT.unavailable);
     }
+    // Only checked text from the server (issue #119): the code if the
+    // protocol defines it, the message escaped with known secrets masked,
+    // and the request id if it has the server's format.
     if (err instanceof VarlatchApiError) {
-      fail(`Error ${err.code}: ${err.message} (request ${err.requestId})`, apiErrorExit(err));
+      fail(apiErrorLine(err), apiErrorExit(err));
     }
     const network = networkFailure(err);
     if (network) {

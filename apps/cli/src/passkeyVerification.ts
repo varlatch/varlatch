@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { VarlatchApiError } from "@varlatch/sdk";
+import { requestNote, serverMessage } from "./safeText.js";
 
 /**
  * An Organization that enforces passkey-verification (ADR-0054 Decision 7)
@@ -11,7 +12,7 @@ import { VarlatchApiError } from "@varlatch/sdk";
 export function passkeyVerificationLines(err: unknown): string[] | null {
   if (!(err instanceof VarlatchApiError) || err.code !== "PASSKEY_VERIFICATION_REQUIRED") return null;
   return [
-    `Error PASSKEY_VERIFICATION_REQUIRED: ${err.message} (request ${err.requestId})`,
+    `Error PASSKEY_VERIFICATION_REQUIRED: ${serverMessage(err.message)}${requestNote(err)}`,
     "To get a CLI credential this Organization accepts:",
     "  varlatch login --server <url>",
     "and approve the sign-in in the browser with a trusted passkey that asks for your PIN, fingerprint or face.",

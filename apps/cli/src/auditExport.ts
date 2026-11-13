@@ -9,6 +9,7 @@ import type {
   AuditExportRetention,
   AuditExportStatus,
 } from "@varlatch/sdk";
+import { printable, safe, safeTime, serverMessage } from "./safeText.js";
 
 /**
  * `varlatch audit-export create|show|change|remove|check` (ADR-0056): an
@@ -172,7 +173,7 @@ export function liveExport(status: AuditExportStatus, organization: string): Aud
   return e;
 }
 
-const retentionWords = (r: AuditExportRetention | null) => (r ? `${r.mode}, ${r.days} day${r.days === 1 ? "" : "s"}` : "none");
+const retentionWords = (r: AuditExportRetention | null) => (r ? `${safe`${r.mode}, ${r.days}`} day${r.days === 1 ? "" : "s"}` : "none");
 
 const LOCK_WORDS: Record<AuditExport["objectLock"], string> = {
   verified: "verified",
@@ -199,23 +200,24 @@ export function statusLines(organization: string, status: AuditExportStatus): st
   }
   const d = e.destination;
   lines.push(
-    `Audit export of ${organization}: ${e.state}${e.state === "draining" && e.drainDeadline ? ` (until ${e.drainDeadline} at the latest)` : ""}`,
-    `  destination   ${hostOf(d.endpoint)}, bucket ${d.bucket}, prefix ${d.prefix === "" ? "(none)" : d.prefix}${d.pathStyle ? ", path-style" : ""}`,
+    `${safe`Audit export of ${organization}: ${e.state}`}${e.state === "draining" && e.drainDeadline ? ` (until ${safeTime(e.drainDeadline)} at the latest)` : ""}`,
+    `${safe`  destination   ${hostOf(d.endpoint)}, bucket ${d.bucket}, prefix ${d.prefix === "" ? "(none)" : d.prefix}`}${d.pathStyle ? ", path-style" : ""}`,
     `  retention     ${retentionWords(e.retention)}; Object Lock ${LOCK_WORDS[e.objectLock]}`,
-    `  stream        ${e.streamId}, delivered up to position ${e.cursor}`,
+    safe`  stream        ${e.streamId}, delivered up to position ${e.cursor}`,
   );
   if (e.lag) {
-    lines.push(`  pending       ${e.lag.pending} event${e.lag.pending === 1 ? "" : "s"}${e.lag.oldestPendingAt ? `, the oldest from ${e.lag.oldestPendingAt}` : ""}`);
+    lines.push(`  pending       ${printable(String(e.lag.pending))} event${e.lag.pending === 1 ? "" : "s"}${e.lag.oldestPendingAt ? `, the oldest from ${safeTime(e.lag.oldestPendingAt)}` : ""}`);
   }
-  lines.push(`  last written  ${e.lastSuccessAt ?? "never"}${e.lastAttemptAt && e.lastAttemptAt !== e.lastSuccessAt ? `; last attempt ${e.lastAttemptAt}` : ""}`);
-  lines.push(`  heartbeat     ${e.lastHeartbeatAt ? `last for ${e.lastHeartbeatAt}` : "none yet"} (one an hour; none in the bucket for two hours means the copy stopped)`);
-  if (e.lastError) lines.push(`  last error    ${e.lastError}${e.failingSince ? ` (failing since ${e.failingSince})` : ""}`);
+  lines.push(`  last written  ${safeTime(e.lastSuccessAt) ?? "never"}${e.lastAttemptAt && e.lastAttemptAt !== e.lastSuccessAt ? `; last attempt ${safeTime(e.lastAttemptAt)}` : ""}`);
+  lines.push(`  heartbeat     ${e.lastHeartbeatAt ? `last for ${safeTime(e.lastHeartbeatAt)}` : "none yet"} (one an hour; none in the bucket for two hours means the copy stopped)`);
+  // The provider's error, as the server reports it: escaped, known secrets masked (issue #119).
+  if (e.lastError) lines.push(`  last error    ${serverMessage(e.lastError)}${e.failingSince ? ` (failing since ${safeTime(e.failingSince)})` : ""}`);
   if (e.stoppedReason === "object_conflict") {
     lines.push("  STOPPED       an object with the planned name exists with other content; nothing was overwritten. Change the destination or remove the export.");
   }
   if (e.unsupportedPlanFormat !== null) {
     lines.push(
-      `  STOPPED       a pending object was planned in format ${e.unsupportedPlanFormat}, which this release cannot upload;`,
+      safe`  STOPPED       a pending object was planned in format ${e.unsupportedPlanFormat}, which this release cannot upload;`,
       "                the host operator finishes it with an earlier release or runs varlatchd admin audit-export discard-plan.",
     );
   }
@@ -223,14 +225,14 @@ export function statusLines(organization: string, status: AuditExportStatus): st
     `  key           ${e.keyCanRead === null ? "object read not determined" : e.keyCanRead ? "can read objects" : "write-only"}` +
       // No retention configured: nothing to read, so nothing to say about it.
       `${e.retention === null ? "" : `, ${e.retentionReadable === null ? "retention read not determined" : e.retentionReadable ? "can read retention" : "cannot read retention"}`}`,
-    `  version       ${e.version}`,
+    safe`  version       ${e.version}`,
   );
   return lines;
 }
 
 /** The human format of `check`. */
 export function checkLines(check: AuditExportCheck): string[] {
-  if (!check.ok) return [`The destination check failed: ${check.message ?? "no reason given"}`, "Nothing was saved."];
+  if (!check.ok) return [`The destination check failed: ${check.message != null ? serverMessage(check.message) : "no reason given"}`, "Nothing was saved."];
   return [
     "The destination passed the check: it refuses to overwrite an existing object (If-None-Match).",
     `Object Lock: ${check.objectLock === null ? "not checked" : LOCK_WORDS[check.objectLock]}.`,

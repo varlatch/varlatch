@@ -11,6 +11,7 @@ import { DeviceSignInRedirectError, VarlatchApiError, VarlatchClient, type Devic
 import { EXIT, networkFailure } from "./exitCodes.js";
 import { noteDefaultServer } from "./serverCommand.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
+import { UNRECOGNIZED_VERSION, printable, rememberSecret, safeApiCode, safeApiMajor, safeTime, safeVersion, serverMessage } from "./safeText.js";
 
 /**
  * Device-authorization sign-in (ADR-0043 Decision 2; design notes
@@ -134,6 +135,8 @@ export async function startDeviceLogin(server: string, ttlSeconds: number | unde
     io.err("varlatch login: the server's answer is not a device sign-in this CLI can show (the verification address must be HTTPS). Nothing was stored.");
     return EXIT.failure;
   }
+  // The device code is a bearer: a server echoing it back gets it masked (issue #119).
+  rememberSecret(started.deviceCode);
   const expiresAt = new Date(now() + started.expiresIn * 1000).toISOString();
   const replaced = savePendingSignIn({
     server,
@@ -157,7 +160,7 @@ export async function startDeviceLogin(server: string, ttlSeconds: number | unde
   }
   io.out(io.assisted ? "Give the person this address and code. They open the address in a browser, on any device, sign in with their passkey, and enter the code:" : "Open this address in a browser, on any device, sign in with your passkey, and enter the code:");
   io.out("");
-  io.out(`  ${started.verificationUri}`);
+  io.out(`  ${printable(started.verificationUri)}`);
   io.out("");
   io.out(`  ${started.userCode}`);
   io.out("");
@@ -181,7 +184,7 @@ async function startFailure(err: unknown, server: string, io: DeviceLoginIO): Pr
       io.err(`varlatch login: ${server} is in maintenance; try again in a moment.`);
       return EXIT.unavailable;
     }
-    io.err(`varlatch login: the server refused to start a sign-in (${err.code}): ${err.message}`);
+    io.err(`varlatch login: the server refused to start a sign-in (${safeApiCode(err)}): ${serverMessage(err.message)}`);
     return err.status >= 500 ? EXIT.unavailable : EXIT.failure;
   }
   if (isAbort(err)) {
@@ -206,7 +209,7 @@ async function unsupported(server: string, io: DeviceLoginIO): Promise<number> {
 
 function redirectMessage(err: DeviceSignInRedirectError, server: string, kept: string): string {
   return (
-    `varlatch login: ${server} answered ${err.status} with a redirect${err.location ? ` to ${err.location}` : ""}. ` +
+    `varlatch login: ${server} answered ${err.status} with a redirect${err.location ? ` to ${serverMessage(err.location)}` : ""}. ` +
     `Device sign-in follows no redirect, so its code was not sent there. ${kept} ` +
     "Check --server: give the address the server answers at."
   );
@@ -228,6 +231,7 @@ export async function waitDeviceLogin(server: string, options: WaitOptions, io: 
     io.err(`varlatch login: no sign-in was started from this CLI for ${server}. Start one: ${io.cli} login --server ${server} --start`);
     return EXIT.usage;
   }
+  rememberSecret(entry.deviceCode);
   const now = io.now ?? Date.now;
   const timeoutMs = options.timeoutSeconds * 1000;
   const deadline = now() + timeoutMs;
@@ -249,7 +253,7 @@ export async function waitDeviceLogin(server: string, options: WaitOptions, io: 
     keep(polledAt);
     if (io.json) io.json({ state: "pending" });
     io.err(
-      `varlatch login: not approved yet. Code ${entry.userCode} is still waiting at ${entry.verificationUri} ` +
+      `varlatch login: not approved yet. Code ${entry.userCode} is still waiting at ${printable(entry.verificationUri)} ` +
         `(it expires at ${entry.expiresAt}). Run again: ${io.cli} login --server ${server} --wait`,
     );
     return PENDING_EXIT;
@@ -329,7 +333,7 @@ function collectedButNotStored(credentialId: string | null, io: DeviceLoginIO, s
   io.err(
     "varlatch login: this sign-in's credential was already collected, but never stored by this CLI (its answer was lost, " +
       "or an earlier --wait was interrupted or failed). The credential this CLI had, if any, is unchanged. " +
-      `Revoke credential ${credentialId ?? "(id unknown)"} in the dashboard (Account, Sessions), then start again: ${startNext}`,
+      `Revoke credential ${printable(credentialId ?? "(id unknown)")} in the dashboard (Account, Sessions), then start again: ${startNext}`,
   );
   return EXIT.denied;
 }
@@ -356,7 +360,7 @@ function waitFailure(
       io.err(`varlatch login: ${server} is unavailable or in maintenance (${err.status}). ${kept}`);
       return EXIT.unavailable;
     }
-    io.err(`varlatch login: the server refused the poll (${err.code}): ${err.message}. ${kept}`);
+    io.err(`varlatch login: the server refused the poll (${safeApiCode(err)}): ${serverMessage(err.message)}. ${kept}`);
     return err.status >= 500 ? EXIT.unavailable : EXIT.failure;
   }
   if (isAbort(err)) {
@@ -383,16 +387,17 @@ async function storeCollected(
   io: DeviceLoginIO,
   startNext: string,
 ): Promise<number> {
+  rememberSecret(credential.token);
   let meta;
   try {
     const probe = boundedClient(server, io, deadline, credential.token);
     meta = await probe.meta();
     await probe.listOrganizations(); // verifies the credential
   } catch (err) {
-    const why = err instanceof VarlatchApiError ? err.code : isAbort(err) ? "no answer before the deadline" : (networkFailure(err) ?? String(err));
+    const why = err instanceof VarlatchApiError ? safeApiCode(err) : isAbort(err) ? "no answer before the deadline" : (networkFailure(err) ?? String(err));
     io.err(
       `varlatch login: the sign-in was approved, but the new credential could not be verified (${why}); it was not stored. ` +
-        `Revoke credential ${credential.id} in the dashboard (Account, Sessions), then start again: ${startNext}`,
+        `Revoke credential ${printable(credential.id)} in the dashboard (Account, Sessions), then start again: ${startNext}`,
     );
     // The pending entry stays, naming the credential: a later --wait says it again.
     if (err instanceof VarlatchApiError) return err.status === 401 || err.status === 403 ? EXIT.denied : EXIT.unavailable;
@@ -410,7 +415,7 @@ async function storeCollected(
     io.err(
       `varlatch login: the sign-in was approved and its credential verified, but it could not be stored ` +
         `(${err instanceof Error ? err.message : String(err)}). The credential this CLI had, if any, is unchanged. ` +
-        `Revoke credential ${credential.id} in the dashboard (Account, Sessions), fix the problem, then start again: ${startNext}`,
+        `Revoke credential ${printable(credential.id)} in the dashboard (Account, Sessions), fix the problem, then start again: ${startNext}`,
     );
     return EXIT.failure;
   }
@@ -422,14 +427,21 @@ async function storeCollected(
   }
   noteDefaultServer(server, io.err);
   if (io.json) io.json({ state: "signed-in", credentialId: credential.id, expiresAt: credential.expiresAt });
-  else io.out(`Logged in to ${server} (server ${meta.serverVersion}, API v${meta.apiMajor}). The credential expires at ${credential.expiresAt}.`);
+  else {
+    // Only fields of the expected shape (issue #119): a server could put anything in them.
+    const apiMajor = safeApiMajor(meta.apiMajor);
+    io.out(
+      `Logged in to ${server} (server ${safeVersion(meta.serverVersion) ?? UNRECOGNIZED_VERSION}, ` +
+        `${apiMajor === undefined ? "an unrecognized API version" : `API v${apiMajor}`}). The credential expires at ${safeTime(credential.expiresAt)}.`,
+    );
+  }
   if (replaced) {
     const failure = await revokeStoredCredential(replaced, (id) =>
       boundedClient(server, io, deadline, replaced.token).revokeMyCredential(id),
     );
     const say = io.json ? io.err : io.out;
     if (failure === null) say("Previous credential revoked.");
-    else io.err(`varlatch: previous credential not revoked (${failure}); it may remain live${replaced.expiresAt ? ` until ${replaced.expiresAt}` : ""}.`);
+    else io.err(`varlatch: previous credential not revoked (${failure}); it may remain live${replaced.expiresAt ? ` until ${safeTime(replaced.expiresAt)}` : ""}.`);
   }
   return EXIT.ok;
 }

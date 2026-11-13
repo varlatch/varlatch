@@ -2,6 +2,7 @@
 import { getAdapter, AdapterError, type SyncItem } from "@varlatch/sync";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
 import type { ResolvedContext } from "@varlatch/context";
+import { printable, rememberSecret, safeApiCode, serverMessage } from "./safeText.js";
 
 /**
  * `varlatch sync push` (ADR-0031 §8): the client-side secondary mode for
@@ -51,6 +52,8 @@ export async function runSyncPush(
     );
     return 1;
   }
+  // A platform echoing the credential back in an error gets it masked (issue #119).
+  rememberSecret(credential);
 
   let baseIdentity: string;
   let destination: Record<string, string>;
@@ -102,7 +105,7 @@ export async function runSyncPush(
       (err.code === "PERMISSION_DENIED" || err.code.startsWith("TAILNET_"))
     ) {
       console.error(
-        `varlatch: secrets not disclosed (${err.code}); pushing non-sensitive values only`,
+        `varlatch: secrets not disclosed (${safeApiCode(err)}); pushing non-sensitive values only`,
       );
     } else {
       throw err;
@@ -148,7 +151,7 @@ export async function runSyncPush(
       if (!excluded(name)) addItem(name, name);
     }
   }
-  for (const problem of problems) console.error(`varlatch: skipped ${problem}`);
+  for (const problem of problems) console.error(`varlatch: skipped ${printable(problem)}`);
   if (selected.length === 0) {
     console.error("varlatch: nothing to push");
     return 1;
@@ -160,11 +163,11 @@ export async function runSyncPush(
   const usage = adapter.inspectUsage
     ? await adapter.inspectUsage({ baseIdentity, destination, credential }, selected.map((i) => i.name))
     : null;
-  if (usage && !usage.checked) console.error(`varlatch: usage not checked: ${usage.reason ?? "unknown"}`);
+  if (usage && !usage.checked) console.error(`varlatch: usage not checked: ${usage.reason ? serverMessage(usage.reason) : "unknown"}`);
   const writable = selected.filter((item) => {
     if (!usage?.names.get(item.name)?.owned) return true;
     problems.push(`${item.name}: the platform sets this name itself`);
-    console.error(`varlatch: skipped ${item.name}: the platform sets this name itself`);
+    console.error(`varlatch: skipped ${printable(item.name)}: the platform sets this name itself`);
     return false;
   });
   if (writable.length === 0) {
@@ -172,16 +175,18 @@ export async function runSyncPush(
     return 1;
   }
 
+  // A platform echoing a value back in an error gets it masked (issue #119).
+  for (const item of writable) rememberSecret(item.value);
   const outcomes = await adapter.writeValues(
     { baseIdentity, destination, credential, usage },
     writable,
   );
   let failed = 0;
   for (const outcome of outcomes) {
-    if (outcome.ok) console.log(`pushed ${outcome.name}`);
+    if (outcome.ok) console.log(`pushed ${printable(outcome.name)}`);
     else {
       failed += 1;
-      console.error(`varlatch: failed ${outcome.name}: ${outcome.error ?? "error"}`);
+      console.error(`varlatch: failed ${printable(outcome.name)}: ${outcome.error ? serverMessage(outcome.error) : "error"}`);
     }
   }
   console.log(

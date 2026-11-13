@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ResolvedContext } from "@varlatch/context";
 import { MIN_LENGTH } from "@varlatch/matcher";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
+import { printable, requestNote, safeApiCode, safeVersion } from "./safeText.js";
 import {
   BASELINE_FILE,
   BaselineError,
@@ -219,13 +220,14 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps, io: ScanIo): Pr
     };
   }
 
-  for (const notice of scanNotices(report)) io.err(notice);
+  // Item names come from the server: escaped (issue #119).
+  for (const notice of scanNotices(report)) io.err(printable(notice));
   if (opts.json) {
     io.out(terminalJson(jsonReport(report, ctx, listing.mode)));
   } else if (files.length === 0 && unlisted.length === 0) {
     io.out(listing.mode === "staged" ? "varlatch scan: nothing is staged." : "varlatch scan: no files to scan.");
   } else {
-    for (const line of formatScanHuman(report, { environment: ctx.environment, mode: listing.mode })) io.out(line);
+    for (const line of formatScanHuman(report, { environment: ctx.environment, mode: listing.mode })) io.out(printable(line));
   }
   return scanExitCode(report);
 }
@@ -256,7 +258,7 @@ export async function retrieveForScan(api: VarlatchClient, ctx: ResolvedContext,
   const meta = await api.meta();
   if (!meta.capabilities.includes("secrets.disclosure-purpose")) {
     io.err(
-      `varlatch scan: this server (${meta.serverVersion}) does not record a disclosure purpose; ` +
+      `varlatch scan: this server (${safeVersion(meta.serverVersion) ?? "an older release"}) does not record a disclosure purpose; ` +
         "the disclosure is audited as an ordinary one.",
     );
   }
@@ -270,7 +272,7 @@ export async function retrieveForScan(api: VarlatchClient, ctx: ResolvedContext,
     if (err instanceof VarlatchApiError && (err.code === "PERMISSION_DENIED" || err.code === "RESOURCE_NOT_FOUND")) {
       throw new ScanUsageError(
         `nothing was scanned: this identity may not retrieve Secrets in ${ctx.environment} ` +
-          `(${err.code}; scanning needs secret.reveal there) (request ${err.requestId})`,
+          `(${safeApiCode(err)}; scanning needs secret.reveal there)${requestNote(err)}`,
       );
     }
     throw err;

@@ -12,6 +12,7 @@ import { canonicalTargets, type EffectiveConfiguration } from "@varlatch/protoco
 import { TUNNELS_PATH, generatePlaceholder, sameTargets, startBroker, type BrokerEvent } from "./broker.js";
 import type { ConfigurationContract } from "@varlatch/contract";
 import { RUN_CONTEXT, runChild } from "./inject.js";
+import { printable, rememberSecret, safeVersion } from "./safeText.js";
 import {
   STRICT_EXIT,
   UsageError,
@@ -105,6 +106,8 @@ export function checkTargetFlags(
   if (untargeted.length > 0) {
     throw new UsageError(
       untargeted
+        // Stored names come from the server: each escaped, the message's own lines kept (issue #119).
+        .map((name) => printable(name))
         .map(
           (n) =>
             `${n} has no substitution target: add --target ${n}=header:authorization\n` +
@@ -123,7 +126,7 @@ export async function requireTargetsServer(api: VarlatchClient): Promise<void> {
   if (!meta.capabilities.includes("capabilities.targets")) {
     throw new Error(
       `varlatch: agent-safe runs need Varlatch ${TARGETS_SERVER} or later on the server, which records substitution targets; ` +
-        `this server is ${meta.serverVersion}. Nothing was started.`,
+        `this server is ${safeVersion(meta.serverVersion) ?? "an older release"}. Nothing was started.`,
     );
   }
 }
@@ -363,7 +366,7 @@ export function agentNoProxy(base: NodeJS.ProcessEnv, broker: string): { NO_PROX
 function reportStripped(base: NodeJS.ProcessEnv, names: Iterable<string>, carried: Set<string>): void {
   const stripped = [...new Set(names)].filter((n) => base[n] !== undefined && !carried.has(n)).sort();
   if (stripped.length > 0) {
-    console.error(`varlatch: removed Secrets inherited from this shell from the Agent's environment: ${stripped.join(", ")}`);
+    console.error(`varlatch: removed Secrets inherited from this shell from the Agent's environment: ${printable(stripped.join(", "))}`);
   }
 }
 
@@ -382,11 +385,17 @@ export async function issueWithTargets(
 }
 
 function loadBrokerCredential(opts: AgentRunOptions): string {
+  // A server echoing the Broker credential back in an error gets it masked (issue #119).
   if (opts.brokerCredentialFile) {
-    return readFileSync(opts.brokerCredentialFile, "utf8").trim();
+    const token = readFileSync(opts.brokerCredentialFile, "utf8").trim();
+    rememberSecret(token);
+    return token;
   }
   const fromEnv = process.env[BROKER_CREDENTIAL_ENV];
-  if (fromEnv) return fromEnv.trim();
+  if (fromEnv) {
+    rememberSecret(fromEnv.trim());
+    return fromEnv.trim();
+  }
   throw new Error(
     `Agent-safe runs need a Broker credential: pass --broker-credential-file <path> or set ${BROKER_CREDENTIAL_ENV}`,
   );
@@ -532,7 +541,7 @@ async function runMediated(run: {
 
   console.error(
     `varlatch: agent-safe run ${runId} — ${secretItems.length} Secret(s) as placeholders, ` +
-      `broker on 127.0.0.1:${broker.port}, destinations: ${cap.destinations.join(", ")}` +
+      `broker on 127.0.0.1:${broker.port}, destinations: ${printable(cap.destinations.join(", "))}` +
       (minted ? ", metadata credential issued" : ""),
   );
 
@@ -563,10 +572,12 @@ function brokerDiagnostics(): { report: (event: BrokerEvent) => void; summarize:
   const counts = new Map<string, number>();
   const scrubbed = new Map<string, number>();
   const once = new Set<string>();
+  // Item names and destinations from the server and the run: one line each, escaped (issue #119).
+  const emit = (line: string) => console.error(printable(line));
   const say = (key: string, line: string) => {
     if (once.has(key)) return;
     once.add(key);
-    console.error(line);
+    emit(line);
   };
   return {
     report: (event) => {
@@ -587,12 +598,12 @@ function brokerDiagnostics(): { report: (event: BrokerEvent) => void; summarize:
           );
           return;
         case "incomplete-prefix":
-          console.error(
+          emit(
             `varlatch-broker: a response ended in the first ${event.length} bytes of ${event.item}, relayed unchanged (only complete values are scrubbed)`,
           );
           return;
         case "aborted":
-          console.error(`varlatch-broker: aborted a response: ${event.reason}`);
+          emit(`varlatch-broker: aborted a response: ${event.reason}`);
           return;
         case "tunnel":
           counts.set("tunnel", (counts.get("tunnel") ?? 0) + 1);
@@ -604,7 +615,7 @@ function brokerDiagnostics(): { report: (event: BrokerEvent) => void; summarize:
         case "blocked":
         case "failed":
           counts.set(event.rule, (counts.get(event.rule) ?? 0) + 1);
-          console.error(
+          emit(
             event.kind === "blocked"
               ? `varlatch-broker: blocked a request (${event.status}): ${event.message}`
               : `varlatch-broker: dropped a request after exercise (502): ${event.message}`,
@@ -614,11 +625,11 @@ function brokerDiagnostics(): { report: (event: BrokerEvent) => void; summarize:
     summarize: () => {
       if (counts.size > 0) {
         const byRule = [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([rule, n]) => `${rule} ${n}`);
-        console.error(`varlatch: the broker refused ${[...counts.values()].reduce((a, b) => a + b, 0)} request(s): ${byRule.join(", ")}`);
+        emit(`varlatch: the broker refused ${[...counts.values()].reduce((a, b) => a + b, 0)} request(s): ${byRule.join(", ")}`);
       }
       if (scrubbed.size > 0) {
         const byItem = [...scrubbed].sort(([a], [b]) => a.localeCompare(b)).map(([item, n]) => `${item} ${n}`);
-        console.error(`varlatch: the broker replaced Secrets reflected in responses: ${byItem.join(", ")}`);
+        emit(`varlatch: the broker replaced Secrets reflected in responses: ${byItem.join(", ")}`);
       }
     },
   };
@@ -715,7 +726,7 @@ export async function runAgentSafeStrict(
   const meta = await api.meta();
   if (!meta.capabilities.includes("retrieval.preflight") || !meta.capabilities.includes("capabilities.targets")) {
     log(
-      `varlatch: --agent-safe --strict needs the agent-safe preflight and substitution targets, which this server (${meta.serverVersion}) does not offer; it needs Varlatch ${TARGETS_SERVER} or later. Nothing was started.`,
+      `varlatch: --agent-safe --strict needs the agent-safe preflight and substitution targets, which this server (${safeVersion(meta.serverVersion) ?? "an older release"}) does not offer; it needs Varlatch ${TARGETS_SERVER} or later. Nothing was started.`,
     );
     return STRICT_EXIT;
   }
