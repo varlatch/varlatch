@@ -188,6 +188,20 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ready\n")) })
 	mux.HandleFunc("GET /v1/retrieve/{env}/{key}", s.handleRetrieve)
+	// The plan and the manifest, for a k6 on another host (run.sh reads
+	// them from the output directory instead). The manifest holds the seeded
+	// tokens of this throwaway database; serve on a private network only.
+	for path, file := range map[string]string{"GET /run/plan": FilePlan, "GET /run/manifest": FileManifest} {
+		mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) {
+			b, err := os.ReadFile(filepath.Join(opts.OutDir, file))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(b)
+		})
+	}
 	mux.HandleFunc("POST /run/start", s.handleStart)
 	mux.HandleFunc("POST /run/stop", func(w http.ResponseWriter, _ *http.Request) {
 		s.stopOnce.Do(func() { close(s.stop) })
