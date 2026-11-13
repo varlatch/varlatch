@@ -160,12 +160,20 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 		Duration: seconds(opts.Plan.IdleProbeSeconds),
 		OnSample: s.fsyncSample(true),
 	})
+	// Every sample is in the event log, which the report judges from. A
+	// disk too slow for enough samples in the time given is what G9a must
+	// record, not a reason to stop: only the summary is missing then.
+	idleSummary := idle.String()
 	if err != nil {
-		return fmt.Errorf("idle fsync probe: %w", err)
+		if ctx.Err() != nil {
+			return err
+		}
+		idleSummary = "no summary: " + err.Error()
+		opts.Logf("idle fsync probe: %v", err)
 	}
 	sys := System{
 		Target: StandInTarget,
-		Disk:   describeDisk(opts.DataDir), Cgroup: s.cg, IdleSync: idle.String(),
+		Disk:   describeDisk(opts.DataDir), Cgroup: s.cg, IdleSync: idleSummary,
 		GoOS: goos(), CPUs: cpus(), Seeded: time.Since(t0).Round(time.Millisecond).String(),
 	}
 	if err := writeJSON(filepath.Join(opts.OutDir, FileSystem), sys); err != nil {

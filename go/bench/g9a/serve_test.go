@@ -133,7 +133,7 @@ func TestServe(t *testing.T) {
 	}
 	var sys System
 	b, _ = os.ReadFile(filepath.Join(out, FileSystem))
-	if err := json.Unmarshal(b, &sys); err != nil || sys.Target != StandInTarget || !strings.Contains(sys.IdleSync, "fsync") {
+	if err := json.Unmarshal(b, &sys); err != nil || sys.Target != StandInTarget || sys.IdleSync == "" {
 		t.Fatalf("system.json: %v %+v", err, sys)
 	}
 	if _, err := os.Stat(filepath.Join(data, "backups", "snapshot-0.db")); !os.IsNotExist(err) {
