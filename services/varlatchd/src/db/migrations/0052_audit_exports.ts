@@ -12,8 +12,9 @@
  *   audit-export-drain, Decision 10); the retention (Decision 7); the
  *   current stream and the committed cursor (an audit event_order); the
  *   lease and its generation (Decision 3); the state; the status fields
- *   the Security page shows (Decision 11); who created it; a version for
- *   changes.
+ *   the Security page shows (Decision 11), among them whether the key could
+ *   read an object's content and, separately, its retention; who created
+ *   it; a version for changes.
  * - audit_export_plans: the one pending object of an export (Decision 2).
  *   Its bytes are stored as planned, already serialized and compressed,
  *   with their SHA-256 and MD5, the name, the format, the retention and,
@@ -69,7 +70,10 @@ CREATE TABLE audit_exports (
   last_error text,
   failing_since timestamptz,
   failing_recorded boolean NOT NULL DEFAULT false,
+  -- What the key could do at the last probe or 412 (Decision 4): read an
+  -- object's content (HEAD), and, separately, read its retention.
   key_can_read boolean,
+  retention_readable boolean,
   stopped_reason text CHECK (stopped_reason IN ('object_conflict', 'unsupported_format')),
   conditional_checked_at timestamptz,
   lock_verified boolean,

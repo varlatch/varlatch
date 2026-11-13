@@ -85,7 +85,10 @@ describe.skipIf(!url)("audit export races on real PostgreSQL", () => {
       const id = `aex_c${i}`;
       const plan = await exportWithExpiredPlan(id);
       const binding: WorkerBinding = { exportId: id, organizationId: orgId, generation: "0", version: 1, streamId: "aes_old" };
-      const [committed, restarted] = await Promise.all([commitPlan(ctx, binding, plan, null), restartStream(ctx, id, plan.id, "plan_expired")]);
+      const [committed, restarted] = await Promise.all([
+        commitPlan(ctx, binding, plan, null).then((r) => r === "committed"),
+        restartStream(ctx, id, plan.id, "plan_expired"),
+      ]);
       expect(committed !== restarted, `round ${i}`).toBe(true);
       const row = (await rows("SELECT cursor_order::text AS cursor, stream_id FROM audit_exports WHERE id = $1", [id]))[0];
       expect(row.cursor).toBe(committed ? "5" : "0");

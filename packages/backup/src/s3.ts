@@ -148,9 +148,21 @@ export async function objectSha256(s3: S3Client, bucket: string, key: string, ab
   const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }), abortSignal ? { abortSignal } : {});
   return head.Metadata?.sha256;
 }
-/** An object's Object Lock retention, read back (GetObjectRetention); null when it has none. */
+/**
+ * An object's Object Lock retention, read back (GetObjectRetention); null
+ * when it has none, whether the answer says so (NoSuchObjectLockConfiguration)
+ * or names no mode and date. A refusal (AccessDenied) throws: reading
+ * retention is a permission of its own.
+ */
 export async function objectRetention(s3: S3Client, bucket: string, key: string, abortSignal?: AbortSignal): Promise<{ mode: string; retainUntil: Date } | null> {
-  const got = await s3.send(new GetObjectRetentionCommand({ Bucket: bucket, Key: key }), abortSignal ? { abortSignal } : {});
+  let got;
+  try {
+    got = await s3.send(new GetObjectRetentionCommand({ Bucket: bucket, Key: key }), abortSignal ? { abortSignal } : {});
+  } catch (error) {
+    const name = (error as { name?: unknown })?.name;
+    if (name === 'NoSuchObjectLockConfiguration' || name === 'ObjectLockConfigurationNotFoundError') return null;
+    throw error;
+  }
   return got.Retention?.Mode && got.Retention.RetainUntilDate ? { mode: got.Retention.Mode.toLowerCase(), retainUntil: got.Retention.RetainUntilDate } : null;
 }
 /** An HTTP 412: the conditional write found the name taken. */

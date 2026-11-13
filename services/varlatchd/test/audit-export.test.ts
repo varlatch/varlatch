@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createServer, type Server } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { gunzipSync } from "node:zlib";
 import {
   CreateBucketCommand,
@@ -16,6 +16,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import { decryptAuditExportDrainCredential } from "../src/crypto/hierarchy.js";
+import { withRequester } from "../src/domain/requestaccess.js";
 import { withApproval, type ProtectedGate, type Requester } from "../src/domain/approvals.js";
 import {
   abandonExpiredDrains,
@@ -28,6 +29,7 @@ import {
   discardPlan,
   exportOnce,
   OBJECT_CONFLICT,
+  PROBE_WORDS,
   recordRestore,
   removeAuditExport,
   replaceAuditExportCredential,
@@ -458,9 +460,16 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     expect(await listed(LOCKED, prefix)).toEqual(before);
   });
 
-  it("a lost success response: the retry gets 412 and commits, with a read key and without one", async () => {
-    const view = await create();
-    for (const canRead of [true, false]) {
+  it.each([
+    ["a key that can read", false],
+    ["a write-only key", true],
+  ])("a lost success response: the retry gets 412 and commits, with %s", async (_label, writeOnly) => {
+    // A write-only key: the destination refuses reading content (HEAD) and retention.
+    const proxy = writeOnly ? await filteringProxy((req) => req.method === "HEAD" || /[?&]retention\b/.test(req.url ?? "")) : null;
+    try {
+      const view = await create(proxy ? { destination: destination({ endpoint: proxy.url }) } : {});
+      expect(view).toMatchObject(writeOnly ? { keyCanRead: false, retentionReadable: false, lockVerified: false } : { keyCanRead: true, retentionReadable: true, lockVerified: true });
+      await drain(view.id);
       let lose = true;
       setAuditExportTestHooks({
         afterUpload: () => {
@@ -470,18 +479,43 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
           }
         },
       });
-      await call("POST", `${ORG}/projects`, person.cli, { name: `p${canRead}`, slug: `p-${canRead}`, contractAuthority: "managed" });
-      const r = await exportOnce(ctx, view.id);
-      expect(r.outcome).toBe("failed");
+      await call("POST", `${ORG}/projects`, person.cli, { name: "late", slug: "late", contractAuthority: "managed" });
+      expect((await exportOnce(ctx, view.id)).outcome).toBe("failed");
       expect((await exportRow(view.id)).last_error).toBe("Upload failed (connection reset)");
-      if (!canRead) await ctx.db.query("UPDATE audit_exports SET key_can_read = false WHERE id = $1", [view.id]);
       setAuditExportTestHooks(null);
+      const heads = proxy?.denied ?? 0;
       await drain(view.id);
       expect(await pendingPlan(view.id)).toBeUndefined();
-      expect((await exportRow(view.id)).key_can_read).toBe(canRead);
+      // The 412 was always checked with a HEAD: answered for a read key, refused for a write-only one.
+      expect((await exportRow(view.id)).key_can_read).toBe(!writeOnly);
+      if (proxy) expect(proxy.denied).toBeGreaterThan(heads);
+      const lines = (await batches(LOCKED, view.streamId)).flatMap((b) => b.lines);
+      expect(lines.map((l) => l.eventId)).toEqual((await orgEvents(String((await exportRow(view.id)).cursor_order))).map((e) => e.id));
+    } finally {
+      await proxy?.close();
     }
-    const lines = (await batches(LOCKED, view.streamId)).flatMap((b) => b.lines);
-    expect(lines.map((l) => l.eventId)).toEqual((await orgEvents(String((await exportRow(view.id)).cursor_order))).map((e) => e.id));
+  });
+
+  it("a key that reads objects but not their retention: a conflicting object under the planned name stops the export", async () => {
+    const proxy = await filteringProxy((req) => /[?&]retention\b/.test(req.url ?? ""));
+    try {
+      const view = await create({ destination: destination({ endpoint: proxy.url }) });
+      // Two permissions, recorded apart: content read yes, retention read no.
+      expect(view).toMatchObject({ keyCanRead: true, retentionReadable: false, lockVerified: false });
+      setAuditExportTestHooks({ beforeUpload: () => { throw Object.assign(new Error("down"), { code: "ECONNREFUSED" }); } });
+      await exportOnce(ctx, view.id);
+      setAuditExportTestHooks(null);
+      const plan = await pendingPlan(view.id);
+      await admin.send(new PutObjectCommand({ Bucket: LOCKED, Key: plan.object_name, Body: "someone else's" }));
+      const heads = proxy.heads;
+      expect(await exportOnce(ctx, view.id)).toMatchObject({ committed: 0, outcome: "stopped" });
+      expect(proxy.heads).toBeGreaterThan(heads);
+      expect(await exportRow(view.id)).toMatchObject({ stopped_reason: "object_conflict", last_error: OBJECT_CONFLICT });
+      expect((await pendingPlan(view.id)).id).toBe(plan.id);
+      expect((await body(LOCKED, plan.object_name)).toString()).toBe("someone else's");
+    } finally {
+      await proxy.close();
+    }
   });
 
   it("uploads a stored plan unchanged on a later attempt: bytes, name and retention", async () => {
@@ -611,11 +645,11 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
 
   it("reports Object Lock verified only for a read-back or a verified provider", async () => {
     expect(await checkAuditExport(ctx, requester(), org, { destination: destination(), credential: credential(), retention: governance }))
-      .toEqual({ ok: true, message: null, conditionalCreation: true, objectLock: "verified", keyCanRead: true });
+      .toEqual({ ok: true, message: null, conditionalCreation: true, objectLock: "verified", keyCanRead: true, retentionReadable: true });
     const fake = await fakeStore({ conditional: true });
     try {
       expect(await checkAuditExport(ctx, requester(), org, { destination: destination({ endpoint: fake.url }), credential: credential(), retention: governance }))
-        .toEqual({ ok: true, message: null, conditionalCreation: true, objectLock: "accepted", keyCanRead: false });
+        .toEqual({ ok: true, message: null, conditionalCreation: true, objectLock: "accepted", keyCanRead: false, retentionReadable: false });
       setAuditExportTestHooks({ verifiedProvider: (e) => e === fake.url });
       expect((await checkAuditExport(ctx, requester(), org, { destination: destination({ endpoint: fake.url }), credential: credential(), retention: governance })).objectLock)
         .toBe("verified");
@@ -636,6 +670,38 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     } finally {
       await elsewhere.close();
     }
+  });
+
+  it("verifies Object Lock only when the retention read back is at least as strong as asked: a shorter one fails the check", async () => {
+    const compliance400: AuditExportRetention = { mode: "compliance", days: 400 };
+    const cases: [string, Parameters<typeof fakeStore>[0]["retention"], Partial<Awaited<ReturnType<typeof checkAuditExport>>>][] = [
+      // Compliance, but kept one day instead of 400.
+      ["a shorter date", { mode: "COMPLIANCE", days: 1 }, { ok: false, message: PROBE_WORDS.weakerRetention, objectLock: null, retentionReadable: true }],
+      // Governance for compliance: a weaker mode.
+      ["a weaker mode", { mode: "GOVERNANCE", days: 401 }, { ok: false, message: PROBE_WORDS.weakerRetention, objectLock: null }],
+      // No retention at all, said plainly.
+      ["no retention", "none", { ok: false, message: PROBE_WORDS.noRetention, objectLock: null }],
+      // The date asked for, to the second: verified.
+      ["the date asked for", { mode: "COMPLIANCE", days: 400 }, { ok: true, objectLock: "verified", retentionReadable: true }],
+      ["a later date", { mode: "COMPLIANCE", days: 401 }, { ok: true, objectLock: "verified", retentionReadable: true }],
+    ];
+    for (const [label, retention, expected] of cases) {
+      const fake = await fakeStore({ conditional: true, retention });
+      try {
+        // A verified provider's name does not outweigh a read-back that contradicts it.
+        setAuditExportTestHooks({ verifiedProvider: (e) => e === fake.url });
+        expect(await checkAuditExport(ctx, requester(), org, { destination: destination({ endpoint: fake.url }), credential: credential(), retention: compliance400 }), label)
+          .toMatchObject(expected);
+        if (expected.ok === false) {
+          await expect(create({ destination: destination({ endpoint: fake.url }), retention: compliance400 }), label)
+            .rejects.toMatchObject({ code: "VALIDATION_FAILED", message: expected.message });
+        }
+      } finally {
+        setAuditExportTestHooks(null);
+        await fake.close();
+      }
+    }
+    expect(await rows("SELECT count(*)::int AS n FROM audit_exports")).toEqual([{ n: 0 }]);
   });
 
   it("a restore starts a new stream; the old stream's objects stay", async () => {
@@ -767,6 +833,143 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     expect(await events("audit_export.abandoned")).toHaveLength(1);
   });
 
+  /** An export drained up to now, then its Organization finalized: a drain with the final events still to deliver. */
+  async function drainingExport() {
+    const view = await create();
+    await drain(view.id);
+    const scheduled = await call("POST", `${ORG}/deletion`, person.cli, {});
+    expect(scheduled.status, JSON.stringify(scheduled.body)).toBeLessThan(300);
+    await ctx.db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '8 days', run_after = now() - interval '1 minute'");
+    expect(await finalizeDeletion(ctx, scheduled.body.id, org.id)).not.toBeNull();
+    expect((await exportRow(view.id)).state).toBe("draining");
+    return view;
+  }
+  const expireDrain = (id: string) => ctx.db.query("UPDATE audit_exports SET drain_deadline = now() - interval '1 second' WHERE id = $1", [id]);
+
+  it("a drain whose deadline passed before the lease is abandoned by the worker: no key read, nothing uploaded, recorded once", async () => {
+    const view = await drainingExport();
+    const cursor = String((await exportRow(view.id)).cursor_order);
+    const before = await listed(LOCKED, prefix);
+    await expireDrain(view.id);
+    let uploads = 0;
+    setAuditExportTestHooks({ beforeUpload: () => { uploads++; } });
+    expect(await exportOnce(ctx, view.id)).toEqual({ committed: 0, outcome: "abandoned" });
+    expect(await exportOnce(ctx, view.id)).toEqual({ committed: 0, outcome: "busy" });
+    await runAuditExportsOnce(ctx);
+    expect(await abandonExpiredDrains(ctx.db)).toEqual([]);
+    expect(uploads).toBe(0);
+    expect(await listed(LOCKED, prefix)).toEqual(before);
+    expect(await exportRow(view.id)).toMatchObject({ state: "abandoned", credential_envelope: null });
+    expect(String((await exportRow(view.id)).cursor_order)).toBe(cursor);
+    expect(await pendingPlan(view.id)).toBeUndefined();
+    expect(await events("audit_export.abandoned")).toHaveLength(1);
+    expect(await events("audit_export.completed")).toEqual([]);
+  });
+
+  it("a drain whose deadline passes between lease and commit is abandoned at commit, never completed, recorded once", async () => {
+    const view = await drainingExport();
+    const cursor = String((await exportRow(view.id)).cursor_order);
+    let expired = false;
+    let uploadsAfter = 0;
+    setAuditExportTestHooks({
+      beforeUpload: () => { if (expired) uploadsAfter++; },
+      beforeCommit: async () => {
+        if (expired) return;
+        expired = true;
+        await expireDrain(view.id);
+      },
+    });
+    expect(await exportOnce(ctx, view.id)).toEqual({ committed: 0, outcome: "abandoned" });
+    await exportOnce(ctx, view.id);
+    await runAuditExportsOnce(ctx);
+    expect(await abandonExpiredDrains(ctx.db)).toEqual([]);
+    expect(uploadsAfter).toBe(0);
+    expect(await exportRow(view.id)).toMatchObject({ state: "abandoned", credential_envelope: null });
+    expect(String((await exportRow(view.id)).cursor_order)).toBe(cursor);
+    expect(await pendingPlan(view.id)).toBeUndefined();
+    expect(await events("audit_export.abandoned")).toHaveLength(1);
+    expect(await events("audit_export.completed")).toEqual([]);
+  });
+
+  it("a drain whose deadline passes during an upload: the request is aborted and the object never lands", async () => {
+    const view = await drainingExport();
+    await ctx.db.query("UPDATE audit_exports SET drain_deadline = now() + interval '1500 milliseconds' WHERE id = $1", [view.id]);
+    let planned = "";
+    setAuditExportTestHooks({
+      beforeUpload: async (plan) => {
+        if (planned) return;
+        planned = plan.object_name;
+        await new Promise((r) => setTimeout(r, 2_500));
+      },
+    });
+    expect(await exportOnce(ctx, view.id)).toEqual({ committed: 0, outcome: "abandoned" });
+    expect(await listed(LOCKED, planned)).toEqual([]);
+    expect(await exportRow(view.id)).toMatchObject({ state: "abandoned", credential_envelope: null });
+    expect(await events("audit_export.abandoned")).toHaveLength(1);
+    expect(await events("audit_export.completed")).toEqual([]);
+  });
+
+  it("consumes an approval only for exactly the request approved: another destination or another key is refused", async () => {
+    const view = await create();
+    // A destination change approved for one prefix, sent with another.
+    const moveTo = (to: string) => (gate: ProtectedGate) =>
+      changeAuditExport(ctx, gate, org, view.id, { destination: { bucket: OTHER, prefix: `${prefix}${to}/` }, expectedVersion: 1 });
+    const moved = await askApproval(moveTo("approved"));
+    await approve(moved);
+    await expect(withApproval(ctx, { requester: requester(), approvalId: moved, publicUrl: PUBLIC_URL }, moveTo("elsewhere")))
+      .rejects.toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "mismatch" } });
+    // Refused before the probe: nothing was written to the other bucket.
+    expect(await listed(OTHER, prefix)).toEqual([]);
+    // A key replacement approved for one key, sent with another.
+    const replaceWith = (secretAccessKey: string) => (gate: ProtectedGate) =>
+      replaceAuditExportCredential(ctx, gate, org, view.id, { credential: { accessKeyId: ROOT_USER, secretAccessKey }, expectedVersion: 1 });
+    const replaced = await askApproval(replaceWith(ROOT_PASSWORD));
+    await approve(replaced);
+    await expect(withApproval(ctx, { requester: requester(), approvalId: replaced, publicUrl: PUBLIC_URL }, replaceWith(`${ROOT_PASSWORD}x`)))
+      .rejects.toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "mismatch" } });
+    // Neither approval was consumed and the export is unchanged; each still works for its own request.
+    expect(await rows("SELECT count(*)::int AS n FROM approval_intents WHERE consumed_at IS NOT NULL")).toEqual([{ n: 0 }]);
+    expect(await exportRow(view.id)).toMatchObject({ version: 1, bucket: LOCKED });
+    expect(await withApproval(ctx, { requester: requester(), approvalId: replaced, publicUrl: PUBLIC_URL }, replaceWith(ROOT_PASSWORD)))
+      .toMatchObject({ version: 2 });
+  });
+
+  it("passkey-verification decides before an approval is asked for: a refused requester creates no intent and sends nothing", async () => {
+    const view = await create();
+    await ctx.db.query(
+      `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)
+       VALUES ($1, 'passkey-verification', 'enforce', NULL, 1, $2, now())`,
+      [org.id, person.id],
+    );
+    const fake = await fakeStore({ conditional: true });
+    try {
+      const asked = (run: (gate: ProtectedGate) => Promise<unknown>) =>
+        withRequester(requester(), () => withApproval(ctx, { requester: requester(), approvalId: null, publicUrl: PUBLIC_URL }, run));
+      const intents = async () => (await rows("SELECT count(*)::int AS n FROM approval_intents"))[0].n as number;
+      const before = await intents();
+      for (const [label, run] of [
+        ["a shorter retention", (gate: ProtectedGate) => changeAuditExport(ctx, gate, org, view.id, { retention: null, expectedVersion: 1 })],
+        ["a destination change", (gate: ProtectedGate) => changeAuditExport(ctx, gate, org, view.id, { destination: { endpoint: fake.url }, expectedVersion: 1 })],
+        ["a new key", (gate: ProtectedGate) => replaceAuditExportCredential(ctx, gate, org, view.id, { credential: credential(), expectedVersion: 1 })],
+        ["the removal", (gate: ProtectedGate) => removeAuditExport(ctx, gate, org, view.id, { expectedVersion: 1 })],
+      ] as const) {
+        await expect(asked(run), label).rejects.toMatchObject({ code: "PASSKEY_VERIFICATION_REQUIRED" });
+      }
+      expect(await intents()).toBe(before);
+      expect(fake.requests).toBe(0);
+      expect(await exportRow(view.id)).toMatchObject({ version: 1, state: "active" });
+      // Creation and the check are refused too, before anything is sent.
+      await ctx.db.query("UPDATE audit_exports SET state = 'removed', removed_at = now(), credential_envelope = NULL WHERE id = $1", [view.id]);
+      await expect(withRequester(requester(), () => create({ destination: destination({ endpoint: fake.url }) })))
+        .rejects.toMatchObject({ code: "PASSKEY_VERIFICATION_REQUIRED" });
+      await expect(withRequester(requester(), () => checkAuditExport(ctx, requester(), org, { destination: destination({ endpoint: fake.url }), credential: credential(), retention: null })))
+        .rejects.toMatchObject({ code: "PASSKEY_VERIFICATION_REQUIRED" });
+      expect(fake.requests).toBe(0);
+    } finally {
+      await fake.close();
+    }
+  });
+
   it("records failing once per episode and recovered on the next success, in fixed words", async () => {
     const view = await create();
     setAuditExportTestHooks({ beforeUpload: () => { throw Object.assign(new Error(`AccessDenied ${ROOT_PASSWORD}`), { name: "AccessDenied", $metadata: { httpStatusCode: 403 } }); } });
@@ -791,9 +994,15 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
  * A store that accepts everything: with `conditional`, a second write of a
  * name is refused with 412, as conditional creation needs; without, it
  * overwrites. GetObjectRetention answers 403, as for a write-only key.
- * With `redirectTo`, every request is answered with a 307 there.
+ * With `redirectTo`, every request is answered with a 307 there; with
+ * `retention`, GetObjectRetention answers it.
  */
-async function fakeStore(options: { conditional: boolean; redirectTo?: string }): Promise<{ url: string; requests: number; close: () => Promise<void> }> {
+async function fakeStore(options: {
+  conditional: boolean;
+  redirectTo?: string;
+  /** GetObjectRetention's answer: a mode and the days from now, or "none" (NoSuchObjectLockConfiguration). Absent: 403. */
+  retention?: { mode: "COMPLIANCE" | "GOVERNANCE"; days: number } | "none";
+}): Promise<{ url: string; requests: number; close: () => Promise<void> }> {
   const seen = new Set<string>();
   const counted = { requests: 0 };
   const server: Server = createServer((req, res) => {
@@ -817,6 +1026,17 @@ async function fakeStore(options: { conditional: boolean; redirectTo?: string })
         res.end();
         return;
       }
+      if (req.method === "GET" && /[?&]retention\b/.test(req.url ?? "") && options.retention) {
+        if (options.retention === "none") {
+          res.writeHead(404, { "content-type": "application/xml" });
+          res.end('<?xml version="1.0"?><Error><Code>NoSuchObjectLockConfiguration</Code></Error>');
+          return;
+        }
+        const until = new Date(Date.now() + options.retention.days * 86_400_000).toISOString();
+        res.writeHead(200, { "content-type": "application/xml" });
+        res.end(`<?xml version="1.0" encoding="UTF-8"?><Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Mode>${options.retention.mode}</Mode><RetainUntilDate>${until}</RetainUntilDate></Retention>`);
+        return;
+      }
       res.writeHead(403, { "content-type": "application/xml" });
       res.end('<?xml version="1.0"?><Error><Code>AccessDenied</Code></Error>');
     });
@@ -827,5 +1047,42 @@ async function fakeStore(options: { conditional: boolean; redirectTo?: string })
     url: `http://127.0.0.1:${port}`,
     get requests() { return counted.requests; },
     close: () => new Promise<void>((done) => server.close(() => done())),
+  };
+}
+
+/**
+ * A proxy in front of MinIO that refuses the requests `deny` picks with 403
+ * AccessDenied, as a key without that permission is refused, and forwards
+ * every other request unchanged (its Host header included, so MinIO's
+ * signature check passes).
+ */
+async function filteringProxy(deny: (req: IncomingMessage) => boolean): Promise<{ url: string; denied: number; heads: number; close: () => Promise<void> }> {
+  const target = new URL(endpoint);
+  const counted = { denied: 0, heads: 0 };
+  const server: Server = createServer((req, res) => {
+    if (req.method === "HEAD") counted.heads++;
+    if (deny(req)) {
+      counted.denied++;
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(403, { "content-type": "application/xml" });
+        res.end(req.method === "HEAD" ? undefined : '<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>');
+      });
+      return;
+    }
+    const upstream = httpRequest({ host: target.hostname, port: target.port, method: req.method, path: req.url, headers: req.headers }, (answer) => {
+      res.writeHead(answer.statusCode ?? 502, answer.headers);
+      answer.pipe(res);
+    });
+    upstream.on("error", () => res.destroy());
+    req.pipe(upstream);
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
+  const port = (server.address() as { port: number }).port;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    get denied() { return counted.denied; },
+    get heads() { return counted.heads; },
+    close: () => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }),
   };
 }

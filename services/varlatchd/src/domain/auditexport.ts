@@ -106,6 +106,9 @@ export const AUDIT_EXPORT_LIMITS = {
   retentionDaysMax: 3_650,
 } as const;
 
+/** The longest delay a Node timer holds (AbortSignal.timeout included). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 /** The object format this release writes. */
 export const FORMAT_VERSION = 1;
 /** The formats this release can upload from a stored plan. */
@@ -155,6 +158,7 @@ export interface AuditExportView {
   lastError: string | null;
   failingSince: string | null;
   keyCanRead: boolean | null;
+  retentionReadable: boolean | null;
   stoppedReason: "object_conflict" | "unsupported_format" | null;
   conditionalCheckedAt: string | null;
   lockVerified: boolean | null;
@@ -170,9 +174,16 @@ export interface ProbeResult {
   /** Fixed wording only (storageErrorDetail, the outbound policy's messages). */
   message: string | null;
   conditionalCreation: boolean | null;
-  /** "verified": a verified provider, or the retention read back; "accepted": headers accepted, not verified. */
+  /**
+   * "verified": the retention read back at least as strong as asked (mode
+   * and date), or, when it cannot be read, a verified provider;
+   * "accepted": headers accepted, not verified.
+   */
   objectLock: "verified" | "accepted" | "not-set" | null;
+  /** The key read the probe object's content (HEAD): the 412 check can compare (Decision 4). */
   keyCanRead: boolean | null;
+  /** The key read the probe object's retention (GetObjectRetention): a separate permission. */
+  retentionReadable: boolean | null;
 }
 
 interface ExportRow {
@@ -199,6 +210,7 @@ interface ExportRow {
   failing_since: Date | string | null;
   failing_recorded: boolean;
   key_can_read: boolean | null;
+  retention_readable: boolean | null;
   stopped_reason: "object_conflict" | "unsupported_format" | null;
   conditional_checked_at: Date | string | null;
   lock_verified: boolean | null;
@@ -259,6 +271,7 @@ export function viewOf(row: ExportRow): AuditExportView {
     lastError: row.last_error,
     failingSince: iso(row.failing_since),
     keyCanRead: row.key_can_read,
+    retentionReadable: row.retention_readable,
     stoppedReason: row.stopped_reason,
     conditionalCheckedAt: iso(row.conditional_checked_at),
     lockVerified: row.lock_verified,
@@ -540,11 +553,16 @@ function clientFor(ctx: AppCtx, destination: AuditExportDestination, credential:
   );
 }
 
-/** A signal for one request: its own timeout, and the external effect's deadline when there is one. */
-function requestSignal(): AbortSignal {
-  const timeout = AbortSignal.timeout(AUDIT_EXPORT_LIMITS.uploadTimeoutMs);
+/**
+ * A signal for one request: its own timeout, the external effect's
+ * deadline when there is one, and a drain's deadline when given.
+ */
+function requestSignal(extra?: AbortSignal): AbortSignal {
+  const signals = [AbortSignal.timeout(AUDIT_EXPORT_LIMITS.uploadTimeoutMs)];
   const effect = currentExternalEffect();
-  return effect ? AbortSignal.any([timeout, effect.signal]) : timeout;
+  if (effect) signals.push(effect.signal);
+  if (extra) signals.push(extra);
+  return signals.length === 1 ? signals[0]! : AbortSignal.any(signals);
 }
 
 
@@ -565,7 +583,7 @@ interface PutInput {
   retainUntil: Date | null;
 }
 
-async function putIfAbsent(s3: StorageClient, bucket: string, input: PutInput): Promise<void> {
+async function putIfAbsent(s3: StorageClient, bucket: string, input: PutInput, extra?: AbortSignal): Promise<void> {
   await putObjectIfAbsent(s3, bucket, {
     key: input.key,
     body: input.body,
@@ -573,7 +591,7 @@ async function putIfAbsent(s3: StorageClient, bucket: string, input: PutInput): 
     md5: input.md5,
     contentType: input.contentType,
     retention: input.retentionMode && input.retainUntil ? { mode: input.retentionMode, retainUntil: input.retainUntil } : null,
-  }, requestSignal());
+  }, requestSignal(extra));
 }
 
 function verifiedProvider(endpoint: string): boolean {
@@ -582,11 +600,40 @@ function verifiedProvider(endpoint: string): boolean {
   return VERIFIED_LOCK_PROVIDERS.some((re) => re.test(host));
 }
 
+/** Failure wording of the probe's own findings (Decision 6, Decision 7). */
+export const PROBE_WORDS = {
+  overwrote: "This destination overwrote an existing object; audit export needs conditional writes (If-None-Match)",
+  noMetadata: "This destination did not keep the test object's SHA-256 metadata, which audit export compares when a write finds its name taken",
+  noRetention: "This destination accepted the retention headers but kept no retention on the test object; check that the bucket has Object Lock enabled",
+  weakerRetention: "This destination kept the test object with a weaker retention than requested (another mode, or an earlier date)",
+} as const;
+
+/** A probe that did not pass: its words, and what it learned before. */
+const probeRefused = (message: string, partial: Partial<ProbeResult> = {}): ProbeResult => ({
+  ok: false, message, conditionalCreation: null, objectLock: null, keyCanRead: null, retentionReadable: null, ...partial,
+});
+
+/**
+ * Whether a retention read back is at least what was asked: the same mode
+ * or compliance for governance, and a date no earlier than the requested
+ * one, which a provider may only round down to its second.
+ */
+export function retentionHolds(asked: { mode: RetentionMode; retainUntil: Date }, got: { mode: string; retainUntil: Date }): boolean {
+  const modeHolds = got.mode === asked.mode || (asked.mode === "governance" && got.mode === "compliance");
+  const askedSecond = Math.floor(asked.retainUntil.getTime() / 1000) * 1000;
+  return modeHolds && got.retainUntil.getTime() >= askedSecond;
+}
+
 /**
  * The probe (Decision 6), under `<prefix>varlatch-audit/<org>/probe/`: a
  * first write (with the retention headers when retention is set), a second
- * write of the same name that must be refused with 412, and, with a key
- * that can read, the retention read back. The probe objects stay.
+ * write of the same name that must be refused with 412, a HEAD of the
+ * object (whether the key can read content, and that the SHA-256 metadata
+ * the 412 check compares is kept), and, with retention, the retention read
+ * back. Reading content and reading retention are separate permissions,
+ * recorded separately. A retention read back weaker than requested fails
+ * the probe; one that cannot be read is "verified" only on a verified
+ * provider (Decision 7). The probe objects stay.
  */
 async function probe(
   ctx: AppCtx,
@@ -605,31 +652,38 @@ async function probe(
     try {
       await putIfAbsent(s3, destination.bucket, put);
     } catch (err) {
-      return { ok: false, message: failureWords("The test write failed", err), conditionalCreation: null, objectLock: null, keyCanRead: null };
+      return probeRefused(failureWords("The test write failed", err));
     }
     try {
       await putIfAbsent(s3, destination.bucket, put);
-      return {
-        ok: false,
-        message: "This destination overwrote an existing object; audit export needs conditional writes (If-None-Match)",
-        conditionalCreation: false,
-        objectLock: null,
-        keyCanRead: null,
-      };
+      return probeRefused(PROBE_WORDS.overwrote, { conditionalCreation: false });
     } catch (err) {
-      if (!isPreconditionFailed(err)) {
-        return { ok: false, message: failureWords("The conditional test write failed", err), conditionalCreation: null, objectLock: null, keyCanRead: null };
-      }
+      if (!isPreconditionFailed(err)) return probeRefused(failureWords("The conditional test write failed", err));
     }
-    if (!retention) return { ok: true, message: null, conditionalCreation: true, objectLock: "not-set", keyCanRead: null };
+    // Content read (HEAD): what the worker's 412 check needs.
     let keyCanRead: boolean | null = null;
-    let readBack = false;
     try {
-      const got = await objectRetention(s3, destination.bucket, key, requestSignal());
+      const sha256 = await objectSha256(s3, destination.bucket, key, requestSignal());
+      if (sha256 !== put.sha256) return probeRefused(PROBE_WORDS.noMetadata, { conditionalCreation: true });
       keyCanRead = true;
-      readBack = got?.mode === retention.mode;
     } catch (err) {
       if (isAccessDenied(err)) keyCanRead = false;
+    }
+    if (!retention || !retainUntil) {
+      return { ok: true, message: null, conditionalCreation: true, objectLock: "not-set", keyCanRead, retentionReadable: null };
+    }
+    // Retention read (GetObjectRetention): a permission of its own.
+    let retentionReadable: boolean | null = null;
+    let readBack: { mode: string; retainUntil: Date } | null | undefined;
+    try {
+      readBack = await objectRetention(s3, destination.bucket, key, requestSignal());
+      retentionReadable = true;
+    } catch (err) {
+      if (isAccessDenied(err)) retentionReadable = false;
+    }
+    if (readBack === null) return probeRefused(PROBE_WORDS.noRetention, { conditionalCreation: true, keyCanRead, retentionReadable });
+    if (readBack && !retentionHolds({ mode: retention.mode, retainUntil }, readBack)) {
+      return probeRefused(PROBE_WORDS.weakerRetention, { conditionalCreation: true, keyCanRead, retentionReadable });
     }
     return {
       ok: true,
@@ -637,6 +691,7 @@ async function probe(
       conditionalCreation: true,
       objectLock: readBack || verifiedProvider(destination.endpoint) ? "verified" : "accepted",
       keyCanRead,
+      retentionReadable,
     };
   } finally {
     s3.destroy();
@@ -795,16 +850,16 @@ export async function createAuditExport(
     const res = await tx.query(
       `INSERT INTO audit_exports (id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope,
          retention_mode, retention_days, stream_id, stream_started_at, cursor_order, state, created_by,
-         conditional_checked_at, lock_verified, key_can_read)
+         conditional_checked_at, lock_verified, key_can_read, retention_readable)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,clock_timestamp(),
          CASE WHEN $12 THEN (SELECT event_order FROM audit_events WHERE id = $13) ELSE 0 END,
-         'active',$14,clock_timestamp(),$15,$16)
+         'active',$14,clock_timestamp(),$15,$16,$17)
        RETURNING ${EXPORT_COLUMNS}`,
       [
         id, org.id, destination.endpoint, destination.region, destination.bucket, destination.prefix, destination.pathStyle,
         JSON.stringify(envelope), retention?.mode ?? null, retention?.days ?? null, streamId,
         input.from === "now", createdEventId, actor,
-        retention ? checked.objectLock === "verified" : null, checked.keyCanRead,
+        retention ? checked.objectLock === "verified" : null, checked.keyCanRead, checked.retentionReadable,
       ],
     );
     const row = res.rows[0] as ExportRow;
@@ -872,7 +927,7 @@ export async function checkAuditExport(
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
   const refusal = await endpointRefusal(ctx, org.id, destination.endpoint, null, requester.identityId);
-  if (refusal) return { ok: false, message: refusal.message, conditionalCreation: null, objectLock: null, keyCanRead: null };
+  if (refusal) return probeRefused(refusal.message);
   return withExternalEffect(ctx.db, { organizationId: org.id, people: [requester.identityId] }, async (tx) => {
     let credential = supplied;
     if (!credential) {
@@ -1067,12 +1122,14 @@ export async function changeAuditExport(
          conditional_checked_at = CASE WHEN $10 THEN clock_timestamp() ELSE conditional_checked_at END,
          lock_verified = CASE WHEN $10 THEN $11::boolean WHEN $8::int IS NULL THEN NULL ELSE lock_verified END,
          key_can_read = CASE WHEN $10 THEN COALESCE($12::boolean, key_can_read) ELSE key_can_read END,
+         retention_readable = CASE WHEN $10 THEN $13::boolean ELSE retention_readable END,
          generation = generation + 1, lease_expires_at = NULL, version = version + 1, updated_at = now()
        WHERE id = $1 RETURNING ${EXPORT_COLUMNS}`,
       [
         exportId, next.destination.endpoint, next.destination.region, next.destination.bucket, next.destination.prefix, next.destination.pathStyle,
         next.retention?.mode ?? null, next.retention?.days ?? null, streamId,
         probed !== null, probed && next.retention ? probed.objectLock === "verified" : null, probed?.keyCanRead ?? null,
+        probed?.retentionReadable ?? null,
       ],
     );
     const updated = res.rows[0] as ExportRow;
@@ -1157,7 +1214,7 @@ export async function replaceAuditExportCredential(
     await options.authorizeIn?.(tx);
     await lockForChange(tx, exportId, input.expectedVersion);
     const res = await tx.query(
-      `UPDATE audit_exports SET credential_envelope = $2, key_can_read = NULL, generation = generation + 1, lease_expires_at = NULL,
+      `UPDATE audit_exports SET credential_envelope = $2, key_can_read = NULL, retention_readable = NULL, generation = generation + 1, lease_expires_at = NULL,
          version = version + 1, updated_at = now()
        WHERE id = $1 RETURNING ${EXPORT_COLUMNS}`,
       [exportId, JSON.stringify(envelope)],
@@ -1239,16 +1296,23 @@ export async function removeAuditExport(
 // ---------------------------------------------------------------------------
 // The worker (Decisions 2 and 3)
 
-/** Take the lease on the database clock: one statement, returning the binding and what the worker needs. */
-async function takeLease(db: Querier, exportId: string): Promise<ExportRow | null> {
+/**
+ * Take the lease on the database clock: one statement, returning the
+ * binding and what the worker needs. Never on a drain past its deadline
+ * (Decision 10); for a drain, the time left until it, so the worker's
+ * requests stop there.
+ */
+async function takeLease(db: Querier, exportId: string): Promise<(ExportRow & { drain_remaining_ms: string | number | null }) | null> {
   const res = await db.query(
     `UPDATE audit_exports SET generation = generation + 1, lease_expires_at = now() + make_interval(secs => $2)
      WHERE id = $1 AND state IN ('active', 'draining') AND stopped_reason IS NULL
        AND (lease_expires_at IS NULL OR lease_expires_at < now())
-     RETURNING ${EXPORT_COLUMNS}`,
+       AND (state <> 'draining' OR drain_deadline > clock_timestamp())
+     RETURNING ${EXPORT_COLUMNS},
+       CASE WHEN state = 'draining' THEN floor(extract(epoch FROM drain_deadline - clock_timestamp()) * 1000) END AS drain_remaining_ms`,
     [exportId, AUDIT_EXPORT_LIMITS.leaseSeconds],
   );
-  return (res.rows[0] as ExportRow | undefined) ?? null;
+  return (res.rows[0] as (ExportRow & { drain_remaining_ms: string | number | null }) | undefined) ?? null;
 }
 
 const bindingOf = (row: ExportRow): WorkerBinding => ({
@@ -1313,8 +1377,15 @@ export async function planNext(ctx: AppCtx, binding: WorkerBinding): Promise<Pla
 
 export type UploadOutcome = { kind: "delivered"; keyCanRead: boolean | null } | { kind: "conflict" } | { kind: "failed"; message: string };
 
-/** Upload a plan exactly as stored. 412 means an earlier attempt of this plan landed (Decision 4). */
-export async function uploadPlan(s3: StorageClient, bucket: string, plan: PlanRow, keyCanRead: boolean | null): Promise<UploadOutcome> {
+/**
+ * Upload a plan exactly as stored. 412 means an earlier attempt of this
+ * plan landed (Decision 4): the existing object is always read (HEAD) and
+ * its SHA-256 compared, whatever an earlier probe found, since reading
+ * content and reading retention are separate permissions. Only a HEAD the
+ * destination refuses (a write-only key) counts the 412 as delivered.
+ * `deadline` aborts the request at a drain's deadline (Decision 10).
+ */
+export async function uploadPlan(s3: StorageClient, bucket: string, plan: PlanRow, deadline?: AbortSignal): Promise<UploadOutcome> {
   try {
     await testHooks.beforeUpload?.(plan);
     await putIfAbsent(s3, bucket, {
@@ -1325,15 +1396,14 @@ export async function uploadPlan(s3: StorageClient, bucket: string, plan: PlanRo
       contentType: plan.content_type,
       retentionMode: plan.retention_mode,
       retainUntil: plan.retain_until ? new Date(plan.retain_until) : null,
-    });
+    }, deadline);
     await testHooks.afterUpload?.(plan);
-    return { kind: "delivered", keyCanRead };
+    return { kind: "delivered", keyCanRead: null };
   } catch (err) {
     if (!isPreconditionFailed(err)) return { kind: "failed", message: failureWords("Upload failed", err) };
   }
-  if (keyCanRead === false) return { kind: "delivered", keyCanRead: false };
   try {
-    const sha256 = await objectSha256(s3, bucket, plan.object_name, requestSignal());
+    const sha256 = await objectSha256(s3, bucket, plan.object_name, requestSignal(deadline));
     return sha256 === plan.sha256 ? { kind: "delivered", keyCanRead: true } : { kind: "conflict" };
   } catch (err) {
     if (isAccessDenied(err)) return { kind: "delivered", keyCanRead: false };
@@ -1347,13 +1417,19 @@ export async function uploadPlan(s3: StorageClient, bucket: string, plan: PlanRo
  * current. A batch moves the cursor; a heartbeat records its hour. A drain
  * whose batch holds organization.deleted completes.
  */
-export async function commitPlan(ctx: AppCtx, binding: WorkerBinding, plan: PlanRow, keyCanRead: boolean | null): Promise<boolean> {
+export async function commitPlan(ctx: AppCtx, binding: WorkerBinding, plan: PlanRow, keyCanRead: boolean | null): Promise<"committed" | "lost" | "abandoned"> {
   await testHooks.beforeCommit?.(plan);
   return withTx(ctx.db, async (tx) => {
     const locked = await lockExport(tx, binding.exportId);
-    if (!bound(locked, binding)) return false;
+    if (!bound(locked, binding)) return "lost";
+    // A drain whose deadline passed during the upload never completes: it
+    // is abandoned here, under the same row lock (Decision 10).
+    if (await drainExpired(tx, locked)) {
+      await abandonLocked(tx, [locked]);
+      return "abandoned";
+    }
     const pending = await lockPlan(tx, binding.exportId);
-    if (!pending || pending.id !== plan.id || pending.stream_id !== locked.stream_id) return false;
+    if (!pending || pending.id !== plan.id || pending.stream_id !== locked.stream_id) return "lost";
     await tx.query("DELETE FROM audit_export_plans WHERE id = $1", [plan.id]);
     const cursor = plan.kind === "batch" ? str(plan.last_order) : str(locked.cursor_order);
     const completes = locked.state === "draining" && plan.kind === "batch" && (await tx.query(
@@ -1393,7 +1469,7 @@ export async function commitPlan(ctx: AppCtx, binding: WorkerBinding, plan: Plan
       });
     }
     if (events.length > 0) await recordAuditEvents(tx, events);
-    return true;
+    return "committed";
   });
 }
 
@@ -1454,10 +1530,20 @@ async function planExpired(db: Querier, plan: PlanRow): Promise<boolean> {
  * One export, one lease: up to 20 objects. Returns what happened, for
  * tests. Never throws for a destination's failure.
  */
-export async function exportOnce(ctx: AppCtx, exportId: string): Promise<{ committed: number; outcome: "idle" | "lost" | "failed" | "stopped" | "restarted" | "done" | "busy" }> {
+export async function exportOnce(
+  ctx: AppCtx,
+  exportId: string,
+): Promise<{ committed: number; outcome: "idle" | "lost" | "failed" | "stopped" | "restarted" | "done" | "busy" | "abandoned" }> {
   const leased = await takeLease(ctx.db, exportId);
-  if (!leased) return { committed: 0, outcome: "busy" };
+  if (!leased) return { committed: 0, outcome: (await abandonIfExpired(ctx.db, exportId)) ? "abandoned" : "busy" };
   const binding = bindingOf(leased);
+  // A drain's deadline (Decision 10): the lease was taken before it, on the
+  // database clock; it is checked again before each upload and at commit,
+  // and every request aborts when it passes. A timer only holds 2^31 ms
+  // (about 24.8 days); a deadline further away cannot pass during one run.
+  const draining = leased.state === "draining";
+  const remainingMs = Math.max(0, Number(leased.drain_remaining_ms ?? 0));
+  const drainDeadline = draining && remainingMs < MAX_TIMER_MS ? AbortSignal.timeout(remainingMs) : undefined;
   let credential: AuditExportCredential;
   try {
     credential = await workerCredential(ctx, leased);
@@ -1467,8 +1553,7 @@ export async function exportOnce(ctx: AppCtx, exportId: string): Promise<{ commi
   }
   const s3 = clientFor(ctx, destinationOf(leased), credential);
   let committed = 0;
-  let keyCanRead = leased.key_can_read;
-  let outcome: "idle" | "lost" | "failed" | "stopped" | "restarted" | "done" = "done";
+  let outcome: "idle" | "lost" | "failed" | "stopped" | "restarted" | "done" | "abandoned" = "done";
   try {
     for (let i = 0; i < AUDIT_EXPORT_LIMITS.objectsPerRun; i++) {
       let plan = await readPlan(ctx.db, exportId);
@@ -1491,10 +1576,17 @@ export async function exportOnce(ctx: AppCtx, exportId: string): Promise<{ commi
         outcome = "restarted";
         break;
       }
-      const uploaded = await uploadPlan(s3, leased.bucket, plan, keyCanRead);
+      if (draining && (await abandonIfExpired(ctx.db, exportId))) {
+        outcome = "abandoned";
+        break;
+      }
+      const uploaded = await uploadPlan(s3, leased.bucket, plan, drainDeadline);
       if (uploaded.kind === "failed") {
-        await recordFailure(ctx, binding, uploaded.message);
-        outcome = "failed";
+        if (draining && (await abandonIfExpired(ctx.db, exportId))) outcome = "abandoned";
+        else {
+          await recordFailure(ctx, binding, uploaded.message);
+          outcome = "failed";
+        }
         break;
       }
       if (uploaded.kind === "conflict") {
@@ -1502,9 +1594,9 @@ export async function exportOnce(ctx: AppCtx, exportId: string): Promise<{ commi
         outcome = "stopped";
         break;
       }
-      keyCanRead = uploaded.keyCanRead ?? keyCanRead;
-      if (!(await commitPlan(ctx, binding, plan, uploaded.keyCanRead))) {
-        outcome = "lost";
+      const result = await commitPlan(ctx, binding, plan, uploaded.keyCanRead);
+      if (result !== "committed") {
+        outcome = result;
         break;
       }
       committed++;
@@ -1716,10 +1808,62 @@ export async function rewrapForDrain(ctx: AppCtx, db: Querier, organizationId: s
   return row.id;
 }
 
+/** Whether `row` is a drain whose deadline has passed, on the database clock. */
+async function drainExpired(db: Querier, row: Pick<ExportRow, "state" | "drain_deadline">): Promise<boolean> {
+  if (row.state !== "draining" || row.drain_deadline === null) return false;
+  const res = await db.query("SELECT $1::timestamptz <= clock_timestamp() AS expired", [row.drain_deadline]);
+  return (res.rows[0] as { expired: boolean }).expired;
+}
+
+/**
+ * Abandon drains whose export rows the transaction holds FOR UPDATE: their
+ * plan rows, then the rows (key cleared, generation incremented, so no
+ * worker can commit), then audit_export.abandoned, once each, since only a
+ * row still draining under its lock is abandoned.
+ */
+async function abandonLocked(tx: Querier, rows: Pick<ExportRow, "id" | "organization_id" | "stream_id" | "cursor_order" | "drain_deadline">[]): Promise<void> {
+  const ids = rows.map((r) => r.id).sort();
+  const plans = (await lockedQuery(
+    tx,
+    { table: "audit_export_plans", mode: "update" },
+    "SELECT id FROM audit_export_plans WHERE export_id = ANY($1) ORDER BY id FOR UPDATE",
+    [ids],
+  )).rows as { id: string }[];
+  if (plans.length > 0) await tx.query("DELETE FROM audit_export_plans WHERE id = ANY($1)", [plans.map((p) => p.id)]);
+  await tx.query(
+    `UPDATE audit_exports SET state = 'abandoned', credential_envelope = NULL, generation = generation + 1, lease_expires_at = NULL, updated_at = now()
+     WHERE id = ANY($1)`,
+    [ids],
+  );
+  await recordAuditEvents(tx, rows.map((r): AuditEventInput => ({
+    eventType: "audit_export.abandoned",
+    decision: "info",
+    actorIdentityId: null,
+    organizationId: r.organization_id,
+    resource: { exportId: r.id },
+    metadata: { streamId: r.stream_id, cursor: str(r.cursor_order), drainDeadline: iso(r.drain_deadline) },
+  })));
+}
+
+/**
+ * The worker's side of the drain's bound: an export it may not lease, or
+ * is about to upload for, that is a drain past its deadline is abandoned
+ * now, not delivered. Returns whether this call abandoned it.
+ */
+async function abandonIfExpired(db: Querier, exportId: string): Promise<boolean> {
+  return withTx(db, async (tx) => {
+    const locked = await lockExport(tx, exportId);
+    if (!locked || !(await drainExpired(tx, locked))) return false;
+    await abandonLocked(tx, [locked]);
+    return true;
+  });
+}
+
 /**
  * The drain's bound, in the deletion worker's loop, whatever
  * VARLATCH_AUDIT_EXPORT says: a drain not completed by its deadline loses
- * its key, becomes `abandoned` and records audit_export.abandoned.
+ * its key, becomes `abandoned` and records audit_export.abandoned. The
+ * export worker abandons one it reaches first (abandonIfExpired, commitPlan).
  */
 export async function abandonExpiredDrains(db: Querier): Promise<string[]> {
   // Found without a transaction or a lock (the partial index on draining
@@ -1734,27 +1878,7 @@ export async function abandonExpiredDrains(db: Querier): Promise<string[]> {
        WHERE state = 'draining' AND drain_deadline <= now() ORDER BY id FOR UPDATE SKIP LOCKED`,
     )).rows as Pick<ExportRow, "id" | "organization_id" | "stream_id" | "cursor_order" | "drain_deadline">[];
     if (rows.length === 0) return [];
-    const ids = rows.map((r) => r.id);
-    const plans = (await lockedQuery(
-      tx,
-      { table: "audit_export_plans", mode: "update" },
-      "SELECT id FROM audit_export_plans WHERE export_id = ANY($1) ORDER BY id FOR UPDATE",
-      [ids],
-    )).rows as { id: string }[];
-    if (plans.length > 0) await tx.query("DELETE FROM audit_export_plans WHERE id = ANY($1)", [plans.map((p) => p.id)]);
-    await tx.query(
-      `UPDATE audit_exports SET state = 'abandoned', credential_envelope = NULL, generation = generation + 1, lease_expires_at = NULL, updated_at = now()
-       WHERE id = ANY($1)`,
-      [ids],
-    );
-    await recordAuditEvents(tx, rows.map((r): AuditEventInput => ({
-      eventType: "audit_export.abandoned",
-      decision: "info",
-      actorIdentityId: null,
-      organizationId: r.organization_id,
-      resource: { exportId: r.id },
-      metadata: { streamId: r.stream_id, cursor: str(r.cursor_order), drainDeadline: iso(r.drain_deadline) },
-    })));
-    return ids;
+    await abandonLocked(tx, rows);
+    return rows.map((r) => r.id);
   });
 }
