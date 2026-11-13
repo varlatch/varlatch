@@ -88,13 +88,15 @@
   # PowerShell 5.1 a native program's stderr becomes error records, which
   # 'Stop' would turn into a failure before the exit code is read, so the
   # preference is relaxed around the call alone.
-  function Invoke-Program([string]$Program, [string[]]$Arguments) {
+  function Invoke-Program([string]$Program, [string[]]$ProgramArguments) {
     $Saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-      $global:LASTEXITCODE = 0
-      $Output = @(& $Program @Arguments 2>&1 | ForEach-Object { "$_" })
-      return [pscustomobject]@{ Code = $global:LASTEXITCODE; Output = $Output }
+      # No exit code read back counts as a failure, never as success.
+      $global:LASTEXITCODE = $null
+      $Output = @(& $Program @ProgramArguments 2>&1 | ForEach-Object { "$_" })
+      $Code = if ($global:LASTEXITCODE -is [int]) { $global:LASTEXITCODE } else { -1 }
+      return [pscustomobject]@{ Code = $Code; Output = $Output }
     } finally {
       $ErrorActionPreference = $Saved
     }
@@ -132,7 +134,7 @@
     }
     if ($Version.StartsWith('@')) { Stop-Install 'this copy of install.ps1 is not from a release; pass --version <version>' }
     # A plain release version: nothing in it can change where files come from.
-    if ($Version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$') {
+    if ($Version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?\z') {
       Stop-Install "not a release version: $Version"
     }
 
@@ -144,8 +146,12 @@
     if (-not $Arch) { Stop-Install "no varlatch for $Machine processors" }
     if (-not $env:LOCALAPPDATA) { Stop-Install 'LOCALAPPDATA is not set' }
 
+    # Windows PowerShell 5.1 may still offer TLS 1.0: TLS 1.2, and 1.3
+    # where .NET has it, only.
     if ($PSVersionTable.PSVersion.Major -lt 6) {
-      [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+      $Protocols = [Net.SecurityProtocolType]::Tls12
+      if ([Enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13') { $Protocols = $Protocols -bor [Net.SecurityProtocolType]::Tls13 }
+      [Net.ServicePointManager]::SecurityProtocol = $Protocols
     }
 
     $From = "$Base$Version"
@@ -184,6 +190,8 @@
       } else {
         New-Item -ItemType Directory -Force -Path $Dir | Out-Null
         Copy-Item -LiteralPath $Staged -Destination $Next -Force
+        # What goes in place is what was checked.
+        if ((Get-Sha256 $Next) -cne $Want) { Stop-Install "$Name changed after it was checked; nothing was installed" }
         try { Install-File $Next $Target }
         catch { Stop-Install "could not replace $Target (is varlatch running?): $($_.Exception.Message)" }
         Write-Host "Installed varlatch $Version at $Target."
@@ -193,13 +201,32 @@
       Remove-Item -Force -LiteralPath $Next -ErrorAction SilentlyContinue
     }
 
-    # The user PATH as stored, never the combined process PATH; added once.
-    $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $Entries = @(if ($UserPath) { $UserPath -split ';' | Where-Object { $_ -ne '' } })
-    if (-not ($Entries | Where-Object { $_.TrimEnd('\') -ieq $Dir.TrimEnd('\') })) {
-      [Environment]::SetEnvironmentVariable('Path', (@($Entries) + $Dir) -join ';', 'User')
+    # The user PATH as stored in the registry: its %VARIABLES% unexpanded
+    # and its kind kept ([Environment]::SetEnvironmentVariable would write it
+    # back expanded, as REG_SZ). Entries are compared expanded; added once.
+    $Added = $false
+    $Key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+    try {
+      $Stored = [string]$Key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+      $Kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+      if ($Key.GetValueNames() -contains 'Path' -and $Key.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::String) {
+        $Kind = [Microsoft.Win32.RegistryValueKind]::String
+      }
+      $Entries = @($Stored -split ';' | Where-Object { $_ -ne '' })
+      if (-not ($Entries | Where-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ieq $Dir.TrimEnd('\') })) {
+        $Key.SetValue('Path', ((@($Entries) + $Dir) -join ';'), $Kind)
+        $Added = $true
+      }
+    } finally {
+      $Key.Dispose()
+    }
+    if ($Added) {
+      # Setting a user variable broadcasts the change, so new terminals and
+      # Explorer see the new PATH; this one is set and removed again.
+      [Environment]::SetEnvironmentVariable('VARLATCH_INSTALL_REFRESH', '1', 'User')
+      [Environment]::SetEnvironmentVariable('VARLATCH_INSTALL_REFRESH', $null, 'User')
       $env:Path = "$env:Path;$Dir"
-      Write-Host "Added $Dir to your user PATH. New terminals find varlatch; this one does too."
+      Write-Host "Added $Dir to your user PATH. Open a new terminal to use varlatch."
     }
     $First = Get-Command varlatch -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($First -and ($First.Source -ine $Target)) {
@@ -211,7 +238,9 @@
   # A failed check prints its one line and exits 1; nothing was installed.
   try { Install-Varlatch }
   catch {
-    [Console]::Error.WriteLine($_.Exception.Message)
+    $Message = $_.Exception.Message
+    if (-not $Message.StartsWith('varlatch install:')) { $Message = "varlatch install: $Message; nothing was installed" }
+    [Console]::Error.WriteLine($Message)
     exit 1
   }
 }

@@ -11,6 +11,20 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3
 
 $Source = [IO.File]::ReadAllText($Script)
+
+# The whole script's shape, as PowerShell's parser sees it: one statement
+# (the & { } group), no param block, no using statements, no #requires
+# (which PowerShell enforces while parsing).
+$Tokens = $null
+$ParseErrors = $null
+$Ast = [Management.Automation.Language.Parser]::ParseFile($Script, [ref]$Tokens, [ref]$ParseErrors)
+if ($ParseErrors.Count -gt 0) { Write-Output "BADSHAPE the script does not parse: $($ParseErrors[0].Message)" }
+if ($null -ne $Ast.ParamBlock) { Write-Output 'BADSHAPE the script has a param block' }
+if ($Ast.UsingStatements.Count -gt 0) { Write-Output 'BADSHAPE the script has using statements' }
+if ($null -ne $Ast.ScriptRequirements) { Write-Output 'BADSHAPE the script has #requires' }
+if ($null -ne $Ast.BeginBlock -or $null -ne $Ast.ProcessBlock -or $Ast.EndBlock.Statements.Count -ne 1) {
+  Write-Output 'BADSHAPE the script is not exactly one statement'
+}
 $Names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($Match in [regex]::Matches($Source, '[A-Za-z0-9_.-]+')) {
   for ($i = 1; $i -le $Match.Value.Length; $i++) { [void]$Names.Add($Match.Value.Substring(0, $i)) }
@@ -26,7 +40,8 @@ New-Item -ItemType Directory -Path $Bin | Out-Null
 foreach ($Name in $Names) {
   if ($Name -in '.', '..' -or $Name.EndsWith('.') -or $Name -match $Reserved) { continue }
   if ($OnWindows) {
-    [IO.File]::WriteAllText((Join-Path $Bin "$Name.cmd"), "@echo COMMAND $Name>>`"$CommandLog`"`r`n")
+    # The redirect first: "echo COMMAND 5>>log" would redirect handle 5.
+    [IO.File]::WriteAllText((Join-Path $Bin "$Name.cmd"), "@>>`"$CommandLog`" echo COMMAND $Name`r`n")
   } else {
     $File = Join-Path $Bin $Name
     [IO.File]::WriteAllText($File, "#!/bin/sh`necho COMMAND $Name >> '$CommandLog'`n")
@@ -67,6 +82,13 @@ for ($Length = 0; $Length -le $Closing; $Length++) {
   $Prefix = [byte[]]::new($Length)
   [Array]::Copy($Bytes, $Prefix, $Length)
   [IO.File]::WriteAllBytes($File, $Prefix)
+  # Before the closing brace, a prefix either does not parse or holds no
+  # statement at all (comments only).
+  $PrefixErrors = $null
+  $PrefixAst = [Management.Automation.Language.Parser]::ParseFile($File, [ref]$Tokens, [ref]$PrefixErrors)
+  if ($PrefixErrors.Count -eq 0 -and $PrefixAst.EndBlock.Statements.Count -gt 0) {
+    Write-Output "BAD $Length parse the prefix parses and has statements"
+  }
   foreach ($Kind in 'alias', 'function') {
     $Hits.Clear()
     if (Test-Path -LiteralPath $CommandLog) { Remove-Item -LiteralPath $CommandLog }

@@ -149,4 +149,4 @@ jobs:
         env:
           CGO_ENABLED: "0"
           VARLATCH_TEST_DISPOSABLE: "1"
-        run: go test -count=1 -v -run 'PS1' ./install/
+        run: go test -count=1 -v -timeout 20m -run 'PS1' ./install/
