@@ -16,7 +16,13 @@ import ts from "typescript";
  * - **References by symbol, not by name.** Every identifier in src/ is
  *   resolved with the checker, aliases followed (getAliasedSymbol): renamed
  *   imports, re-exports, and namespace member access all land on the
- *   declared symbol.
+ *   declared symbol. An element access with a literal key
+ *   (`handlers["mint"]`, `ns["f"]`) is resolved like the property access it
+ *   spells.
+ * - **Access without a name fails closed:** an element access with a
+ *   computed key (`handlers[name]`), a spread, and `Object.values`,
+ *   `entries` or `assign` over an object whose type has a function on a
+ *   chain as a property.
  * - **What a reference does:** a call (or `new`) is attributed to its
  *   enclosing function-like declaration, whose own references are then
  *   followed the same way, exported or not; an anonymous callback belongs to
@@ -43,11 +49,22 @@ export interface Graph {
   program: ts.Program;
   checker: ts.TypeChecker;
   srcDir: string;
-  /** Resolved symbol (by its key) -> its references (identifiers) in src/. */
-  refs: Map<SymbolKey, ts.Identifier[]>;
-  /** Identifiers in src/ the checker could not resolve, by text. */
-  unresolved: Map<string, ts.Identifier[]>;
+  /** Resolved symbol (by its key) -> its references in src/: identifiers, and the literal keys of element accesses. */
+  refs: Map<SymbolKey, RefNode[]>;
+  /** References in src/ the checker could not resolve, by text. */
+  unresolved: Map<string, RefNode[]>;
+  /**
+   * Accesses that may reach any of an object's properties without naming
+   * one: an element access with a computed key (`handlers[name]`), a spread
+   * (`{ ...handlers }`, `[...handlers]`), and `Object.values`, `entries` and
+   * `assign` over an object. Each with the keys of the properties declared in
+   * src/ that the object's type has.
+   */
+  dynamic: { node: ts.Node; what: string; keys: Set<SymbolKey> }[];
 }
+
+/** A reference: an identifier, or the string-literal key of an element access (`handlers["mint"]`). */
+type RefNode = ts.Identifier | ts.StringLiteral | ts.NoSubstitutionTemplateLiteral;
 
 export interface Reach {
   /** "ROOT via outer > ... > inner", or a fail-closed "?? ..." entry. */
@@ -88,28 +105,63 @@ export function buildGraph(packageDir: string, edits: Record<string, string> = {
   const program = ts.createProgram({ rootNames, options, host, ...(oldProgram ? { oldProgram } : {}) });
   const checker = program.getTypeChecker();
   const srcDir = resolve(packageDir, "src");
-  const refs = new Map<SymbolKey, ts.Identifier[]>();
-  const unresolved = new Map<string, ts.Identifier[]>();
+  const refs = new Map<SymbolKey, RefNode[]>();
+  const unresolved = new Map<string, RefNode[]>();
+  const dynamic: Graph["dynamic"] = [];
+  const add = (ref: RefNode, symbol: ts.Symbol | undefined) => {
+    const map = symbol ? refs : unresolved;
+    const key = symbol ? keyOf(symbol) : ref.text;
+    const list = (map as Map<SymbolKey | string, RefNode[]>).get(key);
+    if (list) list.push(ref);
+    else (map as Map<SymbolKey | string, RefNode[]>).set(key, [ref]);
+  };
+  const srcPrefix = `${srcDir}/`;
+  /** The keys of the properties, declared in src/, that `expr`'s type has. */
+  const propertyKeys = (expr: ts.Expression): Set<SymbolKey> => {
+    const keys = new Set<SymbolKey>();
+    for (const prop of checker.getPropertiesOfType(checker.getTypeAtLocation(expr))) {
+      const symbol = canonical(checker, prop);
+      const decl = symbol.declarations?.[0];
+      if (decl && decl.getSourceFile().fileName.startsWith(srcPrefix)) keys.add(keyOf(symbol));
+      // A property holding a function declared elsewhere in src/ (`{ mint: issueCredential }`) is reached through its value.
+      const value = prop.valueDeclaration;
+      if (value && ts.isPropertyAssignment(value) && ts.isIdentifier(value.initializer)) {
+        const held = checker.getSymbolAtLocation(value.initializer);
+        if (held) keys.add(keyOf(canonical(checker, held)));
+      }
+    }
+    return keys;
+  };
+  const OBJECT_SPREADERS = new Set(["values", "entries", "assign"]);
   for (const sf of srcFiles(program, srcDir)) {
     const visit = (n: ts.Node) => {
       if (ts.isIdentifier(n)) {
-        const symbol = symbolOf(checker, n);
-        if (symbol) {
-          const key = keyOf(symbol);
-          const list = refs.get(key);
-          if (list) list.push(n);
-          else refs.set(key, [n]);
+        add(n, symbolOf(checker, n));
+      } else if (ts.isElementAccessExpression(n)) {
+        const arg = n.argumentExpression;
+        if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) {
+          // obj["name"]: the property it names, as obj.name would.
+          const raw = checker.getSymbolAtLocation(arg) ?? checker.getTypeAtLocation(n.expression).getProperty(arg.text);
+          add(arg, raw ? canonical(checker, raw) : undefined);
         } else {
-          const list = unresolved.get(n.text);
-          if (list) list.push(n);
-          else unresolved.set(n.text, [n]);
+          const keys = propertyKeys(n.expression);
+          if (keys.size > 0) dynamic.push({ node: n, what: `a computed access ${n.getText(sf)}`, keys });
+        }
+      } else if ((ts.isSpreadAssignment(n) || ts.isSpreadElement(n))) {
+        const keys = propertyKeys(n.expression);
+        if (keys.size > 0) dynamic.push({ node: n, what: `a spread of ${n.expression.getText(sf)}`, keys });
+      } else if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) &&
+        n.expression.expression.text === "Object" && OBJECT_SPREADERS.has(n.expression.name.text)) {
+        for (const a of n.arguments) {
+          const keys = propertyKeys(a);
+          if (keys.size > 0) dynamic.push({ node: n, what: `Object.${n.expression.name.text}(${a.getText(sf)})`, keys });
         }
       }
       ts.forEachChild(n, visit);
     };
     visit(sf);
   }
-  return { program, checker, srcDir, refs, unresolved };
+  return { program, checker, srcDir, refs, unresolved, dynamic };
 }
 
 export function srcFiles(program: ts.Program, srcDir: string): ts.SourceFile[] {
@@ -240,8 +292,13 @@ type Use =
   | { kind: "escape"; label: string };
 
 /** What a reference to a function does. */
-function useOf(g: Graph, sf: ts.SourceFile, id: ts.Identifier, target: ts.Symbol): Use {
+function useOf(g: Graph, sf: ts.SourceFile, id: RefNode, target: ts.Symbol): Use {
   const p = id.parent;
+  if (!ts.isIdentifier(id)) {
+    // The literal key of an element access: a use of the property, as a property access.
+    if (!ts.isElementAccessExpression(p) || p.argumentExpression !== id) return { kind: "escape", label: escape(g, sf, id, "an unexpected literal reference") };
+    return useOfExpression(g, sf, id, p);
+  }
   // Not a use: a declaration of the target itself, an import or export, a type.
   if ((target.declarations ?? []).some((d) => (d as { name?: ts.Node }).name === id)) return { kind: "ignore" };
   // The name of a declaration bound to another symbol object for the same declaration.
@@ -258,7 +315,12 @@ function useOf(g: Graph, sf: ts.SourceFile, id: ts.Identifier, target: ts.Symbol
     const prop = g.checker.getSymbolAtLocation(p.name);
     return prop ? { kind: "alias", symbol: canonical(g.checker, prop), label: `${p.name.text} (property)` } : { kind: "escape", label: escape(g, sf, id, "an unresolved shorthand property") };
   }
-  let e: ts.Node = ts.isPropertyAccessExpression(p) && p.name === id ? p : id;
+  return useOfExpression(g, sf, id, ts.isPropertyAccessExpression(p) && p.name === id ? p : id);
+}
+
+/** What the expression a reference stands for (`f`, `obj.f`, `obj["f"]`) does with the function. */
+function useOfExpression(g: Graph, sf: ts.SourceFile, id: RefNode, expr: ts.Node): Use {
+  let e: ts.Node = expr;
   while (e.parent && (ts.isParenthesizedExpression(e.parent) || ts.isAsExpression(e.parent) || ts.isNonNullExpression(e.parent) ||
     ts.isSatisfiesExpression(e.parent) || ts.isTypeAssertionExpression(e.parent))) e = e.parent;
   const q = e.parent;
@@ -279,7 +341,7 @@ function useOf(g: Graph, sf: ts.SourceFile, id: ts.Identifier, target: ts.Symbol
   return { kind: "escape", label: escape(g, sf, id, `a value passed on (${ts.SyntaxKind[q.kind]})`) };
 }
 
-const escape = (g: Graph, sf: ts.SourceFile, id: ts.Identifier, what: string) => `?? ${rel(g, sf)}:${line(sf, id)} ${id.text}: ${what}`;
+const escape = (g: Graph, sf: ts.SourceFile, id: RefNode, what: string) => `?? ${rel(g, sf)}:${line(sf, id)} ${id.text}: ${what}`;
 
 /**
  * Every root that can reach `target` (a function's symbol), through the
@@ -295,10 +357,16 @@ export function reach(g: Graph, target: ts.Symbol, roots: ReadonlyMap<string, Ro
       entries.add(`?? depth bound${via}`);
       return;
     }
-    // Unresolved identifiers bearing this function's name may be calls the checker could not follow.
+    // Unresolved references bearing this function's name may be calls the checker could not follow.
     for (const id of g.unresolved.get(symbol.name) ?? []) {
       const sf = id.getSourceFile();
-      entries.add(`${escape(g, sf, id, "an identifier the checker cannot resolve")}${via}`);
+      entries.add(`${escape(g, sf, id, "a reference the checker cannot resolve")}${via}`);
+    }
+    // An access that may reach it without naming it.
+    for (const d of g.dynamic) {
+      if (!d.keys.has(keyOf(symbol))) continue;
+      const sf = d.node.getSourceFile();
+      entries.add(`?? ${rel(g, sf)}:${line(sf, d.node)} ${d.what} may reach ${symbol.name}${via}`);
     }
     const uses = g.refs.get(keyOf(symbol)) ?? [];
     let used = false;

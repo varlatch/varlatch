@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
@@ -800,35 +800,41 @@ describe("alternate callers", () => {
   });
 
   describe("by the caller graph (the TypeScript type checker over src/)", () => {
-    // Built once for these tests: about 5 to 15 s and 700 MB on the test
-    // machine (createProgram over src/ and a symbol lookup for each of its
-    // identifiers). The self-tests build edited copies from it.
+    // Built once for these tests: about 5 s and 700 MB on the test machine
+    // (createProgram over src/ and a symbol lookup for each of its
+    // identifiers). Each self-test builds an edited copy from it, reusing its
+    // unchanged files (6 to 9 s; about 1.2 GB with both alive). The
+    // timeouts leave room for a machine busy with other suites.
+    const GRAPH_TIMEOUT = 300_000;
     let graph: Graph;
     beforeAll(() => {
       graph = buildGraph(PACKAGE_DIR);
-    }, 120_000);
+    }, GRAPH_TIMEOUT);
 
     it("names only roots that exist, and every registration has a literal path", () => {
       const labels = functionLabels(graph);
       expect([...ROOTS.keys()].filter((root) => !labels.has(root))).toEqual([]);
       expect(unlabelledRegistrations(graph)).toEqual([]);
-    });
+    }, GRAPH_TIMEOUT);
 
     it("every writer in src/ of what the operations change is classified, and reached only by the roots its classification allows", () => {
       const expected = Object.fromEntries(Object.entries(WRITERS).map(([label, w]) => [label, [...w.roots].sort()]));
       expect(writersOf(graph)).toEqual(expected);
-    });
+    }, GRAPH_TIMEOUT);
 
     it("every root reaching a protected domain function, or the credential primitive, is known", () => {
       const expected = Object.fromEntries(Object.entries(CALLERS).map(([key, list]) => [key, [...list].sort()]));
       expect(callersOf(graph)).toEqual(expected);
-    });
+    }, GRAPH_TIMEOUT);
 
     describe("would fail on an added caller (in-memory sources through a CompilerHost)", () => {
       const RENAME = 'app.patch("/v1/organizations/:org/identities/:identity", async (c) => {';
       const rename = `http/app.ts PATCH ${ORG}/identities/:identity`;
       const PASSKEY_OWNER = "  const passkeyOwner = (c: Context) => {";
-      const appText = () => readFileSync(srcPath(graph, "http/app.ts"), "utf8");
+      // The text the base graph was built from, not the file on disk now: an
+      // edit to the file while the suite runs cannot make the comparison
+      // with the base graph see unrelated differences.
+      const appText = () => graph.program.getSourceFile(srcPath(graph, "http/app.ts"))!.text;
       /** A graph of src/ with http/app.ts edited by `edit`, and `more` files added (relative to src/). */
       function tampered(edit: (text: string) => string, more: Record<string, string> = {}) {
         const original = appText();
@@ -857,7 +863,7 @@ describe("alternate callers", () => {
       it("a direct call to the credential primitive and to a protected function in an exempt route", () => {
         const g = tampered(intoRename('    await issueCredential(ctx.db, { identityId: "x", kind: "service" });\n    await createRole(ctx, gate, org.id, body, {});'));
         expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename], "domain/policy.ts createRole": [rename] });
-      }, 120_000);
+      }, GRAPH_TIMEOUT);
 
       it("a multiline helper declared just before another route's helper, then called from an exempt route", () => {
         const g = tampered((text) => {
@@ -866,7 +872,7 @@ describe("alternate callers", () => {
           return intoRename('    await mintForIdentity("x");')(text.replace(PASSKEY_OWNER, `${helper}${PASSKEY_OWNER}`));
         });
         expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [`${rename} via mintForIdentity`] });
-      }, 120_000);
+      }, GRAPH_TIMEOUT);
 
       it("a helper declared inside buildApp between two routes, then called from an exempt route", () => {
         const anchor = '  app.post("/v1/organizations/:org/identities/:identity/retire", async (c) => {';
@@ -876,12 +882,12 @@ describe("alternate callers", () => {
           return intoRename("    await quietRole(c);")(text.replace(anchor, `${helper}${anchor}`));
         });
         expect(added(callersOf(g))).toEqual({ "domain/policy.ts createRole": [`${rename} via quietRole`] });
-      }, 120_000);
+      }, GRAPH_TIMEOUT);
 
       it("a call split over several lines", () => {
         const g = tampered(intoRename('    await issueCredential\n      (\n        ctx.db,\n        { identityId: "x", kind: "service" },\n      );'));
         expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename] });
-      }, 120_000);
+      }, GRAPH_TIMEOUT);
 
       it("fails closed: a helper nobody calls, a registration whose path is not a literal, a function passed on as a value", () => {
         const g = tampered((text) =>
@@ -896,14 +902,14 @@ describe("alternate callers", () => {
         expect(after["domain/policy.ts createRole"]![0]).toMatch(/^\?\? http\/app\.ts:\d+ a registration whose path is not a string literal$/);
         expect(after["domain/policy.ts deleteRole"]![0]).toMatch(/^\?\? http\/app\.ts:\d+ deleteRole: a value passed on \(ArrayLiteralExpression\)$/);
         expect(unlabelledRegistrations(g)).toHaveLength(1);
-      }, 120_000);
+      }, GRAPH_TIMEOUT);
 
       it("a renamed import", () => {
         const g = tampered((text) =>
           intoRename('    await mint(ctx.db, { identityId: "x", kind: "service" });')(
             `import { issueCredential as mint } from "../auth/credentials.js";\n${text}`));
         expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename] });
-      }, 120_000);
+      }, GRAPH_TIMEOUT);
 
       it("an exported host-command helper called from an exempt route: its host-command exemption no longer holds", () => {
         const g = tampered((text) =>
@@ -911,7 +917,7 @@ describe("alternate callers", () => {
             `import { issueReenrollmentGrants } from "../domain/bootstrap.js";\n${text}`));
         expect(writersOf(graph)["domain/bootstrap.ts issueReenrollmentGrants"]).toEqual(["host-command"]);
         expect(writersOf(g)["domain/bootstrap.ts issueReenrollmentGrants"]).toEqual(["host-command", "route"]);
-      }, 120_000);
+      }, GRAPH_TIMEOUT);
 
       it("an object method reused from an exempt route", () => {
         const g = tampered((text) => {
@@ -919,7 +925,46 @@ describe("alternate callers", () => {
           return intoRename('    await tools.mint("x");')(text.replace(PASSKEY_OWNER, `${helper}${PASSKEY_OWNER}`));
         });
         expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [`${rename} via tools.mint`] });
-      }, 120_000);
+      }, GRAPH_TIMEOUT);
+
+      it("an element access with a literal key on a module namespace", () => {
+        const g = tampered((text) =>
+          intoRename('    await credentialsProbe["issueCredential"](ctx.db, { identityId: "x", kind: "service" });')(
+            `import * as credentialsProbe from "../auth/credentials.js";\n${text}`));
+        expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename] });
+      }, GRAPH_TIMEOUT);
+
+      it("an element access with a literal key on a module namespace, to a host-command helper: its exemption no longer holds", () => {
+        const g = tampered((text) =>
+          intoRename('    await bootstrapProbe["issueReenrollmentGrants"](ctx, { identities: [] } as never);')(
+            `import * as bootstrapProbe from "../domain/bootstrap.js";\n${text}`));
+        expect(writersOf(g)["domain/bootstrap.ts issueReenrollmentGrants"]).toEqual(["host-command", "route"]);
+      }, GRAPH_TIMEOUT);
+
+      const HANDLERS = '  const handlers = {\n    mint() {\n      return issueCredential(ctx.db, { identityId: "x", kind: "service" });\n    },\n  };\n';
+      const RETIRE = '  app.post("/v1/organizations/:org/identities/:identity/retire", async (c) => {';
+      const retire = `http/app.ts POST ${ORG}/identities/:identity/retire`;
+
+      it("a handler map's method called with a literal key, next to a caller by name", () => {
+        const g = tampered((text) => {
+          expect(text).toContain(RETIRE);
+          const withMap = text.replace(PASSKEY_OWNER, `${HANDLERS}${PASSKEY_OWNER}`).replace(RETIRE, `${RETIRE}\n    await handlers.mint();`);
+          return intoRename('    await handlers["mint"]();')(withMap);
+        });
+        expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [`${rename} via handlers.mint`, `${retire} via handlers.mint`] });
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a handler map's method called with a computed key", () => {
+        const g = tampered((text) => {
+          const withMap = text.replace(PASSKEY_OWNER, `${HANDLERS}${PASSKEY_OWNER}`).replace(RETIRE, `${RETIRE}\n    await handlers.mint();`);
+          return intoRename('    const which = c.req.param("identity") as "mint";\n    await handlers[which]();')(withMap);
+        });
+        const after = added(callersOf(g))["auth/credentials.ts issueCredential"] ?? [];
+        expect(after).toContain(`${retire} via handlers.mint`);
+        expect(after.filter((e) => e.startsWith("??"))).toEqual([
+          expect.stringMatching(/^\?\? http\/app\.ts:\d+ a computed access handlers\[which\] may reach mint via handlers\.mint$/),
+        ]);
+      }, GRAPH_TIMEOUT);
 
       it("a re-export through another module", () => {
         const g = tampered(
@@ -927,7 +972,7 @@ describe("alternate callers", () => {
           { "domain/reexport-probe.ts": 'export { issueCredential as issue } from "../auth/credentials.js";\n' },
         );
         expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename] });
-      }, 120_000);
+      }, GRAPH_TIMEOUT);
     });
   });
 });
