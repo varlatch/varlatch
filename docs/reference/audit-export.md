@@ -339,10 +339,10 @@ in [assisted mode](assisted-mode.md) or not:
 A new destination, a new key, a shorter or removed retention, compliance to
 governance and removal always need the person's passkey approval, which an
 agent cannot give. `varlatch audit-export remove` also needs `--confirm
-<slug>`, the organization's slug, in every mode; in assisted mode the agent adds it only
-after the person agreed, and otherwise prints the command for the person's
-own terminal. If an agent should not be able to do the first two, do not
-let it work with a credential that holds `organization.manage`.
+<slug>`, the organization's slug, in every mode; in assisted mode the agent
+adds it only after the person agreed, and otherwise prints the command for
+the person's own terminal. If an agent should not be able to do the first
+two, do not let it work with a credential that holds `organization.manage`.
 
 ## When the organization is deleted
 

@@ -148,6 +148,42 @@ describe("the Settings danger zone", () => {
     );
   });
 
+  it("before the server's capabilities are known, says the export's state could not be read", async () => {
+    let answerMeta!: (v: unknown) => void;
+    fake.api.meta = () => new Promise((resolve) => (answerMeta = resolve));
+    fake.confirm.mockResolvedValue(false);
+    await mount(<OrganizationDeletionCard org="acme" slug="acme" id="org_1" />);
+    await act(async () => root.root.findByType("form").props.onSubmit({ preventDefault: () => {} }));
+    await settle();
+    const said = (fake.confirm.mock.calls[0]![0] as { consequences: { text: string }[] }).consequences.map((c) => c.text);
+    expect(said).toContain(AUDIT_EXPORT_UNKNOWN);
+    answerMeta({ apiMajor: 1, capabilities: ["organizations.delete", "projects.delete"] });
+    await settle();
+  });
+
+  it("opens one confirmation at a time: a second submit while the state is read does nothing", async () => {
+    fake.api.meta = async () => ({ apiMajor: 1, capabilities: ["organizations.delete", "projects.delete", "audit.storage-export"] });
+    let answer!: (v: unknown) => void;
+    fake.api.getAuditExport = vi.fn(() => new Promise((resolve) => (answer = resolve)));
+    fake.confirm.mockResolvedValue(false);
+    await mount(<OrganizationDeletionCard org="acme" slug="acme" id="org_1" />);
+    const submit = () => root.root.findByType("form").props.onSubmit({ preventDefault: () => {} });
+    await act(async () => {
+      void submit();
+    });
+    await settle();
+    expect(all("delete-org")[0]!.props.disabled).toBe(true);
+    await act(async () => {
+      void submit();
+    });
+    await settle();
+    expect(fake.api.getAuditExport).toHaveBeenCalledTimes(1);
+    await act(async () => answer({ enabled: true, export: { state: "active" } }));
+    await settle();
+    expect(fake.confirm).toHaveBeenCalledTimes(1);
+    expect(all("delete-org")[0]!.props.disabled).toBe(false);
+  });
+
   it("a member's deletion card never asks for the audit export", async () => {
     fake.me = "idn_eve";
     fake.api.meta = async () => ({ apiMajor: 1, capabilities: ["organizations.delete", "projects.delete", "audit.storage-export"] });

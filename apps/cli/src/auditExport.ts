@@ -221,7 +221,8 @@ export function statusLines(organization: string, status: AuditExportStatus): st
   }
   lines.push(
     `  key           ${e.keyCanRead === null ? "object read not determined" : e.keyCanRead ? "can read objects" : "write-only"}` +
-      `, ${e.retentionReadable === null ? "retention read not determined" : e.retentionReadable ? "can read retention" : "cannot read retention"}`,
+      // No retention configured: nothing to read, so nothing to say about it.
+      `${e.retention === null ? "" : `, ${e.retentionReadable === null ? "retention read not determined" : e.retentionReadable ? "can read retention" : "cannot read retention"}`}`,
     `  version       ${e.version}`,
   );
   return lines;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { TriangleAlert } from "lucide-react";
@@ -10,7 +10,7 @@ import { Button, Callout, Input, SectionCard } from "../../components/ui";
 import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
-import { useCapability } from "../projects/hooks";
+import { useCapability, useMeta } from "../projects/hooks";
 import { useIdentities } from "../access/shared";
 import { auditExportKey } from "../security-controls/AuditExportCard";
 
@@ -112,7 +112,11 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
   const now = useNow();
   const deletion = useOrganizationDeletion(org);
   const { me, admin, admins, name } = useMembership(org);
+  const meta = useMeta();
   const auditExportSupported = useCapability("audit.storage-export");
+  // One confirmation at a time: the export's state is read before it opens.
+  const asking = useRef(false);
+  const [askingNow, setAskingNow] = useState(false);
   const [days, setDays] = useState("7");
   const afterDays = /^\d+$/.test(days) && Number(days) >= 1 && Number(days) <= 30 ? Number(days) : null;
   const done = async (title: string, description?: string) => {
@@ -138,19 +142,31 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
   const open = deletion.data ?? null;
 
   const askSchedule = async () => {
-    if (afterDays === null) return;
-    const auditExport = auditExportSupported
-      ? await readLiveAuditExport(() => qc.fetchQuery({ queryKey: auditExportKey(org), queryFn: () => api.getAuditExport(org), staleTime: 0, retry: false }))
-      : false;
-    const ok = await confirm({
-      title: `Delete organization ${slug}?`,
-      description: `It freezes now and is deleted no earlier than ${afterDays} ${afterDays === 1 ? "day" : "days"} from now.`,
-      consequences: organizationDeletionConsequences(admins > 1, auditExport).map((text) => ({ text })),
-      confirmLabel: "Schedule deletion",
-      tone: "danger",
-      typeToConfirm: slug,
-    });
-    if (ok) schedule.mutate(afterDays);
+    if (afterDays === null || asking.current) return;
+    asking.current = true;
+    setAskingNow(true);
+    try {
+      // Before the server's capabilities are known, whether it has audit
+      // export is not: the disclosure says the state could not be read.
+      const auditExport =
+        meta.data === undefined
+          ? "unknown"
+          : auditExportSupported
+            ? await readLiveAuditExport(() => qc.fetchQuery({ queryKey: auditExportKey(org), queryFn: () => api.getAuditExport(org), staleTime: 0, retry: false }))
+            : false;
+      const ok = await confirm({
+        title: `Delete organization ${slug}?`,
+        description: `It freezes now and is deleted no earlier than ${afterDays} ${afterDays === 1 ? "day" : "days"} from now.`,
+        consequences: organizationDeletionConsequences(admins > 1, auditExport).map((text) => ({ text })),
+        confirmLabel: "Schedule deletion",
+        tone: "danger",
+        typeToConfirm: slug,
+      });
+      if (ok) schedule.mutate(afterDays);
+    } finally {
+      asking.current = false;
+      setAskingNow(false);
+    }
   };
   const askApprove = async (d: OrganizationDeletion) => {
     const ok = await confirm({
@@ -242,7 +258,7 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
                     data-testid="org-deletion-days"
                   />
                 </label>
-                <Button type="submit" variant="danger" disabled={afterDays === null} loading={schedule.isPending} data-testid="delete-org">
+                <Button type="submit" variant="danger" disabled={afterDays === null || askingNow} loading={schedule.isPending || askingNow} data-testid="delete-org">
                   Delete organization…
                 </Button>
               </form>
