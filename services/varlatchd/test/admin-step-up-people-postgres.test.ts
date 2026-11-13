@@ -136,7 +136,7 @@ describe.skipIf(!url)("admin-step-up for people on real PostgreSQL", () => {
     }
   });
 
-  /** admin-step-up at enforce, written directly: the API refuses it until step 4.9. */
+  /** admin-step-up at enforce, written directly in the database (the API accepts it since step 4.9). */
   const enforce = () =>
     db.query(
       `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)

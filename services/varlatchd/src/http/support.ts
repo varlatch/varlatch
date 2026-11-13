@@ -318,6 +318,60 @@ export async function enforce(ctx: AppCtx, decision: Decision): Promise<Evaluati
 }
 
 /**
+ * The denial an authorization recheck found inside a transaction that the
+ * refusal then rolls back (deferDenial), recorded once the transaction
+ * ended (auditDeferredDenial, from app.onError).
+ */
+export const DEFERRED_DENIAL = "deferredDenial";
+
+/**
+ * Authorization for one action, rechecked inside a protected operation's
+ * transaction once its approval was consumed (ADR-0054 Decision 3: "the
+ * person still holds the action"). The decision is the one {@link authorize}
+ * makes, against the transaction (`db`). A denial is not recorded there:
+ * its refusal rolls the transaction back, and the audit event with it. It
+ * is kept on the request instead, and app.onError records it after the
+ * rollback (auditDeferredDenial), as it does for passkey-verification and
+ * incident-freeze refusals: exactly one `authorization.denied` per refused
+ * request, the same event {@link authorize} records for an ordinary
+ * denial. Only a request that consumed an approval reaches this, so with
+ * every control off nothing calls it.
+ */
+export async function authorizeInTransaction(
+  ctx: AppCtx,
+  db: AppCtx["db"],
+  c: Context,
+  principal: Principal,
+  action: Action,
+  resource: ResourceContext,
+  opts: AuthorizeOptions = {},
+): Promise<Evaluation> {
+  const decision = await decide({ ...ctx, db }, c, principal, action, resource, opts);
+  if (decision.allowed) return decision.evaluation;
+  // The last one wins: a request is refused once, by its last recheck.
+  if (decision.denialEvent) c.set(DEFERRED_DENIAL, decision.denialEvent);
+  throw decision.error;
+}
+
+/**
+ * Record the denial an in-transaction recheck kept (authorizeInTransaction),
+ * once, after the transaction that refused the request ended, in a short
+ * transaction of its own. Best effort, as for the other refusals recorded
+ * at the outcome: a failure to record is logged and never changes the
+ * answer.
+ */
+export async function auditDeferredDenial(ctx: AppCtx, c: Context): Promise<void> {
+  const event = c.get(DEFERRED_DENIAL) as AuditEventInput | undefined;
+  if (!event) return;
+  c.set(DEFERRED_DENIAL, undefined);
+  try {
+    await recordAuditEvent(ctx.db, event);
+  } catch (e) {
+    console.error("could not audit an authorization denial:", e);
+  }
+}
+
+/**
  * Full authorization for one action (ADR-0015/0018): loads role, grants, and
  * requirements, evaluates, audits denials, and maps denial classes:
  * no visibility -> 404-equivalent; visible but denied -> PERMISSION_DENIED;

@@ -54,6 +54,7 @@ export const ENFORCEABLE_CONTROLS: ReadonlySet<SecurityControlName> = new Set<Se
   "requirement-protection",
   "credential-lifetime",
   "passkey-verification",
+  "admin-step-up",
 ]);
 
 /** The modes a change may set for this control in this release. */

@@ -188,6 +188,8 @@ import { lockPeople, lockPerson, type PersonRef } from "../domain/personlocks.js
 import {
   STATUS_BY_CODE,
   authorize,
+  authorizeInTransaction,
+  auditDeferredDenial,
   bodyHash,
   decide,
   recordDenial,
@@ -681,6 +683,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.onError(async (err, c) => {
     const reqId = (c.get("requestId") as string) ?? requestId();
+    // A denial found by a protected operation's recheck inside its
+    // transaction (ADR-0054 Decision 3), which the refusal rolled back:
+    // recorded now, once (support.ts authorizeInTransaction).
+    await auditDeferredDenial(ctx, c);
     if (err instanceof OrganizationFrozenError) {
       // Final for this request: clients back off (ADR-0055 Decision 8). One
       // audit event per refusal, after the transaction or snapshot ended.
@@ -2014,7 +2020,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const deleted = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
       deleteProject(ctx, gate, org.id, project.id, {
         authorizeIn: async (db) => {
-          await authorize({ ...ctx, db }, c, principal, "project.manage", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
+          await authorizeInTransaction(ctx, db, c, principal, "project.manage", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
         },
       }));
     return c.json({ projectId: project.id, slug: project.slug, ...deleted });
@@ -2366,8 +2372,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       const { unexpanded, ...result } = phase.enforce
         ? await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
             disclose(exportGuard(ctx, gate, state, body, selectDisclosure(state, body).selected, async (db) => {
-              const again = await decide({ ...ctx, db }, c, principal, "secret.reveal", phase.resource);
-              if (!again.allowed) throw again.error;
+              await authorizeInTransaction(ctx, db, c, principal, "secret.reveal", phase.resource);
             })))
         : await disclose();
       c.header("Cache-Control", "no-store");
@@ -2709,7 +2714,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
    * once its approval was consumed (ADR-0054 Decision 3).
    */
   const identityManageIn = (c: Context, principal: Principal, organizationId: string) => async (db: Querier) => {
-    await authorize({ ...ctx, db }, c, principal, "identity.manage", { organizationId }, { hideExistence: true });
+    await authorizeInTransaction(ctx, db, c, principal, "identity.manage", { organizationId }, { hideExistence: true });
   };
 
   app.post("/v1/organizations/:org/identities", async (c) => {
@@ -3403,14 +3408,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
    * once its approval was consumed (ADR-0054 Decision 3).
    */
   const policyManageIn = (c: Context, principal: Principal, organizationId: string) => async (db: Querier) => {
-    await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId }, { hideExistence: true });
+    await authorizeInTransaction(ctx, db, c, principal, "policy.manage", { organizationId }, { hideExistence: true });
   };
   /**
    * An action rechecked inside a protected operation's transaction, once its
    * approval was consumed (ADR-0054 Decision 3).
    */
   const actionIn = (c: Context, principal: Principal, organizationId: string, action: Action) => async (db: Querier) => {
-    await authorize({ ...ctx, db }, c, principal, action, { organizationId }, { hideExistence: true });
+    await authorizeInTransaction(ctx, db, c, principal, action, { organizationId }, { hideExistence: true });
   };
   /** A protected operation's gate (ADR-0054): the header is read only when a control at enforce asks for an approval. */
   const approvalGate = <T>(c: Context, run: (gate: ProtectedGate) => Promise<T>) =>
@@ -3957,7 +3962,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
             return requirementUpdateBinding(db, org, current, next, body.expectedVersion);
           },
           authorizeIn: async (db) => {
-            await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
+            await authorizeInTransaction(ctx, db, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
           },
         });
         const res = await lockedQuery(
@@ -4047,7 +4052,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
             return requirementRevokeBinding(db, org, current);
           },
           authorizeIn: async (db) => {
-            await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
+            await authorizeInTransaction(ctx, db, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
           },
         });
         const locked = (await lockedQuery(

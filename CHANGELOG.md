@@ -31,20 +31,18 @@ fixes.
 - **Runners and scripts: `ORGANIZATION_FROZEN` is final.** It answers HTTP
   409 with `Retry-After: 300`. The CLI exits with status 77 and never
   retries it; back off in your own runners too.
-- **Requirement protection can now be enforced.** With
-  `varlatch security set requirement-protection enforce` (or from the
-  Security page), editing or removing one of the organization's Tailnet
-  Requirements needs the approval of the person asking, with a trusted
-  passkey, for exactly that change. A stolen sign-in or a machine
-  credential with `policy.manage` can then no longer remove a Requirement
-  from off the tailnet; a machine credential is refused outright.
-  Creating a Requirement, and an edit that changes nothing, need no
-  approval. `varlatch tailnet remove` waits for the approval like
-  `varlatch security set`; the dashboard opens the approval dialog. The
-  audit events `requirement.updated` and `requirement.revoked` name the
-  approval used. Every control stays off until an admin turns it on, and
-  `admin-step-up` still refuses `enforce` (`CONTROL_MODE_UNAVAILABLE`).
-  See [Requirement
+- **Requirement protection can now be enforced.** With `varlatch security
+  set requirement-protection enforce` (or from the Security page), editing
+  or removing one of the organization's Tailnet Requirements needs the
+  approval of the person asking, with a trusted passkey, for exactly that
+  change. A stolen sign-in or a machine credential with `policy.manage` can
+  then no longer remove a Requirement from off the tailnet; a machine
+  credential is refused outright. Creating a Requirement, and an edit that
+  changes nothing, need no approval. `varlatch tailnet remove` waits for the
+  approval like `varlatch security set`; the dashboard opens the approval
+  dialog. The audit events `requirement.updated` and `requirement.revoked`
+  name the approval used. Every control stays off until an admin turns it
+  on. See [Requirement
   protection](docs/reference/security-controls.md#requirement-protection).
 - **Credential lifetime can now be enforced.** With
   `varlatch security set credential-lifetime enforce --default-ttl <s>
@@ -59,56 +57,48 @@ fixes.
   one, like any loosening. The `credential.issued` audit event says
   `lifetimeDefaulted` when the default was applied. See [Credential
   lifetime](docs/reference/security-controls.md#credential-lifetime).
-- **Admin step-up: approvals for machine identities are built.**
-  Creating a machine identity, issuing a credential, reactivating an
-  identity, and adding or removing an OIDC binding will each need the
-  approval of the person asking, for exactly that request, once
-  `admin-step-up` can be enforced; a machine credential will be refused.
-  It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
-  changes now, and with every control off nothing changes at all. See
+- **Admin step-up: approvals for machine identities are built.** Creating a
+  machine identity, issuing a credential, reactivating an identity, and
+  adding or removing an OIDC binding each need the approval of the person
+  asking, for exactly that request, while `admin-step-up` is enforced; a
+  machine credential is refused. With every control off nothing changes. See
   [Admin step-up](docs/reference/security-controls.md#admin-step-up).
 - **Admin step-up: approvals for Grants, roles, groups and teams are
   built.** Creating, replacing or revoking a Grant; creating, changing or
-  deleting a role, a group or a team; adding or removing their members;
-  and giving a team a project or taking it away will each need the
-  approval of the person asking, for exactly that request, once
-  `admin-step-up` can be enforced; a machine credential will be refused.
-  Revoking a Grant stays possible during an incident freeze and still
-  asks. It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
-  changes now, and with every control off nothing changes at all. In
-  report mode, a Grant replacement or a role edit that only reorders
-  actions is no longer counted. Every approval summary, Tailnet
+  deleting a role, a group or a team; adding or removing their members; and
+  giving a team a project or taking it away each need the approval of the
+  person asking, for exactly that request, while `admin-step-up` is
+  enforced; a machine credential is refused. Revoking a Grant stays possible
+  during an incident freeze and still asks. With every control off nothing
+  changes. In report mode, a Grant replacement or a role edit that only
+  reorders actions is no longer counted. Every approval summary, Tailnet
   Requirement edits and removals included, quotes every name and value and
-  names each existing item by its id. See
-  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+  names each existing item by its id. See [Admin
+  step-up](docs/reference/security-controls.md#admin-step-up).
 - **Dashboard: adding or removing a group or team member, and giving a
   team a project or taking it away, now show an error when they fail.**
   They used to fail silently.
-- **Admin step-up: approvals for people are built.** Inviting someone as
-  an admin, promoting a member, demoting an admin (yourself included) and
-  removing someone will each need the approval of the person asking, for
-  exactly that request, once `admin-step-up` can be enforced; an admin
-  invitation by a machine credential will be refused. Leaving an
-  organization and inviting a member never ask. The last-admin rule
-  still refuses first, before any approval, and again when it is used.
-  Removing someone and demoting an admin stay possible during an incident
-  freeze and still ask. It cannot be enforced yet
-  (`CONTROL_MODE_UNAVAILABLE`), so nothing changes now, and with every
-  control off nothing changes at all. See
-  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up: approvals for people are built.** Inviting someone as an
+  admin, promoting a member, demoting an admin (yourself included) and
+  removing someone each need the approval of the person asking, for exactly
+  that request, while `admin-step-up` is enforced; an admin invitation by a
+  machine credential is refused. Leaving an organization and inviting a
+  member never ask. The last-admin rule still refuses first, before any
+  approval, and again when it is used. Removing someone and demoting an
+  admin stay possible during an incident freeze and still ask. With every
+  control off nothing changes. See [Admin
+  step-up](docs/reference/security-controls.md#admin-step-up).
 - **Admin step-up: approvals for integrations are built.** Creating,
   changing or deleting a webhook; creating a connection, replacing its
   credential or revoking it; and registering, importing, replacing the key
-  of or removing the GitHub App will each need the approval of the person
-  asking, for exactly that request, once `admin-step-up` can be enforced; a
-  machine credential will be refused. A webhook address, a credential and
-  a private key are covered by the approval without being stored in it.
-  Importing an App, replacing its key and connecting an installation send
-  nothing to GitHub before the approval. Revoking a connection stays
-  possible during an incident freeze and still asks. It cannot be enforced
-  yet (`CONTROL_MODE_UNAVAILABLE`), so nothing changes now, and with every
-  control off nothing changes at all. See
-  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+  of or removing the GitHub App each need the approval of the person asking,
+  for exactly that request, while `admin-step-up` is enforced; a machine
+  credential is refused. A webhook address, a credential and a private key
+  are covered by the approval without being stored in it. Importing an App,
+  replacing its key and connecting an installation send nothing to GitHub
+  before the approval. Revoking a connection stays possible during an
+  incident freeze and still asks. With every control off nothing changes.
+  See [Admin step-up](docs/reference/security-controls.md#admin-step-up).
 - **GitHub App registration is staged.** When an approval is needed, the
   App GitHub hands over is kept as pending, its key encrypted, until it is
   attached; with none needed, it is attached in the same transaction, as
@@ -120,25 +110,57 @@ fixes.
   ended is refused without a link to delete its App, which may be the one
   attached. Migration 50. With every control off, the registration start's
   `id` and the two new routes are the only visible changes.
-- **Admin step-up: approvals for deletion and export are built.** Deleting
-  a project, scheduling an organization's deletion and exporting Secrets
-  to a `.env` file from the dashboard will each need the approval of the
-  person asking, for exactly that request, once `admin-step-up` can be
-  enforced; a machine credential will be refused. Scheduling a deletion
-  still waits the full period, and still needs a second admin's approval
-  when there is more than one admin. An export's approval covers the exact
-  set of Secret names in the file; if a value changes while the export is
-  being prepared, nothing is disclosed and the dashboard repeats it with
-  the same approval. It cannot be enforced yet
-  (`CONTROL_MODE_UNAVAILABLE`), so nothing changes now, and with every
-  control off nothing changes at all. See
-  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up: approvals for deletion and export are built.** Deleting a
+  project, scheduling an organization's deletion and exporting Secrets to a
+  `.env` file from the dashboard each need the approval of the person
+  asking, for exactly that request, while `admin-step-up` is enforced; a
+  machine credential is refused. Scheduling a deletion still waits the full
+  period, and still needs a second admin's approval when there is more than
+  one admin. An export's approval covers the exact set of Secret names in
+  the file; if a value changes while the export is being prepared, nothing
+  is disclosed and the dashboard repeats it with the same approval. With
+  every control off nothing changes. See [Admin
+  step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up can now be enforced.** With
+  `varlatch security set admin-step-up enforce` (or from the Security
+  page), each of its 40 operations needs the approval of the person
+  asking, with a trusted passkey that verifies them, for exactly that
+  request: creating machine identities and issuing their credentials,
+  reactivating them and managing their OIDC bindings; Grants, roles,
+  groups and teams, their members and a team's projects; inviting an
+  admin, promoting, demoting and removing members; webhooks, connections
+  and the GitHub App; deleting a project, scheduling the organization's
+  deletion and exporting Secrets to a `.env` file. A stolen sign-in can no
+  longer make these changes without the person's passkey, and a machine
+  credential is refused outright, so automation that makes them stops:
+  look at report mode first. Value reads, `varlatch run`, sync and the
+  other changes never ask. If nobody can approve, the host operator's
+  `admin reenroll` enrolls a trusted passkey, and `admin security reset
+  --control admin-step-up` turns the control off and closes its open
+  approvals. Every control stays off until an admin turns it on, new
+  installations included; with every control off nothing changes, apart
+  from `security.enforce.admin-step-up` in `GET /v1/meta` and `enforce`
+  in the control's `availableModes`. See [Admin
+  step-up](docs/reference/security-controls.md#admin-step-up), including
+  the order in which the controls refuse a request.
+- **Approval summaries say where a credential's lifetime comes from.**
+  Creating a machine identity with a credential, and issuing one, now
+  say whether the lifetime shown was asked for, is the organization's
+  default under `credential-lifetime`, or is none because none was asked
+  for.
+- **Fixed: a refused approved request is recorded in the audit log.**
+  When an admin-step-up or requirement-protection operation used its
+  approval and then found that the person had lost the action meanwhile,
+  it was refused but left no `authorization.denied` event. It now records
+  one, the same as for any other refusal, and the approval stays unused.
+- **The API description documents every approval.** Each route that can
+  answer `STEP_UP_REQUIRED` declares that answer and the
+  `Varlatch-Approval` header.
 - **Removing a trusted passkey needs an approval** once you are a member of
-  an organization that enforces a control (`requirement-protection`,
-  `credential-lifetime` or `passkey-verification`). Removing an unconfirmed passkey
-  never does. If you lose your trusted passkeys, the host operator's
-  `admin reenroll` enrolls a new one, and `admin security reset` turns the
-  control off.
+  an organization that enforces a control (any of the four). Removing an
+  unconfirmed passkey never does. If you lose your trusted passkeys, the
+  host operator's `admin reenroll` enrolls a new one, and `admin security
+  reset` turns the control off.
 - **Passkey verification can now be enforced.** With
   `varlatch security set passkey-verification enforce` (or from the
   Security page), the organization refuses requests by a person's
@@ -186,13 +208,18 @@ fixes.
 
 - `GET /v1/meta` lists `security.enforce.<control>` for each control the
   server can enforce (`security.enforce.requirement-protection`,
-  `security.enforce.credential-lifetime` and
-  `security.enforce.passkey-verification` in this release). Each item of `GET /v1/organizations/{org}/security/controls`
-  gains its own `availableModes`. `varlatch security status --json` gains
+  `security.enforce.credential-lifetime`,
+  `security.enforce.passkey-verification` and
+  `security.enforce.admin-step-up` in this release: all four). Each item
+  of `GET /v1/organizations/{org}/security/controls` gains its own
+  `availableModes`. `varlatch security status --json` gains
   `enforceable`.
-- `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}` can
-  answer `403 STEP_UP_REQUIRED`: repeat the request with the
-  `Varlatch-Approval` header once it is approved. A removal whose
+- `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}`, and
+  every route of an admin-step-up operation, can answer
+  `403 STEP_UP_REQUIRED`: repeat the request with the
+  `Varlatch-Approval` header once it is approved. The OpenAPI description
+  declares that answer (`components.responses.StepUpRequired`) and the
+  header on each of them. A removal whose
   Requirement changed meanwhile answers `STATE_CHANGED`.
 - New error code `CREDENTIAL_LIFETIME_EXCEEDED` (HTTP 422, with
   `details.requestedTtlSeconds` and `details.maxTtlSeconds`): `POST

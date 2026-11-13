@@ -291,6 +291,20 @@ describe("varlatch security set", () => {
     ]);
   });
 
+  it("says what turning admin-step-up to enforce does, and how to get back in (ADR-0054 step 4.9)", async () => {
+    controls = controls.map((c) => ({ ...c, availableModes: ["off", "report", "enforce"] }));
+    const r = await cli(["security", "set", "admin-step-up", "enforce"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.split("\n")).toEqual([
+      "admin-step-up in acme: report -> enforce, version 3.",
+      "From now on each administrative change in acme (machine identities and credentials, grants, roles, groups and teams,",
+      "admins and members, integrations, deletion and .env export) needs the approval of the person asking, with a trusted passkey.",
+      "Machine credentials are refused for these changes. Without a trusted passkey, the host operator can enroll one",
+      "(varlatch admin reenroll) or turn the control off (varlatch admin security reset).",
+      "",
+    ]);
+  });
+
   it("explains a refusal for an unverified sign-in, and exits 77 (ADR-0054 Decision 7)", async () => {
     verificationRequired = "not-user-verified";
     const r = await cli(["security", "controls"]);

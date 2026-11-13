@@ -127,6 +127,7 @@ export const CAPABILITIES = [
   "security.enforce.requirement-protection",
   "security.enforce.credential-lifetime",
   "security.enforce.passkey-verification",
+  "security.enforce.admin-step-up",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
