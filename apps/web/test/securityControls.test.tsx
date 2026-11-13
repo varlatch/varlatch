@@ -258,6 +258,23 @@ describe("the Security controls section", () => {
     expect(text(one("security-control-error-passkey-verification"))).toContain("Your own sign-in would be refused, so nothing was changed");
   });
 
+  it("says what enforcing admin-step-up does and how to get back in (ADR-0054 step 4.9)", async () => {
+    fake.api.listSecurityControls = vi.fn(async () => ({
+      items: CONTROLS.map((c) => ({ ...c, availableModes: ["off", "report", "enforce"] })),
+      availableModes: ["off", "report"],
+    }));
+    await mount(<Controls />);
+    expect(text(one("security-controls-enforce-note"))).toBe("The control applies.");
+    await click("security-control-select-admin-step-up-enforce");
+    const note = text(one("security-control-enforce-note-admin-step-up"));
+    expect(note).toContain("needs the approval of the person asking, with a trusted passkey");
+    expect(note).toContain("A machine credential is refused");
+    expect(note).toContain("look at report first");
+    expect(note).toContain("varlatch admin security reset");
+    await click("security-control-save-admin-step-up");
+    expect(fake.api.changeSecurityControl).toHaveBeenCalledWith("acme", "admin-step-up", { mode: "enforce", expectedVersion: 0 });
+  });
+
   it("shows a member the controls without anything to change", async () => {
     await mount(<Controls admin={false} />);
     expect(byTestId("security-control-admin-step-up")).toHaveLength(1);

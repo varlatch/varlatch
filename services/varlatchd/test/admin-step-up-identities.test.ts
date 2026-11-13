@@ -19,9 +19,9 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  * admin-step-up for machine identities, credentials and OIDC bindings
  * (ADR-0054 step 4.5), on PGlite under the lock-order check
  * (test/helpers/lock-trace.ts): identity.create, credential.issue,
- * identity.reactivate, oidc_binding.create and oidc_binding.delete. The
- * API still refuses `enforce` for admin-step-up (it is unlocked in step
- * 4.9), so these tests set it directly in the database. With every control
+ * identity.reactivate, oidc_binding.create and oidc_binding.delete. These tests set admin-step-up's
+ * enforce directly in the database (written before the unlock); setting
+ * it through the API is tested in admin-step-up-catalogue.test.ts. With every control
  * off nothing changes; report mode counts and refuses nothing; under
  * enforce each operation needs the requester's approval bound to exactly
  * that request, as the binding catalogue says, and a machine credential is
@@ -113,8 +113,8 @@ const setMode = async (control: string, mode: string, config?: unknown) =>
   call("PATCH", `${CONTROLS}/${control}`, admin.cli, { mode, ...(config === undefined ? {} : { config }), expectedVersion: (await controlOf(control)).version });
 
 /**
- * admin-step-up at enforce, written directly: the API refuses it until
- * ADR-0054 step 4.9 unlocks the control (CONTROL_MODE_UNAVAILABLE).
+ * admin-step-up at enforce, written directly in the database (the API
+ * accepts it since ADR-0054 step 4.9 unlocked the control).
  */
 async function enforceAdminStepUp() {
   await ctx.db.query(
@@ -207,16 +207,17 @@ afterEach(async () => {
   await ctx.close();
 });
 
-describe("admin-step-up's enforce stays unavailable", () => {
-  it("is refused by the API with CONTROL_MODE_UNAVAILABLE and not advertised", async () => {
-    expect(ENFORCEABLE_CONTROLS.has("admin-step-up")).toBe(false);
-    const res = await setMode("admin-step-up", "enforce");
-    expect(res.status).toBe(422);
-    expect(res.body.error).toMatchObject({ code: "CONTROL_MODE_UNAVAILABLE", details: { control: "admin-step-up", mode: "enforce", availableModes: ["off", "report"] } });
-    expect((await controlOf("admin-step-up")).availableModes).toEqual(["off", "report"]);
+describe("admin-step-up's enforce, set through the API (unlocked in step 4.9)", () => {
+  it("is advertised and accepted as tightening, without an approval; identity.create then asks for one", async () => {
+    expect(ENFORCEABLE_CONTROLS.has("admin-step-up")).toBe(true);
+    expect((await controlOf("admin-step-up")).availableModes).toEqual(["off", "report", "enforce"]);
     const meta = (await call("GET", "/v1/meta", admin.cli)).body.capabilities as string[];
-    expect(meta).not.toContain("security.enforce.admin-step-up");
-    expect(await count("SELECT count(*)::int AS n FROM security_controls")).toBe(0);
+    expect(meta).toContain("security.enforce.admin-step-up");
+    const res = await setMode("admin-step-up", "enforce");
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ changed: true, loosened: false, control: { control: "admin-step-up", mode: "enforce", version: 1 } });
+    expect(await intents()).toBe(0);
+    expect(stepUp(await createMachine(admin.cli, { name: "billing", kind: "service" })).operation).toBe("identity.create");
   });
 });
 
@@ -290,11 +291,11 @@ describe("under enforce", () => {
     const create = stepUp(await createMachine(admin.cli, { name: "billing", kind: "service", credentialTtlSeconds: 86_400, credentialMaxUses: 5 }));
     expect(create).toMatchObject({ operation: "identity.create", organization: { id: orgId, slug: "acme" }, state: "pending" });
     expect(create.summary).toEqual({
-      title: 'Create machine identity "billing" (service), with a credential that expires after 1 day',
+      title: 'Create machine identity "billing" (service), with a credential that expires after 1 day (as requested)',
       changes: [
         { field: "name", from: null, to: '"billing"', loosens: false },
         { field: "kind", from: null, to: "service", loosens: false },
-        { field: "credentialExpiry", from: null, to: "after 1 day", loosens: false },
+        { field: "credentialExpiry", from: null, to: "after 1 day (as requested)", loosens: false },
         { field: "credentialUses", from: null, to: "5 uses", loosens: false },
       ],
     });
@@ -307,7 +308,7 @@ describe("under enforce", () => {
     });
     const issuing = stepUp(await issue(admin.cli, f.svc, { name: "backup job" }));
     expect(issuing).toMatchObject({ operation: "credential.issue", organization: { id: orgId } });
-    expect(issuing.summary.title).toBe(`Issue credential "backup job" for service "api" (${f.svc}), never expiring, unlimited`);
+    expect(issuing.summary.title).toBe(`Issue credential "backup job" for service "api" (${f.svc}), never expiring (none was requested), unlimited`);
     const reactivating = stepUp(await reactivate(admin.cli, f.old));
     expect(reactivating).toMatchObject({ operation: "identity.reactivate", summary: { title: `Reactivate machine identity "old-worker" (${f.old}). It has no working credential until one is issued`, changes: [] } });
     const binding = stepUp(await addBinding(admin.cli, f.ci, ciBinding("repo:acme/web:*", { claims: { ref: "refs/heads/main", environment: "prod" } })));
@@ -579,10 +580,15 @@ describe("with the other controls", () => {
     expect(await intents()).toBe(0);
 
     const asked = stepUp(await createMachine(admin.cli, { name: "billing", kind: "service" }));
-    expect(asked.summary.title).toBe('Create machine identity "billing" (service), with a credential that expires after 1 hour');
+    expect(asked.summary.title).toBe('Create machine identity "billing" (service), with a credential that expires after 1 hour (the organization\'s default, since none was requested)');
     await approve(admin, asked.id);
     // An explicit TTL equal to the default is another request: it binds what was asked for.
     invalid(await createMachine(admin.cli, { name: "billing", kind: "service", credentialTtlSeconds: 3600 }, asked.id), "mismatch");
+    // and its summary says the lifetime was asked for, not defaulted (follow-up e).
+    expect(stepUp(await createMachine(admin.cli, { name: "billing", kind: "service", credentialTtlSeconds: 3600 })).summary).toMatchObject({
+      title: 'Create machine identity "billing" (service), with a credential that expires after 1 hour (as requested)',
+      changes: expect.arrayContaining([{ field: "credentialExpiry", from: null, to: "after 1 hour (as requested)", loosens: false }]),
+    });
     // A new default (tightening needs no approval) changes the effective TTL: the approval no longer fits.
     expect((await setMode("credential-lifetime", "enforce", { defaultTtlSeconds: 1800, maxTtlSeconds: 86_400 })).status).toBe(200);
     invalid(await createMachine(admin.cli, { name: "billing", kind: "service" }, asked.id), "mismatch");
@@ -607,10 +613,14 @@ describe("with the other controls", () => {
     expect(await intents()).toBe(before);
 
     const asked = stepUp(await issue(admin.cli, svc, { name: "job" }));
-    expect(asked.summary.title).toBe(`Issue credential "job" for service "api" (${svc}), expiring after 1 hour, unlimited`);
+    expect(asked.summary.title).toBe(`Issue credential "job" for service "api" (${svc}), expiring after 1 hour (the organization's default, since none was requested), unlimited`);
     await approve(admin, asked.id);
     // An explicit TTL equal to the default is another request.
     invalid(await issue(admin.cli, svc, { name: "job", ttlSeconds: 3600 }, asked.id), "mismatch");
+    expect(stepUp(await issue(admin.cli, svc, { name: "job", ttlSeconds: 3600 })).summary).toMatchObject({
+      title: `Issue credential "job" for service "api" (${svc}), expiring after 1 hour (as requested), unlimited`,
+      changes: expect.arrayContaining([{ field: "credentialExpiry", from: null, to: "after 1 hour (as requested)", loosens: false }]),
+    });
     // A new default changes the effective TTL: the approval no longer fits.
     expect((await setMode("credential-lifetime", "enforce", { defaultTtlSeconds: 1800, maxTtlSeconds: 86_400 })).status).toBe(200);
     invalid(await issue(admin.cli, svc, { name: "job" }, asked.id), "mismatch");

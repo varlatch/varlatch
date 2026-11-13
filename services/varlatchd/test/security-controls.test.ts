@@ -11,6 +11,7 @@ import {
   canonicalJson,
   consumeApproval,
   type ApprovalBinding,
+  type ApprovalGate,
   type Requester,
 } from "../src/domain/approvals.js";
 
@@ -24,7 +25,17 @@ const consumeAsOperation: typeof consumeApproval = async (db, key, requester, ap
   return consumeApproval(db, key, requester, approvalId, binding);
 };
 import { lockPerson } from "../src/domain/personlocks.js";
-import { classifyChange, parseResetArgs, resetControls, resetReportLines } from "../src/domain/securitycontrols.js";
+import {
+  ENFORCEABLE_CONTROLS,
+  SECURITY_CONTROLS,
+  availableModesOf,
+  changeControl,
+  classifyChange,
+  parseResetArgs,
+  resetControls,
+  resetReportLines,
+  type SecurityControlName,
+} from "../src/domain/securitycontrols.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { migratedTestDb } from "./helpers/pglite.js";
@@ -169,7 +180,8 @@ describe("reading the controls", () => {
       availableModes: ["off", "report"],
       items: ["requirement-protection", "admin-step-up", "passkey-verification", "credential-lifetime"].map((control) => ({
         control, mode: "off", config: null, version: 0, changedAt: null, changedBy: null,
-        availableModes: control === "admin-step-up" ? ["off", "report"] : ["off", "report", "enforce"],
+        // Every control is unlocked (ADR-0054 step 4.9 unlocked the last, admin-step-up).
+        availableModes: ["off", "report", "enforce"],
       })),
     });
   });
@@ -202,9 +214,16 @@ describe("changing a control", () => {
   });
 
   it("refuses enforce for a control this release cannot enforce, with CONTROL_MODE_UNAVAILABLE, and stores nothing", async () => {
-    const res = await set(admin.cli, "admin-step-up", { mode: "enforce", expectedVersion: 0 });
-    expect(res.status).toBe(422);
-    expect(res.body.error).toMatchObject({ code: "CONTROL_MODE_UNAVAILABLE", details: { control: "admin-step-up", mode: "enforce", availableModes: ["off", "report"] } });
+    // Every control of this release is unlocked; the refusal stays for one
+    // a later release adds before it can enforce it.
+    expect(SECURITY_CONTROLS.filter((c) => !ENFORCEABLE_CONTROLS.has(c))).toEqual([]);
+    const future = "future-control" as SecurityControlName;
+    expect(availableModesOf(future)).toEqual(["off", "report"]);
+    const gate: ApprovalGate = { require: async () => { throw new Error("no approval is asked for"); } };
+    await expect(changeControl(ctx, gate, {
+      organizationId: orgId, control: future, mode: "enforce", expectedVersion: 0, actorIdentityId: admin.id, requestId: "req_test",
+      authorizeIn: async () => undefined,
+    })).rejects.toMatchObject({ code: "CONTROL_MODE_UNAVAILABLE", details: { control: future, mode: "enforce", availableModes: ["off", "report"] } });
     expect(await rows("SELECT count(*)::int AS n FROM security_controls")).toEqual([{ n: 0 }]);
     expect(await rows("SELECT count(*)::int AS n FROM approval_intents")).toEqual([{ n: 0 }]);
   });

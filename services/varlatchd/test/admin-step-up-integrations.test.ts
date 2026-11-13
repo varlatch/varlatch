@@ -22,9 +22,9 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  * admin-step-up for integrations (ADR-0054 step 4.8), on PGlite under the
  * lock-order check (test/helpers/lock-trace.ts): webhooks, Platform
  * Connections and every GitHub App path, registration's staged attachment
- * and the secret-bearing requests included. The API still refuses
- * `enforce` for admin-step-up (it is unlocked in step 4.9), so these tests
- * set it directly in the database. With every control off nothing
+ * and the secret-bearing requests included. These tests set admin-step-up's
+ * enforce directly in the database (written before the unlock); setting
+ * it through the API is tested in admin-step-up-catalogue.test.ts. With every control off nothing
  * changes; report mode counts and refuses nothing; under enforce each
  * operation needs the requester's approval bound to exactly that request,
  * as the binding catalogue says, and a machine credential is refused
@@ -115,7 +115,7 @@ async function controlOf(control: string) {
 const setMode = async (control: string, mode: string) =>
   call("PATCH", `${CONTROLS}/${control}`, admin.cli, { mode, expectedVersion: (await controlOf(control)).version });
 
-/** admin-step-up at enforce, written directly: the API refuses it until step 4.9. */
+/** admin-step-up at enforce, written directly in the database (the API accepts it since step 4.9). */
 async function enforceAdminStepUp() {
   await ctx.db.query(
     `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)
@@ -262,12 +262,13 @@ async function registerApp() {
   return res.body.app as { id: string; githubAppId: number; version: number; slug: string };
 }
 
-describe("admin-step-up's enforce stays unavailable", () => {
-  it("is refused by the API with CONTROL_MODE_UNAVAILABLE", async () => {
-    expect(ENFORCEABLE_CONTROLS.has("admin-step-up")).toBe(false);
+describe("admin-step-up's enforce, set through the API (unlocked in step 4.9)", () => {
+  it("is accepted as tightening, without an approval; webhook.create then asks for one", async () => {
+    expect(ENFORCEABLE_CONTROLS.has("admin-step-up")).toBe(true);
     const res = await setMode("admin-step-up", "enforce");
-    expect(res.status).toBe(422);
-    expect(res.body.error).toMatchObject({ code: "CONTROL_MODE_UNAVAILABLE" });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ changed: true, loosened: false, control: { mode: "enforce" } });
+    expect(stepUp(await createHook(admin.cli)).operation).toBe("webhook.create");
   });
 
   it("names the ten integration operations among those the operator's reset closes", () => {

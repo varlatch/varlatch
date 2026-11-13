@@ -16,8 +16,9 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  * admin-step-up for deletion and export (ADR-0054 step 4.9, amendments B
  * and C), on PGlite under the lock-order check (test/helpers/lock-trace.ts):
  * deleting a Project, scheduling the Organization's deletion, and a Secret
- * disclosure with purpose "export". The API still refuses `enforce` for
- * admin-step-up, so these tests set it directly in the database.
+ * disclosure with purpose "export". These tests set admin-step-up's
+ * enforce directly in the database (written before the unlock); setting
+ * it through the API is tested in admin-step-up-catalogue.test.ts.
  *
  * - With every control off nothing changes; report mode counts and refuses
  *   nothing; under enforce each needs the requester's approval bound as the
@@ -115,7 +116,7 @@ const controlOf = async (control: string) =>
 const setMode = async (control: string, mode: string) =>
   call("PATCH", `${ORG}/security/controls/${control}`, admin.cli, { mode, expectedVersion: (await controlOf(control)).version });
 
-/** admin-step-up at enforce, written directly: the API refuses it until the control is unlocked. */
+/** admin-step-up at enforce, written directly in the database (the API accepts it since step 4.9). */
 async function enforceAdminStepUp() {
   await ctx.db.query(
     `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)
@@ -253,12 +254,13 @@ afterEach(async () => {
   await ctx.close();
 });
 
-describe("admin-step-up's enforce stays unavailable", () => {
-  it("is refused by the API with CONTROL_MODE_UNAVAILABLE", async () => {
-    expect(ENFORCEABLE_CONTROLS.has("admin-step-up")).toBe(false);
+describe("admin-step-up's enforce, set through the API (unlocked in step 4.9)", () => {
+  it("is accepted as tightening, without an approval; project.delete then asks for one", async () => {
+    expect(ENFORCEABLE_CONTROLS.has("admin-step-up")).toBe(true);
     const res = await setMode("admin-step-up", "enforce");
-    expect(res.status).toBe(422);
-    expect(res.body.error.code).toBe("CONTROL_MODE_UNAVAILABLE");
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ changed: true, loosened: false, control: { mode: "enforce" } });
+    expect(stepUp(await deleteProject(admin.cli)).operation).toBe("project.delete");
   });
 });
 

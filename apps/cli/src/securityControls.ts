@@ -208,6 +208,14 @@ export function setLines(organization: string, before: SecurityControlMode | nul
       `${c.config ? ` (${configWords(c.config)})` : ""}, version ${c.version}.`,
   ];
   if (change.loosened) lines.push("This loosened the control; your approval was used.");
+  if (c.control === "admin-step-up" && c.mode === "enforce" && before !== "enforce") {
+    lines.push(
+      `From now on each administrative change in ${organization} (machine identities and credentials, grants, roles, groups and teams,`,
+      "admins and members, integrations, deletion and .env export) needs the approval of the person asking, with a trusted passkey.",
+      "Machine credentials are refused for these changes. Without a trusted passkey, the host operator can enroll one",
+      "(varlatch admin reenroll) or turn the control off (varlatch admin security reset).",
+    );
+  }
   if (c.control === "passkey-verification" && c.mode === "enforce" && before !== "enforce") {
     lines.push(
       `From now on ${organization} refuses a person's sign-in that was not made with a trusted passkey that verified them (PIN, fingerprint or face),`,
