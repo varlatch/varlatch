@@ -43,6 +43,11 @@ integrations, Connections, webhooks and machine credentials they were
 shown, keeps working: removal lists it for you to review. The last admin
 of an organization cannot be removed or leave.
 
+When the organization turns on the `admin-step-up` security control,
+removing someone, changing a role and inviting an admin each need your
+approval with a trusted passkey: see
+[Admin step-up](security-controls.md#admin-step-up). Leaving does not.
+
 Then see what they received, from the dashboard (Former members, then
 What they received) or the CLI:
 

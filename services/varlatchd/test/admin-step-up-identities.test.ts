@@ -91,9 +91,17 @@ async function person(identityId: string): Promise<Person> {
   return { id: identityId, cli: cli.token, cliId: cli.credentialId, web: web.token, key };
 }
 
+/**
+ * A new person of the Organization. An admin is invited as a member and
+ * made one in the database: inviting an admin is itself protected by
+ * admin-step-up (step 4.7), which these tests may have at enforce.
+ */
 async function invite(name: string, role: "admin" | "member"): Promise<Person> {
-  const grant = await issueInviteGrant(ctx, { organizationId: orgId, role, name }, admin.id);
+  const grant = await issueInviteGrant(ctx, { organizationId: orgId, role: "member", name }, admin.id);
   const { identityId } = await consumeSetupGrant(ctx, grant.token, {});
+  if (role === "admin") {
+    await ctx.db.query("UPDATE org_memberships SET role = 'admin' WHERE organization_id = $1 AND identity_id = $2", [orgId, identityId]);
+  }
   return person(identityId);
 }
 

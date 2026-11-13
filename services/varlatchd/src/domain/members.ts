@@ -14,9 +14,9 @@ import { withSerializableTx, withSnapshot } from "../db/tx.js";
 import { loadGrants, loadTailnetRequirements } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope, type FreezeException } from "./liveness.js";
-import type { PersonRef } from "./personlocks.js";
-import { reportAdminStepUp } from "./securityreport.js";
+import type { ProtectedGate } from "./approvals.js";
+import { memberRemoveBinding, memberRoleBinding, readMember, removalCounts } from "./peoplestepup.js";
+import { approvalMetadata, prepareProtectedOperation } from "./protected.js";
 import { lockedQuery } from "../db/locks.js";
 
 /**
@@ -102,24 +102,6 @@ async function liveMembership(db: Querier, organizationId: string, identityId: s
     [organizationId, identityId],
   );
   return (res.rows[0] as MembershipRow | undefined) ?? null;
-}
-
-/**
- * The shared Organization lock of ADR-0051's writer protocol. It is
- * compatible with the key-share lock an invitation acceptance's membership
- * insert takes, so the two never deadlock; Organization deletion's
- * exclusive lock excludes it.
- */
-async function lockOrganization(
-  db: Querier,
-  organizationId: string,
-  people: readonly PersonRef[],
-  duringIncidentFreeze?: FreezeException,
-): Promise<void> {
-  // The writer protocol's Organization lock and liveness, freeze included
-  // (ADR-0051): no membership changes while the Organization is being
-  // deleted; then the people (lock order step 2, liveness.ts).
-  await lockLiveScope(db, { organizationId, duringIncidentFreeze, people });
 }
 
 /**
@@ -428,17 +410,37 @@ export async function previewMemberReview(
  * group and team links removed and the pending invitations they issued
  * revoked, then one membership.removed event. Their sign-in and
  * credentials are untouched; from the next request they reach nothing here.
+ *
+ * Removing someone else is a protected operation (ADR-0054):
+ * admin-step-up's member.remove. Under enforce it needs the requester's
+ * approval, bound to the person and the version of their membership
+ * (peoplestepup.ts). The admin check, a missing membership and the
+ * last-admin rule refuse before an approval is asked for, and all three
+ * run again once it is consumed. Leaving is exempt.
  */
 export async function removeMember(
   ctx: AppCtx,
+  gate: ProtectedGate,
   organizationId: string,
   identityId: string,
-  actor: Actor,
 ): Promise<RemovalResult> {
+  const actor = actorOf(gate);
   const left = actor.id === identityId;
   return withSerializableTx(ctx.db, async (db) => {
     // Removal only takes authority away: recovery while frozen (ADR-0055).
-    await lockOrganization(db, organizationId, [actor.id, identityId], "recovery");
+    // Steps 1 and 2 (liveness.ts): the Organization, then both people.
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId, people: [actor.id, identityId], duringIncidentFreeze: "recovery" },
+      checks: left ? [] : [{ control: "admin-step-up", operation: "member.remove" }],
+      binding: async (db) => {
+        await requireLiveAdmin(db, organizationId, actor);
+        const member = await readMember(db, organizationId, identityId);
+        if (!member) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
+        if (member.role === "admin") await requireAnotherAdmin(db, organizationId, identityId);
+        const org = (await db.query("SELECT name FROM organizations WHERE id = $1", [organizationId])).rows[0] as { name: string };
+        return memberRemoveBinding({ id: organizationId, name: org.name }, member, await removalCounts(db, organizationId, identityId));
+      },
+    });
     if (!left) await requireLiveAdmin(db, organizationId, actor);
     const membership = await liveMembership(db, organizationId, identityId);
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
@@ -453,14 +455,18 @@ export async function removeMember(
        WHERE p.organization_id = $1 AND e.deleted_at IS NULL ORDER BY e.id FOR KEY SHARE OF e`,
       [organizationId],
     );
+    // The version the approval bound, under the membership's row lock: a
+    // role change since rolls back this attempt, consumption included.
+    if (prepared.binding) await recheckMembershipVersion(db, organizationId, identityId, prepared.binding.expectedVersion);
 
     const ended = await endMembership(ctx, db, organizationId, identityId, membership.role, actor.id);
     const { removalId, removedAt, grants, groups, invitations } = ended;
     const review = await memberReview(db, organizationId, identityId);
 
     // Report mode (ADR-0054 Decision 9): removing someone else; leaving is
-    // the person's own and not on admin-step-up's list.
-    if (!left) await reportAdminStepUp(db, organizationId, actor.id, "member.remove");
+    // the person's own and not on admin-step-up's list. Before the audit
+    // insert.
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "membership.removed",
       decision: "info",
@@ -474,6 +480,7 @@ export async function removeMember(
         grantsRevoked: grants,
         groupsLeft: groups,
         invitationsRevoked: invitations,
+        ...approvalMetadata(prepared.approval),
       },
     });
     return {
@@ -488,6 +495,32 @@ export async function removeMember(
       review,
     };
   });
+}
+
+/** The person a protected request comes from, as the membership checks take them. */
+function actorOf(gate: ProtectedGate): Actor {
+  return { id: gate.requester.identityId, kind: gate.requester.identityKind };
+}
+
+/**
+ * The membership row at step 10, FOR NO KEY UPDATE (the mode its update
+ * takes), and the version an approval bound for it: a difference refuses,
+ * rolling back the consumption with the rest of the transaction.
+ */
+async function recheckMembershipVersion(db: Querier, organizationId: string, identityId: string, expected: number | null): Promise<void> {
+  const row = (await lockedQuery(
+    db,
+    { table: "org_memberships", mode: "no key update", key: "lock_key" },
+    `SELECT concat_ws('|', organization_id::text, identity_id::text) AS lock_key, version FROM org_memberships
+     WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL FOR NO KEY UPDATE`,
+    [organizationId, identityId],
+  )).rows[0] as { version: number } | undefined;
+  if (!row || Number(row.version) !== expected) {
+    throw new DomainError(
+      "STATE_CHANGED",
+      "The membership changed since the approval was asked for; nothing was changed. Read it again and ask for a new approval",
+    );
+  }
 }
 
 /**
@@ -558,29 +591,52 @@ export async function endMembership(
  * transaction and last-admin rule. Demotion removes the built-in admin
  * bundle only: explicit and group Grants stay, since authorization is
  * additive. The same role again changes nothing and records nothing.
+ *
+ * A protected operation (ADR-0054): admin-step-up's member.promote or
+ * member.demote, self-demotion included. Under enforce it needs the
+ * requester's approval, bound to the person, the resulting role and the
+ * version of their membership (peoplestepup.ts). The admin check, a
+ * missing membership and the last-admin rule refuse before an approval is
+ * asked for, and all three run again once it is consumed; the same role
+ * again needs none.
  */
 export async function changeMemberRole(
   ctx: AppCtx,
+  gate: ProtectedGate,
   organizationId: string,
   identityId: string,
   role: OrgRole,
-  actor: Actor,
 ): Promise<{ identityId: string; role: OrgRole; previousRole: OrgRole }> {
+  const actor = actorOf(gate);
   return withSerializableTx(ctx.db, async (db) => {
     // Demotion only takes authority away: recovery while frozen (ADR-0055);
     // promotion is refused then.
-    await lockOrganization(db, organizationId, [actor.id], role === "member" ? "recovery" : undefined);
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId, people: [actor.id], duringIncidentFreeze: role === "member" ? "recovery" : undefined },
+      checks: [{ control: "admin-step-up", operation: role === "admin" ? "member.promote" : "member.demote" }],
+      binding: async (db) => {
+        await requireLiveAdmin(db, organizationId, actor);
+        const member = await readMember(db, organizationId, identityId);
+        if (!member) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
+        if (member.role === role) return null;
+        if (member.role === "admin") await requireAnotherAdmin(db, organizationId, identityId);
+        return memberRoleBinding({ id: organizationId }, member, role);
+      },
+    });
     await requireLiveAdmin(db, organizationId, actor);
     const membership = await liveMembership(db, organizationId, identityId);
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
     if (membership.role === role) return { identityId, role, previousRole: role };
     if (membership.role === "admin") await requireAnotherAdmin(db, organizationId, identityId);
+    // The version the approval bound, under the membership's row lock.
+    if (prepared.binding) await recheckMembershipVersion(db, organizationId, identityId, prepared.binding.expectedVersion);
     await db.query(
       `UPDATE org_memberships SET role = $3, version = version + 1
        WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL`,
       [organizationId, identityId, role],
     );
-    await reportAdminStepUp(db, organizationId, actor.id, role === "admin" ? "member.promote" : "member.demote");
+    // Report mode (ADR-0054 Decision 9), before the audit insert.
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "membership.role_changed",
       decision: "info",
@@ -588,7 +644,7 @@ export async function changeMemberRole(
       organizationId,
       action: "identity.manage",
       resource: { identityId },
-      metadata: { previousRole: membership.role, role },
+      metadata: { previousRole: membership.role, role, ...approvalMetadata(prepared.approval) },
     });
     return { identityId, role, previousRole: membership.role };
   });

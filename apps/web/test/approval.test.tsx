@@ -251,6 +251,12 @@ describe("words", () => {
     expect(fieldLabel("actionsRemoved")).toBe("Actions removed");
     expect(changeValue("actionsRemoved", null)).toBe("none");
   });
+
+  it("names the role field of a person's invitation, promotion or demotion (admin-step-up)", () => {
+    expect(fieldLabel("role")).toBe("Role");
+    expect(changeValue("role", "admin")).toBe("admin");
+    expect(changeValue("role", null)).toBe("none");
+  });
 });
 
 describe("the inline approval dialog", () => {

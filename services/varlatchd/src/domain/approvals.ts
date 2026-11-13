@@ -195,6 +195,11 @@ export const APPROVAL_OPERATIONS = [
   "team.member_remove",
   "team.project_add",
   "team.project_remove",
+  // admin-step-up: people (step 4.7).
+  "member.invite_admin",
+  "member.promote",
+  "member.demote",
+  "member.remove",
 ] as const;
 export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
 
@@ -212,6 +217,7 @@ export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly Appro
     "group.create", "group.update", "group.delete", "group.member_add", "group.member_remove",
     "team.create", "team.update", "team.delete", "team.member_add", "team.member_remove",
     "team.project_add", "team.project_remove",
+    "member.invite_admin", "member.promote", "member.demote", "member.remove",
   ],
 };
 
@@ -220,14 +226,18 @@ export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly Appro
  * Organization is frozen for an incident (ADR-0055 Decision 3): the lift,
  * and the operations under `recovery` that ask for an approval (ADR-0055
  * Decision 6: admin-step-up still asks for them, such as removing an OIDC
- * binding or revoking a Grant). Account intents (passkey.remove) are not Organization-bound
- * and are unaffected.
+ * binding, revoking a Grant, removing a member or demoting an admin).
+ * Account intents (passkey.remove) are not Organization-bound and are
+ * unaffected. Promoting a member and inviting an admin add authority: they
+ * stay refused while frozen, so no intent is created for them.
  */
 export const OPERATIONS_DURING_FREEZE: ReadonlySet<ApprovalOperation> = new Set([
   "organization.unfreeze",
   "security_control.change",
   "oidc_binding.delete",
   "grant.revoke",
+  "member.remove",
+  "member.demote",
 ]);
 
 export interface ApprovalChange {

@@ -722,6 +722,25 @@ id. Two different requests never read the same. Report mode counts these operati
 requests that change nothing (a current member, an owned project, an
 identical Grant, a role whose actions only change order).
 
+The approvals for people are built too: inviting an admin, promoting a
+member, demoting an admin and removing someone.
+
+| Operation | What the approval covers |
+| --- | --- |
+| `member.invite_admin` | The organization, the invitee's name and the admin role. The invitation link is created when the approved request runs, and is not part of the approval. Inviting a member never asks. |
+| `member.promote` | The person, the admin role, and the version of their membership the server read. Making an admin an admin again needs no approval. |
+| `member.demote` | The person, the member role, and the version of their membership. Demoting yourself asks too. During an incident freeze, demoting an admin is still allowed and still asks. |
+| `member.remove` | The person, at the version of their membership the server read: a person whose role changed since needs a new approval. During an incident freeze, removing someone is still allowed and still asks. Leaving an organization yourself never asks. |
+
+The last admin of an organization still cannot be demoted, removed or
+leave. That refusal comes before any approval, so nobody is asked to
+approve a change that cannot happen, and it is checked again when the
+approval is used: an approval to demote yourself, given while another
+admin existed, is refused once you are the last one, and stays unused.
+Role changes and removals need a live admin of the organization, which a
+machine credential never is; an admin invitation by a machine credential
+that holds `identity.manage` is refused.
+
 ## Removing a passkey
 
 Removing a trusted passkey needs an approval while you are a member of an
