@@ -486,7 +486,7 @@ it("lets Approval Intents name the access-structure operations of admin-step-up,
   // Before 0047: none of them is an operation yet.
   await expect(intent("apr_early", "grant.create", "org_a")).rejects.toThrow(/check constraint/);
 
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([47, 48]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([47, 48, 49]);
   for (const [i, operation] of access.entries()) {
     await intent(`apr_${i}`, operation, "org_a");
     await expect(intent(`apr_noorg_${i}`, operation, null), operation).rejects.toThrow(/check constraint/);
@@ -520,7 +520,7 @@ it("lets Approval Intents name the people operations of admin-step-up, always in
   // Before 0048: none of them is an operation yet.
   await expect(intent("apr_early", "member.remove", "org_a")).rejects.toThrow(/check constraint/);
 
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([48]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([48, 49]);
   for (const [i, operation] of people.entries()) {
     await intent(`apr_${i}`, operation, "org_a");
     await expect(intent(`apr_noorg_${i}`, operation, null), operation).rejects.toThrow(/check constraint/);
