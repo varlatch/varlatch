@@ -8,14 +8,18 @@ import { DomainError } from "./errors.js";
  * withExternalEffect, ADR-0054 Decision 7): what the effect's transaction
  * shares with the outbound calls it makes.
  *
- * - A deadline: an AbortSignal that fires `deadlineMs` after the effect
- *   began. Every outbound call of the effect goes through guardEffectFetch:
- *   none starts once the signal fired, and one in flight is aborted. The
+ * - A deadline, while passkey-verification is at report or enforce for the
+ *   Organization (liveness.ts withExternalEffect decides under the lock):
+ *   an AbortSignal that fires `deadlineMs` after that decision. Every
+ *   outbound call of the effect goes through guardEffectFetch: none starts
+ *   once the signal fired, and one in flight is aborted. The
  *   transaction's own idle cap (`idleMs`, PostgreSQL's
  *   idle_in_transaction_session_timeout) is set above the deadline, so the
  *   Organization lock is still held whenever a call can start: no call
  *   outlives the protection. When the deadline fired, the effect fails
- *   and its transaction rolls back.
+ *   with the deadline error, whatever its code made of the stopped call,
+ *   and its transaction rolls back. With the control off there is no
+ *   deadline and no idle cap.
  * - Outbound refusal records written during the effect (net/outbound.ts
  *   recordRefusal): kept in the transaction, in their place in the audit
  *   order, and written again after the transaction when it rolled back, so
@@ -47,11 +51,16 @@ export function currentExternalEffect(): ExternalEffect | undefined {
   return storage.getStore();
 }
 
-/** An external effect stopped at its deadline: nothing it began is kept. */
+/**
+ * An external effect stopped at its deadline: Varlatch's own changes of the
+ * request are rolled back; what a call already did outside Varlatch may
+ * have happened.
+ */
 export function externalEffectDeadline(): DomainError {
   return new DomainError(
     "STATE_CHANGED",
-    `The call outside Varlatch took longer than ${Math.round(EXTERNAL_EFFECT_LIMITS.deadlineMs / 1000)} seconds, so it was stopped and nothing was changed. Try again.`,
+    `The call outside Varlatch took longer than ${Math.round(EXTERNAL_EFFECT_LIMITS.deadlineMs / 1000)} seconds, so it was stopped and Varlatch's own changes for this request were rolled back. ` +
+      "What the call already did outside Varlatch may have happened (a GitHub code it already exchanged, say): check there before you try again.",
     { retryable: true, reason: "external-effect-deadline" },
   );
 }

@@ -645,7 +645,12 @@ whether what it asks for exists, and before anything happens:
   before any credential is decrypted or any request sent, and keeps its
   lock on the organization until the call and what it saves are done:
   changing a security control waits for it, so the call either finishes
-  before the control changed or is refused. The check of a webhook URL,
+  before the control changed or is refused. While the control is at
+  `report` or `enforce`, such an operation is stopped after 90 seconds
+  (`STATE_CHANGED`, `details.reason: "external-effect-deadline"`):
+  Varlatch's own changes for the request are rolled back, but what a call
+  already did outside Varlatch may have happened. With the control off it
+  runs to completion, as before. The check of a webhook URL,
   an OIDC issuer or a base identity against the server's outbound policy
   only looks the name up, and comes before, as before.
 - **A repeated request** with the same `Idempotency-Key` is decided too:
