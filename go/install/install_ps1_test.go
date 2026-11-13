@@ -305,17 +305,21 @@ func TestPS1EndToEnd(t *testing.T) {
 			src = edit(t, src, "'@VARLATCH_VERSION@'", "'"+version+"'")
 		}
 		src = edit(t, src, ps1BaseLine, "  $Base = '"+srv.URL+"/v'")
+		// The test server's certificate, pinned by thumbprint, on each
+		// request (a compiled callback: a script block would run on a
+		// thread without a runspace).
 		trust := "  $ErrorActionPreference = 'Stop'\n" +
 			"Add-Type -TypeDefinition @'\n" +
-			"using System.Net;\n" +
 			"public static class VarlatchTestTrust {\n" +
-			"  public static void Pin(string thumbprint) {\n" +
-			"    ServicePointManager.ServerCertificateValidationCallback = (s, c, chain, e) => c != null && c.GetCertHashString() == thumbprint;\n" +
-			"  }\n" +
+			"  public static string Thumbprint;\n" +
+			"  public static System.Net.Security.RemoteCertificateValidationCallback Callback =\n" +
+			"    (s, c, chain, e) => c != null && c.GetCertHashString() == Thumbprint;\n" +
 			"}\n" +
 			"'@\n" +
-			"  [VarlatchTestTrust]::Pin('" + strings.ToUpper(hex.EncodeToString(thumb[:])) + "')\n"
+			"  [VarlatchTestTrust]::Thumbprint = '" + strings.ToUpper(hex.EncodeToString(thumb[:])) + "'\n"
 		src = edit(t, src, "  $ErrorActionPreference = 'Stop'\n", trust)
+		src = edit(t, src, "      $Request.AllowAutoRedirect = $false\n",
+			"      $Request.AllowAutoRedirect = $false\n      $Request.ServerCertificateValidationCallback = [VarlatchTestTrust]::Callback\n")
 		file := filepath.Join(t.TempDir(), "install.ps1")
 		if err := os.WriteFile(file, src, 0o644); err != nil {
 			t.Fatal(err)
@@ -323,7 +327,14 @@ func TestPS1EndToEnd(t *testing.T) {
 		local, tmp := t.TempDir(), t.TempDir()
 		log := filepath.Join(t.TempDir(), "stub.log")
 		cmd := exec.Command(host, psArgs(file, args...)...)
-		cmd.Env = append(os.Environ(), "LOCALAPPDATA="+local, "TEMP="+tmp, "TMP="+tmp, "STUB_LOG="+log, "PROCESSOR_ARCHITEW6432=")
+		// PROCESSOR_ARCHITEW6432 is left out rather than set empty: an
+		// empty entry garbles the environment block on Windows.
+		for _, e := range os.Environ() {
+			if !strings.HasPrefix(strings.ToUpper(e), "PROCESSOR_ARCHITEW6432=") {
+				cmd.Env = append(cmd.Env, e)
+			}
+		}
+		cmd.Env = append(cmd.Env, "LOCALAPPDATA="+local, "TEMP="+tmp, "TMP="+tmp, "STUB_LOG="+log)
 		cmd.Env = append(cmd.Env, env...)
 		out, _ := cmd.CombinedOutput()
 		stubLog, _ := os.ReadFile(log)
