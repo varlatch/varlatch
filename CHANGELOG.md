@@ -153,6 +153,14 @@ fixes.
   approval and then found that the person had lost the action meanwhile,
   it was refused but left no `authorization.denied` event. It now records
   one, the same as for any other refusal, and the approval stays unused.
+- **Fixed: a refused freeze, lift or control change is recorded in the
+  audit log.** When freezing an organization, lifting its freeze or
+  changing a security control found, inside its transaction, that the
+  person had lost `organization.manage` meanwhile, it was refused but left
+  no `authorization.denied` event. It now records one, once, while at least
+  one security control is at `report` or `enforce`. For a control change
+  that is the state before the change. With every control off nothing
+  changes: the same answer and no new event.
 - **The API description documents every approval.** Each route that can
   answer `STEP_UP_REQUIRED` declares that answer and the
   `Varlatch-Approval` header.

@@ -139,6 +139,20 @@ export async function controlMode(db: Querier, organizationId: string, control: 
   return row?.mode ?? "off";
 }
 
+/**
+ * Whether any of the Organization's controls is at `report` or `enforce`.
+ * Call it inside a transaction that holds the Organization row (every
+ * control change and the operator's reset take it FOR UPDATE), so the
+ * answer is the state that transaction decides on. A plain read, no lock.
+ */
+export async function anyControlOn(db: Querier, organizationId: string): Promise<boolean> {
+  const row = (await db.query(
+    "SELECT 1 AS on FROM security_controls WHERE organization_id = $1 AND mode <> 'off' LIMIT 1",
+    [organizationId],
+  )).rows[0];
+  return row !== undefined;
+}
+
 const describeConfig = (value: number | undefined) => (value === undefined ? null : String(value));
 
 /**
