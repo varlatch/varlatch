@@ -182,8 +182,30 @@ async function generate(ref, out) {
   fixture.nodeBase64 = [
     "QUJD", "QUJ", "QU", "Q", "QUJDRA==", "QUJDRA=", "QUJDRA", "QU JD\nRA==", "QU$JDRA==", "QUJD=RA==",
     "-_-_", "+/+/", "=QUJD", "QUJ=D", "\u00e9QUJD", "QUJD\u0000QU", "\u0141UJD", "\u0130UJD", "QU\ud83d\ude00JD",
-    "QU\ude00JD", "QUJD\u2028", "\ufeffQUJD", "",
+    "QU\ude00JD", "QU\ud855JD", "QU\udc2dJD", "QUJD\u2028", "\ufeffQUJD", "",
   ].map((input) => ({ input, hex: Buffer.from(input, "base64").toString("hex") }));
+
+  // Envelopes stored in unusual but valid encodings, each checked here to
+  // open in the TypeScript code: a lone surrogate standing for the base64
+  // character in its low byte, the URL alphabet without padding, and
+  // characters Node skips.
+  {
+    const context = { purpose: "kek-canary", installationId };
+    const plaintext = Buffer.from("loose encodings", "utf8");
+    const env = ts.aead.encrypt(rootKek, plaintext, context);
+    const high = (s) => String.fromCharCode(0xd800 | s.charCodeAt(0)) + s.slice(1);
+    const low = (s) => String.fromCharCode(0xdc00 | s.charCodeAt(0)) + s.slice(1);
+    const variants = {
+      "lone high surrogate in nonce": { ...env, nonce: high(env.nonce) },
+      "lone low surrogate in tag": { ...env, authTag: low(env.authTag) },
+      "URL alphabet, unpadded": { ...env, ciphertext: Buffer.from(env.ciphertext, "base64").toString("base64url") },
+      "skipped characters": { ...env, nonce: `${env.nonce.slice(0, 4)} \n$${env.nonce.slice(4)}` },
+    };
+    fixture.looseEnvelopes = Object.entries(variants).map(([name, envelope]) => {
+      if (!ts.aead.decrypt(rootKek, envelope, context).equals(plaintext)) throw new Error(`${name} does not open in TypeScript`);
+      return { name, envelope, plaintext: b64(plaintext) };
+    });
+  }
 
   // The UTF-16 code units JavaScript's String.prototype.trim removes.
   fixture.jsTrimCodeUnits = [];
@@ -222,6 +244,9 @@ async function verify(ref, file) {
     for (const g of org.githubApps) same(`GitHub App ${g.githubAppId}`, Buffer.from(ts.hierarchy.decryptGitHubAppKey(orgKek, org.organizationId, g.githubAppId, g.envelope)), Buffer.from(g.privateKeyPem));
   }
   for (const k of f.jwtSigningKeys) same(`JWT key ${k.keyId}`, ts.aead.decrypt(rootKek, k.envelope, jwtContext(ref, k.keyId)), Buffer.from(k.privateKeyPem));
+  for (const l of f.looseEnvelopes ?? []) {
+    same(`loose envelope: ${l.name}`, ts.aead.decrypt(rootKek, l.envelope, { purpose: "kek-canary", installationId: f.installationId }), Buffer.from(l.plaintext, "base64"));
+  }
   for (const c of f.canonical ?? []) {
     checked++;
     if (ts.canonical.canonicalJson(c.value) !== c.canonical) fail(`canonical ${JSON.stringify(c.value)}`);

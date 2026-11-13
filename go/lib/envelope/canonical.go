@@ -14,7 +14,11 @@ import (
 	"unicode/utf8"
 )
 
-var errNoPurpose = errors.New("envelope: context has no purpose")
+// Canonicalization errors name no value: a context holds identifiers.
+var (
+	errNoPurpose      = errors.New("envelope: context has no purpose")
+	errNotSafeInteger = errors.New("envelope: context number is not a safe integer")
+)
 
 // maxSafeInteger is JavaScript's Number.MAX_SAFE_INTEGER: beyond it,
 // String(n) in JavaScript stops writing plain digits.
@@ -56,14 +60,14 @@ func canonical(b *strings.Builder, v any) error {
 		if err != nil {
 			f, ferr := x.Float64()
 			if ferr != nil || f != math.Trunc(f) || math.Abs(f) > maxSafeInteger {
-				return fmt.Errorf("envelope: %s is not a safe integer", x)
+				return errNotSafeInteger
 			}
 			n = int64(f)
 		}
 		return integer(b, n)
 	case float64:
 		if math.IsNaN(x) || math.IsInf(x, 0) || x != math.Trunc(x) || math.Abs(x) > maxSafeInteger {
-			return errors.New("envelope: only safe integers are canonicalizable")
+			return errNotSafeInteger
 		}
 		return integer(b, int64(x))
 	case Context:
@@ -101,7 +105,7 @@ func canonical(b *strings.Builder, v any) error {
 
 func integer(b *strings.Builder, n int64) error {
 	if n > maxSafeInteger || n < -maxSafeInteger {
-		return fmt.Errorf("envelope: %d is not a safe integer", n)
+		return errNotSafeInteger
 	}
 	b.WriteString(strconv.FormatInt(n, 10))
 	return nil

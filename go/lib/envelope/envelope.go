@@ -60,41 +60,51 @@ type Envelope struct {
 }
 
 // UnmarshalJSON reads an envelope the way the TypeScript server's decrypt
-// sees one: formatVersion must be the JSON number 1 (1.0 is the same
-// number; "1" is not), and every field must be present.
+// sees one (JSON.parse, then property lookups):
+//
+//   - field names match exactly (encoding/json alone would also take
+//     "FORMATVERSION");
+//   - formatVersion must be the JSON number 1 (1.0 is the same number, the
+//     string "1" is not), and every field must be a JSON string otherwise;
+//   - nonce, ciphertext and authTag are decoded as Node decodes them, from
+//     the UTF-16 code units of the JSON strings (encoding/json would turn a
+//     lone surrogate into U+FFFD first), and kept in standard base64, which
+//     decodes to the same bytes in both servers.
+//
+// An envelope that does not meet this decodes without error but is refused
+// by Open, as the TypeScript server refuses it at decryption.
 func (e *Envelope) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		FormatVersion json.RawMessage `json:"formatVersion"`
-		Algorithm     *string         `json:"algorithm"`
-		Nonce         *string         `json:"nonce"`
-		Ciphertext    *string         `json:"ciphertext"`
-		AuthTag       *string         `json:"authTag"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("envelope: %w", err)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return errors.New("envelope: not a JSON object")
 	}
 	*e = Envelope{}
+	ok := true
 	// A JSON number, never a string: json.Number alone would also accept "1".
 	var version json.Number
-	rawVersion := bytes.TrimSpace(raw.FormatVersion)
-	if len(rawVersion) > 0 && rawVersion[0] != '"' && json.Unmarshal(rawVersion, &version) == nil {
+	if raw := bytes.TrimSpace(fields["formatVersion"]); len(raw) > 0 && raw[0] != '"' && json.Unmarshal(raw, &version) == nil {
 		if f, err := version.Float64(); err == nil && f == FormatVersion {
 			e.FormatVersion = FormatVersion
 		}
 	}
-	for _, f := range []struct {
-		src *string
-		dst *string
-	}{{raw.Algorithm, &e.Algorithm}, {raw.Nonce, &e.Nonce}, {raw.Ciphertext, &e.Ciphertext}, {raw.AuthTag, &e.AuthTag}} {
-		if f.src == nil {
-			e.missing = true
-		} else {
-			*f.dst = *f.src
-		}
-	}
 	if e.FormatVersion != FormatVersion {
-		e.missing = true
+		ok = false
 	}
+	if raw, found := fields["algorithm"]; !found || json.Unmarshal(raw, &e.Algorithm) != nil {
+		ok = false
+	}
+	for _, f := range []struct {
+		name string
+		dst  *string
+	}{{"nonce", &e.Nonce}, {"ciphertext", &e.Ciphertext}, {"authTag", &e.AuthTag}} {
+		units, isString := jsonStringUnits(fields[f.name])
+		if !isString {
+			ok = false
+			continue
+		}
+		*f.dst = base64.StdEncoding.EncodeToString(nodeBase64Units(units))
+	}
+	e.missing = !ok
 	return nil
 }
 

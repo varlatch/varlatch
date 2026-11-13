@@ -15,9 +15,14 @@ import (
 	"testing"
 )
 
-// update rewrites testdata/go-sealed.json, which the TypeScript code then
-// verifies (node testdata/tsfixtures.mjs verify testdata/go-sealed.json).
-var update = flag.Bool("update", false, "rewrite testdata/go-sealed.json")
+// update rewrites testdata/go-sealed.json; writeGoFixture writes a fresh
+// one elsewhere, which CI hands to the TypeScript code (node
+// testdata/tsfixtures.mjs verify <file>), so it always checks what this
+// code seals now.
+var (
+	update         = flag.Bool("update", false, "rewrite testdata/go-sealed.json")
+	writeGoFixture = flag.String("write-go-fixture", "", "write a freshly sealed Go fixture to this path")
+)
 
 // fixture is the shape tsfixtures.mjs writes, and go-sealed.json too.
 type fixture struct {
@@ -34,9 +39,14 @@ type fixture struct {
 		Key   *string `json:"key"`
 	} `json:"kekMaterial,omitempty"`
 	NodeBase64 []struct {
-		Input string `json:"input"`
-		Hex   string `json:"hex"`
+		Input json.RawMessage `json:"input"` // may hold lone surrogates
+		Hex   string          `json:"hex"`
 	} `json:"nodeBase64,omitempty"`
+	LooseEnvelopes []struct {
+		Name      string   `json:"name"`
+		Envelope  Envelope `json:"envelope"`
+		Plaintext string   `json:"plaintext"`
+	} `json:"looseEnvelopes,omitempty"`
 	JSTrimCodeUnits []uint16 `json:"jsTrimCodeUnits,omitempty"`
 }
 
@@ -164,6 +174,13 @@ func openAll(t *testing.T, f fixture) {
 		}
 		n++
 	}
+	for _, l := range f.LooseEnvelopes {
+		got, err := Open(root, l.Envelope, KEKCanaryContext(f.InstallationID))
+		if err != nil || !bytes.Equal(got, unb64(t, l.Plaintext)) {
+			t.Fatalf("loose envelope %q: %v", l.Name, err)
+		}
+		n++
+	}
 	if n < 15 {
 		t.Fatalf("only %d envelopes checked", n)
 	}
@@ -211,9 +228,16 @@ func TestParseRootKEKMatchesTypeScript(t *testing.T) {
 			t.Errorf("the error echoes the material: %v", err)
 		}
 	}
+	if len(f.NodeBase64) < 20 {
+		t.Fatal("no base64 vectors")
+	}
 	for _, v := range f.NodeBase64 {
-		if got := hex.EncodeToString(nodeBase64(v.Input)); got != v.Hex {
-			t.Errorf("base64 %q: got %s, want %s", v.Input, got, v.Hex)
+		units, ok := jsonStringUnits(v.Input)
+		if !ok {
+			t.Fatalf("vector %s is not a JSON string", v.Input)
+		}
+		if got := hex.EncodeToString(nodeBase64Units(units)); got != v.Hex {
+			t.Errorf("base64 %s: got %s, want %s", v.Input, got, v.Hex)
 		}
 	}
 	var set []uint16
@@ -228,7 +252,7 @@ func TestParseRootKEKMatchesTypeScript(t *testing.T) {
 
 // writeGoFixture seals the same kind of hierarchy in Go, for the TypeScript
 // code to open.
-func writeGoFixture(t *testing.T, path string) {
+func sealGoFixture(t *testing.T, path string) {
 	t.Helper()
 	ts := load(t, "testdata/ts-v0.21.0.json")
 	root := GenerateKey()
@@ -297,9 +321,73 @@ func must(e Envelope, err error) Envelope {
 // tsfixtures.mjs verify, which CI runs on the same file.
 func TestGoFixtures(t *testing.T) {
 	if *update {
-		writeGoFixture(t, "testdata/go-sealed.json")
+		sealGoFixture(t, "testdata/go-sealed.json")
+	}
+	if *writeGoFixture != "" {
+		sealGoFixture(t, *writeGoFixture)
+		openAll(t, load(t, *writeGoFixture))
 	}
 	openAll(t, load(t, "testdata/go-sealed.json"))
+}
+
+// An envelope read from JSON and written back is re-encoded in standard
+// base64 and still opens: decoding normalizes Node's lenient forms.
+func TestLooseEnvelopesRoundTrip(t *testing.T) {
+	f := load(t, "testdata/ts-v0.21.0.json")
+	root := unhex(t, f.RootKEK)
+	if len(f.LooseEnvelopes) < 4 {
+		t.Fatal("no loose envelopes")
+	}
+	for _, l := range f.LooseEnvelopes {
+		data, err := json.Marshal(l.Envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back Envelope
+		if err := json.Unmarshal(data, &back); err != nil {
+			t.Fatal(err)
+		}
+		if back != l.Envelope || strings.ContainsAny(back.Nonce+back.Ciphertext+back.AuthTag, "-_ \n$") {
+			t.Fatalf("%s: not normalized: %+v", l.Name, back)
+		}
+		if _, err := Open(root, back, KEKCanaryContext(f.InstallationID)); err != nil {
+			t.Fatalf("%s: %v", l.Name, err)
+		}
+	}
+}
+
+// Field names match exactly, as JavaScript property lookups do; the last
+// of duplicate keys wins, as in JSON.parse.
+func TestEnvelopeFieldNamesAreExact(t *testing.T) {
+	key := GenerateKey()
+	ctx := OrgKEKContext("org_a")
+	env, _ := Seal(key, []byte("x"), ctx)
+	doc := func(fields ...string) []byte { return []byte("{" + strings.Join(fields, ",") + "}") }
+	fv := `"formatVersion":1`
+	alg := `"algorithm":"aes-256-gcm"`
+	nonce := `"nonce":"` + env.Nonce + `"`
+	ct := `"ciphertext":"` + env.Ciphertext + `"`
+	tag := `"authTag":"` + env.AuthTag + `"`
+	for name, tc := range map[string]struct {
+		data  []byte
+		opens bool
+	}{
+		"exact":                          {doc(fv, alg, nonce, ct, tag), true},
+		"FORMATVERSION only":             {doc(`"FORMATVERSION":1`, alg, nonce, ct, tag), false},
+		"Nonce only":                     {doc(fv, alg, `"Nonce":"`+env.Nonce+`"`, ct, tag), false},
+		"exact and a wrong case variant": {doc(fv, `"FormatVersion":2`, alg, nonce, `"NONCE":"AAAA"`, ct, tag), true},
+		"duplicate, last wins":           {doc(`"formatVersion":2`, fv, alg, nonce, ct, tag), true},
+		"duplicate, last is wrong":       {doc(fv, `"formatVersion":2`, alg, nonce, ct, tag), false},
+		"nonce not a string":             {doc(fv, alg, `"nonce":12`, ct, tag), false},
+	} {
+		var e Envelope
+		if err := json.Unmarshal(tc.data, &e); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, err := Open(key, e, ctx); (err == nil) != tc.opens {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
 }
 
 func TestSealOpen(t *testing.T) {
@@ -435,6 +523,16 @@ func TestTamperedAndMalformed(t *testing.T) {
 }
 
 func TestErrorsHideSecrets(t *testing.T) {
+	for _, v := range []any{json.Number("TOPSECRET"), json.Number("123456789012345678901234"), int64(1 << 60), 1.5} {
+		bad := Context{"purpose": "test", "x": v}
+		_, err := Seal(GenerateKey(), nil, bad)
+		_, err2 := Open(GenerateKey(), Envelope{}, bad)
+		for _, e := range []error{err, err2} {
+			if e == nil || strings.Contains(e.Error(), "TOPSECRET") || strings.ContainsAny(e.Error(), "0123456789") {
+				t.Errorf("%v: %v", v, e)
+			}
+		}
+	}
 	_, err := ParseRootKEK("0123456789abcdef0123456789abcdef")
 	if err == nil || strings.Contains(err.Error(), "0123456789abcdef") {
 		t.Fatalf("got %v", err)

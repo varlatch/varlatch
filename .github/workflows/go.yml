@@ -94,8 +94,15 @@ jobs:
         with:
           node-version: 26
 
+      # The Go envelopes are sealed now, by this commit's code, not taken
+      # from the committed file (which only the Go tests read).
       - name: The TypeScript server opens what Go sealed
+        env:
+          CGO_ENABLED: "0"
         run: |
+          fresh="$RUNNER_TEMP/go-sealed.json"
+          (cd go && go test -count=1 -run '^TestGoFixtures$' ./lib/envelope/ -args -write-go-fixture="$fresh")
+          node go/lib/envelope/testdata/tsfixtures.mjs verify "$fresh"
           node go/lib/envelope/testdata/tsfixtures.mjs verify go/lib/envelope/testdata/go-sealed.json
           node go/lib/envelope/testdata/tsfixtures.mjs verify go/lib/envelope/testdata/ts-v0.21.0.json
 
