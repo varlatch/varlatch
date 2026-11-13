@@ -489,14 +489,9 @@ jobs:
   # minutes have run out GitHub refuses it within seconds; continue-on-error
   # keeps the run green (its result then still reads success, with no
   # output), and `changes` sends every job to the self-hosted runner.
-  # Every other job needs this one, directly or through changes, so skipping
-  # it skips the whole TypeScript run. Pull requests into rewrite/go (the Go
-  # rewrite's groundwork, ADR-0059 amendment 2) run go.yml instead, on
-  # GitHub-hosted runners only, so they never take the release's self-hosted
-  # runner.
   hosted-runner:
     name: GitHub-hosted runners available?
-    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && github.base_ref != 'rewrite/go'
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 5
