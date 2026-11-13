@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strconv"
 
@@ -80,16 +81,32 @@ func NewVerifier(trusted root.TrustedMaterial) (*Verifier, error) {
 
 // LiveTrustedRoot fetches Sigstore's trusted root through its TUF
 // repository, starting from the root embedded in sigstore-go, and caches it
-// in cacheDir (as cosign does in ~/.sigstore). Key rotations at Sigstore
-// therefore need no Varlatch release.
+// in cacheDir (as cosign does in ~/.sigstore); an empty cacheDir keeps
+// nothing on disk. Key rotations at Sigstore therefore need no Varlatch
+// release. Every download is bound to ctx (and to a per-request timeout),
+// and any failure to refresh is an error: there is no stale fallback.
 func LiveTrustedRoot(ctx context.Context, cacheDir string) (*root.TrustedRoot, error) {
-	opts := tuf.DefaultOptions().WithContext(ctx)
+	return liveTrustedRoot(ctx, cacheDir, "", http.DefaultClient)
+}
+
+// liveTrustedRoot lets tests point at their own repository.
+func liveTrustedRoot(ctx context.Context, cacheDir, repositoryURL string, client *http.Client) (*root.TrustedRoot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	opts := tuf.DefaultOptions().WithContext(ctx).WithFetcher(&ctxFetcher{ctx: ctx, client: client})
+	if repositoryURL != "" {
+		opts = opts.WithRepositoryBaseURL(repositoryURL)
+	}
 	if cacheDir != "" {
 		opts = opts.WithCachePath(cacheDir)
 	} else {
 		opts = opts.WithDisableLocalCache()
 	}
 	tr, err := root.FetchTrustedRootWithOptions(opts)
+	if err == nil {
+		err = ctx.Err() // a result that arrived after the deadline is not used
+	}
 	if err != nil {
 		return nil, fmt.Errorf("release: fetching Sigstore's trusted root: %w", err)
 	}
