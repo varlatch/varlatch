@@ -361,6 +361,18 @@ fixes.
   heartbeat, what a coding agent may do with it, and its limits.
   `VARLATCH_AUDIT_EXPORT` is in
   [Configuration](docs/self-hosting/configuration.md#varlatch_audit_export).
+- **Security controls in one place.** [Security
+  controls](docs/reference/security-controls.md) now starts with all four
+  controls at a glance, says what stays the same with every control off
+  (the default, new installations included) and what exists regardless,
+  and gives one procedure for turning a control on: trusted passkeys for
+  every admin, `report` first, the counts, then `enforce`. Before
+  enforcing `passkey-verification`, it shows how to check in report mode
+  that everyone's sign-ins record user verification. New sections cover
+  how the controls meet the incident freeze and what the audit log
+  records when an approved request is refused by the final check. The
+  [threat model](docs/THREAT-MODEL.md) states the off-by-default and
+  report-mode guarantees with the tests that check them.
 - **Getting started is split by reader.** It now sends you to a short
   page for where you are: [Join a team](docs/join-a-team.md) when you
   were invited, [Set up a project](docs/set-up-a-project.md), or

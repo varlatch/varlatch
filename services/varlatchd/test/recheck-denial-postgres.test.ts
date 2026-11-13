@@ -4,10 +4,11 @@ import { issueCredential } from "../src/auth/credentials.js";
 import { lockedQuery } from "../src/db/locks.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { createPgQuerier } from "../src/db/pg.js";
-import { withTx } from "../src/db/tx.js";
+import { withTx, type PoolQuerier } from "../src/db/tx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { lockLiveScope } from "../src/domain/liveness.js";
+import { resetControls } from "../src/domain/securitycontrols.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
@@ -25,6 +26,12 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  *   rollback.
  * - With every control off: the same answer and no audit event, as on
  *   main.
+ *
+ * - While the operator's reset holds the Organization row (uncommitted,
+ *   turning the only control off), a freeze waits for it: its recheck
+ *   decides on the state the reset left. A committed reset leaves every
+ *   control off, so the denial takes main's path; a reset that rolled back
+ *   leaves the control on, so the denial is audited once.
  *
  * The same races on PGlite, and report to off: recheck-denial.test.ts.
  */
@@ -245,6 +252,114 @@ describe.skipIf(!url)("a recheck denial racing a demotion, on real PostgreSQL", 
     expect(withoutRequestId(on)).toEqual(withoutRequestId(off));
     expect((await rows("SELECT lifted_at FROM organization_freezes WHERE id = $1", [id]))[0].lifted_at).toBeNull();
     expect((await rows("SELECT consumed_at FROM approval_intents WHERE id = $1", [approval]))[0].consumed_at).toBeNull();
+  });
+
+  /**
+   * The operator's reset of every control, held at its COMMIT: it has taken
+   * the Organization row FOR UPDATE and written its changes. `outcome`
+   * commits it or makes the COMMIT fail, which rolls it back.
+   */
+  function heldReset() {
+    const held = deferred();
+    const release = deferred();
+    let outcome: "commit" | "fail" = "commit";
+    const resetDb: PoolQuerier = {
+      query: (text, params) => db.query(text, params),
+      connect: async () => {
+        const client = await db.connect();
+        return {
+          query: async (text: string, params?: unknown[]) => {
+            if (text.trim() === "COMMIT") {
+              held.resolve();
+              await release.promise;
+              if (outcome === "fail") throw new Error("the reset's COMMIT failed (injected)");
+            }
+            return client.query(text, params);
+          },
+          release: (destroy?: boolean) => client.release(destroy),
+        };
+      },
+    };
+    const resetting = resetControls({ ...ctx, db: resetDb }, { organization: "acme", controls: "all" });
+    resetting.catch(() => undefined);
+    return {
+      holding: Promise.race([held.promise, resetting.then(() => { throw new Error("the reset finished without waiting"); })]),
+      finish: async (how: "commit" | "fail") => {
+        outcome = how;
+        release.resolve();
+        return resetting.then(() => "committed" as const, () => "rolled back" as const);
+      },
+    };
+  }
+
+  /**
+   * Carol freezes while the reset holds the Organization row: the route's
+   * own check reads her an admin, the freeze's transaction waits for the
+   * row, she is demoted meanwhile (her membership only, not the
+   * Organization row), and the reset ends as `how` says before the freeze
+   * gets the row.
+   */
+  async function freezeWhileResetHolds(how: "commit" | "fail"): Promise<{ res: Answer; reset: string }> {
+    const reset = heldReset();
+    await reset.holding;
+    let finished = false;
+    const sending = freeze(carol.cli).finally(() => { finished = true; });
+    let reached: string;
+    try {
+      let waiting = 0;
+      for (let i = 0; i < 100 && waiting === 0 && !finished; i++) {
+        await sleep(50);
+        waiting = Number(((await admin.query(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'",
+          [database],
+        )).rows[0] as { n: number }).n);
+      }
+      expect(finished, "the freeze waited for the reset").toBe(false);
+      expect(waiting).toBeGreaterThan(0);
+      await setRole("member");
+    } finally {
+      reached = await reset.finish(how);
+    }
+    const res = await sending;
+    await setRole("admin");
+    return { res, reset: reached };
+  }
+
+  const otherEvents = async () =>
+    Number((await rows("SELECT count(*)::int AS n FROM audit_events WHERE event_type <> 'security_control.reset'"))[0].n);
+  const resets = async () => Number((await rows("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'security_control.reset'"))[0].n);
+
+  it("freezing while the operator's reset holds the Organization: decided on the state the reset leaves", async () => {
+    // Main's answer for the same race with every control off.
+    const off = await race(() => freeze(carol.cli), false);
+
+    // The reset commits: every control off when the freeze gets the row, so main's path, no denial recorded.
+    await report("admin-step-up");
+    let others = await otherEvents();
+    let denied = (await denials()).length;
+    const committed = await freezeWhileResetHolds("commit");
+    expect(committed.reset).toBe("committed");
+    expect(committed.res.status, JSON.stringify(committed.res.body)).toBe(403);
+    expect(withoutRequestId(committed.res)).toEqual(withoutRequestId(off));
+    expect((await denials()).length).toBe(denied);
+    expect(await otherEvents()).toBe(others);
+    expect(await resets()).toBe(4);
+    expect(await rows("SELECT control, mode FROM security_controls")).toEqual([{ control: "admin-step-up", mode: "off" }]);
+
+    // The reset rolls back: the control is still at report when the freeze gets the row, so one denial.
+    await db.query("UPDATE security_controls SET mode = 'report', version = version + 1 WHERE organization_id = $1", [orgId]);
+    others = await otherEvents();
+    denied = (await denials()).length;
+    const rolledBack = await freezeWhileResetHolds("fail");
+    expect(rolledBack.reset).toBe("rolled back");
+    expect(withoutRequestId(rolledBack.res)).toEqual(withoutRequestId(off));
+    const after = await denials();
+    expect(after).toHaveLength(denied + 1);
+    expect(after.at(-1)).toMatchObject({ decision: "deny", organization_id: orgId, action: "organization.manage" });
+    expect(await otherEvents()).toBe(others + 1);
+    expect(await resets()).toBe(4);
+    expect(await rows("SELECT control, mode FROM security_controls")).toEqual([{ control: "admin-step-up", mode: "report" }]);
+    expect(await rows("SELECT id FROM organization_freezes")).toEqual([]);
   });
 
   it("changing a control: off to report from all off records nothing; with another control on, one denial", async () => {
