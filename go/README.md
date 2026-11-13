@@ -26,6 +26,11 @@ amendment 2 allows, and nothing here ships.
   and bash runs nothing or the whole script (G8), and end-to-end runs
   against a local HTTPS server. The downloaded CLI checks the signature
   (`varlatch verify-release`) before anything is put in place.
+- `install/install.ps1`: the Windows installer (CLI for the current user,
+  in `%LOCALAPPDATA%\Programs\Varlatch`, added to the user `PATH`), with
+  the same checks as `install.sh` and its G8 tests under PowerShell 5.1 and
+  7 (the prefix runner is `install/testdata/ps1prefix.ps1`; the Windows CI
+  job runs the end-to-end install).
 - `install/varlatchd.service`: the systemd unit (data in
   `/var/lib/varlatch`, configuration in `/etc/varlatch/varlatchd.conf`, the
   Root KEK and BEK as systemd credentials, user `varlatch`, a strict
@@ -56,6 +61,11 @@ CGO_ENABLED=1 go test -race ./...
 - Regenerate `lib/envelope/testdata/ts-*.json` from the next TypeScript
   release (`node tsfixtures.mjs generate --ref v<next> ts-v<next>.json`),
   including any envelope purpose it adds (ADR-0056's audit export).
+- When varlatchd itself is written: configuration errors that a retry
+  cannot fix (an unparsable file, a missing key, conflicting options;
+  nothing touching DNS, network, disk or the database) exit 78, and the
+  unit gets `RestartPreventExitStatus=78`, pinned in `unit_test.go`;
+  varlatchd sets `PR_SET_DUMPABLE` to 0.
 - The Go release workflow: binaries named `varlatch-<version>-<os>-<arch>`
   (`.exe` on Windows) and `varlatchd-<version>-linux-<arch>`, plus
   `varlatchd.service`, all in `SHA256SUMS`; `install.sh` attached with

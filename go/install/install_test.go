@@ -456,7 +456,7 @@ const (
 func edit(t *testing.T, src []byte, old, new string) []byte {
 	t.Helper()
 	if bytes.Count(src, []byte(old)) != 1 {
-		t.Fatalf("install.sh no longer has exactly one %q", old)
+		t.Fatalf("the script no longer has exactly one %q", old)
 	}
 	return bytes.Replace(src, []byte(old), []byte(new), 1)
 }
