@@ -1,0 +1,78 @@
+name: Go
+
+# The Go rewrite's groundwork (ADR-0059 amendment 2) lives on the rewrite/go
+# branch until the next TypeScript release is tagged. Its pull requests run
+# these checks instead of ci.yml (whose jobs skip any pull request into
+# rewrite/go), and only on GitHub-hosted runners: never on the self-hosted
+# varlatch-ci runner the TypeScript release uses, and with no fallback to it.
+# When hosted minutes are out these jobs wait or fail; the checks then run
+# locally, outside the release's test runs.
+on:
+  pull_request:
+    branches: [rewrite/go]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [rewrite/go]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  go:
+    # Drafts run nothing, as in ci.yml.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+
+      - name: Formatted
+        working-directory: go
+        run: |
+          unformatted=$(gofmt -l .)
+          [ -z "$unformatted" ] || { echo "gofmt needed:"; echo "$unformatted"; exit 1; }
+
+      - name: go.mod and go.sum are tidy
+        working-directory: go
+        run: go mod tidy -diff
+
+      - name: Vet
+        working-directory: go
+        run: go vet ./...
+
+      # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
+      # shared libraries) may depend on an AGPL-3.0-or-later one (G12).
+      - name: Test
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test ./...
+
+      # ADR-0059 Decision 1: varlatchd for Linux, varlatch for Linux, macOS
+      # and Windows, each on amd64 and arm64; static, no cgo.
+      - name: Both binaries build for every platform
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          build() {
+            GOOS=${2%/*} GOARCH=${2#*/} go build -trimpath -o /dev/null "./cmd/$1"
+            echo "built $1 for $2"
+          }
+          for p in linux/amd64 linux/arm64; do build varlatchd "$p"; done
+          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do build varlatch "$p"; done
+
+      # ADR-0021's split, SPDX headers and LICENSE files included, for go/
+      # too. The script uses Node's standard library only.
+      - name: Every file matches the license map
+        run: node scripts/check-licenses.mjs
