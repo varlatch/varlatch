@@ -443,6 +443,20 @@ func TestPS1EndToEnd(t *testing.T) {
 	}
 	psRun(t, writePath, "VARLATCH_PATH_KIND=ExpandString", "VARLATCH_PATH_VALUE="+withVar)
 
+	// A user variable named like the one the installer sets and removes to
+	// broadcast the PATH change must survive it, and no broadcast variable
+	// may be left behind.
+	const userVars = `$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment'); ` +
+		`($k.GetValueNames() | Where-Object { $_ -like 'VARLATCH_INSTALL_REFRESH*' } | Sort-Object | ForEach-Object { '{0}={1}' -f $_, $k.GetValue($_) }) -join ';'`
+	const setUserVar = `[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment').SetValue('VARLATCH_INSTALL_REFRESH', $env:VARLATCH_VAR_VALUE)`
+	const deleteUserVars = `$k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment'); ` +
+		`$k.GetValueNames() | Where-Object { $_ -like 'VARLATCH_INSTALL_REFRESH*' } | ForEach-Object { $k.DeleteValue($_) }`
+	if got := psRun(t, userVars); got != "" {
+		t.Fatalf("this machine already has %s", got)
+	}
+	t.Cleanup(func() { psRun(t, deleteUserVars) })
+	psRun(t, setUserVar, "VARLATCH_VAR_VALUE=the user's own")
+
 	newRelease := func() *psRelease {
 		r := &psRelease{files: map[string][]byte{exe: stubBytes, "SHA256SUMS.sigstore.json": bundle}}
 		r.sums = sha256Line(stubBytes, exe)
@@ -575,6 +589,9 @@ func TestPS1EndToEnd(t *testing.T) {
 			dir := filepath.Dir(target(res))
 			if n := pathCount(t, dir); n != 1 {
 				t.Fatalf("the user PATH holds %s %d times", dir, n)
+			}
+			if got := psRun(t, userVars); got != "VARLATCH_INSTALL_REFRESH=the user's own" {
+				t.Fatalf("after adding to PATH the user variables are %q", got)
 			}
 
 			// A rerun into the same place changes nothing, PATH included.
