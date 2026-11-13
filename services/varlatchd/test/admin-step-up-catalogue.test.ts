@@ -991,6 +991,90 @@ describe("alternate callers", () => {
         handlersEscaped(tampered(withHandlers("    invokeAll(handlers);", invokeAll)), "CallExpression");
       }, GRAPH_TIMEOUT);
 
+      // ---- The last broadening round (Sonnet's review at 40fc6f2; its probes B, N, A/D/E and C).
+      const MINT = 'issueCredential(ctx.db, { identityId: "x", kind: "service" })';
+      /** The fail-closed entries a tampered graph adds for the credential primitive. */
+      const failClosed = (g: Graph) => (added(callersOf(g))["auth/credentials.ts issueCredential"] ?? []).filter((e) => e.startsWith("??"));
+      /** `helper` declared before passkeyOwner, `named` in the retire route (the chain), `code` in the rename route. */
+      const probe = (helper: string, code: string, named: string, head = "") => (text: string) =>
+        head + intoRename(code)(text.replace(PASSKEY_OWNER, `${helper}${PASSKEY_OWNER}`).replace(RETIRE, `${RETIRE}\n${named}`));
+      const MINTER = "  interface Minter { mint(): unknown }\n";
+
+      it("fails closed: a call through an interface the handler map is cast to (item 1, probe B1)", () => {
+        const g = tampered(probe(MINTER + HANDLERS, "    await (handlers as Minter).mint();", "    await handlers.mint();"));
+        expect(failClosed(g)).toEqual([expect.stringMatching(/^\?\? http\/app\.ts:\d+ Minter\.mint: a use of a member without a body may dispatch to mint via handlers\.mint$/)]);
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a call through an interface-typed alias of the handler map (item 1, probe B2)", () => {
+        const g = tampered(probe(MINTER + HANDLERS, "    const t: Minter = handlers;\n    await t.mint();", "    await handlers.mint();"));
+        expect(failClosed(g)).toEqual([expect.stringMatching(/^\?\? http\/app\.ts:\d+ Minter\.mint: a use of a member without a body may dispatch to mint via handlers\.mint$/)]);
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a call through an abstract base (item 1, probe B5)", () => {
+        const classes = `  abstract class Base { abstract mint(): unknown }\n  class M extends Base { mint() { return ${MINT}; } }\n`;
+        const g = tampered(probe(classes, "    const m: Base = new M();\n    await m.mint();", "    await new M().mint();"));
+        expect(failClosed(g)).toEqual([expect.stringMatching(/^\?\? http\/app\.ts:\d+ Base\.mint: a use of a member without a body may dispatch to mint via M\.mint$/)]);
+      }, GRAPH_TIMEOUT);
+
+      const NS = 'import * as credProbe from "../auth/credentials.js";\n';
+      const NS_NAMED = `    await credProbe.${MINT};`;
+
+      it("fails closed: a module namespace enumerated (item 2, probe N2)", () => {
+        const g = tampered(probe("", "    await (Object.values(credProbe)[0] as any)(ctx.db, {});", NS_NAMED, NS));
+        expect(failClosed(g)).toEqual([expect.stringMatching(/^\?\? http\/app\.ts:\d+ credProbe passed on \(CallExpression\) may reach issueCredential$/)]);
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a dynamically imported module with a computed key (item 2, probe N4)", () => {
+        const g = tampered(probe("", "    const m = await import('../auth/credentials.js');\n    await (m as any)[c.req.param('identity')](ctx.db, {});", NS_NAMED, NS));
+        expect(failClosed(g)).toEqual([expect.stringMatching(/^\?\? http\/app\.ts:\d+ a computed access \(m as any\)\[c\.req\.param\('identity'\)\] may reach issueCredential$/)]);
+      }, GRAPH_TIMEOUT);
+
+      const MAKE = `  function makeH() { return { mint() { return ${MINT}; } }; }\n`;
+
+      it("fails closed: a factory's result enumerated, and the factory returning it (item 3, probe A1)", () => {
+        const g = tampered(probe(MAKE, "    await Object.values(makeH())[0]!();", "    await makeH().mint();"));
+        expect(failClosed(g)).toEqual([
+          expect.stringMatching(/^\?\? http\/app\.ts:\d+ \{ mint\(\) \{ .* \} \} passed on \(ReturnStatement\) may reach mint via \{\}\.mint$/),
+          expect.stringMatching(/^\?\? http\/app\.ts:\d+ makeH\(\) passed on \(CallExpression\) may reach mint via \{\}\.mint$/),
+        ]);
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a new instance with a computed key (item 3, probe D3)", () => {
+        const g = tampered(probe(`  class X { mint() { return ${MINT}; } }\n`, "    const k = 'mint' as const;\n    await new X()[k]();", "    await new X().mint();"));
+        expect(failClosed(g)).toEqual([expect.stringMatching(/^\?\? http\/app\.ts:\d+ a computed access new X\(\)\[k\] may reach mint via X\.mint$/)]);
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: an awaited holder enumerated (item 3, probe E16)", () => {
+        const g = tampered(probe(`  const mk = async () => ({ mint() { return ${MINT}; } });\n`, "    await Object.values(await mk())[0]!();", "    await (await mk()).mint();"));
+        expect(failClosed(g)).toContainEqual(expect.stringMatching(/^\?\? http\/app\.ts:\d+ mk\(\) passed on \(CallExpression\) may reach mint via \{\}\.mint$/));
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a holder typed as a union with undefined (item 3, heldKeys through unions)", () => {
+        // `maybe` is `typeof handlers | undefined`: only a union-aware heldKeys sees it hold mint.
+        const g = tampered(withHandlers("    const maybe = c.req.param('identity') ? handlers : undefined;\n    await Object.values(maybe!)[0]!();"));
+        expect(failClosed(g)).toEqual([
+          expect.stringMatching(/^\?\? http\/app\.ts:\d+ handlers passed on \(ConditionalExpression\) may reach mint via handlers\.mint$/),
+          expect.stringMatching(/^\?\? http\/app\.ts:\d+ maybe passed on \(CallExpression\) may reach mint via handlers\.mint$/),
+        ]);
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a destructuring with a computed key (item 4, probe C1)", () => {
+        const g = tampered(withHandlers("    const k = c.req.param('identity') as 'mint';\n    const { [k]: f } = handlers;\n    await f();"));
+        expect(failClosed(g)).toEqual([expect.stringMatching(/^\?\? http\/app\.ts:\d+ a computed destructuring \{ \[k\]: f \} may reach mint via handlers\.mint$/)]);
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: the handler map spread into another object", () => {
+        handlersEscaped(tampered(withHandlers("    const copy = { ...handlers };\n    await copy.mint();")), "SpreadAssignment");
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: the handler map returned", () => {
+        handlersEscaped(tampered(withHandlers("    const get = () => {\n      return handlers;\n    };\n    await get().mint();")), "ReturnStatement");
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: the handler map stored into a property", () => {
+        handlersEscaped(tampered(withHandlers("    const box: { h?: unknown } = {};\n    box.h = handlers;")), "BinaryExpression");
+      }, GRAPH_TIMEOUT);
+
       it("a re-export through another module", () => {
         const g = tampered(
           (text) => intoRename('    await issue(ctx.db, { identityId: "x", kind: "service" });')(`import { issue } from "../domain/reexport-probe.js";\n${text}`),

@@ -29,7 +29,15 @@ import ts from "typescript";
  *   Anywhere else (an argument, to `Object.values` or any other function, a
  *   spread, a return value, a store, a computed key `h[name]`) it is
  *   recorded, and a function on a chain among its properties yields a "??"
- *   entry naming the holder.
+ *   entry naming the holder. The rule looks at every expression that may
+ *   evaluate to an object (a call result, `new`, `await`, an inline literal,
+ *   a conditional), sees through unions, intersections and Promises, counts a
+ *   module namespace's members (`import * as ns`, `await import()`), and a
+ *   destructuring with a computed key (`const { [k]: f } = h`) is an escape.
+ * - **Dispatch through a member without a body fails closed.** A use of an
+ *   interface, type-literal or abstract member (`(h as Minter).mint()`,
+ *   `m: Base; m.mint()`) may run any implementation; when a function on a
+ *   chain is a member with that name, the use yields a "??" entry.
  * - **What a reference does:** a call (or `new`) is attributed to its
  *   enclosing function-like declaration, whose own references are then
  *   followed the same way, exported or not; an anonymous callback belongs to
@@ -66,6 +74,12 @@ export interface Graph {
    * nested.
    */
   dynamic: { node: ts.Node; what: string; keys: Set<SymbolKey> }[];
+  /**
+   * Uses of members without a body (an interface, type-literal or abstract
+   * member, or a function-typed property signature), by name: a call
+   * through one may dispatch to any implementation with that name.
+   */
+  bodiless: Map<string, { ref: RefNode; owner: string }[]>;
 }
 
 /** A reference: an identifier, or the string-literal key of an element access (`handlers["mint"]`). */
@@ -122,18 +136,31 @@ export function buildGraph(packageDir: string, edits: Record<string, string> = {
   };
   const srcPrefix = `${srcDir}/`;
   const inSrc = (d: ts.Node) => d.getSourceFile().fileName.startsWith(srcPrefix);
-  // A property that can carry a function: a method, an object property or class field, an accessor.
+  // A property that can carry a function: a method, an object property or class field, an accessor, and a
+  // module namespace's member (a function declaration, an exported variable).
   const CARRIER = (d: ts.Node) => ts.isMethodDeclaration(d) || ts.isPropertyAssignment(d) || ts.isShorthandPropertyAssignment(d) ||
-    ts.isPropertyDeclaration(d) || ts.isGetAccessorDeclaration(d);
+    ts.isPropertyDeclaration(d) || ts.isGetAccessorDeclaration(d) || ts.isFunctionDeclaration(d) || ts.isVariableDeclaration(d);
   const memo = new Map<ts.Type, Set<SymbolKey>>();
   const NONE = new Set<SymbolKey>();
-  /** The keys of the functions a type holds as properties, directly or nested (memoized per type, cycles cut). */
+  /**
+   * The keys of the functions a type holds as properties, directly or
+   * nested: through each member of a union or intersection
+   * (`Handlers | undefined`), and through what a Promise resolves to
+   * (memoized per type, cycles cut).
+   */
   const heldKeys = (type: ts.Type, depth = 0): Set<SymbolKey> => {
     const known = memo.get(type);
     if (known) return known;
-    if (depth > 4 || !(type.flags & ts.TypeFlags.Object)) return NONE;
+    if (depth > 4) return NONE;
     const keys = new Set<SymbolKey>();
     memo.set(type, keys);
+    if (type.isUnionOrIntersection()) {
+      for (const t of type.types) for (const k of heldKeys(t, depth + 1)) keys.add(k);
+      return keys;
+    }
+    if (!(type.flags & ts.TypeFlags.Object)) return keys;
+    const awaited = checker.getAwaitedType(type);
+    if (awaited && awaited !== type) for (const k of heldKeys(awaited, depth + 1)) keys.add(k);
     for (const prop of checker.getPropertiesOfType(type)) {
       const symbol = canonical(checker, prop);
       const decl = symbol.declarations?.[0];
@@ -159,38 +186,72 @@ export function buildGraph(packageDir: string, edits: Record<string, string> = {
       ts.isNamespaceImport(p) || ts.isImportEqualsDeclaration(p) || ts.isLabeledStatement(p) || ts.isBreakOrContinueStatement(p)) return false;
     return true;
   };
+  const isLiteralKey = (k: ts.Node) => ts.isStringLiteral(k) || ts.isNoSubstitutionTemplateLiteral(k);
+  /** A binding pattern with a computed, non-literal key anywhere (`const { [k]: f } = h`). */
+  const computedKeyIn = (name: ts.BindingName): boolean =>
+    !ts.isIdentifier(name) && name.elements.some((el) => ts.isBindingElement(el) &&
+      ((el.propertyName && ts.isComputedPropertyName(el.propertyName) && !isLiteralKey(el.propertyName.expression)) || computedKeyIn(el.name)));
   /** Null when a holder reference is in an allowed position; otherwise what it does there. */
   const escapeOf = (e: ts.Node, sf: ts.SourceFile): string | null => {
     let x: ts.Node = e;
     while (x.parent && (ts.isParenthesizedExpression(x.parent) || ts.isAsExpression(x.parent) || ts.isNonNullExpression(x.parent) ||
-      ts.isSatisfiesExpression(x.parent) || ts.isTypeAssertionExpression(x.parent))) x = x.parent;
+      ts.isSatisfiesExpression(x.parent) || ts.isTypeAssertionExpression(x.parent) || ts.isAwaitExpression(x.parent))) x = x.parent;
     const p = x.parent;
     if (!p) return "no parent";
     if (ts.isPropertyAccessExpression(p) && p.expression === x) return null;
     if (ts.isElementAccessExpression(p) && p.expression === x) {
-      const arg = p.argumentExpression;
-      return ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) ? null : `a computed access ${p.getText(sf)}`;
+      return isLiteralKey(p.argumentExpression) ? null : `a computed access ${p.getText(sf)}`;
     }
-    if (ts.isVariableDeclaration(p) && p.initializer === x) return null;
+    if (ts.isVariableDeclaration(p) && p.initializer === x) {
+      return computedKeyIn(p.name) ? `a computed destructuring ${p.name.getText(sf)}` : null;
+    }
+    // An object literal or class expression defining a property is the holder's own definition; anything else stored there is a store.
+    if ((ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p)) && p.initializer === x && (ts.isObjectLiteralExpression(e) || ts.isClassExpression(e))) return null;
     if (ts.isTypeQueryNode(p)) return null;
     return `${e.getText(sf)} passed on (${ts.SyntaxKind[p.kind]})`;
+  };
+  /** An expression that may evaluate to an object: what the holder rule looks at. */
+  const isCandidate = (n: ts.Node): boolean =>
+    (ts.isIdentifier(n) && isValueReference(n)) || n.kind === ts.SyntaxKind.ThisKeyword ||
+    ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n) || ts.isCallExpression(n) || ts.isNewExpression(n) ||
+    ts.isTaggedTemplateExpression(n) || ts.isObjectLiteralExpression(n) || ts.isClassExpression(n) || ts.isConditionalExpression(n) ||
+    (ts.isBinaryExpression(n) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken].includes(n.operatorToken.kind));
+  /** A member without a body: an interface, type-literal or abstract member, or a property signature. */
+  const isBodiless = (d: ts.Node) => ts.isMethodSignature(d) || ts.isPropertySignature(d) ||
+    ((ts.isMethodDeclaration(d) || ts.isPropertyDeclaration(d)) && (ts.getCombinedModifierFlags(d) & ts.ModifierFlags.Abstract) !== 0);
+  const ownerOf = (d: ts.Node) => {
+    const o = d.parent;
+    return (o && (ts.isInterfaceDeclaration(o) || ts.isClassLike(o)) && o.name ? o.name.text : "{}");
+  };
+  const bodiless: Graph["bodiless"] = new Map();
+  const noteBodiless = (ref: RefNode, symbol: ts.Symbol | undefined) => {
+    const decls = symbol?.declarations ?? [];
+    if (decls.length === 0 || !decls.every(isBodiless)) return;
+    const name = symbol!.name;
+    const list = bodiless.get(name);
+    const entry = { ref, owner: `${ownerOf(decls[0]!)}.${name}` };
+    if (list) list.push(entry);
+    else bodiless.set(name, [entry]);
   };
   for (const sf of srcFiles(program, srcDir)) {
     const visit = (n: ts.Node) => {
       if (ts.isIdentifier(n)) {
-        add(n, symbolOf(checker, n));
+        const symbol = symbolOf(checker, n);
+        add(n, symbol);
+        // A member named by a property access (`m.mint`) is used too, not declared.
+        if (isValueReference(n) || (ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)) noteBodiless(n, symbol);
       } else if (ts.isElementAccessExpression(n)) {
         const arg = n.argumentExpression;
         if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) {
           // obj["name"]: the property it names, as obj.name would.
           const raw = checker.getSymbolAtLocation(arg) ?? checker.getTypeAtLocation(n.expression).getProperty(arg.text);
-          add(arg, raw ? canonical(checker, raw) : undefined);
+          const symbol = raw ? canonical(checker, raw) : undefined;
+          add(arg, symbol);
+          noteBodiless(arg, symbol);
         }
       }
-      // The holder rule: a reference whose type holds functions, outside the allowed positions.
-      const candidate = (ts.isIdentifier(n) && isValueReference(n)) || n.kind === ts.SyntaxKind.ThisKeyword ||
-        ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n);
-      if (candidate) {
+      // The holder rule: an expression whose type holds functions, outside the allowed positions.
+      if (isCandidate(n)) {
         const what = escapeOf(n, sf);
         if (what !== null) {
           const keys = heldKeys(checker.getTypeAtLocation(n));
@@ -201,7 +262,7 @@ export function buildGraph(packageDir: string, edits: Record<string, string> = {
     };
     visit(sf);
   }
-  return { program, checker, srcDir, refs, unresolved, dynamic };
+  return { program, checker, srcDir, refs, unresolved, dynamic, bodiless };
 }
 
 export function srcFiles(program: ts.Program, srcDir: string): ts.SourceFile[] {
@@ -238,7 +299,11 @@ function symbolOf(checker: ts.TypeChecker, id: ts.Identifier): ts.Symbol | undef
 function destructuredProperty(checker: ts.TypeChecker, id: ts.Identifier): ts.Symbol | null | undefined {
   const p = id.parent;
   if (!p || !ts.isBindingElement(p) || p.name !== id || !ts.isObjectBindingPattern(p.parent)) return undefined;
-  const key = p.propertyName ? (ts.isIdentifier(p.propertyName) || ts.isStringLiteral(p.propertyName) ? p.propertyName.text : null) : id.text;
+  const pn = p.propertyName;
+  const key = !pn ? id.text
+    : ts.isIdentifier(pn) || ts.isStringLiteral(pn) ? pn.text
+    : ts.isComputedPropertyName(pn) && (ts.isStringLiteral(pn.expression) || ts.isNoSubstitutionTemplateLiteral(pn.expression)) ? pn.expression.text
+    : null;
   if (key === null) return null;
   const property = checker.getTypeAtLocation(p.parent).getProperty(key);
   return property ? canonical(checker, property) : null;
@@ -281,7 +346,8 @@ const FUNCTION_LIKE = (n: ts.Node): n is ts.SignatureDeclaration =>
 function bindingName(n: ts.SignatureDeclaration): ts.Node | null {
   if ((ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n) || ts.isGetAccessorDeclaration(n) || ts.isSetAccessorDeclaration(n)) && n.name) return n.name;
   if (ts.isConstructorDeclaration(n)) return n.parent.name ?? null;
-  if ((ts.isArrowFunction(n) || ts.isFunctionExpression(n)) && (ts.isVariableDeclaration(n.parent) || ts.isPropertyAssignment(n.parent)) && n.parent.initializer === n) {
+  if ((ts.isArrowFunction(n) || ts.isFunctionExpression(n)) &&
+    (ts.isVariableDeclaration(n.parent) || ts.isPropertyAssignment(n.parent) || ts.isPropertyDeclaration(n.parent)) && n.parent.initializer === n) {
     return n.parent.name;
   }
   return null;
@@ -315,7 +381,8 @@ function enclosingOf(g: Graph, sf: ts.SourceFile, node: ts.Node): Enclosing {
 function functionLabel(g: Graph, sf: ts.SourceFile, fn: ts.Node, name: ts.Node): string {
   const own = ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteral(name) ? name.text : name.getText(sf);
   let owner = "";
-  const container = ts.isConstructorDeclaration(fn) ? null : fn.parent && ts.isPropertyAssignment(fn.parent) ? fn.parent.parent : fn.parent;
+  const container = ts.isConstructorDeclaration(fn) ? null
+    : fn.parent && (ts.isPropertyAssignment(fn.parent) || ts.isPropertyDeclaration(fn.parent)) ? fn.parent.parent : fn.parent;
   if (container && ts.isClassLike(container)) owner = `${container.name?.text ?? "(class)"}.`;
   if (container && ts.isObjectLiteralExpression(container)) {
     const holder = container.parent;
@@ -401,6 +468,16 @@ export function reach(g: Graph, target: ts.Symbol, roots: ReadonlyMap<string, Ro
     for (const id of g.unresolved.get(symbol.name) ?? []) {
       const sf = id.getSourceFile();
       entries.add(`${escape(g, sf, id, "a reference the checker cannot resolve")}${via}`);
+    }
+    // A call through a member without a body (an interface, type-literal or abstract member) may dispatch to this
+    // member: when a chain function is a member, every such use with its name fails closed.
+    const own = keyOf(symbol);
+    if (own && typeof own === "object" && "kind" in own && (ts.isMethodDeclaration(own) || ts.isPropertyAssignment(own) ||
+      ts.isPropertyDeclaration(own) || ts.isShorthandPropertyAssignment(own) || ts.isGetAccessorDeclaration(own))) {
+      for (const { ref, owner } of g.bodiless.get(symbol.name) ?? []) {
+        const sf = ref.getSourceFile();
+        entries.add(`?? ${rel(g, sf)}:${line(sf, ref)} ${owner}: a use of a member without a body may dispatch to ${symbol.name}${via}`);
+      }
     }
     // An access that may reach it without naming it.
     for (const d of g.dynamic) {
