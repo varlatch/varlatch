@@ -2,7 +2,7 @@
 import { VarlatchApiError, type Approval, type VarlatchClient } from "@varlatch/sdk";
 import { EXIT } from "./exitCodes.js";
 import { shellWord } from "./members.js";
-import { printable, safeTime } from "./safeText.js";
+import { printable, safeTime, serverMessage } from "./safeText.js";
 
 /**
  * Step-up approvals in the CLI (ADR-0054 Decision 3). When an operation
@@ -76,9 +76,10 @@ export function takeApprovalOption(argv: string[]): { argv: string[]; approval: 
 
 /** What the approval asks for, its address and its expiry: the lines the CLI prints on stderr. */
 export function approvalLines(approval: Approval): string[] {
-  const lines = [`This needs your approval with a trusted passkey: ${approval.summary.title}`];
+  // The title and the values a change sets are free text from the server: masked as well as escaped (issue #119).
+  const lines = [`This needs your approval with a trusted passkey: ${serverMessage(approval.summary.title)}`];
   for (const change of approval.summary.changes) {
-    lines.push(`  ${change.field}: ${change.from ?? "not set"} -> ${change.to ?? "not set"}${change.loosens ? " (loosens)" : ""}`);
+    lines.push(`  ${change.field}: ${change.from != null ? serverMessage(change.from) : "not set"} -> ${change.to != null ? serverMessage(change.to) : "not set"}${change.loosens ? " (loosens)" : ""}`);
   }
   if (approval.url) {
     lines.push(
@@ -150,20 +151,20 @@ function ended(approval: Approval): ApprovalError | null {
       return null;
     case "expired":
       return new ApprovalError(
-        `Approval ${approval.id} expired before it was approved. Nothing was changed; run the command again for a new one.`,
+        `Approval ${printable(approval.id)} expired before it was approved. Nothing was changed; run the command again for a new one.`,
         EXIT.tempfail,
       );
     case "consumed":
-      return new ApprovalError(`Approval ${approval.id} was already used. Run the command again for a new one.`, EXIT.denied);
+      return new ApprovalError(`Approval ${printable(approval.id)} was already used. Run the command again for a new one.`, EXIT.denied);
     case "closed":
       return new ApprovalError(
         approval.closeReason === "cancelled"
-          ? `Approval ${approval.id} was cancelled. Nothing was changed.`
+          ? `Approval ${printable(approval.id)} was cancelled. Nothing was changed.`
           : approval.closeReason === "reset"
-            ? `Approval ${approval.id} was closed by the host operator's reset of the security controls. Nothing was changed.`
+            ? `Approval ${printable(approval.id)} was closed by the host operator's reset of the security controls. Nothing was changed.`
             : approval.closeReason === "organization-deleted"
-              ? `Approval ${approval.id} was closed: its organization was deleted. Nothing was changed.`
-              : `Approval ${approval.id} was closed. Nothing was changed.`,
+              ? `Approval ${printable(approval.id)} was closed: its organization was deleted. Nothing was changed.`
+              : `Approval ${printable(approval.id)} was closed. Nothing was changed.`,
         EXIT.denied,
       );
   }
@@ -198,7 +199,7 @@ export async function waitForApproval(api: Polling, first: Approval, io: WaitIo,
       }
       if (err instanceof VarlatchApiError && err.code === "RESOURCE_NOT_FOUND") {
         throw new ApprovalError(
-          `No approval ${approval.id} exists for you (an approval belongs to the person who asked for it). Nothing was changed.`,
+          `No approval ${printable(approval.id)} exists for you (an approval belongs to the person who asked for it). Nothing was changed.`,
           EXIT.denied,
         );
       }
@@ -242,7 +243,7 @@ export async function waitInterruptibly(
   const io = options.io ?? realWaitIo;
   const exit = options.exit ?? ((code: number) => process.exit(code));
   const controller = new AbortController();
-  const stopped = new ApprovalError(`Stopped waiting; approval ${approval.id} was cancelled. Nothing was changed.`, EXIT.interrupted);
+  const stopped = new ApprovalError(`Stopped waiting; approval ${printable(approval.id)} was cancelled. Nothing was changed.`, EXIT.interrupted);
   let interrupted = false;
   let interrupt!: (err: ApprovalError) => void;
   const interruption = new Promise<never>((_, reject) => {

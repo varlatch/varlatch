@@ -221,19 +221,25 @@ fixes.
   is still recorded once. See [When it
   decides](docs/reference/security-controls.md#when-it-decides).
 - **The CLI prints only checked text from the server.** A server that
-  misbehaves can no longer use the CLI's output to show a credential or a
-  value, add fake lines, or send escape sequences to your terminal. Times,
-  versions and request ids print only when they have the expected form,
-  and as a fixed phrase such as "an unrecognized time" otherwise; an error
-  code prints only when Varlatch defines it. An error message from the
-  server is still shown, with control characters made visible and with
-  every credential and value the CLI knows of replaced by `[redacted]`:
-  the request's credential, every stored one, values it sent, and anything
-  in a Varlatch token format. Names of organizations, projects,
+  misbehaves can no longer use the CLI's output to add fake lines or send
+  escape sequences to your terminal. Names of organizations, projects,
   environments, identities and other things the server returns show their
-  control characters as visible escapes such as `\u001b`. JSON output,
-  NDJSON audit exports, what `varlatch run` gives its command and the
-  format of `varlatch env list` are unchanged.
+  control characters as visible escapes such as `\u001b`. Times and
+  versions print only when they have the expected form, and as a fixed
+  phrase such as "an unrecognized time" otherwise. Times in human output
+  are now shown in UTC in ISO 8601 form with milliseconds, for example
+  `2026-12-01T00:00:00.000Z`. A request id prints only in the server's own
+  form and is left out otherwise. An error code that the CLI does not
+  know, for example one from a newer server, prints as
+  `UNRECOGNIZED_ERROR`; its message is still shown. Error messages and
+  other free text from the server, such as rotation hints, freeze reasons
+  and approval titles, are still shown, with control characters made
+  visible. In them, every credential and value the CLI knows of (the
+  request's credential, every stored credential, and the values it sent)
+  is replaced by `[redacted]` where it appears exactly, and so is anything
+  in a Varlatch token format. JSON output, NDJSON audit exports, what
+  `varlatch run` gives its command and the format of `varlatch env list`
+  are unchanged.
 - Dependency update for published advisories: `hono` 4.13.16
   (GHSA-4m76-xfj5-7975 and GHSA-h7mg-cq63-vhpq: `mount()`, and the
   RegExpRouter for some route sets and for paths with an encoded line

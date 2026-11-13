@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ExposureReport, MemberRemoval, MemberReview, OrgIdentity } from "@varlatch/sdk";
-import { UNRECOGNIZED_TIME, printable, safe, safeTime } from "./safeText.js";
+import { UNRECOGNIZED_TIME, printable, safe, safeTime, serverMessage } from "./safeText.js";
 
 /**
  * `varlatch member` (capability members.lifecycle, ADR-0052): list, remove,
@@ -128,7 +128,7 @@ export function exposureLines(
       const through = r.environmentId !== v.owningEnvironmentId ? ` through ${envName(r.environmentId)}` : "";
       lines.push(`    ${WAY_WORDS[r.way] ?? r.way}${through}, ${r.firstAt === r.lastAt ? safeTime(r.firstAt) : `${safeTime(r.firstAt)} to ${safeTime(r.lastAt)}`}`);
     }
-    if (v.rotationHint && v.served) lines.push(`    to rotate: ${v.rotationHint}`);
+    if (v.rotationHint && v.served) lines.push(`    to rotate: ${serverMessage(v.rotationHint)}`); // free text from a Contract: masked too
   }
   if (report.received.some((v) => !v.served && !v.confirmation)) {
     lines.push("  No longer served is not safe: replacing a value in Varlatch does not revoke the old credential at its provider.");

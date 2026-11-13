@@ -15,7 +15,7 @@ import {
 import type { Requirement } from "@varlatch/protocol";
 import { enforceable, lifetime } from "./securityControls.js";
 import { ago, expiryLine, usagePolicyLine } from "./securityReport.js";
-import { printable, safeTime, safeVersion } from "./safeText.js";
+import { printable, safeTime, safeVersion, serverMessage } from "./safeText.js";
 
 /**
  * `varlatch security status` (ADR-0054 Decision 11): what the dashboard's
@@ -256,7 +256,7 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
   if (s.incidentFreeze) {
     const f = s.incidentFreeze;
     lines.push(
-      `FROZEN for an incident since ${safeTime(f.frozenAt)} by ${f.frozenBy.name ?? f.frozenBy.id}: ${f.reason}`,
+      `FROZEN for an incident since ${safeTime(f.frozenAt)} by ${f.frozenBy.name ?? f.frozenBy.id}: ${serverMessage(f.reason)}`,
       `  Every read and write is refused except inspection, audit and recovery. Lift it: varlatch org unfreeze ${s.organization}`,
     );
   }

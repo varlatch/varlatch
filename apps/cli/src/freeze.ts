@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { IncidentFreeze, IncidentFreezeLift, IncidentFreezeState, ResumingTarget } from "@varlatch/sdk";
-import { UNRECOGNIZED_TIME, safe, safeTime } from "./safeText.js";
+import { UNRECOGNIZED_TIME, safe, safeTime, serverMessage } from "./safeText.js";
 
 /**
  * `varlatch org freeze` and `varlatch org unfreeze` (ADR-0055 Decision 11):
@@ -53,7 +53,7 @@ function targetLine(t: ResumingTarget): string {
 export function liftConfirmationLines(state: IncidentFreezeState, slug: string): string[] {
   const freeze = state.freeze!;
   return [
-    safe`${slug} is frozen since ${safeTime(freeze.frozenAt)} by ${freeze.frozenBy.name ?? freeze.frozenBy.id}: ${freeze.reason}`,
+    safe`${slug} is frozen since ${safeTime(freeze.frozenAt)} by ${freeze.frozenBy.name ?? freeze.frozenBy.id}: ${serverMessage(freeze.reason)}`,
     "Lifting undoes nothing done during the freeze: revoked credentials and Grants stay revoked.",
     ...(state.resumingTargets === null
       ? ["Sync Targets that were not paused or revoked resume pushing (listing them needs config.sync.manage)."]

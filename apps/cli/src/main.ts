@@ -2145,7 +2145,7 @@ async function main(): Promise<void> {
           // How to rotate this credential, from the Contract: before the value is
           // asked for or sent (the steps may come first) and again after.
           const hint = sub === "rotate" ? await rotationHintOf(api, ctx, item) : undefined;
-          if (hint !== undefined) console.error(`How to rotate ${item} (from the Contract): ${hint}`);
+          if (hint !== undefined) console.error(`How to rotate ${item} (from the Contract): ${serverMessage(hint)}`);
           const obtained = await obtainValue(source, item);
           // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
           if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
@@ -2164,7 +2164,7 @@ async function main(): Promise<void> {
           console.log(
             `${item} rotating${how} — new primary ${printable(rot.primaryVersionId)}, previous value valid until ${safeTime(rot.rotationDeadline)}. Run "varlatch values rotate-complete ${item}" once consumers have migrated.`,
           );
-          if (hint !== undefined) console.error(`Remaining steps for ${item} (from the Contract): ${hint}`);
+          if (hint !== undefined) console.error(`Remaining steps for ${item} (from the Contract): ${serverMessage(hint)}`);
           return;
         }
         if (sub === "delete") {

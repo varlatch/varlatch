@@ -106,6 +106,8 @@ export function checkTargetFlags(
   if (untargeted.length > 0) {
     throw new UsageError(
       untargeted
+        // Stored names come from the server: each escaped, the message's own lines kept (issue #119).
+        .map((name) => printable(name))
         .map(
           (n) =>
             `${n} has no substitution target: add --target ${n}=header:authorization\n` +
