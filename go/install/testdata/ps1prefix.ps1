@@ -58,20 +58,41 @@ function New-SentinelRunspace([string]$Kind) {
   if ($OnWindows) { $State.ExecutionPolicy = 'Bypass' }
   $State.Variables.Add([Management.Automation.Runspaces.SessionStateVariableEntry]::new('SentinelHits', $Hits, ''))
   $State.Commands.Add([Management.Automation.Runspaces.SessionStateFunctionEntry]::new('Invoke-VarlatchSentinel', '[void]$SentinelHits.Add("ALIAS " + $MyInvocation.InvocationName)'))
-  foreach ($Name in $Names) {
-    # Names PowerShell would not read as a command name at all.
-    if ($Name -notmatch '^[A-Za-z_][A-Za-z0-9_.-]*$' -or $Name -eq 'Invoke-VarlatchSentinel') { continue }
-    if ($Kind -eq 'function') {
+  # Names PowerShell would not read as a command name at all are left out.
+  $Valid = @($Names | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_.-]*$' -and $_ -ne 'Invoke-VarlatchSentinel' })
+  if ($Kind -eq 'function') {
+    foreach ($Name in $Valid) {
       $State.Commands.Add([Management.Automation.Runspaces.SessionStateFunctionEntry]::new($Name, "[void]`$SentinelHits.Add('FUNCTION $Name')"))
-    } else {
-      $State.Commands.Add([Management.Automation.Runspaces.SessionStateAliasEntry]::new($Name, 'Invoke-VarlatchSentinel'))
     }
   }
   $Runspace = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($State)
   $Runspace.Open()
+  if ($Kind -eq 'alias') {
+    # Set inside the open session: Windows PowerShell 5.1 ignores alias
+    # entries in an InitialSessionState.
+    $Shell = [PowerShell]::Create()
+    $Shell.Runspace = $Runspace
+    [void]$Shell.AddScript('param($Names) foreach ($Name in $Names) { Set-Alias -Name $Name -Value Invoke-VarlatchSentinel -Scope Global -Force }').AddArgument($Valid)
+    [void]$Shell.Invoke()
+    $Shell.Dispose()
+  }
   return $Runspace
 }
 $Runspaces = @{ alias = New-SentinelRunspace 'alias'; function = New-SentinelRunspace 'function' }
+
+# The sentinels must be live: in each session, a bare word of the script
+# reaches its alias or function.
+$Probe = @($Names | Where-Object { $_ -match '^[A-Za-z][A-Za-z0-9-]*$' } | Sort-Object Length -Descending)[0]
+foreach ($Kind in 'alias', 'function') {
+  $Hits.Clear()
+  $Shell = [PowerShell]::Create()
+  $Shell.Runspace = $Runspaces[$Kind]
+  [void]$Shell.AddScript($Probe)
+  try { [void]$Shell.Invoke() } catch { }
+  $Shell.Dispose()
+  $Want = if ($Kind -eq 'alias') { "ALIAS $Probe" } else { "FUNCTION $Probe" }
+  if (-not ($Hits -contains $Want)) { Write-Output "BADSETUP the $Kind sentinel for $Probe did not run (hits: $($Hits -join ', '))" }
+}
 
 # The script's own messages start a line.
 $Messages = '(?m)^(varlatch install:|usage:|Installed|Next:|Added )'

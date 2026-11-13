@@ -168,6 +168,9 @@ func TestPS1EveryPrefix(t *testing.T) {
 			if psMessages.Match(out) {
 				t.Fatalf("a prefix printed one of the script's messages:\n%s", out)
 			}
+			if strings.Contains(string(out), "BADSETUP") {
+				t.Fatalf("the sentinels did not load:\n%s", out)
+			}
 			bad := 0
 			for _, line := range strings.Split(string(out), "\n") {
 				if strings.HasPrefix(line, "BAD") {
@@ -658,8 +661,8 @@ func TestPS1EndToEnd(t *testing.T) {
 			t.Run("ARM64 machine", func(t *testing.T) {
 				r := newRelease()
 				res := install(t, host, r, true, false, nil, "PROCESSOR_ARCHITECTURE=x86", "PROCESSOR_ARCHITEW6432=ARM64")
-				if res.code == 0 || !strings.Contains(strings.Join(r.requests, " "), "-windows-arm64.exe") {
-					t.Fatalf("exit %d, requests %v:\n%s", res.code, r.requests, res.out)
+				if res.code == 0 || !strings.Contains(res.out, "does not list varlatch-"+version+"-windows-arm64.exe") {
+					t.Fatalf("exit %d:\n%s", res.code, res.out)
 				}
 			})
 		})
