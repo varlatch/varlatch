@@ -159,6 +159,7 @@ import {
   parseApprovalId,
   startApproval,
   withApproval,
+  type ProtectedGate,
   type Requester,
 } from "../domain/approvals.js";
 import { SECURITY_CONTROLS, AVAILABLE_MODES, availableModesOf, changeControl, listControls } from "../domain/securitycontrols.js";
@@ -169,6 +170,15 @@ import {
   requirementUpdateBinding,
   sameRequirementState,
 } from "../domain/requirementprotection.js";
+import {
+  checkGrantSubject,
+  grantCreateBinding,
+  grantReplaceBinding,
+  grantRevokeBinding,
+  readGrant,
+  sameGrant,
+  storedGrant,
+} from "../domain/accessstepup.js";
 import { approvalKeys } from "../domain/approvalKeys.js";
 import { lockPeople, lockPerson, type PersonRef } from "../domain/personlocks.js";
 import {
@@ -206,7 +216,6 @@ import {
 import { captureOrganizationAccess, requireOrganizationAccess, withRequester } from "../domain/requestaccess.js";
 import {
   queueAccessCount,
-  reportAdminStepUp,
   reportingControls,
   securityControlReport,
   type PendingAccessReport,
@@ -3341,6 +3350,19 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     }
   };
 
+  /**
+   * policy.manage rechecked inside a protected operation's transaction,
+   * once its approval was consumed (ADR-0054 Decision 3).
+   */
+  const policyManageIn = (c: Context, principal: Principal, organizationId: string) => async (db: Querier) => {
+    await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId }, { hideExistence: true });
+  };
+  /** A protected operation's gate (ADR-0054): the header is read only when a control at enforce asks for an approval. */
+  const approvalGate = <T>(c: Context, run: (gate: ProtectedGate) => Promise<T>) =>
+    withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, run);
+
+  // A protected operation (ADR-0054): admin-step-up at enforce asks for the
+  // requester's approval of exactly this declaration (grant.create).
   app.post("/v1/organizations/:org/grants", async (c) => {
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
@@ -3348,11 +3370,22 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const body = parseBody(grantBodySchema, await c.req.json());
     requireOneOfEach(body);
     const id = newId("grant");
-    await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId], accessCheck: "deferred" });
+    await approvalGate(c, (gate) => withTx(ctx.db, async (db) => {
+      const prepared = await prepareProtectedOperation(db, gate, {
+        scope: { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId] },
+        checks: [{ control: "admin-step-up", operation: "grant.create" }],
+        // The subject exists, whatever the controls, before passkey-verification.
+        preflight: async (db) => {
+          if (body.subjectIdentityId) await checkGrantSubject(db, org.id, body.subjectIdentityId);
+        },
+        binding: async (db) => {
+          // Refusals first (amendment A), read without a lock; pinned below.
+          if (body.subjectIdentityId) await checkGrantSubject(db, org.id, body.subjectIdentityId);
+          return grantCreateBinding(db, org, body);
+        },
+        authorizeIn: policyManageIn(c, principal, org.id),
+      });
       if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
-      // Existence first, then passkey-verification (ADR-0054 Decision 7).
-      await requireOrganizationAccess(db, org.id);
       await db.query(
         `INSERT INTO grants (id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -3367,7 +3400,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           principal.identity.id,
         ],
       );
-      await reportAdminStepUp(db, org.id, principal.identity.id, "grant.create");
+      // Report mode (ADR-0054 Decision 9), before the audit insert.
+      await prepared.count(db);
       await recordAuditEvent(db, {
         eventType: "grant.created",
         decision: "info",
@@ -3379,9 +3413,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           ...(body.subjectIdentityId ? { subjectIdentityId: body.subjectIdentityId } : {}),
           ...(body.subjectGroupId ? { subjectGroupId: body.subjectGroupId } : {}),
         },
-        metadata: body.roleId ? { roleId: body.roleId } : { actions: (body.actions ?? []).join(",") },
+        metadata: {
+          ...(body.roleId ? { roleId: body.roleId } : { actions: (body.actions ?? []).join(",") }),
+          ...approvalMetadata(prepared.approval),
+        },
       });
-    });
+    }));
     return c.json(
       {
         id,
@@ -3397,31 +3434,47 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     );
   });
 
+  // A protected operation (ADR-0054): admin-step-up at enforce asks for the
+  // requester's approval (grant.revoke). It stays a recovery operation
+  // during an incident freeze (ADR-0055), where its approval may still be
+  // asked for.
   app.delete("/v1/organizations/:org/grants/:grant", async (c) => {
     const principal = c.get("principal");
     const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
-    await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [principal.identity.id], accessCheck: "deferred" });
-      // Existence first, then passkey-verification (ADR-0054 Decision 7).
-      const live = await db.query("SELECT 1 FROM grants WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL", [c.req.param("grant"), org.id]);
-      if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
-      await requireOrganizationAccess(db, org.id);
+    const grantId = c.req.param("grant");
+    await approvalGate(c, (gate) => withTx(ctx.db, async (db) => {
+      const prepared = await prepareProtectedOperation(db, gate, {
+        scope: { organizationId: org.id, duringIncidentFreeze: "recovery", people: [principal.identity.id] },
+        checks: [{ control: "admin-step-up", operation: "grant.revoke" }],
+        preflight: async (db) => {
+          const grant = await readGrant(db, org.id, grantId);
+          if (!grant || grant.revoked) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
+        },
+        binding: async (db) => {
+          const grant = await readGrant(db, org.id, grantId);
+          if (!grant || grant.revoked) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
+          return grantRevokeBinding(db, org, grant);
+        },
+        authorizeIn: policyManageIn(c, principal, org.id),
+      });
       const res = await db.query(
         "UPDATE grants SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
-        [c.req.param("grant"), org.id],
+        [grantId, org.id],
       );
       if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
-      await reportAdminStepUp(db, org.id, principal.identity.id, "grant.revoke");
+      // Report mode (ADR-0054 Decision 9), before the audit insert.
+      await prepared.count(db);
       await recordAuditEvent(db, {
         eventType: "grant.revoked",
         decision: "info",
         actorIdentityId: principal.identity.id,
         organizationId: org.id,
         action: "policy.manage",
-        resource: { grantId: c.req.param("grant") },
+        resource: { grantId },
+        ...(prepared.approval ? { metadata: approvalMetadata(prepared.approval) } : {}),
       });
-    });
+    }));
     return c.body(null, 204);
   });
 
@@ -3429,6 +3482,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // atomic revoke-and-replace, one transaction, linked audit events. An
   // already-revoked original is VERSION_CONFLICT so concurrent replacements
   // can never create multiple successors.
+  //
+  // A protected operation (ADR-0054): admin-step-up at enforce asks for the
+  // requester's approval (grant.replace), bound to the old Grant and the
+  // complete normalized replacement. A replacement identical to the old
+  // declaration (sets compared as sets) changes no access: it needs no
+  // approval and report mode does not count it; it still replaces the Grant.
   app.post("/v1/organizations/:org/grants/:grant/replace", async (c) => {
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
@@ -3437,39 +3496,55 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     requireOneOfEach(body);
     const grantId = c.req.param("grant");
     const endpoint = `POST grants ${grantId} replace`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [body.subjectIdentityId] }, async (ctx) => {
+    const approvalId = approvalHeaderOf(c);
+    const { status, payload } = await approvalGate(c, (gate) =>
+      // The claim (step 2.5) comes after every person in its strongest
+      // mode: the requester FOR UPDATE when the request carries an
+      // approval it may consume.
+      withIdempotency(ctx, c, principal, endpoint, body, {
+        organizationId: org.id,
+        people: [body.subjectIdentityId, ...(approvalId !== null ? [{ id: principal.identity.id, mode: "update" as const }] : [])],
+      }, async (ctx) => {
       const newGrantId = newId("grant");
       await withTx(ctx.db, async (db) => {
-        await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId], accessCheck: "deferred" });
-        // The Grant exists (read without a lock): after the subject's
-        // checks, as before, and before passkey-verification, which the
-        // subject's pin is preceded by (ADR-0054 Decision 7).
-        const grantExists = async () => {
-          if (!(await db.query("SELECT 1 FROM grants WHERE id = $1 AND organization_id = $2", [grantId, org.id])).rows[0]) {
-            throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
-          }
-        };
+        const prepared = await prepareProtectedOperation(db, gate, {
+          scope: { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId] },
+          checks: [{ control: "admin-step-up", operation: "grant.replace" }],
+          // The subject and the Grant exist, in the binding's order, whatever the controls.
+          preflight: async (db) => {
+            if (body.subjectIdentityId) await checkGrantSubject(db, org.id, body.subjectIdentityId);
+            if (!(await readGrant(db, org.id, grantId))) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
+          },
+          binding: async (db) => {
+            // Refusals first (amendment A), read without a lock, in the
+            // order the locked checks below make them.
+            if (body.subjectIdentityId) await checkGrantSubject(db, org.id, body.subjectIdentityId);
+            const old = await readGrant(db, org.id, grantId);
+            if (!old) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
+            if (old.revoked) throw new DomainError("VERSION_CONFLICT", "Grant is already revoked or replaced");
+            if (sameGrant(old, body)) return null;
+            return grantReplaceBinding(db, org, old, body);
+          },
+          authorizeIn: policyManageIn(c, principal, org.id),
+        });
         // Membership before the Grant, the order a removal locks them in,
         // so replacing a Grant of someone being removed cannot deadlock.
-        if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId, grantExists);
-        else await grantExists();
+        if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
         const existing = await lockedQuery(
           db,
           { table: "grants", mode: "update" },
-          `SELECT id, revoked_at,
-                  (subject_identity_id IS NOT DISTINCT FROM $3 AND subject_group_id IS NOT DISTINCT FROM $4
-                   AND scope = $5::jsonb AND actions IS NOT DISTINCT FROM $6::text[] AND role_id IS NOT DISTINCT FROM $7) AS same
+          `SELECT id, subject_identity_id, subject_group_id, scope, actions, role_id, revoked_at IS NOT NULL AS revoked
            FROM grants WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
-          [grantId, org.id, body.subjectIdentityId ?? null, body.subjectGroupId ?? null, JSON.stringify(body.scope), body.actions ?? null,
-            body.roleId ?? null],
+          [grantId, org.id],
         );
-        const row = existing.rows[0] as { id: string; revoked_at: string | null; same: boolean } | undefined;
+        const row = existing.rows[0] as Parameters<typeof storedGrant>[0] | undefined;
         if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
-        // Existence first, then passkey-verification (ADR-0054 Decision 7).
-        await requireOrganizationAccess(db, org.id);
-        if (row.revoked_at) {
+        // An immutable declaration: once it is live under the lock, it is
+        // the one the approval was decided on.
+        if (row.revoked) {
           throw new DomainError("VERSION_CONFLICT", "Grant is already revoked or replaced");
         }
+        const same = sameGrant(storedGrant(row), body);
         await db.query("UPDATE grants SET revoked_at = now() WHERE id = $1", [grantId]);
         await db.query(
           `INSERT INTO grants (id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_by)
@@ -3487,7 +3562,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         );
         // Report mode counts a replacement that changes the declaration; one
         // with identical content still replaces the Grant, but changes no access.
-        if (!row.same) await reportAdminStepUp(db, org.id, principal.identity.id, "grant.replace");
+        if (!same) await prepared.count(db);
         await recordAuditEvent(db, {
           eventType: "grant.revoked",
           decision: "info",
@@ -3495,7 +3570,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           organizationId: org.id,
           action: "policy.manage",
           resource: { grantId },
-          metadata: { replacedBy: newGrantId },
+          metadata: { replacedBy: newGrantId, ...approvalMetadata(prepared.approval) },
         });
         await recordAuditEvent(db, {
           eventType: "grant.created",
@@ -3511,6 +3586,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           metadata: {
             replaces: grantId,
             ...(body.roleId ? { roleId: body.roleId } : { actions: (body.actions ?? []).join(",") }),
+            ...approvalMetadata(prepared.approval),
           },
         });
       });
@@ -3530,7 +3606,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           },
         },
       };
-    });
+    }));
     return c.json(payload as Record<string, unknown>, status as 201);
   });
 
@@ -3553,13 +3629,22 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listRoles(ctx, org.id), nextCursor: null });
   });
+  // Every write below is a protected operation (ADR-0054): admin-step-up
+  // at enforce asks for the requester's approval of exactly that request
+  // (accessstepup.ts), and policy.manage is rechecked once it is consumed.
+  // The PATCH routes take an Idempotency-Key: its claim (step 2.5) holds
+  // the requester FOR UPDATE when the request carries an approval it may
+  // consume, and rolls back with a STEP_UP_REQUIRED answer.
+  const claimPeople = (c: Context, principal: Principal) =>
+    approvalHeaderOf(c) !== null ? [{ id: principal.identity.id, mode: "update" as const }] : [];
   app.post("/v1/organizations/:org/roles", async (c) => {
     const { principal, org } = await policyManage(c);
     const body = parseBody(
       z.object({ name: z.string().min(1).max(200), actions: z.array(z.string()).min(1) }),
       await c.req.json(),
     );
-    const role = await createRole(ctx, org.id, body as { name: string; actions: Action[] }, principal.identity.id);
+    const role = await approvalGate(c, (gate) =>
+      createRole(ctx, gate, org.id, body as { name: string; actions: Action[] }, { authorizeIn: policyManageIn(c, principal, org.id) }));
     return c.json(role, 201);
   });
   app.patch("/v1/organizations/:org/roles/:role", async (c) => {
@@ -3573,21 +3658,23 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH roles ${c.req.param("role")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
-      status: 200,
-      payload: await updateRole(
-        ctx,
-        org.id,
-        c.req.param("role"),
-        body as { expectedVersion: number; name?: string; actions?: Action[] },
-        principal.identity.id,
-      ),
-    }));
+    const { status, payload } = await approvalGate(c, (gate) =>
+      withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: claimPeople(c, principal) }, async (ctx) => ({
+        status: 200,
+        payload: await updateRole(
+          ctx,
+          gate,
+          org.id,
+          c.req.param("role"),
+          body as { expectedVersion: number; name?: string; actions?: Action[] },
+          { authorizeIn: policyManageIn(c, principal, org.id) },
+        ),
+      })));
     return c.json(payload as Record<string, unknown>, status as 200);
   });
   app.delete("/v1/organizations/:org/roles/:role", async (c) => {
     const { principal, org } = await policyManage(c);
-    await deleteRole(ctx, org.id, c.req.param("role"), principal.identity.id);
+    await approvalGate(c, (gate) => deleteRole(ctx, gate, org.id, c.req.param("role"), { authorizeIn: policyManageIn(c, principal, org.id) }));
     return c.body(null, 204);
   });
 
@@ -3595,89 +3682,72 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listGroups(ctx, org.id, "group"), nextCursor: null });
   });
-  app.post("/v1/organizations/:org/groups", async (c) => {
+  // Groups and Teams share their writers; `kind` is the route's for a
+  // creation and a rename (which finds only its own kind), the stored row's
+  // for a deletion and for memberships.
+  const createGroupRoute = (kind: "group" | "team") => async (c: Context) => {
     const { principal, org } = await policyManage(c);
     const body = parseBody(z.object({ name: z.string().min(1).max(200) }), await c.req.json());
-    const group = await createGroup(ctx, org.id, { name: body.name, kind: "group" }, principal.identity.id);
+    const group = await approvalGate(c, (gate) =>
+      createGroup(ctx, gate, org.id, { name: body.name, kind }, { authorizeIn: policyManageIn(c, principal, org.id) }));
     return c.json(group, 201);
-  });
-  app.patch("/v1/organizations/:org/groups/:group", async (c) => {
+  };
+  const updateGroupRoute = (kind: "group" | "team") => async (c: Context) => {
     const { principal, org } = await policyManage(c);
     const body = parseBody(
       z.object({ expectedVersion: z.number().int().min(1), name: z.string().min(1).max(200).optional() }),
       await c.req.json(),
     );
-    const endpoint = `PATCH groups ${c.req.param("group")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
-      status: 200,
-      payload: await updateGroup(ctx, org.id, c.req.param("group"), "group", body, principal.identity.id),
-    }));
+    const id = routeParam(c, kind);
+    const endpoint = `PATCH ${kind}s ${id}`;
+    const { status, payload } = await approvalGate(c, (gate) =>
+      withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: claimPeople(c, principal) }, async (ctx) => ({
+        status: 200,
+        payload: await updateGroup(ctx, gate, org.id, id, kind, body, { authorizeIn: policyManageIn(c, principal, org.id) }),
+      })));
     return c.json(payload as Record<string, unknown>, status as 200);
-  });
-  app.delete("/v1/organizations/:org/groups/:group", async (c) => {
+  };
+  const deleteGroupRoute = (param: "group" | "team") => async (c: Context) => {
     const { principal, org } = await policyManage(c);
-    await deleteGroup(ctx, org.id, c.req.param("group"), principal.identity.id);
+    await approvalGate(c, (gate) => deleteGroup(ctx, gate, org.id, routeParam(c, param), { authorizeIn: policyManageIn(c, principal, org.id) }));
     return c.body(null, 204);
-  });
+  };
+  const addMemberRoute = (param: "group" | "team") => async (c: Context) => {
+    const { principal, org } = await policyManage(c);
+    const body = parseBody(z.object({ identityId: z.string() }), await c.req.json());
+    await approvalGate(c, (gate) =>
+      addGroupMember(ctx, gate, org.id, routeParam(c, param), body.identityId, { authorizeIn: policyManageIn(c, principal, org.id) }));
+    return c.body(null, 204);
+  };
+  const removeMemberRoute = (param: "group" | "team") => async (c: Context) => {
+    const { principal, org } = await policyManage(c);
+    await approvalGate(c, (gate) =>
+      removeGroupMember(ctx, gate, org.id, routeParam(c, param), routeParam(c, "identity"), { authorizeIn: policyManageIn(c, principal, org.id) }));
+    return c.body(null, 204);
+  };
+  app.post("/v1/organizations/:org/groups", createGroupRoute("group"));
+  app.patch("/v1/organizations/:org/groups/:group", updateGroupRoute("group"));
+  app.delete("/v1/organizations/:org/groups/:group", deleteGroupRoute("group"));
   app.get("/v1/organizations/:org/groups/:group/members", async (c) => {
     const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listGroupMembers(ctx, org.id, c.req.param("group")), nextCursor: null });
   });
-  app.post("/v1/organizations/:org/groups/:group/members", async (c) => {
-    const { principal, org } = await policyManage(c);
-    const body = parseBody(z.object({ identityId: z.string() }), await c.req.json());
-    await addGroupMember(ctx, org.id, c.req.param("group"), body.identityId, principal.identity.id);
-    return c.body(null, 204);
-  });
-  app.delete("/v1/organizations/:org/groups/:group/members/:identity", async (c) => {
-    const { principal, org } = await policyManage(c);
-    await removeGroupMember(ctx, org.id, c.req.param("group"), c.req.param("identity"), principal.identity.id);
-    return c.body(null, 204);
-  });
+  app.post("/v1/organizations/:org/groups/:group/members", addMemberRoute("group"));
+  app.delete("/v1/organizations/:org/groups/:group/members/:identity", removeMemberRoute("group"));
 
   app.get("/v1/organizations/:org/teams", async (c) => {
     const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listGroups(ctx, org.id, "team"), nextCursor: null });
   });
-  app.post("/v1/organizations/:org/teams", async (c) => {
-    const { principal, org } = await policyManage(c);
-    const body = parseBody(z.object({ name: z.string().min(1).max(200) }), await c.req.json());
-    const team = await createGroup(ctx, org.id, { name: body.name, kind: "team" }, principal.identity.id);
-    return c.json(team, 201);
-  });
-  app.patch("/v1/organizations/:org/teams/:team", async (c) => {
-    const { principal, org } = await policyManage(c);
-    const body = parseBody(
-      z.object({ expectedVersion: z.number().int().min(1), name: z.string().min(1).max(200).optional() }),
-      await c.req.json(),
-    );
-    const endpoint = `PATCH teams ${c.req.param("team")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
-      status: 200,
-      payload: await updateGroup(ctx, org.id, c.req.param("team"), "team", body, principal.identity.id),
-    }));
-    return c.json(payload as Record<string, unknown>, status as 200);
-  });
-  app.delete("/v1/organizations/:org/teams/:team", async (c) => {
-    const { principal, org } = await policyManage(c);
-    await deleteGroup(ctx, org.id, c.req.param("team"), principal.identity.id);
-    return c.body(null, 204);
-  });
+  app.post("/v1/organizations/:org/teams", createGroupRoute("team"));
+  app.patch("/v1/organizations/:org/teams/:team", updateGroupRoute("team"));
+  app.delete("/v1/organizations/:org/teams/:team", deleteGroupRoute("team"));
   app.get("/v1/organizations/:org/teams/:team/members", async (c) => {
     const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listGroupMembers(ctx, org.id, c.req.param("team")), nextCursor: null });
   });
-  app.post("/v1/organizations/:org/teams/:team/members", async (c) => {
-    const { principal, org } = await policyManage(c);
-    const body = parseBody(z.object({ identityId: z.string() }), await c.req.json());
-    await addGroupMember(ctx, org.id, c.req.param("team"), body.identityId, principal.identity.id);
-    return c.body(null, 204);
-  });
-  app.delete("/v1/organizations/:org/teams/:team/members/:identity", async (c) => {
-    const { principal, org } = await policyManage(c);
-    await removeGroupMember(ctx, org.id, c.req.param("team"), c.req.param("identity"), principal.identity.id);
-    return c.body(null, 204);
-  });
+  app.post("/v1/organizations/:org/teams/:team/members", addMemberRoute("team"));
+  app.delete("/v1/organizations/:org/teams/:team/members/:identity", removeMemberRoute("team"));
   app.get("/v1/organizations/:org/teams/:team/projects", async (c) => {
     const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listTeamProjects(ctx, org.id, c.req.param("team")), nextCursor: null });
@@ -3685,12 +3755,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   app.post("/v1/organizations/:org/teams/:team/projects", async (c) => {
     const { principal, org } = await policyManage(c);
     const body = parseBody(z.object({ projectId: z.string() }), await c.req.json());
-    await addTeamProject(ctx, org.id, c.req.param("team"), body.projectId, principal.identity.id);
+    await approvalGate(c, (gate) =>
+      addTeamProject(ctx, gate, org.id, c.req.param("team"), body.projectId, { authorizeIn: policyManageIn(c, principal, org.id) }));
     return c.body(null, 204);
   });
   app.delete("/v1/organizations/:org/teams/:team/projects/:project", async (c) => {
     const { principal, org } = await policyManage(c);
-    await removeTeamProject(ctx, org.id, c.req.param("team"), routeParam(c, "project"), principal.identity.id);
+    await approvalGate(c, (gate) =>
+      removeTeamProject(ctx, gate, org.id, c.req.param("team"), routeParam(c, "project"), { authorizeIn: policyManageIn(c, principal, org.id) }));
     return c.body(null, 204);
   });
 

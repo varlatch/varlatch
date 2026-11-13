@@ -67,6 +67,23 @@ fixes.
   It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
   changes now, and with every control off nothing changes at all. See
   [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up: approvals for Grants, roles, groups and teams are
+  built.** Creating, replacing or revoking a Grant; creating, changing or
+  deleting a role, a group or a team; adding or removing their members;
+  and giving a team a project or taking it away will each need the
+  approval of the person asking, for exactly that request, once
+  `admin-step-up` can be enforced; a machine credential will be refused.
+  Revoking a Grant stays possible during an incident freeze and still
+  asks. It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
+  changes now, and with every control off nothing changes at all. In
+  report mode, a Grant replacement or a role edit that only reorders
+  actions is no longer counted. Every approval summary, Tailnet
+  Requirement edits and removals included, quotes every name and value and
+  names each existing item by its id. See
+  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Dashboard: adding or removing a group or team member, and giving a
+  team a project or taking it away, now show an error when they fail.**
+  They used to fail silently.
 - **Removing a trusted passkey needs an approval** once you are a member of
   an organization that enforces a control (`requirement-protection`,
   `credential-lifetime` or `passkey-verification`). Removing an unconfirmed passkey
@@ -106,6 +123,15 @@ fixes.
   sign-in, and a refused request never asks for an approval. Each refusal
   is still recorded once. See [When it
   decides](docs/reference/security-controls.md#when-it-decides).
+- Dependency update for published advisories: `hono` 4.13.16
+  (GHSA-4m76-xfj5-7975 and GHSA-h7mg-cq63-vhpq: `mount()`, and the
+  RegExpRouter for some route sets and for paths with an encoded line
+  terminator, could skip middleware; GHSA-3gg2-335m-rxc6: the `css` helper's
+  escaping). Varlatch uses neither `mount()` nor the `css` helper.
+- Dependency update for a published advisory: `@hono/node-server` 2.1.6
+  (GHSA-qv5m-9pm6-hqp3: a connection reset during a WebSocket upgrade could
+  crash the process). varlatchd and the MCP server accept no WebSocket
+  upgrades, so no installation was exposed.
 
 ### Scripts and API
 

@@ -81,7 +81,7 @@ what the bundler includes.
 | @fontsource-variable/inter | 5.3.0 | OFL-1.1 | dashboard |
 | @fontsource-variable/jetbrains-mono | 5.3.0 | OFL-1.1 | dashboard |
 | @hexagon/base64 | 1.1.28 | MIT | varlatchd, dashboard |
-| @hono/node-server | 2.1.5 | MIT | varlatchd, CLI |
+| @hono/node-server | 2.1.6 | MIT | varlatchd, CLI |
 | @isaacs/fs-minipass | 4.0.1 | ISC | CLI |
 | @levischuck/tiny-cbor | 0.2.11 | MIT | varlatchd, dashboard |
 | @modelcontextprotocol/sdk | 1.32.2 | MIT | CLI |
@@ -164,7 +164,7 @@ what the bundler includes.
 | gopd | 1.2.0 | MIT | CLI |
 | has-symbols | 1.1.0 | MIT | CLI |
 | hasown | 2.0.4 | MIT | CLI |
-| hono | 4.13.13 | MIT | varlatchd, CLI |
+| hono | 4.13.16 | MIT | varlatchd, CLI |
 | http-errors | 2.0.1 | MIT | CLI |
 | iconv-lite | 0.7.3 | MIT | CLI |
 | ieee754 | 1.2.1 | BSD-3-Clause | varlatchd, CLI |
@@ -1340,7 +1340,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### @hono/node-server@2.1.5
+### @hono/node-server@2.1.6
 
 ````text
 MIT License
@@ -3272,7 +3272,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### hono@4.13.13
+### hono@4.13.16
 
 ````text
 MIT License

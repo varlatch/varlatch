@@ -140,7 +140,7 @@ it("upgrades existing audit history and removes legacy idempotency hashes", asyn
   await db.query("INSERT INTO idempotency_keys(identity_id,endpoint,idempotency_key,body_hash,response) VALUES ('legacy','write','key','guessable','{}')");
   await db.query(`INSERT INTO audit_events(id,event_type,decision,occurred_at) VALUES
     ('older','test','info','2026-01-01T00:00:00.123455Z'), ('newer','test','info','2026-01-01T00:00:00.123456Z')`);
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
   expect((await db.query("SELECT id FROM audit_events ORDER BY event_order")).rows).toEqual([{ id: "older" }, { id: "newer" }]);
   expect((await db.query("SELECT * FROM idempotency_keys")).rows).toEqual([]);
   await db.query("INSERT INTO audit_events(id,event_type,decision) VALUES ('latest','test','info')");
@@ -168,7 +168,7 @@ it("drops the environment-name mapping, leaving contract revisions and audit his
   const beforeRevisions = await revisions();
   const beforeAudit = await audit();
 
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
   expect((await db.query("SELECT to_regclass('varlock_env_mappings') AS t")).rows).toEqual([{ t: null }]);
   expect(await revisions()).toEqual(beforeRevisions);
   expect(await audit()).toEqual(beforeAudit);
@@ -186,7 +186,7 @@ it("adds the audit client column, leaving history as it was", async () => {
   const audit = async () => (await db.query("SELECT id, event_type, decision, actor_identity_id, credential_id, occurred_at, event_order FROM audit_events ORDER BY event_order")).rows;
   const before = await audit();
 
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
   expect(await audit()).toEqual(before);
   // History is not backfilled: no request recorded a client for it.
   expect((await db.query("SELECT id, client FROM audit_events ORDER BY event_order")).rows).toEqual([
@@ -213,7 +213,7 @@ it("adds credential expiry to connections, unknown for every existing one", asyn
   await db.query(`INSERT INTO platform_connections(id,organization_id,platform,base_identity,name,credential_envelope,created_by)
     VALUES ('pcn_a','org_a','github-actions','acme','GitHub','{}','idn_admin')`);
 
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
   expect((await db.query("SELECT id, version, credential_expires_at, credential_expiry_seen_at FROM platform_connections")).rows).toEqual([
     { id: "pcn_a", version: 1, credential_expires_at: null, credential_expiry_seen_at: null },
   ]);
@@ -233,7 +233,7 @@ it("adds GitHub Apps and a credential kind; existing connections are tokens", as
   await db.query(`INSERT INTO platform_connections(id,organization_id,platform,base_identity,name,credential_envelope,created_by,credential_expires_at,credential_expiry_seen_at)
     VALUES ('pcn_token','org_a','github-actions','acme','GitHub','{}','idn_admin','2027-01-01T00:00:00Z','2026-10-09T00:00:00Z')`);
 
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
   expect((await db.query("SELECT id, version, credential_kind, github_app_id, github_installation_id, credential_expires_at IS NOT NULL AS has_expiry FROM platform_connections")).rows).toEqual([
     { id: "pcn_token", version: 1, credential_kind: "token", github_app_id: null, github_installation_id: null, has_expiry: true },
   ]);
@@ -304,7 +304,7 @@ it("adds GitHub App registrations: a state hash bound to an actor, an Organizati
   }
   await db.query("INSERT INTO identities(id,kind,name) VALUES ('idn_admin','human','Admin')");
   await db.query("INSERT INTO organizations(id,slug,name,wrapped_org_kek) VALUES ('org_a','acme','Acme','{}')");
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
 
   const registration = (stateHash: string, login: string, type: string, expires = "now() + interval '1 hour'") =>
     db.query(
@@ -340,7 +340,7 @@ it("adds usage notes to Sync Targets, null for every existing one", async () => 
   await db.query(`INSERT INTO sync_targets(id,organization_id,project_id,environment_id,connection_id,destination,canonical_destination,mapping,created_by,last_result)
     VALUES ('snt_a','org_a','prj_a','env_a','pcn_a','{"applicationUuid":"app1"}','["coolify","https://coolify.example.com","app1"]','{"kind":"wildcard"}','idn_admin','ok')`);
 
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
   expect((await db.query("SELECT id, last_result, last_notes FROM sync_targets")).rows).toEqual([
     { id: "snt_a", last_result: "ok", last_notes: null },
   ]);
@@ -365,7 +365,7 @@ it("ends memberships without deleting them, and backfills who each credential wa
     ('evt_2','credential.issued','info','idn_admin','crd_self',NULL),
     ('evt_3','credential.issued','info','idn_missing','crd_unknown','org_a')`);
 
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
   expect((await db.query("SELECT identity_id, role, removed_at, version FROM org_memberships")).rows).toEqual([
     { identity_id: "idn_admin", role: "admin", removed_at: null, version: 0 },
   ]);
@@ -391,7 +391,7 @@ it("starts the exposure backfill at the audit position the migration saw, finish
     await db.query("INSERT INTO varlatch_migrations VALUES ($1,$2)", [migration.id, migration.name]);
   }
   await db.query("INSERT INTO audit_events(id,event_type,decision) VALUES ('evt_1','test','info'), ('evt_2','test','info')");
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
   expect((await db.query("SELECT cursor::int, until_order::int, finished_at FROM exposure_backfill")).rows).toEqual([
     { cursor: 0, until_order: 2, finished_at: null },
   ]);
@@ -420,7 +420,7 @@ it("frees a deleted Project's slug and keeps value versions intact or erased, ne
   await db.query("INSERT INTO environments(id,project_id,name,kind,tier) VALUES ('env_a','prj_a','dev','shared','development')");
   await db.query("INSERT INTO env_values(id,environment_id,item_name) VALUES ('val_a','env_a','A')");
   await db.query(`INSERT INTO value_versions(id,value_id,payload,wrapped_dek) VALUES ('ver_a','val_a','{"x":1}','{"y":1}')`);
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
 
   await expect(db.query("INSERT INTO projects(id,organization_id,slug,name,contract_authority) VALUES ('prj_b','org_a','api','API','git')")).rejects.toThrow(/duplicate key/);
   await db.query("UPDATE projects SET deleted_at = now() WHERE id = 'prj_a'");
@@ -440,7 +440,7 @@ it("adds deletion requests, one open per Organization, and a KEK that is present
   }
   await db.query("INSERT INTO identities(id,kind,name) VALUES ('idn_a','human','A'), ('idn_b','human','B')");
   await db.query(`INSERT INTO organizations(id,slug,name,wrapped_org_kek) VALUES ('org_a','acme','Acme','{"k":1}')`);
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([38, 39, 40, 41, 42, 43, 44, 45, 46, 49]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49]);
 
   await db.query("INSERT INTO organization_deletions(id,organization_id,requested_by,run_after,approval_required) VALUES ('odl_1','org_a','idn_a',now() + interval '7 days',true)");
   await expect(
@@ -460,16 +460,42 @@ it("adds deletion requests, one open per Organization, and a KEK that is present
   expect((await runMigrations(db)).applied).toEqual([]);
 });
 
-it("adds the Organization's security epoch, 0 for every existing one", async () => {
+it("lets Approval Intents name the access-structure operations of admin-step-up, always in an Organization", async () => {
   await db.exec!("CREATE TABLE varlatch_migrations (id integer PRIMARY KEY, name text NOT NULL)");
   for (const migration of MIGRATIONS.filter(m => m.id <= 46)) {
     await db.exec!(migration.sql);
     await db.query("INSERT INTO varlatch_migrations VALUES ($1,$2)", [migration.id, migration.name]);
   }
-  await db.query(`INSERT INTO organizations(id,slug,name,wrapped_org_kek) VALUES ('org_a','acme','Acme','{"k":1}')`);
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([49]);
-  expect((await db.query("SELECT security_epoch::int AS e FROM organizations")).rows).toEqual([{ e: 0 }]);
-  await db.query(`INSERT INTO organizations(id,slug,name,wrapped_org_kek) VALUES ('org_b','beta','Beta','{"k":1}')`);
-  expect((await db.query("SELECT security_epoch::int AS e FROM organizations WHERE id = 'org_b'")).rows).toEqual([{ e: 0 }]);
-  expect((await runMigrations(db)).applied).toEqual([]);
+  await db.query("INSERT INTO organizations(id,slug,name,wrapped_org_kek) VALUES ('org_a','acme','Acme','{}')");
+  await db.query("INSERT INTO identities(id,kind,name) VALUES ('idn_admin','human','Admin')");
+  await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash) VALUES ('crd_cli','idn_admin','cli','h1')");
+  const intent = (id: string, operation: string, organizationId: string | null) =>
+    db.query(
+      `INSERT INTO approval_intents (id, credential_id, identity_id, organization_id, operation, target, body_hash, query_hash, summary, origin,
+                                     created_at, expires_at, poll_interval)
+       VALUES ($1, 'crd_cli', 'idn_admin', $2, $3, '{}'::jsonb, 'b', 'q', '{}'::jsonb, 'cli', now(), now() + interval '10 minutes', 5)`,
+      [id, organizationId, operation],
+    );
+  const access = [
+    "grant.create", "grant.replace", "grant.revoke",
+    "role.create", "role.update", "role.delete",
+    "group.create", "group.update", "group.delete", "group.member_add", "group.member_remove",
+    "team.create", "team.update", "team.delete", "team.member_add", "team.member_remove",
+    "team.project_add", "team.project_remove",
+  ];
+  // Before 0047: none of them is an operation yet.
+  await expect(intent("apr_early", "grant.create", "org_a")).rejects.toThrow(/check constraint/);
+
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([47]);
+  for (const [i, operation] of access.entries()) {
+    await intent(`apr_${i}`, operation, "org_a");
+    await expect(intent(`apr_noorg_${i}`, operation, null), operation).rejects.toThrow(/check constraint/);
+  }
+  // The operations before 0047 keep their rules.
+  await intent("apr_identity", "identity.create", "org_a");
+  await expect(intent("apr_identity_noorg", "identity.create", null)).rejects.toThrow(/check constraint/);
+  await intent("apr_passkey", "passkey.remove", null);
+  await intent("apr_requirement", "requirement.revoke", "org_a");
+  await expect(intent("apr_unknown", "grant.edit", "org_a")).rejects.toThrow(/check constraint/);
+  expect((await db.query("SELECT count(*)::int AS n FROM approval_intents")).rows).toEqual([{ n: access.length + 3 }]);
 });

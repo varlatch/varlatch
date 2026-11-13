@@ -15,8 +15,14 @@ minimumReleaseAgeExclude:
 overrides:
   # Patch the OpenAPI generator's transitive YAML parser.
   js-yaml@>=4.0.0 <4.3.2: 4.3.2
-  # serveStatic decodes the path twice (GHSA-rmxm-3fg6-px4f); the MCP SDK allows 2.x.
-  '@hono/node-server@>=1.19.10 <2.1.3': 2.1.5
+  # serveStatic decodes the path twice (GHSA-rmxm-3fg6-px4f), and an ECONNRESET
+  # during a WebSocket upgrade crashes the process (GHSA-qv5m-9pm6-hqp3); the
+  # MCP SDK allows 2.x.
+  '@hono/node-server@>=1.19.10 <2.1.6': 2.1.6
+  # mount() and RegExpRouter could skip middleware (GHSA-4m76-xfj5-7975,
+  # GHSA-h7mg-cq63-vhpq), css helper escaping (GHSA-3gg2-335m-rxc6); the MCP
+  # SDK's copy too, though it only runs over stdio.
+  'hono@>=4.0.0 <4.13.16': 4.13.16
   # The OpenAPI generator's glob matcher (GHSA-g3hv-75wg-m249), for this Redocly
   # release only: 11.x is not callable from CommonJS, and Redocly's only call
   # matches remote-$ref header rules, which the protocol config does not use.

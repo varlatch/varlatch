@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Querier } from "../db/migrate.js";
 import { canonicalJson, type ApprovalBinding, type ApprovalChange } from "./approvals.js";
+import { labelWithId, list, quoted, quotedList, unnamed } from "./approvallabels.js";
 
 /**
  * requirement-protection (ADR-0054 Decision 5, step 4.2): what an approval
@@ -90,22 +91,22 @@ async function environmentNames(db: Querier, organizationId: string, ids: readon
      WHERE e.id = ANY($1) AND p.organization_id = $2`,
     [[...ids], organizationId],
   )).rows as { id: string; name: string; slug: string }[];
-  return new Map(rows.map((r) => [r.id, `${r.slug}/${r.name}`]));
+  return new Map(rows.map((r) => [r.id, labelWithId(null, `${r.slug}/${r.name}`, r.id)]));
 }
 
 function describeTarget(target: RequirementTarget, names: Map<string, string>): string {
   if (target.kind === "tier") return `the ${target.tier} tier`;
-  return `environments ${set(target.environmentIds).map((id) => names.get(id) ?? id).join(", ")}`;
+  return `environments ${list(set(target.environmentIds.map((id) => names.get(id) ?? unnamed("environment", id))))}`;
 }
 
 function describeSelector(selector: RequirementSelector): string {
   const n = normalizedRequirement({ target: { kind: "tier", tier: "" }, selector }).selector;
   const parts = [
-    n.tags.length ? `tags ${n.tags.join(", ")}` : null,
-    n.users.length ? `users ${n.users.join(", ")}` : null,
-    n.nodes.length ? `nodes ${n.nodes.join(", ")}` : null,
+    n.tags.length ? `tags ${quotedList(n.tags)}` : null,
+    n.users.length ? `users ${quotedList(n.users)}` : null,
+    n.nodes.length ? `nodes ${quotedList(n.nodes)}` : null,
   ].filter((p): p is string => p !== null);
-  return `tailnet ${n.tailnet}: ${parts.join("; ")}`;
+  return `tailnet ${quoted(n.tailnet)}: ${parts.join("; ")}`;
 }
 
 /**
@@ -166,7 +167,7 @@ export async function requirementUpdateBinding(
     body: normalizedRequirement(next),
     query: {},
     expectedVersion,
-    summary: { title: `Change the Tailnet Requirement on ${before.target}`, changes },
+    summary: { title: `Change the Tailnet Requirement ${current.id} on ${before.target}`, changes },
   };
 }
 
@@ -185,7 +186,7 @@ export async function requirementRevokeBinding(
     query: {},
     expectedVersion: current.version,
     summary: {
-      title: `Remove the Tailnet Requirement on ${describeTarget(current.target, names)} (${describeSelector(current.selector)}). What it constrained is no longer constrained`,
+      title: `Remove the Tailnet Requirement ${current.id} on ${describeTarget(current.target, names)} (${describeSelector(current.selector)}). What it constrained is no longer constrained`,
       changes: [],
     },
   };

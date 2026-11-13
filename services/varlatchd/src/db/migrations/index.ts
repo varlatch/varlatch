@@ -46,6 +46,7 @@ import { sql as sessionEndRevokesBrowserCredentials } from "./0043_session_end_r
 import { sql as incidentFreeze } from "./0044_incident_freeze.js";
 import { sql as requirementProtection } from "./0045_requirement_protection.js";
 import { sql as adminStepUpIdentities } from "./0046_admin_step_up_identities.js";
+import { sql as adminStepUpAccess } from "./0047_admin_step_up_access.js";
 import { sql as organizationSecurityEpoch } from "./0049_organization_security_epoch.js";
 
 export interface Migration {
@@ -102,6 +103,7 @@ export const MIGRATIONS: Migration[] = [
   { id: 44, name: "incident_freeze", sql: incidentFreeze },
   { id: 45, name: "requirement_protection", sql: requirementProtection },
   { id: 46, name: "admin_step_up_identities", sql: adminStepUpIdentities },
-  // 47 and 48: taken by changes in flight.
+  { id: 47, name: "admin_step_up_access", sql: adminStepUpAccess },
+  // 48: taken by a change in flight.
   { id: 49, name: "organization_security_epoch", sql: organizationSecurityEpoch },
 ];
