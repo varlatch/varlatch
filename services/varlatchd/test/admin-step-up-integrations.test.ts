@@ -308,6 +308,21 @@ describe("with every control off", () => {
   });
 });
 
+describe("the registration callback with every control off", () => {
+  it("is one transaction, as before staging: a failure while attaching keeps nothing, not even a pending conversion", async () => {
+    const started = await startRegistration(admin.cli);
+    await ctx.db.query(`CREATE FUNCTION fail_app_insert_off() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END $$`);
+    await ctx.db.query("CREATE TRIGGER fail_app_insert_off BEFORE INSERT ON github_apps FOR EACH ROW EXECUTE FUNCTION fail_app_insert_off()");
+    expect((await completeRegistration(admin.cli, started.state, "code-off")).status).toBeGreaterThanOrEqual(500);
+    // The claim, the conversion and the attachment rolled back together.
+    expect((await rows("SELECT consumed_at, converted_at, pending_key_envelope FROM github_app_registrations WHERE id = $1", [started.id]))[0])
+      .toEqual({ consumed_at: null, converted_at: null, pending_key_envelope: null });
+    expect(await liveApp()).toBeUndefined();
+    expect(await events("sync.github_app_registration_abandoned")).toEqual([]);
+    expect(await intents()).toBe(0);
+  });
+});
+
 describe("a replayed callback", () => {
   it("with every control off, answers CONSUMED as before: no details", async () => {
     const started = await startRegistration(admin.cli);

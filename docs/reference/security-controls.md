@@ -816,16 +816,18 @@ the audit log does.
 
 **Nothing goes to GitHub before the approval.** Importing an App, replacing
 its key and connecting one of its installations ask GitHub something first.
-Under enforce, Varlatch sends nothing to GitHub until you have approved
-exactly that request; the approval is used only when the change is saved.
-If GitHub then refuses the key or the installation, nothing changes and the
-approval stays usable until it expires.
+Each runs as one transaction that holds the organization from its checks
+until the change is saved. Under enforce, Varlatch sends nothing to GitHub
+until it has found your approval for exactly that request; the approval is
+used only after GitHub answered, when the change is saved. If GitHub then
+refuses the key or the installation, nothing changes and the approval stays
+usable until it expires.
 
 **Registering a GitHub App** runs in stages. GitHub creates the App when you
 submit its manifest, before Varlatch is involved, and hands it over when it
-sends you back. Varlatch keeps what it handed over as pending for one hour,
-with the private key encrypted. With no approval needed, the App is
-attached at once, as before. Under enforce, the dashboard asks for your
+sends you back. With no approval needed, the App is attached in the same
+step, as before. When one is needed, Varlatch keeps what GitHub handed over
+as pending for one hour, with the private key encrypted. Under enforce, the dashboard asks for your
 approval and then attaches it; if you close the approval, the page offers
 **Approve and attach** and **Discard**. Only the person who started the
 registration can attach or discard it. A pending App that is discarded,

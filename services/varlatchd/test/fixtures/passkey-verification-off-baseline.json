@@ -1,5 +1,5 @@
 {
- "source": "main 71570de",
+ "source": "main 71570de; the attach and discard routes of a pending GitHub App registration (ADR-0054 4.8) recorded on feat/admin-step-up-integrations, which adds them",
  "variants": {
   "GET /v1/organizations/:org (fixtures)": {
    "status": 200,
@@ -5784,6 +5784,92 @@
    "tables": []
   },
   "GET /v1/organizations/:org/audit-events/export (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "account": {
+     "login": "string",
+     "type": "string"
+    },
+    "app": {
+     "githubAppId": "number",
+     "owner": {
+      "login": "string",
+      "type": "string"
+     },
+     "slug": "string"
+    },
+    "deleteUrl": "string",
+    "message": "string",
+    "outcome": "string",
+    "reason": "string"
+   },
+   "tables": [
+    "audit_events",
+    "github_app_registrations"
+   ]
+  },
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach (missing registration)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "deleteUrl": "string",
+    "discarded": "boolean"
+   },
+   "tables": [
+    "audit_events",
+    "github_app_registrations"
+   ]
+  },
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration (missing registration)": {
    "status": 404,
    "code": "RESOURCE_NOT_FOUND",
    "shape": {

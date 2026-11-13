@@ -229,6 +229,8 @@ const DURING_FREEZE: Record<string, FreezeException | null> = {
   "GET /v1/organizations/:org/github-app": null,
   "POST /v1/organizations/:org/github-app/registrations": null,
   "POST /v1/organizations/:org/github-app/registrations/complete": null,
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach": null,
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration": null,
   "POST /v1/organizations/:org/github-app/import": null,
   "POST /v1/organizations/:org/github-app/key": null,
   "DELETE /v1/organizations/:org/github-app": null,

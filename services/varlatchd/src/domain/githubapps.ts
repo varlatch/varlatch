@@ -62,30 +62,42 @@ import { outboundOf, outboundRefusalOf } from "../net/outbound.js";
  *
  * 1. Start (not protected): the registration gets a stable id, returned
  *    with the state; it is the registration's target from then on.
- * 2. Conversion (the callback, not protected): it claims the state,
- *    exchanges the code and checks GitHub's answer and the owner, then
- *    stores the conversion as pending on the registration, in one
- *    transaction: the App's id, slug, client id and owner, and its private
- *    key wrapped under the Organization KEK and bound to the registration
- *    id. Pending material is written once and never updated (migration 50).
- * 3. Attachment (github_app.register, protected; attachRegistration): one
- *    transaction, in amendment E's order: the Organization FOR KEY SHARE,
- *    the person (FOR UPDATE when an approval is consumed, FOR KEY SHARE
- *    otherwise), the registration FOR UPDATE (step 10) and its checks
- *    (still pending, not expired by clock_timestamp(), started by this
- *    person), then the github_apps insert, the pending key deleted, the
- *    audit event. It calls nothing outside Varlatch. With no approval
- *    needed it follows conversion in the same request, and the outcome is
- *    as before. When one is needed, the completion answers STEP_UP_REQUIRED
- *    for the registration, and the client repeats the attachment (its own
- *    route) with the approval, never the callback.
+ * 2. Conversion (the callback, not protected; completeRegistration): an
+ *    external effect (liveness.ts withExternalEffect), one transaction
+ *    holding the Organization row and the person from its checkpoint,
+ *    after the registration was found, until the writes are done. It
+ *    claims the state, exchanges the code, checks GitHub's answer and the
+ *    owner, then stores the conversion as pending on the registration row:
+ *    the App's id, slug, client id and owner, and its private key wrapped
+ *    under the Organization KEK and bound to the registration id. Pending
+ *    material is written once and never updated (migration 50).
+ * 3. Attachment (github_app.register, protected; attachInTx), in amendment
+ *    E's order: the Organization FOR KEY SHARE, the existence preflight
+ *    and the passkey-verification checkpoint, the person (FOR UPDATE when
+ *    an approval is consumed, FOR KEY SHARE otherwise), the registration
+ *    FOR UPDATE (step 10) and its checks (still pending, not expired by
+ *    clock_timestamp(), started by this person), then the github_apps
+ *    insert, the pending key deleted, the audit event. It calls nothing
+ *    outside Varlatch.
+ *    - With no approval needed, it runs in the callback's transaction: the
+ *      claim, the exchange, the conversion and the attachment commit or
+ *      roll back together, as before staging.
+ *    - When one is needed, ApprovalNeeded comes before the attachment
+ *      writes anything: the callback's transaction commits the conversion
+ *      as pending, and the completion answers STEP_UP_REQUIRED for the
+ *      registration. The client repeats the attachment on its own route
+ *      (attachRegistration, a transaction of its own) with the approval,
+ *      never the callback.
  *
  * Terminal refusals end a registration (the pending conversion expired,
  * was discarded or already attached; the Organization got another App;
- * another Organization uses this App): the attempt rolls back, consumption
+ * another Organization uses this App). In the callback's transaction the
+ * registration is ended there, with its audit event, as a refusal was
+ * before staging. On the attach route the attempt rolls back, consumption
  * included, then a cleanup of its own deletes the pending key, if it is
  * still pending, and audits. STEP_UP_REQUIRED, an approval that does not
- * fit, and transient failures keep the registration until its own expiry.
+ * fit, and transient failures on the attach route keep the registration
+ * until its own expiry.
  *
  * Attachment, discard and the expiry sweep each lock the registration row
  * FOR UPDATE and check again under it that it is still pending; whichever
