@@ -264,6 +264,13 @@ export async function issueInviteGrant(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId: input.organizationId, people: [actorIdentityId] },
       checks: input.role === "admin" ? [{ control: "admin-step-up", operation: "member.invite_admin" }] : [],
+      // The issuer's membership, whatever the controls, before
+      // passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (person && !(await readMember(db, input.organizationId, actorIdentityId))) {
+          throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
+        }
+      },
       binding: async (db) => {
         // Refused first, before an approval is asked for (amendment A).
         if (person && !(await readMember(db, input.organizationId, actorIdentityId))) {
