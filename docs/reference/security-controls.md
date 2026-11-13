@@ -2,10 +2,116 @@
 
 Security controls are optional protections an organization can turn on.
 They all start **off**, on new and upgraded installations alike: with every
-control off, Varlatch works exactly as it did before they existed.
+control off, Varlatch works exactly as it did before they existed (see
+[Off by default](#off-by-default)).
 
-This page covers the controls, their modes, how a change is approved with
-your passkey, and the way back for whoever runs the server.
+This page covers the controls, their modes, how to turn them on safely, how
+a change is approved with your passkey, and the way back for whoever runs
+the server.
+
+At a glance:
+
+| Control | With `enforce` | `report` counts | The way back |
+| --- | --- | --- | --- |
+| [`requirement-protection`](#requirement-protection) | Editing or removing a Tailnet Requirement needs the approval of the person asking; a machine credential is refused. | each edit or removal | [reset](#the-way-back-the-host-operators-reset) `--control requirement-protection` |
+| [`admin-step-up`](#admin-step-up) | Each of [40 administrative operations](#what-report-mode-counts) needs the approval of the person asking; a machine credential is refused. | each such operation | reset `--control admin-step-up` |
+| [`passkey-verification`](#passkey-verification) | A person's request to the organization is refused unless their sign-in was made with a trusted passkey that verified them. | each such request, per person and reason | `admin reenroll`, or reset `--control passkey-verification` |
+| [`credential-lifetime`](#credential-lifetime) | Machine credentials get a default lifetime and none above a maximum. | would-default and would-refuse | reset `--control credential-lifetime` |
+
+## Off by default
+
+- **Every control is off** on every installation and in every
+  organization, new ones included. Installing, upgrading, a setting or an
+  environment variable never turns one on: only an admin of the
+  organization does, on its Security page or with `varlatch security set`.
+  A release that can enforce a control changes no mode either.
+- **With every control off, nothing changes.** Every request is allowed
+  or refused as before, with the same answer; credentials are issued with
+  the lifetime asked for, or none; no approval is asked for that was not
+  asked for before; nothing is counted; and nothing that worked before
+  records a new audit event (confirming a passkey, which is new, records
+  `authentication.passkey_confirmed`). The test suite checks this route by
+  route: with every control off, each route's answer and the tables it
+  changes must match a recorded baseline.
+- **What exists regardless of the modes**, so that turning a control on
+  later has something to rely on:
+  - each passkey's provenance (trusted or unconfirmed, see [Trusted
+    passkeys only](#trusted-passkeys-only)) and, for each sign-in, whether
+    the passkey verified the person and which passkey it was;
+  - the dashboard removes passkeys through Varlatch's
+    `DELETE /v1/me/passkeys/{id}` instead of Better Auth's own endpoint,
+    which is turned off; with no control enforced anywhere you belong, it
+    behaves as before;
+  - the read-only views: the [Security page](#the-security-page),
+    `varlatch security status`, `varlatch security report`, machine reach,
+    and the `Varlatch-Credential-Expires` header with the CLI's expiry
+    warning on stderr;
+  - `security.enforce.<control>` in `GET /v1/meta` and `enforce` in each
+    control's `availableModes`.
+- **Approvals that do not depend on a control.** Turning a control down
+  needs an approval whatever its mode, and so does lengthening or clearing
+  the lifetimes `credential-lifetime` keeps while it is off. It keeps them
+  when it is turned off without `--clear-config` or by the operator's
+  reset, and when they are saved while it is off: `security set
+  credential-lifetime off --default-ttl <s> --max-ttl <s>` needs no
+  approval when the lifetimes are newly set or shorter, and one when either
+  is longer. Lifting an [incident freeze](incident-freeze.md) always needs
+  one, and so do the changes that weaken an
+  [audit export](audit-export.md). These exist only once someone turns a
+  control on, freezes the organization or creates an export.
+
+## Turning controls on
+
+Turn one control on at a time, in `report` first:
+
+1. **Make sure every admin has a trusted passkey.** The Security page's
+   approval keys show, per admin, which passkeys are trusted. Only a
+   trusted passkey can approve, and once a control is enforced, turning it
+   back down needs an approval. Confirm unconfirmed passkeys first (see
+   [Trusted passkeys only](#trusted-passkeys-only)).
+2. **Set the control to `report`** (`varlatch security set <control>
+   report`). Nothing is refused or changed.
+3. **Let the organization work as usual** for long enough to cover what
+   runs rarely: CI pipelines, deploys, scheduled jobs, the people who sign
+   in once a week.
+4. **Read the counts** on the Security page or with `varlatch security
+   status --json`. Each count is a request that `enforce` would have
+   refused or asked an approval for (see [What report mode
+   counts](#what-report-mode-counts)). The reason `machine-credential`
+   marks automation that will stop.
+5. **Set it to `enforce`** once you know who and what it will stop. Keep
+   the [host operator's reset](#the-way-back-the-host-operators-reset) in
+   mind as the way back.
+
+> **Before enforcing `passkey-verification`, check in report mode that
+> your sign-ins record user verification.** This control refuses every
+> request of a person whose sign-in did not verify them, admins included,
+> and a person whose passkeys cannot verify them gets back in only through
+> whoever runs the server.
+>
+> 1. `varlatch security set passkey-verification report`.
+> 2. Ask every member to sign in again, in the dashboard and with
+>    `varlatch login`, with the passkey they will use from now on, and to
+>    use the organization as usual. Sign-ins made before Varlatch recorded
+>    user verification count as `no-evidence` until then.
+> 3. Read `passkey-verification`'s counts per person and reason. Every
+>    person counted would be refused:
+>    - `not-user-verified`: their authenticator signed them in without a
+>      PIN, fingerprint or face (`userVerified` false), for example a
+>      security key without a PIN. Set one up, or use another passkey, and
+>      sign in again;
+>    - `untrusted-passkey`: confirm that passkey with a trusted one;
+>    - `no-evidence`: sign in again; a credential issued without a passkey
+>      sign-in (`admin bootstrap`, `admin recover --cli-credential`) never
+>      qualifies, so replace it with `varlatch login`.
+> 4. Enforce only when every person who needs access has made requests
+>    since signing in again and none of them is counted. The counts are a
+>    lower bound: someone who made no request is not counted at all, and
+>    access counts are best-effort.
+>
+> Turning it on from your own sign-in is refused when that sign-in would
+> not qualify, so you cannot lock yourself out by saving it; other people
+> can be locked out, which is what report mode shows first.
 
 ## The controls
 
@@ -26,16 +132,17 @@ Each control has a mode:
   an outcome, Varlatch counts it, so you can see what turning it on would
   do before you decide (see [What report mode counts](#what-report-mode-counts)).
 - **`enforce`**: the control applies. **This release offers `enforce`
-  for `requirement-protection`, `credential-lifetime` and
-  `passkey-verification`** (see [Requirement
+  for all four controls** (see [Requirement
   protection](#requirement-protection), [Credential
-  lifetime](#credential-lifetime) and [Passkey
-  verification](#passkey-verification)). For `admin-step-up` the server
-  refuses it with `CONTROL_MODE_UNAVAILABLE`, and the dashboard shows it
-  as coming in a later release. A release says which controls it
-  can enforce: each control's `availableModes`, and the capability
-  `security.enforce.<control>` in `GET /v1/meta`. Nothing changes this at
-  runtime.
+  lifetime](#credential-lifetime), [Passkey
+  verification](#passkey-verification) and [Admin
+  step-up](#admin-step-up)). Offering it changes no default: every
+  control stays off until an admin turns it on. A release says which
+  controls it can enforce: each control's `availableModes`, and the
+  capability `security.enforce.<control>` in `GET /v1/meta`. Nothing
+  changes this at runtime. A server that cannot enforce a control refuses
+  `enforce` for it with `CONTROL_MODE_UNAVAILABLE`, and the dashboard
+  shows it as coming in a later release.
 
 A control's state has a version that goes up by one with every change. A
 control nobody has changed is off at version 0.
@@ -77,7 +184,10 @@ a while, then decide. Every control is off until an admin changes it.
 `enforce` is offered for the controls this server can enforce and shown
 as coming in a later release for the others.
 
-It has five parts:
+At the top it shows the organization's [incident
+freeze](incident-freeze.md) (freeze it, or the freeze in force) and which
+controls are on. Then seven sections, each shown to whoever may read it
+(see "Who sees what" below):
 
 - **Controls.** Each control with its mode, what `report` counts and what
   `enforce` would change, and its counts of the last 30 days per
@@ -96,6 +206,11 @@ It has five parts:
   never used, unused for 30 days, or without expiry, and the service
   credentials that expire within 7 days or have expired. Revoke or replace
   them in **Access**, **Machines**. Nothing is revoked automatically.
+- **Refused destinations.** The webhooks, connections and OIDC issuers
+  this installation's [outbound policy](outbound-policy.md) refuses, so
+  their deliveries and checks fail.
+- **Audit export.** The organization's [audit export](audit-export.md),
+  on a server that offers it (capability `audit.storage-export`).
 - **Tailnet Requirements.** How many there are, with a link to their
   editor (**Access**, **Advanced**) and the mode of
   `requirement-protection`, which protects them.
@@ -109,9 +224,9 @@ It has five parts:
   and the [threat model](../THREAT-MODEL.md).
 
 Who sees what: every member sees the controls and their modes
-(`organization.read`). The counts and the approval keys need
-`organization.manage`, the credential review `identity.manage`, and the
-requirements `policy.read`; organization admins hold all of them, and a
+(`organization.read`). The counts, the approval keys, the refused
+destinations and the audit export need `organization.manage`, the credential review
+`identity.manage`, and the requirements `policy.read`; organization admins hold all of them, and a
 grant can give any of them to someone else. The page first asks the
 server which of these you hold (`GET
 /v1/organizations/{org}/me/permissions`) and shows exactly those parts;
@@ -135,13 +250,17 @@ varlatch security status --json
 ```
 
 It prints the same parts, grouped and short (the three largest counts
-per control; `--json` has all of them). For machine credentials it gives
+per control; `--json` has all of them), and the freeze in force, if any.
+Refused destinations are in `varlatch security report` instead. For machine credentials it gives
 two separate lines: the use and expiry policy (never used, unused for 30
 days, no expiry) and the expiry warnings (expiring within 7 days or
 expired), so a credential that already expired is never hidden behind
 "nothing to review". `varlatch security report` starts with the same two
-lines. Like the page, `security status` asks the server which parts you
-may read first, and does not ask for the others. A part you cannot read, or that
+lines. For whoever may manage the organization, `security status` also
+prints an "Audit export" section (in JSON, `auditExport`, the last key):
+see [Audit export](audit-export.md). Like the page, `security status`
+asks the server which parts you may read first, and does not ask for the
+others. A part you cannot read, or that
 the server does not offer, is named under "Not shown" (in JSON,
 `unavailable`, with the reason `not-permitted` or `not-supported`), and
 the command still exits 0. It exits 1 only when the server has no
@@ -273,6 +392,14 @@ Every change is recorded in the audit log as `security_control.changed`,
 with the old and new state, whether it loosened the control, and the
 approval it used.
 
+Your authority (`organization.manage`) is checked again inside the change,
+after the organization is locked. If you lost it meanwhile, the change is
+refused and, when the approval was used, it stays unused. While at least
+one control is at `report` or `enforce` before the change, the audit log
+records one `authorization.denied` for that refusal. With every control
+off before the change (so also for `off` to `report` from all off), it
+records nothing, as before.
+
 ## Approvals
 
 An approval is your passkey, with your PIN, fingerprint or face, saying yes
@@ -281,7 +408,9 @@ to one exact change that you asked for.
 1. You ask for a loosening change. The server keeps a pending approval for
    exactly that request (the control, the new state, the version it
    expects, and the sign-in that asked) and answers `STEP_UP_REQUIRED`
-   with its address, `https://<your server>/approve/<id>`.
+   with its address, `https://<your server>/approve/<id>`. A server
+   without a public URL gives only the approval's id: open
+   `/approve/<id>` on the dashboard where you sign in.
 2. You open that address in a browser where you are signed in to
    Varlatch. The page shows what the change does, written by the server,
    and how long is left. Approve it with a **trusted** passkey, which must
@@ -307,9 +436,15 @@ What holds:
 - **It is used together with the change.** If the change fails, the
   approval stays usable until it expires; once the change is made, the
   approval can never be used again.
-- **Limits:** at most 5 open approvals per sign-in, and 30 per person in 10
-  minutes. The CLI checks every 5 seconds; checking faster is slowed down,
-  as for a CLI sign-in.
+- **Limits:** at most 5 open approvals per CLI sign-in or dashboard
+  access token, and 30 per person in 10 minutes; past either, the server
+  answers `RATE_LIMITED` (429). The CLI checks every 5 seconds; checking
+  faster is slowed down, as for a CLI sign-in.
+- **A refused use** answers `APPROVAL_INVALID` (409) with
+  `error.details.reason`, for example `pending` (not approved yet),
+  `expired`, `consumed` (already used), `closed` (cancelled or reset),
+  `mismatch` (given for another request), `stale` (the target changed) or
+  `session-ended`.
 
 ### Trusted passkeys only
 
@@ -444,7 +579,8 @@ approval that was used.
   passkeys can still change a Requirement.
 - **It protects Requirements, not every path to a value.** Grants, roles,
   groups and memberships also decide who can read what, and changing them
-  is `admin-step-up`'s business, which cannot be enforced yet.
+  is [`admin-step-up`](#admin-step-up)'s business: enforce both to cover
+  both paths.
 - **Whoever controls the host or the deployment can turn it off** with
   the [host operator's reset](#the-way-back-the-host-operators-reset).
 - **Coding agents stop.** A coding agent cannot approve; in assisted mode
@@ -719,18 +855,69 @@ organization can sign in with such a passkey:
 
 ## Admin step-up
 
-`admin-step-up` cannot be enforced yet: the server refuses `enforce` with
-`CONTROL_MODE_UNAVAILABLE` until every operation it covers asks for an
-approval. Its guarantee is described here when it can be turned on.
+`admin-step-up` is about the changes that hand out or take away
+authority, or send data out of Varlatch: machine identities and their
+credentials, grants, roles, groups and teams, admins and members,
+integrations, deletion, and `.env` export. Without it, anyone holding an
+admin's sign-in (a stolen CLI credential or dashboard session, for
+example) can make any of them from anywhere. Each is audited, but nothing
+stops it.
 
-The approvals for machine identities are built. Once the control is
-enforced, each of these needs your approval for exactly that request, and
-a machine credential that tries one is refused:
+Turn it on from the Security page, or:
+
+```sh
+varlatch security set admin-step-up report     # see first what it would ask for
+varlatch security set admin-step-up enforce
+```
+
+Turning it on is tightening: it needs no approval. Turning it down again
+(to `report` or `off`) needs your approval, like any loosening. Look at
+report mode first: every change it counts would then need an approval,
+and every one it counts with the reason `machine-credential` would be
+refused, so automation that makes such changes with a machine credential
+stops.
+
+### What it guarantees
+
+With `admin-step-up` at `enforce`, each of the 40 operations below:
+
+- **needs the approval of the person asking**, with a trusted passkey that
+  verifies them (PIN, fingerprint or face), for exactly that request:
+  the operation, its target, what the request asks for and, where the
+  target has one, its version. An approval for one request never fits
+  another; a target that changed in between needs a new approval. See
+  [Approvals](#approvals);
+- **is refused for a machine credential**, which can never give an
+  approval: `PERMISSION_DENIED` with the reason `machine-credential`, and
+  no approval is created. Role changes, removals and scheduling the
+  organization's deletion need a live admin of the organization, which a
+  machine never is: those are refused by that check first, as before;
+- **asks on every route that performs it.** A team reached through a
+  `/groups/` route asks for the `team.*` operation; both shapes of a new
+  connection ask; registering a GitHub App asks on the callback and on
+  the attachment;
+- **reads the mode inside the change**, after the organization is locked:
+  a change either completes before the control changes, or sees the new
+  mode. The approval is used once, together with the change; a change
+  that fails leaves it usable until it expires;
+- **rechecks your authority after the approval is used**, in the same
+  transaction: if you lost the action meanwhile, the change is refused,
+  the approval stays unused, and the audit log records one
+  `authorization.denied`, as for any other refused request.
+
+Removing a trusted passkey also needs an approval for everyone with a
+live membership in the organization (see [Removing a
+passkey](#removing-a-passkey)).
+
+Report mode counts the same requests without refusing them.
+
+These operations, and what an approval for each covers. Machine
+identities:
 
 | Operation | What the approval covers |
 | --- | --- |
-| `identity.create` | The name and kind, the credential lifetime and use budget asked for, and the lifetime the credential gets (with `credential-lifetime` enforced, its default when none was asked for). One approval covers both controls. |
-| `credential.issue` | The machine, the credential's name, the lifetime and use budget asked for, and the lifetime it gets. |
+| `identity.create` | The name and kind, the credential lifetime and use budget asked for, and the lifetime the credential gets (with `credential-lifetime` enforced, its default when none was asked for). The summary says which: "as requested", "the organization's default, since none was requested", or that it never expires because none was requested. One approval covers both controls. |
+| `credential.issue` | The machine, the credential's name, the lifetime and use budget asked for, and the lifetime it gets, said the same way. |
 | `identity.reactivate` | The machine. Reactivating a machine that is already active changes nothing and needs no approval. |
 | `oidc_binding.create` | The machine, the issuer, audience and subject, and the required claims (none and `{}` are the same). |
 | `oidc_binding.delete` | The machine and the binding. During an incident freeze, removing a binding is still allowed and still asks. |
@@ -739,8 +926,8 @@ An agent-run credential minted by a broker, retiring or renaming a machine,
 and revoking a credential never ask. Report mode already counts all five
 operations.
 
-The approvals for the access structure are built too: Grants, roles,
-groups and teams, their members, and the projects a team owns.
+Grants, roles, groups and teams, their members, and the projects a team
+owns:
 
 | Operation | What the approval covers |
 | --- | --- |
@@ -771,8 +958,8 @@ id. Two different requests never read the same. Report mode counts these operati
 requests that change nothing (a current member, an owned project, an
 identical Grant, a role whose actions only change order).
 
-The approvals for people are built too: inviting an admin, promoting a
-member, demoting an admin and removing someone.
+People: inviting an admin, promoting a member, demoting an admin and
+removing someone:
 
 | Operation | What the approval covers |
 | --- | --- |
@@ -790,12 +977,159 @@ Role changes and removals need a live admin of the organization, which a
 machine credential never is; an admin invitation by a machine credential
 that holds `identity.manage` is refused.
 
+Integrations: webhooks, connections and the GitHub App:
+
+| Operation | What the approval covers |
+| --- | --- |
+| `webhook.create` | The full address and the set of event types (every event when none is given). The signing secret is created when the approved request runs, and is not part of the approval. |
+| `webhook.update` | The webhook, its resulting address and set of event types, and the version you edited. Leaving a field out and sending its current value mean the same; `null` event types means every event. Reordering the event types, or keeping both, needs no approval. |
+| `webhook.delete` | The webhook, at the version the server read. Not allowed during an incident freeze. |
+| `connection.create` | A token connection: the platform, the base identity as Varlatch normalizes it, the name and the credential. A GitHub App connection: the App, the installation and the name. |
+| `connection.replace_credential` | The connection, the new credential and the version you edited. Every Sync Target on it must still pass its disclosure check, as before. |
+| `connection.delete` | The connection, at the version the server read: a connection whose credential was replaced since needs a new approval. During an incident freeze, revoking a connection is still allowed and still asks. |
+| `github_app.register` | The registration and the App GitHub handed over: its id, slug, client id and owner. |
+| `github_app.import` | The App id and the private key. |
+| `github_app.replace_key` | The App, the new private key and the version you edited. |
+| `github_app.remove` | The App, at the version the server read. |
+
+**Secrets in an approval.** A webhook address (it may carry a token), a
+connection's credential and a GitHub App's private key are part of what an
+approval covers, so an approval given for one value never works for
+another. The approval stores only a keyed hash of the request, never the
+value. The summary you approve says that a credential or key is set or
+replaced, and shows a webhook address with its path and query hidden, as
+the audit log does.
+
+**Nothing goes to GitHub before the approval.** Importing an App, replacing
+its key and connecting one of its installations ask GitHub something first.
+Each runs as one transaction that holds the organization from its checks
+until the change is saved. Under enforce, Varlatch sends nothing to GitHub
+until it has found your approval for exactly that request; the approval is
+used only after GitHub answered, when the change is saved. If GitHub then
+refuses the key or the installation, nothing changes and the approval stays
+usable until it expires.
+
+**Registering a GitHub App** runs in stages. GitHub creates the App when you
+submit its manifest, before Varlatch is involved, and hands it over when it
+sends you back. With no approval needed, the App is attached in the same
+step, as before. When one is needed, Varlatch keeps what GitHub handed over
+as pending for one hour, with the private key encrypted. Under enforce, the dashboard asks for your
+approval and then attaches it; if you close the approval, the page offers
+**Approve and attach** and **Discard**. Only the person who started the
+registration can attach or discard it. A pending App that is discarded,
+not attached within the hour, or refused (the organization got another
+App meanwhile, or another organization uses this one) loses its key, and
+the audit log records `sync.github_app_registration_abandoned` or
+`sync.github_app_registration_refused`. The App stays on GitHub; the
+dashboard links to where its owner deletes it.
+
+Checking a credential or listing destinations before saving a connection
+never asks.
+
+Deletion and export:
+
+| Operation | What the approval covers |
+| --- | --- |
+| `project.delete` | The project. It is deleted at once, in the request that uses the approval. |
+| `organization.delete` | The organization and the waiting period in days (7 when you leave it out). The deletion is scheduled when the approved request runs, and the waiting period starts then, in full. With more than one admin, another admin must still approve the scheduled deletion; their approval needs no passkey step-up of its own, and yours does not stand in for it. Approving and cancelling a scheduled deletion never ask. |
+| `secret.export` | The project, the environment, whether you asked for named Secrets or for every Secret you may reveal, the names you asked for, and the exact set of Secret names the file will contain. A Secret added since, or a new Grant that lets you see one more, changes that set: the dashboard then asks for a new approval. |
+
+An export (the dashboard's `.env` download) is read in one step and its
+approval is used in a second, before any value is decrypted. If a value
+changed in between (a new value, a rotation started or completed, a
+retiring value past its deadline, a value set or removed in a derived
+environment over its parent's, or a new Contract revision), the server
+answers `STATE_CHANGED`, discloses nothing and leaves the approval unused;
+the dashboard repeats the export with it, which reads the values again.
+Other Secret disclosures, `varlatch run`, and the non-secret values of the
+same file never ask. An export through the tailnet endpoint asks the same
+way.
+
+All three are refused while the organization is frozen for an incident,
+before any approval is asked for. Deleting a project is refused while the
+organization's deletion is pending; an export is not, since reading stays
+possible then.
+
+**During an incident freeze**, an approval can be asked for only for the
+operations that take authority away: removing an OIDC binding, revoking a
+Grant, demoting an admin, removing a member and revoking a connection.
+Every other operation is refused with `ORGANIZATION_FROZEN`, and no
+approval is created (see [Incident freeze](incident-freeze.md)).
+
+### With the other controls
+
+The controls meet in one place, in this order. A request refused at any
+step is refused there, and only the last step creates an approval:
+
+1. the route's own checks: who you are, whether you hold the action, and
+   whether what you named exists. While the organization is frozen, its
+   members and machines are refused here (`ORGANIZATION_FROZEN`);
+2. the request's validation (`VALIDATION_FAILED`);
+3. an organization being deleted (`ORGANIZATION_DELETING`) or frozen;
+4. `credential-lifetime` at `enforce`, for `identity.create` and
+   `credential.issue`: a lifetime above the maximum is refused
+   (`CREDENTIAL_LIFETIME_EXCEEDED`), for people and machines alike, and
+   one left out gets the default, which the approval covers;
+5. the operation's own not-found, such as a role that does not exist;
+6. `passkey-verification` at `enforce`: a person's sign-in that was not
+   made with a trusted passkey that verified them is refused
+   (`PASSKEY_VERIFICATION_REQUIRED`) and audited once; machine credentials
+   are not affected;
+7. the operation's refusals that do not depend on an approval, such as
+   the last-admin rule or a GitHub App the organization already has;
+8. a machine credential, when a control at `enforce` would ask it for an
+   approval (`PERMISSION_DENIED`, reason `machine-credential`);
+9. `STEP_UP_REQUIRED` with the approval to give, or the approval used.
+
+`requirement-protection` asks for approvals on its own two operations, which
+`admin-step-up` never covers; a host reset of one closes only its own open
+approvals. With `admin-step-up` in `report`, its operations run and are
+counted while `requirement-protection` at `enforce` still asks for its own.
+
+### What it does not do
+
+- **It is not a second person.** The approval comes from the person who
+  asked. Someone who has both their sign-in and one of their trusted
+  passkeys can still make these changes.
+- **It covers these 40 operations, not every write.** Value writes and
+  rotations, creating projects and environments, Sync Targets (ADR-0031's
+  disclosure check still applies), Capabilities, invitations of members,
+  retiring and renaming machines, and revoking credentials never ask.
+  Neither do value reads: `varlatch run`, Secret disclosures other than
+  an export, Capability exercise, sync, OIDC exchange and a broker's
+  agent-run credentials. Whoever holds the reveal action can still read
+  what an export would contain, by those paths.
+- **It does not replace the second admin.** Scheduling the organization's
+  deletion still waits its full period, and with more than one admin,
+  another admin must still approve it.
+- **Coding agents stop.** A coding agent cannot approve; in assisted mode
+  the CLI prints the address and exits 75 (see [Coding
+  agents](#coding-agents)).
+- **What GitHub already did stays done.** A GitHub App created by its
+  manifest exists on GitHub before Varlatch asks for an approval; a
+  refused or discarded registration leaves it there.
+- **Whoever controls the host or the deployment can turn it off** with
+  the [host operator's reset](#the-way-back-the-host-operators-reset).
+- What was changed before you turned it on stays changed.
+
+### The way back
+
+Turning the control down (to `report` or `off`) is loosening: it needs
+your approval with a trusted passkey that verifies you. If nobody can give
+one, for example after losing every trusted passkey:
+
+- whoever runs the server can send a person a link that enrolls a trusted
+  passkey: `varlatch admin reenroll --identity <identity id>`. Then
+  approve as usual;
+- or they can turn the control off: `varlatch admin security reset --org
+  <slug> --control admin-step-up`. This also closes the open approvals of
+  all 40 operations. It does not touch a pending GitHub App registration,
+  which still ends after its hour.
+
 ## Removing a passkey
 
 Removing a trusted passkey needs an approval while you are a member of an
-organization with any control at `enforce` (in this release,
-`requirement-protection`, `credential-lifetime` or
-`passkey-verification`). Approve it with a trusted passkey, which may be
+organization with any control at `enforce`. Approve it with a trusted passkey, which may be
 the one you are removing. When none of your organizations enforces a
 control, removing a passkey works as before. Removing an unconfirmed
 passkey never needs one. Better Auth's own passkey removal endpoint is
@@ -819,17 +1153,76 @@ varlatch admin security reset --org acme --all
 docker compose exec varlatchd node dist/cli.js admin security reset --org acme --all
 ```
 
+`varlatch admin security reset` runs the command in the varlatchd
+container of the Compose installation in the current directory; pass
+`--dir <compose-directory>` to name another one. `--org` takes the
+organization's slug or id, and `--json` prints the outcome as JSON.
+
 It sets the named controls (or all four) to off, closes their open
 approvals, and records `security_control.reset` in the audit log for each.
-It does not touch an organization's deletion, suspended machine
-identities, passkeys or grants. Use it when nobody can give an approval,
-for example after a lost passkey.
+It changes only the mode: `credential-lifetime` keeps its lifetimes, so
+turning it on again reuses them, and lengthening or clearing them later
+still needs an approval. It does not touch an organization's deletion,
+suspended machine identities, passkeys or grants. Use it when nobody can
+give an approval, for example after a lost passkey.
 
 It also means that whoever controls the host or the deployment can bypass
 every control. See the [threat model](../THREAT-MODEL.md).
 
 The reset never lifts an [incident freeze](incident-freeze.md); it says
 when the organization is still frozen.
+
+## Controls and the incident freeze
+
+The [incident freeze](incident-freeze.md) is not a security control: it
+has no mode and works whatever the controls are set to. Where the two
+meet:
+
+- **Freezing** needs an admin's sign-in and no approval. It closes every
+  open approval of the organization, so nothing approved before the freeze
+  is used after it.
+- **Lifting** always needs an admin's approval with a trusted passkey,
+  even with every control off. The host operator lifts it with `admin
+  unfreeze`; the [reset](#the-way-back-the-host-operators-reset) never
+  does.
+- **Changing a control stays possible while frozen.** Tightening needs no
+  approval; loosening still needs one.
+- **While frozen**, editing or removing a Tailnet Requirement and issuing
+  a machine credential are refused with `ORGANIZATION_FROZEN` before any
+  approval is asked for or any lifetime is looked at. Of `admin-step-up`'s
+  40 operations, only the five that take authority away can be asked for
+  and made: removing an OIDC binding, revoking a Grant, demoting an admin,
+  removing a member and revoking a connection. Adding a Requirement still
+  works.
+
+## When an approved request is refused after all
+
+An approval is checked once more when it is used: inside the request's
+transaction, after the organization is locked, Varlatch checks again that
+the person asking still holds the action. If they lost it meanwhile (an
+admin demoted them, for example), the request is refused with
+`PERMISSION_DENIED`, or not found when they are no longer a member at
+all; nothing changes, and the approval stays unused until
+it expires. What the audit log records:
+
+- **An operation a control protects** (any of `admin-step-up`'s 40, and
+  `requirement-protection`'s two): one `authorization.denied`, the same
+  event an ordinary refusal records, written after the refused
+  transaction rolled back. Only a request that used an approval gets this
+  far, so this happens only while a control asks for approvals.
+- **Freezing, lifting a freeze, changing a control, and the audit
+  export's writes** (creating, checking, changing, replacing the key of
+  and removing an [audit export](audit-export.md)) run this check
+  whatever the controls are set to. The refusal is recorded once, the same
+  way, only while at least one control of the organization is at `report`
+  or `enforce`. That is read under the same organization lock, so it is
+  the state the decision was made on; for a control change, the state
+  before the change. Turning a control from `off` to `report` with every
+  control off records nothing; turning the last one from `report` to `off`
+  records the refusal. With every control off, these refusals record
+  nothing, as before the controls existed. If the controls cannot be read
+  at that point, the request is refused the same way and nothing is
+  recorded.
 
 ## API
 
@@ -840,8 +1233,10 @@ when the organization is still frozen.
 - `PATCH /v1/organizations/{org}/security/controls/{control}` with
   `{ "mode", "config", "expectedVersion" }`: `config` is the lifetimes
   object, `null` to clear it, or absent to keep it.
-- A loosening change without an approval answers `403` with
-  `STEP_UP_REQUIRED` and the approval in `error.details.approval`. Repeat
+- A loosening change without an approval, and any of `admin-step-up`'s or
+  `requirement-protection`'s operations while it is enforced, answers
+  `403` with `STEP_UP_REQUIRED` and the approval in
+  `error.details.approval`. Repeat
   the identical request with the header `Varlatch-Approval: <id>` once it
   is approved.
 - `GET /v1/me/approvals/{id}`, `POST /v1/me/approvals/{id}/options`,
@@ -855,6 +1250,9 @@ when the organization is still frozen.
   `policy.read`, `policy.manage`, `audit.read`) your role and
   organization-wide grants allow here. Readable by every member; it says
   nothing else. Capability `organizations.permissions`.
+- `GET /v1/organizations/{org}/security/credential-review`: the machine
+  credential review (see [The Security page](#the-security-page)). Needs
+  `identity.manage`.
 - `GET /v1/organizations/{org}/security/approval-keys`: per admin, the
   number of trusted and unconfirmed passkeys, when one was last
   confirmed, and each passkey's name, provenance and dates. Never a
@@ -868,8 +1266,14 @@ when the organization is still frozen.
   [Outbound policy](outbound-policy.md).
 
 The capabilities are `security.controls`, `security.report`,
-`security.approval-keys`, `security.refused-destinations` and
-`organizations.permissions`, and `security.enforce.<control>` for each
+`security.approval-keys`, `security.credential-review`,
+`security.refused-destinations` and `organizations.permissions`, and `security.enforce.<control>` for each
 control this server can enforce (`security.enforce.requirement-protection`,
 `security.enforce.credential-lifetime`,
-`security.enforce.passkey-verification`).
+`security.enforce.passkey-verification`,
+`security.enforce.admin-step-up`).
+
+Every route of an operation that can ask for an approval documents the
+`403 STEP_UP_REQUIRED` answer and the `Varlatch-Approval` header in the
+[OpenAPI description](../../packages/protocol/openapi.yaml)
+(`components.responses.StepUpRequired`).

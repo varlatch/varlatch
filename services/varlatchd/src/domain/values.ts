@@ -1010,6 +1010,13 @@ export async function discloseSecrets(
      * disclosure's audit event, before it.
      */
     report?: { attempts: WouldBlock[]; at: Date } | undefined;
+    /**
+     * An export's phase 2 under admin-step-up's `enforce` (exportstepup.ts),
+     * run in the transaction that commits the disclosure's audit event,
+     * before it: it consumes the approval and checks the capture is fresh,
+     * and returns what the event adds. It replaces `report`.
+     */
+    guard?: ((db: Querier) => Promise<Record<string, string | boolean>>) | undefined;
   },
 ): Promise<DisclosureResult & { unexpanded: CallerView["unexpanded"] }> {
   const { org, project, env } = state;
@@ -1042,10 +1049,11 @@ export async function discloseSecrets(
       },
     ],
     selected.flatMap((i) => (i.retiringVersionId ? [i.versionId, i.retiringVersionId] : [i.versionId])),
-    opts.report && opts.report.attempts.length > 0
-      // Only while the Organization is live: its deletion may have run since the snapshot.
-      ? async (db) => { await countWouldBlockInLiveOrganization(db, org.id, opts.report!.attempts, { at: opts.report!.at }); }
-      : undefined,
+    opts.guard ??
+      (opts.report && opts.report.attempts.length > 0
+        // Only while the Organization is live: its deletion may have run since the snapshot.
+        ? async (db) => { await countWouldBlockInLiveOrganization(db, org.id, opts.report!.attempts, { at: opts.report!.at }); }
+        : undefined),
   );
 
   const items: DisclosureResult["items"] = [];

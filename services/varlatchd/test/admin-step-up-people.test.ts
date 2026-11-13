@@ -16,9 +16,9 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  * admin-step-up for people (ADR-0054 step 4.7), on PGlite under the
  * lock-order check (test/helpers/lock-trace.ts): inviting someone as an
  * admin, promoting a member, demoting an admin and removing a member, with
- * the last-admin rule. The API still refuses `enforce` for admin-step-up
- * (it is unlocked in step 4.9), so these tests set it directly in the
- * database. With every control off nothing changes; report mode counts
+ * the last-admin rule. These tests set admin-step-up's
+ * enforce directly in the database (written before the unlock); setting
+ * it through the API is tested in admin-step-up-catalogue.test.ts. With every control off nothing changes; report mode counts
  * and refuses nothing; under enforce each operation needs the requester's
  * approval bound to exactly that request, as the binding catalogue says,
  * and a machine credential is refused without an intent. Leaving and
@@ -99,8 +99,8 @@ const setMode = async (control: string, mode: string, config?: unknown) =>
   call("PATCH", `${CONTROLS}/${control}`, admin.cli, { mode, ...(config === undefined ? {} : { config }), expectedVersion: (await controlOf(control)).version });
 
 /**
- * admin-step-up at enforce, written directly: the API refuses it until
- * ADR-0054 step 4.9 unlocks the control (CONTROL_MODE_UNAVAILABLE).
+ * admin-step-up at enforce, written directly in the database (the API
+ * accepts it since ADR-0054 step 4.9 unlocked the control).
  */
 async function enforceAdminStepUp() {
   await ctx.db.query(
@@ -203,13 +203,13 @@ afterEach(async () => {
   await ctx.close();
 });
 
-describe("admin-step-up's enforce stays unavailable", () => {
-  it("is refused by the API with CONTROL_MODE_UNAVAILABLE", async () => {
-    expect(ENFORCEABLE_CONTROLS.has("admin-step-up")).toBe(false);
+describe("admin-step-up's enforce, set through the API (unlocked in step 4.9)", () => {
+  it("is accepted as tightening, without an approval; member.invite_admin then asks for one", async () => {
+    expect(ENFORCEABLE_CONTROLS.has("admin-step-up")).toBe(true);
     const res = await setMode("admin-step-up", "enforce");
-    expect(res.status).toBe(422);
-    expect(res.body.error).toMatchObject({ code: "CONTROL_MODE_UNAVAILABLE", details: { control: "admin-step-up", mode: "enforce" } });
-    expect(await count("SELECT count(*)::int AS n FROM security_controls")).toBe(0);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ changed: true, loosened: false, control: { mode: "enforce" } });
+    expect(stepUp(await inviteAs(admin.cli, "Dana", "admin")).operation).toBe("member.invite_admin");
   });
 });
 

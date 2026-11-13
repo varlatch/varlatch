@@ -12,7 +12,14 @@
 #       manifests, tsconfig.base.json, scripts/, infra/, CI itself), else
 #       tests=affected. Here every *.md and docs/ path is documentation,
 #       CHANGELOG.md included: no package's tests read one, and the checks
-#       that do read them run on every pull request. The paths behind each
+#       that do read them run on every pull request. The Go rewrite (go/ and
+#       .github/workflows/go.yml, ADR-0059) counts as neither: go.yml checks
+#       it, and the TypeScript jobs have nothing to test there. A pull
+#       request that changes only Go files and documentation answers
+#       code=false and tests=affected (no package), so it runs the test job's
+#       repository-wide checks (licenses, notices, the changelog section,
+#       the build) and the secret scan, and skips every TypeScript test. A
+#       mixed change answers for its other paths. The paths behind each
 #       answer go to stderr.
 #
 #   scripts/ci-changes.sh affected <base>
@@ -32,6 +39,8 @@ REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 # Documentation, and the documentation that CI checks or ships in images.
 DOCS='\.md$|^docs/'
 CHECKED_DOCS='^(CHANGELOG|THIRD-PARTY-NOTICES)\.md$'
+# The Go rewrite, which go.yml checks.
+GO='^go/|^\.github/workflows/go\.yml$'
 
 # True when a path lies inside a workspace package (pnpm-workspace.yaml).
 in_package() {
@@ -45,16 +54,23 @@ in_package() {
 }
 
 classify() {
-  local path total=0 code=0 global=()
+  local path total=0 code=0 go=0 global=()
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     total=$((total + 1))
+    if [[ $path =~ $GO ]]; then go=$((go + 1)); continue; fi
     if [[ $path =~ $CHECKED_DOCS ]] || ! [[ $path =~ $DOCS ]]; then code=$((code + 1)); fi
     if ! [[ $path =~ $DOCS ]] && ! in_package "$path"; then global+=("$path"); fi
   done
   if [ "$code" -eq 0 ]; then
     echo "code=false"
-    echo "code: false, all $total changed file(s) are documentation that no check reads." >&2
+    if [ "$go" -eq 0 ]; then
+      echo "code: false, all $total changed file(s) are documentation that no check reads." >&2
+    elif [ "$go" -eq "$total" ]; then
+      echo "code: false, all $total changed file(s) are Go files, which go.yml checks." >&2
+    else
+      echo "code: false, $go of $total changed file(s) are Go files, which go.yml checks; the rest are documentation that no check reads." >&2
+    fi
   else
     echo "code=true"
     echo "code: true, $code of $total changed file(s) are code or checked documentation." >&2

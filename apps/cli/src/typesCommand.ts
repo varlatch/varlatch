@@ -18,6 +18,7 @@ import type { ContractRevision } from "@varlatch/protocol";
 import { VarlatchApiError } from "@varlatch/sdk";
 import { TypesError, generateTypesModule } from "./typegen.js";
 import { generatePythonModule } from "./typegenPython.js";
+import { safe } from "./safeText.js";
 
 /**
  * `varlatch types --out <file>`: fetch one Contract Revision (the active one,
@@ -174,7 +175,7 @@ export async function runTypes(api: TypesClient, opts: TypesOptions, io: TypesIo
       contract: revision.contract,
     };
     const content = Buffer.from(generate(input, { generatorVersion: opts.generatorVersion }), "utf8");
-    const source = `Contract Revision ${revision.id} (${revision.contentHash}, Contract Semantics version ${revision.semanticsVersion})`;
+    const source = safe`Contract Revision ${revision.id} (${revision.contentHash}, Contract Semantics version ${revision.semanticsVersion})`;
     const current = readOutput(path);
     const generatedBy =
       current === null

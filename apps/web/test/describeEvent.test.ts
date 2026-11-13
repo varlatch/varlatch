@@ -112,6 +112,16 @@ describe("describeEvent", () => {
     expect(
       sentence(event({ eventType: "sync.github_app_registered", resource: { githubAppId: "gha_1" }, metadata: { via: "manifest", appId: 5254113, slug: "varlatch-acme", owner: "acme-gh", ownerType: "organization" } })),
     ).toBe("registered the GitHub App varlatch-acme on acme-gh");
+    const abandoned = { eventType: "sync.github_app_registration_abandoned", decision: "info" };
+    expect(sentence(event({ ...abandoned, metadata: { reason: "expired", slug: "varlatch-acme", appId: 5254113 } }))).toBe(
+      "deleted the key of the pending GitHub App varlatch-acme: not attached within the hour",
+    );
+    expect(sentence(event({ ...abandoned, metadata: { reason: "machine-credential", slug: "varlatch-acme" } }))).toBe(
+      "deleted the key of the pending GitHub App varlatch-acme: a machine credential cannot approve attaching it",
+    );
+    expect(sentence(event({ ...abandoned, metadata: { reason: "discarded", slug: "varlatch-acme" } }))).toBe(
+      "deleted the key of the pending GitHub App varlatch-acme: discarded before it was attached",
+    );
     const refused = { eventType: "sync.github_app_registration_refused", decision: "deny" };
     expect(
       sentence(event({ ...refused, metadata: { reason: "owner-mismatch", slug: "varlatch-acme", owner: "jeremydeceuster", ownerType: "user", account: "acme-gh", accountType: "organization" } })),

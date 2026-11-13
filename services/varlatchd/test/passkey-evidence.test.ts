@@ -99,7 +99,7 @@ describe("migration 39", () => {
       await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash,auth_session_id) VALUES ('crd_web','idn_a','browser','h1','ses_old')");
       await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash) VALUES ('crd_cli','idn_a','cli','h2')");
 
-      expect((await runMigrations(db)).applied.map((m) => m.id)).toEqual([39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49]);
+      expect((await runMigrations(db)).applied.map((m) => m.id)).toEqual([39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]);
       // The oldest row of a credential id stays (pk_1 has no date, so it sorts first) and is trusted, like every remaining passkey.
       expect((await db.query("SELECT passkey_id, trust, trusted_via, trusted_at IS NOT NULL AS dated FROM passkey_provenance ORDER BY passkey_id")).rows).toEqual([
         { passkey_id: "pk_1", trust: "trusted", trusted_via: "existing-at-upgrade", dated: true },

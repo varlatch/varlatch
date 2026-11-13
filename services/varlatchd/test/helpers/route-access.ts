@@ -59,6 +59,10 @@ export const ROUTE_ACCESS: Record<string, AccessCheckpoint> = {
   "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations": "transaction",
   "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations/complete": "transaction",
   "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration": "snapshot",
+  // An export under admin-step-up's enforce is decided in its snapshot too,
+  // then again in its phase-2 transaction under the Organization lock,
+  // before its approval is consumed or an intent created
+  // (domain/exportstepup.ts).
   "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures": "snapshot",
   "POST /v1/organizations/:org/projects/:project/environments/:environment/retrievals": "snapshot",
   "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities": "transaction",
@@ -129,6 +133,16 @@ export const ROUTE_ACCESS: Record<string, AccessCheckpoint> = {
   "GET /v1/organizations/:org/webhooks": "read",
   "PATCH /v1/organizations/:org/webhooks/:webhook": "transaction",
   "DELETE /v1/organizations/:org/webhooks/:webhook": "transaction",
+  // The audit export (ADR-0056): creating, the check and a destination
+  // change probe the destination with the key inside an external effect; a
+  // retention-only change, a new key and removal are decided in their
+  // transaction, after their not-found.
+  "GET /v1/organizations/:org/audit-export": "read",
+  "POST /v1/organizations/:org/audit-export": "external",
+  "PATCH /v1/organizations/:org/audit-export": "external",
+  "DELETE /v1/organizations/:org/audit-export": "transaction",
+  "PUT /v1/organizations/:org/audit-export/credential": "transaction",
+  "POST /v1/organizations/:org/audit-export/check": "external",
   "GET /v1/organizations/:org/platform-connections": "read",
   "POST /v1/organizations/:org/platform-connections": "external",
   "POST /v1/organizations/:org/platform-connections/check": "external",
@@ -139,6 +153,13 @@ export const ROUTE_ACCESS: Record<string, AccessCheckpoint> = {
   "GET /v1/organizations/:org/github-app": "read",
   "POST /v1/organizations/:org/github-app/registrations": "transaction",
   "POST /v1/organizations/:org/github-app/registrations/complete": "external",
+  // A pending registration's attachment (ADR-0054 amendment D): a write in
+  // one transaction through prepareProtectedOperation, which decides after
+  // finding the registration; the pending key is decrypted only after that
+  // checkpoint, in the same transaction. It calls nothing outside Varlatch.
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach": "transaction",
+  // Discarding one: a write, decided after the registration is found.
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration": "transaction",
   "POST /v1/organizations/:org/github-app/import": "external",
   "POST /v1/organizations/:org/github-app/key": "external",
   "DELETE /v1/organizations/:org/github-app": "transaction",

@@ -143,6 +143,13 @@ The approval names the freeze: it can never lift a later one. Lifting is
 recorded as `organization.unfrozen`, with the method and how long the
 freeze lasted.
 
+Freezing and lifting check your authority (`organization.manage`) again
+inside the change, after the organization is locked. If you lost it
+meanwhile, the request is refused, and a lift's approval stays unused.
+While at least one [security control](security-controls.md) is at
+`report` or `enforce`, the audit log records one `authorization.denied`
+for that refusal; with every control off it records nothing.
+
 ### When nobody can approve
 
 Whoever runs the server can lift a freeze from the host, without the API

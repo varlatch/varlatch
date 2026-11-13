@@ -255,9 +255,9 @@ custody, the Docker Compose version) are listed but never block.
 is older than the release, the upgrade leaves the release's CLI as
 `varlatch-cli-<version>.cjs` here: use it from then on.
 
-### Outbound destinations after upgrading to 0.21.1
+### Outbound destinations after upgrading to 0.22.0
 
-From 0.21.1, varlatchd no longer connects to private, loopback or
+From 0.22.0, varlatchd no longer connects to private, loopback or
 link-local addresses on an Organization's behalf. A webhook receiver, a
 Coolify or Convex instance, or an OIDC issuer on your LAN, a Docker network
 or a tailnet needs an entry in `VARLATCH_OUTBOUND_ALLOW`, with the port when
@@ -280,7 +280,7 @@ varlatchd (adjust the network and image to yours):
 ```sh
 docker run --rm --network <compose-project>_default \
   -e VARLATCH_DATABASE_URL=postgres://varlatchd_runtime:<password>@postgres:5432/varlatch \
-  ghcr.io/varlatch/varlatchd:0.21.1 admin outbound check
+  ghcr.io/varlatch/varlatchd:0.22.0 admin outbound check
 ```
 
 OIDC issuers whose discovery document or JWKS answers with a redirect stop
@@ -499,6 +499,8 @@ The Compose files set it for you:
 Entries are compose service or container names, which are resolved again every 10 seconds, IP addresses, or CIDR ranges. If you put your own reverse proxy in front of the dashboard, set the variable in `.env` and add your proxy's name or address. That proxy must replace `X-Forwarded-For` with the client's address or append the address to it. varlatchd logs each name's resolved address at startup, and warns when a name does not resolve. Until it resolves, every caller behind that proxy counts as one client. Trust from a name lasts only as long as its resolution. A refresh that fails drops the name's addresses at once, so a container that is gone is never trusted at the address it had. varlatchd never relies on a resolution more than 30 seconds old. Never list a range that contains a Docker network's gateway address: callers on the host reach containers from that address.
 
 `VARLATCH_SYNC=off` disables outbound sync. `VARLATCH_SYNC_ADAPTERS=github-actions,coolify` restricts adapters; an empty value allows the built-in set. Both settings are forwarded by canonical Compose.
+
+`VARLATCH_AUDIT_EXPORT=off` turns off the audit export to object storage for the whole installation: nothing is delivered, no export can be set up or changed, and organizations can still remove theirs. It is on by default and forwarded by canonical Compose; nothing is sent anywhere until an organization's admin sets up an export. See [Audit export](../../docs/reference/audit-export.md).
 
 `varlatch upgrade` writes a pending manifest while applying a release and promotes it only when the upgrade gate passes. If it fails, retry the same target version; the original `*.pre-<version>` files are preserved.
 

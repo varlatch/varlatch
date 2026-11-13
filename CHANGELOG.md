@@ -5,261 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased
-
-### Security
-
-- **Incident freeze: stop all access to an organization at once.** During
-  an incident an admin can freeze an organization from its Security page
-  (`varlatch org freeze <slug> --reason <text> --confirm <slug>`). Every
-  read and write of its members and machine identities is then refused
-  with `ORGANIZATION_FROZEN`, values included, so `varlatch run`, CI jobs
-  and deploys that fetch from it fail. What keeps working: signing in,
-  reading members, machines, credentials, grants and the audit log,
-  revoking access (credentials, grants, Capabilities, OIDC bindings,
-  invitations, members), pausing Sync Targets, adding a Tailnet
-  Requirement, changing security controls and cancelling a pending
-  deletion. Webhooks keep delivering the audit log; Sync Targets stop
-  pushing and resume when the freeze is lifted. Lifting always needs an
-  admin's approval with a trusted passkey (`varlatch org unfreeze <slug>`),
-  or the host operator's `varlatch admin unfreeze --org <slug> --confirm
-  <slug>`. Recorded as `organization.frozen` and `organization.unfrozen`;
-  each refused request is recorded as `authorization.denied` with the
-  reason `organization_frozen`. If your deploy or rollback credentials come
-  from Varlatch, keep a break-glass credential outside it before you rely
-  on the freeze. See [Incident freeze](docs/reference/incident-freeze.md).
-- **Runners and scripts: `ORGANIZATION_FROZEN` is final.** It answers HTTP
-  409 with `Retry-After: 300`. The CLI exits with status 77 and never
-  retries it; back off in your own runners too.
-- **Requirement protection can now be enforced.** With
-  `varlatch security set requirement-protection enforce` (or from the
-  Security page), editing or removing one of the organization's Tailnet
-  Requirements needs the approval of the person asking, with a trusted
-  passkey, for exactly that change. A stolen sign-in or a machine
-  credential with `policy.manage` can then no longer remove a Requirement
-  from off the tailnet; a machine credential is refused outright.
-  Creating a Requirement, and an edit that changes nothing, need no
-  approval. `varlatch tailnet remove` waits for the approval like
-  `varlatch security set`; the dashboard opens the approval dialog. The
-  audit events `requirement.updated` and `requirement.revoked` name the
-  approval used. Every control stays off until an admin turns it on, and
-  `admin-step-up` still refuses `enforce` (`CONTROL_MODE_UNAVAILABLE`).
-  See [Requirement
-  protection](docs/reference/security-controls.md#requirement-protection).
-- **Credential lifetime can now be enforced.** With
-  `varlatch security set credential-lifetime enforce --default-ttl <s>
-  --max-ttl <s>` (or from the Security page), a machine credential issued
-  without a lifetime (creating a service, workload or broker identity, or
-  `varlatch credential issue` without `--ttl`) gets the organization's
-  default lifetime, and one asked for above the maximum is refused with
-  `CREDENTIAL_LIFETIME_EXCEEDED`; nothing is issued. Credentials that
-  already exist keep their expiry. People's sign-ins, OIDC and agent-run
-  credentials keep their own, shorter limits. No approval is involved in
-  issuing; lengthening the lifetimes or turning the control down needs
-  one, like any loosening. The `credential.issued` audit event says
-  `lifetimeDefaulted` when the default was applied. See [Credential
-  lifetime](docs/reference/security-controls.md#credential-lifetime).
-- **Admin step-up: approvals for machine identities are built.**
-  Creating a machine identity, issuing a credential, reactivating an
-  identity, and adding or removing an OIDC binding will each need the
-  approval of the person asking, for exactly that request, once
-  `admin-step-up` can be enforced; a machine credential will be refused.
-  It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
-  changes now, and with every control off nothing changes at all. See
-  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
-- **Admin step-up: approvals for Grants, roles, groups and teams are
-  built.** Creating, replacing or revoking a Grant; creating, changing or
-  deleting a role, a group or a team; adding or removing their members;
-  and giving a team a project or taking it away will each need the
-  approval of the person asking, for exactly that request, once
-  `admin-step-up` can be enforced; a machine credential will be refused.
-  Revoking a Grant stays possible during an incident freeze and still
-  asks. It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
-  changes now, and with every control off nothing changes at all. In
-  report mode, a Grant replacement or a role edit that only reorders
-  actions is no longer counted. Every approval summary, Tailnet
-  Requirement edits and removals included, quotes every name and value and
-  names each existing item by its id. See
-  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
-- **Dashboard: adding or removing a group or team member, and giving a
-  team a project or taking it away, now show an error when they fail.**
-  They used to fail silently.
-- **Admin step-up: approvals for people are built.** Inviting someone as
-  an admin, promoting a member, demoting an admin (yourself included) and
-  removing someone will each need the approval of the person asking, for
-  exactly that request, once `admin-step-up` can be enforced; an admin
-  invitation by a machine credential will be refused. Leaving an
-  organization and inviting a member never ask. The last-admin rule
-  still refuses first, before any approval, and again when it is used.
-  Removing someone and demoting an admin stay possible during an incident
-  freeze and still ask. It cannot be enforced yet
-  (`CONTROL_MODE_UNAVAILABLE`), so nothing changes now, and with every
-  control off nothing changes at all. See
-  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
-- **Removing a trusted passkey needs an approval** once you are a member of
-  an organization that enforces a control (`requirement-protection`,
-  `credential-lifetime` or `passkey-verification`). Removing an unconfirmed passkey
-  never does. If you lose your trusted passkeys, the host operator's
-  `admin reenroll` enrolls a new one, and `admin security reset` turns the
-  control off.
-- **Passkey verification can now be enforced.** With
-  `varlatch security set passkey-verification enforce` (or from the
-  Security page), the organization refuses requests by a person's
-  dashboard or CLI sign-in unless it was made with a trusted passkey that
-  verified them with a PIN, fingerprint or face. It applies to every
-  route of the organization, retrieval, validation and export included;
-  the dashboard's live updates leave the organization out. Machine
-  credentials, other organizations and people outside the organization
-  see no change, and a refusal comes after every other one, so it reveals
-  nothing to outsiders. The dashboard offers to sign in again; the CLI
-  explains how (`varlatch login`) and exits 77. A passkey added from the
-  dashboard counts once it is confirmed. Look at report mode first: it
-  refuses admins too, and sign-ins from before this was recorded count as
-  unverified. Turning it on from a sign-in it would refuse is refused. A
-  person whose passkeys cannot verify them gets back in through the host
-  operator (`admin reenroll`, or `admin security reset --control
-  passkey-verification`). See [Passkey
-  verification](docs/reference/security-controls.md#passkey-verification).
-- **Fixed: passkey verification decides where each request commits to
-  what it reads.** A change now decides under its lock on the
-  organization, in the transaction that makes it, so a change that
-  started while the control was off and saved after it was enforced is
-  refused and changes nothing; changes that run with the strictest
-  isolation start again when the control changed meanwhile. A retrieval,
-  validation or disclosure decides in its snapshot, and an operation that
-  calls out (access checks, destination listings, GitHub App setup) before
-  it decrypts or sends anything. Asking for something that does not exist
-  (a project, a revision, a grant, a value) answers "not found" again, as
-  with the control off, instead of the refusal. A repeated request with
-  the same `Idempotency-Key` is refused too while the control refuses the
-  sign-in, and a refused request never asks for an approval. Each refusal
-  is still recorded once. See [When it
-  decides](docs/reference/security-controls.md#when-it-decides).
-- Dependency update for published advisories: `hono` 4.13.16
-  (GHSA-4m76-xfj5-7975 and GHSA-h7mg-cq63-vhpq: `mount()`, and the
-  RegExpRouter for some route sets and for paths with an encoded line
-  terminator, could skip middleware; GHSA-3gg2-335m-rxc6: the `css` helper's
-  escaping). Varlatch uses neither `mount()` nor the `css` helper.
-- Dependency update for a published advisory: `@hono/node-server` 2.1.6
-  (GHSA-qv5m-9pm6-hqp3: a connection reset during a WebSocket upgrade could
-  crash the process). varlatchd and the MCP server accept no WebSocket
-  upgrades, so no installation was exposed.
-
-### Scripts and API
-
-- `GET /v1/meta` lists `security.enforce.<control>` for each control the
-  server can enforce (`security.enforce.requirement-protection`,
-  `security.enforce.credential-lifetime` and
-  `security.enforce.passkey-verification` in this release). Each item of `GET /v1/organizations/{org}/security/controls`
-  gains its own `availableModes`. `varlatch security status --json` gains
-  `enforceable`.
-- `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}` can
-  answer `403 STEP_UP_REQUIRED`: repeat the request with the
-  `Varlatch-Approval` header once it is approved. A removal whose
-  Requirement changed meanwhile answers `STATE_CHANGED`.
-- New error code `CREDENTIAL_LIFETIME_EXCEEDED` (HTTP 422, with
-  `details.requestedTtlSeconds` and `details.maxTtlSeconds`): `POST
-  /v1/organizations/{org}/identities` and `POST
-  /v1/organizations/{org}/identities/{id}/credentials` answer it for a
-  lifetime above the maximum while the organization enforces
-  `credential-lifetime`. Scripts that create machine credentials without a
-  lifetime should read `credentialExpiresAt` or `expiresAt` from the
-  answer rather than assume no expiry.
-- New error code `PASSKEY_VERIFICATION_REQUIRED` (HTTP 403, details
-  `control` and `reason`: `no-evidence`, `not-user-verified` or
-  `untrusted-passkey`) from organizations that enforce
-  `passkey-verification`. Repeating the request with the same credential
-  will not help; sign in again. `GET /v1/meta` lists
-  `security.enforce.passkey-verification`.
-
-### CLI
-
-- **A default server, so you type the address once.** The first server you
-  sign in to becomes your default server. Outside a repository, commands
-  that need no Project (`org create`, `org list`, `project create`, `org
-  delete`, `org freeze`, `security …`, `audit export --deleted-org`,
-  `whoami`, `logout`) use it when you give no `--server` and set no
-  `VARLATCH_SERVER` (with no default, the only server you are signed in
-  to, as `whoami` and `logout` did), and `varlatch login` without `--server` signs in again
-  to the server a command here would use. A repository never uses it: its
-  `varlatch.toml` names its own server, so signing in somewhere else never
-  moves a repository. Signing in to another server never replaces the
-  default; `varlatch server` shows it and `varlatch server use <url>`
-  changes it. It is kept in `settings.json`, next to `credentials.json`.
-  See [The default server](docs/reference/passkeys-and-sessions.md#the-default-server).
-- **`varlatch init` guides you on a terminal.** Without `--org` or
-  `--project`, it asks for what is missing: the server (signing you in
-  when needed), the organization and project (creating them after asking),
-  the environments when the project has none, and which environment each
-  `.env` file goes to. It shows names, types and Secrets, never a value;
-  asks separately before replacing a value an environment already has
-  (typing the environment's name in production) and before activating the
-  one contract revision it adds for all files; and offers to delete a
-  `.env` file only once all of its values are stored and its items are in
-  the active contract. Off a terminal or in assisted mode it asks nothing
-  and needs both flags, as before. See [Set up a project](docs/set-up-a-project.md#the-quick-way).
-- **`varlatch init` always names the server** in `varlatch.toml`: from
-  `--server`, `VARLATCH_SERVER`, your default server, or the only server
-  you are signed in to.
-- **`context --json` and `status --json`** report `serverSource` in the
-  repository context: `flag`, `env-var`, `local-override` or `repository`.
-- **`varlatch credential issue`** says when a credential got the
-  organization's default lifetime, and names the maximum when a `--ttl` is
-  refused under `credential-lifetime`.
-
-### Self-hosting
-
-- **An installation can serve its own CLI.** With `VARLATCH_SERVE_CLI=on`,
-  people install the CLI the installation runs with one line:
-  `curl -fsSL https://vault.example.com/install.sh | sh`, or
-  `irm https://vault.example.com/install.ps1 | iex` on Windows. The
-  scripts install for the current user, without `sudo`, check the file's
-  SHA-256, never install Node.js, ask before replacing a copy, and leave a
-  Homebrew copy to Homebrew. It is **off by default**: installing this way
-  trusts the installation, and whoever controls its host or its address, to
-  run code on the installer's machine. `varlatch setup` asks on a new
-  installation; `--serve-cli` and `--no-serve-cli` change it, and
-  `varlatch doctor` reports it. It serves only an https address or
-  `http://localhost`. `/v1/meta` lists the `cli.download` capability when
-  it is on. See [Serving the CLI](docs/self-hosting/configuration.md#serving-the-cli).
-- **The invitation page shows what to do next.** After someone creates
-  their passkey from an invitation, the page shows how to install the CLI
-  (the one-line install for their system when the installation serves it,
-  the signed release otherwise), the `varlatch login` line for this
-  installation, and `varlatch run`. The short-lived credential moved under
-  "Sign in without a browser". The dashboard's project onboarding shows
-  the install line too, and its `varlatch init` line now names the server.
-
-### Documentation
-
-- **Getting started is split by reader.** It now sends you to a short
-  page for where you are: [Join a team](docs/join-a-team.md) when you
-  were invited, [Set up a project](docs/set-up-a-project.md), or
-  [Run an installation](docs/run-an-installation.md). The rest moved to
-  reference pages: [Install the CLI](docs/reference/install-the-cli.md),
-  [Members and access](docs/reference/members.md),
-  [Passkeys and sessions](docs/reference/passkeys-and-sessions.md),
-  [CI and other machines](docs/reference/ci-and-machines.md) and
-  [Removing Varlatch](docs/reference/uninstall.md). Links to the old
-  sections on docs.varlatch.com, including those in earlier releases' CLI
-  and dashboard, lead to the new places.
-
-### Upgrading
-
-- `varlatch init` with no server to write (no `--server`, no
-  `VARLATCH_SERVER`, no default server) now exits 64 and writes nothing.
-  It used to write a `varlatch.toml` without a server, which every later
-  command rejected. Pass `--server`, or sign in first.
-- Migration 44 adds the freeze history. Restoring a backup taken before a
-  freeze brings the organization back unfrozen: freeze it again after the
-  restore.
-- Migration 45 lets approvals cover Tailnet Requirement changes. Nothing
-  changes until an admin enforces `requirement-protection`.
-- Migration 49 adds a counter to each organization that a security control
-  change bumps (the organization's security epoch). Nothing reads it but
-  the server's own transactions.
-
-## Unreleased (0.21.1)
+## 0.22.0 (2026-11-13)
 
 ### Sign-in
 
@@ -302,9 +48,371 @@ fixes.
   retrying an issuer that failed (30 seconds, doubling up to 10 minutes),
   and refreshes for an unknown key at most once a minute. Tokens that fail
   verification never cause a fetch.
+- **Audit export to object storage.** An organization can keep a copy of its
+  whole audit log in an S3-compatible bucket it controls (AWS S3, Backblaze
+  B2 or another provider that honours conditional writes), with Object Lock
+  retention nobody on the Varlatch side can shorten: `varlatch audit-export
+  create`, the Security page, or the API. Every event of the organization is
+  copied once, in order, as gzipped NDJSON batches, with an hourly heartbeat
+  object that shows at the bucket when the copy stops. Before saving,
+  Varlatch writes a test object and checks that the bucket refuses to
+  overwrite it, and reads its retention back where the key may. Creating an
+  export and lengthening or strengthening its retention need no approval; a
+  new destination, a new key, a shorter or removed retention and removal
+  always need the approval of the person asking, with a trusted passkey,
+  whatever the security controls' modes, and machine credentials can never
+  make them. The key is never shown, logged or audited. Changes are refused
+  while the organization is frozen or being deleted; delivery continues.
+  When an organization is deleted, its export delivers the final events for
+  up to 30 days, then its key is cleared; the deletion confirmation, in the
+  dashboard and in `varlatch org delete`, says so when an export exists, or
+  that the export's state could not be read; the CLI says it after
+  scheduling, since its `--confirm` prompt sends no request. The Security
+  page and `varlatch security status` show the export to admins: whether it
+  is delivering, its destination, retention and Object Lock, the last write
+  and heartbeat, what is pending, the last error, and a short checklist.
+  Nothing changes for an organization until an admin creates an export: its
+  Security page only says it is not set up. See
+  [Audit export](docs/reference/audit-export.md).
+- **Incident freeze: stop all access to an organization at once.** During
+  an incident an admin can freeze an organization from its Security page
+  (`varlatch org freeze <slug> --reason <text> --confirm <slug>`). Every
+  read and write of its members and machine identities is then refused
+  with `ORGANIZATION_FROZEN`, values included, so `varlatch run`, CI jobs
+  and deploys that fetch from it fail. What keeps working: signing in,
+  reading members, machines, credentials, grants and the audit log,
+  revoking access (credentials, grants, Capabilities, OIDC bindings,
+  invitations, members), pausing Sync Targets, adding a Tailnet
+  Requirement, changing security controls and cancelling a pending
+  deletion. Webhooks keep delivering the audit log; Sync Targets stop
+  pushing and resume when the freeze is lifted. Lifting always needs an
+  admin's approval with a trusted passkey (`varlatch org unfreeze <slug>`),
+  or the host operator's `varlatch admin unfreeze --org <slug> --confirm
+  <slug>`. Recorded as `organization.frozen` and `organization.unfrozen`;
+  each refused request is recorded as `authorization.denied` with the
+  reason `organization_frozen`. If your deploy or rollback credentials come
+  from Varlatch, keep a break-glass credential outside it before you rely
+  on the freeze. See [Incident freeze](docs/reference/incident-freeze.md).
+- **Runners and scripts: `ORGANIZATION_FROZEN` is final.** It answers HTTP
+  409 with `Retry-After: 300`. The CLI exits with status 77 and never
+  retries it; back off in your own runners too.
+- **Requirement protection can now be enforced.** With `varlatch security
+  set requirement-protection enforce` (or from the Security page), editing
+  or removing one of the organization's Tailnet Requirements needs the
+  approval of the person asking, with a trusted passkey, for exactly that
+  change. A stolen sign-in or a machine credential with `policy.manage` can
+  then no longer remove a Requirement from off the tailnet; a machine
+  credential is refused outright. Creating a Requirement, and an edit that
+  changes nothing, need no approval. `varlatch tailnet remove` waits for the
+  approval like `varlatch security set`; the dashboard opens the approval
+  dialog. The audit events `requirement.updated` and `requirement.revoked`
+  name the approval used. Every control stays off until an admin turns it
+  on. See [Requirement
+  protection](docs/reference/security-controls.md#requirement-protection).
+- **Credential lifetime can now be enforced.** With
+  `varlatch security set credential-lifetime enforce --default-ttl <s>
+  --max-ttl <s>` (or from the Security page), a machine credential issued
+  without a lifetime (creating a service, workload or broker identity, or
+  `varlatch credential issue` without `--ttl`) gets the organization's
+  default lifetime, and one asked for above the maximum is refused with
+  `CREDENTIAL_LIFETIME_EXCEEDED`; nothing is issued. Credentials that
+  already exist keep their expiry. People's sign-ins, OIDC and agent-run
+  credentials keep their own, shorter limits. No approval is involved in
+  issuing; lengthening the lifetimes or turning the control down needs
+  one, like any loosening. The `credential.issued` audit event says
+  `lifetimeDefaulted` when the default was applied. See [Credential
+  lifetime](docs/reference/security-controls.md#credential-lifetime).
+- **Admin step-up: approvals for machine identities are built.** Creating a
+  machine identity, issuing a credential, reactivating an identity, and
+  adding or removing an OIDC binding each need the approval of the person
+  asking, for exactly that request, while `admin-step-up` is enforced; a
+  machine credential is refused. With every control off nothing changes. See
+  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up: approvals for Grants, roles, groups and teams are
+  built.** Creating, replacing or revoking a Grant; creating, changing or
+  deleting a role, a group or a team; adding or removing their members; and
+  giving a team a project or taking it away each need the approval of the
+  person asking, for exactly that request, while `admin-step-up` is
+  enforced; a machine credential is refused. Revoking a Grant stays possible
+  during an incident freeze and still asks. With every control off nothing
+  changes. In report mode, a Grant replacement or a role edit that only
+  reorders actions is no longer counted. Every approval summary, Tailnet
+  Requirement edits and removals included, quotes every name and value and
+  names each existing item by its id. See [Admin
+  step-up](docs/reference/security-controls.md#admin-step-up).
+- **Dashboard: adding or removing a group or team member, and giving a
+  team a project or taking it away, now show an error when they fail.**
+  They used to fail silently.
+- **Admin step-up: approvals for people are built.** Inviting someone as an
+  admin, promoting a member, demoting an admin (yourself included) and
+  removing someone each need the approval of the person asking, for exactly
+  that request, while `admin-step-up` is enforced; an admin invitation by a
+  machine credential is refused. Leaving an organization and inviting a
+  member never ask. The last-admin rule still refuses first, before any
+  approval, and again when it is used. Removing someone and demoting an
+  admin stay possible during an incident freeze and still ask. With every
+  control off nothing changes. See [Admin
+  step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up: approvals for integrations are built.** Creating,
+  changing or deleting a webhook; creating a connection, replacing its
+  credential or revoking it; and registering, importing, replacing the key
+  of or removing the GitHub App each need the approval of the person asking,
+  for exactly that request, while `admin-step-up` is enforced; a machine
+  credential is refused. A webhook address, a credential and a private key
+  are covered by the approval without being stored in it. Importing an App,
+  replacing its key and connecting an installation send nothing to GitHub
+  before the approval. Revoking a connection stays possible during an
+  incident freeze and still asks. With every control off nothing changes.
+  See [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **GitHub App registration is staged.** When an approval is needed, the
+  App GitHub hands over is kept as pending, its key encrypted, until it is
+  attached; with none needed, it is attached in the same transaction, as
+  before. A registration start now returns its `id`. New routes attach
+  (`POST …/github-app/registrations/{registration}/attach`) or discard
+  (`DELETE …/github-app/registrations/{registration}`) a pending
+  registration; one not attached within an hour loses its key, recorded as
+  `sync.github_app_registration_abandoned`. A registration that already
+  ended is refused without a link to delete its App, which may be the one
+  attached. Migration 50. With every control off, the registration start's
+  `id` and the two new routes are the only visible changes.
+- **Admin step-up: approvals for deletion and export are built.** Deleting a
+  project, scheduling an organization's deletion and exporting Secrets to a
+  `.env` file from the dashboard each need the approval of the person
+  asking, for exactly that request, while `admin-step-up` is enforced; a
+  machine credential is refused. Scheduling a deletion still waits the full
+  period, and still needs a second admin's approval when there is more than
+  one admin. An export's approval covers the exact set of Secret names in
+  the file; if a value changes while the export is being prepared, nothing
+  is disclosed and the dashboard repeats it with the same approval. With
+  every control off nothing changes. See [Admin
+  step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up can now be enforced.** With
+  `varlatch security set admin-step-up enforce` (or from the Security
+  page), each of its 40 operations needs the approval of the person
+  asking, with a trusted passkey that verifies them, for exactly that
+  request: creating machine identities and issuing their credentials,
+  reactivating them and managing their OIDC bindings; Grants, roles,
+  groups and teams, their members and a team's projects; inviting an
+  admin, promoting, demoting and removing members; webhooks, connections
+  and the GitHub App; deleting a project, scheduling the organization's
+  deletion and exporting Secrets to a `.env` file. A stolen sign-in can no
+  longer make these changes without the person's passkey, and a machine
+  credential is refused outright, so automation that makes them stops:
+  look at report mode first. Value reads, `varlatch run`, sync and the
+  other changes never ask. If nobody can approve, the host operator's
+  `admin reenroll` enrolls a trusted passkey, and `admin security reset
+  --control admin-step-up` turns the control off and closes its open
+  approvals. Every control stays off until an admin turns it on, new
+  installations included; with every control off nothing changes, apart
+  from `security.enforce.admin-step-up` in `GET /v1/meta` and `enforce`
+  in the control's `availableModes`. See [Admin
+  step-up](docs/reference/security-controls.md#admin-step-up), including
+  the order in which the controls refuse a request.
+- **Approval summaries say where a credential's lifetime comes from.**
+  Creating a machine identity with a credential, and issuing one, now
+  say whether the lifetime shown was asked for, is the organization's
+  default under `credential-lifetime`, or is none because none was asked
+  for.
+- **Fixed: a refused approved request is recorded in the audit log.**
+  When an admin-step-up or requirement-protection operation used its
+  approval and then found that the person had lost the action meanwhile,
+  it was refused but left no `authorization.denied` event. It now records
+  one, the same as for any other refusal, and the approval stays unused.
+- **Fixed: a refused freeze, lift or control change is recorded in the
+  audit log.** When freezing an organization, lifting its freeze or
+  changing a security control found, inside its transaction, that the
+  person had lost `organization.manage` meanwhile, it was refused but left
+  no `authorization.denied` event. It now records one, once, while at least
+  one security control is at `report` or `enforce`. For a control change
+  that is the state before the change. With every control off nothing
+  changes: the same answer and no new event.
+- **The API description documents every approval.** Each route that can
+  answer `STEP_UP_REQUIRED` declares that answer and the
+  `Varlatch-Approval` header.
+- **Removing a trusted passkey needs an approval** once you are a member of
+  an organization that enforces a control (any of the four). Removing an
+  unconfirmed passkey never does. If you lose your trusted passkeys, the
+  host operator's `admin reenroll` enrolls a new one, and `admin security
+  reset` turns the control off.
+- **Passkey verification can now be enforced.** With
+  `varlatch security set passkey-verification enforce` (or from the
+  Security page), the organization refuses requests by a person's
+  dashboard or CLI sign-in unless it was made with a trusted passkey that
+  verified them with a PIN, fingerprint or face. It applies to every
+  route of the organization, retrieval, validation and export included;
+  the dashboard's live updates leave the organization out. Machine
+  credentials, other organizations and people outside the organization
+  see no change, and a refusal comes after every other one, so it reveals
+  nothing to outsiders. The dashboard offers to sign in again; the CLI
+  explains how (`varlatch login`) and exits 77. A passkey added from the
+  dashboard counts once it is confirmed. Look at report mode first: it
+  refuses admins too, and sign-ins from before this was recorded count as
+  unverified. Turning it on from a sign-in it would refuse is refused. A
+  person whose passkeys cannot verify them gets back in through the host
+  operator (`admin reenroll`, or `admin security reset --control
+  passkey-verification`). See [Passkey
+  verification](docs/reference/security-controls.md#passkey-verification).
+- **Fixed: passkey verification decides where each request commits to
+  what it reads.** A change now decides under its lock on the
+  organization, in the transaction that makes it, so a change that
+  started while the control was off and saved after it was enforced is
+  refused and changes nothing; changes that run with the strictest
+  isolation start again when the control changed meanwhile. A retrieval,
+  validation or disclosure decides in its snapshot, and an operation that
+  calls out (access checks, destination listings, GitHub App setup) before
+  it decrypts or sends anything. Asking for something that does not exist
+  (a project, a revision, a grant, a value) answers "not found" again, as
+  with the control off, instead of the refusal. A repeated request with
+  the same `Idempotency-Key` is refused too while the control refuses the
+  sign-in, and a refused request never asks for an approval. Each refusal
+  is still recorded once. See [When it
+  decides](docs/reference/security-controls.md#when-it-decides).
+- **The CLI prints only checked text from the server.** A server that
+  misbehaves can no longer use the CLI's output to add fake lines or send
+  escape sequences to your terminal. Names of organizations, projects,
+  environments, identities and other things the server returns show their
+  control characters as visible escapes such as `\u001b`. Times and
+  versions print only when they have the expected form, and as a fixed
+  phrase such as "an unrecognized time" otherwise. Times in human output
+  are now shown in UTC in ISO 8601 form with milliseconds, for example
+  `2026-12-01T00:00:00.000Z`. A request id prints only in the server's own
+  form and is left out otherwise. An error code that the CLI does not
+  know, for example one from a newer server, prints as
+  `UNRECOGNIZED_ERROR`; its message is still shown. Error messages and
+  other free text from the server, such as rotation hints, freeze reasons
+  and approval titles, are still shown, with control characters made
+  visible. In them, every credential and value the CLI knows of (the
+  request's credential, every stored credential, and the values it sent)
+  is replaced by `[redacted]` where it appears exactly, and so is anything
+  in a Varlatch token format. JSON output, NDJSON audit exports, what
+  `varlatch run` gives its command and the format of `varlatch env list`
+  are unchanged.
+- Dependency update for published advisories: `hono` 4.13.16
+  (GHSA-4m76-xfj5-7975 and GHSA-h7mg-cq63-vhpq: `mount()`, and the
+  RegExpRouter for some route sets and for paths with an encoded line
+  terminator, could skip middleware; GHSA-3gg2-335m-rxc6: the `css` helper's
+  escaping). Varlatch uses neither `mount()` nor the `css` helper.
+- Dependency update for a published advisory: `@hono/node-server` 2.1.6
+  (GHSA-qv5m-9pm6-hqp3: a connection reset during a WebSocket upgrade could
+  crash the process). varlatchd and the MCP server accept no WebSocket
+  upgrades, so no installation was exposed.
+
+### Scripts and API
+
+- `GET`, `POST`, `PATCH` and `DELETE /v1/organizations/{org}/audit-export`,
+  `PUT /v1/organizations/{org}/audit-export/credential` and `POST
+  /v1/organizations/{org}/audit-export/check` (capability
+  `audit.storage-export`; all need `organization.manage`). An export's
+  status includes `lastHeartbeatAt`. `PATCH`, `PUT`
+  and `DELETE` can answer `403 STEP_UP_REQUIRED` with the approval
+  operations `audit_export.change` and `audit_export.remove`, which the
+  `Approval.operation` enum gains. Writes from a machine credential are
+  refused with `PERMISSION_DENIED` (`details.reason`
+  `machine-credential`); creating while the host operator turned audit
+  export off is refused with `details.reason` `audit-export-off`.
+- `GET /v1/meta` lists `security.enforce.<control>` for each control the
+  server can enforce (`security.enforce.requirement-protection`,
+  `security.enforce.credential-lifetime`,
+  `security.enforce.passkey-verification` and
+  `security.enforce.admin-step-up` in this release: all four). Each item
+  of `GET /v1/organizations/{org}/security/controls` gains its own
+  `availableModes`. `varlatch security status --json` gains
+  `enforceable`, and `auditExport` as its last key (null unless the caller
+  may manage the organization and the server has audit export).
+- `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}`, and
+  every route of an admin-step-up operation, can answer
+  `403 STEP_UP_REQUIRED`: repeat the request with the
+  `Varlatch-Approval` header once it is approved. The OpenAPI description
+  declares that answer (`components.responses.StepUpRequired`) and the
+  header on each of them. A removal whose
+  Requirement changed meanwhile answers `STATE_CHANGED`.
+- New error code `CREDENTIAL_LIFETIME_EXCEEDED` (HTTP 422, with
+  `details.requestedTtlSeconds` and `details.maxTtlSeconds`): `POST
+  /v1/organizations/{org}/identities` and `POST
+  /v1/organizations/{org}/identities/{id}/credentials` answer it for a
+  lifetime above the maximum while the organization enforces
+  `credential-lifetime`. Scripts that create machine credentials without a
+  lifetime should read `credentialExpiresAt` or `expiresAt` from the
+  answer rather than assume no expiry.
+- New error code `PASSKEY_VERIFICATION_REQUIRED` (HTTP 403, details
+  `control` and `reason`: `no-evidence`, `not-user-verified` or
+  `untrusted-passkey`) from organizations that enforce
+  `passkey-verification`. Repeating the request with the same credential
+  will not help; sign in again. `GET /v1/meta` lists
+  `security.enforce.passkey-verification`.
+
+### CLI
+
+- `varlatch audit-export show|create|change|remove|check`: an
+  organization's audit export to object storage. The secret access key is
+  read from `--secret-stdin`, `--secret-file <path>` or a hidden prompt,
+  never from the command line. `remove` names the organization again with
+  `--confirm`; in assisted mode a coding agent is told to leave that to the
+  person.
+- **A default server, so you type the address once.** The first server you
+  sign in to becomes your default server. Outside a repository, commands
+  that need no Project (`org create`, `org list`, `project create`, `org
+  delete`, `org freeze`, `security …`, `audit export --deleted-org`,
+  `whoami`, `logout`) use it when you give no `--server` and set no
+  `VARLATCH_SERVER` (with no default, the only server you are signed in
+  to, as `whoami` and `logout` did), and `varlatch login` without `--server` signs in again
+  to the server a command here would use. A repository never uses it: its
+  `varlatch.toml` names its own server, so signing in somewhere else never
+  moves a repository. Signing in to another server never replaces the
+  default; `varlatch server` shows it and `varlatch server use <url>`
+  changes it. It is kept in `settings.json`, next to `credentials.json`.
+  See [The default server](docs/reference/passkeys-and-sessions.md#the-default-server).
+- **`varlatch init` guides you on a terminal.** Without `--org` or
+  `--project`, it asks for what is missing: the server (signing you in
+  when needed), the organization and project (creating them after asking),
+  the environments when the project has none, and which environment each
+  `.env` file goes to. It shows names, types and Secrets, never a value;
+  asks separately before replacing a value an environment already has
+  (typing the environment's name in production) and before activating the
+  one contract revision it adds for all files; and offers to delete a
+  `.env` file only once all of its values are stored and its items are in
+  the active contract. Off a terminal or in assisted mode it asks nothing
+  and needs both flags, as before. See [Set up a project](docs/set-up-a-project.md#the-quick-way).
+- **`varlatch init` always names the server** in `varlatch.toml`: from
+  `--server`, `VARLATCH_SERVER`, your default server, or the only server
+  you are signed in to.
+- **`context --json` and `status --json`** report `serverSource` in the
+  repository context: `flag`, `env-var`, `local-override` or `repository`.
+- **`varlatch credential issue`** says when a credential got the
+  organization's default lifetime, and names the maximum when a `--ttl` is
+  refused under `credential-lifetime`.
 
 ### Self-hosting
 
+- `VARLATCH_AUDIT_EXPORT=off` turns audit export off on an installation
+  (it is on by default, like `VARLATCH_SYNC`, and the Compose files pass it
+  to varlatchd): nothing is delivered and no
+  export can be created; organizations see that the host operator stopped
+  it, and can still remove theirs. A destination on a private network
+  needs the outbound allow list (`VARLATCH_OUTBOUND_ALLOW`), as webhooks
+  do. `varlatchd admin audit-export discard-plan --export <id> --reason
+  <expired|unsupported-format>` restarts an export whose pending object can
+  no longer be uploaded; it refuses any other.
+- **An installation can serve its own CLI.** With `VARLATCH_SERVE_CLI=on`,
+  people install the CLI the installation runs with one line:
+  `curl -fsSL https://vault.example.com/install.sh | sh`, or
+  `irm https://vault.example.com/install.ps1 | iex` on Windows. The
+  scripts install for the current user, without `sudo`, check the file's
+  SHA-256, never install Node.js, ask before replacing a copy, and leave a
+  Homebrew copy to Homebrew. It is **off by default**: installing this way
+  trusts the installation, and whoever controls its host or its address, to
+  run code on the installer's machine. `varlatch setup` asks on a new
+  installation; `--serve-cli` and `--no-serve-cli` change it, and
+  `varlatch doctor` reports it. It serves only an https address or
+  `http://localhost`. `/v1/meta` lists the `cli.download` capability when
+  it is on. See [Serving the CLI](docs/self-hosting/configuration.md#serving-the-cli).
+- **The invitation page shows what to do next.** After someone creates
+  their passkey from an invitation, the page shows how to install the CLI
+  (the one-line install for their system when the installation serves it,
+  the signed release otherwise), the `varlatch login` line for this
+  installation, and `varlatch run`. The short-lived credential moved under
+  "Sign in without a browser". The dashboard's project onboarding shows
+  the install line too, and its `varlatch init` line now names the server.
 - **`varlatch admin outbound check`** (and `varlatchd admin outbound check`
   in the container) lists every configured webhook, Coolify and Convex
   Connection and OIDC issuer with the policy's verdict, and suggests the
@@ -322,8 +430,9 @@ fixes.
   OIDC issuers this installation refuses, with the reason and the first
   refusal recorded in the last 30 days, says how many destinations could
   not be checked because their names did not resolve, and says that
-  private destinations are allowed by the host operator, not in Varlatch. `varlatch security report`
-  shows the same list. Both need `organization.manage`. API:
+  private destinations are allowed by the host operator, not in Varlatch.
+  `varlatch security report` shows the same list. Both need
+  `organization.manage`. API:
   `GET /v1/organizations/{org}/security/refused-destinations` (capability
   `security.refused-destinations`). A webhook, Sync Target or Connection
   whose destination is refused now says so with the policy's wording,
@@ -331,13 +440,78 @@ fixes.
   integration uses it or all are paused. Both pages check when asked,
   with DNS lookups only, and reuse a check for up to 30 seconds.
 
+### Documentation
+
+- **[Audit export](docs/reference/audit-export.md):** setting it up with
+  AWS S3 and Backblaze B2 (Object Lock, a key that can only write and set
+  retention), what the destination check does, watching the hourly
+  heartbeat, what a coding agent may do with it, and its limits.
+  `VARLATCH_AUDIT_EXPORT` is in
+  [Configuration](docs/self-hosting/configuration.md#varlatch_audit_export).
+- **Security controls in one place.** [Security
+  controls](docs/reference/security-controls.md) now starts with all four
+  controls at a glance, says what stays the same with every control off
+  (the default, new installations included) and what exists regardless,
+  and gives one procedure for turning a control on: trusted passkeys for
+  every admin, `report` first, the counts, then `enforce`. Before
+  enforcing `passkey-verification`, it shows how to check in report mode
+  that everyone's sign-ins record user verification. New sections cover
+  how the controls meet the incident freeze and what the audit log
+  records when an approved request is refused by the final check. The
+  [threat model](docs/THREAT-MODEL.md) states the off-by-default and
+  report-mode guarantees with the tests that check them.
+- **Getting started is split by reader.** It now sends you to a short
+  page for where you are: [Join a team](docs/join-a-team.md) when you
+  were invited, [Set up a project](docs/set-up-a-project.md), or
+  [Run an installation](docs/run-an-installation.md). The rest moved to
+  reference pages: [Install the CLI](docs/reference/install-the-cli.md),
+  [Members and access](docs/reference/members.md),
+  [Passkeys and sessions](docs/reference/passkeys-and-sessions.md),
+  [CI and other machines](docs/reference/ci-and-machines.md) and
+  [Removing Varlatch](docs/reference/uninstall.md). Links to the old
+  sections on docs.varlatch.com, including those in earlier releases' CLI
+  and dashboard, lead to the new places.
+- **Installing the CLI by hand on Windows keeps your `PATH` as it was.** The
+  steps in [Install the CLI](docs/reference/install-the-cli.md) wrote the
+  user `PATH` back with its variables expanded and as a plain string
+  (`REG_SZ`): an entry such as `%JAVA_HOME%\bin` stopped following
+  `JAVA_HOME`, and variables in entries added later were no longer
+  expanded. They now change it in the registry as it is stored. If you
+  followed the earlier steps, open "Edit environment variables for your
+  account" and restore the variables in the user `Path` entries.
+
 ### Upgrading
 
-- Migration 43 adds a database trigger that revokes a browser session's
-  dashboard tokens when the session ends. Nothing to do.
+Database schema: migrations 43 to 52, forward only, one transaction each.
 
-Outbound destinations: varlatchd no longer connects to private, loopback
-or link-local addresses on an Organization's behalf:
+- 43 adds a database trigger that revokes a browser session's dashboard
+  tokens when the session ends. Nothing to do.
+- 44 adds the freeze history. Restoring a backup taken before a freeze
+  brings the organization back unfrozen: freeze it again after the restore.
+- 45 lets approvals cover Tailnet Requirement changes. Nothing changes
+  until an admin enforces `requirement-protection`.
+- 46, 47, 48 and 51 let approvals cover the admin-step-up operations for
+  machine identities, Grants, roles, groups and teams, people, and deletion
+  and export. Nothing changes until an admin enforces `admin-step-up`.
+- 49 adds a counter to each organization that a security control change
+  bumps (the organization's security epoch). Nothing reads it but the
+  server's own transactions.
+- 50 lets approvals cover the integration operations and stages GitHub App
+  registrations (see Security). Registrations in progress at the upgrade
+  get an id.
+- 52 adds the audit export tables and lets approvals cover audit export
+  changes. Nothing changes until an admin creates an export. Every
+  varlatchd process runs an audit export loop; with no export it only
+  looks, once a minute, for one. `VARLATCH_AUDIT_EXPORT=off` stops the
+  audit export loop host-wide. It defaults to on, and with no export
+  configured it sends nothing.
+
+Every security control stays off, on existing and new installations, and
+`enforce` is now offered for all four: a control that is off adds no
+access restriction. What changes regardless is listed under Sign-in,
+Security and Self-hosting above. One change can stop something that works
+today, the outbound policy: varlatchd no longer connects to private,
+loopback or link-local addresses on an Organization's behalf.
 
 - A webhook receiver, Coolify, Convex or OIDC issuer on a private network
   needs an entry in `VARLATCH_OUTBOUND_ALLOW` in `.env`, then
@@ -354,10 +528,23 @@ or link-local addresses on an Organization's behalf:
   the new release and shows the result; it does not block the upgrade.
   Installations deployed by hand can run the new image's check against
   their database first: see
-  [Outbound destinations after upgrading to 0.21.1](infra/compose/README.md#outbound-destinations-after-upgrading-to-0211).
+  [Outbound destinations after upgrading to 0.22.0](infra/compose/README.md#outbound-destinations-after-upgrading-to-0220).
 - Nothing is lost while a destination is refused: webhooks keep their
   position, and Sync Targets keep waiting without being disabled. Once the
   destination is allowed and varlatchd restarts, everything is delivered.
+
+`varlatch init` with no server to write (no `--server`, no
+`VARLATCH_SERVER`, no default server) now exits 64 and writes nothing.
+It used to write a `varlatch.toml` without a server, which every later
+command rejected. Pass `--server`, or sign in first.
+
+The new server features (`varlatch audit-export`, `org freeze`, `security
+set ... enforce`, the refused destinations and `admin outbound check`)
+need this release on the server: upgrade the server before the CLIs that
+use them.
+
+Backups: archives of 0.21.0 and earlier still restore into this release.
+From 0.20.0 or earlier, read the 0.21.0 notes below as well.
 
 ## 0.21.0 (2026-11-11)
 

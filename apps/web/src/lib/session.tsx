@@ -63,6 +63,12 @@ interface SessionState {
    * approval. With no handler the STEP_UP_REQUIRED error surfaces.
    */
   setStepUpHandler: (handler: StepUpHandler | null) => void;
+  /**
+   * The registered handler, for another client of this session (the
+   * tailnet endpoint's, for an export, ADR-0054 amendment C): resolves
+   * false when none is registered.
+   */
+  onStepUp: StepUpHandler;
   signInWithPasskey: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -296,14 +302,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const setStepUpHandler = useCallback((handler: StepUpHandler | null) => {
     stepUp.current = handler;
   }, []);
+  const onStepUp = useCallback<StepUpHandler>((approval) => (stepUp.current ? stepUp.current(approval) : Promise.resolve(false)), []);
   const api = useMemo(
     () =>
       new VarlatchClient({
         server: location.origin,
         fetch: sessionFetch,
-        onStepUp: (approval) => (stepUp.current ? stepUp.current(approval) : Promise.resolve(false)),
+        onStepUp,
       }),
-    [sessionFetch],
+    [sessionFetch, onStepUp],
   );
 
   const signInWithPasskey = useCallback(async () => {
@@ -329,8 +336,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [clearSession]);
 
   const value = useMemo(
-    () => ({ identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, verificationRequired, dismissVerificationRequired, api, fetch: sessionFetch, mintConvexToken, setStepUpHandler, signInWithPasskey, signOut }),
-    [identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, verificationRequired, dismissVerificationRequired, api, sessionFetch, mintConvexToken, setStepUpHandler, signInWithPasskey, signOut],
+    () => ({ identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, verificationRequired, dismissVerificationRequired, api, fetch: sessionFetch, mintConvexToken, setStepUpHandler, onStepUp, signInWithPasskey, signOut }),
+    [identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, verificationRequired, dismissVerificationRequired, api, sessionFetch, mintConvexToken, setStepUpHandler, onStepUp, signInWithPasskey, signOut],
   );
 
   if (!checked) return <p className="p-8 text-muted">Loading…</p>;

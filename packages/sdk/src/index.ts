@@ -2,6 +2,14 @@
 import type {
   Approval,
   ApprovalOptions,
+  AuditExport,
+  AuditExportChange,
+  AuditExportChangeInput,
+  AuditExportCheck,
+  AuditExportCheckInput,
+  AuditExportCreateInput,
+  AuditExportCredentialChange,
+  AuditExportStatus,
   SecurityControlChange,
   SecurityControlChangeInput,
   SecurityControlList,
@@ -266,6 +274,20 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
+export type {
+  AuditExport,
+  AuditExportChange,
+  AuditExportChangeInput,
+  AuditExportCheck,
+  AuditExportCheckInput,
+  AuditExportCreateInput,
+  AuditExportCredentialChange,
+  AuditExportCredentialInput,
+  AuditExportDestination,
+  AuditExportDestinationInput,
+  AuditExportRetention,
+  AuditExportStatus,
+} from "@varlatch/protocol";
 export type { Approval, ApprovalChange, ApprovalOptions, CredentialLifetimeConfig, SecurityControl, SecurityControlChange, SecurityControlChangeInput, SecurityControlList, SecurityControlMode, SecurityControlName } from "@varlatch/protocol";
 export type { SecurityControlCounts, SecurityControlReport, SecurityReportEntry, SecurityReportReason } from "@varlatch/protocol";
 export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, IncidentFreeze, IncidentFreezeLift, IncidentFreezeState, ResumingTarget, OwnCredential, OwnPasskey, PasskeyConfirmationOptions, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
@@ -327,14 +349,37 @@ export class VarlatchClient {
       ? { ...headers, [APPROVAL_HEADER]: this.approval }
       : headers;
     try {
-      return await this.requestRiding<T>(method, path, body, sent, signal);
+      return await this.requestApproved<T>(method, path, body, sent, signal);
     } catch (err) {
       // A step-up approval (ADR-0054 Decision 3): wait for the person, then
       // repeat the identical request once, carrying the approval.
       const approval = stepUpApproval(err);
       if (!approval || !this.onStepUp || APPROVAL_HEADER in sent) throw err;
       if (!(await this.onStepUp(approval))) throw err;
-      return this.requestRiding<T>(method, path, body, { ...sent, [APPROVAL_HEADER]: approval.id }, signal);
+      return this.requestApproved<T>(method, path, body, { ...sent, [APPROVAL_HEADER]: approval.id }, signal);
+    }
+  }
+
+  /**
+   * A request carrying an approval whose read the server found stale (an
+   * export's values changed between its snapshot and the approval's use,
+   * ADR-0054 amendment C) left the approval unused: repeat it, with the same
+   * approval, at most twice. Each repeat reads afresh.
+   */
+  private async requestApproved<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    headers: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    for (let repeats = 0; ; repeats++) {
+      try {
+        return await this.requestRiding<T>(method, path, body, headers, signal);
+      } catch (err) {
+        const stale = err instanceof VarlatchApiError && err.code === "STATE_CHANGED" && err.details?.reason === "stale-capture";
+        if (!stale || !(APPROVAL_HEADER in headers) || repeats >= 2) throw err;
+      }
     }
   }
 
@@ -1101,6 +1146,44 @@ export class VarlatchClient {
   }
 
   /**
+   * The Organization's audit export to object storage and its status, and
+   * whether the host operator left audit export on (organization.manage;
+   * capability audit.storage-export, ADR-0056). Never the key.
+   */
+  getAuditExport(org: string): Promise<AuditExportStatus> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/audit-export`);
+  }
+
+  /** Create the Organization's audit export; the destination is probed first. Needs no approval. */
+  createAuditExport(org: string, input: AuditExportCreateInput): Promise<AuditExport> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/audit-export`, input);
+  }
+
+  /**
+   * Change the export's destination or retention. A destination change, a
+   * shorter or removed retention, or compliance to governance always needs
+   * a step-up approval (STEP_UP_REQUIRED, handled by onStepUp).
+   */
+  changeAuditExport(org: string, input: AuditExportChangeInput): Promise<AuditExportChange> {
+    return this.request("PATCH", `/v1/organizations/${encodeURIComponent(org)}/audit-export`, input);
+  }
+
+  /** Replace the export's key: always needs a step-up approval. */
+  replaceAuditExportCredential(org: string, input: AuditExportCredentialChange): Promise<AuditExport> {
+    return this.request("PUT", `/v1/organizations/${encodeURIComponent(org)}/audit-export/credential`, input);
+  }
+
+  /** Remove the export: always needs a step-up approval. What was delivered stays at the destination. */
+  removeAuditExport(org: string, expectedVersion: number): Promise<AuditExport> {
+    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/audit-export?expectedVersion=${encodeURIComponent(String(expectedVersion))}`);
+  }
+
+  /** Probe a destination without saving anything: with the key given, or the live export's own key for its own destination. */
+  checkAuditExport(org: string, input: AuditExportCheckInput): Promise<AuditExportCheck> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/audit-export/check`, input);
+  }
+
+  /**
    * The Organization's machine credentials never used, idle for 30 days, or
    * without expiry, with identity and last use, and the service credentials
    * expiring within 7 days or expired (identity.manage; capability
@@ -1385,12 +1468,63 @@ export class VarlatchClient {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations`, { account });
   }
 
-  /** Complete it with the state and GitHub's code. */
-  completeGitHubAppRegistration(
+  /**
+   * Complete it with the state and GitHub's code. The callback is never
+   * repeated: when the attachment needs a step-up approval (ADR-0054
+   * amendment D), the server answers STEP_UP_REQUIRED naming the
+   * registration, and once onStepUp resolves true, the attachment is
+   * repeated on its own route with the approval. Without a handler, or when
+   * it resolves false, the STEP_UP_REQUIRED error surfaces, its details
+   * naming `registrationId` for attachGitHubAppRegistration.
+   */
+  async completeGitHubAppRegistration(
     org: string,
     input: { state: string; code: string },
   ): Promise<GitHubAppRegistrationRegistered | GitHubAppRegistrationRefused | GitHubAppRegistrationFailed> {
-    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/complete`, input);
+    const path = `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/complete`;
+    try {
+      // Never with an approval, and never repeated by the step-up handler.
+      return await this.requestRiding("POST", path, input, {});
+    } catch (err) {
+      const approval = stepUpApproval(err);
+      const registrationId = (err as VarlatchApiError).details?.registrationId;
+      if (!approval || !this.onStepUp || typeof registrationId !== "string") throw err;
+      if (!(await this.onStepUp(approval))) throw err;
+      return this.request("POST", this.attachPath(org, registrationId), undefined, { [APPROVAL_HEADER]: approval.id });
+    }
+  }
+
+  private attachPath(org: string, registrationId: string): string {
+    return `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/${encodeURIComponent(registrationId)}/attach`;
+  }
+
+  /**
+   * Attach a pending registration (ADR-0054 amendment D): after an
+   * approval was not given at completion, or to try again after a
+   * transient failure. Asks for its own approval when one is needed.
+   */
+  attachGitHubAppRegistration(
+    org: string,
+    registrationId: string,
+  ): Promise<GitHubAppRegistrationRegistered | GitHubAppRegistrationRefused> {
+    return this.request("POST", this.attachPath(org, registrationId));
+  }
+
+  /**
+   * Discard a pending registration: its key is deleted; the App stays on
+   * GitHub. `state` says what the server found under the registration's
+   * lock: `attached` means the App is this organization's (no `deleteUrl`).
+   */
+  discardGitHubAppRegistration(
+    org: string,
+    registrationId: string,
+  ): Promise<{
+    discarded: boolean;
+    state: "discarded" | "attached" | "ended" | "waiting";
+    deleteUrl: string | null;
+    app: { githubAppId: number; slug: string } | null;
+  }> {
+    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/${encodeURIComponent(registrationId)}`);
   }
 
   importGitHubApp(org: string, input: { appId: number; privateKey: string }): Promise<GitHubAppRegistrationRegistered | GitHubAppImportFailed> {

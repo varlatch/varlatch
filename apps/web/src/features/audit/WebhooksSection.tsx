@@ -11,6 +11,7 @@ import { CopyButton } from "../../components/CodeBlock";
 import { deliveryStatus } from "./webhookStatus";
 import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 
 const URL_PATTERN = /^https?:\/\/.+/;
 
@@ -49,7 +50,7 @@ export function WebhooksSection({ org, orgId, className }: { org: string; orgId:
       setEventTypes("");
       refresh();
     },
-    onError: (err) => toast.error("Could not register the webhook", { description: String((err as Error).message ?? err) }),
+    onError: (err) => toast.error("Could not register the webhook", { description: approvalOutcomeMessage(err) ?? String((err as Error).message ?? err) }),
   });
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeWebhook(org, id),
@@ -57,7 +58,7 @@ export function WebhooksSection({ org, orgId, className }: { org: string; orgId:
       refresh();
       toast.success("Webhook revoked");
     },
-    onError: (err) => toast.error("Could not revoke the webhook", { description: String((err as Error).message ?? err) }),
+    onError: (err) => toast.error("Could not revoke the webhook", { description: approvalOutcomeMessage(err) ?? String((err as Error).message ?? err) }),
   });
 
   // In-place edit keeps delivery identity: the signing secret and cursor are

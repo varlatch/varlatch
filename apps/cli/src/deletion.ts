@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { OrganizationDeletion } from "@varlatch/sdk";
+import { UNRECOGNIZED_TIME, safe, safeTime } from "./safeText.js";
 
 /**
  * Deleting Projects and Organizations from the CLI (ADR-0051 Decision 11):
@@ -71,10 +72,10 @@ export function projectDeletionLines(
   organization: string,
 ): string[] {
   return [
-    `Project ${result.slug} deleted from ${organization}.`,
-    `Erased ${result.versionsErased} value versions of ${result.values} items in ${result.environments} environments; ` +
-      `revoked ${result.capabilitiesRevoked} Capabilities and ${result.targetsRevoked} Sync Targets; removed ${result.teamLinksRemoved} Team links.`,
-    `The slug ${result.slug} can be used again; a new Project with it starts empty and inherits nothing tied to this one. The audit log keeps this Project's events.`,
+    safe`Project ${result.slug} deleted from ${organization}.`,
+    safe`Erased ${result.versionsErased} value versions of ${result.values} items in ${result.environments} environments; ` +
+      safe`revoked ${result.capabilitiesRevoked} Capabilities and ${result.targetsRevoked} Sync Targets; removed ${result.teamLinksRemoved} Team links.`,
+    safe`The slug ${result.slug} can be used again; a new Project with it starts empty and inherits nothing tied to this one. The audit log keeps this Project's events.`,
     ...deletionLimits("project"),
   ];
 }
@@ -83,33 +84,33 @@ export function projectDeletionLines(
 export function deletionStateLines(deletion: OrganizationDeletion, organization: string, now: Date = new Date()): string[] {
   const due = Date.parse(deletion.runAfter) <= now.getTime();
   const lines = [
-    `Deletion ${deletion.id} of ${organization}: scheduled ${deletion.scheduledAt} by ${deletion.requestedBy}.`,
-    `It runs no earlier than ${deletion.runAfter}.`,
+    safe`Deletion ${deletion.id} of ${organization}: scheduled ${safeTime(deletion.scheduledAt)} by ${deletion.requestedBy}.`,
+    `It runs no earlier than ${safeTime(deletion.runAfter)}.`,
   ];
   if (!deletion.approvalRequired) {
     lines.push("No second approval is needed: the Organization had one admin when it was scheduled.");
   } else if (deletion.approvedBy) {
-    lines.push(`Approved by ${deletion.approvedBy} at ${deletion.approvedAt}.`);
+    lines.push(safe`Approved by ${deletion.approvedBy} at ${safeTime(deletion.approvedAt) ?? UNRECOGNIZED_TIME}.`);
   } else {
     lines.push(
-      `It waits for another admin's approval${due ? ", and never runs without it" : ""}: varlatch org delete ${organization} --approve ${deletion.id}`,
+      `It waits for another admin's approval${due ? ", and never runs without it" : ""}: ${safe`varlatch org delete ${organization} --approve ${deletion.id}`}`,
     );
   }
   lines.push(
     `${organization} is frozen until then: changes are refused, reads still work, so a last copy can be made.`,
-    `Any admin can cancel it until it runs: varlatch org delete ${organization} --cancel ${deletion.id}`,
+    safe`Any admin can cancel it until it runs: varlatch org delete ${organization} --cancel ${deletion.id}`,
   );
   return lines;
 }
 
 export function cancelledLines(deletion: OrganizationDeletion, organization: string): string[] {
   return [
-    `Deletion ${deletion.id} of ${organization} cancelled; ${organization} is no longer frozen.`,
+    safe`Deletion ${deletion.id} of ${organization} cancelled; ${organization} is no longer frozen.`,
     "Machine identities and webhooks it suspended are back. Sync Targets stay paused: resume them when you choose. Invitations it revoked must be issued again.",
   ];
 }
 
 /** After the deletion runs, the people who could read the audit log export it with this. */
 export function tombstoneExportLine(organizationId: string): string {
-  return `After it runs, the people who can then read ${organizationId}'s audit log export it with: varlatch audit export --deleted-org ${organizationId}`;
+  return safe`After it runs, the people who can then read ${organizationId}'s audit log export it with: varlatch audit export --deleted-org ${organizationId}`;
 }

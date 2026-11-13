@@ -55,6 +55,9 @@ const envSchema = z.object({
   // unless the host operator says on, since installing from the
   // installation trusts it to run code on the installer's machine.
   VARLATCH_SERVE_CLI: optional(z.enum(["on", "off"])),
+  // The audit export (ADR-0056 Decision 6): on by default, like
+  // VARLATCH_SYNC. Off: no export runs or can be created.
+  VARLATCH_AUDIT_EXPORT: optional(z.enum(["on", "off"])),
 });
 
 export interface VarlatchdConfig {
@@ -82,6 +85,8 @@ export interface VarlatchdConfig {
   outboundAllow: AllowEntry[];
   /** VARLATCH_SERVE_CLI (ADR-0058 Decision 3): "on" serves the CLI and install scripts. */
   serveCli: "on" | "off";
+  /** The audit export (ADR-0056 Decision 6): false when VARLATCH_AUDIT_EXPORT=off. */
+  auditExport: boolean;
   /** Loads and validates the raw 32-byte root KEK. Never log its value. */
   loadRootKek: () => Buffer;
 }
@@ -269,6 +274,7 @@ export function loadConfig(
     port: cfg.VARLATCH_PORT,
     publicUrl: cfg.VARLATCH_PUBLIC_URL,
     serveCli: cfg.VARLATCH_SERVE_CLI ?? "off",
+    auditExport: cfg.VARLATCH_AUDIT_EXPORT !== "off",
     // The one token issuer (#110): the server, the Mirror publisher, and
     // `admin mirror-sync` must agree, and Convex trusts exactly this value.
     // Compose refuses to start without VARLATCH_PUBLIC_URL; the localhost

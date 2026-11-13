@@ -9,6 +9,7 @@ import type {
   SecurityControlName,
   VarlatchClient,
 } from "@varlatch/sdk";
+import { UNRECOGNIZED_TIME, printable, safeTime, safeVersion } from "./safeText.js";
 
 /**
  * `varlatch security controls` and `varlatch security set` (ADR-0054
@@ -94,7 +95,7 @@ async function requireCapability(api: SecurityApi, command: string): Promise<voi
   const meta = await api.meta();
   if (!meta.capabilities.includes(SECURITY_CONTROLS_CAPABILITY)) {
     throw new SecurityControlsError(
-      `varlatch ${command}: this server (${meta.serverVersion}) has no security controls ` +
+      `varlatch ${command}: this server (${safeVersion(meta.serverVersion) ?? "an older release"}) has no security controls ` +
         `(it lacks the ${SECURITY_CONTROLS_CAPABILITY} capability); upgrade the server.`,
     );
   }
@@ -156,7 +157,7 @@ export async function setControl(
   if (!offered.includes(request.mode)) {
     throw new SecurityControlsError(
       `varlatch security set: this server does not offer the mode ${request.mode} for ${request.control} yet ` +
-        `(it offers ${offered.join(", ")}). Nothing was changed.`,
+        `(it offers ${printable(offered.join(", "))}). Nothing was changed.`,
     );
   }
   const change = await api.changeSecurityControl(organization, request.control, changeInput(request, current));
@@ -178,7 +179,7 @@ function configWords(config: CredentialLifetimeConfig | null): string {
 
 function changedWords(c: SecurityControl): string {
   if (c.version === 0 || !c.changedAt) return "never changed";
-  return `changed ${c.changedAt}${c.changedBy ? ` by ${c.changedBy.name ?? c.changedBy.id}` : " by the host operator"}`;
+  return `changed ${safeTime(c.changedAt) ?? UNRECOGNIZED_TIME}${c.changedBy ? ` by ${c.changedBy.name ?? c.changedBy.id}` : " by the host operator"}`;
 }
 
 /** The human format of `security controls`. */
@@ -196,18 +197,27 @@ export function controlsLines(organization: string, list: SecurityControlList): 
       (enforcing.length > 0 ? `, and enforce for ${enforcing.join(", ")}.` : ". enforce is not available yet."),
     "Loosening a control (a mode towards off, a longer lifetime, cleared settings) needs your approval with a trusted passkey.",
   );
-  return lines;
+  // Names, modes and versions from the server: escaped (issue #119).
+  return lines.map(printable);
 }
 
 /** The human format of `security set`'s result. */
 export function setLines(organization: string, before: SecurityControlMode | null, change: SecurityControlChange): string[] {
   const c = change.control;
-  if (!change.changed) return [`${c.control} in ${organization} is already ${c.mode}${c.config ? ` (${configWords(c.config)})` : ""}. Nothing was changed.`];
+  if (!change.changed) return [printable(`${c.control} in ${organization} is already ${c.mode}${c.config ? ` (${configWords(c.config)})` : ""}. Nothing was changed.`)];
   const lines = [
     `${c.control} in ${organization}: ${before && before !== c.mode ? `${before} -> ` : ""}${c.mode}` +
       `${c.config ? ` (${configWords(c.config)})` : ""}, version ${c.version}.`,
   ];
   if (change.loosened) lines.push("This loosened the control; your approval was used.");
+  if (c.control === "admin-step-up" && c.mode === "enforce" && before !== "enforce") {
+    lines.push(
+      `From now on each administrative change in ${organization} (machine identities and credentials, grants, roles, groups and teams,`,
+      "admins and members, integrations, deletion and .env export) needs the approval of the person asking, with a trusted passkey.",
+      "Machine credentials are refused for these changes. Without a trusted passkey, the host operator can enroll one",
+      "(varlatch admin reenroll) or turn the control off (varlatch admin security reset).",
+    );
+  }
   if (c.control === "passkey-verification" && c.mode === "enforce" && before !== "enforce") {
     lines.push(
       `From now on ${organization} refuses a person's sign-in that was not made with a trusted passkey that verified them (PIN, fingerprint or face),`,
@@ -215,5 +225,6 @@ export function setLines(organization: string, before: SecurityControlMode | nul
       "Someone whose passkeys cannot verify them gets back in only through the host operator: varlatch admin security reset.",
     );
   }
-  return lines;
+  // Names, modes and versions from the server: escaped (issue #119).
+  return lines.map(printable);
 }

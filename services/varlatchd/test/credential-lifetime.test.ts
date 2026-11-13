@@ -169,7 +169,7 @@ describe("unlocking credential-lifetime", () => {
       expect(res.status, control).toBe(422);
       expect(res.body.error.code).toBe("CONTROL_MODE_UNAVAILABLE");
     }
-    expect([...ENFORCEABLE_CONTROLS].sort()).toEqual(["credential-lifetime", "passkey-verification", "requirement-protection"]);
+    expect([...ENFORCEABLE_CONTROLS].sort()).toEqual(["admin-step-up", "credential-lifetime", "passkey-verification", "requirement-protection"]);
   });
 
   it("classifies lifetime changes under enforce: shorter is free, longer or turned down needs an approval, which then applies", async () => {

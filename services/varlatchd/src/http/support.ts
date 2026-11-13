@@ -9,6 +9,7 @@ import type { CredentialRow, IdentityRow } from "../auth/credentials.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { DomainError } from "../domain/errors.js";
 import { getOrgRole } from "../domain/orgs.js";
+import { anyControlOn } from "../domain/securitycontrols.js";
 
 export const STATUS_BY_CODE: Record<ErrorCode, number> = {
   AUTHENTICATION_REQUIRED: 401,
@@ -315,6 +316,115 @@ export async function enforce(ctx: AppCtx, decision: Decision): Promise<Evaluati
   if (decision.allowed) return decision.evaluation;
   await recordDenial(ctx, decision);
   throw decision.error;
+}
+
+/**
+ * The denial an authorization recheck found inside a transaction that the
+ * refusal then rolls back, kept on the request by
+ * {@link authorizeInTransaction} or {@link authorizeInControlledTransaction}
+ * and recorded once the transaction ended ({@link auditDeferredDenial},
+ * from app.onError).
+ */
+export const DEFERRED_DENIAL = "deferredDenial";
+
+/**
+ * Authorization for one action, rechecked inside a protected operation's
+ * transaction once its approval was consumed (ADR-0054 Decision 3: "the
+ * person still holds the action"). The decision is the one {@link authorize}
+ * makes, against the transaction (`db`). A denial is not recorded there:
+ * its refusal rolls the transaction back, and the audit event with it. It
+ * is kept on the request instead, and app.onError records it after the
+ * rollback (auditDeferredDenial), as it does for passkey-verification and
+ * incident-freeze refusals: exactly one `authorization.denied` per refused
+ * request, the same event {@link authorize} records for an ordinary
+ * denial. Only a request that consumed an approval reaches this, so with
+ * every control off nothing calls it. An operation that rechecks whatever
+ * the controls' modes uses {@link authorizeInControlledTransaction}.
+ */
+export async function authorizeInTransaction(
+  ctx: AppCtx,
+  db: AppCtx["db"],
+  c: Context,
+  principal: Principal,
+  action: Action,
+  resource: ResourceContext,
+  opts: AuthorizeOptions = {},
+): Promise<Evaluation> {
+  const decision = await decide({ ...ctx, db }, c, principal, action, resource, opts);
+  if (decision.allowed) return decision.evaluation;
+  // The last one wins: a request is refused once, by its last recheck.
+  if (decision.denialEvent) c.set(DEFERRED_DENIAL, decision.denialEvent);
+  throw decision.error;
+}
+
+/**
+ * Authorization rechecked inside the transaction of an operation that runs
+ * whatever the Security Controls' modes: freezing and lifting a freeze
+ * (ADR-0055) and changing a control (ADR-0054 Decision 2). Each takes the
+ * Organization row FOR UPDATE, then rechecks here (ADR-0054 follow-up (f)).
+ *
+ * A denial is kept for app.onError, as {@link authorizeInTransaction} keeps
+ * it, only when at least one control is at `report` or `enforce` in the
+ * state this decision was made on: read in the same transaction, under the
+ * Organization lock, which every control change and the operator's reset
+ * also take FOR UPDATE, so it cannot change between the decision and the
+ * read. For a control change that is the state before the change, since
+ * the recheck comes before the new state is written: turning a control on
+ * from all off (off to report) keeps nothing, turning the last one off
+ * (report to off) keeps the denial.
+ *
+ * With every control off, the denial takes main's path unchanged: it is
+ * recorded in the transaction ({@link authorize} against `db`), which the
+ * refusal rolls back. Nothing observable changes: no audit event, the same
+ * answer. The read of the controls happens only on a denial.
+ *
+ * If that read fails (a database fault after the denial), the request gets
+ * main's answer all the same: the denial's own error, never a 500, and
+ * nothing kept for app.onError. Main's in-transaction audit event would be
+ * rolled back with the refusal, so main records nothing for it either; and
+ * on PostgreSQL the failed read has already aborted the transaction, where
+ * a further insert could only fail.
+ */
+export async function authorizeInControlledTransaction(
+  ctx: AppCtx,
+  db: AppCtx["db"],
+  c: Context,
+  principal: Principal,
+  action: Action,
+  resource: ResourceContext,
+  opts: AuthorizeOptions = {},
+): Promise<Evaluation> {
+  const txCtx = { ...ctx, db };
+  const decision = await decide(txCtx, c, principal, action, resource, opts);
+  if (decision.allowed) return decision.evaluation;
+  let on: boolean;
+  try {
+    on = await anyControlOn(db, resource.organizationId);
+  } catch (e) {
+    console.error("could not read the security controls after an authorization denial:", e);
+    throw decision.error;
+  }
+  if (!on) return enforce(txCtx, decision);
+  if (decision.denialEvent) c.set(DEFERRED_DENIAL, decision.denialEvent);
+  throw decision.error;
+}
+
+/**
+ * Record the denial an in-transaction recheck kept (authorizeInTransaction),
+ * once, after the transaction that refused the request ended, in a short
+ * transaction of its own. Best effort, as for the other refusals recorded
+ * at the outcome: a failure to record is logged and never changes the
+ * answer.
+ */
+export async function auditDeferredDenial(ctx: AppCtx, c: Context): Promise<void> {
+  const event = c.get(DEFERRED_DENIAL) as AuditEventInput | undefined;
+  if (!event) return;
+  c.set(DEFERRED_DENIAL, undefined);
+  try {
+    await recordAuditEvent(ctx.db, event);
+  } catch (e) {
+    console.error("could not audit an authorization denial:", e);
+  }
 }
 
 /**

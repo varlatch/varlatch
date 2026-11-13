@@ -19,6 +19,25 @@ import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen, withExternalEffe
 import { requireOrganizationAccess } from "./requestaccess.js";
 import { guardEffectFetch } from "./externaleffect.js";
 import { reportAdminStepUp } from "./securityreport.js";
+import type { ProtectedGate } from "./approvals.js";
+import type { ProtectedOptions } from "./identities.js";
+import {
+  appConnectionCreateBinding,
+  connectionCreateBinding,
+  connectionDeleteBinding,
+  connectionReplaceCredentialBinding,
+  githubAppRemoveBinding,
+  githubAppReplaceKeyBinding,
+  readApp,
+  readConnection,
+} from "./integrationstepup.js";
+import {
+  approvalMetadata,
+  effectRequester,
+  prepareProtectedOperation,
+  startProtectedOperation,
+  type ProtectedOperationInput,
+} from "./protected.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
 import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, githubUnreachable, readJwtRefusal } from "./githubjwt.js";
@@ -382,12 +401,22 @@ function refusedCheck(refusal: OutboundRefusedError): AccessCheck {
   return { status: "unreachable", where: "connection", message: refusal.message };
 }
 
+/**
+ * Create a token Connection. A protected operation (ADR-0054):
+ * admin-step-up's connection.create. Under enforce it needs the
+ * requester's approval, bound to the platform and base identity as
+ * canonicalized, the name and the credential itself (the intent keeps only
+ * its keyed hash; integrationstepup.ts). Validation and the outbound policy
+ * refuse before an approval is asked for.
+ */
 export async function createConnection(
   ctx: AppCtx,
+  gate: ProtectedGate,
   org: OrgRow,
   input: { platform: string; baseIdentity: string; name: string; credential: string },
-  actorIdentityId: string,
+  options: ProtectedOptions = {},
 ): Promise<PlatformConnectionRow> {
+  const actorIdentityId = gate.requester.identityId;
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
@@ -404,10 +433,17 @@ export async function createConnection(
   const id = newId("platformConnection");
   const envelope = encryptPlatformCredential(orgKekOf(ctx, org), org.id, id, input.credential);
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+    // The writer protocol (ADR-0051): the live scope first (steps 1 and 2,
+    // with the approval when one is needed), then Apps → Connections → Targets.
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId: org.id, people: [actorIdentityId] },
+      checks: [{ control: "admin-step-up", operation: "connection.create" }],
+      binding: async () =>
+        connectionCreateBinding(org, { platform: adapter.platform, baseIdentity, name: input.name, credential: input.credential }),
+      authorizeIn: options.authorizeIn,
+    });
     // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
-    await reportAdminStepUp(db, org.id, actorIdentityId, "connection.create");
+    await prepared.count(db);
     await recordIntegrationChange(db, {
       organizationId: org.id,
       identityId: actorIdentityId,
@@ -422,7 +458,7 @@ export async function createConnection(
       organizationId: org.id,
       action: "config.sync.manage",
       resource: { connectionId: id },
-      metadata: { platform: adapter.platform, baseIdentity, name: input.name },
+      metadata: { platform: adapter.platform, baseIdentity, name: input.name, ...approvalMetadata(prepared.approval) },
     });
     const res = await db.query(
       `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by)
@@ -441,31 +477,73 @@ export async function createConnection(
  * App's and not suspended, and its account becomes the base identity. No
  * network call holds a lock. Creation then takes the App's row lock, as
  * attachment and key rotation do, and checks the App is still live under it.
+ *
+ * A protected operation (ADR-0054): admin-step-up's connection.create,
+ * bound to the App (Varlatch's records), the installation id and the name.
+ * Under enforce the installation is read from GitHub only after a precheck
+ * found an approved intent for exactly this binding (amendment D);
+ * consumption stays in the final transaction. The installation's account
+ * is learned from GitHub afterwards and is not bound.
  */
 export async function createAppConnection(
   ctx: AppCtx,
+  gate: ProtectedGate,
   org: OrgRow,
   input: { installationId: number; name: string },
-  actorIdentityId: string,
   allowedAdapters: string[] | null,
   /** Test hook; GitHub is otherwise reached through the outbound policy (ADR-0057). */
   fetchImpl?: typeof fetch,
+  options: ProtectedOptions = {},
 ): Promise<PlatformConnectionRow> {
+  const actorIdentityId = gate.requester.identityId;
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
   if (allowedAdapters && !allowedAdapters.includes("github-actions")) {
     throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
   }
+  // The App row an approval is bound to, pinned by the binding (only when a
+  // control asks for an approval): the key read for the installation and
+  // the locked write must name that same row. An App replaced meanwhile is
+  // refused with STATE_CHANGED before anything is consumed. With no
+  // approval, nothing is pinned and the App is read as before.
+  let boundAppId: string | null = null;
+  const liveAppOf = async (db: Querier) => {
+    const app = await readApp(db, org.id);
+    if (!app) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    return app;
+  };
+  const protectedInput: ProtectedOperationInput = {
+    scope: { organizationId: org.id, people: [actorIdentityId] },
+    checks: [{ control: "admin-step-up", operation: "connection.create" }],
+    // The App exists, then passkey-verification (ADR-0054 Decision 7).
+    preflight: async (db) => {
+      await liveAppOf(db);
+    },
+    binding: async (db) => {
+      const app = await liveAppOf(db);
+      boundAppId = app.id;
+      return appConnectionCreateBinding(org, app, input);
+    },
+    authorizeIn: options.authorizeIn,
+  };
   // The external-effect contract (liveness.ts withExternalEffect): from
   // here to the end, one transaction holding the Organization row and the
-  // actor, with passkey-verification after the lookups and before the
-  // first decryption or call (ADR-0054 Decisions 2 and 7).
-  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
+  // actor (FOR UPDATE when the request carries an approval it may consume),
+  // with passkey-verification after the lookups and before the first
+  // decryption or call. Under enforce, an approved intent for exactly this
+  // request must exist before the installation is read (the precheck,
+  // amendment D); it is consumed only once GitHub answered, before the App
+  // row is locked.
+  return withExternalEffect(ctx.db, { organizationId: org.id, people: [effectRequester(gate)] }, async (tx) => {
     const tctx: AppCtx = { ...ctx, db: tx };
+    const started = await startProtectedOperation(tx, gate, protectedInput, { precheck: true });
     const { app, pem } = await appWithKey(tctx, org);
+    if (boundAppId !== null && app.id !== boundAppId) {
+      throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was replaced since the approval was asked for; nothing was changed. Reload and try again");
+    }
     const installation = await readInstallation(
-      guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} })),
+      guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tx, organizationId: org.id, resource: {} })),
       { githubAppId: Number(app.github_app_id), clientId: app.client_id, privateKeyPem: pem },
       input.installationId,
     );
@@ -481,49 +559,50 @@ export async function createAppConnection(
     const adapter = getAdapter("github-actions");
     const baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(installation.account.login));
     const id = newId("platformConnection");
-    return withTx(tctx.db, async (db) => {
-      // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-      await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
-      const locked = await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
-        [app.id, org.id],
-      );
-      if (!locked.rows[0]) {
-        throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was removed meanwhile");
-      }
-      // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
-      await reportAdminStepUp(db, org.id, actorIdentityId, "connection.create");
-      await recordIntegrationChange(db, {
-        organizationId: org.id,
-        identityId: actorIdentityId,
-        kind: "connection",
-        resourceId: id,
-        changes: ["created"],
-      });
-      await recordAuditEvent(db, {
-        eventType: "sync.connection_created",
-        decision: "info",
-        actorIdentityId,
-        organizationId: org.id,
-        action: "config.sync.manage",
-        resource: { connectionId: id },
-        metadata: {
-          platform: adapter.platform,
-          baseIdentity,
-          name: input.name,
-          credentialKind: "github-app",
-          githubAppId: app.id,
-          installationId: input.installationId,
-        },
-      });
-      const res = await db.query(
-        `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by,
-           credential_kind, github_app_id, github_installation_id)
-         VALUES ($1,$2,$3,$4,$5,NULL,$6,'github-app',$7,$8)
-         RETURNING ${CONNECTION_COLUMNS}`,
-        [id, org.id, adapter.platform, baseIdentity, input.name, actorIdentityId, app.id, input.installationId],
-      );
-      return res.rows[0] as PlatformConnectionRow;
+    // Consumption (steps 4, 6, 7, the person held since step 2), then the
+    // writer protocol (ADR-0051): Apps, then Connections.
+    const prepared = await started.finish(tx);
+    const db = tx;
+    const locked = await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
+      [app.id, org.id],
+    );
+    if (!locked.rows[0]) {
+      throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was removed meanwhile");
+    }
+    // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
+    await prepared.count(db);
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "connection",
+      resourceId: id,
+      changes: ["created"],
     });
+    await recordAuditEvent(db, {
+      eventType: "sync.connection_created",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: { connectionId: id },
+      metadata: {
+        platform: adapter.platform,
+        baseIdentity,
+        name: input.name,
+        credentialKind: "github-app",
+        githubAppId: app.id,
+        installationId: input.installationId,
+        ...approvalMetadata(prepared.approval),
+      },
+    });
+    const res = await db.query(
+      `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by,
+         credential_kind, github_app_id, github_installation_id)
+       VALUES ($1,$2,$3,$4,$5,NULL,$6,'github-app',$7,$8)
+       RETURNING ${CONNECTION_COLUMNS}`,
+      [id, org.id, adapter.platform, baseIdentity, input.name, actorIdentityId, app.id, input.installationId],
+    );
+    return res.rows[0] as PlatformConnectionRow;
   });
 }
 
@@ -544,35 +623,82 @@ export type KeyRotationOutcome = { outcome: "rotated"; app: GitHubAppRow } | ({ 
  * locked in that order (each set in id order), the App's version must be
  * the one the caller saw, every Target passes the gate, the key is
  * replaced and the version moves, and every Target is queued to converge.
+ *
+ * A protected operation (ADR-0054): admin-step-up's github_app.replace_key,
+ * bound to the App, the key itself (the intent keeps only its keyed hash)
+ * and the version the request expects. Under enforce, GitHub is asked only
+ * after a precheck found an approved intent for exactly this binding
+ * (amendment D): an unapproved request never sends the supplied key out.
+ * The re-authorization gate refuses before an approval is asked for, and
+ * again under the locks. Consumption stays in the final transaction; a key
+ * GitHub does not confirm leaves the approval unconsumed.
  */
 export async function rotateGitHubAppKey(
   ctx: AppCtx,
+  approvalGate: ProtectedGate,
   org: OrgRow,
   input: { privateKey: string; expectedVersion: number },
   gate: (target: SyncTargetRow) => Promise<Record<string, unknown> | undefined | void>,
-  actorIdentityId: string,
   /** Test hook; GitHub is otherwise reached through the outbound policy (ADR-0057). */
   fetchImpl?: typeof fetch,
   now: number = Date.now(),
+  options: ProtectedOptions = {},
 ): Promise<KeyRotationOutcome> {
+  const actorIdentityId = approvalGate.requester.identityId;
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
   if (!isRsaKey(input.privateKey)) {
     throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
   }
+  // The App row an approval is bound to, pinned by the binding (only when a
+  // control asks for an approval): the key GitHub verifies and the locked
+  // write must name that same row. An App removed and imported again
+  // meanwhile (a new row, even of the same GitHub App and version) is
+  // refused with STATE_CHANGED before anything is consumed, so an approval
+  // given for one row is never used on another. With no approval, nothing
+  // is pinned and the rotation reads the App as before.
+  let pinnedAppId: string | null = null;
+  const replaced = () =>
+    new DomainError("STATE_CHANGED", "The Organization's GitHub App was replaced or removed since the approval was asked for; nothing was changed. Reload and try again");
+  const protectedInput: ProtectedOperationInput = {
+    scope: { organizationId: org.id, people: [actorIdentityId] },
+    checks: [{ control: "admin-step-up", operation: "github_app.replace_key" }],
+    // The App exists, then passkey-verification, before GitHub is called
+    // (ADR-0054 Decision 7).
+    preflight: async (db) => {
+      if (!(await readApp(db, org.id))) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    },
+    binding: async (db) => {
+      // Refusals first (amendment A), read without a lock; the version is
+      // checked again under the App's row lock.
+      const app = await readApp(db, org.id);
+      if (!app) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+      pinnedAppId = app.id;
+      if (app.version !== input.expectedVersion) {
+        throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
+      }
+      for (const target of await readAppTargets(db, app.id)) await gate(target);
+      return githubAppReplaceKeyBinding(db, org, app, input.privateKey, input.expectedVersion);
+    },
+    authorizeIn: options.authorizeIn,
+  };
   // The external-effect contract (liveness.ts withExternalEffect): from
   // here to the end, one transaction holding the Organization row and the
-  // actor, with passkey-verification after the lookups and before the
-  // first decryption or call (ADR-0054 Decisions 2 and 7).
-  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
+  // actor (FOR UPDATE when the request carries an approval it may consume),
+  // with passkey-verification after the lookups and before the first call.
+  // Under enforce, an approved intent for exactly this key must exist before
+  // GitHub is called (the precheck, amendment D); it is consumed only once
+  // GitHub confirmed the key, before the App row is locked.
+  return withExternalEffect(ctx.db, { organizationId: org.id, people: [effectRequester(approvalGate)] }, async (tx) => {
     const tctx: AppCtx = { ...ctx, db: tx };
+    const started = await startProtectedOperation(tx, approvalGate, protectedInput, { precheck: true });
+    // The App GitHub verifies the key for: the one the binding and the
+    // precheck named, when they named one.
     const seen = await getGitHubApp(tctx, org.id);
-    // The App exists; then passkey-verification, before GitHub is called
-    // (ADR-0054 Decision 7).
-    await requireOrganizationAccess(tctx.db, org.id);
+    if (pinnedAppId !== null && seen.id !== pinnedAppId) throw replaced();
     const githubAppId = Number(seen.github_app_id);
-    const { res, claims, refusal } = await appRequest(guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} })), "/app", seen.client_id, input.privateKey, now);
+    const { res, claims, refusal } = await appRequest(guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tx, organizationId: org.id, resource: {} })), "/app", seen.client_id, input.privateKey, now);
     if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
     if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
     if (!res.ok) {
@@ -589,52 +715,55 @@ export async function rotateGitHubAppKey(
       return { outcome: "failed", ...NOT_GITHUB(res.status) };
     }
     const envelope = encryptGitHubAppKey(orgKekOf(tctx, org), org.id, seen.id, input.privateKey);
-    return withTx(tctx.db, async (db) => {
-      // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-      await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
-      const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
-        [seen.id, org.id],
-      )).rows[0] as { id: string; version: number } | undefined;
-      if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
-      // Existence first, then passkey-verification (ADR-0054 Decision 7).
-      await requireOrganizationAccess(db, org.id);
-      if (locked.version !== input.expectedVersion) {
-        throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
-      }
-      const { connections, targets } = await lockAppConnectionsAndTargets(db, seen.id);
-      const provenance: Record<string, unknown> = {};
-      for (const target of targets) provenance[target.id] = (await gate(target)) ?? null;
-      const updated = await db.query(
-        `UPDATE github_apps SET key_envelope = $1, version = version + 1, updated_at = now()
-         WHERE id = $2 RETURNING ${APP_COLUMNS}`,
-        [JSON.stringify(envelope), seen.id],
-      );
-      // A rotation is a Target mutation class trigger (ADR-0031 §6): enqueue directly.
-      await db.query(
-        "UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL WHERE id = ANY($1::text[])",
-        [targets.map((t) => t.id)],
-      );
-      const app = updated.rows[0] as GitHubAppRow;
-      await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.replace_key");
-      await recordAuditEvent(db, {
-        eventType: "sync.github_app_key_rotated",
-        decision: "info",
-        actorIdentityId,
-        organizationId: org.id,
-        action: "config.sync.manage",
-        resource: { githubAppId: seen.id },
-        // Decision 7: the gate's provenance for every Target in the set.
-        authz: { reauthorizedTargets: provenance },
-        metadata: {
-          appId: githubAppId,
-          slug: seen.slug,
-          version: app.version,
-          connections: connections.map((c) => c.id).join(",") || null,
-          reauthorizedTargets: targets.map((t) => t.id).join(",") || null,
-        },
-      });
-      return { outcome: "rotated" as const, app };
+    // Consumption (steps 4, 6, 7, the person held since step 2), then the
+    // writer protocol (ADR-0051): Apps → Connections → Targets.
+    const prepared = await started.finish(tx);
+    const db = tx;
+    const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
+      [seen.id, org.id],
+    )).rows[0] as { id: string; version: number } | undefined;
+    // The row under its lock: with an approval bound to it, one removed
+    // since is refused as replaced (the transaction rolls back, consumption
+    // included); without one, as before.
+    if (!locked) throw pinnedAppId !== null ? replaced() : new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    if (locked.version !== input.expectedVersion) {
+      throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
+    }
+    const { connections, targets } = await lockAppConnectionsAndTargets(db, seen.id);
+    const provenance: Record<string, unknown> = {};
+    for (const target of targets) provenance[target.id] = (await gate(target)) ?? null;
+    const updated = await db.query(
+      `UPDATE github_apps SET key_envelope = $1, version = version + 1, updated_at = now()
+       WHERE id = $2 RETURNING ${APP_COLUMNS}`,
+      [JSON.stringify(envelope), seen.id],
+    );
+    // A rotation is a Target mutation class trigger (ADR-0031 §6): enqueue directly.
+    await db.query(
+      "UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL WHERE id = ANY($1::text[])",
+      [targets.map((t) => t.id)],
+    );
+    const app = updated.rows[0] as GitHubAppRow;
+    // Report mode (ADR-0054 Decision 9), before the audit insert.
+    await prepared.count(db);
+    await recordAuditEvent(db, {
+      eventType: "sync.github_app_key_rotated",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: { githubAppId: seen.id },
+      // Decision 7: the gate's provenance for every Target in the set.
+      authz: { reauthorizedTargets: provenance },
+      metadata: {
+        appId: githubAppId,
+        slug: seen.slug,
+        version: app.version,
+        connections: connections.map((c) => c.id).join(",") || null,
+        reauthorizedTargets: targets.map((t) => t.id).join(",") || null,
+        ...approvalMetadata(prepared.approval),
+      },
     });
+    return { outcome: "rotated" as const, app };
   });
 }
 
@@ -646,21 +775,52 @@ export async function rotateGitHubAppKey(
  * The wrapped key is deleted. Removal narrows disclosure, so it needs no
  * gate. It does not touch GitHub: the App stays registered and installed
  * there until its owner deletes it.
+ *
+ * A protected operation (ADR-0054): admin-step-up's github_app.remove,
+ * bound to the App, the query's `appId` and the version the server reads,
+ * checked again under the App's row lock.
  */
-export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string, actorIdentityId: string): Promise<void> {
+export async function removeGitHubApp(
+  ctx: AppCtx,
+  gate: ProtectedGate,
+  org: OrgRow,
+  appRowId: string,
+  options: ProtectedOptions = {},
+): Promise<void> {
+  const actorIdentityId = gate.requester.identityId;
   await withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
-    const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
+    // The writer protocol (ADR-0051): the live scope first (steps 1 and 2,
+    // consumption when an approval is needed), then Apps → Connections → Targets.
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId: org.id, people: [actorIdentityId] },
+      checks: [{ control: "admin-step-up", operation: "github_app.remove" }],
+      // The App exists, then passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await readApp(db, org.id))) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+      },
+      binding: async (db) => {
+        const app = await readApp(db, org.id);
+        if (!app) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+        if (app.id !== appRowId) {
+          throw new DomainError("STATE_CHANGED", "The Organization's GitHub App changed since you confirmed; reload and try again");
+        }
+        return githubAppRemoveBinding(db, org, app);
+      },
+      authorizeIn: options.authorizeIn,
+    });
+    const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, github_app_id, slug, version FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
       [org.id],
-    )).rows[0] as { id: string; github_app_id: string | number; slug: string } | undefined;
+    )).rows[0] as { id: string; github_app_id: string | number; slug: string; version: number } | undefined;
     if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
-    // Existence first, then passkey-verification (ADR-0054 Decision 7).
-    await requireOrganizationAccess(db, org.id);
     // The App the caller confirmed, and no other: another one may have
     // replaced it since (removed, then registered or imported).
     if (locked.id !== appRowId) {
       throw new DomainError("STATE_CHANGED", "The Organization's GitHub App changed since you confirmed; reload and try again");
+    }
+    // The version the approval bound, under the App's row lock: a change
+    // since (a key rotation) rolls back this attempt, consumption included.
+    if (prepared.binding && Number(locked.version) !== prepared.binding.expectedVersion) {
+      throw new DomainError("STATE_CHANGED", "The GitHub App changed since the approval was asked for; nothing was changed. Read it again and ask for a new approval");
     }
     const { connections, targets } = await lockAppConnectionsAndTargets(db, locked.id);
     await db.query(
@@ -678,7 +838,8 @@ export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string
       "UPDATE github_apps SET removed_at = now(), key_envelope = NULL, version = version + 1, updated_at = now() WHERE id = $1",
       [locked.id],
     );
-    await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.remove");
+    // Report mode (ADR-0054 Decision 9), before the audit insert.
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "sync.github_app_removed",
       decision: "info",
@@ -691,9 +852,30 @@ export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string
         slug: locked.slug,
         revokedConnections: connections.map((c) => c.id).join(",") || null,
         disabledTargets: targets.map((t) => t.id).join(",") || null,
+        ...approvalMetadata(prepared.approval),
       },
     });
   });
+}
+
+/**
+ * The live Targets of the App's live Connections, read without a lock: the
+ * set a key rotation re-authorizes, for its refusals before an approval is
+ * asked for. Locked and checked again in the rotation's transaction.
+ */
+async function readAppTargets(db: Querier, appRowId: string): Promise<SyncTargetRow[]> {
+  return ((await db.query(
+    `SELECT ${TARGET_COLUMNS.split(",").map((c) => `t.${c.trim()}`).join(", ")} FROM sync_targets t
+     JOIN platform_connections c ON c.id = t.connection_id
+     WHERE c.github_app_id = $1 AND c.revoked_at IS NULL AND t.revoked_at IS NULL ORDER BY t.id`,
+    [appRowId],
+  )).rows as Record<string, unknown>[]).map(targetRow);
+}
+
+/** A Connection's live Targets, read without a lock (see readAppTargets). */
+async function readConnectionTargets(db: Querier, connectionId: string): Promise<SyncTargetRow[]> {
+  return ((await db.query(`SELECT ${TARGET_COLUMNS} FROM sync_targets WHERE connection_id = $1 AND revoked_at IS NULL ORDER BY id`, [connectionId]))
+    .rows as Record<string, unknown>[]).map(targetRow);
 }
 
 /** With the App row already locked: its non-revoked Connections, then their non-revoked Targets, each in id order. */
@@ -758,14 +940,23 @@ export function isCredentialRejection(result: string | null | undefined): boolea
   return /\b(401|403)\b|unauthori[sz]ed|bad credentials|forbidden|invalid (api )?(token|key|credential)|authentication failed/i.test(result ?? "");
 }
 
+/**
+ * Replace a token Connection's credential. A protected operation
+ * (ADR-0054): admin-step-up's connection.replace_credential, bound to the
+ * Connection, the credential itself (the intent keeps only its keyed hash)
+ * and the version the request expects. The re-authorization gate refuses
+ * before an approval is asked for, and again under the locks.
+ */
 export async function replaceConnectionCredential(
   ctx: AppCtx,
+  approvalGate: ProtectedGate,
   org: OrgRow,
   connectionId: string,
   input: { credential: string; expectedVersion: number },
   gate: (target: SyncTargetRow) => Promise<Record<string, unknown> | undefined | void>,
-  actorIdentityId: string,
+  options: ProtectedOptions = {},
 ): Promise<PlatformConnectionRow> {
+  const actorIdentityId = approvalGate.requester.identityId;
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
@@ -779,16 +970,35 @@ export async function replaceConnectionCredential(
     input.credential,
   );
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
+    // The writer protocol (ADR-0051): the live scope first (steps 1 and 2,
+    // consumption when an approval is needed), then Apps → Connections → Targets.
+    const prepared = await prepareProtectedOperation(db, approvalGate, {
+      scope: { organizationId: org.id, people: [actorIdentityId] },
+      checks: [{ control: "admin-step-up", operation: "connection.replace_credential" }],
+      // The Connection exists, then passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await readConnection(db, org.id, connectionId))) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+      },
+      binding: async (db) => {
+        // Refusals first (amendment A), read without a lock; each is made
+        // again under the locks below.
+        const connection = await readConnection(db, org.id, connectionId);
+        if (!connection) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+        if (connection.credentialKind === "github-app") throw appHasNoCredential();
+        if (connection.version !== input.expectedVersion) {
+          throw new DomainError("VERSION_CONFLICT", "Connection was modified concurrently; reload and retry");
+        }
+        for (const target of await readConnectionTargets(db, connectionId)) await gate(target);
+        return connectionReplaceCredentialBinding(db, org, connection, input.credential, input.expectedVersion);
+      },
+      authorizeIn: options.authorizeIn,
+    });
     const res = await lockedQuery(db, { table: "platform_connections", mode: "update" }, `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [connectionId, org.id],
     );
     const row = res.rows[0] as PlatformConnectionRow | undefined;
     if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
-    // Existence first, then passkey-verification (ADR-0054 Decision 7).
-    await requireOrganizationAccess(db, org.id);
     if (row.credential_kind === "github-app") throw appHasNoCredential();
     if (row.version !== input.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "Connection was modified concurrently; reload and retry");
@@ -839,7 +1049,7 @@ export async function replaceConnectionCredential(
       [connectionId],
     );
     // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
-    await reportAdminStepUp(db, org.id, actorIdentityId, "connection.replace_credential");
+    await prepared.count(db);
     await recordIntegrationChange(db, {
       organizationId: org.id,
       identityId: actorIdentityId,
@@ -861,6 +1071,7 @@ export async function replaceConnectionCredential(
         metadata: {
           reauthorizedTargets: rows.map((t) => t.id).join(",") || null,
           resumedTargets: resumed.map((t) => t.id).join(",") || null,
+          ...approvalMetadata(prepared.approval),
         },
       },
       ...resumed.map((t): AuditEventInput => ({
@@ -877,22 +1088,48 @@ export async function replaceConnectionCredential(
   });
 }
 
+/**
+ * Revoke a Connection. A protected operation (ADR-0054): admin-step-up's
+ * connection.delete, bound to the Connection and the version the server
+ * reads, checked again under the Connection's row lock. A recovery
+ * operation during an incident freeze (ADR-0055 Decision 3), where its
+ * approval may still be asked for.
+ */
 export async function revokeConnection(
   ctx: AppCtx,
+  gate: ProtectedGate,
   org: OrgRow,
   connectionId: string,
-  actorIdentityId: string,
+  options: ProtectedOptions = {},
 ): Promise<void> {
+  const actorIdentityId = gate.requester.identityId;
   await withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [actorIdentityId], accessCheck: "deferred" });
+    // The writer protocol (ADR-0051): the live scope first (steps 1 and 2,
+    // consumption when an approval is needed), then Apps → Connections → Targets.
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId: org.id, duringIncidentFreeze: "recovery", people: [actorIdentityId] },
+      checks: [{ control: "admin-step-up", operation: "connection.delete" }],
+      // The Connection exists, then passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await readConnection(db, org.id, connectionId))) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+      },
+      binding: async (db) => {
+        const connection = await readConnection(db, org.id, connectionId);
+        if (!connection) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+        return connectionDeleteBinding(db, org, connection);
+      },
+      authorizeIn: options.authorizeIn,
+    });
     // An App Connection's App first (ADR-0047 Decision 5), then the
     // Connection, then its Targets.
-    await lockConnectionsAndApps(db, org.id, [connectionId]);
-    const live = await db.query("SELECT 1 FROM platform_connections WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL", [connectionId, org.id]);
-    if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
-    // Existence first, then passkey-verification (ADR-0054 Decision 7).
-    await requireOrganizationAccess(db, org.id);
+    const { connections } = await lockConnectionsAndApps(db, org.id, [connectionId]);
+    // The version the approval bound, under the Connection's row lock: a
+    // change since (a credential replaced) rolls back this attempt,
+    // consumption included.
+    const lockedConnection = connections.find((c) => c.id === connectionId && c.revoked_at === null);
+    if (prepared.binding && lockedConnection && Number(lockedConnection.version) !== prepared.binding.expectedVersion) {
+      throw new DomainError("STATE_CHANGED", "The connection changed since the approval was asked for; nothing was changed. Read it again and ask for a new approval");
+    }
     const res = await db.query(
       `UPDATE platform_connections SET revoked_at = now(), version = version + 1, updated_at = now()
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
@@ -912,7 +1149,8 @@ export async function revokeConnection(
        WHERE id = ANY($1) AND revoked_at IS NULL RETURNING id`,
       [(referencing.rows as { id: string }[]).map((r) => r.id)],
     );
-    await reportAdminStepUp(db, org.id, actorIdentityId, "connection.delete");
+    // Report mode (ADR-0054 Decision 9), before the audit insert.
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "sync.connection_revoked",
       decision: "info",
@@ -922,6 +1160,7 @@ export async function revokeConnection(
       resource: { connectionId },
       metadata: {
         disabledTargets: (disabled.rows as { id: string }[]).map((r) => r.id).join(",") || null,
+        ...approvalMetadata(prepared.approval),
       },
     });
   });

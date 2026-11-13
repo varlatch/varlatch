@@ -173,15 +173,14 @@ afterEach(async () => {
 });
 
 describe("which controls can enforce", () => {
-  it("advertises security.enforce.passkey-verification, and offers enforce for it; admin-step-up still refuses it", async () => {
+  it("advertises security.enforce.passkey-verification, and offers enforce for it (and, since step 4.9, for admin-step-up)", async () => {
     const meta = (await call("GET", "/v1/meta", admin)).body.capabilities as string[];
     expect(meta).toContain("security.enforce.passkey-verification");
-    expect(meta).not.toContain("security.enforce.admin-step-up");
+    expect(meta).toContain("security.enforce.admin-step-up");
     expect(CAPABILITIES.filter((c) => c.startsWith("security.enforce."))).toEqual([...ENFORCEABLE_CONTROLS].map(enforceCapability));
     const list = (await ok("GET", `${ORG}/security/controls`, admin)) as { items: { control: string; availableModes: string[] }[] };
     expect(list.items.find((i) => i.control === "passkey-verification")?.availableModes).toEqual(["off", "report", "enforce"]);
-    const refused = await call("PATCH", `${ORG}/security/controls/admin-step-up`, verified, { mode: "enforce", expectedVersion: 0 });
-    expect(refused.body.error.code).toBe("CONTROL_MODE_UNAVAILABLE");
+    expect(list.items.find((i) => i.control === "admin-step-up")?.availableModes).toEqual(["off", "report", "enforce"]);
   });
 });
 
@@ -658,6 +657,7 @@ async function sweepRoutes(rootKek: Buffer): Promise<Sweep> {
     if (base && JSON.stringify(record) !== JSON.stringify(base)) out.offDiffers.push(`${label}: main ${JSON.stringify(base)}, now ${JSON.stringify(record)}`);
     // Then under enforce, on the same state (offRun undid any change).
     await s.setMode("enforce");
+    await s.prepare(v);
     const before = await s.state();
     const denied = await s.denials();
     const enforced = await s.send(v);

@@ -18,6 +18,7 @@ import {
 } from "../src/domain/sync.js";
 import { buildApp } from "../src/http/app.js";
 import { fakeGitHubApps } from "./helpers/fake-github-app.js";
+import { personGate } from "./helpers/gates.js";
 
 /**
  * Key rotation and App removal against attachment, on real PostgreSQL
@@ -95,7 +96,7 @@ describe.skipIf(!url)("GitHub App rotation and removal against attachment on rea
     createTarget(c, await org(), projectId, environmentId, { connectionId, destination: { repo: `r${++repoCounter}` }, mapping: { kind: "wildcard" }, removeOrphans: false, redeploy: false }, {}, identityId);
   const appVersion = async () => ((await db.query("SELECT version FROM github_apps WHERE removed_at IS NULL")).rows[0] as { version: number }).version;
   const rotate = async (c: AppCtx, gate: (t: SyncTargetRow) => Promise<void> = async () => {}) =>
-    rotateGitHubAppKey(c, await org(), { privateKey: pem, expectedVersion: await appVersion() }, gate, identityId, github.fetchImpl);
+    rotateGitHubAppKey(c, personGate(identityId), await org(), { privateKey: pem, expectedVersion: await appVersion() }, gate, github.fetchImpl);
   const lastRotation = async () =>
     ((await db.query("SELECT metadata FROM audit_events WHERE event_type = 'sync.github_app_key_rotated' ORDER BY event_order DESC LIMIT 1")).rows[0] as {
       metadata: { reauthorizedTargets: string | null };
@@ -138,8 +139,8 @@ describe.skipIf(!url)("GitHub App rotation and removal against attachment on rea
        VALUES ('gha_rot', $1, 5254113, 'varlatch-test', 'Iv23rot', 'acme', 1, 'organization', $2, $3)`,
       [o.id, JSON.stringify(encryptGitHubAppKey(orgKekOf(ctx, o), o.id, "gha_rot", pem)), identityId],
     );
-    connA = (await createAppConnection(ctx, o, { installationId: instA, name: "A" }, identityId, null, github.fetchImpl)).id;
-    connB = (await createAppConnection(ctx, o, { installationId: instB, name: "B" }, identityId, null, github.fetchImpl)).id;
+    connA = (await createAppConnection(ctx, personGate(identityId), o, { installationId: instA, name: "A" }, null, github.fetchImpl)).id;
+    connB = (await createAppConnection(ctx, personGate(identityId), o, { installationId: instB, name: "B" }, null, github.fetchImpl)).id;
     await attach(ctx, connA);
   });
   afterEach(async () => {
@@ -180,7 +181,7 @@ describe.skipIf(!url)("GitHub App rotation and removal against attachment on rea
 
   it("an attachment that arrives while removal holds its locks waits, then is refused", async () => {
     const pause = paused.pauseAfter(ROTATION_TARGETS);
-    const removing = removeGitHubApp(pctx, await org(), "gha_rot", identityId);
+    const removing = removeGitHubApp(pctx, personGate(identityId), await org(), "gha_rot");
     await pause.reached;
     const attaching = attach(ctx, connA);
     await waitingOnLock();
@@ -196,7 +197,7 @@ describe.skipIf(!url)("GitHub App rotation and removal against attachment on rea
     const pause = paused.pauseAfter(ATTACH_APP_LOCK);
     const attaching = attach(pctx, connA);
     await pause.reached;
-    const removing = removeGitHubApp(ctx, await org(), "gha_rot", identityId);
+    const removing = removeGitHubApp(ctx, personGate(identityId), await org(), "gha_rot");
     await waitingOnLock();
     pause.release();
     const [attached] = await Promise.all([attaching, removing]);
@@ -225,7 +226,7 @@ describe.skipIf(!url)("GitHub App rotation and removal against attachment on rea
               await updateTarget(ctx, await org(), t, { expectedVersion: t.version, connectionId: t.connection_id === connA ? connB : connA }, null, identityId);
             }
           } else {
-            await createAppConnection(ctx, await org(), { installationId: instA, name: `extra-${n}-${i}` }, identityId, null, github.fetchImpl);
+            await createAppConnection(ctx, personGate(identityId), await org(), { installationId: instA, name: `extra-${n}-${i}` }, null, github.fetchImpl);
           }
         } catch (err) {
           const code = (err as { code?: string }).code;

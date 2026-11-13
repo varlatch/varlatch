@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "version": "0.21.0",
+  "version": "0.22.0",
   "apiMajor": 1,
-  "migrationVersion": 49,
+  "migrationVersion": 52,
   "supportedPostgresMajor": 17,
   "supportedRestoreSources": [
     {

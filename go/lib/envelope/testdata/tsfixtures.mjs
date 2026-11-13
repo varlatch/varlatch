@@ -9,7 +9,8 @@
  *
  *   node tsfixtures.mjs generate [--ref <git ref>] <out.json>
  *       Seals a key hierarchy (canary, org KEKs, values, webhook secrets,
- *       platform credentials, GitHub App keys, JWT signing keys) and writes
+ *       platform credentials, GitHub App keys, audit export credentials and
+ *       their drain copies (0.22.0 and later), JWT signing keys) and writes
  *       it with canonical-JSON and Root KEK parsing vectors. Without --ref
  *       the working tree's sources are used.
  *   node tsfixtures.mjs verify [--ref <git ref>] <sealed.json>
@@ -133,6 +134,19 @@ async function generate(ref, out) {
     const organizationId = id("org", o);
     const { orgKek, wrapped } = ts.hierarchy.createWrappedOrgKek(rootKek, organizationId);
     const org = { organizationId, orgKek: orgKek.toString("hex"), wrappedOrgKek: wrapped, values: [], webhooks: [], connections: [], githubApps: [] };
+    // ADR-0056's audit export, since 0.22.0: its S3 credential (JSON) under
+    // the org KEK, and the copy under the Root KEK that drains it after the
+    // Organization is deleted. Older refs have neither.
+    if (ts.hierarchy.encryptAuditExportCredential) {
+      const exportId = id("aex", o);
+      const credential = JSON.stringify({ accessKeyId: `AKIA${randomBytes(8).toString("hex").toUpperCase()}`, secretAccessKey: randomBytes(30).toString("base64") });
+      org.auditExports = [{
+        exportId,
+        credential,
+        envelope: ts.hierarchy.encryptAuditExportCredential(orgKek, organizationId, exportId, credential),
+        drainEnvelope: ts.hierarchy.encryptAuditExportDrainCredential(rootKek, organizationId, exportId, credential),
+      }];
+    }
     plaintexts().forEach((plaintext, i) => {
       const secretId = id("val", o * 8 + i);
       const versionId = id("ver", o * 8 + i);
@@ -242,6 +256,10 @@ async function verify(ref, file) {
     for (const w of org.webhooks) same(`webhook ${w.webhookId}`, Buffer.from(ts.hierarchy.decryptWebhookSecret(orgKek, org.organizationId, w.webhookId, w.envelope)), Buffer.from(w.secret));
     for (const c of org.connections) same(`connection ${c.connectionId}`, Buffer.from(ts.hierarchy.decryptPlatformCredential(orgKek, org.organizationId, c.connectionId, c.envelope)), Buffer.from(c.credential));
     for (const g of org.githubApps) same(`GitHub App ${g.githubAppId}`, Buffer.from(ts.hierarchy.decryptGitHubAppKey(orgKek, org.organizationId, g.githubAppId, g.envelope)), Buffer.from(g.privateKeyPem));
+    for (const a of org.auditExports ?? []) {
+      same(`audit export ${a.exportId}`, Buffer.from(ts.hierarchy.decryptAuditExportCredential(orgKek, org.organizationId, a.exportId, a.envelope)), Buffer.from(a.credential));
+      same(`audit export drain ${a.exportId}`, Buffer.from(ts.hierarchy.decryptAuditExportDrainCredential(rootKek, org.organizationId, a.exportId, a.drainEnvelope)), Buffer.from(a.credential));
+    }
   }
   for (const k of f.jwtSigningKeys) same(`JWT key ${k.keyId}`, ts.aead.decrypt(rootKek, k.envelope, jwtContext(ref, k.keyId)), Buffer.from(k.privateKeyPem));
   for (const l of f.looseEnvelopes ?? []) {

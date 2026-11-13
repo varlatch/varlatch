@@ -11,7 +11,7 @@ import { schemaIsCurrent } from '../db/migrate.js';
 import { syncAllMirrors, type MirrorConfig } from '../mirror/publisher.js';
 import { drainOperators } from "./operator-lock.js";
 import type { PoolQuerier } from "../db/tx.js";
-import { recordAuditEvent } from '../audit/events.js';
+import { recordRestore } from '../domain/auditexport.js';
 import { OnlineCapture, CAPTURE_EXCLUSION } from './online.js';
 
 export const stateDir = () => process.env.VARLATCH_STATE_DIR ?? '/var/lib/varlatch';
@@ -85,7 +85,8 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
             if (!mirror) throw new Error('Application Plane URL is required');
             if (!/^[0-9a-f]{64}$/.test(input.manifestIdentity ?? '')) throw new Error('Restore manifest identity is required');
             // First new audit event, before reconciliation and before admitting work.
-            await recordAuditEvent(ctx.db, { eventType: 'installation.restored', decision: 'info', metadata: { archiveId: gate.archiveId, manifestIdentity: input.manifestIdentity!, installationId: inst.id } });
+            // Every audit export starts a new stream in the same transaction (ADR-0056 Decision 5).
+            await recordRestore(ctx.db, { eventType: 'installation.restored', decision: 'info', metadata: { archiveId: gate.archiveId, manifestIdentity: input.manifestIdentity!, installationId: inst.id } });
             maintenance.phase(gate.id, 'reconciling');
             for (let i = 0; i < 120; i++) {
               try {

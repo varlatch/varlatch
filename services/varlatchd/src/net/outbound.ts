@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { lookup as dnsLookup } from "node:dns/promises";
+import http from "node:http";
 import https from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 import type { Duplex } from "node:stream";
 import type { ConnectionOptions } from "node:tls";
 import { OUTBOUND_POLICY_DOCS, outboundRefusalMessage, type OutboundRefusalReason } from "@varlatch/protocol";
 import { OUTBOUND_REFUSED_CODE } from "@varlatch/sync";
+import { storageClient, type BucketDestination, type StorageClient, type StorageCredentials } from "@varlatch/backup/s3";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import { recordAuditEvent, type AuditEventInput } from "../audit/events.js";
 import type { Querier } from "../db/migrate.js";
@@ -780,6 +782,60 @@ export class OutboundPolicy {
       }
     }
     return new PolicyAgent({ keepAlive: true, ...policy.tls });
+  }
+
+  /**
+   * A Node http.Agent with the same check, for an S3 client whose endpoint
+   * the host operator allowed over plain http (ADR-0057 Decision 3: http
+   * only to a destination an allow list entry matches; decide() refuses
+   * any other). The audit export passes it next to httpsAgent.
+   */
+  httpAgent(purpose: OutboundPurpose): http.Agent {
+    const policy = this;
+    void purpose;
+    class PolicyHttpAgent extends http.Agent {
+      override createConnection(
+        options: http.ClientRequestArgs,
+        callback?: (err: Error | null, stream: Duplex) => void,
+      ): ReturnType<http.Agent["createConnection"]> {
+        const host = normalizeHost(String(options.host ?? options.hostname ?? "localhost"));
+        const port = Number(options.port) || 80;
+        const destination: Destination = { scheme: "http:", host, port };
+        if (isIP(host)) {
+          const verdict = policy.decide(destination, [host]);
+          if (!verdict.allowed) {
+            const refusal = new OutboundRefusedError(verdict.reason, destination, [host]);
+            process.nextTick(() => (callback as ((err: Error) => void) | undefined)?.(refusal));
+            return undefined as unknown as ReturnType<http.Agent["createConnection"]>;
+          }
+        }
+        const lookup = policy.lookupFor("http:", port);
+        return (http.Agent.prototype.createConnection as (...args: unknown[]) => ReturnType<http.Agent["createConnection"]>).call(
+          this,
+          { ...options, lookup, autoSelectFamily: true },
+          callback,
+        );
+      }
+    }
+    return new PolicyHttpAgent({ keepAlive: true });
+  }
+
+  /**
+   * An S3 client whose every connection goes through this policy (ADR-0057
+   * Decision 4, ADR-0056 Decision 6): its https and http agents, one
+   * attempt per request (the caller retries through its plans), and the
+   * request timeout. The audit export's only way to build a client.
+   */
+  storageClient(purpose: OutboundPurpose, destination: BucketDestination, credentials: StorageCredentials, requestTimeoutMs: number): StorageClient {
+    return storageClient(destination, credentials, {
+      maxAttempts: 1,
+      requestHandler: {
+        httpsAgent: this.httpsAgent(purpose),
+        httpAgent: this.httpAgent(purpose),
+        requestTimeout: requestTimeoutMs,
+        connectionTimeout: this.connectTimeoutMs,
+      },
+    });
   }
 
   /**

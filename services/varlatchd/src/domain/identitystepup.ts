@@ -25,6 +25,12 @@ import { labelWithId, quoted, quotedMap } from "./approvallabels.js";
  *   `subject` and `claims` (a left-out object binds `{}`, which matches the
  *   same tokens; keys are sorted by the canonical form).
  * - oidc_binding.delete: target the identity and the binding; no body.
+ *
+ * A credential's expiry in a summary says where it comes from (the
+ * catalogue's `effectiveTtlSeconds`): the lifetime the request asked for,
+ * credential-lifetime's default for a request that asked for none, or no
+ * expiry at all because none was asked for and no default applies. Only
+ * the summary's own words: nothing from the request is written bare.
  */
 
 /** A machine identity of the Organization, as a summary names it. */
@@ -55,6 +61,14 @@ export function durationWords(seconds: number): string {
 }
 
 const expiryWords = (ttlSeconds: number | null) => (ttlSeconds === null ? "never" : `after ${durationWords(ttlSeconds)}`);
+/**
+ * Where an effective TTL comes from: asked for, credential-lifetime's
+ * default (asked for none, and the control at enforce gave one), or none.
+ */
+const ttlSource = (requested: number | undefined, effective: number | null) =>
+  requested !== undefined ? "as requested" : effective !== null ? "the organization's default, since none was requested" : "none was requested";
+/** "after 1 day (as requested)", "never (none was requested)". */
+const expiryWithSource = (requested: number | undefined, effective: number | null) => `${expiryWords(effective)} (${ttlSource(requested, effective)})`;
 const usesWords = (maxUses: number | null) => (maxUses === null ? "unlimited" : `${maxUses} use${maxUses === 1 ? "" : "s"}`);
 const added = (field: string, to: string): ApprovalChange => ({ field, from: null, to, loosens: false });
 
@@ -68,7 +82,9 @@ export function identityCreateBinding(
   const ttl = issuesCredential ? (effectiveTtlSeconds ?? null) : null;
   const maxUses = issuesCredential ? (input.credentialMaxUses ?? null) : null;
   const changes = [added("name", quoted(input.name)), added("kind", input.kind)];
-  if (issuesCredential) changes.push(added("credentialExpiry", expiryWords(ttl)), added("credentialUses", usesWords(maxUses)));
+  if (issuesCredential) {
+    changes.push(added("credentialExpiry", expiryWithSource(input.credentialTtlSeconds, ttl)), added("credentialUses", usesWords(maxUses)));
+  }
   return {
     operation: "identity.create",
     organizationId: org.id,
@@ -84,7 +100,7 @@ export function identityCreateBinding(
     expectedVersion: null,
     summary: {
       title: issuesCredential
-        ? `Create machine identity ${quoted(input.name)} (${input.kind}), with a credential that ${ttl === null ? "never expires" : `expires ${expiryWords(ttl)}`}`
+        ? `Create machine identity ${quoted(input.name)} (${input.kind}), with a credential that ${ttl === null ? "never expires" : `expires ${expiryWords(ttl)}`} (${ttlSource(input.credentialTtlSeconds, ttl)})`
         : `Create machine identity ${quoted(input.name)} (${input.kind}). It gets no credential`,
       changes,
     },
@@ -108,8 +124,8 @@ export function credentialIssueBinding(
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Issue credential ${quoted(input.name)} for ${identity.kind} ${labelWithId(null, identity.name, identity.id)}, ${ttl === null ? "never expiring" : `expiring ${expiryWords(ttl)}`}, ${usesWords(maxUses)}`,
-      changes: [added("name", quoted(input.name)), added("credentialExpiry", expiryWords(ttl)), added("credentialUses", usesWords(maxUses))],
+      title: `Issue credential ${quoted(input.name)} for ${identity.kind} ${labelWithId(null, identity.name, identity.id)}, ${ttl === null ? "never expiring" : `expiring ${expiryWords(ttl)}`} (${ttlSource(input.ttlSeconds, ttl)}), ${usesWords(maxUses)}`,
+      changes: [added("name", quoted(input.name)), added("credentialExpiry", expiryWithSource(input.ttlSeconds, ttl)), added("credentialUses", usesWords(maxUses))],
     },
   };
 }

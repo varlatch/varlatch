@@ -277,11 +277,35 @@ export function installPs1(d: CliDownload): string {
     }
   }
 
-  # The user PATH as stored, never the combined process PATH; added once.
-  $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-  $Entries = @(if ($UserPath) { $UserPath -split ';' | Where-Object { $_ -ne '' } })
-  if (-not ($Entries | Where-Object { $_.TrimEnd('\\') -ieq $Dir.TrimEnd('\\') })) {
-    [Environment]::SetEnvironmentVariable('Path', (@($Entries) + $Dir) -join ';', 'User')
+  # The user PATH as stored in the registry, never the combined process
+  # PATH: its %VARIABLES% unexpanded and its kind kept
+  # ([Environment]::SetEnvironmentVariable would write it back expanded, as
+  # REG_SZ, freezing an entry such as %JAVA_HOME%\\bin). Entries are compared
+  # expanded; the directory is added once.
+  $Added = $false
+  $Key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+  try {
+    $Stored = [string]$Key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    $Kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    if ($Key.GetValueNames() -contains 'Path' -and $Key.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::String) {
+      $Kind = [Microsoft.Win32.RegistryValueKind]::String
+    }
+    $Entries = @($Stored -split ';' | Where-Object { $_ -ne '' })
+    if (-not ($Entries | Where-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\\') -ieq $Dir.TrimEnd('\\') })) {
+      $Key.SetValue('Path', ((@($Entries) + $Dir) -join ';'), $Kind)
+      $Added = $true
+    }
+  } finally {
+    $Key.Dispose()
+  }
+  if ($Added) {
+    # Setting a user variable broadcasts the change, so new terminals and
+    # Explorer see the new PATH; this one, named so that it cannot be one
+    # the user has, is set and removed again (removed with a real null:
+    # PowerShell would pass $null as "", which leaves it set and empty).
+    $Refresh = 'VARLATCH_INSTALL_REFRESH_' + [Guid]::NewGuid().ToString('N')
+    [Environment]::SetEnvironmentVariable($Refresh, '1', 'User')
+    [Environment]::SetEnvironmentVariable($Refresh, [NullString]::Value, 'User')
     $env:Path = "$env:Path;$Dir"
     Write-Host "Added $Dir to your user PATH. New terminals find varlatch; this one does too."
   }

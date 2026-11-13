@@ -170,6 +170,7 @@ describe("which controls can enforce", () => {
       "security.enforce.requirement-protection",
       "security.enforce.credential-lifetime",
       "security.enforce.passkey-verification",
+      "security.enforce.admin-step-up",
     ]);
     // The release's list and the capabilities say the same.
     expect(CAPABILITIES.filter((c) => c.startsWith("security.enforce."))).toEqual([...ENFORCEABLE_CONTROLS].map(enforceCapability));
@@ -177,7 +178,7 @@ describe("which controls can enforce", () => {
     expect(list.availableModes).toEqual(["off", "report"]);
     expect(Object.fromEntries(list.items.map((i) => [i.control, i.availableModes]))).toEqual({
       "requirement-protection": ["off", "report", "enforce"],
-      "admin-step-up": ["off", "report"],
+      "admin-step-up": ["off", "report", "enforce"],
       "passkey-verification": ["off", "report", "enforce"],
       "credential-lifetime": ["off", "report", "enforce"],
     });

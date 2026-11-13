@@ -47,6 +47,7 @@ vi.mock("../src/features/projects/hooks", () => ({ useOrgName: () => "Acme", use
 
 import {
   ConnectInstallationDialog,
+  DiscardOutcome,
   GitHubAppCallbackPage,
   GitHubAppPanel,
   ImportAppDialog,
@@ -371,6 +372,73 @@ describe("where GitHub sends the browser back", () => {
     await settle();
     expect(calls).toBe(0);
     expect(all("github-app-callback")).toHaveLength(0);
+  });
+});
+
+describe("discarding a pending registration (ADR-0054 amendment D)", () => {
+  const callback = (query: string) =>
+    mount(
+      <Routes>
+        <Route path="/o/:org/connections/github-app" element={<GitHubAppCallbackPage />} />
+      </Routes>,
+      `/o/acme/connections/github-app${query}`,
+    );
+  const status = () => byTestId("github-app-callback").props["data-status"];
+  const pending = () =>
+    new VarlatchApiError(410, {
+      code: "CONSUMED",
+      message: "This GitHub App registration is waiting to be attached; attach it from Connections",
+      requestId: "r",
+      details: { registrationId: "ghr_1", pending: true },
+    });
+
+  it("an attachment whose answer was lost: Discard says it was attached, discards nothing and offers no delete link", async () => {
+    fake.api.completeGitHubAppRegistration = (async () => {
+      throw pending();
+    }) as never;
+    const discards: unknown[] = [];
+    fake.api.discardGitHubAppRegistration = (async (org: string, id: string) => {
+      discards.push([org, id]);
+      return { discarded: false, state: "attached", deleteUrl: null, app: { githubAppId: 5254113, slug: "varlatch-acme" } };
+    }) as never;
+    await callback("?code=c1&state=s1");
+    await settle();
+    expect(status()).toBe("pending-attachment");
+    await click("github-app-discard");
+    await settle();
+    expect(discards).toEqual([["acme", "ghr_1"]]);
+    expect(status()).toBe("attached");
+    expect(text(byTestId("github-app-callback"))).toContain("Nothing was discarded");
+    expect(text(byTestId("github-app-callback"))).not.toContain("deleted the key");
+    expect(all("github-app-delete")).toHaveLength(0);
+  });
+
+  it("says what each answer means, and links to GitHub only for an App Varlatch did not keep", async () => {
+    const app = { githubAppId: 5254113, slug: "varlatch-acme" };
+    const url = "https://github.com/organizations/acme-gh/settings/apps/varlatch-acme/advanced";
+    const show = (outcome: Parameters<typeof DiscardOutcome>[0]["outcome"]) => mount(<DiscardOutcome outcome={outcome} />);
+
+    await show({ discarded: true, state: "discarded", deleteUrl: url, app });
+    expect(status()).toBe("discarded");
+    expect(text(byTestId("github-app-callback"))).toContain("Varlatch deleted the key");
+    expect(byTestId("github-app-delete").props.href).toBe(url);
+    await act(async () => root.unmount());
+
+    await show({ discarded: false, state: "ended", deleteUrl: url, app });
+    expect(status()).toBe("ended");
+    expect(text(byTestId("github-app-callback"))).toContain("Nothing was discarded now");
+    expect(byTestId("github-app-delete").props.href).toBe(url);
+    await act(async () => root.unmount());
+
+    await show({ discarded: false, state: "waiting", deleteUrl: null, app: null });
+    expect(status()).toBe("waiting");
+    expect(all("github-app-delete")).toHaveLength(0);
+    await act(async () => root.unmount());
+
+    // Even if a server sent a link for an attached registration, none is shown.
+    await show({ discarded: false, state: "attached", deleteUrl: url, app });
+    expect(status()).toBe("attached");
+    expect(all("github-app-delete")).toHaveLength(0);
   });
 });
 
