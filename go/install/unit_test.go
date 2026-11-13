@@ -37,42 +37,70 @@ func unit(t *testing.T) map[string]map[string][]string {
 	return out
 }
 
-// The unit's promises (ADR-0059 Decision 8 and the file's own header):
-// these settings are what the security review relied on, so a change to
-// any of them fails here first. go/install/test-unit.sh checks the
-// sandbox's effect at run time.
+// The unit's security contract: every setting the review and the run-time
+// probe rely on. Any change to one, or any setting added to [Service]
+// without being listed here, fails, so it is reviewed as a security change.
+var securitySettings = map[string][]string{
+	"User":                    {"varlatch"},
+	"Group":                   {"varlatch"},
+	"UMask":                   {"0077"},
+	"StateDirectory":          {"varlatch"},
+	"StateDirectoryMode":      {"0700"},
+	"LoadCredential":          {"root-kek:/etc/varlatch/root-kek", "backup-key:/etc/varlatch/backup-key"},
+	"AmbientCapabilities":     {"CAP_NET_BIND_SERVICE"},
+	"CapabilityBoundingSet":   {"CAP_NET_BIND_SERVICE"},
+	"NoNewPrivileges":         {"yes"},
+	"ProtectSystem":           {"strict"},
+	"ProtectHome":             {"yes"},
+	"PrivateTmp":              {"yes"},
+	"PrivateDevices":          {"yes"},
+	"ProtectKernelTunables":   {"yes"},
+	"ProtectKernelModules":    {"yes"},
+	"ProtectKernelLogs":       {"yes"},
+	"ProtectControlGroups":    {"yes"},
+	"ProtectClock":            {"yes"},
+	"ProtectHostname":         {"yes"},
+	"ProtectProc":             {"invisible"},
+	"RemoveIPC":               {"yes"},
+	"RestrictAddressFamilies": {"AF_UNIX AF_INET AF_INET6 AF_NETLINK"},
+	"RestrictNamespaces":      {"yes"},
+	"RestrictRealtime":        {"yes"},
+	"RestrictSUIDSGID":        {"yes"},
+	"LockPersonality":         {"yes"},
+	"MemoryDenyWriteExecute":  {"yes"},
+	"PrivateUsers":            {"no"},
+	"SystemCallArchitectures": {"native"},
+	"SystemCallFilter":        {"@system-service", "~@privileged"},
+	"SystemCallErrorNumber":   {"EPERM"},
+	"DevicePolicy":            {"closed"},
+	"KeyringMode":             {"private"},
+}
+
+// How the service starts, stops and restarts.
+var lifecycleSettings = map[string][]string{
+	"Type":           {"exec"},
+	"ExecStart":      {"/usr/local/bin/varlatchd serve --config /etc/varlatch/varlatchd.conf"},
+	"Restart":        {"on-failure"},
+	"RestartSec":     {"5s"},
+	"TimeoutStopSec": {"30s"},
+	"LimitNOFILE":    {"65536"},
+}
+
 func TestUnitSettings(t *testing.T) {
 	u := unit(t)
 	svc := u["Service"]
-	want := map[string][]string{
-		"ExecStart":               {"/usr/local/bin/varlatchd serve --config /etc/varlatch/varlatchd.conf"},
-		"User":                    {"varlatch"},
-		"StateDirectory":          {"varlatch"},
-		"StateDirectoryMode":      {"0700"},
-		"UMask":                   {"0077"},
-		"LoadCredential":          {"root-kek:/etc/varlatch/root-kek", "backup-key:/etc/varlatch/backup-key"},
-		"AmbientCapabilities":     {"CAP_NET_BIND_SERVICE"},
-		"CapabilityBoundingSet":   {"CAP_NET_BIND_SERVICE"},
-		"NoNewPrivileges":         {"yes"},
-		"ProtectSystem":           {"strict"},
-		"ProtectHome":             {"yes"},
-		"PrivateTmp":              {"yes"},
-		"PrivateDevices":          {"yes"},
-		"RestrictAddressFamilies": {"AF_UNIX AF_INET AF_INET6 AF_NETLINK"},
-		"SystemCallFilter":        {"@system-service", "~@privileged"},
-		"MemoryDenyWriteExecute":  {"yes"},
-		"RestrictSUIDSGID":        {"yes"},
-		"Restart":                 {"on-failure"},
-	}
-	for k, v := range want {
-		if !slices.Equal(svc[k], v) {
-			t.Errorf("%s = %q, want %q", k, svc[k], v)
+	for _, want := range []map[string][]string{securitySettings, lifecycleSettings} {
+		for k, v := range want {
+			if !slices.Equal(svc[k], v) {
+				t.Errorf("%s = %q, want %q", k, svc[k], v)
+			}
 		}
 	}
-	// Secrets reach the service only as credentials.
-	for _, k := range []string{"Environment", "EnvironmentFile", "SetCredential", "PassEnvironment", "ReadWritePaths", "DynamicUser"} {
-		if len(svc[k]) != 0 {
-			t.Errorf("%s is set: %q", k, svc[k])
+	for k := range svc {
+		if _, ok := securitySettings[k]; !ok {
+			if _, ok := lifecycleSettings[k]; !ok {
+				t.Errorf("[Service] has %s, which neither list covers: add it to one, as a reviewed change", k)
+			}
 		}
 	}
 	for _, p := range []string{"/etc/varlatch/varlatchd.conf", "/etc/varlatch/root-kek", "/etc/varlatch/backup-key"} {

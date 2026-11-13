@@ -81,7 +81,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           (cd go && go build -o "$RUNNER_TEMP/unitprobe" ./install/unitprobe)
-          sudo go/install/test-unit.sh "$RUNNER_TEMP/unitprobe"
+          sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 go/install/test-unit.sh "$RUNNER_TEMP/unitprobe"
 
       # ADR-0059 Decision 1: varlatchd for Linux, varlatch for Linux, macOS
       # and Windows, each on amd64 and arm64; static, no cgo. Every package
