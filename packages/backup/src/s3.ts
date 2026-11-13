@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, GetObjectRetentionCommand, HeadObjectCommand, PutObjectCommand, type ObjectLockMode, type S3ClientConfig } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { stat, rm } from 'node:fs/promises';
@@ -12,13 +12,37 @@ export const destinationSchema = z.object({
   forcePathStyle: z.boolean().default(true),
   writeCredentialsFile: z.string().min(1),
 }).strict();
+/**
+ * A bucket without a credentials file: for callers whose credential comes
+ * from elsewhere (the audit export keeps its key in the database, ADR-0056
+ * Decision 12).
+ */
+export const bucketDestinationSchema = destinationSchema.omit({ writeCredentialsFile: true });
 export const destinationsSchema = z.record(z.string().regex(/^[a-zA-Z0-9_-]+$/), destinationSchema);
 export const credentialsSchema = z.object({ accessKeyId: z.string().min(1), secretAccessKey: z.string().min(1), sessionToken: z.string().optional() }).strict();
 export type Destination = z.infer<typeof destinationSchema>;
+export type BucketDestination = z.infer<typeof bucketDestinationSchema>;
 export type StorageCredentials = z.infer<typeof credentialsSchema>;
-function client(destination: Destination, credentials: StorageCredentials): S3Client {
-  return new S3Client({ region: destination.region, ...(destination.endpoint ? { endpoint: destination.endpoint } : {}), forcePathStyle: destination.forcePathStyle, credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey, ...(credentials.sessionToken ? { sessionToken: credentials.sessionToken } : {}) }, maxAttempts: 3 });
+export interface StorageClientOptions {
+  /**
+   * The request handler, or its options (agents, timeouts): a caller whose
+   * requests must go through a policy (the audit export, ADR-0057) passes
+   * its agents here. Absent: the SDK's default handler.
+   */
+  requestHandler?: S3ClientConfig['requestHandler'];
+  /** Attempts per request, retries included. Default 3. */
+  maxAttempts?: number;
 }
+/** An S3 client for one destination and key. The caller destroys it. */
+export function storageClient(destination: BucketDestination, credentials: StorageCredentials, options: StorageClientOptions = {}): S3Client {
+  return new S3Client({
+    region: destination.region, ...(destination.endpoint ? { endpoint: destination.endpoint } : {}), forcePathStyle: destination.forcePathStyle,
+    credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey, ...(credentials.sessionToken ? { sessionToken: credentials.sessionToken } : {}) },
+    maxAttempts: options.maxAttempts ?? 3,
+    ...(options.requestHandler ? { requestHandler: options.requestHandler } : {}),
+  });
+}
+const client = (destination: Destination, credentials: StorageCredentials): S3Client => storageClient(destination, credentials);
 function objectKey(destination: Destination, archiveId: string): string {
   if (!z.uuid().safeParse(archiveId).success) throw new BackupError('Invalid archive ID');
   return `${destination.prefix.replace(/\/?$/, '/')}${archiveId}.vltbak`;
@@ -29,6 +53,10 @@ function objectKey(destination: Destination, archiveId: string): string {
 // a signature or an object path, so an unrecognised value is never shown.
 const KEY = 'the destination rejected the key; check its ID and secret, and that it is not deleted or expired';
 const ACCESS = 'the key may not do this; check that it can access this bucket';
+// A conditional write found the name taken (If-None-Match, ADR-0056 Decision 4).
+const EXISTS = 'an object with this name already exists at the destination';
+// Retention headers the bucket refused: Object Lock is off, or the key may not set retention.
+const LOCK = 'the destination refused the request; if it sets retention, check that the bucket has Object Lock enabled and that the key may set retention';
 const S3_CODES: ReadonlyMap<string, string> = new Map([
   ['InvalidAccessKeyId', KEY], ['SignatureDoesNotMatch', KEY], ['ExpiredToken', KEY], ['InvalidToken', KEY],
   ['TokenRefreshRequired', KEY], ['Unauthorized', KEY],
@@ -39,6 +67,8 @@ const S3_CODES: ReadonlyMap<string, string> = new Map([
   ['InvalidObjectState', 'the archive is in a storage class that cannot be read directly; restore it at the provider first'],
   ['InternalError', 'the destination had a temporary problem; try again later'], ['ServiceUnavailable', 'the destination had a temporary problem; try again later'],
   ['SlowDown', 'the destination is limiting requests; try again later'],
+  ['PreconditionFailed', EXISTS],
+  ['InvalidRequest', LOCK], ['ObjectLockConfigurationNotFoundError', LOCK], ['NoSuchObjectLockConfiguration', LOCK],
 ]);
 const LOCAL_NAMES: ReadonlyMap<string, string> = new Map([
   ['TimeoutError', 'request timed out'], ['CredentialsProviderError', 'credentials could not be loaded'],
@@ -67,7 +97,8 @@ export function storageErrorDetail(error: unknown): string {
   const hint = s3Code ? S3_CODES.get(s3Code)
     : status === 401 ? KEY
     : status === 403 ? 'the destination refused the request; check that the key can access this bucket'
-    : status === 404 ? 'the bucket or archive is not at the destination' : undefined;
+    : status === 404 ? 'the bucket or archive is not at the destination'
+    : status === 412 ? EXISTS : undefined;
   return ` (${parts.join(', ')})${hint ? `: ${hint}` : ''}`;
 }
 export async function uploadArchive(destination: Destination, credentials: StorageCredentials, archiveId: string, path: string): Promise<void> {
@@ -86,3 +117,45 @@ export async function downloadArchive(destination: Destination, readCredentials:
   } catch (error) { await rm(output, { force: true }); throw new BackupError(`Remote archive retrieval failed${storageErrorDetail(error)}`); }
   finally { s3.destroy(); }
 }
+
+export type StorageClient = S3Client;
+/** One object written only if its name is free (If-None-Match: *), with its checksums and optional Object Lock retention. */
+export interface ConditionalPut {
+  key: string;
+  body: Buffer;
+  /** Hex digests of `body`. */
+  sha256: string;
+  md5: string;
+  contentType: string;
+  retention: { mode: 'compliance' | 'governance'; retainUntil: Date } | null;
+}
+/**
+ * A conditional PutObject (ADR-0056 Decision 4): If-None-Match: *,
+ * Content-MD5 (B2 needs it with Object Lock), x-amz-checksum-sha256, the
+ * SHA-256 as object metadata, and the retention headers when set. A taken
+ * name rejects with HTTP 412.
+ */
+export async function putObjectIfAbsent(s3: S3Client, bucket: string, put: ConditionalPut, abortSignal?: AbortSignal): Promise<void> {
+  await s3.send(new PutObjectCommand({
+    Bucket: bucket, Key: put.key, Body: put.body, ContentLength: put.body.length, ContentType: put.contentType,
+    ContentMD5: Buffer.from(put.md5, 'hex').toString('base64'), ChecksumSHA256: Buffer.from(put.sha256, 'hex').toString('base64'),
+    Metadata: { sha256: put.sha256 }, IfNoneMatch: '*',
+    ...(put.retention ? { ObjectLockMode: put.retention.mode.toUpperCase() as ObjectLockMode, ObjectLockRetainUntilDate: put.retention.retainUntil } : {}),
+  }), abortSignal ? { abortSignal } : {});
+}
+/** The SHA-256 metadata of an existing object (undefined when it has none). Needs a key that can read. */
+export async function objectSha256(s3: S3Client, bucket: string, key: string, abortSignal?: AbortSignal): Promise<string | undefined> {
+  const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }), abortSignal ? { abortSignal } : {});
+  return head.Metadata?.sha256;
+}
+/** An object's Object Lock retention, read back (GetObjectRetention); null when it has none. */
+export async function objectRetention(s3: S3Client, bucket: string, key: string, abortSignal?: AbortSignal): Promise<{ mode: string; retainUntil: Date } | null> {
+  const got = await s3.send(new GetObjectRetentionCommand({ Bucket: bucket, Key: key }), abortSignal ? { abortSignal } : {});
+  return got.Retention?.Mode && got.Retention.RetainUntilDate ? { mode: got.Retention.Mode.toLowerCase(), retainUntil: got.Retention.RetainUntilDate } : null;
+}
+/** An HTTP 412: the conditional write found the name taken. */
+export const isPreconditionFailed = (error: unknown): boolean =>
+  (error as { $metadata?: { httpStatusCode?: unknown } })?.$metadata?.httpStatusCode === 412 || (error as { name?: unknown })?.name === 'PreconditionFailed';
+/** An HTTP 403 or AccessDenied: the key may not do this. */
+export const isAccessDenied = (error: unknown): boolean =>
+  (error as { $metadata?: { httpStatusCode?: unknown } })?.$metadata?.httpStatusCode === 403 || (error as { name?: unknown })?.name === 'AccessDenied';
