@@ -139,6 +139,7 @@ jobs:
         run: |
           go vet ./...
           go vet -tags conformance ./...
+          go vet -tags crashpoint ./...
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
       # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
@@ -160,6 +161,34 @@ jobs:
           VARLATCH_REQUIRE_DASHBOARD: "1"
         # The installer tests run shells, not Go concurrency; once is enough.
         run: go test -race $(go list ./... | grep -v '/go/install$')
+
+      # G7 against the server (ADR-0059 step 3.6): a full disk refuses
+      # writes, keeps reads and recovers, and a disk-full error in a
+      # group-commit batch of disclosures answers each with an error and no
+      # value. The tests fill a filesystem, so they get a 32 MiB tmpfs of
+      # their own (the runner is disposable); the test above that kills
+      # varlatchd during disclosures needs none and runs with the others.
+      - name: G7 against the server on a full disk
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          dir="$RUNNER_TEMP/g7-small-fs"
+          mkdir -p "$dir"
+          sudo mount -t tmpfs -o size=32m,mode=1777 tmpfs "$dir"
+          trap 'sudo umount "$dir"' EXIT
+          VARLATCH_G7_SMALL_FS="$dir" VARLATCH_REQUIRE_G7_DISK=1 go test -count=1 -v -run '^(TestFullDiskRefusesWritesKeepsReads|TestDiskFullBatchAnswersEveryDisclosure)$' ./server/daemon
+
+      # G7 at controlled crash points: varlatchd, built with the storage
+      # engine's crash points (the crashpoint tag, which no release has), is
+      # killed inside a commit, during a WAL write and during a checkpoint
+      # while clients ask for disclosures; every answered disclosure keeps
+      # its audit event and the database recovers consistent.
+      - name: G7 against the server at crash points
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v -tags crashpoint -run '^TestKillAtCrashPoints$' ./server/daemon
 
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.

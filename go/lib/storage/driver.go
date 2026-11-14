@@ -32,6 +32,7 @@ import (
 // writerState is shared by the writer goroutine, the wrapped connection and
 // SQLite's callbacks on it.
 type writerState struct {
+	db          *DB         // for crash points (crashPoint)
 	inJob       atomic.Bool // a job's code is running
 	batchActive atomic.Bool // between our BEGIN and our COMMIT or ROLLBACK
 	txLost      atomic.Bool // SQLite rolled the batch back on its own
@@ -109,6 +110,7 @@ func (s *writerState) onCommit() int32 {
 		s.noteFatal(errors.New("storage: a commit was attempted while a job ran"))
 		return 1 // non-zero turns the commit into a rollback
 	}
+	crashPoint(s.db, "commit")
 	return 0
 }
 

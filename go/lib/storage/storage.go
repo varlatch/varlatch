@@ -157,6 +157,7 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 		ops:  make(chan *op, 16),
 		stop: make(chan struct{}),
 	}
+	db.ws.db = db
 	ok := false
 	defer func() {
 		if !ok {
@@ -205,6 +206,7 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 	go db.writerLoop()
 	go db.checkpointLoop()
 	ok = true
+	crashPoint(db, "open")
 	return db, nil
 }
 

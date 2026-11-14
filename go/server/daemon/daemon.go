@@ -84,7 +84,19 @@ type Options struct {
 }
 
 // Serve runs the server and returns its exit status.
-func Serve(opts Options) int {
+func Serve(opts Options) int { return serve(opts, nil) }
+
+// hooks are what tests add to serving; a production build has none.
+type hooks struct {
+	// storage adds to the engine's options (a checkpoint log, a shorter
+	// checkpoint period in a test).
+	storage func(*storage.Options)
+}
+
+func serve(opts Options, h *hooks) int {
+	if h == nil {
+		h = &hooks{}
+	}
 	log := slog.New(slog.NewTextHandler(opts.Stderr, nil))
 	fail := func(status int, msg string, args ...any) int {
 		log.Error(msg, args...)
@@ -123,11 +135,15 @@ func Serve(opts Options) int {
 	// Decision 4). The hub is made once the database is open; commits
 	// before that have nobody to tell.
 	var live atomic.Pointer[realtime.Hub]
-	store, err := storage.Open(ctx, storage.Options{Path: cfg.DatabasePath(), OnCommit: func() {
-		if h := live.Load(); h != nil {
-			h.Notify()
+	sopts := storage.Options{Path: cfg.DatabasePath(), OnCommit: func() {
+		if hub := live.Load(); hub != nil {
+			hub.Notify()
 		}
-	}})
+	}}
+	if h.storage != nil {
+		h.storage(&sopts)
+	}
+	store, err := storage.Open(ctx, sopts)
 	if err != nil {
 		return fail(ExitFailure, "cannot open the database", "file", cfg.DatabasePath(), "error", err)
 	}
