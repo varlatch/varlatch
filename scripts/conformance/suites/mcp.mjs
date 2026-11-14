@@ -33,10 +33,14 @@ function session(args) {
   const pending = new Map();
   let buffer = "";
   let stderr = "";
+  // Everything the process writes, through its exit: the secrecy check
+  // reads all of it, not only the messages the suite asked for.
+  let stdout = "";
   let next = 1;
   const exited = new Promise((resolve) => child.on("close", (code, signal) => resolve({ code, signal })));
   child.stderr.on("data", (d) => (stderr += d));
   child.stdout.on("data", (d) => {
+    stdout += d;
     buffer += d;
     let newline;
     while ((newline = buffer.indexOf("\n")) >= 0) {
@@ -71,7 +75,34 @@ function session(args) {
       });
       send({ id, method, params });
     });
-  return { request, notify: (method, params) => send({ method, params }), close: () => child.stdin.end(), exited, stderr: () => stderr, kill: () => child.kill("SIGKILL") };
+  return {
+    request,
+    notify: (method, params) => send({ method, params }),
+    close: () => child.stdin.end(),
+    exited,
+    stderr: () => stderr,
+    transcript: () => ({ stdout, stderr }),
+    kill: () => child.kill("SIGKILL"),
+  };
+}
+
+/**
+ * Whether `s` appears in a string value of any JSON line in `text`: a value
+ * written with JSON escapes (\u0070 for "p") does not show in the raw text.
+ */
+function inJsonStrings(text, s) {
+  let found = false;
+  for (const line of text.split("\n")) {
+    try {
+      JSON.parse(line, (_key, value) => {
+        if (typeof value === "string" && value.includes(s)) found = true;
+        return value;
+      });
+    } catch {
+      // Not JSON; the raw check covers it.
+    }
+  }
+  return found;
 }
 
 let mcp = null;
@@ -120,15 +151,21 @@ try {
       !read.error && read.result?.isError !== true && items.includes("DATABASE_URL") && items.every((n) => text.includes(n)),
       `${JSON.stringify(items)} ${JSON.stringify(read).slice(0, 400)}`,
     );
-    check(
-      "mcp.read-holds-no-secret",
-      "no message from varlatch mcp carries the Secret's value or the credential",
-      !JSON.stringify(read).includes(seeded) && !JSON.stringify(listed).includes(seeded) && !mcp.stderr().includes(seeded) && !mcp.stderr().includes(token),
-    );
 
     mcp.close();
     const exit = await Promise.race([mcp.exited, new Promise((resolve) => setTimeout(() => resolve(null), 15_000))]);
     check("mcp.exits-when-stdin-closes", "varlatch mcp exits 0 when the host closes its input", exit?.code === 0, JSON.stringify(exit));
+    // After the exit (or the wait for it), so the whole transcript is in:
+    // every message and notification on stdout and everything on stderr,
+    // raw and with JSON escapes undone, holds neither sensitive string.
+    const { stdout, stderr } = mcp.transcript();
+    const leaks = [seeded, token].filter((s) => stdout.includes(s) || stderr.includes(s) || inJsonStrings(stdout, s));
+    check(
+      "mcp.read-holds-no-secret",
+      "nothing varlatch mcp writes, from start to exit, carries the Secret's value or the credential",
+      leaks.length === 0,
+      leaks.length === 0 ? "" : `${leaks.length} sensitive string(s) found in its output`,
+    );
     mcp = null;
   }
 } catch (err) {
