@@ -140,8 +140,11 @@ func New(opts Options) (*Server, error) {
 	}
 	mux := &operationMux{ServeMux: http.NewServeMux(), built: built, wrap: s.builtOperation}
 	strict := api.NewStrictHandlerWithOptions(&operations{s: s}, nil, api.StrictHTTPServerOptions{
+		// A body the generated decoder cannot read: zod's 422. A built
+		// operation's body was checked against its schema first (body.go),
+		// so this answers only what that check let through.
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			writeError(w, r, http.StatusBadRequest, "VALIDATION_FAILED", err.Error())
+			writeError(w, r, http.StatusUnprocessableEntity, "VALIDATION_FAILED", err.Error())
 		},
 		ResponseErrorHandlerFunc: s.answerError,
 	})

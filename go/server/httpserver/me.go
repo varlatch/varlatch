@@ -3,16 +3,12 @@
 package httpserver
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/auth"
@@ -209,6 +205,9 @@ func (o *operations) ExchangeCliCredential(ctx context.Context, req api.Exchange
 	if p.Identity.Kind != "human" || p.Credential.Kind != auth.KindBrowser {
 		return nil, domainerr.New("PERMISSION_DENIED", "Only a browser session bearer may be exchanged for a CLI credential")
 	}
+	if err := bodyError(ctx); err != nil {
+		return nil, err
+	}
 	var body api.ExchangeCliCredentialJSONBody
 	if req.Body != nil {
 		body = api.ExchangeCliCredentialJSONBody(*req.Body)
@@ -322,6 +321,9 @@ func (o *operations) ConfirmMyPasskey(ctx context.Context, req api.ConfirmMyPass
 	if err != nil {
 		return nil, err
 	}
+	if err := bodyError(ctx); err != nil {
+		return nil, err
+	}
 	if req.Body == nil || req.Body.Assertion == nil {
 		return nil, validation("assertion: Invalid input: expected record, received undefined")
 	}
@@ -367,19 +369,4 @@ func (o *operations) ListOrganizations(ctx context.Context, _ api.ListOrganizati
 		items = append(items, orgJS(r.ID, r.Slug, r.Name, r.CreatedAt))
 	}
 	return ok(page(items)), nil
-}
-
-// lenient reads a body the TypeScript server parsed with .catch(() => ({})):
-// anything but a JSON object becomes {}.
-func lenient(body io.ReadCloser) io.ReadCloser {
-	if body == nil {
-		return io.NopCloser(strings.NewReader("{}"))
-	}
-	b, err := io.ReadAll(body)
-	_ = body.Close()
-	var probe map[string]json.RawMessage
-	if err != nil || !utf8.Valid(b) || json.Unmarshal(b, &probe) != nil || probe == nil {
-		return io.NopCloser(strings.NewReader("{}"))
-	}
-	return io.NopCloser(bytes.NewReader(b))
 }

@@ -215,16 +215,10 @@ var noStore = map[string]bool{
 	"POST /v1/me/passkeys/{passkey}/confirmation":         true,
 }
 
-// lenientBody are the operations whose body the TypeScript server reads
-// with .catch(() => ({})): a body that is not a JSON object counts as {}.
-var lenientBody = map[string]bool{
-	"POST /v1/auth/device":                                true,
-	"POST /v1/auth/device/token":                          true,
-	"POST /v1/auth/device/lookup":                         true,
-	"POST /v1/auth/device/approve":                        true,
-	"POST /v1/me/credentials/cli":                         true,
-	"POST /v1/me/passkeys/{passkey}/confirmation":         true,
-	"POST /v1/me/passkeys/{passkey}/confirmation/options": true,
+// ignoresQuery are the operations whose query the TypeScript server never
+// reads: a query parameter, well formed or not, changes nothing.
+var ignoresQuery = map[string]bool{
+	"GET /v1/organizations": true,
 }
 
 // builtOperation wraps a built /v1 operation's generated handler:
@@ -237,8 +231,13 @@ func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.Handler
 		if noStore[pattern] {
 			w.Header().Set("Cache-Control", "no-store")
 		}
-		if lenientBody[pattern] {
-			r.Body = lenient(r.Body)
+		if schema, ok := bodySchemas[pattern]; ok {
+			r = readBody(r, schema)
+		}
+		if ignoresQuery[pattern] {
+			u := *r.URL
+			u.RawQuery = ""
+			r.URL = &u
 		}
 		if !open {
 			p, ok := s.authenticate(w, r)

@@ -15,9 +15,11 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/query"
 )
 
+var parityBrowserSession = "ses_parity"
+
 // testAuth is an installation in a temporary database, with one person
-// (idn_parity) and its credentials by state: valid, revoked, expired and
-// agent-run, as the parity table names them.
+// (idn_parity) and its credentials by state: valid, revoked, expired,
+// agent-run and browser, as the parity table names them.
 type testAuth struct {
 	svc    *auth.Service
 	store  *storage.DB
@@ -51,6 +53,8 @@ func newTestAuth(t *testing.T, pub *url.URL, now func() time.Time) *testAuth {
 			"revoked":   {IdentityID: "idn_parity", Kind: auth.KindCLI},
 			"expired":   {IdentityID: "idn_parity", Kind: auth.KindCLI, ExpiresAt: &past},
 			"agent-run": {IdentityID: "idn_parity", Kind: auth.KindAgentRun},
+			// A dashboard bearer of a session (any id: nothing references it).
+			"browser": {IdentityID: "idn_parity", Kind: auth.KindBrowser, AuthSessionID: &parityBrowserSession},
 		} {
 			issued, err := auth.IssueCredential(ctx, tx, n, in)
 			if err != nil {

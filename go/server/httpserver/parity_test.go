@@ -21,6 +21,7 @@ type parityTable struct {
 	NginxVectors []struct{ Target, Nginx string } `json:"nginxVectors"`
 	Routes       []struct {
 		Method, Target, Credential, Expect, Code, Text string
+		Body                                           *string
 		Status                                         int
 	} `json:"routes"`
 	ForwardedFor []struct {
@@ -84,10 +85,16 @@ func TestParityRoutes(t *testing.T) {
 	for _, c := range loadParity(t).Routes {
 		logBuf.Reset()
 		status, expect, text := c.Status, c.Expect, c.Text
-		r := httptest.NewRequest(c.Method, c.Target, nil)
+		var r *http.Request
+		if c.Body != nil {
+			r = httptest.NewRequest(c.Method, c.Target, strings.NewReader(*c.Body))
+			r.Header.Set("Content-Type", "application/json")
+		} else {
+			r = httptest.NewRequest(c.Method, c.Target, nil)
+		}
 		r.RemoteAddr = "192.0.2.10:40000"
 		switch c.Credential {
-		case "valid", "revoked", "expired", "agent-run":
+		case "valid", "revoked", "expired", "agent-run", "browser":
 			r.Header.Set("Authorization", "Bearer "+ta.tokens[c.Credential])
 		case "invalid":
 			r.Header.Set("Authorization", "Bearer vlt_cli_notacredential")
@@ -127,6 +134,11 @@ func TestParityRoutes(t *testing.T) {
 		case "meta":
 			var m struct{ ApiMajor int }
 			if ct != "application/json" || (!head && (json.Unmarshal(w.Body.Bytes(), &m) != nil || m.ApiMajor != 1)) {
+				t.Errorf("%s: %q %q", name, ct, w.Body.String())
+			}
+		case "json":
+			var body map[string]any
+			if ct != "application/json" || json.Unmarshal(w.Body.Bytes(), &body) != nil || body["error"] != nil {
 				t.Errorf("%s: %q %q", name, ct, w.Body.String())
 			}
 		case "code":

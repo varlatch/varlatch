@@ -56,6 +56,9 @@ func (o *operations) StartDeviceSignIn(ctx context.Context, req api.StartDeviceS
 	if err != nil {
 		return nil, err
 	}
+	if err := bodyError(ctx); err != nil {
+		return nil, err
+	}
 	var body api.StartDeviceSignInJSONBody
 	if req.Body != nil {
 		body = api.StartDeviceSignInJSONBody(*req.Body)
@@ -81,6 +84,9 @@ func (o *operations) StartDeviceSignIn(ctx context.Context, req api.StartDeviceS
 // CollectDeviceSignIn is POST /v1/auth/device/token: the CLI's poll.
 func (o *operations) CollectDeviceSignIn(ctx context.Context, req api.CollectDeviceSignInRequestObject) (api.CollectDeviceSignInResponseObject, error) {
 	if _, err := o.s.deviceAvailable(); err != nil {
+		return nil, err
+	}
+	if err := bodyError(ctx); err != nil {
 		return nil, err
 	}
 	code := ""
@@ -137,6 +143,9 @@ func (o *operations) LookupDeviceSignIn(ctx context.Context, req api.LookupDevic
 	if err != nil {
 		return nil, err
 	}
+	if err := bodyError(ctx); err != nil {
+		return nil, err
+	}
 	code := ""
 	if req.Body != nil {
 		code = req.Body.UserCode
@@ -176,6 +185,9 @@ func (o *operations) DecideDeviceSignIn(ctx context.Context, req api.DecideDevic
 	}
 	identityID, sessionID, err := dashboardSession(ctx, deviceApproverRefusal)
 	if err != nil {
+		return nil, err
+	}
+	if err := bodyError(ctx); err != nil {
 		return nil, err
 	}
 	var body api.DecideDeviceSignInJSONBody

@@ -30,9 +30,10 @@ const { buildApp } = await vi.importActual<typeof import("../src/http/app.js")>(
 interface RouteCase {
   method: string;
   target: string;
-  credential: "none" | "basic" | "valid" | "invalid" | "revoked" | "expired" | "agent-run";
+  credential: "none" | "basic" | "valid" | "invalid" | "revoked" | "expired" | "agent-run" | "browser";
   status: number;
-  expect: "text" | "code" | "meta" | "dashboard";
+  expect: "text" | "code" | "json" | "meta" | "dashboard";
+  body?: string;
   code?: string;
   text?: string;
 }
@@ -47,7 +48,7 @@ const table = JSON.parse(
 };
 
 let ctx: AppCtx & { close: () => Promise<void> };
-let tokens: Record<"valid" | "revoked" | "expired" | "agent-run", string>;
+let tokens: Record<"valid" | "revoked" | "expired" | "agent-run" | "browser", string>;
 
 beforeEach(async () => {
   const db = await migratedTestDb();
@@ -63,6 +64,8 @@ beforeEach(async () => {
     expired: (await issueCredential(ctx.db, { identityId, kind: "cli", expiresAt: new Date(Date.now() - 3_600_000).toISOString() })).token,
     // An Agent Run's metadata credential: read-only at the HTTP layer (ADR-0023).
     "agent-run": (await issueCredential(ctx.db, { identityId, kind: "agent-run" })).token,
+    // A dashboard bearer of a session (any id: nothing references it).
+    browser: (await issueCredential(ctx.db, { identityId, kind: "browser", authSessionId: "ses_parity" })).token,
   };
 });
 afterEach(async () => {
@@ -70,7 +73,7 @@ afterEach(async () => {
 });
 
 const authorization = (credential: RouteCase["credential"]): Record<string, string> =>
-  credential === "valid" || credential === "revoked" || credential === "expired" || credential === "agent-run"
+  credential === "valid" || credential === "revoked" || credential === "expired" || credential === "agent-run" || credential === "browser"
     ? { Authorization: `Bearer ${tokens[credential]}` }
     : credential === "invalid"
       ? { Authorization: "Bearer vlt_cli_notacredential" }
@@ -144,8 +147,13 @@ describe("routes, as raw request targets", () => {
       return;
     }
     expect(nginxSends(c.target)).toBe("varlatchd");
-    const app = buildApp(ctx);
-    const res = await app.request(c.target, { method: c.method, headers: authorization(c.credential) });
+    // The public URL both servers run with: device sign-in is available.
+    const app = buildApp(ctx, { publicUrl: "http://127.0.0.1:8686" });
+    const res = await app.request(c.target, {
+      method: c.method,
+      headers: { ...authorization(c.credential), ...(c.body !== undefined ? { "Content-Type": "application/json" } : {}) },
+      ...(c.body !== undefined ? { body: c.body } : {}),
+    });
     expect(res.status).toBe(c.status);
     const body = await res.text();
     if (c.expect === "text") {
@@ -156,6 +164,7 @@ describe("routes, as raw request targets", () => {
     expect(res.headers.get("Content-Type")).toBe("application/json");
     if (c.method === "HEAD") return;
     if (c.expect === "meta") expect(JSON.parse(body).apiMajor).toBe(1);
+    else if (c.expect === "json") expect(JSON.parse(body).error).toBeUndefined();
     else expect(JSON.parse(body).error.code).toBe(c.code);
   });
 });
