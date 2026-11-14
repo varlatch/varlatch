@@ -33,7 +33,8 @@
  *             audit events, a removal) through `varlatchd admin
  *             conformance-fixture`, from the same conformance build; JSON
  *
- * Optional capabilities: the device sign-in probes and go-server. Maintenance and
+ * Optional capabilities (targets/capabilities.json, their only source): the
+ * device sign-in probes and go-server. Maintenance and
  * serve-cli come with the operations that need them (expect/go-binary.json
  * lists them).
  * The only processes it signals are the ones it started, by the PID it
@@ -54,10 +55,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
-import { targetCapabilities } from "./capabilities.mjs";
 
 export const name = "go-binary";
-export const capabilities = targetCapabilities("go-binary");
 
 const READY_TIMEOUT_MS = 30_000;
 /** One /readyz request's deadline: a server that accepts and never answers must not hold up the loop. */

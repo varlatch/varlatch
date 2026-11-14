@@ -17,7 +17,6 @@ import { join } from "node:path";
 import * as stack from "./compose-stack.mjs";
 
 export const name = "ts-source";
-export const capabilities = stack.CAPABILITIES;
 
 /** The services built from source, and the image each one runs. */
 export const BUILT_FROM_SOURCE = {

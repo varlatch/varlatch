@@ -150,6 +150,13 @@ of reaching into Compose or the database:
 | `ts-stack` | `ts-stack compose <args...>` and `ts-stack compose-env`: Compose control for the ts-stack checks |
 | `go-server` | `go-server fixture <name> [args...]`: the Go server's fixtures for its go-server checks (organizations, people, browser sessions, audit events, a removal), written while the `/v1` writes that would make them are not built (ADR-0059 step 4); JSON |
 
+`targets/capabilities.json` is the only source of a target's capabilities:
+`loadTarget` reads them from it, and refuses an adapter that declares a
+list of its own, or that lacks the operation a listed capability needs
+(`probe:<name>` the `probe` operation; `maintenance`, `serveCli`,
+`tsStack`, `goServer`). So what the merge-base check judges is what the
+runner uses.
+
 A probe is a fixed, named read; a suite never sends SQL. A conformance check
 that needs a capability the target lacks fails.
 

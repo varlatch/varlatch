@@ -42,11 +42,9 @@ import {
   releaseVersionProblem,
   VARLATCH_IMAGES,
 } from "../lib/release.mjs";
-import { targetCapabilities } from "./capabilities.mjs";
 import * as stack from "./compose-stack.mjs";
 
 export const name = "ts-release";
-export const capabilities = targetCapabilities("ts-release");
 
 function tar(args) {
   const r = spawnSync("tar", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

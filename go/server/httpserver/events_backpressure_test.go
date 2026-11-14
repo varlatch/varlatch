@@ -319,8 +319,10 @@ func TestRemovalSendsOnlyItsNotification(t *testing.T) {
 
 // A slow client is cut off when its buffer of publications fills; its
 // blocked write is cut at once; another stream of the same person gets
-// every publication meanwhile. Each round waits for the other stream to
-// have it, so no timing decides the outcome.
+// every publication meanwhile. Barriers, not timing: the slow client's
+// write of the first publication is seen blocked, each publication is
+// seen by the other stream before the next, and the cut is awaited after
+// the fourth (one taken, two buffered, the fourth overflows).
 func TestSlowClientCutOffUnderControlledBackpressure(t *testing.T) {
 	w := newStreamWorld(t, realtime.Options{Buffer: 2})
 	slow := newGatedWriter(1)
@@ -329,22 +331,27 @@ func TestSlowClientCutOffUnderControlledBackpressure(t *testing.T) {
 	_, fastDone := w.serve(w.session(), fast)
 	waitFor(t, 2*time.Second, "ready", func() bool { return len(slow.events()) == 1 && len(fast.events()) == 1 })
 	var sent []string
-	for round := 0; ; round++ {
-		if round == 10 {
-			t.Fatal("not cut off after 10 publications with a buffer of 2")
-		}
+	publish := func(n int) {
 		ids := w.event("org_a", "project.created")
 		sent = append(sent, ids...)
-		waitFor(t, 2*time.Second, "the fast stream's publication", func() bool { return contains(fast.events(), ids[0]) })
-		if r, _ := slowStream.Ending(); r != "" {
-			// One publication taken (blocked), two buffered, the fourth cuts.
-			if r != realtime.ReasonSlowClient || round != 3 {
-				t.Fatalf("ended %q at round %d", r, round)
-			}
-			break
-		}
+		waitFor(t, 2*time.Second, fmt.Sprintf("the other stream's publication %d", n), func() bool { return contains(fast.events(), ids[0]) })
 	}
-	within(t, slowDone, time.Second, "the slow stream to end")
+	publish(1)
+	select {
+	case <-slow.blocked: // the slow client's writer took publication 1 and is stuck on it
+	case <-time.After(2 * time.Second):
+		t.Fatal("the slow client's write of publication 1 never blocked")
+	}
+	publish(2)
+	publish(3)
+	if r, _ := slowStream.Ending(); r != "" {
+		t.Fatalf("ended %q with one publication taken and two buffered", r)
+	}
+	publish(4)
+	within(t, slowDone, 2*time.Second, "the slow stream to end after publication 4")
+	if r, _ := slowStream.Ending(); r != realtime.ReasonSlowClient {
+		t.Fatalf("ended %q", r)
+	}
 	slow.release()
 	if got := slow.events(); len(got) != 1 {
 		t.Fatalf("written to the slow client after its cut: %v", got)

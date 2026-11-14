@@ -319,6 +319,7 @@ test("the checker's own files: static relative imports, comments ignored, dynami
     "scripts/conformance/lib/inventory.mjs",
     "scripts/conformance/lib/operations.mjs",
     "scripts/conformance/lib/results.mjs",
+    "scripts/conformance/targets/capabilities.mjs",
     "scripts/conformance/targets/index.mjs",
   ]);
 });
