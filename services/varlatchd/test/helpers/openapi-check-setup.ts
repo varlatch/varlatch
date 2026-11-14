@@ -49,7 +49,7 @@ vi.mock(import("../../src/http/app.js"), async (importOriginal) => {
   };
 });
 
-afterEach(() => {
+function enforce(): void {
   const found = pending;
   pending = [];
   if (mode !== "enforce") return;
@@ -57,10 +57,22 @@ afterEach(() => {
     found.map((m) => `${m.kind}: ${m.operation} ${m.status}: ${m.detail}`),
     "/v1 traffic that does not match packages/protocol/openapi.yaml (test/helpers/openapi-check.ts)",
   ).toEqual([]);
-});
+}
 
+afterEach(enforce);
+
+// Registered first, so it runs after the test file's own afterAll hooks:
+// traffic from beforeAll/afterAll hooks fails the file, not a later test.
 afterAll(() => {
   if (mode === "off") return;
+  try {
+    enforce();
+  } finally {
+    report();
+  }
+});
+
+function report(): void {
   const dir = inject("openApiReportDir");
   if (!dir) return;
   const file = join(dir, `${process.pid}-${threadId}.jsonl`);
@@ -70,4 +82,4 @@ afterAll(() => {
     ...recorded.map((m) => JSON.stringify({ type: "mismatch", file: testFile, ...m })),
   ];
   if (lines.length) appendFileSync(file, lines.join("\n") + "\n");
-});
+}
