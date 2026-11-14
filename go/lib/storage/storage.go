@@ -72,6 +72,12 @@ type Options struct {
 	// checkpoint lock held: it must return quickly and must not call into
 	// the DB. The G9a harness logs every checkpoint through it.
 	OnCheckpoint func(CheckpointResult, error)
+	// OnCommit, if set, is called after every COMMIT that succeeded, on the
+	// writer goroutine, before the batch's jobs are answered: what the
+	// batch wrote is durable and visible to the readers by then. It must
+	// return quickly and must not call into the DB (a non-blocking send on
+	// a channel, say). varlatchd publishes its realtime signals from it.
+	OnCommit func()
 }
 
 func (o *Options) setDefaults() {

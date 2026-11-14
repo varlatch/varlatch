@@ -3,23 +3,35 @@ import { useEffect, useState } from "react";
 import { useConvex } from "convex/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { LiveUpdatesController, type LiveStatus } from "../lib/liveUpdates";
+import { useSseStream } from "../lib/sseProvider";
 
 /**
  * Mounted once under the Convex and React Query providers: drives degraded
  * realtime (ADR-0035 D10) and shows a quiet indicator while live updates are
- * down. Nothing is shown while they work.
+ * down. Nothing is shown while they work. SseLiveUpdatesStatus is the same
+ * over the Go server's server-sent events.
  */
 export function LiveUpdatesStatus() {
   const convex = useConvex();
   return <Status connected={() => convex.connectionState().isWebSocketConnected} subscribe={(on) => convex.subscribeToConnectionState((s) => on(s.isWebSocketConnected))} />;
 }
 
+/**
+ * The same indicator over the Go server's server-sent events (lib/sse.ts):
+ * mounted under SseProvider.
+ */
+export function SseLiveUpdatesStatus() {
+  const stream = useSseStream();
+  return <Status connected={stream.isConnected} subscribe={stream.onConnection} />;
+}
+
 const NEVER_CONNECTED = { connected: () => false, subscribe: () => () => {} };
 
 /**
- * The same indicator on a server without live updates yet (lib/backend.ts:
- * the Go server until it serves events): never connected, so it says live
- * updates are unavailable and keeps what is on screen fresh by polling.
+ * The same indicator on a server without live updates (lib/backend.ts: a
+ * Go server that does not list realtime.sse): never connected, so it says
+ * live updates are unavailable and keeps what is on screen fresh by
+ * polling.
  */
 export function RealtimeUnavailable() {
   return <Status {...NEVER_CONNECTED} />;

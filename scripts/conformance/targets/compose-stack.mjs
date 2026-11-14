@@ -26,15 +26,6 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { requestsFromNginxLog } from "./nginx-log.mjs";
 
-export const CAPABILITIES = [
-  "probe:audit-event-count",
-  "probe:device-sign-in-addresses",
-  "probe:expire-pending-device-sign-ins",
-  "probe:proxy-addresses",
-  "maintenance",
-  "serve-cli",
-  "ts-stack",
-];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

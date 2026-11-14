@@ -40,7 +40,7 @@ test("each ts-stack check names a conformance replacement, none with a reason, o
   const cases = [
     [undefined, /names its replacement/],
     ["web.missing", /not in the inventory/],
-    ["stack.reconcile", /not a conformance check/],
+    ["stack.reconcile", /not a conformance or go-server check/],
     [{ none: "" }, /replacement must be/],
     [{ none: "x", open: "y" }, /replacement must be/],
     [{ later: "x" }, /replacement must be/],
@@ -54,6 +54,33 @@ test("each ts-stack check names a conformance replacement, none with a reason, o
   const inv = base();
   inv.checks["web.csp-strict"].replacement = "stack.convex";
   assert.match(validateInventory(inv).join("\n"), /only a ts-stack check has a replacement/);
+});
+
+test("a go-server check: its suite needs the go-server capability, it may replace a ts-stack check, and it does not apply elsewhere", () => {
+  const inv = base();
+  inv.suites.sse = { title: "sse", script: "x.mjs", needs: ["go-server"] };
+  inv.checks["sse.scope"] = { suite: "sse", kind: "go-server", title: "scope" };
+  inv.checks["stack.convex"].replacement = "sse.scope";
+  // Listed, with why the TypeScript server cannot pass it.
+  assert.match(validateInventory(inv).join("\n"), /sse\.scope: a go-server check is listed in goServerChecks/);
+  inv.goServerChecks = { "sse.scope": " " };
+  assert.match(validateInventory(inv).join("\n"), /sse\.scope: a go-server check is listed in goServerChecks/);
+  inv.goServerChecks = { "sse.scope": "Convex cannot", "web.csp-strict": "not one" };
+  assert.match(validateInventory(inv).join("\n"), /goServerChecks web\.csp-strict: not a go-server check/);
+  inv.goServerChecks = { "sse.scope": "Convex cannot" };
+  assert.deepEqual(validateInventory(inv), []);
+  inv.suites.sse.needs = [];
+  assert.match(validateInventory(inv).join("\n"), /sse\.scope: a go-server check's suite needs the go-server capability/);
+  inv.suites.sse.needs = ["go-server"];
+  inv.checks["sse.scope"].replacement = "web.csp-strict";
+  assert.match(validateInventory(inv).join("\n"), /only a ts-stack check has a replacement/);
+  delete inv.checks["sse.scope"].replacement;
+  const reports = (status) => [
+    ...Object.entries(inv.checks).filter(([id]) => id !== "sse.scope").map(([id, c]) => ({ suite: c.suite, id, status: c.kind === "ts-stack" ? "N/A" : "PASS", text: "" })),
+    { suite: "sse", id: "sse.scope", status, text: "the target lacks go-server" },
+  ];
+  assert.equal(evaluate({ inventory: inv, reports: reports("N/A") }).checks.find((c) => c.id === "sse.scope").outcome, "not-applicable");
+  assert.equal(evaluate({ inventory: inv, reports: reports("PASS") }).checks.find((c) => c.id === "sse.scope").outcome, "pass");
 });
 
 test("IDs, suites, kinds, capabilities and versions are checked", () => {
@@ -246,7 +273,7 @@ test("an external suite is a scripts/test-*.mjs suite the runner does not run, w
   assert.match(problems({ script: "apps/web/scripts/e2e-web.mjs" }), /script must be scripts\/test-<name>\.mjs/);
   assert.match(problems({ kind: "conformance" }), /kind must be ts-stack/);
   assert.match(problems({ replacement: undefined }), /names its replacement/);
-  assert.match(problems({ replacement: "stack.convex" }), /is not a conformance check/);
+  assert.match(problems({ replacement: "stack.convex" }), /is not a conformance or go-server check/);
   assert.match(problems({ replacement: { open: "" } }), /replacement must be/);
   assert.match(problems({ title: "" }), /no title/);
   const clash = base();

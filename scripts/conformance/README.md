@@ -33,8 +33,8 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 | `plan.mjs` | The order of the suites and how each gets its arguments. |
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
-| `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`) and the registry. |
-| `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), and the client suites: the CLI's compatibility core, `varlatch mcp`, and the sdk smoke. |
+| `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`), the registry, and each target's optional capabilities as data (`capabilities.json`). |
+| `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), the client suites (the CLI's compatibility core, `varlatch mcp`, and the sdk smoke), and G11's checks on the Go server's server-sent events (`realtime-events`). |
 | `lib/` | The runner's pure logic: result lines, inventory rules, operations and declared gaps, the request-log check, the client pins, release verification, expected failures, gate mode. |
 | `test/` | Unit tests: `pnpm test:conformance`. |
 
@@ -71,10 +71,18 @@ Every check has a **kind**:
 - `conformance`: must run and pass on every target;
 - `ts-stack`: about the TypeScript deployment itself (Convex, nginx,
   Compose). Not applicable on a target without the `ts-stack` capability.
-  Each names its `replacement`: a conformance check ID in the inventory,
-  `{ "none": "<why>" }`, or `{ "open": "<the step that writes it>" }`;
+  Each names its `replacement`: a conformance or go-server check ID in the
+  inventory, `{ "none": "<why>" }`, or `{ "open": "<the step that writes
+  it>" }`;
 - `component`: tests this checkout's code, not the target (the enroll page
-  against a stub server). Kept in the run, never counted as conformance.
+  against a stub server). Kept in the run, never counted as conformance;
+- `go-server`: about a mechanism of the Go server that the TypeScript
+  deployment has no counterpart of (its server-sent events, gate G11). Its
+  suite needs the `go-server` capability; it is not applicable on a target
+  without it, and must run and pass on one with it. A gate run on
+  `go-binary` refuses it not applicable. Each is listed in the inventory's
+  `goServerChecks` with why the TypeScript server cannot pass it, so making
+  a check go-server is visible in review.
 
 A run fails on any of these:
 
@@ -82,7 +90,8 @@ A run fails on any of these:
 - a reported check that is not in the inventory, or that another suite reported;
 - a failed check, unless the target's expectations list it (see
   [Expected failures](#expected-failures)); an expected failure that passes;
-- a conformance or component check reported not applicable;
+- a conformance or component check reported not applicable (a ts-stack or
+  go-server check may be);
 - a `PREDATES-CLI` result the runner cannot confirm. It is accepted only for
   a check whose feature names the version that introduced it
   (`introducedIn`), never for a compatibility-core feature, and only when
@@ -92,7 +101,8 @@ A run fails on any of these:
   or a setup step that fails. An error is never a skip.
 
 A suite whose `needs` the target lacks is not started; its checks are
-reported not applicable, which fails the run unless they are ts-stack checks.
+reported not applicable, which fails the run unless they are ts-stack or
+go-server checks.
 
 Adding a check: give it an ID that starts with its suite's name, write it in
 the suite, and add it to `inventory.json`. `pnpm test:conformance` fails
@@ -138,6 +148,14 @@ of reaching into Compose or the database:
 | `maintenance` | `maintenance <ttl ms>`: the `503 MAINTENANCE` admission a restore uses, for a lease |
 | `serve-cli` | `serve-cli on\|off`: the server serves the CLI and install scripts, or not (ADR-0058 Decision 3) |
 | `ts-stack` | `ts-stack compose <args...>` and `ts-stack compose-env`: Compose control for the ts-stack checks |
+| `go-server` | `go-server fixture <name> [args...]`: the Go server's fixtures for its go-server checks (organizations, people, browser sessions, audit events, a removal), written while the `/v1` writes that would make them are not built (ADR-0059 step 4); JSON |
+
+`targets/capabilities.json` is the only source of a target's capabilities:
+`loadTarget` reads them from it, and refuses an adapter that declares a
+list of its own, or that lacks the operation a listed capability needs
+(`probe:<name>` the `probe` operation; `maintenance`, `serveCli`,
+`tsStack`, `goServer`). So what the merge-base check judges is what the
+runner uses.
 
 A probe is a fixed, named read; a suite never sends SQL. A conformance check
 that needs a capability the target lacks fails.
@@ -185,7 +203,9 @@ in `CONFORMANCE_TARGET_STATE`, which `target-op.mjs` reads.
   `serve_cli` set, which it refuses until it knows the setting. Its
   optional capabilities are device sign-in's probes, which it runs as
   `varlatchd admin conformance-probe`, a command only a build with the
-  `conformance` tag has; `up` refuses a binary without it. It signals only
+  `conformance` tag has (`up` refuses a binary without it), and
+  `go-server`, whose fixtures it runs as `varlatchd admin
+  conformance-fixture`, from the same build. It signals only
   the process it started, by the PID it recorded, after checking that PID
   still runs its configuration. Build the binary with the dashboard first:
   `go generate ./server/web` then
@@ -258,8 +278,8 @@ files at the pull request's head with its merge base, and fails when the
 head adds an entry (moving one to another client or target counts as
 adding one), unless the pull request carries the `conformance-regression`
 label. The same label is needed to delete or rename a target's file (or
-the whole directory), the checker, a module it imports, `inventory.json` or
-`clients.json`. Adding or removing the label runs the check again.
+the whole directory), the checker, a module it imports, `inventory.json`,
+`clients.json` or `targets/capabilities.json`. Adding or removing the label runs the check again.
 
 The workflow runs on `pull_request_target`: its definition and the checker
 come from the base branch, so a pull request can change neither the check
@@ -271,6 +291,12 @@ without the checker fails the job. A push to `main` validates the files it
 lands.
 
 The same check covers the declared gaps: see [Declared gaps](#declared-gaps).
+It also covers coverage itself: a check of the merge base that the head makes
+newly not applicable on a target (`NEWLY-N/A <target>|<check>`), because its
+kind changed, it moved to a suite that needs more, its suite needs more, or
+the target's capabilities in `targets/capabilities.json` lost one, needs the
+label. Each side is judged with its own inventory and capabilities file,
+which is data, so nothing from the head runs. A new check is not counted.
 This pull request's own run of the check, like any, uses the base's
 checker; a change to the checker takes effect for the pull requests after
 it merges.
@@ -386,7 +412,8 @@ Besides passing as an ordinary run, a gate run must have:
   with a CLI that predates nothing. That report is judged again from
   scratch, never by its own `ok` or `gate` fields: the same target and the
   same `implementation`, a complete run with every inventory check present
-  once and passing (not applicable only for a ts-stack check), no problem,
+  once and passing (not applicable only for a ts-stack check, or a
+  go-server check off `go-binary`), no problem,
   no expected failure, a CLI that predates no feature of the current
   inventory, the same walkthrough evidence, and the gate's replacement
   rules.
@@ -404,9 +431,11 @@ workflow run gives the same assurance.
 
 The report's `gate` holds the verdict and each problem; a gate failure
 prints `CONFORMANCE GATE FAILED` and exits 1. Gate mode fails today on every
-target: the realtime checks' replacements (G11's checks, step 3), doctor's
-(step 6) and every external suite's are still open; on `go-binary`, its
-declared gaps too. `test/gate.test.mjs`
+target: doctor's replacements (step 6) and every external suite's are
+still open; on `go-binary`, its declared gaps too. The Convex realtime
+checks' replacements are the `realtime-degraded` checks (step 3.5), and
+G11's own checks on the Go server's events are the `realtime-events`
+go-server checks, which a gate run on `go-binary` needs passing. `test/gate.test.mjs`
 shows this on the inventory as it stands.
 
 ## The weekly matrix

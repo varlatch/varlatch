@@ -146,23 +146,36 @@ test("a gate run needs its own implementation fingerprint", () => {
   assert.match(verdict.problems.join(), /recorded no implementation fingerprint/);
 });
 
-test("today no target can pass the gate: the realtime (G11), doctor and lifecycle replacements are open", () => {
+test("today no target can pass the gate: the doctor and lifecycle replacements are open", () => {
   const open = replacements(inventory).filter((r) => r.replacement && typeof r.replacement === "object" && "open" in r.replacement);
-  // G11's realtime checks are written in step 3, doctor in step 6, and each
-  // lifecycle and installer suite in the step its Go counterpart lands.
-  assert.ok(open.some((r) => r.of.startsWith("realtime.") && /step 3: the G11 realtime checks/.test(r.replacement.open)));
+  // Doctor is written in step 6, and each lifecycle and installer suite in
+  // the step its Go counterpart lands. The Convex realtime checks' are
+  // written (step 3.5): the degraded-state checks, which run on every
+  // target.
+  assert.ok(!open.some((r) => r.of.startsWith("realtime.")));
+  for (const [id, c] of Object.entries(inventory.checks)) {
+    if (id.startsWith("realtime.") && typeof c.replacement === "string") assert.match(c.replacement, /^(realtime-degraded|dashboard)\./, id);
+  }
   assert.ok(open.some((r) => r.of.startsWith("doctor.") && /step 6/.test(r.replacement.open)));
   for (const name of Object.keys(inventory.externalSuites)) assert.ok(open.some((r) => r.of.startsWith(`${name} (`)), name);
 
   // The best a run can do on each target: every check passes (a ts-stack
-  // check does not apply where the target has no TypeScript stack), with a
-  // recent CLI, no expected failure and the walkthrough named.
-  for (const [target, tsStack] of [["ts-source", "pass"], ["ts-release:0.22.0", "pass"], ["go-binary:/opt/varlatchd", "not-applicable"]]) {
-    const outcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" ? tsStack : "pass"]));
+  // check does not apply where the target has no TypeScript stack, nor a
+  // go-server check where it is not the Go server), with a recent CLI, no
+  // expected failure and the walkthrough named. Only the open replacements
+  // stop it.
+  for (const [target, tsStack, goServer] of [["ts-source", "pass", "not-applicable"], ["ts-release:0.22.0", "pass", "not-applicable"], ["go-binary:/opt/varlatchd", "not-applicable", "pass"]]) {
+    const outcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" ? tsStack : c.kind === "go-server" ? goServer : "pass"]));
     const verdict = judgeGate({ inventory, run: run(outcomes, { target }), walkthrough });
     assert.equal(verdict.passed, false, target);
     assert.equal(verdict.problems.length, 1, `${target}: only the open replacements stop it: ${verdict.problems.join("\n")}`);
     assert.match(verdict.problems[0], /replacements are still open/);
     assert.equal(verdict.open.length, open.length);
   }
+});
+
+test("on the Go server, G11's go-server checks must run: not applicable there fails the gate", () => {
+  const outcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" || c.kind === "go-server" ? "not-applicable" : "pass"]));
+  const verdict = judgeGate({ inventory, run: run(outcomes, { target: "go-binary:/opt/varlatchd" }), walkthrough });
+  assert.ok(verdict.problems.some((p) => /must run and pass: .*realtime-events\./.test(p)), verdict.problems.join("\n"));
 });

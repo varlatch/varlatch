@@ -14,6 +14,7 @@
  *   target-op.mjs maintenance <ttl ms>
  *   target-op.mjs serve-cli on|off
  *   target-op.mjs ts-stack compose <args...> | compose-env
+ *   target-op.mjs go-server fixture <name> [args...]  JSON
  *
  * An optional operation the target does not have exits 3.
  */
@@ -69,6 +70,10 @@ switch (operation) {
     needs("serve-cli");
     if (!["on", "off"].includes(args[0])) throw new Error("serve-cli on|off");
     await target.serveCli(state, args[0] === "on");
+    break;
+  case "go-server":
+    needs("go-server");
+    print(JSON.stringify(await target.goServer(state, ...args)));
     break;
   case "ts-stack": {
     needs("ts-stack");

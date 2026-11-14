@@ -406,6 +406,33 @@
         "ts-stack"
       ]
     },
+    "realtime-degraded": {
+      "title": "degraded live updates on any server: the connection cut in the page, the indicator, bounded polling, the refresh on reconnect (ADR-0035 D10, ADR-0059 Decision 4)",
+      "script": "apps/web/scripts/e2e-realtime-degraded.mjs",
+      "operations": [
+        "admin-recover",
+        "enroll-page",
+        "browser-session",
+        "getMeta",
+        "listOrganizations",
+        "getMyProfile",
+        "listMyCredentials",
+        "revokeMyCredential"
+      ]
+    },
+    "realtime-events": {
+      "title": "the Go server's live updates: G11's scope, closure and slow-client checks on its server-sent events (ADR-0059 Decision 4)",
+      "script": "scripts/conformance/suites/realtime-events.mjs",
+      "needs": [
+        "go-server"
+      ],
+      "operations": [
+        "browser-session",
+        "streamBrowserEvents",
+        "whoami",
+        "revokeMyCredential"
+      ]
+    },
     "broker": {
       "title": "credential broker (ADR-0022)",
       "script": "services/varlatchd/scripts/e2e-broker.mjs",
@@ -1767,17 +1794,13 @@
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "no indicator while live updates work",
-      "replacement": {
-        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
-      }
+      "replacement": "realtime-degraded.no-indicator-while-live"
     },
     "realtime.dashboard-says-live-updates-reconnecting": {
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "the dashboard says live updates are reconnecting",
-      "replacement": {
-        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
-      }
+      "replacement": "realtime-degraded.says-reconnecting"
     },
     "realtime.api-accepts-change-convex-down": {
       "suite": "realtime",
@@ -1791,9 +1814,7 @@
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "a change made elsewhere shows up by polling /v1",
-      "replacement": {
-        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
-      }
+      "replacement": "realtime-degraded.change-shows-up-by-polling"
     },
     "realtime.dashboard-writes-convex-down": {
       "suite": "realtime",
@@ -1825,31 +1846,85 @@
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "the indicator clears when Convex returns",
-      "replacement": {
-        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
-      }
+      "replacement": "realtime-degraded.indicator-clears-on-reconnect"
     },
     "realtime.live-signals-drive-updates-again": {
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "live signals drive updates again",
-      "replacement": {
-        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
-      }
+      "replacement": "realtime-degraded.live-signals-drive-updates-again"
     },
     "realtime.no-page-reload-throughout": {
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "no page reload throughout",
-      "replacement": {
-        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
-      }
+      "replacement": "realtime-degraded.no-page-reload"
     },
     "realtime.no-content-security-policy-violations": {
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "no Content-Security-Policy violations",
       "replacement": "dashboard.csp-strict"
+    },
+    "realtime-degraded.no-indicator-while-live": {
+      "suite": "realtime-degraded",
+      "kind": "conformance",
+      "title": "no indicator while live updates work"
+    },
+    "realtime-degraded.says-reconnecting": {
+      "suite": "realtime-degraded",
+      "kind": "conformance",
+      "title": "with the live-update connection cut, the dashboard says live updates are reconnecting, and that it refreshes what is on screen"
+    },
+    "realtime-degraded.change-shows-up-by-polling": {
+      "suite": "realtime-degraded",
+      "kind": "conformance",
+      "title": "a change made elsewhere shows up by polling /v1 while live updates are down"
+    },
+    "realtime-degraded.polling-is-bounded": {
+      "suite": "realtime-degraded",
+      "kind": "conformance",
+      "title": "polling while disconnected is bounded: at least 12 s between refreshes of what is on screen"
+    },
+    "realtime-degraded.indicator-clears-on-reconnect": {
+      "suite": "realtime-degraded",
+      "kind": "conformance",
+      "title": "the indicator clears when live updates return"
+    },
+    "realtime-degraded.reconnect-refresh-covers-missed-signal": {
+      "suite": "realtime-degraded",
+      "kind": "conformance",
+      "title": "G11: a signal missed while live updates were down is covered by the refresh on reconnect"
+    },
+    "realtime-degraded.live-signals-drive-updates-again": {
+      "suite": "realtime-degraded",
+      "kind": "conformance",
+      "title": "live signals drive updates again"
+    },
+    "realtime-degraded.no-page-reload": {
+      "suite": "realtime-degraded",
+      "kind": "conformance",
+      "title": "no page reload throughout"
+    },
+    "realtime-degraded.no-content-security-policy-violations": {
+      "suite": "realtime-degraded",
+      "kind": "conformance",
+      "title": "no Content-Security-Policy violations"
+    },
+    "realtime-events.no-signal-crosses-organizations": {
+      "suite": "realtime-events",
+      "kind": "go-server",
+      "title": "G11: no signal crosses organizations: a stream carries only its person's organizations' changeSignals and its own identitySignal, metadata only"
+    },
+    "realtime-events.revocation-and-removal-close-streams": {
+      "suite": "realtime-events",
+      "kind": "go-server",
+      "title": "G11: revocation and removal close streams: sign-out, a revoked session credential and removal from an organization end the stream with the reason, and other streams stay open"
+    },
+    "realtime-events.slow-client-cut-off-alone": {
+      "suite": "realtime-events",
+      "kind": "go-server",
+      "title": "G11: a slow client is cut off without affecting others: a stream that is not read is disconnected, another receives every signal"
     },
     "broker.agent-identity-created-no-credential": {
       "suite": "broker",
@@ -3114,6 +3189,11 @@
       "kind": "conformance",
       "title": "the server answered no 429 other than the proxy probe's pending cap"
     }
+  },
+  "goServerChecks": {
+    "realtime-events.no-signal-crosses-organizations": "It reads the Go server's own event stream (GET /auth/events). The TypeScript server's live updates are Convex subscriptions, scoped by the claims of a Convex token, which this suite cannot open as a stream.",
+    "realtime-events.revocation-and-removal-close-streams": "The TypeScript server cannot pass it: a Convex subscription stays open until its 10-minute Convex token expires or is minted again, whatever was signed out, revoked or removed.",
+    "realtime-events.slow-client-cut-off-alone": "It needs the Go server's bounded per-stream buffer. On the TypeScript server, Convex serves the subscriptions and its own buffering is not varlatchd's to bound."
   },
   "externalSuites": {
     "setup": {

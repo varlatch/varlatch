@@ -2235,6 +2235,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The dashboard's live updates (ADR-0059 Decision 4): server-sent events, served only when /v1/meta lists the capability realtime.sse. The browser's session (its varlatch_session cookie) authenticates the stream; a stream receives the changeSignal of each Organization its identity is a member of when the signal is sent, and its own identity's identitySignal, never another's. Signals carry the domains an audit event touched and the last event's id, never data. Events: "ready" once, data {"identityId"}; "change", data {"organizationId", "lastEventId", "occurredAt", "domains"}; "identity", data {"lastEventId", "occurredAt", "domains"}; a comment line about every 15 s to keep the connection alive; and "close", data {"reason"}, as the server ends the stream: "session-ended" (signed out, expired, or the identity disabled), "credential-revoked" (a credential of the session revoked), "membership-removed" (after the identity event that says so), "slow-client" (16 publications waiting for it; a publication is the events one round of publishing sends it), "replaced" (more than 8 streams for one session; the oldest closes) or "shutdown". Once the server ends a stream, nothing it had queued is sent: only a removal's identity event and the close event, within 2 s. Nothing is replayed and no event carries an id: a dashboard that reconnects refreshes from /v1. 401 AUTHENTICATION_REQUIRED without a live session; 400 VALIDATION_FAILED, the connection closed, for a request that declares a body. Cache-Control no-store. */
+        get: operations["streamBrowserEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -9700,6 +9717,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrowserBearer"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    streamBrowserEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event stream (text/event-stream), until the server or the browser ends it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
                 };
             };
             429: components["responses"]["RequestWindow"];

@@ -45,7 +45,6 @@ import {
 import * as stack from "./compose-stack.mjs";
 
 export const name = "ts-release";
-export const capabilities = stack.CAPABILITIES;
 
 function tar(args) {
   const r = spawnSync("tar", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

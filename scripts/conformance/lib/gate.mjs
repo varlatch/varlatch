@@ -60,9 +60,21 @@ export function predatedFeatures(inventory, version) {
     .map(([name]) => name);
 }
 
+/**
+ * Whether a check may be not applicable in a gate run on target: a ts-stack
+ * check anywhere; a go-server check (G11 on the Go server's own events)
+ * only off the Go server, where it never runs.
+ */
+function mayNotApply(inventory, id, target) {
+  const kind = inventory.checks[id]?.kind;
+  return kind === "ts-stack" || (kind === "go-server" && !String(target).startsWith("go-binary"));
+}
+
 /** The rules a run's own checks must meet: no expected failure, every replacement passing. */
 function runRules(inventory, run) {
   const problems = [];
+  const missingG11 = run.checks.filter((c) => c.outcome === "not-applicable" && !mayNotApply(inventory, c.id, run.target)).map((c) => c.id);
+  if (missingG11.length > 0) problems.push(`on ${run.target} these checks must run and pass: ${missingG11.join(", ")}`);
   if (run.partial) problems.push("a gate run covers every suite: --suite is not allowed");
   if (!run.ok) problems.push("the run itself did not pass");
   if (run.expectedInForce.length > 0) {
@@ -130,7 +142,8 @@ export function judgeGate({ inventory, run, walkthrough = null, recentCli = null
  * Why `report` cannot stand in as the recent-CLI gate run for this one;
  * empty when it can. It is judged again from scratch: a complete report of
  * the same target and the same implementation, every inventory check present
- * once and passing (or not applicable, for a ts-stack check), no problem,
+ * once and passing (or not applicable, for a ts-stack check, or a go-server
+ * check off the Go server), no problem,
  * a CLI that predates no feature, the same walkthrough evidence, and the
  * gate's own rules on its checks.
  */
@@ -162,7 +175,7 @@ export function recentCliProblems(report, { inventory, target, implementation, w
   if (missing.length > 0) problems.push(`${missing.length} inventory checks are missing from it (${missing.slice(0, 5).join(", ")})`);
   if (extra.length > 0) problems.push(`it has checks the inventory does not (${extra.slice(0, 5).join(", ")})`);
   if (twice.length > 0) problems.push(`it lists checks more than once (${twice.slice(0, 5).join(", ")})`);
-  const bad = checks.filter((c) => !(c?.outcome === "pass" || (c?.outcome === "not-applicable" && inventory.checks[c.id]?.kind === "ts-stack")));
+  const bad = checks.filter((c) => !(c?.outcome === "pass" || (c?.outcome === "not-applicable" && mayNotApply(inventory, c?.id, target))));
   if (bad.length > 0) problems.push(`${bad.length} of its checks did not pass (${bad.slice(0, 5).map((c) => `${c?.id}: ${c?.outcome}`).join(", ")})`);
 
   // The gate's rules on its own checks, recomputed: its ok is ours, not its.

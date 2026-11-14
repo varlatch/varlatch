@@ -12,7 +12,15 @@
  *                in the inventory, { "none": "<why>" }, or
  *                { "open": "<the step that writes it>" };
  *   component    tests this checkout's code, not the target; kept in the
- *                run, never counted as conformance.
+ *                run, never counted as conformance;
+ *   go-server    about the Go server's own mechanisms that the TypeScript
+ *                deployment has no counterpart of (ADR-0059: its
+ *                server-sent events, gate G11): its suite needs the
+ *                go-server capability, it is not applicable where the
+ *                target lacks it, and it must pass where it has it. It may
+ *                be a ts-stack check's replacement. Each is listed in
+ *                `goServerChecks` with why the TypeScript server cannot
+ *                pass it.
  *
  * External suites (`externalSuites`): the suites the runner does not run,
  * the TypeScript installation's lifecycle and installer suites
@@ -36,7 +44,10 @@
 
 import { RUNNER_STATUSES, STATUSES } from "./results.mjs";
 
-export const KINDS = ["conformance", "ts-stack", "component"];
+export const KINDS = ["conformance", "ts-stack", "component", "go-server"];
+
+/** The kinds a target without their capability reports not applicable. */
+export const TARGET_SPECIFIC = { "ts-stack": "ts-stack", "go-server": "go-server" };
 
 /**
  * The optional capabilities a suite may need. The required operations (up,
@@ -51,6 +62,7 @@ export const CAPABILITIES = [
   "maintenance",
   "serve-cli",
   "ts-stack",
+  "go-server",
 ];
 
 /**
@@ -92,6 +104,9 @@ export function validateInventory(inventory) {
   const suites = inventory.suites ?? {};
   const checks = inventory.checks ?? {};
   const features = inventory.features ?? {};
+  // The go-server checks, each with why the TypeScript server cannot pass
+  // it: a check only becomes go-server (and stops applying there) visibly.
+  const goServerChecks = inventory.goServerChecks ?? {};
   const counts = new Map(Object.keys(suites).map((s) => [s, 0]));
   const featureChecks = new Map(Object.keys(features).map((f) => [f, 0]));
   for (const [name, feature] of Object.entries(features)) {
@@ -140,6 +155,12 @@ export function validateInventory(inventory) {
     } else if ("replacement" in check) {
       problems.push(`${where}: only a ts-stack check has a replacement`);
     }
+    if (check.kind === "go-server" && check.suite in suites && !(suites[check.suite].needs ?? []).includes("go-server")) {
+      problems.push(`${where}: a go-server check's suite needs the go-server capability`);
+    }
+    if (check.kind === "go-server" && !(typeof goServerChecks[id] === "string" && goServerChecks[id].trim() !== "")) {
+      problems.push(`${where}: a go-server check is listed in goServerChecks, with why the TypeScript server cannot pass it`);
+    }
     if ("reportedBy" in check && check.reportedBy !== "runner") problems.push(`${where}: reportedBy can only be "runner"`);
     for (const key of ["introducedIn", "core"]) {
       if (key in check) problems.push(`${where}: ${key} belongs on the check's feature, not the check`);
@@ -162,6 +183,9 @@ export function validateInventory(inventory) {
     if (suite.kind !== "ts-stack") problems.push(`${where}: kind must be ts-stack (it tests the TypeScript installation)`);
     problems.push(...replacementProblems(where, suite.replacement, checks));
   }
+  for (const id of Object.keys(goServerChecks)) {
+    if (checks[id]?.kind !== "go-server") problems.push(`goServerChecks ${id}: not a go-server check in the inventory`);
+  }
   for (const [suite, count] of counts) if (count === 0) problems.push(`suite ${suite}: no checks`);
   for (const [feature, count] of featureChecks) if (count === 0) problems.push(`feature ${feature}: no checks`);
   for (const name of CORE_FEATURES) {
@@ -173,13 +197,13 @@ export function validateInventory(inventory) {
 }
 
 /**
- * Problems with a replacement: a conformance check ID in the inventory,
+ * Problems with a replacement: a conformance (or go-server) check ID in the inventory,
  * { "none": "<why>" } or { "open": "<the step that writes it>" }.
  */
 function replacementProblems(where, r, checks) {
   if (typeof r === "string") {
     if (!(r in checks)) return [`${where}: replacement ${r} is not in the inventory`];
-    if (checks[r].kind !== "conformance") return [`${where}: replacement ${r} is not a conformance check`];
+    if (checks[r].kind !== "conformance" && checks[r].kind !== "go-server") return [`${where}: replacement ${r} is not a conformance or go-server check`];
     return [];
   }
   if (r && typeof r === "object") {
@@ -275,7 +299,7 @@ export function evaluate({ inventory, reports, errors = [], cliVersion = null, l
     else if (statuses.has("FAIL")) judged("fail", got.find((r) => r.status === "FAIL").text, "assertion");
     else if (statuses.has("PASS")) judged("pass");
     else if (statuses.has("N/A")) {
-      if (entry.kind === "ts-stack") judged("not-applicable", got[0].text);
+      if (entry.kind in TARGET_SPECIFIC) judged("not-applicable", got[0].text);
       else reporting(`a ${entry.kind} check reported not applicable: ${got[0].text}`);
     } else {
       // PREDATES-CLI: accepted only when the runner itself confirms it,

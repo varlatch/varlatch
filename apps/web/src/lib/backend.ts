@@ -9,10 +9,11 @@
  *   own browser session (/auth/session and the paths beside it, a CSRF
  *   token on every POST); "better-auth" otherwise, the TypeScript server's
  *   Better Auth client, as before.
- * - realtime: "convex" on the TypeScript server, as before; "none" on the
- *   Go server until it serves events (realtime.sse, step 3.5): no Convex
- *   client is ever created, the live-updates indicator says updates are
- *   unavailable, and pages refresh by polling.
+ * - realtime: "convex" on the TypeScript server, as before; "sse" when
+ *   /v1/meta also lists realtime.sse, the Go server's server-sent events
+ *   (lib/sse.ts); "none" on a Go server without them: no Convex client is
+ *   ever created on the Go server, and without live updates the indicator
+ *   says they are unavailable and pages refresh by polling.
  *
  * Only a successful /v1/meta answer chooses. Until one arrives the choice
  * stays open and /v1/meta is asked again: a failure, a timeout or an
@@ -24,13 +25,13 @@
 
 export interface Backend {
   session: "better-auth" | "varlatchd";
-  realtime: "convex" | "none";
+  realtime: "convex" | "sse" | "none";
 }
 
 /** The clients a successful /v1/meta's capabilities choose. */
 export function backendOf(capabilities: readonly string[]): Backend {
   if (!capabilities.includes("auth.session")) return { session: "better-auth", realtime: "convex" };
-  return { session: "varlatchd", realtime: "none" };
+  return { session: "varlatchd", realtime: capabilities.includes("realtime.sse") ? "sse" : "none" };
 }
 
 /** One /v1/meta request's outcome. */

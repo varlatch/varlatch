@@ -80,8 +80,10 @@ var Capabilities = []string{
 // TypeScript server's: auth.session, its own browser session (ADR-0059
 // Decision 6; varlatchd-core decision 1), which tells the dashboard and the
 // enrollment page to use /auth/session and the paths beside it instead of
-// Better Auth's. The TypeScript server never lists it.
-var GoCapabilities = []string{"auth.session"}
+// Better Auth's; and realtime.sse, its live updates as server-sent events
+// (GET /auth/events, ADR-0059 Decision 4), which tells the dashboard to use
+// them instead of Convex. The TypeScript server lists neither.
+var GoCapabilities = []string{"auth.session", "realtime.sse"}
 
 // SemanticsVersions are the Contract Semantics versions the server
 // evaluates (packages/contract/src/semantics.ts SEMANTICS_VERSIONS).
@@ -120,7 +122,10 @@ func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (a
 	}
 	caps := slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return hidden[c] })
 	if s.opts.Auth != nil {
-		caps = append(caps, GoCapabilities...)
+		caps = append(caps, "auth.session")
+		if s.opts.Realtime != nil {
+			caps = append(caps, "realtime.sse")
+		}
 	}
 	semantics := slices.Clone(SemanticsVersions)
 	meta := api.Meta{ApiMajor: 1, ServerVersion: s.opts.Version, SemanticsVersions: &semantics, Capabilities: caps}

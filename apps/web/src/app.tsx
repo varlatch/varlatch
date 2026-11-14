@@ -3,9 +3,10 @@ import React, { lazy, Suspense, useEffect, useMemo } from "react";
 import { createBrowserRouter, Navigate, Outlet, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
-import { LiveUpdatesStatus, RealtimeUnavailable } from "./components/LiveUpdatesStatus";
+import { LiveUpdatesStatus, RealtimeUnavailable, SseLiveUpdatesStatus } from "./components/LiveUpdatesStatus";
 import { backend } from "./lib/backend";
 import { SessionProvider, useSession } from "./lib/session";
+import { SseProvider } from "./lib/sseProvider";
 import { TailnetConnectionProvider } from "./lib/tailnetConnection";
 import { showPreferredTheme } from "./lib/theme";
 import { DialogProvider } from "./components/Dialog";
@@ -63,8 +64,10 @@ const CONVEX_URL =
   (import.meta as { env?: Record<string, string> }).env?.VITE_CONVEX_URL ||
   "http://localhost:3210";
 // No Convex client at all on a server without it (lib/backend.ts): the Go
-// server until it serves events.
-const convex = backend().realtime === "convex" ? new ConvexReactClient(CONVEX_URL) : null;
+// server, whose live updates are its own server-sent events (realtime.sse)
+// or none.
+const realtime = backend().realtime;
+const convex = realtime === "convex" ? new ConvexReactClient(CONVEX_URL) : null;
 
 // Secrets never enter this cache: disclosures are imperative mutations only.
 const queryClient = new QueryClient({
@@ -110,6 +113,14 @@ function ConvexWithSession({ children }: { children: React.ReactNode }) {
     }),
     [identityId, mintConvexToken, accessEpoch],
   );
+  if (realtime === "sse") {
+    return (
+      <SseProvider enabled={identityId !== null}>
+        <SseLiveUpdatesStatus />
+        {children}
+      </SseProvider>
+    );
+  }
   if (!convex) {
     return (
       <>

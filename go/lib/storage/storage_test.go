@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -886,5 +887,34 @@ func TestOnCheckpointReportsEveryTrigger(t *testing.T) {
 	}
 	if r := log.wait(t, "close TRUNCATE", func(r CheckpointResult) bool { return r.Trigger == TriggerClose }); r.Mode != "TRUNCATE" || r.Busy {
 		t.Fatalf("close checkpoint: %+v", r)
+	}
+}
+
+// OnCommit runs after each successful COMMIT, before the batch's callers
+// are answered (so a caller that returns from Write finds the hook already
+// run, and a reader sees the batch), and never for a failed batch.
+func TestOnCommit(t *testing.T) {
+	var commits atomic.Int64
+	var seen atomic.Int64
+	db := open(t, Options{OnCommit: func() { commits.Add(1) }})
+	before := commits.Load()
+	mustWrite(t, db, insert("one"))
+	if commits.Load() != before+1 {
+		t.Fatalf("commits %d, want %d", commits.Load(), before+1)
+	}
+	setPageLimit(t, db, 4) // commits a batch of its own
+	seen.Store(commits.Load())
+	if err := db.Write(context.Background(), bigInsert("too big")); !IsDiskFull(err) {
+		t.Fatalf("got %v, want disk full", err)
+	}
+	if commits.Load() != seen.Load() {
+		t.Fatal("OnCommit ran for a failed batch")
+	}
+	// A job's own error rolls back to its savepoint; the batch commits.
+	if err := db.Write(context.Background(), func(tx *Tx) error { return errors.New("own") }); err == nil {
+		t.Fatal("want the job's error")
+	}
+	if commits.Load() != seen.Load()+1 {
+		t.Fatalf("commits %d after a committed batch with a failed job, want %d", commits.Load(), seen.Load()+1)
 	}
 }

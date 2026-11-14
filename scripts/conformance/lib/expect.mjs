@@ -100,6 +100,38 @@ export function lackingCheckKeys(files, inventory) {
   return keys;
 }
 
+/**
+ * Every check that may report not applicable on each target, as
+ * `<target>|<check id>`: one whose suite needs a capability the target
+ * lacks, or whose kind is tied to one (ts-stack, go-server) the target
+ * lacks. `capabilities` is capabilities.json: { "<target>": [...] }.
+ */
+export function notApplicableKeys(inventory, capabilities) {
+  const keys = new Set();
+  for (const [target, caps] of Object.entries(capabilities ?? {})) {
+    if (!Array.isArray(caps)) continue;
+    for (const [id, check] of Object.entries(inventory?.checks ?? {})) {
+      const needs = [...(inventory.suites?.[check.suite]?.needs ?? []), ...(check.kind === "ts-stack" || check.kind === "go-server" ? [check.kind] : [])];
+      if (needs.some((c) => !caps.includes(c))) keys.add(`${target}|${id}`);
+    }
+  }
+  return keys;
+}
+
+/**
+ * The checks of the merge base that the head makes newly not applicable on
+ * a target (a new kind, a suite that needs more, a move to another suite,
+ * a capability the target no longer has), each side judged with its own
+ * inventory and capabilities: they would stop being checked there, so this
+ * needs the label like a new gap. A check new at the head is not counted.
+ */
+export function newlyNotApplicable(base, head) {
+  const before = notApplicableKeys(base.inventory, base.capabilities);
+  return [...notApplicableKeys(head.inventory, head.capabilities)]
+    .filter((k) => !before.has(k) && Object.hasOwn(base.inventory?.checks ?? {}, k.slice(k.indexOf("|") + 1)))
+    .sort();
+}
+
 /** Every `lacks` entry of a set of expectations files: `<file>|<target key>|<operation>`. */
 export function lacksKeys(files) {
   const keys = new Set();
