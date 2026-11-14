@@ -151,31 +151,36 @@ const asSet = (lacks) => (lacks instanceof Set ? lacks : lacks instanceof Map ? 
 
 /**
  * Whether an operation is lacking, given the lacking set: a listed operation,
- * or a named one that uses a listed one.
+ * or a named one that uses a listed one, unless the target has a capability
+ * of that name, which writes it with an operation of its own (the `seed`
+ * capability: the Go server's seed, while the /v1 writes the runner's seed
+ * uses are not built).
  */
-function lacking(inventory, op, lacks) {
+function lacking(inventory, op, lacks, capabilities = []) {
   if (lacks.has(op)) return true;
   const uses = inventory.operations?.[op]?.uses;
-  return Array.isArray(uses) && uses.some((u) => lacks.has(u));
+  if (!Array.isArray(uses) || capabilities.includes(op)) return false;
+  return uses.some((u) => lacks.has(u));
 }
 
 /**
- * The checks that report target-lacks for a set of lacking operations:
+ * The checks that report target-lacks for a set of lacking operations, on a
+ * target with these capabilities (targets/capabilities.json):
  * Map(check id → [the lacking operations it needs, sorted]).
  */
-export function lackingChecks(inventory, lacks) {
+export function lackingChecks(inventory, lacks, capabilities = []) {
   const set = asSet(lacks);
   const out = new Map();
   for (const id of Object.keys(inventory.checks ?? {})) {
-    const missing = operationsOf(inventory, id).filter((op) => lacking(inventory, op, set));
+    const missing = operationsOf(inventory, id).filter((op) => lacking(inventory, op, set, capabilities));
     if (missing.length > 0) out.set(id, missing);
   }
   return out;
 }
 
-/** Whether a named setup operation (the seed, bootstrap) cannot run on a target lacking `lacks`. */
-export function setupLacks(inventory, op, lacks) {
-  return lacking(inventory, op, asSet(lacks));
+/** Whether a named setup operation (the seed, bootstrap) cannot run on a target lacking `lacks`, with these capabilities. */
+export function setupLacks(inventory, op, lacks, capabilities = []) {
+  return lacking(inventory, op, asSet(lacks), capabilities);
 }
 
 /** Problems with one target key's `lacks` entries; empty when valid. */

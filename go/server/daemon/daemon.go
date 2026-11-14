@@ -35,6 +35,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/realtime"
+	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/web"
 )
 
@@ -184,6 +185,11 @@ func Serve(opts Options) int {
 		}
 	}()
 	defer func() { cancel(); <-hubDone }()
+	// The read path of values (ADR-0059 step 3.6). Its report counts run
+	// after their responses: a stop waits for them before the database
+	// closes.
+	readPath := values.New(store, rootKEK, values.Options{Log: log})
+	defer readPath.Settled()
 	handler, err := httpserver.New(httpserver.Options{
 		Version:        buildinfo.Version,
 		PublicURL:      cfg.PublicURL,
@@ -195,6 +201,7 @@ func Serve(opts Options) int {
 		Backend:        &backend{store: store, rootKEK: rootKEK},
 		Auth:           auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK}),
 		Realtime:       hub,
+		Values:         readPath,
 		Log:            log,
 	})
 	if err != nil {
@@ -301,6 +308,12 @@ func ensureInstallation(ctx context.Context, store *storage.DB, rootKEK []byte) 
 
 func verify(rootKEK []byte, inst installation) bool {
 	return envelope.VerifyCanary(rootKEK, inst.Canary, inst.ID)
+}
+
+// NewBackend is the HTTP layer's Backend serve uses: the installation and
+// readiness, read from store (the read path's parity tests use it).
+func NewBackend(store *storage.DB, rootKEK []byte) httpserver.Backend {
+	return &backend{store: store, rootKEK: rootKEK}
 }
 
 // backend answers the HTTP layer's reads.

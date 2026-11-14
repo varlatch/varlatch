@@ -123,6 +123,23 @@ func unhex(c byte) (byte, bool) {
 // without two hex digits, or bytes that are not UTF-8). An escape of one
 // of ";/?:@&=+$,#" is kept as written.
 func decodeURI(s string) (string, bool) {
+	return decodeEscapes(s, ";/?:@&=+$,#")
+}
+
+// decodeURIComponent is JavaScript's decodeURIComponent: decodeURI that
+// keeps no escape as written.
+func decodeURIComponent(s string) (string, bool) {
+	return decodeEscapes(s, "")
+}
+
+// tryDecodeURIComponent is Hono's route parameter decoding
+// (tryDecodeURIComponent): decodeURIComponent on the whole value, or, where
+// that throws, on each run of escapes, keeping a run that throws as written.
+func tryDecodeURIComponent(s string) string {
+	return tryDecode(s, decodeURIComponent)
+}
+
+func decodeEscapes(s, reserved string) (string, bool) {
 	var b strings.Builder
 	for i := 0; i < len(s); {
 		if s[i] != '%' {
@@ -151,7 +168,7 @@ func decodeURI(s string) (string, bool) {
 			}
 		}
 		if buf[0] < 0x80 {
-			if strings.IndexByte(";/?:@&=+$,#", buf[0]) >= 0 {
+			if strings.IndexByte(reserved, buf[0]) >= 0 {
 				b.WriteString(s[start:i])
 			} else {
 				b.WriteByte(buf[0])
@@ -170,7 +187,11 @@ func decodeURI(s string) (string, bool) {
 // tryDecodeURI is Hono's: decodeURI on the whole string, or, where that
 // throws, on each run of escapes, keeping a run that throws as written.
 func tryDecodeURI(s string) string {
-	if out, ok := decodeURI(s); ok {
+	return tryDecode(s, decodeURI)
+}
+
+func tryDecode(s string, decode func(string) (string, bool)) string {
+	if out, ok := decode(s); ok {
 		return out
 	}
 	var b strings.Builder
@@ -190,7 +211,7 @@ func tryDecodeURI(s string) string {
 			i++
 			continue
 		}
-		if out, ok := decodeURI(s[i:j]); ok {
+		if out, ok := decode(s[i:j]); ok {
 			b.WriteString(out)
 		} else {
 			b.WriteString(s[i:j])

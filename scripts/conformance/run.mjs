@@ -181,7 +181,7 @@ async function main() {
   const expectations = loadExpectations(targetName, inventory, openapi);
   // The target's declared gaps, and the checks that need one.
   const lacks = lacksFor(expectations, expectKey);
-  const lacking = lackingChecks(inventory, lacks.keys());
+  const lacking = lackingChecks(inventory, lacks.keys(), capabilities);
   // Gate evidence is checked before anything starts: a gate run without it
   // cannot pass, so it does not spend an hour finding that out.
   const walkthrough = options.walkthrough ? walkthroughEvidence(options.walkthrough) : null;
@@ -305,17 +305,24 @@ async function main() {
         // The admin identity's CLI credential, which later suites use: issued
         // whenever the target can recover, seed or not (a target that lacks
         // the seed's writes still signs in with it; cli-core's token sign-in).
-        if (!setupLacks(inventory, "admin-recover", lacks)) {
+        if (!setupLacks(inventory, "admin-recover", lacks, capabilities)) {
           if (!ctx.adminId) throw new Error("the passkey suite named no identity: nothing after it can run");
           ctx.token = await ctx.cliCredential();
         }
-        if (setupLacks(inventory, "seed", lacks)) {
+        if (setupLacks(inventory, "seed", lacks, capabilities)) {
           const missing = inventory.operations.seed.uses.filter((op) => lacks.has(op));
           console.log(`--- seed: not run, the target lacks ${missing.join(", ")}`);
           continue;
         }
-        console.log(`--- seed data as ${ctx.adminId}`);
-        await seed(ctx.origin, ctx.token);
+        if (capabilities.includes("seed")) {
+          // The target writes the same data with an operation of its own
+          // while the /v1 writes the seed uses are not built.
+          console.log(`--- seed data as ${ctx.adminId}, by the target's own seed`);
+          await target.seed(state, ctx.adminId, SEEDED_SECRET);
+        } else {
+          console.log(`--- seed data as ${ctx.adminId}`);
+          await seed(ctx.origin, ctx.token);
+        }
         await target.settle?.(state);
         continue;
       }

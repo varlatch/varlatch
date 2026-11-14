@@ -149,12 +149,13 @@ of reaching into Compose or the database:
 | `serve-cli` | `serve-cli on\|off`: the server serves the CLI and install scripts, or not (ADR-0058 Decision 3) |
 | `ts-stack` | `ts-stack compose <args...>` and `ts-stack compose-env`: Compose control for the ts-stack checks |
 | `go-server` | `go-server fixture <name> [args...]`: the Go server's fixtures for its go-server checks (organizations, people, browser sessions, audit events, a removal), written while the `/v1` writes that would make them are not built (ADR-0059 step 4); JSON |
+| `seed` | `seed <identity> <secret>`: the target writes the runner's seed itself (the Organization, Project, environments, Contract and values `run.mjs` seeds through `/v1`), as the given admin identity; the seed is then not lacking whatever the operations it uses (ADR-0059 step 3, varlatchd-core decision 5) |
 
 `targets/capabilities.json` is the only source of a target's capabilities:
 `loadTarget` reads them from it, and refuses an adapter that declares a
 list of its own, or that lacks the operation a listed capability needs
 (`probe:<name>` the `probe` operation; `maintenance`, `serveCli`,
-`tsStack`, `goServer`). So what the merge-base check judges is what the
+`tsStack`, `goServer`, `seed`). So what the merge-base check judges is what the
 runner uses.
 
 A probe is a fixed, named read; a suite never sends SQL. A conformance check
@@ -205,7 +206,10 @@ in `CONFORMANCE_TARGET_STATE`, which `target-op.mjs` reads.
   `varlatchd admin conformance-probe`, a command only a build with the
   `conformance` tag has (`up` refuses a binary without it), and
   `go-server`, whose fixtures it runs as `varlatchd admin
-  conformance-fixture`, from the same build. It signals only
+  conformance-fixture`, from the same build, and `seed`, which it runs as
+  `varlatchd admin conformance-seed` (the Secret's value on standard
+  input), from the same build, until the `/v1` writes the runner's seed
+  uses are built. It signals only
   the process it started, by the PID it recorded, after checking that PID
   still runs its configuration. Build the binary with the dashboard first:
   `go generate ./server/web` then
@@ -318,7 +322,9 @@ operation outside `/v1`, listed in `inventory.json` `operations`:
   `admin-recover`, the targets' `bootstrap` and `recover`; `serve-cli`,
   `serveCli`);
 - `{ "uses": [...] }`: the `seed`, the runner's own writes, which lacks
-  exactly when an operation it uses does. It is never listed itself.
+  exactly when an operation it uses does, unless the target has the `seed`
+  capability and writes it with an operation of its own. It is never
+  listed itself.
 
 Each suite lists the operations it needs (`suites.<name>.operations`), and a
 check may add its own (`checks.<id>.operations`), for a feature group that

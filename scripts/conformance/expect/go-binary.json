@@ -176,10 +176,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "discloseSecrets": {
-        "reason": "the read path of values is not built yet in the Go server",
-        "step": "ADR-0059 step 3.6"
-      },
       "exchangeOidcToken": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -211,10 +207,6 @@
       "getContractRevision": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
-      },
-      "getEffectiveConfiguration": {
-        "reason": "the read path of values is not built yet in the Go server",
-        "step": "ADR-0059 step 3.6"
       },
       "getEnvironment": {
         "reason": "not ported to the Go server yet",

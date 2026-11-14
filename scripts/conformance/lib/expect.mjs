@@ -88,13 +88,16 @@ export function lacksFor(file, key) {
 
 /**
  * Every check that reports target-lacks under a set of expectations files,
- * judged with one inventory: `<file>|<target key>|<check id>`.
+ * judged with one inventory and one capabilities file (capabilities.json,
+ * by target; a target key is `<target>` or `<target>:<argument>`):
+ * `<file>|<target key>|<check id>`.
  */
-export function lackingCheckKeys(files, inventory) {
+export function lackingCheckKeys(files, inventory, capabilities = {}) {
   const keys = new Set();
   for (const [fileName, file] of Object.entries(files)) {
     for (const [key, entries] of Object.entries(file?.lacks ?? {})) {
-      for (const id of lackingChecks(inventory, Object.keys(entries ?? {})).keys()) keys.add(`${fileName}|${key}|${id}`);
+      const caps = capabilities?.[key.split(":")[0]] ?? [];
+      for (const id of lackingChecks(inventory, Object.keys(entries ?? {}), caps).keys()) keys.add(`${fileName}|${key}|${id}`);
     }
   }
   return keys;
