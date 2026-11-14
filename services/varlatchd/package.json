@@ -31,9 +31,12 @@
     "@types/pg": "8.15.5",
     "@varlatch/env-schema": "workspace:*",
     "@varlatch/sdk": "workspace:*",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "esbuild": "0.28.2",
     "playwright": "1.61.0",
     "typescript": "5.9.2",
-    "vitest": "4.1.12"
+    "vitest": "4.1.12",
+    "yaml": "2.9.1"
   }
 }
