@@ -9,13 +9,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { judgeGate, recentCliProblem, replacements } from "../lib/gate.mjs";
+import { canonical, judgeGate, predatedFeatures, recentCliProblems, replacements } from "../lib/gate.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const inventory = JSON.parse(readFileSync(join(here, "..", "inventory.json"), "utf8"));
 
 /** A small inventory whose replacements are all satisfiable. */
 const small = {
+  features: { scan: { title: "scan", introducedIn: "0.20.0", changelog: { release: "0.20.0", quote: "q" } } },
   checks: {
     "a.new": { suite: "a", kind: "conformance" },
     "a.old": { suite: "a", kind: "ts-stack", replacement: "a.new" },
@@ -23,13 +24,15 @@ const small = {
   },
   externalSuites: { setup: { script: "scripts/test-setup.mjs", replacement: "a.new" } },
 };
-const walkthrough = { path: "docs/evidence/walkthrough-2026-12.md", exists: true, size: 120 };
+const walkthrough = { path: "docs/evidence/walkthrough-2026-12.md", exists: true, size: 120, sha256: "w".repeat(64) };
+const implementation = { target: "go-binary", sha256: "b".repeat(64) };
 const run = (outcomes, extra = {}) => ({
   target: "go-binary:/usr/bin/varlatchd",
   partial: false,
   ok: true,
   checks: Object.entries(outcomes).map(([id, outcome]) => ({ id, outcome })),
   expectedInForce: [],
+  implementation,
   ...extra,
 });
 const passing = { "a.new": "pass", "a.old": "not-applicable", "a.gone": "not-applicable" };
@@ -71,18 +74,76 @@ test("the browser-walkthrough evidence must be named, under docs/evidence/, pres
   assert.match(problem({ ...walkthrough, size: 0 }), /is empty/);
 });
 
-test("a run whose CLI predates checks needs the passing gate report of a run with a recent CLI", () => {
-  const old = run({ ...passing, "a.new": "pass", "a.x": "predates-cli" });
-  let v = judgeGate({ inventory: small, run: old, walkthrough });
-  assert.match(v.problems.join(), /1 checks predate this run's CLI, .*--recent-cli-report.*: none named/);
-  const recent = { target: old.target, partial: false, ok: true, gate: { passed: true }, checks: [{ id: "a.new", outcome: "pass" }] };
-  v = judgeGate({ inventory: small, run: old, walkthrough, recentCli: recent });
-  assert.equal(v.passed, true, v.problems.join());
-  assert.match(recentCliProblem({ ...recent, target: "ts-source" }, old.target), /a run of ts-source/);
-  assert.match(recentCliProblem({ ...recent, gate: { passed: false } }, old.target), /did not pass in gate mode/);
-  assert.match(recentCliProblem({ ...recent, ok: false }, old.target), /did not pass in gate mode/);
-  assert.match(recentCliProblem({ ...recent, partial: ["a"] }, old.target), /partial/);
-  assert.match(recentCliProblem({ ...recent, checks: [{ id: "a.x", outcome: "predates-cli" }] }, old.target), /predated its CLI too/);
+/** A complete report of a gate run with a source CLI, as run.mjs writes it. */
+const recentReport = (change = () => {}) => {
+  const report = {
+    target: "go-binary:/usr/bin/varlatchd",
+    partial: false,
+    implementation: structuredClone(implementation),
+    cli: { spec: "source", version: null, sha256: "c".repeat(64) },
+    checks: [
+      { id: "a.new", outcome: "pass" },
+      { id: "a.old", outcome: "not-applicable" },
+      { id: "a.gone", outcome: "not-applicable" },
+    ],
+    problems: [],
+    ok: true,
+    gate: { passed: true, walkthrough: { ...walkthrough } },
+  };
+  change(report);
+  return report;
+};
+const old = run({ "a.new": "pass", "a.old": "not-applicable", "a.gone": "predates-cli" });
+const why = (report) => recentCliProblems(report, { inventory: small, target: old.target, implementation, walkthrough }).join("\n");
+
+test("a run whose CLI predates checks needs the complete, passing report of the same implementation with a recent CLI", () => {
+  assert.match(judgeGate({ inventory: small, run: old, walkthrough }).problems.join(), /1 checks predate this run's CLI, .*--recent-cli-report.*: none named/);
+  const verdict = judgeGate({ inventory: small, run: old, walkthrough, recentCli: recentReport() });
+  assert.equal(verdict.passed, true, verdict.problems.join());
+  assert.equal(why(recentReport((r) => (r.cli = { spec: "0.22.0", version: "0.22.0" }))), "");
+});
+
+test("the recent-CLI report is judged again, not trusted: a bare or failing report with ok and gate.passed set is refused", () => {
+  // Sol's case: only the fields a forger would set.
+  const bare = why({ target: old.target, ok: true, gate: { passed: true } });
+  assert.match(bare, /not a complete run/);
+  assert.match(bare, /ran another implementation/);
+  assert.match(bare, /names no verified CLI/);
+  assert.match(bare, /reports problems outside its checks/);
+  assert.match(bare, /3 inventory checks are missing/);
+  // A failed check, with ok and gate.passed still claimed.
+  assert.match(why(recentReport((r) => (r.checks[0].outcome = "fail"))), /1 of its checks did not pass \(a\.new: fail\)/);
+  assert.match(why(recentReport((r) => (r.checks[0].outcome = "expected-fail"))), /did not pass/);
+  assert.match(why(recentReport((r) => (r.checks[1].outcome = "predates-cli"))), /did not pass \(a\.old: predates-cli\)/);
+  // Not applicable is accepted for a ts-stack check only.
+  assert.match(why(recentReport((r) => (r.checks[0].outcome = "not-applicable"))), /a\.new: not-applicable/);
+  assert.match(why(recentReport((r) => r.checks.pop())), /1 inventory checks are missing from it \(a\.gone\)/);
+  assert.match(why(recentReport((r) => r.checks.push({ id: "a.extra", outcome: "pass" }))), /checks the inventory does not \(a\.extra\)/);
+  assert.match(why(recentReport((r) => r.checks.push({ id: "a.new", outcome: "pass" }))), /more than once \(a\.new\)/);
+  assert.match(why(recentReport((r) => (r.problems = ["runner: the run stopped"]))), /problems outside its checks/);
+  assert.match(why(recentReport((r) => (r.partial = ["a"]))), /not a complete run/);
+  assert.match(why(recentReport((r) => (r.checks[0].expected = { reason: "x" }))), /its own gate: no expected failure is allowed/);
+});
+
+test("the recent-CLI report must come from the same implementation, a CLI that predates nothing, and the same walkthrough", () => {
+  assert.match(why(recentReport((r) => (r.target = "go-binary:/other/varlatchd"))), /a run of "go-binary:\/other\/varlatchd"/);
+  // Same path, another binary.
+  assert.match(why(recentReport((r) => (r.implementation.sha256 = "d".repeat(64)))), /ran another implementation/);
+  assert.match(why(recentReport((r) => delete r.implementation)), /ran another implementation/);
+  assert.match(recentCliProblems(recentReport(), { inventory: small, target: old.target, implementation: null }).join(), /this run recorded no implementation fingerprint/);
+  // Its CLI must predate nothing in the current inventory.
+  assert.match(why(recentReport((r) => (r.cli = { spec: "0.19.0", version: "0.19.0" }))), /its CLI 0\.19\.0 predates scan/);
+  assert.match(why(recentReport((r) => (r.gate.walkthrough.sha256 = "x".repeat(64)))), /other browser-walkthrough evidence/);
+  // Fingerprints compare by content, not key order.
+  assert.equal(canonical({ b: 1, a: [1, { d: 2, c: 3 }] }), canonical({ a: [1, { c: 3, d: 2 }], b: 1 }));
+  assert.deepEqual(predatedFeatures(small, null), []);
+  assert.deepEqual(predatedFeatures(small, "0.19.9"), ["scan"]);
+  assert.deepEqual(predatedFeatures(small, "0.20.0"), []);
+});
+
+test("a gate run needs its own implementation fingerprint", () => {
+  const verdict = judgeGate({ inventory: small, run: run(passing, { implementation: null }), walkthrough });
+  assert.match(verdict.problems.join(), /recorded no implementation fingerprint/);
 });
 
 test("today no target can pass the gate: the realtime (G11), doctor and lifecycle replacements are open", () => {

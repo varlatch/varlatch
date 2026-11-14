@@ -144,7 +144,7 @@ test("a run where every check passed is ok", () => {
 test("a check in the inventory that did not report fails the run", () => {
   const run = evaluate({ inventory: base(), reports: all().filter((r) => r.id !== "stub.page") });
   assert.equal(run.ok, false);
-  assert.deepEqual(outcome(run, "stub.page"), { id: "stub.page", suite: "stub", kind: "component", feature: null, outcome: "fail", why: "did not report", reports: 0 });
+  assert.deepEqual(outcome(run, "stub.page"), { id: "stub.page", suite: "stub", kind: "component", feature: null, outcome: "fail", why: "did not report", reports: 0, failure: "reporting" });
 });
 
 test("a reported check that is not in the inventory, or comes from another suite, fails the run", () => {

@@ -8,6 +8,9 @@
  * run against it fails clearly instead of passing anything.
  */
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
 export const name = "go-binary";
 export const capabilities = [];
 
@@ -32,6 +35,16 @@ export const recover = notBuilt;
 export const restart = notBuilt;
 export const logs = notBuilt;
 export const requestLog = notBuilt;
+
+/**
+ * The implementation fingerprint step 3 records: the binary's sha256, not
+ * its path, so the same build compares equal wherever it is and another
+ * build at the same path does not.
+ */
+export function fingerprintBinary(path) {
+  return { target: name, sha256: createHash("sha256").update(readFileSync(path)).digest("hex") };
+}
+export const fingerprint = (state) => (state?.binary ? fingerprintBinary(state.binary) : null);
 
 /** Expectations are kept for the Go server whatever its path. */
 export const expectKey = () => name;

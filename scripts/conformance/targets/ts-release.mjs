@@ -152,6 +152,24 @@ export function describe(state) {
   return { release: state.release ?? null };
 }
 
+/**
+ * The implementation fingerprint: the release as verified (version, the
+ * hash of its signed SHA256SUMS and of each asset, each image's digest) and
+ * the image IDs the stack ran. Gate mode compares it between runs.
+ */
+export function fingerprint(state) {
+  const r = state.release;
+  if (!r) return null;
+  return {
+    target: name,
+    version: r.version,
+    sha256sums: r.sha256sums,
+    assets: r.assets,
+    images: Object.fromEntries(Object.entries(r.images).map(([k, v]) => [k, v.digest])),
+    imageIds: stack.imageIds(state),
+  };
+}
+
 /** Expectations are kept per release: ts-release:<version>. */
 export const expectKey = (argument) => `${name}:${argument}`;
 

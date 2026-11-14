@@ -152,6 +152,25 @@ export async function down(state) {
   rmSync(state.root ?? state.dir, { recursive: true, force: true });
 }
 
+/**
+ * The image each service of the project runs, by image ID (content
+ * address), from its containers: what the stack actually ran, for the
+ * target's implementation fingerprint.
+ */
+export function imageIds(state) {
+  const ids = mustCompose(state, ["ps", "-a", "-q"]).split("\n").map((l) => l.trim()).filter(Boolean);
+  if (ids.length === 0) throw new Error("the project has no containers to fingerprint");
+  const r = spawnSync("docker", ["inspect", "-f", '{{ index .Config.Labels "com.docker.compose.service" }} {{ .Image }}', ...ids], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`docker inspect failed: ${r.stderr}`);
+  const images = {};
+  for (const line of r.stdout.split("\n").filter(Boolean)) {
+    const [service, image] = line.trim().split(/\s+/);
+    if (images[service] && images[service] !== image) throw new Error(`service ${service} runs two images: ${images[service]}, ${image}`);
+    images[service] = image;
+  }
+  return Object.fromEntries(Object.entries(images).sort(([a], [b]) => a.localeCompare(b)));
+}
+
 /** What a failed run prints to help: the last lines of every service's log. */
 export async function diagnostics(state) {
   return compose(state, ["logs", "--tail", "50"]).stdout;

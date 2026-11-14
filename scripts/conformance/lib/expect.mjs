@@ -68,21 +68,31 @@ export function expectationsFor(file, key, cliSpec) {
 
 /**
  * Applies the expected failures to a judged run (lib/inventory.mjs
- * evaluate): a failed check that is expected becomes `expected-fail`, still
- * listed with why it failed and its entry; an expected check that passed
- * becomes a failure. Other outcomes (not applicable, predates the CLI) stay
- * as they are and are listed as not exercised. Problems outside checks are
- * never expected.
+ * evaluate): an expected check that failed by its own FAIL line
+ * (`failure: "assertion"`) becomes `expected-fail`, still listed with why
+ * it failed and its entry; an expected check that passed becomes a
+ * failure. A reporting failure (no result, a forbidden N/A, an unconfirmed
+ * PREDATES-CLI, inconsistent results) stays a failure whatever is
+ * expected. Other outcomes (not applicable, predates the CLI) stay as they
+ * are and are listed as not exercised. Problems outside checks are never
+ * expected.
  */
 export function applyExpectations(judged, expected) {
-  const summary = { inForce: expected.size, failedAsExpected: [], passedUnexpectedly: [], notExercised: [] };
+  const summary = { inForce: expected.size, failedAsExpected: [], failedOtherwise: [], passedUnexpectedly: [], notExercised: [] };
   const checks = judged.checks.map((c) => {
     const entry = expected.get(c.id);
     if (!entry) return c;
     const expectation = { reason: entry.reason, removedBy: entry.removedBy, client: entry.client };
-    if (c.outcome === "fail") {
+    // Only a failure the check itself reported (a FAIL line) can be
+    // expected. A check that did not report, reported a forbidden N/A or an
+    // unconfirmed PREDATES-CLI, or reported inconsistently always fails.
+    if (c.outcome === "fail" && c.failure === "assertion") {
       summary.failedAsExpected.push(c.id);
       return { ...c, outcome: "expected-fail", expected: expectation };
+    }
+    if (c.outcome === "fail") {
+      summary.failedOtherwise.push(c.id);
+      return { ...c, why: `${c.why} (expected to fail by assertion, but this failure is not one: an expectation never covers it)`, expected: expectation };
     }
     if (c.outcome === "pass") {
       summary.passedUnexpectedly.push(c.id);

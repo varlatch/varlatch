@@ -236,3 +236,48 @@ test("ts-source's Compose override: built here, built and labeled once, or prebu
   }
   assert.throws(() => buildOverride("/repo", { mode: "prebuilt" }), /needs an image tag/);
 });
+
+test("prebuilt images are refused for a checkout that differs from their commit: build, then edit or add a file", async () => {
+  const { prebuiltProblems, worktreeChanges, checkoutCommit } = await import("../targets/ts-source.mjs");
+  const repo = mkdtempSync(join(tmpdir(), "conformance-prebuilt-test-"));
+  const git = (...args) => {
+    const r = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: repo, encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+  };
+  try {
+    git("init", "-q");
+    mkdirSync(join(repo, "services", "varlatchd", "src"), { recursive: true });
+    writeFileSync(join(repo, "services", "varlatchd", "src", "server.ts"), "export const v = 1;\n");
+    writeFileSync(join(repo, ".gitignore"), "node_modules/\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "built");
+    const commit = checkoutCommit(repo);
+    // The images were built from this commit (as source-images.mjs labels them).
+    const labeled = () => commit;
+    assert.deepEqual(prebuiltProblems({ repoRoot: repo, tag: "ci", commit, inspect: labeled }), []);
+    // An ignored file is not a change.
+    mkdirSync(join(repo, "node_modules"));
+    writeFileSync(join(repo, "node_modules", "x.js"), "");
+    assert.deepEqual(worktreeChanges(repo), []);
+
+    // Edited after the build: a tracked server file.
+    writeFileSync(join(repo, "services", "varlatchd", "src", "server.ts"), "export const v = 2;\n");
+    let problems = prebuiltProblems({ repoRoot: repo, tag: "ci", commit, inspect: labeled }).join();
+    assert.match(problems, new RegExp(`the checkout differs from ${commit} \\(1 changed or untracked files: services/varlatchd/src/server\\.ts\\)`));
+    git("checkout", "--", ".");
+    // A new, untracked file in a nested directory.
+    mkdirSync(join(repo, "apps", "web", "src"), { recursive: true });
+    writeFileSync(join(repo, "apps", "web", "src", "new-page.tsx"), "x");
+    problems = prebuiltProblems({ repoRoot: repo, tag: "ci", commit, inspect: labeled }).join();
+    assert.match(problems, /apps\/web\/src\/new-page\.tsx/);
+    rmSync(join(repo, "apps"), { recursive: true });
+    assert.deepEqual(prebuiltProblems({ repoRoot: repo, tag: "ci", commit, inspect: labeled }), []);
+
+    // Images from another commit, or missing.
+    assert.match(prebuiltProblems({ repoRoot: repo, tag: "ci", commit, inspect: () => "f".repeat(40) }).join(), /was built from f{40}, not/);
+    assert.match(prebuiltProblems({ repoRoot: repo, tag: "ci", commit, inspect: () => null }).join(), /varlatch-conformance\/varlatchd:ci is not loaded/);
+    assert.match(prebuiltProblems({ repoRoot: repo, tag: "ci", commit, inspect: () => "" }).join(), /built from an unlabeled tree/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

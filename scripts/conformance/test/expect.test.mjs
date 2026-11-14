@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { addedEntries, applyExpectations, entryKeys, expectationsFor, validateExpectations } from "../lib/expect.mjs";
+import { evaluate } from "../lib/inventory.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const inventory = JSON.parse(readFileSync(join(here, "..", "inventory.json"), "utf8"));
@@ -50,8 +51,16 @@ test("the entries in force: those of the run's target key, for its client and fo
   assert.deepEqual([...expectationsFor({ schema: 1, expected: {} }, "ts-source", "source").keys()], []);
 });
 
+/** A judged run whose failures are all the checks' own FAIL lines. */
 const judged = (outcomes, problems = []) => ({
-  checks: Object.entries(outcomes).map(([id, outcome]) => ({ id, suite: id.split(".")[0], kind: "conformance", outcome, why: outcome === "fail" ? "it failed" : "" })),
+  checks: Object.entries(outcomes).map(([id, outcome]) => ({
+    id,
+    suite: id.split(".")[0],
+    kind: "conformance",
+    outcome,
+    why: outcome === "fail" ? "it failed" : "",
+    ...(outcome === "fail" ? { failure: "assertion" } : {}),
+  })),
   problems,
   ok: false,
 });
@@ -64,7 +73,7 @@ test("an expected failure is reported as one, never hidden, and the run passes",
   assert.equal(a.outcome, "expected-fail");
   assert.equal(a.why, "it failed");
   assert.deepEqual(a.expected, { reason: "known", removedBy: "ADR-0059 step 3", client: "*" });
-  assert.deepEqual(out.expectations, { inForce: 1, failedAsExpected: ["s.a"], passedUnexpectedly: [], notExercised: [] });
+  assert.deepEqual(out.expectations, { inForce: 1, failedAsExpected: ["s.a"], failedOtherwise: [], passedUnexpectedly: [], notExercised: [] });
 });
 
 test("an expected failure that passes fails the run", () => {
@@ -86,6 +95,53 @@ test("expectations cover failed checks only: other failures and problems still f
   assert.deepEqual(na.expectations.notExercised, ["s.a"]);
   // An entry for a check the run does not have is a problem.
   assert.match(applyExpectations(judged({ "s.b": "pass" }), expected).problems.join(), /s\.a is expected to fail, but the run has no such check/);
+});
+
+/** A tiny inventory, judged by the real evaluate(), then the expectation for s.a applied. */
+function judgeWithExpectation(reports, { errors = [], cliVersion = null, kind = "conformance" } = {}) {
+  const inv = {
+    features: { gated: { title: "gated", introducedIn: "0.20.0", changelog: { release: "0.20.0", quote: "q" } } },
+    suites: { s: { title: "s", script: "s.mjs" } },
+    checks: {
+      "s.a": { suite: "s", kind, title: "a", feature: "gated", ...(kind === "ts-stack" ? { replacement: { none: "x" } } : {}) },
+      "s.b": { suite: "s", kind: "conformance", title: "b" },
+    },
+  };
+  const all = [{ suite: "s", id: "s.b", status: "PASS", text: "" }, ...reports];
+  return applyExpectations(evaluate({ inventory: inv, reports: all, errors, cliVersion }), new Map([["s.a", { ...entry("known"), client: "*" }]]));
+}
+
+test("only a check's own FAIL line can be expected; a reporting failure always fails the run", () => {
+  // The reported failure the entry is for: expected.
+  const asserted = judgeWithExpectation([{ suite: "s", id: "s.a", status: "FAIL", text: "s.a failed" }]);
+  assert.equal(asserted.ok, true);
+  assert.equal(asserted.checks.find((c) => c.id === "s.a").outcome, "expected-fail");
+
+  const fails = (out, why) => {
+    const a = out.checks.find((c) => c.id === "s.a");
+    assert.equal(out.ok, false, why.source);
+    assert.equal(a.outcome, "fail");
+    assert.equal(a.failure, "reporting");
+    assert.match(a.why, why);
+    assert.match(a.why, /an expectation never covers it/);
+    assert.deepEqual(out.expectations.failedOtherwise, ["s.a"]);
+    assert.deepEqual(out.expectations.failedAsExpected, []);
+  };
+  // A check that never reported.
+  const missing = judgeWithExpectation([]);
+  fails(missing, /did not report/);
+  assert.equal(missing.checks.find((c) => c.id === "s.a").reports, 0);
+  // A conformance check reported not applicable.
+  fails(judgeWithExpectation([{ suite: "s", id: "s.a", status: "N/A", text: "no capability" }]), /reported not applicable/);
+  // PREDATES-CLI the runner cannot confirm: a source CLI, or one not older.
+  fails(judgeWithExpectation([{ suite: "s", id: "s.a", status: "PREDATES-CLI", text: "" }]), /built from source/);
+  fails(judgeWithExpectation([{ suite: "s", id: "s.a", status: "PREDATES-CLI", text: "" }], { cliVersion: "0.22.0" }), /is not older than 0\.20\.0/);
+  // Inconsistent reports.
+  fails(judgeWithExpectation([{ suite: "s", id: "s.a", status: "PASS", text: "" }, { suite: "s", id: "s.a", status: "N/A", text: "" }]), /reported inconsistently/);
+  // An infrastructure error fails the run even when the expected check failed as expected.
+  const infra = judgeWithExpectation([{ suite: "s", id: "s.a", status: "FAIL", text: "" }], { errors: [{ suite: "runner", message: "the run stopped: docker compose up failed" }] });
+  assert.equal(infra.ok, false);
+  assert.match(infra.problems.join(), /the run stopped/);
 });
 
 test("merge-base comparison: an added entry, or one moved to another client or target, counts as added; removing does not", () => {
@@ -158,6 +214,36 @@ test("expect-check.mjs: fails a branch that adds an entry, unless labeled; compa
     r = check("--base", mainTip, "--head", "HEAD", "--labeled");
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /INVALID .*not in the inventory/);
+    r = check("--validate-only", "--head", "HEAD");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+
+    // A file not named after a target is refused, whatever its keys say.
+    git(repo, "checkout", "-q", "-b", "stray", mergeBase);
+    writeFileSync(join(repo, "scripts/conformance/expect/mine.json"), JSON.stringify(file({ mine: { "*": { "values.grid-masks-secret": entry() } } })));
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "stray");
+    r = check("--base", mainTip, "--head", "HEAD", "--labeled");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /INVALID +expect\/mine\.json: not named after a target/);
+
+    // A push to main validates what it lands, without a base.
+    r = check("--validate-only", "--head", mainTip);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /0 entries, valid/);
+    assert.equal(check("--validate-only", "--head", mainTip, "--labeled").status, 64);
+    assert.equal(check("--head", mainTip).status, 64);
+
+    // The checker reads the head only as data: a head that changes the
+    // checker itself changes nothing, since CI runs the base's checker.
+    git(repo, "checkout", "-q", "-b", "sneaky", mergeBase);
+    mkdirSync(join(repo, "scripts/conformance/lib"), { recursive: true });
+    writeFileSync(join(repo, "scripts/conformance/expect-check.mjs"), "process.exit(0);\n");
+    write({ "ts-source": { "*": { "values.grid-masks-secret": entry() }, source: { "dashboard.csp-strict": entry() } } });
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "sneaky");
+    r = check("--base", mainTip, "--head", "HEAD");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /ADDED/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

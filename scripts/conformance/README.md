@@ -146,9 +146,14 @@ in `CONFORMANCE_TARGET_STATE`, which `target-op.mjs` reads.
 - `ts-source`: the TypeScript stack built from this checkout, as a
   disposable Compose project. It has every capability. With
   `CONFORMANCE_SOURCE_IMAGES=<tag>` it uses images `source-images.mjs <tag>`
-  built earlier instead of building, and refuses them unless their label
-  names the checkout's own commit (`git rev-parse HEAD`; `source-images.mjs`
-  refuses a checkout with changes, so the label is true).
+  built earlier instead of building. It refuses them, and the run fails
+  before anything starts, unless their label names the checkout's own
+  commit (`git rev-parse HEAD`) and the checkout is exactly that commit: a
+  changed tracked file or an untracked file that git does not ignore would
+  be in a build from this checkout but is not in the images.
+  `source-images.mjs` refuses such a checkout too, so the label is true.
+  The run fails rather than building instead, since the variable says the
+  images come from elsewhere; unset it to build from the checkout.
 - `ts-release:<version>`: a released TypeScript stack, from the release's
   own compose bundle (`varlatch-compose-<version>.tar.gz`) with every image
   pulled by the digest `varlatch-release.json` pins. Nothing is built. The
@@ -209,9 +214,13 @@ Entries are keyed by target (`ts-source`, `ts-release:<version>`,
 `go-binary` whatever its path), then by client (`source`, a version
 `clients.json` pins, or `*` for every CLI), then by check ID. In a run:
 
-- an expected check that fails is reported `EXPECTED-FAIL`, with its reason
-  and the step that removes it, in the output and the report. It is never
-  hidden, and it does not fail the run;
+- an expected check that fails by its own `FAIL` line is reported
+  `EXPECTED-FAIL`, with its reason and the step that removes it, in the
+  output and the report. It is never hidden, and it does not fail the run;
+- an expected check that fails any other way still fails the run: it did
+  not report, a conformance check reported not applicable, a
+  `PREDATES-CLI` result the runner cannot confirm, or inconsistent results.
+  An expectation covers a known wrong answer, never a missing one;
 - an expected check that passes fails the run: remove its entry;
 - an expected check that did not apply or predates the CLI is listed as
   not exercised;
@@ -223,7 +232,10 @@ runs `expect-check.mjs` on a pull request that changes it: it compares the
 files at the pull request's head with its merge base, and fails when the
 head adds an entry (moving one to another client or target counts as
 adding one), unless the pull request carries the `conformance-regression`
-label. Adding or removing the label runs the check again. For `go-binary`
+label. Adding or removing the label runs the check again. The checker runs
+from the pull request's base commit, and reads the head's files with
+`git show` as data only, so a pull request cannot change the checker that
+judges it. A push to `main` validates the files it lands. For `go-binary`
 the file starts, in step 3, as the conformance checks the Go server does
 not pass yet, and is the step 4 parity tracker.
 
@@ -258,9 +270,31 @@ Besides passing as an ordinary run, a gate run must have:
   `--walkthrough`. The run stops before the target starts when it is
   missing; the report records its path and hash;
 - every suite (no `--suite`);
+- the target's record of what it ran (`implementation` in the report):
+  for `ts-source` the commit, whether the tree was exactly that commit, and
+  the image IDs the stack ran; for `ts-release` the version, the hashes of
+  the signed `SHA256SUMS` and each asset, each image digest and the image
+  IDs; for `go-binary` the binary's sha256 (not its path);
 - a CLI recent enough that nothing reports `PREDATES-CLI`, or, for a run
-  with an older CLI (G2), `--recent-cli-report` naming the report of a
-  passing gate run of the same target in which nothing did.
+  with an older CLI (G2), `--recent-cli-report` naming the report of a run
+  with a CLI that predates nothing. That report is judged again from
+  scratch, never by its own `ok` or `gate` fields: the same target and the
+  same `implementation`, a complete run with every inventory check present
+  once and passing (not applicable only for a ts-stack check), no problem,
+  no expected failure, a CLI that predates no feature of the current
+  inventory, the same walkthrough evidence, and the gate's replacement
+  rules.
+
+Image IDs match only for runs that ran the same images: the cells of one
+matrix run, which share the prebuilt images, not two separate builds.
+
+Gate evidence comes from CI: the reports of one workflow run, downloaded
+from that run's artifacts (`gh run download <run id>`), with the run named
+in the gate record. A report is a JSON file anyone can write, so a local
+report, or one from another run, is not evidence. The runner could instead
+run the recent CLI itself in the same invocation, but that doubles a gate
+run's length and needs a second stack; taking both reports from one
+workflow run gives the same assurance.
 
 The report's `gate` holds the verdict and each problem; a gate failure
 prints `CONFORMANCE GATE FAILED` and exits 1. Gate mode fails today on every

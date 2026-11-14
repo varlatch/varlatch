@@ -242,22 +242,28 @@ export function evaluate({ inventory, reports, errors = [], cliVersion = null })
   for (const [id, entry] of Object.entries(inventory.checks)) {
     const got = byId.get(id) ?? [];
     const statuses = new Set(got.map((r) => r.status));
-    const judged = (outcome, why = "") => checks.push({ id, suite: entry.suite, kind: entry.kind, feature: entry.feature ?? null, outcome, why, reports: got.length });
-    if (got.length === 0) judged("fail", "did not report");
-    else if (statuses.has("FAIL")) judged("fail", got.find((r) => r.status === "FAIL").text);
-    else if (statuses.size > 1) judged("fail", `reported inconsistently: ${[...statuses].join(", ")}`);
+    // `failure` says why a check failed: "assertion" only when the check
+    // itself reported a FAIL line; every other failure (no report, a
+    // forbidden N/A, an unconfirmed PREDATES-CLI, inconsistent reports) is
+    // "reporting", which no expected failure can cover (lib/expect.mjs).
+    const judged = (outcome, why = "", failure = null) =>
+      checks.push({ id, suite: entry.suite, kind: entry.kind, feature: entry.feature ?? null, outcome, why, reports: got.length, ...(failure ? { failure } : {}) });
+    const reporting = (why) => judged("fail", why, "reporting");
+    if (got.length === 0) reporting("did not report");
+    else if (statuses.has("FAIL")) judged("fail", got.find((r) => r.status === "FAIL").text, "assertion");
+    else if (statuses.size > 1) reporting(`reported inconsistently: ${[...statuses].join(", ")}`);
     else if (statuses.has("PASS")) judged("pass");
     else if (statuses.has("N/A")) {
       if (entry.kind === "ts-stack") judged("not-applicable", got[0].text);
-      else judged("fail", `a ${entry.kind} check reported not applicable: ${got[0].text}`);
+      else reporting(`a ${entry.kind} check reported not applicable: ${got[0].text}`);
     } else {
       // PREDATES-CLI: accepted only when the runner itself confirms it,
       // from the inventory and the CLI's verified version.
       const gate = gating(inventory, id);
-      if (gate.core) judged("fail", `a compatibility-core check (${gate.feature}) cannot predate the CLI`);
-      else if (!gate.introducedIn) judged("fail", "reported predates-cli, but the inventory names no version that introduced its feature");
-      else if (cliVersion === null) judged("fail", "reported predates-cli, but the CLI under test is built from source");
-      else if (compareVersions(cliVersion, gate.introducedIn) >= 0) judged("fail", `reported predates-cli, but CLI ${cliVersion} is not older than ${gate.introducedIn} (${gate.feature})`);
+      if (gate.core) reporting(`a compatibility-core check (${gate.feature}) cannot predate the CLI`);
+      else if (!gate.introducedIn) reporting("reported predates-cli, but the inventory names no version that introduced its feature");
+      else if (cliVersion === null) reporting("reported predates-cli, but the CLI under test is built from source");
+      else if (compareVersions(cliVersion, gate.introducedIn) >= 0) reporting(`reported predates-cli, but CLI ${cliVersion} is not older than ${gate.introducedIn} (${gate.feature})`);
       else judged("predates-cli", `CLI ${cliVersion} predates ${gate.feature}, introduced in ${gate.introducedIn}`);
     }
   }

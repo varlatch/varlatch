@@ -242,6 +242,8 @@ async function main() {
     }
     writeFileSync(stateFile, JSON.stringify(state));
     if (target.describe) report.targetDetails = target.describe(state);
+    // What ran, for gate mode to compare runs by (targets' `fingerprint`).
+    report.implementation = target.fingerprint ? await target.fingerprint(state) : null;
     // VARLATCH_CLI_VERSION is the verified version (empty for source): the
     // suites gate feature groups on it, and the runner checks every
     // predates-cli result against it again.
@@ -400,7 +402,7 @@ async function main() {
     if (options.gate) {
       report.gate = judgeGate({
         inventory,
-        run: { target: options.target, partial: report.partial, ok: judged.ok, checks: judged.checks, expectedInForce: [...inForce.keys()] },
+        run: { target: options.target, partial: report.partial, ok: judged.ok, checks: judged.checks, expectedInForce: [...inForce.keys()], implementation: report.implementation ?? null },
         walkthrough,
         recentCli,
       });

@@ -17,7 +17,7 @@ import { closeSync, openSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as stack from "./targets/compose-stack.mjs";
-import { BUILT_FROM_SOURCE, checkoutCommit, prepare, sourceImage } from "./targets/ts-source.mjs";
+import { BUILT_FROM_SOURCE, checkoutCommit, prepare, sourceImage, worktreeChanges } from "./targets/ts-source.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const [tag, flag, file] = process.argv.slice(2);
@@ -28,9 +28,9 @@ if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(tag ?? "") || (flag !== undefined && (fl
 
 const commit = checkoutCommit(REPO_ROOT);
 // The label names a commit, so the tree must be exactly that commit.
-const dirty = spawnSync("git", ["status", "--porcelain"], { cwd: REPO_ROOT, encoding: "utf8" });
-if (dirty.status !== 0 || dirty.stdout.trim() !== "") {
-  console.error(`the checkout differs from ${commit}: commit or remove the changes first, the images are labeled with that commit\n${dirty.stdout.slice(0, 2000)}`);
+const changes = worktreeChanges(REPO_ROOT);
+if (changes.length > 0) {
+  console.error(`the checkout differs from ${commit}: commit or remove the changes first, the images are labeled with that commit\n${changes.slice(0, 40).join("\n")}`);
   process.exit(1);
 }
 const { state, lay } = prepare(REPO_ROOT, { mode: "tagged", tag, commit });

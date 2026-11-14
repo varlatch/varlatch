@@ -89,14 +89,46 @@ export function prepare(repoRoot, options = {}) {
   };
 }
 
-/** Why the prebuilt images of `tag` cannot be used for `commit`; empty when they can. */
-function prebuiltProblems(tag, commit) {
+/**
+ * What differs in the checkout from its commit: changed tracked files and
+ * untracked files that are not ignored (`git status --porcelain`). The
+ * images are built with the whole checkout as their context, so any of these
+ * may be a build input.
+ */
+export function worktreeChanges(repoRoot) {
+  const r = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0) throw new Error(`git status failed: ${r.stderr}`);
+  return r.stdout.split("\n").filter((l) => l.trim() !== "");
+}
+
+const inspectLabel = (ref) => {
+  const r = spawnSync("docker", ["image", "inspect", "--format", `{{ index .Config.Labels "${COMMIT_LABEL}" }}`, ref], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : null;
+};
+
+/**
+ * Why the prebuilt images of `tag` cannot run for this checkout; empty when
+ * they can. They must carry the checkout's commit, and the checkout must be
+ * exactly that commit: a changed or untracked file would be in a build from
+ * this checkout but is not in the images, so the run would test old code
+ * under the new commit's name. Such a run fails here, before anything
+ * starts, rather than quietly building instead: CONFORMANCE_SOURCE_IMAGES
+ * says the images were built elsewhere, and a run that rebuilt would not be
+ * the run that was asked for. Unset it to build from the checkout.
+ * `inspect(ref)` (the label, or null when the image is missing) is replaced
+ * in unit tests.
+ */
+export function prebuiltProblems({ repoRoot, tag, commit, inspect = inspectLabel }) {
   const problems = [];
+  const changes = worktreeChanges(repoRoot);
+  if (changes.length > 0) {
+    problems.push(`the checkout differs from ${commit} (${changes.length} changed or untracked files: ${changes.slice(0, 5).map((l) => l.slice(3)).join(", ")}), so the prebuilt images are not this code`);
+  }
   for (const image of new Set(Object.values(BUILT_FROM_SOURCE))) {
     const ref = sourceImage(image, tag);
-    const r = spawnSync("docker", ["image", "inspect", "--format", `{{ index .Config.Labels "${COMMIT_LABEL}" }}`, ref], { encoding: "utf8" });
-    if (r.status !== 0) problems.push(`${ref} is not loaded`);
-    else if (r.stdout.trim() !== commit) problems.push(`${ref} was built from ${r.stdout.trim() || "an unlabeled tree"}, not ${commit}`);
+    const label = inspect(ref);
+    if (label === null) problems.push(`${ref} is not loaded`);
+    else if (label !== commit) problems.push(`${ref} was built from ${label || "an unlabeled tree"}, not ${commit}`);
   }
   return problems;
 }
@@ -112,11 +144,15 @@ export async function up({ repoRoot, onState = () => {} }) {
   onState(state);
   try {
     if (tag) {
-      const problems = prebuiltProblems(tag, commit);
-      if (problems.length > 0) throw new Error(`CONFORMANCE_SOURCE_IMAGES=${tag}: ${problems.join("; ")} (build them with scripts/conformance/source-images.mjs)`);
+      const problems = prebuiltProblems({ repoRoot, tag, commit });
+      if (problems.length > 0) {
+        throw new Error(`CONFORMANCE_SOURCE_IMAGES=${tag}: ${problems.join("; ")} (build them from this commit with scripts/conformance/source-images.mjs, or unset it to build here)`);
+      }
       console.log(`--- images prebuilt from ${commit} (${tag})`);
     }
     state.images = tag ? { prebuilt: tag, commit } : "built from this checkout";
+    state.commit = checkoutCommit(repoRoot);
+    state.clean = worktreeChanges(repoRoot).length === 0;
     lay();
     await stack.configure(state);
     await stack.start(state, tag ? ["--no-build"] : ["--build"]);
@@ -130,6 +166,16 @@ export async function up({ repoRoot, onState = () => {} }) {
 /** What the report records about the target. */
 export function describe(state) {
   return { images: state.images ?? null };
+}
+
+/**
+ * The implementation fingerprint: the checkout's commit, whether the tree
+ * was exactly that commit, and the image IDs the stack ran. Two runs match
+ * only when they ran the same images, which is the case for the cells of one
+ * matrix run (they share the prebuilt images), not for two separate builds.
+ */
+export function fingerprint(state) {
+  return { target: name, commit: state.commit ?? null, clean: state.clean ?? null, imageIds: stack.imageIds(state) };
 }
 
 export const expectKey = () => name;
