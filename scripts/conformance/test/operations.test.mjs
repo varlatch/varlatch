@@ -122,6 +122,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "startDeviceSignIn", "collectDeviceSignIn", "lookupDeviceSignIn", "decideDeviceSignIn", "listOrganizations",
     "getBrowserSession", "startPasskeySignIn", "finishPasskeySignIn", "startPasskeyRegistration", "finishPasskeyRegistration",
     "signOut", "mintBrowserBearer",
+    // Step 3.5: the dashboard's live updates.
+    "streamBrowserEvents",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is
@@ -131,12 +133,17 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // The conformance checks the Go server runs (step 3.4): the passkey
   // bootstrap, the CLI's token sign-in and whoami, the CLI browser login,
   // device sign-in with the dashboard's sign-in and the proxy probe's
-  // pending cap, and the CLI-download-off checks, which need only /v1/meta.
-  // Every other one lacks something.
+  // pending cap, and the CLI-download-off checks, which need only /v1/meta;
+  // and (step 3.5) degraded live updates. Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
+  // G11's go-server checks (step 3.5) lack nothing either.
+  assert.deepEqual(
+    Object.entries(inventory.checks).filter(([id, c]) => c.kind === "go-server" && !lacking.has(id)).map(([id]) => id).sort(),
+    Object.keys(inventory.checks).filter((id) => id.startsWith("realtime-events.")).sort(),
+  );
   const expected = Object.keys(inventory.checks).filter((id) =>
-    /^(passkey|cli-login|device|proxy-probe|cli-download-off)\./.test(id) ||
+    /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded)\./.test(id) ||
     ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format"].includes(id));
   assert.deepEqual(runs.sort(), expected.sort());
 });

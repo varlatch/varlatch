@@ -52,7 +52,7 @@ import { fileURLToPath } from "node:url";
 import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
 import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
 import { judgeGate } from "./lib/gate.mjs";
-import { evaluate, validateInventory } from "./lib/inventory.mjs";
+import { evaluate, TARGET_SPECIFIC, validateInventory } from "./lib/inventory.mjs";
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
@@ -329,9 +329,9 @@ async function main() {
       const missing = (suite.needs ?? []).filter((c) => !capabilities.includes(c));
       const ids = Object.entries(inventory.checks).filter(([, c]) => c.suite === entry.suite).map(([id]) => id);
       // A check needing an operation the target lacks: target-lacks, from
-      // the runner; a ts-stack check on a target without the stack stays
-      // not applicable.
-      const lacked = new Set(ids.filter((id) => lacking.has(id) && !(missing.length > 0 && inventory.checks[id].kind === "ts-stack")));
+      // the runner; a ts-stack (or go-server) check on a target without
+      // the stack (or the Go server) stays not applicable.
+      const lacked = new Set(ids.filter((id) => lacking.has(id) && !(missing.length > 0 && inventory.checks[id].kind in TARGET_SPECIFIC)));
       const reportLacks = () => {
         for (const id of lacked) reports.push({ suite: entry.suite, id, status: "TARGET-LACKS", text: `the target lacks ${lacking.get(id).join(", ")}`, runner: true });
       };

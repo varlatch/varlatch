@@ -25,6 +25,9 @@ describe("the clients /v1/meta chooses", () => {
   it("takes the Go server's own session, and no Convex client, with auth.session", () => {
     expect(backendOf(["identity.whoami", "auth.session"])).toEqual({ session: "varlatchd", realtime: "none" });
   });
+  it("takes the Go server's server-sent events with realtime.sse", () => {
+    expect(backendOf(["identity.whoami", "auth.session", "realtime.sse"])).toEqual({ session: "varlatchd", realtime: "sse" });
+  });
 });
 
 describe("detecting the server", () => {

@@ -36,6 +36,15 @@ export const PLAN = [
   { suite: "p4", args: async (ctx) => [await ctx.grant(), ctx.token, await ctx.cliCredential()] },
   { suite: "onboarding", args: async (ctx) => [await ctx.grant(), ctx.token] },
   { suite: "realtime", args: async (ctx) => [await ctx.grant(), ctx.token] },
+  // Degraded live updates on any server: the connection cut in the page;
+  // three disposable credentials of the same identity to revoke from
+  // outside it (while live, while down, and in a short drop).
+  {
+    suite: "realtime-degraded",
+    args: async (ctx) => [await ctx.grant(), await ctx.cliCredential(), await ctx.cliCredential(), await ctx.cliCredential()],
+  },
+  // G11 on the Go server's server-sent events (go-server checks).
+  { suite: "realtime-events", args: (ctx) => [ctx.origin] },
   // The credential broker (ADR-0022). It ran inside the realtime suite, with
   // Convex down; on the TypeScript stack the runner still stops Convex
   // around it (broker.convex-down-throughout).

@@ -45,6 +45,9 @@ func Admin(args []string, stdout, stderr io.Writer) int {
 	if sub == "conformance-probe" && conformanceProbe != nil {
 		return conformanceProbe(args[1:], stdout, stderr)
 	}
+	if sub == "conformance-fixture" && conformanceFixture != nil {
+		return conformanceFixture(args[1:], stdout, stderr)
+	}
 	if sub != "bootstrap" && sub != "recover" {
 		return usage("unknown command " + sub)
 	}
@@ -171,6 +174,10 @@ func Admin(args []string, stdout, stderr io.Writer) int {
 // conformanceProbe is `varlatchd admin conformance-probe`, in a build with
 // the conformance tag only (probe_conformance.go); nil otherwise.
 var conformanceProbe func(args []string, stdout, stderr io.Writer) int
+
+// conformanceFixture is `varlatchd admin conformance-fixture`, in a build
+// with the conformance tag only (fixture_conformance.go); nil otherwise.
+var conformanceFixture func(args []string, stdout, stderr io.Writer) int
 
 // issuer is the base of the enrollment URLs: the public URL as configured,
 // else http://localhost and the listener's port, as the TypeScript

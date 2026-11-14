@@ -1,0 +1,2738 @@
+{
+ "organizations": [
+  {
+   "id": "org_a",
+   "slug": "a",
+   "deleted": false
+  },
+  {
+   "id": "org_b",
+   "slug": "b",
+   "deleted": false
+  },
+  {
+   "id": "org_gone",
+   "slug": "gone",
+   "deleted": true
+  }
+ ],
+ "batches": [
+  {
+   "name": "every event type in an Organization",
+   "events": [
+    {
+     "id": "evt_0001",
+     "type": "audit_export.abandoned",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:01.234Z"
+    },
+    {
+     "id": "evt_0002",
+     "type": "audit_export.changed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:02.468Z"
+    },
+    {
+     "id": "evt_0003",
+     "type": "audit_export.completed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:03.702Z"
+    },
+    {
+     "id": "evt_0004",
+     "type": "audit_export.created",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:04.936Z"
+    },
+    {
+     "id": "evt_0005",
+     "type": "audit_export.credential_replaced",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:06.170Z"
+    },
+    {
+     "id": "evt_0006",
+     "type": "audit_export.failing",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:07.404Z"
+    },
+    {
+     "id": "evt_0007",
+     "type": "audit_export.recovered",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:08.638Z"
+    },
+    {
+     "id": "evt_0008",
+     "type": "audit_export.removed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:09.872Z"
+    },
+    {
+     "id": "evt_0009",
+     "type": "audit_export.stream_started",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:11.106Z"
+    },
+    {
+     "id": "evt_0010",
+     "type": "audit_tombstone.reader_removed",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:12.340Z"
+    },
+    {
+     "id": "evt_0011",
+     "type": "authentication.device_approved",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:13.574Z"
+    },
+    {
+     "id": "evt_0012",
+     "type": "authentication.device_code_locked",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:14.808Z"
+    },
+    {
+     "id": "evt_0013",
+     "type": "authentication.device_code_rejected",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:16.042Z"
+    },
+    {
+     "id": "evt_0014",
+     "type": "authentication.device_collected",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:17.276Z"
+    },
+    {
+     "id": "evt_0015",
+     "type": "authentication.device_denied",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:18.510Z"
+    },
+    {
+     "id": "evt_0016",
+     "type": "authentication.device_requested",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:19.744Z"
+    },
+    {
+     "id": "evt_0017",
+     "type": "authentication.failed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:20.978Z"
+    },
+    {
+     "id": "evt_0018",
+     "type": "authentication.passkey_confirmed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:22.212Z"
+    },
+    {
+     "id": "evt_0019",
+     "type": "authentication.passkey_enrollment_started",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:23.446Z"
+    },
+    {
+     "id": "evt_0020",
+     "type": "authorization.denied",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:24.680Z"
+    },
+    {
+     "id": "evt_0021",
+     "type": "bootstrap.completed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:25.914Z"
+    },
+    {
+     "id": "evt_0022",
+     "type": "bootstrap.grant_issued",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:27.148Z"
+    },
+    {
+     "id": "evt_0023",
+     "type": "capability.denied",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:28.382Z"
+    },
+    {
+     "id": "evt_0024",
+     "type": "capability.exercised",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:29.616Z"
+    },
+    {
+     "id": "evt_0025",
+     "type": "capability.issued",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:30.850Z"
+    },
+    {
+     "id": "evt_0026",
+     "type": "capability.revoked",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:32.084Z"
+    },
+    {
+     "id": "evt_0027",
+     "type": "contract.activated",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:33.318Z"
+    },
+    {
+     "id": "evt_0028",
+     "type": "contract.revision_pushed",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:34.552Z"
+    },
+    {
+     "id": "evt_0029",
+     "type": "credential.issued",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:35.786Z"
+    },
+    {
+     "id": "evt_0030",
+     "type": "credential.revoked",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:37.020Z"
+    },
+    {
+     "id": "evt_0031",
+     "type": "environment.created",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:38.254Z"
+    },
+    {
+     "id": "evt_0032",
+     "type": "environment.deleted",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:39.488Z"
+    },
+    {
+     "id": "evt_0033",
+     "type": "exposure.revocation_confirmed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:40.722Z"
+    },
+    {
+     "id": "evt_0034",
+     "type": "grant.created",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:41.956Z"
+    },
+    {
+     "id": "evt_0035",
+     "type": "grant.revoked",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:43.190Z"
+    },
+    {
+     "id": "evt_0036",
+     "type": "group.created",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:44.424Z"
+    },
+    {
+     "id": "evt_0037",
+     "type": "group.deleted",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:45.658Z"
+    },
+    {
+     "id": "evt_0038",
+     "type": "group.member_added",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:46.892Z"
+    },
+    {
+     "id": "evt_0039",
+     "type": "group.member_removed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:48.126Z"
+    },
+    {
+     "id": "evt_0040",
+     "type": "group.updated",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:49.360Z"
+    },
+    {
+     "id": "evt_0041",
+     "type": "identity.created",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:50.594Z"
+    },
+    {
+     "id": "evt_0042",
+     "type": "identity.profile_updated",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:51.828Z"
+    },
+    {
+     "id": "evt_0043",
+     "type": "identity.reactivated",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:53.062Z"
+    },
+    {
+     "id": "evt_0044",
+     "type": "identity.renamed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:54.296Z"
+    },
+    {
+     "id": "evt_0045",
+     "type": "identity.retired",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:55.530Z"
+    },
+    {
+     "id": "evt_0046",
+     "type": "installation.custody_attested",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:56.764Z"
+    },
+    {
+     "id": "evt_0047",
+     "type": "installation.initialized",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:57.998Z"
+    },
+    {
+     "id": "evt_0048",
+     "type": "installation.public_url_changed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:00:59.232Z"
+    },
+    {
+     "id": "evt_0049",
+     "type": "installation.restored",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:00.466Z"
+    },
+    {
+     "id": "evt_0050",
+     "type": "invitation.accepted",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:01.700Z"
+    },
+    {
+     "id": "evt_0051",
+     "type": "invitation.issued",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:02.934Z"
+    },
+    {
+     "id": "evt_0052",
+     "type": "invitation.revoked",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:04.168Z"
+    },
+    {
+     "id": "evt_0053",
+     "type": "membership.removed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:05.402Z"
+    },
+    {
+     "id": "evt_0054",
+     "type": "membership.role_changed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:06.636Z"
+    },
+    {
+     "id": "evt_0055",
+     "type": "oidc_binding.created",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:07.870Z"
+    },
+    {
+     "id": "evt_0056",
+     "type": "oidc_binding.revoked",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:09.104Z"
+    },
+    {
+     "id": "evt_0057",
+     "type": "organization.created",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:10.338Z"
+    },
+    {
+     "id": "evt_0058",
+     "type": "organization.deleted",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:11.572Z"
+    },
+    {
+     "id": "evt_0059",
+     "type": "organization.deletion_approved",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:12.806Z"
+    },
+    {
+     "id": "evt_0060",
+     "type": "organization.deletion_cancelled",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:14.040Z"
+    },
+    {
+     "id": "evt_0061",
+     "type": "organization.deletion_scheduled",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:15.274Z"
+    },
+    {
+     "id": "evt_0062",
+     "type": "organization.frozen",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:16.508Z"
+    },
+    {
+     "id": "evt_0063",
+     "type": "organization.renamed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:17.742Z"
+    },
+    {
+     "id": "evt_0064",
+     "type": "organization.unfrozen",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:18.976Z"
+    },
+    {
+     "id": "evt_0065",
+     "type": "outbound.refused",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:20.210Z"
+    },
+    {
+     "id": "evt_0066",
+     "type": "project.created",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:21.444Z"
+    },
+    {
+     "id": "evt_0067",
+     "type": "project.deleted",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:22.678Z"
+    },
+    {
+     "id": "evt_0068",
+     "type": "project.renamed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:23.912Z"
+    },
+    {
+     "id": "evt_0069",
+     "type": "recovery.completed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:25.146Z"
+    },
+    {
+     "id": "evt_0070",
+     "type": "recovery.grant_issued",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:26.380Z"
+    },
+    {
+     "id": "evt_0071",
+     "type": "recovery.identity_reenabled",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:27.614Z"
+    },
+    {
+     "id": "evt_0072",
+     "type": "reenrollment.completed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:28.848Z"
+    },
+    {
+     "id": "evt_0073",
+     "type": "reenrollment.grant_issued",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:30.082Z"
+    },
+    {
+     "id": "evt_0074",
+     "type": "requirement.created",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:31.316Z"
+    },
+    {
+     "id": "evt_0075",
+     "type": "requirement.revoked",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:32.550Z"
+    },
+    {
+     "id": "evt_0076",
+     "type": "requirement.updated",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:33.784Z"
+    },
+    {
+     "id": "evt_0077",
+     "type": "role.created",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:35.018Z"
+    },
+    {
+     "id": "evt_0078",
+     "type": "role.deleted",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:36.252Z"
+    },
+    {
+     "id": "evt_0079",
+     "type": "role.updated",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:37.486Z"
+    },
+    {
+     "id": "evt_0080",
+     "type": "secret.disclosed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:38.720Z"
+    },
+    {
+     "id": "evt_0081",
+     "type": "secret.validated",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:39.954Z"
+    },
+    {
+     "id": "evt_0082",
+     "type": "security_control.changed",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:41.188Z"
+    },
+    {
+     "id": "evt_0083",
+     "type": "security_control.reset",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:42.422Z"
+    },
+    {
+     "id": "evt_0084",
+     "type": "security_control.would_block",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:43.656Z"
+    },
+    {
+     "id": "evt_0085",
+     "type": "setup.grant_rejected",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:44.890Z"
+    },
+    {
+     "id": "evt_0086",
+     "type": "sync.connection_checked",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:46.124Z"
+    },
+    {
+     "id": "evt_0087",
+     "type": "sync.connection_created",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:47.358Z"
+    },
+    {
+     "id": "evt_0088",
+     "type": "sync.connection_credential_replaced",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:48.592Z"
+    },
+    {
+     "id": "evt_0089",
+     "type": "sync.connection_revoked",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:49.826Z"
+    },
+    {
+     "id": "evt_0090",
+     "type": "sync.destinations_listed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:51.060Z"
+    },
+    {
+     "id": "evt_0091",
+     "type": "sync.drift_detected",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:52.294Z"
+    },
+    {
+     "id": "evt_0092",
+     "type": "sync.github_app_installations_listed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:53.528Z"
+    },
+    {
+     "id": "evt_0093",
+     "type": "sync.github_app_key_rotated",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:54.762Z"
+    },
+    {
+     "id": "evt_0094",
+     "type": "sync.github_app_registered",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:55.996Z"
+    },
+    {
+     "id": "evt_0095",
+     "type": "sync.github_app_registration_abandoned",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:57.230Z"
+    },
+    {
+     "id": "evt_0096",
+     "type": "sync.github_app_registration_refused",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:58.464Z"
+    },
+    {
+     "id": "evt_0097",
+     "type": "sync.github_app_removed",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:01:59.698Z"
+    },
+    {
+     "id": "evt_0098",
+     "type": "sync.push_attempted",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:00.932Z"
+    },
+    {
+     "id": "evt_0099",
+     "type": "sync.push_result",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:02.166Z"
+    },
+    {
+     "id": "evt_0100",
+     "type": "sync.target_created",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:03.400Z"
+    },
+    {
+     "id": "evt_0101",
+     "type": "sync.target_disabled",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:04.634Z"
+    },
+    {
+     "id": "evt_0102",
+     "type": "sync.target_paused",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:05.868Z"
+    },
+    {
+     "id": "evt_0103",
+     "type": "sync.target_resumed",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:07.102Z"
+    },
+    {
+     "id": "evt_0104",
+     "type": "sync.target_revoked",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:08.336Z"
+    },
+    {
+     "id": "evt_0105",
+     "type": "sync.target_updated",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:09.570Z"
+    },
+    {
+     "id": "evt_0106",
+     "type": "sync.values_decrypted",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:10.804Z"
+    },
+    {
+     "id": "evt_0107",
+     "type": "team.created",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:12.038Z"
+    },
+    {
+     "id": "evt_0108",
+     "type": "team.deleted",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:13.272Z"
+    },
+    {
+     "id": "evt_0109",
+     "type": "team.member_added",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:14.506Z"
+    },
+    {
+     "id": "evt_0110",
+     "type": "team.member_removed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:15.740Z"
+    },
+    {
+     "id": "evt_0111",
+     "type": "team.project_added",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:16.974Z"
+    },
+    {
+     "id": "evt_0112",
+     "type": "team.project_removed",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:18.208Z"
+    },
+    {
+     "id": "evt_0113",
+     "type": "team.updated",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:19.442Z"
+    },
+    {
+     "id": "evt_0114",
+     "type": "value.deleted",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:20.676Z"
+    },
+    {
+     "id": "evt_0115",
+     "type": "value.disclosed",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:21.910Z"
+    },
+    {
+     "id": "evt_0116",
+     "type": "value.rotation_completed",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:23.144Z"
+    },
+    {
+     "id": "evt_0117",
+     "type": "value.rotation_started",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:24.378Z"
+    },
+    {
+     "id": "evt_0118",
+     "type": "value.validated",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:25.612Z"
+    },
+    {
+     "id": "evt_0119",
+     "type": "value.written",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:26.846Z"
+    },
+    {
+     "id": "evt_0120",
+     "type": "webhook.created",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:28.080Z"
+    },
+    {
+     "id": "evt_0121",
+     "type": "webhook.revoked",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:29.314Z"
+    },
+    {
+     "id": "evt_0122",
+     "type": "webhook.updated",
+     "organizationId": "org_a",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:30.548Z"
+    }
+   ],
+   "signals": [
+    {
+     "kind": "change",
+     "key": "org_a",
+     "lastEventId": "evt_0122",
+     "occurredAt": "2026-11-14T10:02:30.548Z",
+     "domains": [
+      "audit_export",
+      "authentication",
+      "bootstrap",
+      "capability",
+      "contract",
+      "credential",
+      "environment",
+      "exposure",
+      "grant",
+      "group",
+      "identity",
+      "installation",
+      "invitation",
+      "membership",
+      "oidc_binding",
+      "organization",
+      "outbound",
+      "project",
+      "recovery",
+      "reenrollment",
+      "requirement",
+      "role",
+      "security_control",
+      "sync",
+      "team",
+      "value",
+      "webhook"
+     ]
+    },
+    {
+     "kind": "change",
+     "key": "org_b",
+     "lastEventId": "evt_0121",
+     "occurredAt": "2026-11-14T10:02:29.314Z",
+     "domains": [
+      "organization",
+      "project",
+      "recovery",
+      "reenrollment",
+      "requirement",
+      "role",
+      "security_control",
+      "setup",
+      "sync",
+      "team",
+      "webhook"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "every event type outside an Organization",
+   "events": [
+    {
+     "id": "evt_0123",
+     "type": "audit_export.abandoned",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:31.782Z"
+    },
+    {
+     "id": "evt_0124",
+     "type": "audit_export.changed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:33.016Z"
+    },
+    {
+     "id": "evt_0125",
+     "type": "audit_export.completed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:34.250Z"
+    },
+    {
+     "id": "evt_0126",
+     "type": "audit_export.created",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:35.484Z"
+    },
+    {
+     "id": "evt_0127",
+     "type": "audit_export.credential_replaced",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:36.718Z"
+    },
+    {
+     "id": "evt_0128",
+     "type": "audit_export.failing",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:37.952Z"
+    },
+    {
+     "id": "evt_0129",
+     "type": "audit_export.recovered",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:39.186Z"
+    },
+    {
+     "id": "evt_0130",
+     "type": "audit_export.removed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:40.420Z"
+    },
+    {
+     "id": "evt_0131",
+     "type": "audit_export.stream_started",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:41.654Z"
+    },
+    {
+     "id": "evt_0132",
+     "type": "audit_tombstone.reader_removed",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:42.888Z"
+    },
+    {
+     "id": "evt_0133",
+     "type": "authentication.device_approved",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:44.122Z"
+    },
+    {
+     "id": "evt_0134",
+     "type": "authentication.device_code_locked",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:45.356Z"
+    },
+    {
+     "id": "evt_0135",
+     "type": "authentication.device_code_rejected",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:46.590Z"
+    },
+    {
+     "id": "evt_0136",
+     "type": "authentication.device_collected",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:47.824Z"
+    },
+    {
+     "id": "evt_0137",
+     "type": "authentication.device_denied",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:49.058Z"
+    },
+    {
+     "id": "evt_0138",
+     "type": "authentication.device_requested",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:50.292Z"
+    },
+    {
+     "id": "evt_0139",
+     "type": "authentication.failed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:51.526Z"
+    },
+    {
+     "id": "evt_0140",
+     "type": "authentication.passkey_confirmed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:52.760Z"
+    },
+    {
+     "id": "evt_0141",
+     "type": "authentication.passkey_enrollment_started",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:53.994Z"
+    },
+    {
+     "id": "evt_0142",
+     "type": "authorization.denied",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:55.228Z"
+    },
+    {
+     "id": "evt_0143",
+     "type": "bootstrap.completed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:56.462Z"
+    },
+    {
+     "id": "evt_0144",
+     "type": "bootstrap.grant_issued",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:57.696Z"
+    },
+    {
+     "id": "evt_0145",
+     "type": "capability.denied",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:02:58.930Z"
+    },
+    {
+     "id": "evt_0146",
+     "type": "capability.exercised",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:00.164Z"
+    },
+    {
+     "id": "evt_0147",
+     "type": "capability.issued",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:01.398Z"
+    },
+    {
+     "id": "evt_0148",
+     "type": "capability.revoked",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:02.632Z"
+    },
+    {
+     "id": "evt_0149",
+     "type": "contract.activated",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:03.866Z"
+    },
+    {
+     "id": "evt_0150",
+     "type": "contract.revision_pushed",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:05.100Z"
+    },
+    {
+     "id": "evt_0151",
+     "type": "credential.issued",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:06.334Z"
+    },
+    {
+     "id": "evt_0152",
+     "type": "credential.revoked",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:07.568Z"
+    },
+    {
+     "id": "evt_0153",
+     "type": "environment.created",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:08.802Z"
+    },
+    {
+     "id": "evt_0154",
+     "type": "environment.deleted",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:10.036Z"
+    },
+    {
+     "id": "evt_0155",
+     "type": "exposure.revocation_confirmed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:11.270Z"
+    },
+    {
+     "id": "evt_0156",
+     "type": "grant.created",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:12.504Z"
+    },
+    {
+     "id": "evt_0157",
+     "type": "grant.revoked",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:13.738Z"
+    },
+    {
+     "id": "evt_0158",
+     "type": "group.created",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:14.972Z"
+    },
+    {
+     "id": "evt_0159",
+     "type": "group.deleted",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:16.206Z"
+    },
+    {
+     "id": "evt_0160",
+     "type": "group.member_added",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:17.440Z"
+    },
+    {
+     "id": "evt_0161",
+     "type": "group.member_removed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:18.674Z"
+    },
+    {
+     "id": "evt_0162",
+     "type": "group.updated",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:19.908Z"
+    },
+    {
+     "id": "evt_0163",
+     "type": "identity.created",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:21.142Z"
+    },
+    {
+     "id": "evt_0164",
+     "type": "identity.profile_updated",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:22.376Z"
+    },
+    {
+     "id": "evt_0165",
+     "type": "identity.reactivated",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:23.610Z"
+    },
+    {
+     "id": "evt_0166",
+     "type": "identity.renamed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:24.844Z"
+    },
+    {
+     "id": "evt_0167",
+     "type": "identity.retired",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:26.078Z"
+    },
+    {
+     "id": "evt_0168",
+     "type": "installation.custody_attested",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:27.312Z"
+    },
+    {
+     "id": "evt_0169",
+     "type": "installation.initialized",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:28.546Z"
+    },
+    {
+     "id": "evt_0170",
+     "type": "installation.public_url_changed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:29.780Z"
+    },
+    {
+     "id": "evt_0171",
+     "type": "installation.restored",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:31.014Z"
+    },
+    {
+     "id": "evt_0172",
+     "type": "invitation.accepted",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:32.248Z"
+    },
+    {
+     "id": "evt_0173",
+     "type": "invitation.issued",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:33.482Z"
+    },
+    {
+     "id": "evt_0174",
+     "type": "invitation.revoked",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:34.716Z"
+    },
+    {
+     "id": "evt_0175",
+     "type": "membership.removed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:35.950Z"
+    },
+    {
+     "id": "evt_0176",
+     "type": "membership.role_changed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:37.184Z"
+    },
+    {
+     "id": "evt_0177",
+     "type": "oidc_binding.created",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:38.418Z"
+    },
+    {
+     "id": "evt_0178",
+     "type": "oidc_binding.revoked",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:39.652Z"
+    },
+    {
+     "id": "evt_0179",
+     "type": "organization.created",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:40.886Z"
+    },
+    {
+     "id": "evt_0180",
+     "type": "organization.deleted",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:42.120Z"
+    },
+    {
+     "id": "evt_0181",
+     "type": "organization.deletion_approved",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:43.354Z"
+    },
+    {
+     "id": "evt_0182",
+     "type": "organization.deletion_cancelled",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:44.588Z"
+    },
+    {
+     "id": "evt_0183",
+     "type": "organization.deletion_scheduled",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:45.822Z"
+    },
+    {
+     "id": "evt_0184",
+     "type": "organization.frozen",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:47.056Z"
+    },
+    {
+     "id": "evt_0185",
+     "type": "organization.renamed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:48.290Z"
+    },
+    {
+     "id": "evt_0186",
+     "type": "organization.unfrozen",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:49.524Z"
+    },
+    {
+     "id": "evt_0187",
+     "type": "outbound.refused",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:50.758Z"
+    },
+    {
+     "id": "evt_0188",
+     "type": "project.created",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:51.992Z"
+    },
+    {
+     "id": "evt_0189",
+     "type": "project.deleted",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:53.226Z"
+    },
+    {
+     "id": "evt_0190",
+     "type": "project.renamed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:54.460Z"
+    },
+    {
+     "id": "evt_0191",
+     "type": "recovery.completed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:55.694Z"
+    },
+    {
+     "id": "evt_0192",
+     "type": "recovery.grant_issued",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:56.928Z"
+    },
+    {
+     "id": "evt_0193",
+     "type": "recovery.identity_reenabled",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:58.162Z"
+    },
+    {
+     "id": "evt_0194",
+     "type": "reenrollment.completed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:03:59.396Z"
+    },
+    {
+     "id": "evt_0195",
+     "type": "reenrollment.grant_issued",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:00.630Z"
+    },
+    {
+     "id": "evt_0196",
+     "type": "requirement.created",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:01.864Z"
+    },
+    {
+     "id": "evt_0197",
+     "type": "requirement.revoked",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:03.098Z"
+    },
+    {
+     "id": "evt_0198",
+     "type": "requirement.updated",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:04.332Z"
+    },
+    {
+     "id": "evt_0199",
+     "type": "role.created",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:05.566Z"
+    },
+    {
+     "id": "evt_0200",
+     "type": "role.deleted",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:06.800Z"
+    },
+    {
+     "id": "evt_0201",
+     "type": "role.updated",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:08.034Z"
+    },
+    {
+     "id": "evt_0202",
+     "type": "secret.disclosed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:09.268Z"
+    },
+    {
+     "id": "evt_0203",
+     "type": "secret.validated",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:10.502Z"
+    },
+    {
+     "id": "evt_0204",
+     "type": "security_control.changed",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:11.736Z"
+    },
+    {
+     "id": "evt_0205",
+     "type": "security_control.reset",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:12.970Z"
+    },
+    {
+     "id": "evt_0206",
+     "type": "security_control.would_block",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:14.204Z"
+    },
+    {
+     "id": "evt_0207",
+     "type": "setup.grant_rejected",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:15.438Z"
+    },
+    {
+     "id": "evt_0208",
+     "type": "sync.connection_checked",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:16.672Z"
+    },
+    {
+     "id": "evt_0209",
+     "type": "sync.connection_created",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:17.906Z"
+    },
+    {
+     "id": "evt_0210",
+     "type": "sync.connection_credential_replaced",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:19.140Z"
+    },
+    {
+     "id": "evt_0211",
+     "type": "sync.connection_revoked",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:20.374Z"
+    },
+    {
+     "id": "evt_0212",
+     "type": "sync.destinations_listed",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:21.608Z"
+    },
+    {
+     "id": "evt_0213",
+     "type": "sync.drift_detected",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:22.842Z"
+    },
+    {
+     "id": "evt_0214",
+     "type": "sync.github_app_installations_listed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:24.076Z"
+    },
+    {
+     "id": "evt_0215",
+     "type": "sync.github_app_key_rotated",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:25.310Z"
+    },
+    {
+     "id": "evt_0216",
+     "type": "sync.github_app_registered",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:26.544Z"
+    },
+    {
+     "id": "evt_0217",
+     "type": "sync.github_app_registration_abandoned",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:27.778Z"
+    },
+    {
+     "id": "evt_0218",
+     "type": "sync.github_app_registration_refused",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:29.012Z"
+    },
+    {
+     "id": "evt_0219",
+     "type": "sync.github_app_removed",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:30.246Z"
+    },
+    {
+     "id": "evt_0220",
+     "type": "sync.push_attempted",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:31.480Z"
+    },
+    {
+     "id": "evt_0221",
+     "type": "sync.push_result",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:32.714Z"
+    },
+    {
+     "id": "evt_0222",
+     "type": "sync.target_created",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:33.948Z"
+    },
+    {
+     "id": "evt_0223",
+     "type": "sync.target_disabled",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:35.182Z"
+    },
+    {
+     "id": "evt_0224",
+     "type": "sync.target_paused",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:36.416Z"
+    },
+    {
+     "id": "evt_0225",
+     "type": "sync.target_resumed",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:37.650Z"
+    },
+    {
+     "id": "evt_0226",
+     "type": "sync.target_revoked",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:38.884Z"
+    },
+    {
+     "id": "evt_0227",
+     "type": "sync.target_updated",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:40.118Z"
+    },
+    {
+     "id": "evt_0228",
+     "type": "sync.values_decrypted",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:41.352Z"
+    },
+    {
+     "id": "evt_0229",
+     "type": "team.created",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:42.586Z"
+    },
+    {
+     "id": "evt_0230",
+     "type": "team.deleted",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:43.820Z"
+    },
+    {
+     "id": "evt_0231",
+     "type": "team.member_added",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:45.054Z"
+    },
+    {
+     "id": "evt_0232",
+     "type": "team.member_removed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:46.288Z"
+    },
+    {
+     "id": "evt_0233",
+     "type": "team.project_added",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:47.522Z"
+    },
+    {
+     "id": "evt_0234",
+     "type": "team.project_removed",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:48.756Z"
+    },
+    {
+     "id": "evt_0235",
+     "type": "team.updated",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:49.990Z"
+    },
+    {
+     "id": "evt_0236",
+     "type": "value.deleted",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:51.224Z"
+    },
+    {
+     "id": "evt_0237",
+     "type": "value.disclosed",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:52.458Z"
+    },
+    {
+     "id": "evt_0238",
+     "type": "value.rotation_completed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:53.692Z"
+    },
+    {
+     "id": "evt_0239",
+     "type": "value.rotation_started",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:54.926Z"
+    },
+    {
+     "id": "evt_0240",
+     "type": "value.validated",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:56.160Z"
+    },
+    {
+     "id": "evt_0241",
+     "type": "value.written",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:57.394Z"
+    },
+    {
+     "id": "evt_0242",
+     "type": "webhook.created",
+     "organizationId": null,
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:58.628Z"
+    },
+    {
+     "id": "evt_0243",
+     "type": "webhook.revoked",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:04:59.862Z"
+    },
+    {
+     "id": "evt_0244",
+     "type": "webhook.updated",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:01.096Z"
+    }
+   ],
+   "signals": [
+    {
+     "kind": "identity",
+     "key": "idn_alice",
+     "lastEventId": "evt_0243",
+     "occurredAt": "2026-11-14T10:04:59.862Z",
+     "domains": [
+      "audit_export",
+      "audit_tombstone",
+      "bootstrap",
+      "capability",
+      "contract",
+      "environment",
+      "grant",
+      "group",
+      "identity",
+      "installation",
+      "invitation",
+      "oidc_binding",
+      "organization",
+      "project",
+      "recovery",
+      "reenrollment",
+      "requirement",
+      "role",
+      "security_control",
+      "setup",
+      "sync",
+      "team",
+      "webhook"
+     ]
+    },
+    {
+     "kind": "identity",
+     "key": "idn_bob",
+     "lastEventId": "evt_0244",
+     "occurredAt": "2026-11-14T10:05:01.096Z",
+     "domains": [
+      "audit_export",
+      "capability",
+      "credential",
+      "environment",
+      "grant",
+      "group",
+      "identity",
+      "installation",
+      "invitation",
+      "membership",
+      "oidc_binding",
+      "organization",
+      "outbound",
+      "project",
+      "recovery",
+      "requirement",
+      "role",
+      "security_control",
+      "sync",
+      "team",
+      "value",
+      "webhook"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "read-only events only",
+   "events": [
+    {
+     "id": "evt_0245",
+     "type": "value.disclosed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:02.330Z"
+    },
+    {
+     "id": "evt_0246",
+     "type": "authorization.denied",
+     "organizationId": "org_a",
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:03.564Z"
+    },
+    {
+     "id": "evt_0247",
+     "type": "authentication.failed",
+     "organizationId": null,
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:04.798Z"
+    },
+    {
+     "id": "evt_0248",
+     "type": "capability.exercised",
+     "organizationId": "org_b",
+     "actor": null,
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:06.032Z"
+    }
+   ],
+   "signals": [
+    {
+     "kind": "change",
+     "key": "org_a",
+     "lastEventId": "evt_0246",
+     "occurredAt": "2026-11-14T10:05:03.564Z",
+     "domains": []
+    },
+    {
+     "kind": "change",
+     "key": "org_b",
+     "lastEventId": "evt_0248",
+     "occurredAt": "2026-11-14T10:05:06.032Z",
+     "domains": []
+    },
+    {
+     "kind": "identity",
+     "key": "idn_bob",
+     "lastEventId": "evt_0247",
+     "occurredAt": "2026-11-14T10:05:04.798Z",
+     "domains": []
+    }
+   ]
+  },
+  {
+   "name": "membership changes",
+   "events": [
+    {
+     "id": "evt_0249",
+     "type": "membership.removed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": {
+      "identityId": "idn_bob"
+     },
+     "occurredAt": "2026-11-14T10:05:07.266Z"
+    },
+    {
+     "id": "evt_0250",
+     "type": "membership.role_changed",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": {
+      "identityId": "idn_carol",
+      "role": "admin"
+     },
+     "occurredAt": "2026-11-14T10:05:08.500Z"
+    },
+    {
+     "id": "evt_0251",
+     "type": "membership.removed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": {
+      "identityId": ""
+     },
+     "occurredAt": "2026-11-14T10:05:09.734Z"
+    },
+    {
+     "id": "evt_0252",
+     "type": "membership.removed",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:10.968Z"
+    },
+    {
+     "id": "evt_0253",
+     "type": "membership.removed",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": {
+      "identityId": "idn_dave"
+     },
+     "occurredAt": "2026-11-14T10:05:12.202Z"
+    },
+    {
+     "id": "evt_0254",
+     "type": "membership.created",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": {
+      "identityId": "idn_erin"
+     },
+     "occurredAt": "2026-11-14T10:05:13.436Z"
+    },
+    {
+     "id": "evt_0255",
+     "type": "project.created",
+     "organizationId": "org_a",
+     "actor": "idn_bob",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:14.670Z"
+    }
+   ],
+   "signals": [
+    {
+     "kind": "change",
+     "key": "org_a",
+     "lastEventId": "evt_0255",
+     "occurredAt": "2026-11-14T10:05:14.670Z",
+     "domains": [
+      "membership",
+      "project"
+     ]
+    },
+    {
+     "kind": "change",
+     "key": "org_b",
+     "lastEventId": "evt_0254",
+     "occurredAt": "2026-11-14T10:05:13.436Z",
+     "domains": [
+      "membership"
+     ]
+    },
+    {
+     "kind": "identity",
+     "key": "idn_bob",
+     "lastEventId": "evt_0249",
+     "occurredAt": "2026-11-14T10:05:07.266Z",
+     "domains": [
+      "membership"
+     ]
+    },
+    {
+     "kind": "identity",
+     "key": "idn_carol",
+     "lastEventId": "evt_0250",
+     "occurredAt": "2026-11-14T10:05:08.500Z",
+     "domains": [
+      "membership"
+     ]
+    },
+    {
+     "kind": "identity",
+     "key": "idn_alice",
+     "lastEventId": "evt_0253",
+     "occurredAt": "2026-11-14T10:05:12.202Z",
+     "domains": [
+      "membership"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "organization.deleted in the middle of a batch",
+   "events": [
+    {
+     "id": "evt_0256",
+     "type": "project.created",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:15.904Z"
+    },
+    {
+     "id": "evt_0257",
+     "type": "grant.created",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:17.138Z"
+    },
+    {
+     "id": "evt_0258",
+     "type": "organization.deleted",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": {
+      "organizationId": "org_b"
+     },
+     "occurredAt": "2026-11-14T10:05:18.372Z"
+    },
+    {
+     "id": "evt_0259",
+     "type": "membership.removed",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": {
+      "identityId": "idn_bob"
+     },
+     "occurredAt": "2026-11-14T10:05:19.606Z"
+    },
+    {
+     "id": "evt_0260",
+     "type": "environment.created",
+     "organizationId": "org_b",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:20.840Z"
+    },
+    {
+     "id": "evt_0261",
+     "type": "organization.deleted",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:22.074Z"
+    }
+   ],
+   "signals": [
+    {
+     "kind": "change",
+     "key": "org_b",
+     "lastEventId": "evt_0260",
+     "occurredAt": "2026-11-14T10:05:20.840Z",
+     "domains": [
+      "membership",
+      "environment"
+     ]
+    },
+    {
+     "kind": "identity",
+     "key": "idn_bob",
+     "lastEventId": "evt_0259",
+     "occurredAt": "2026-11-14T10:05:19.606Z",
+     "domains": [
+      "membership"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "an Organization deleted before publication",
+   "events": [
+    {
+     "id": "evt_0262",
+     "type": "project.created",
+     "organizationId": "org_gone",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:23.308Z"
+    },
+    {
+     "id": "evt_0263",
+     "type": "membership.removed",
+     "organizationId": "org_gone",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": {
+      "identityId": "idn_bob"
+     },
+     "occurredAt": "2026-11-14T10:05:24.542Z"
+    },
+    {
+     "id": "evt_0264",
+     "type": "value.updated",
+     "organizationId": "org_a",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:25.776Z"
+    },
+    {
+     "id": "evt_0265",
+     "type": "credential.revoked",
+     "organizationId": null,
+     "actor": "idn_alice",
+     "credentialId": "crd_1",
+     "resource": {
+      "identityId": "idn_alice"
+     },
+     "occurredAt": "2026-11-14T10:05:27.010Z"
+    }
+   ],
+   "signals": [
+    {
+     "kind": "change",
+     "key": "org_a",
+     "lastEventId": "evt_0264",
+     "occurredAt": "2026-11-14T10:05:25.776Z",
+     "domains": [
+      "value"
+     ]
+    },
+    {
+     "kind": "identity",
+     "key": "idn_bob",
+     "lastEventId": "evt_0263",
+     "occurredAt": "2026-11-14T10:05:24.542Z",
+     "domains": [
+      "membership"
+     ]
+    },
+    {
+     "kind": "identity",
+     "key": "idn_alice",
+     "lastEventId": "evt_0265",
+     "occurredAt": "2026-11-14T10:05:27.010Z",
+     "domains": [
+      "credential"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "empty Organization and actor ids",
+   "events": [
+    {
+     "id": "evt_0266",
+     "type": "project.created",
+     "organizationId": "",
+     "actor": "idn_alice",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:28.244Z"
+    },
+    {
+     "id": "evt_0267",
+     "type": "credential.issued",
+     "organizationId": null,
+     "actor": "",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:29.478Z"
+    },
+    {
+     "id": "evt_0268",
+     "type": "credential.issued",
+     "organizationId": "",
+     "actor": "",
+     "credentialId": null,
+     "resource": null,
+     "occurredAt": "2026-11-14T10:05:30.712Z"
+    }
+   ],
+   "signals": [
+    {
+     "kind": "identity",
+     "key": "idn_alice",
+     "lastEventId": "evt_0266",
+     "occurredAt": "2026-11-14T10:05:28.244Z",
+     "domains": [
+      "project"
+     ]
+    }
+   ]
+  }
+ ]
+}

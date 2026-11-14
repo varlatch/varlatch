@@ -28,8 +28,12 @@
  *             `varlatchd admin conformance-probe`, which a varlatchd built
  *             with the conformance build tag has (go build -tags
  *             conformance); `up` refuses a binary without it
+ *   goServer  the go-server capability: `fixture <name> [args]`, the realtime
+ *             suite's fixtures (Organizations, people, browser sessions,
+ *             audit events, a removal) through `varlatchd admin
+ *             conformance-fixture`, from the same conformance build; JSON
  *
- * Optional capabilities: the device sign-in probes. Maintenance and
+ * Optional capabilities: the device sign-in probes and go-server. Maintenance and
  * serve-cli come with the operations that need them (expect/go-binary.json
  * lists them).
  * The only processes it signals are the ones it started, by the PID it
@@ -52,7 +56,7 @@ import { fileURLToPath } from "node:url";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
 
 export const name = "go-binary";
-export const capabilities = ["probe:device-sign-in-addresses", "probe:expire-pending-device-sign-ins", "probe:proxy-addresses"];
+export const capabilities = ["probe:device-sign-in-addresses", "probe:expire-pending-device-sign-ins", "probe:proxy-addresses", "go-server"];
 
 const READY_TIMEOUT_MS = 30_000;
 /** One /readyz request's deadline: a server that accepts and never answers must not hold up the loop. */
@@ -310,6 +314,19 @@ export async function bootstrap(state) {
 
 export async function recover(state, identity, { cliCredential = false } = {}) {
   return admin(state, ["recover", "--identity", identity, ...(cliCredential ? ["--cli-credential"] : [])]);
+}
+
+/**
+ * The go-server capability (the realtime suite, gate G11): `fixture <name>
+ * [args]` runs `varlatchd admin conformance-fixture`, which writes what the
+ * suite's streams need while the /v1 writes that would make it are not
+ * built (ADR-0059 step 4). Its JSON answer.
+ */
+export async function goServer(state, operation, ...args) {
+  if (operation !== "fixture" || !["world", "orgs", "session", "events", "remove-member"].includes(args[0])) {
+    throw new Error(`go-server: unknown operation ${[operation, ...args.slice(0, 1)].join(" ")}`);
+  }
+  return JSON.parse(admin(state, ["conformance-fixture", ...args]));
 }
 
 /** A fixed, named probe of server state (the target contract): `varlatchd admin conformance-probe`. */

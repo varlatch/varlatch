@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/httpserver"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/web"
 )
 
@@ -116,7 +118,15 @@ func Serve(opts Options) int {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	store, err := storage.Open(ctx, storage.Options{Path: cfg.DatabasePath()})
+	// The dashboard's live updates: woken by every commit (ADR-0059
+	// Decision 4). The hub is made once the database is open; commits
+	// before that have nobody to tell.
+	var live atomic.Pointer[realtime.Hub]
+	store, err := storage.Open(ctx, storage.Options{Path: cfg.DatabasePath(), OnCommit: func() {
+		if h := live.Load(); h != nil {
+			h.Notify()
+		}
+	}})
 	if err != nil {
 		return fail(ExitFailure, "cannot open the database", "file", cfg.DatabasePath(), "error", err)
 	}
@@ -164,6 +174,16 @@ func Serve(opts Options) int {
 		accessOut = f
 	}
 
+	hub := realtime.New(realtime.Options{Store: store, Log: log})
+	live.Store(hub)
+	hubDone := make(chan struct{})
+	go func() {
+		defer close(hubDone)
+		if err := hub.Run(ctx); err != nil {
+			log.Error("realtime: the publisher stopped; live updates are unavailable until varlatchd restarts", "error", err)
+		}
+	}()
+	defer func() { cancel(); <-hubDone }()
 	handler, err := httpserver.New(httpserver.Options{
 		Version:        buildinfo.Version,
 		PublicURL:      cfg.PublicURL,
@@ -174,6 +194,7 @@ func Serve(opts Options) int {
 		Web:            web.FS(),
 		Backend:        &backend{store: store, rootKEK: rootKEK},
 		Auth:           auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK}),
+		Realtime:       hub,
 		Log:            log,
 	})
 	if err != nil {
@@ -192,7 +213,11 @@ func Serve(opts Options) int {
 		ReadTimeout:       readTimeout,
 		IdleTimeout:       idleTimeout,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+		ConnContext:       httpserver.ConnContext,
 	}
+	// Shutdown waits for requests to finish, and an event stream does not
+	// by itself: the hub ends every stream first.
+	srv.RegisterOnShutdown(hub.Close)
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	log.Info("varlatchd is serving", "version", buildinfo.Version, "address", ln.Addr().String(), "installationId", inst.ID)

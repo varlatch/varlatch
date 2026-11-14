@@ -261,6 +261,9 @@ type FinishPasskeySignInJSONRequestBody FinishPasskeySignInJSONBody
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// StreamBrowserEvents The dashboard's live updates (ADR-0059 Decision 4): server-sent events, served only when /v1/meta lists the capability realtime.sse. The browser's session (its varlatch_session cookie) authenticates the stream; a stream receives the changeSignal of each Organization its identity is a member of when the signal is sent, and its own identity's identitySignal, never another's. Signals carry the domains an audit event touched and the last event's id, never data. Events: "ready" once, data {"identityId"}; "change", data {"organizationId", "lastEventId", "occurredAt", "domains"}; "identity", data {"lastEventId", "occurredAt", "domains"}; a comment line about every 15 s to keep the connection alive; and "close", data {"reason"}, as the server ends the stream: "session-ended" (signed out, expired, or the identity disabled), "credential-revoked" (a credential of the session revoked), "membership-removed" (after the identity event that says so), "slow-client" (16 publications waiting for it; a publication is the events one round of publishing sends it), "replaced" (more than 8 streams for one session; the oldest closes) or "shutdown". Nothing is replayed and no event carries an id: a dashboard that reconnects refreshes from /v1. 401 AUTHENTICATION_REQUIRED without a live session. Cache-Control no-store.
+	// (GET /auth/events)
+	StreamBrowserEvents(w http.ResponseWriter, r *http.Request)
 	// FinishPasskeyRegistration Verify the registration and store the passkey. An enrollment consumes its setup grant, records the passkey as trusted (ADR-0054 Decision 4) and starts a session; a passkey a signed-in person adds is unconfirmed. A credential id already registered, for anyone, answers 400 PASSKEY_ALREADY_REGISTERED, before the grant is consumed.
 	// (POST /auth/passkey/registration)
 	FinishPasskeyRegistration(w http.ResponseWriter, r *http.Request, params FinishPasskeyRegistrationParams)
@@ -292,6 +295,20 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// StreamBrowserEvents operation middleware
+func (siw *ServerInterfaceWrapper) StreamBrowserEvents(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StreamBrowserEvents(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // FinishPasskeyRegistration operation middleware
 func (siw *ServerInterfaceWrapper) FinishPasskeyRegistration(w http.ResponseWriter, r *http.Request) {
@@ -704,6 +721,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/passkey/registration", wrapper.FinishPasskeyRegistration)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/sign-out", wrapper.SignOut)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/varlatch-token", wrapper.MintBrowserBearer)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/events", wrapper.StreamBrowserEvents)
 
 	return m
 }
@@ -717,6 +735,90 @@ type RequestWindowJSONResponse struct {
 	Body ApiError
 
 	Headers RequestWindowResponseHeaders
+}
+
+type StreamBrowserEventsRequestObject struct {
+}
+
+type StreamBrowserEventsResponseObject interface {
+	VisitStreamBrowserEventsResponse(w http.ResponseWriter) error
+}
+
+type StreamBrowserEvents200TexteventStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response StreamBrowserEvents200TexteventStreamResponse) VisitStreamBrowserEventsResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		// If w doesn't support flushing, fall back to io.Copy.
+		_, err := io.Copy(w, response.Body)
+		return err
+	}
+	// text/event-stream messages are typically small; use a
+	// modest buffer and flush after each chunk so clients see
+	// events immediately instead of waiting on OS buffering.
+	buf := make([]byte, 4096)
+	for {
+		n, err := response.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+type StreamBrowserEvents429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response StreamBrowserEvents429JSONResponse) VisitStreamBrowserEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamBrowserEventsdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response StreamBrowserEventsdefaultJSONResponse) VisitStreamBrowserEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type FinishPasskeyRegistrationRequestObject struct {
@@ -1109,6 +1211,9 @@ func (response MintBrowserBearerdefaultJSONResponse) VisitMintBrowserBearerRespo
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// StreamBrowserEvents The dashboard's live updates (ADR-0059 Decision 4): server-sent events, served only when /v1/meta lists the capability realtime.sse. The browser's session (its varlatch_session cookie) authenticates the stream; a stream receives the changeSignal of each Organization its identity is a member of when the signal is sent, and its own identity's identitySignal, never another's. Signals carry the domains an audit event touched and the last event's id, never data. Events: "ready" once, data {"identityId"}; "change", data {"organizationId", "lastEventId", "occurredAt", "domains"}; "identity", data {"lastEventId", "occurredAt", "domains"}; a comment line about every 15 s to keep the connection alive; and "close", data {"reason"}, as the server ends the stream: "session-ended" (signed out, expired, or the identity disabled), "credential-revoked" (a credential of the session revoked), "membership-removed" (after the identity event that says so), "slow-client" (16 publications waiting for it; a publication is the events one round of publishing sends it), "replaced" (more than 8 streams for one session; the oldest closes) or "shutdown". Nothing is replayed and no event carries an id: a dashboard that reconnects refreshes from /v1. 401 AUTHENTICATION_REQUIRED without a live session. Cache-Control no-store.
+	// (GET /auth/events)
+	StreamBrowserEvents(ctx context.Context, request StreamBrowserEventsRequestObject) (StreamBrowserEventsResponseObject, error)
 	// FinishPasskeyRegistration Verify the registration and store the passkey. An enrollment consumes its setup grant, records the passkey as trusted (ADR-0054 Decision 4) and starts a session; a passkey a signed-in person adds is unconfirmed. A credential id already registered, for anyone, answers 400 PASSKEY_ALREADY_REGISTERED, before the grant is consumed.
 	// (POST /auth/passkey/registration)
 	FinishPasskeyRegistration(ctx context.Context, request FinishPasskeyRegistrationRequestObject) (FinishPasskeyRegistrationResponseObject, error)
@@ -1169,6 +1274,30 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// StreamBrowserEvents operation middleware
+func (sh *strictHandler) StreamBrowserEvents(w http.ResponseWriter, r *http.Request) {
+	var request StreamBrowserEventsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StreamBrowserEvents(ctx, request.(StreamBrowserEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StreamBrowserEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StreamBrowserEventsResponseObject); ok {
+		if err := validResponse.VisitStreamBrowserEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // FinishPasskeyRegistration operation middleware

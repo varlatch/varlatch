@@ -5,14 +5,28 @@ import { anyApi } from "convex/server";
 import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { useSession } from "./session";
 import { backend } from "./backend";
+import { useSseConnected, useSseMeDocs, useSseOrgDocs } from "./sseProvider";
 
 /**
- * Reactive invalidation over the Convex mirror (ADR-0005): varlatchd pushes a
+ * Reactive invalidation over live-update signals: the server sends a
  * per-org changeSignal whenever audit events are recorded, carrying the
- * event-type domains touched ("grant", "project", …). Pages subscribe to the
+ * event-type domains touched ("grant", "project", …), and a per-identity
+ * identitySignal for events outside any organization. Pages subscribe to the
  * signal for their domains and refetch their authoritative /v1 queries when
- * it moves. Convex never serves authoritative data here — it only says
- * "something changed"; a stale or lost signal degrades to today's behavior.
+ * it moves. The signal never carries authoritative data, it only says
+ * "something changed"; a stale or lost signal degrades to polling
+ * (LiveUpdatesStatus).
+ *
+ * The transport is chosen once, when this module loads, after /v1/meta was
+ * read (lib/backend.ts), so a component calls the same hooks on every
+ * render:
+ *
+ * - "convex": the TypeScript server's Convex mirror (ADR-0005), whose
+ *   subscriptions are scoped by the Convex token's claims;
+ * - "sse": the Go server's server-sent events (lib/sse.ts, ADR-0059
+ *   Decision 4), scoped by the browser session on the server;
+ * - "none": no live updates; a signal never arrives (undefined, as before
+ *   the first snapshot), and the pages' queries refresh by polling.
  */
 
 const mirrorList = (anyApi as Record<string, Record<string, unknown>>).mirror!
@@ -20,19 +34,33 @@ const mirrorList = (anyApi as Record<string, Record<string, unknown>>).mirror!
 const mirrorListMine = (anyApi as Record<string, Record<string, unknown>>).mirror!
   .listMine as Parameters<typeof useConvexQuery>[0];
 
-/**
- * The mirror's subscriptions, or none on a server without Convex
- * (lib/backend.ts): chosen once, when this module loads, after /v1/meta
- * was read, so a component calls the same hooks on every render. Without
- * live updates a signal never arrives (undefined, as before the first
- * snapshot), and the pages' queries refresh by polling (LiveUpdatesStatus).
- */
-const useMirrorDocs: (query: Parameters<typeof useConvexQuery>[0], args: Record<string, unknown> | "skip") => unknown =
-  backend().realtime === "convex" ? (query, args) => useConvexQuery(query, args as never) : () => undefined;
+type Docs = { data?: ChangeSignal }[] | undefined;
 
-/** Whether the live-updates connection is up; always false without Convex. */
+const transport = backend().realtime;
+
+/** An Organization's changeSignal documents. */
+const useOrgDocs: (orgId: string | undefined) => Docs =
+  transport === "convex"
+    ? (orgId) => useConvexQuery(mirrorList, (orgId ? { kind: "changeSignal", organizationId: orgId } : "skip") as never) as Docs
+    : transport === "sse"
+      ? useSseOrgDocs
+      : () => undefined;
+
+/** The signed-in person's identitySignal documents. */
+const useMeDocs: () => Docs =
+  transport === "convex"
+    ? () => useConvexQuery(mirrorListMine, { kind: "identitySignal" } as never) as Docs
+    : transport === "sse"
+      ? useSseMeDocs
+      : () => undefined;
+
+/** Whether the live-updates connection is up; always false without live updates. */
 export const useRealtimeConnected: () => boolean =
-  backend().realtime === "convex" ? () => useConvexConnectionState().isWebSocketConnected : () => false;
+  transport === "convex"
+    ? () => useConvexConnectionState().isWebSocketConnected
+    : transport === "sse"
+      ? useSseConnected
+      : () => false;
 
 interface ChangeSignal {
   lastEventId?: string;
@@ -50,23 +78,17 @@ export function useMirrorInvalidation(
   domains: "*" | string[],
   queryKeys: QueryKey[],
 ): void {
-  const docs = useMirrorDocs(
-    mirrorList,
-    orgId ? { kind: "changeSignal", organizationId: orgId } : "skip",
-  ) as { data?: ChangeSignal }[] | undefined;
-  useSignalInvalidation(docs, domains, queryKeys);
+  useSignalInvalidation(useOrgDocs(orgId), domains, queryKeys);
 }
 
 /**
  * Me-scoped counterpart: org-less events (credential lifecycle on /v1/me)
  * signal the acting identity instead of an org. The subscription is scoped
- * server-side to the Convex token's subject — no id is passed here.
+ * server-side to the signed-in identity (the Convex token's subject, or the
+ * stream's session); no id is passed here.
  */
 export function useMeRealtime(domains: "*" | string[], queryKeys: QueryKey[]): void {
-  const docs = useMirrorDocs(mirrorListMine, { kind: "identitySignal" }) as
-    | { data?: ChangeSignal }[]
-    | undefined;
-  useSignalInvalidation(docs, domains, queryKeys);
+  useSignalInvalidation(useMeDocs(), domains, queryKeys);
 }
 
 /**
@@ -75,10 +97,7 @@ export function useMeRealtime(domains: "*" | string[], queryKeys: QueryKey[]): v
  * instance "membership": removed from an organization, or a new role).
  */
 export function useMeSignal(domains: "*" | string[], onChange: () => void): void {
-  const docs = useMirrorDocs(mirrorListMine, { kind: "identitySignal" }) as
-    | { data?: ChangeSignal }[]
-    | undefined;
-  useSignal(docs, domains, onChange);
+  useSignal(useMeDocs(), domains, onChange);
 }
 
 function useSignalInvalidation(
