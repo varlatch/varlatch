@@ -35,6 +35,19 @@ describe("OpenAPI check", () => {
     expect(found).toEqual([]);
   });
 
+  it("every operation documents its errors: a default response with the error envelope", () => {
+    // Any operation can answer 401, 429 (rate limit), 503 (maintenance) or
+    // 500 before its handler runs; the server sends the ApiError envelope.
+    const missing: string[] = [];
+    for (const [path, item] of Object.entries(spec.paths as Record<string, Json>)) {
+      for (const [method, op] of Object.entries(item)) {
+        const responses = (op as Json).responses as Json | undefined;
+        if (responses && (responses.default as Json | undefined)?.$ref !== "#/components/responses/Error") missing.push(`${method.toUpperCase()} ${path}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
   it("every $ref resolves", () => {
     const broken: string[] = [];
     walk(spec, "", (node, path) => {
@@ -62,7 +75,7 @@ describe("OpenAPI check", () => {
     expect(me?.template).toBe("/v1/me");
   });
 
-  it("flags an undocumented status, a schema mismatch and an undocumented 2xx path", () => {
+  it("flags a schema mismatch, a missing body and an undocumented 2xx path", () => {
     const base = {
       method: "GET",
       pathname: "/v1/meta",
@@ -84,9 +97,9 @@ describe("OpenAPI check", () => {
     expect(error.mismatches).toEqual([]);
     const bare = checkExchange({ ...base, pathname: "/v1/organizations", status: 500, responseText: JSON.stringify({ message: "x" }) });
     expect(bare.mismatches.map((m) => m.kind)).toEqual(["response-schema"]);
-    // GET /v1/meta documents only 200.
-    const undocumented = checkExchange({ ...base, status: 500, responseText: "{}" });
-    expect(undocumented.mismatches.map((m) => m.kind)).toEqual(["undocumented-status"]);
+    // A 204 where the spec documents a JSON body.
+    const empty = checkExchange({ ...base, status: 200, responseHasBody: false, responseText: "" });
+    expect(empty.mismatches.map((m) => m.kind)).toEqual(["missing-response-body"]);
     const unknown = checkExchange({ ...base, pathname: "/v1/nowhere", status: 200, responseText: "{}" });
     expect(unknown.mismatches.map((m) => m.kind)).toEqual(["undocumented-operation"]);
     const notFound = checkExchange({ ...base, pathname: "/v1/nowhere", status: 404, responseText: "{}" });

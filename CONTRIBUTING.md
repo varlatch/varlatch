@@ -58,6 +58,17 @@ you changed and of the packages that depend on them) and marks the pull
 request ready, which starts CI, only if they pass. `pnpm verify` needs
 Docker, and `pnpm ready` needs the GitHub CLI.
 
+`packages/protocol/openapi.yaml` describes the `/v1` API as the server
+serves it. The varlatchd tests check every `/v1` request and response they
+make against it: the status code, the content type, the body (error
+responses included), and the bodies of accepted requests. A field the
+spec does not name counts as a mismatch, and a mismatch fails the test
+that caused it. When you change what an endpoint accepts or returns,
+change the spec with it and run `pnpm --filter @varlatch/protocol
+generate`. `VARLATCH_OPENAPI_CHECK=collect` lists mismatches at the end of
+the run without failing tests, and `VARLATCH_OPENAPI_REPORT=<file>` also
+writes the run's report, including the operations no test exercised.
+
 The documentation is the Markdown in `docs/`, plus the deployment guide,
 `CONTEXT.md`, and `CHANGELOG.md`. `apps/docs`, a pnpm workspace of its
 own, builds it into the site at docs.varlatch.com; `pnpm install && pnpm

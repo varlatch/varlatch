@@ -2493,33 +2493,32 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        /** @description An identity in an Organization's identity listing. */
         Identity: {
             id: string;
             name: string;
             /** @enum {string} */
             kind: "human" | "service" | "workload" | "ci" | "broker" | "agent";
-            disabled?: boolean;
-            /** Format: date-time */
-            createdAt: string;
+            disabled: boolean;
             /**
              * Format: date-time
              * @description Most recent successful authentication by any of the identity's credentials, throttled to ~60s granularity (ADR-0034 §5). An operational signal, not an audit record. Null when never seen.
              */
-            lastSeenAt?: string | null;
+            lastSeenAt: string | null;
             /** @description Better Auth account email for human identities; null for machines. */
-            email?: string | null;
+            email: string | null;
             /** @description Avatar image (data or https URL) for human identities; null for machines. */
-            image?: string | null;
+            image: string | null;
             /**
              * @description In an Organization's identity listing, a live member's built-in role; null for machines and former members.
              * @enum {string|null}
              */
-            orgRole?: "admin" | "member" | null;
+            orgRole: "admin" | "member" | null;
             /**
              * Format: date-time
              * @description In an Organization's identity listing, when a former member was removed or left (capability members.lifecycle); null otherwise.
              */
-            removedAt?: string | null;
+            removedAt: string | null;
         };
         /** @description What a person created or changed in the Organization that may keep working without them (ADR-0052 Decision 4). Names, IDs and states only. Removal changes none of it. It ends this identity's authority, not a credential, token or platform account held outside Varlatch. */
         MemberReview: {
@@ -2813,14 +2812,21 @@ export interface components {
             /** @description Only on the tailnet listeners: the device this request's own connection resolved to through Tailscale WhoIs, or why there is none, as GET /v1/tailnet/context reports it (nodeName included when Tailscale gives one). No Requirement is evaluated: a recognized device is no promise that a constrained read will be allowed. */
             tailnet?: components["schemas"]["TailnetDevice"];
         };
-        CreatedIdentity: components["schemas"]["Identity"] & {
+        /** @description The new machine identity and its first credential. Not an Identity: it carries no createdAt, lastSeenAt or member fields. */
+        CreatedIdentity: {
+            id: string;
+            name: string;
+            /** @enum {string} */
+            kind: "service" | "workload" | "ci" | "broker" | "agent";
+            /** @constant */
+            disabled: false;
             /** @description Shown exactly once at creation; stored hashed; never retrievable. */
-            credential?: string | null;
+            credential: string | null;
             /**
              * Format: date-time
              * @description Expiry of the issued credential: from credentialTtlSeconds, or from the Organization's default lifetime while it enforces credential-lifetime; null for no expiry.
              */
-            credentialExpiresAt?: string | null;
+            credentialExpiresAt: string | null;
         };
         /**
          * @description pending: can still be accepted. consumed: accepted, the invitee enrolled. expired: not accepted before expiresAt. revoked: revoked while pending. Every state but pending is final.
@@ -4025,15 +4031,15 @@ export interface components {
             client?: string | null;
             organizationId?: string | null;
             action?: string | null;
-            resource?: Record<string, never>;
+            resource?: Record<string, never> | null;
             /** @enum {string} */
             decision: "allow" | "deny" | "info";
-            authorization?: Record<string, never>;
-            tailnetContext?: Record<string, never>;
+            authorization?: Record<string, never> | null;
+            tailnetContext?: Record<string, never> | null;
             /** @enum {string|null} */
             listener?: "ordinary" | "tailnet" | null;
             requestId?: string | null;
-            metadata?: Record<string, never>;
+            metadata?: Record<string, never> | null;
         };
     };
     responses: {
@@ -4125,8 +4131,11 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
+            default: components["responses"]["Error"];
         };
     };
     getInstallationListeners: {
@@ -4152,8 +4161,11 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
+            default: components["responses"]["Error"];
         };
     };
     getInstallationRelease: {
@@ -4179,8 +4191,11 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
+            default: components["responses"]["Error"];
         };
     };
     getInstallationOutbound: {
@@ -4206,8 +4221,11 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
+            default: components["responses"]["Error"];
         };
     };
     getMeta: {
@@ -4228,6 +4246,7 @@ export interface operations {
                     "application/json": components["schemas"]["Meta"];
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     getTailnetEndpoint: {
@@ -4253,8 +4272,11 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
+            default: components["responses"]["Error"];
         };
     };
     getTailnetContext: {
@@ -4280,15 +4302,20 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
-            /** @description Not the tailnet browser endpoint */
+            /** @description Not the tailnet browser endpoint: the route does not exist on this listener, so the answer is the router's plain-text "404 Not Found", not the error envelope. */
             404: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "text/plain": string;
+                };
             };
+            default: components["responses"]["Error"];
         };
     };
     listOrganizations: {
@@ -4386,7 +4413,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description 1 to 200 characters once surrounding whitespace is trimmed. */
+                    /** @description 1 to 200 characters once surrounding whitespace is trimmed; the limits apply to the trimmed name, so they are not schema bounds. */
                     name: string;
                 };
             };

@@ -60,9 +60,8 @@ export type OpenApiCheckMode = "enforce" | "collect" | "off";
 /** VARLATCH_OPENAPI_CHECK: enforce (default), collect or off. */
 export function openApiCheckMode(): OpenApiCheckMode {
   const v = process.env.VARLATCH_OPENAPI_CHECK;
-  if (v === "enforce" || v === "off") return v;
-  // TEMPORARY: collect while the spec is brought in line; enforce next.
-  return "collect";
+  if (v === "collect" || v === "off") return v;
+  return "enforce";
 }
 
 /** Served under /v1 but outside the contract (spec-coverage.test.ts). */
@@ -72,7 +71,15 @@ const UNSPECCED = new Set(["POST /v1/tokens/convex"]);
  * Mismatches that cannot be fixed in the spec, each with its reason, keyed
  * "kind METHOD /v1/template status". Keep it empty unless a reason holds.
  */
-export const ALLOWED: ReadonlyMap<string, string> = new Map<string, string>([]);
+export const ALLOWED: ReadonlyMap<string, string> = new Map<string, string>([
+  [
+    "request-undocumented-field PATCH /v1/organizations/{org} 200",
+    // organization-rename.test.ts sends a slug on purpose, to prove the
+    // rename ignores it. The spec rightly names only `name`; the server's
+    // parser drops unknown fields.
+    "a test sends slug on purpose to prove a rename never changes it; the server drops unknown fields",
+  ],
+]);
 
 type Json = Record<string, unknown>;
 
@@ -290,6 +297,9 @@ export function checkExchange(input: {
 }): { exchange?: Exchange; mismatches: Mismatch[] } {
   const { method, pathname, status } = input;
   if (pathname !== "/v1" && !pathname.startsWith("/v1/")) return { mismatches: [] };
+  // CORS preflights, which the tailnet browser endpoint answers before any
+  // route (ADR-0046), are transport, not operations of the contract.
+  if (method === "OPTIONS") return { mismatches: [] };
   const matched = matchOperation(method, pathname);
   if (!matched) {
     const concrete = `${method} ${pathname}`;
@@ -360,7 +370,11 @@ export function checkExchange(input: {
     const content = requestBody?.content as Json | undefined;
     const type = mediaType(input.requestContentType);
     if (!requestBody) {
-      if (hasBody) add("undocumented-request-body", `${type ?? "no content type"} body, spec documents none`);
+      // Generic test helpers send {} to every POST; a server handler
+      // without a body ignores it. Anything more is a body the spec omits.
+      if (hasBody && input.requestText!.trim() !== "{}") {
+        add("undocumented-request-body", `${type ?? "no content type"} body, spec documents none`);
+      }
     } else if (!hasBody) {
       if (requestBody.required === true) add("missing-request-body", "requestBody is required");
     } else {

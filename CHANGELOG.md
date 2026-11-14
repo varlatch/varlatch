@@ -5,6 +5,22 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased
+
+### API
+
+- **The published OpenAPI document now matches what the server returns.**
+  The test suite checks every `/v1` request and response against
+  `openapi.yaml`, and the document was corrected where it differed. The
+  server itself did not change. Corrections a client generated from the
+  document may notice: an identity in the identity listing and a newly
+  created identity carry no `createdAt` (they never did); an audit event's
+  `resource`, `authorization`, `tailnetContext` and `metadata` may be
+  `null`; every operation now documents its error responses, including
+  the installation endpoints' 403 and the tailnet endpoints' 401; and an
+  Organization rename's `name` is limited to 200 characters after
+  trimming, which the schema no longer states as a raw length.
+
 ## 0.22.0 (2026-11-13)
 
 ### Sign-in
