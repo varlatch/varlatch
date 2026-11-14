@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
+import { reporter } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live passkey E2E (ADR-0006/0008): drives the real enrollment page against
  * the running canonical stack with a CDP virtual authenticator. Usage:
@@ -17,11 +18,7 @@ if (!enrollUrl?.includes("#")) {
 const base = new URL(enrollUrl).origin;
 
 const browser = await chromium.launch();
-let failed = false;
-const check = (name, ok, detail = "") => {
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
-  if (!ok) failed = true;
-};
+const { check, finish } = reporter();
 
 async function newPageWithAuthenticator(context) {
   const page = await context.newPage();
@@ -48,7 +45,7 @@ const abandoned = await fetch(
   `${base}/auth/passkey/generate-register-options?context=${encodeURIComponent(setupToken)}`,
   { headers: { Origin: base } },
 );
-check("abandoned ceremony start is accepted", abandoned.status === 200, `status ${abandoned.status}`);
+check("passkey.abandoned-ceremony-start-accepted", "abandoned ceremony start is accepted", abandoned.status === 200, `status ${abandoned.status}`);
 
 // ---- 1. Enrollment consumes the setup token and yields a working credential.
 const context = await browser.newContext();
@@ -65,15 +62,15 @@ await page.waitForFunction(
   { timeout: 20000 },
 );
 const enrollStatus = await page.textContent("#status");
-check("passkey enrollment completes", /API credential/.test(enrollStatus), enrollStatus.split("\n")[0]);
+check("passkey.passkey-enrollment-completes", "passkey enrollment completes", /API credential/.test(enrollStatus), enrollStatus.split("\n")[0]);
 
 const enrollToken = enrollStatus.match(/vlt_web_[A-Za-z0-9_-]+/)?.[0];
-check("exchange yields a browser bearer", Boolean(enrollToken));
+check("passkey.exchange-yields-browser-bearer", "exchange yields a browser bearer", Boolean(enrollToken));
 
 const orgs = await fetch(`${base}/v1/organizations`, {
   headers: { Authorization: `Bearer ${enrollToken}` },
 });
-check("browser bearer authenticates /v1", orgs.status === 200, `status ${orgs.status}`);
+check("passkey.browser-bearer-authenticates-v1", "browser bearer authenticates /v1", orgs.status === 200, `status ${orgs.status}`);
 
 // ---- 2. The setup token is single-use.
 const replayContext = await browser.newContext();
@@ -86,7 +83,7 @@ await replay.page.waitForFunction(
   { timeout: 20000 },
 );
 const replayStatus = await replay.page.textContent("#status");
-check("setup token replay is rejected", /failed/i.test(replayStatus), replayStatus.split("\n")[0]);
+check("passkey.setup-token-replay-rejected", "setup token replay is rejected", /failed/i.test(replayStatus), replayStatus.split("\n")[0]);
 await replayContext.close();
 
 // ---- 3. Sign-in with the discoverable credential in a fresh session.
@@ -100,13 +97,15 @@ await page.waitForFunction(
   { timeout: 20000 },
 );
 const signinStatus = await page.textContent("#status");
-check("passkey sign-in works with a discoverable credential", /API credential/.test(signinStatus), signinStatus.split("\n")[0]);
+check("passkey.passkey-sign-in-works-discoverable-credential", "passkey sign-in works with a discoverable credential", /API credential/.test(signinStatus), signinStatus.split("\n")[0]);
 const signinToken = signinStatus.match(/vlt_web_[A-Za-z0-9_-]+/)?.[0];
 if (signinToken) {
   const res = await fetch(`${base}/v1/organizations`, {
     headers: { Authorization: `Bearer ${signinToken}` },
   });
-  check("sign-in bearer authenticates /v1", res.status === 200, `status ${res.status}`);
+  check("passkey.sign-in-bearer-authenticates-v1", "sign-in bearer authenticates /v1", res.status === 200, `status ${res.status}`);
+} else {
+  check("passkey.sign-in-bearer-authenticates-v1", "sign-in bearer authenticates /v1", false, "the sign-in yielded no bearer");
 }
 
 // ---- 4. Without the authenticator, sign-in cannot succeed silently.
@@ -120,10 +119,10 @@ await bare.waitForFunction(
   { timeout: 20000 },
 ).catch(() => {});
 const bareStatus = await bare.textContent("#status");
-check("sign-in without an authenticator fails", /failed/i.test(bareStatus), bareStatus.split("\n")[0]);
+check("passkey.sign-in-without-authenticator-fails", "sign-in without an authenticator fails", /failed/i.test(bareStatus), bareStatus.split("\n")[0]);
 await noAuthContext.close();
 
 void cdp;
 void authenticatorId;
 await browser.close();
-process.exit(failed ? 1 : 0);
+finish();

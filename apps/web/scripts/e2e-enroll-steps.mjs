@@ -11,16 +11,17 @@
  *   node apps/web/scripts/e2e-enroll-steps.mjs [chromium executable]
  *
  * Node 22.18 or newer: it imports the TypeScript page source directly.
+ * A component check: it tests this checkout's page, not the server under
+ * test (scripts/conformance/inventory.json); the target's own enroll page is
+ * checked by dashboard.enroll-steps-match-meta in e2e-web.mjs.
  */
 import { createServer } from "node:http";
 import { chromium } from "playwright";
 import { ENROLL_HTML } from "../../../services/varlatchd/src/enroll/page.ts";
+import { reporter } from "../../../scripts/conformance/suite-kit.mjs";
 
-const failures = [];
-const check = (ok, what) => {
-  console.log(`${ok ? "ok  " : "FAIL"} ${what}`);
-  if (!ok) failures.push(what);
-};
+const kit = reporter();
+const { check } = kit;
 
 let meta = "on";
 let metaRequests = 0;
@@ -68,25 +69,26 @@ try {
     const page = await enroll("on");
     await page.waitForFunction(() => /install\.sh/.test(document.getElementById("status").textContent), null, { timeout: 5000 });
     const steps = await text(page);
-    check(steps.includes(`curl -fsSL ${base}/install.sh | sh`), "with cli.download: the install.sh line");
+    check("enroll-steps.cli-download-install-sh-line", "with cli.download: the install.sh line", steps.includes(`curl -fsSL ${base}/install.sh | sh`));
     await page.click('button[data-os="windows"]');
-    check((await text(page)).includes(`irm ${base}/install.ps1 | iex`), "the Windows tab shows the install.ps1 line");
-    check(/2\. Sign in from your terminal/.test(steps) && /varlatch run -- <your command>/.test(steps), "the sign-in and run steps");
+    check("enroll-steps.windows-tab-shows-install-ps1-line", "the Windows tab shows the install.ps1 line", (await text(page)).includes(`irm ${base}/install.ps1 | iex`));
+    check("enroll-steps.sign-in-run-steps", "the sign-in and run steps", /2\. Sign in from your terminal/.test(steps) && /varlatch run -- <your command>/.test(steps));
     await page.close();
   }
+  const verifiedOnly = { off: "enroll-steps.meta-off-verified-route-only", error: "enroll-steps.meta-error-verified-route-only" };
   for (const mode of ["off", "error"]) {
     const page = await enroll(mode);
     await page.waitForTimeout(500);
     const steps = await text(page);
-    check(/Install it from its signed release/.test(steps) && !/install\.sh/.test(steps), `/v1/meta ${mode}: the verified route only`);
+    check(verifiedOnly[mode], `/v1/meta ${mode}: the verified route only`, /Install it from its signed release/.test(steps) && !/install\.sh/.test(steps));
     await page.close();
   }
   {
     // The steps render while /v1/meta never answers.
     const page = await enroll("stalled");
     const steps = await text(page);
-    check(/1\. Install the CLI/.test(steps) && /Install it from its signed release/.test(steps) && /varlatch login --server/.test(steps), "a stalled /v1/meta never holds the steps");
-    check(/API credential/.test(steps), "the credential is on the page while /v1/meta stalls");
+    check("enroll-steps.stalled-meta-never-holds-steps", "a stalled /v1/meta never holds the steps", /1\. Install the CLI/.test(steps) && /Install it from its signed release/.test(steps) && /varlatch login --server/.test(steps));
+    check("enroll-steps.credential-shown-while-meta-stalls", "the credential is on the page while /v1/meta stalls", /API credential/.test(steps));
     await page.close();
   }
   {
@@ -96,9 +98,9 @@ try {
     await page.goto(`${base}/enroll?callback=${encodeURIComponent(`${base}/cb`)}`);
     await page.click("#signin");
     await page.waitForFunction(() => /terminal|failed/.test(document.getElementById("status").textContent), null, { timeout: 5000 });
-    check(/terminal/.test(await text(page)), "the CLI hand-off still completes");
+    check("enroll-steps.cli-hand-off-completes", "the CLI hand-off still completes", /terminal/.test(await text(page)));
     await page.waitForTimeout(500);
-    check(metaRequests === 0, "the CLI hand-off never asks /v1/meta");
+    check("enroll-steps.cli-hand-off-never-asks-meta", "the CLI hand-off never asks /v1/meta", metaRequests === 0);
     await page.close();
   }
 } finally {
@@ -106,8 +108,5 @@ try {
   await browser.close();
   server.close();
 }
-if (failures.length > 0) {
-  console.error(`${failures.length} check(s) failed`);
-  process.exit(1);
-}
-console.log("enroll page next steps: all checks passed");
+if (kit.failures === 0) console.log("enroll page next steps: all checks passed");
+kit.finish("check(s)");

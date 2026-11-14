@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
+import { reporter } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Onboarding E2E: the getting-started checklist derives every checkmark from
  * authoritative /v1 state (design R2 §Onboarding) — steps check off as the
@@ -42,18 +43,14 @@ await cdp.send("WebAuthn.addVirtualAuthenticator", {
     automaticPresenceSimulation: true,
   },
 });
-let failed = false;
-const check = (name, ok, detail = "") => {
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
-  if (!ok) failed = true;
-};
+const { check, finish } = reporter();
 page.on("console", (m) => {
   if (m.type() === "error") console.log(`  [browser] ${m.text().slice(0, 140)}`);
 });
 
 // A fresh org so the checklist starts from zero (acme is fully onboarded).
 const mkOrg = await api("POST", "/organizations", { name: "Onboard Co", slug: "onboard-co" });
-check("fresh org seeded", mkOrg.status === 201, `status ${mkOrg.status}`);
+check("onboarding.fresh-org-seeded", "fresh org seeded", mkOrg.status === 201, `status ${mkOrg.status}`);
 
 await page.goto(enrollUrl);
 await page.click("#enroll");
@@ -71,22 +68,22 @@ const pending = await page
   .locator('[data-testid^="onboarding-"][data-done="false"]')
   .evaluateAll((els) => els.map((e) => e.dataset.testid));
 check(
-  "fresh org shows all required steps pending",
+  "onboarding.fresh-org-shows-all-required-steps", "fresh org shows all required steps pending",
   ["project", "contract", "environments", "values"].every((s) =>
     pending.includes(`onboarding-${s}`),
   ),
   pending.join(","),
 );
 check(
-  "progress derives 0 of 4",
+  "onboarding.progress-derives-0-4", "progress derives 0 of 4",
   (await page.textContent('[data-testid="onboarding-progress"]')) === "0 of 4",
 );
 check(
-  "workload + invite are recommended, not required",
+  "onboarding.workload-invite-recommended-not-required", "workload + invite are recommended, not required",
   (await page.locator('[data-testid="onboarding-recommended"] [data-testid="onboarding-workload"]').count()) === 1 &&
     (await page.locator('[data-testid="onboarding-recommended"] [data-testid="onboarding-invite"]').count()) === 1,
 );
-check("no empty project list", (await page.locator('[data-testid="project-row"]').count()) === 0);
+check("onboarding.no-empty-project-list", "no empty project list", (await page.locator('[data-testid="project-row"]').count()) === 0);
 
 // 2. Create a git-authority project through the New project dialog, with no
 //    environments yet: the project step checks off live, the page stays.
@@ -94,7 +91,7 @@ await page.click('[data-testid="onboarding-new-project"]');
 await page.waitForSelector('[data-testid="new-project-dialog"]', { timeout: 5000 });
 await page.fill('[data-testid="new-project-slug"]', "web");
 check(
-  "git is the default contract location",
+  "onboarding.git-default-contract-location", "git is the default contract location",
   (await page.getAttribute('[data-testid="contract-authority-git"]', "aria-checked")) === "true",
 );
 for (const tier of ["development", "staging", "production"]) {
@@ -104,14 +101,14 @@ await page.click('[data-testid="create-project"]');
 await page.waitForSelector('[data-testid="onboarding-project"][data-done="true"]', {
   timeout: 15000,
 });
-check("project step checks off from authoritative state", true);
+check("onboarding.project-step-checks-off-authoritative-state", "project step checks off from authoritative state", true);
 check(
-  "environments step still pending (all environment toggles were off)",
+  "onboarding.environments-step-pending-all-environment-toggles", "environments step still pending (all environment toggles were off)",
   (await page.getAttribute('[data-testid="onboarding-environments"]', "data-done")) === "false",
 );
 const contractStep = await page.textContent('[data-testid="onboarding-contract"]');
 check(
-  "git authority branches to CLI contract push snippet",
+  "onboarding.git-authority-branches-cli-contract-push", "git authority branches to CLI contract push snippet",
   contractStep.includes("contract push --schema"),
   contractStep.slice(0, 80),
 );
@@ -121,9 +118,9 @@ await page.click('[data-testid="onboarding-create-environments"]');
 await page.waitForSelector('[data-testid="onboarding-environments"][data-done="true"]', {
   timeout: 15000,
 });
-check("environments step checks off from authoritative state", true);
+check("onboarding.environments-step-checks-off-authoritative-state", "environments step checks off from authoritative state", true);
 await page.waitForSelector('[data-testid="project-row"][data-slug="web"] [data-env="production"]', { timeout: 15000 });
-check("the project row lists the new environments", true);
+check("onboarding.project-row-lists-new-environments", "the project row lists the new environments", true);
 
 // 3b. Another environment from the row's "…" menu.
 await page.click('[data-testid="project-row"][data-slug="web"] [data-testid="project-menu"]');
@@ -131,7 +128,7 @@ await page.click('[data-testid="menu-new-environment"]');
 await page.fill('[data-testid="new-environment-name"]', "qa");
 await page.click('[data-testid="create-environment"]');
 await page.waitForSelector('[data-testid="project-row"][data-slug="web"] [data-env="qa"]', { timeout: 15000 });
-check("new environment from the project menu", true);
+check("onboarding.new-environment-project-menu", "new environment from the project menu", true);
 
 // 3c. Rename the display name through the same menu; the slug stays.
 await page.click('[data-testid="project-row"][data-slug="web"] [data-testid="project-menu"]');
@@ -141,7 +138,7 @@ await page.click('[data-testid="prompt-ok"]');
 await page.waitForSelector('[data-testid="project-row"][data-slug="web"] >> text=Web storefront', {
   timeout: 15000,
 });
-check("rename from the project menu shows the new display name", true);
+check("onboarding.rename-project-menu-shows-new-display", "rename from the project menu shows the new display name", true);
 
 // 4. Contract push + activate via /v1 (the CLI path the snippet teaches).
 const rev = await (
@@ -162,7 +159,7 @@ await page.waitForSelector('[data-testid="onboarding-contract"][data-done="true"
   timeout: 15000,
 });
 check(
-  "contract step checks off after push+activate",
+  "onboarding.contract-step-checks-off-after-push", "contract step checks off after push+activate",
   (await page.textContent('[data-testid="onboarding-progress"]')) === "3 of 4",
 );
 
@@ -177,15 +174,15 @@ await page
   .waitForSelector('[data-testid="onboarding"]', { state: "detached", timeout: 15000 })
   .catch(() => {});
 check(
-  "completed solo org hides the checklist",
+  "onboarding.completed-solo-org-hides-checklist", "completed solo org hides the checklist",
   (await page.locator('[data-testid="onboarding"]').count()) === 0,
 );
 check(
-  "projects page still renders normally",
+  "onboarding.projects-page-renders-normally", "projects page still renders normally",
   (await page.locator('[data-testid="project-row"][data-slug="web"]').count()) === 1 &&
     (await page.locator('[data-testid="project-filter"]').count()) === 1,
 );
 
-check("no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
+check("onboarding.no-content-security-policy-violations", "no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
 await browser.close();
-process.exit(failed ? 1 : 0);
+finish();

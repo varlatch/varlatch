@@ -18,6 +18,7 @@
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "license:check": "node scripts/check-licenses.mjs",
     "license:fix": "node scripts/check-licenses.mjs --fix",
+    "test:conformance": "node --test scripts/conformance/test/",
     "verify": "scripts/verify.sh",
     "ready": "scripts/ready.sh",
     "dev:up": "scripts/dev.sh up",

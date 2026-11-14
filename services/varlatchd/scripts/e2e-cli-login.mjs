@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
+import { cliPath as cliUnderTest, reporter } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live E2E for the CLI browser-handoff login (ADR-0017): enrolls a passkey
  * via a recovery grant, then drives `varlatch login` end to end — CLI opens
@@ -19,7 +20,9 @@ if (!enrollUrl?.includes("#")) {
   process.exit(1);
 }
 const base = new URL(enrollUrl).origin;
-const cliPath = new URL("../../../apps/cli/dist/main.js", import.meta.url).pathname;
+// The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
+const cliPath = cliUnderTest();
+const { check, finish } = reporter();
 
 const browser = await chromium.launch();
 const context = await browser.newContext();
@@ -45,11 +48,10 @@ await page.waitForFunction(
   null,
   { timeout: 20000 },
 );
-if (!/API credential/.test(await page.textContent("#status"))) {
-  console.error("FAIL  enrollment: " + (await page.textContent("#status")));
-  process.exit(1);
+{
+  const status = await page.textContent("#status");
+  if (!check("cli-login.recovery-passkey-enrolled", "recovery passkey enrolled", /API credential/.test(status), /API credential/.test(status) ? "" : status)) finish();
 }
-console.log("PASS  recovery passkey enrolled");
 
 // 2. Run `varlatch login` (no --token) and capture its callback URL.
 const home = mkdtempSync(join(tmpdir(), "varlatch-login-e2e-"));
@@ -62,18 +64,21 @@ const cli = spawn("node", [cliPath, "login", "--server", base], {
 let out = "";
 cli.stdout.on("data", (d) => (out += d.toString()));
 cli.stderr.on("data", (d) => (out += d.toString()));
-const loginUrl = await new Promise((resolve, reject) => {
-  const t = setTimeout(() => reject(new Error("no login URL printed")), 10000);
-  const check = () => {
+const loginUrl = await new Promise((resolve) => {
+  const deadline = Date.now() + 10000;
+  const poll = () => {
     const m = out.match(/http:\/\/[^\s]+\/enroll\?callback=[^\s]+/);
-    if (m) {
-      clearTimeout(t);
-      resolve(m[0]);
-    } else setTimeout(check, 100);
+    if (m) resolve(m[0]);
+    else if (Date.now() > deadline) resolve(null);
+    else setTimeout(poll, 100);
   };
-  check();
+  poll();
 });
-console.log("PASS  CLI printed handoff URL");
+if (!check("cli-login.cli-printed-handoff-url", "CLI printed handoff URL", loginUrl !== null, loginUrl ? "" : out)) {
+  cli.kill();
+  await browser.close();
+  finish();
+}
 
 // 3. Complete sign-in in the browser; the page posts the bearer to the CLI.
 await page.goto(loginUrl);
@@ -84,17 +89,15 @@ await page.waitForFunction(
   { timeout: 20000 },
 );
 const status = await page.textContent("#status");
-if (!/terminal/.test(status)) {
-  console.error("FAIL  browser handoff: " + status);
-  process.exit(1);
+if (!check("cli-login.browser-delivered-credential-cli-callback", "browser delivered the credential to the CLI callback", /terminal/.test(status), /terminal/.test(status) ? "" : `browser handoff: ${status}`)) {
+  cli.kill();
+  await browser.close();
+  finish();
 }
-console.log("PASS  browser delivered the credential to the CLI callback");
 
 const code = await new Promise((resolve) => cli.on("exit", resolve));
-if (code !== 0 || !/Logged in to/.test(out)) {
-  console.error(`FAIL  CLI exit ${code}: ${out}`);
-  process.exit(1);
-}
-console.log("PASS  varlatch login completed: " + out.trim().split("\n").pop());
+const completed = code === 0 && /Logged in to/.test(out);
+check("cli-login.login-completed", "varlatch login completed", completed, completed ? out.trim().split("\n").pop() : `CLI exit ${code}: ${out}`);
 
 await browser.close();
+finish();

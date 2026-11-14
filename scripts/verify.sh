@@ -67,6 +67,9 @@ pnpm notices:check
 step "Every file and package matches the license map"
 pnpm license:check
 
+step "Conformance runner unit tests"
+pnpm test:conformance
+
 step "The changelog has a section for the current version"
 VERSION=$(node -p "require('./packages/backup/src/release.json').version")
 grep -q "^## ${VERSION} (" CHANGELOG.md || { echo "CHANGELOG.md has no section for ${VERSION}" >&2; exit 1; }

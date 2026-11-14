@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
+import { reporter } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * P3 access E2E: machine identity with one-time credential, default-deny
  * before any Grant, preset Grants compiling to real access, revocation
@@ -33,11 +34,7 @@ await cdp.send("WebAuthn.addVirtualAuthenticator", {
     automaticPresenceSimulation: true,
   },
 });
-let failed = false;
-const check = (name, ok, detail = "") => {
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
-  if (!ok) failed = true;
-};
+const { check, finish } = reporter();
 page.on("console", (m) => {
   if (m.type() === "error") console.log(`  [browser] ${m.text().slice(0, 140)}`);
 });
@@ -75,9 +72,9 @@ await page.waitForSelector('[data-testid="machines-section"]', { timeout: 20000 
 await createMachine("ci-deployer");
 await page.waitForSelector('[data-testid="one-time-credential"]', { timeout: 10000 });
 const machineToken = (await page.textContent('[data-testid="one-time-credential-token"]')).trim();
-check("one-time machine credential displayed", /^vlt_svc_/.test(machineToken));
+check("access.one-time-machine-credential-displayed", "one-time machine credential displayed", /^vlt_svc_/.test(machineToken));
 await page.click('[data-testid="dismiss-credential"]');
-check("credential dismissed, not re-shown", (await page.locator('[data-testid="one-time-credential"]').count()) === 0);
+check("access.credential-dismissed-not-re-shown", "credential dismissed, not re-shown", (await page.locator('[data-testid="one-time-credential"]').count()) === 0);
 await page.waitForSelector('[data-identity="ci-deployer"]');
 
 // 1b. Credential TTL + use budget flow through creation and are echoed once.
@@ -88,7 +85,7 @@ await createMachine("budget-runner", null, async () => {
 await page.waitForSelector('[data-testid="one-time-credential-limits"]', { timeout: 10000 });
 const limitsText = await page.textContent('[data-testid="one-time-credential-limits"]');
 check(
-  "credential expiry and use budget echoed at creation",
+  "access.credential-expiry-use-budget-echoed-creation", "credential expiry and use budget echoed at creation",
   /Expires /.test(limitsText) && /5 requests/.test(limitsText),
   limitsText.trim().slice(0, 80),
 );
@@ -107,22 +104,22 @@ await page.fill('[data-testid="issue-credential-ttl"]', "3600");
 await page.click('[data-testid="issue-credential-submit"]');
 await page.waitForSelector('[data-testid="issued-credential"]', { timeout: 10000 });
 const issuedToken = (await page.textContent('[data-testid="issued-credential-token"]')).trim();
-check("issued credential shown once, a new service token", /^vlt_svc_/.test(issuedToken) && issuedToken !== machineToken);
-check("issued credential's expiry echoed", /Expires /.test(await page.textContent('[data-testid="issued-credential-limits"]')));
+check("access.issued-credential-shown-once-new-service", "issued credential shown once, a new service token", /^vlt_svc_/.test(issuedToken) && issuedToken !== machineToken);
+check("access.issued-credential-expiry-echoed", "issued credential's expiry echoed", /Expires /.test(await page.textContent('[data-testid="issued-credential-limits"]')));
 await page.click('[data-testid="dismiss-issued-credential"]');
-check("issued credential dismissed, not re-shown", (await page.locator('[data-testid="issued-credential"]').count()) === 0);
+check("access.issued-credential-dismissed-not-re-shown", "issued credential dismissed, not re-shown", (await page.locator('[data-testid="issued-credential"]').count()) === 0);
 const issuedRow = page.locator(`[data-testid="credentials-panel-${deployerId}"] [data-credential]`, { hasText: "nightly backup" });
 await issuedRow.waitFor({ timeout: 10000 });
-check("issued credential listed under its name", true);
+check("access.issued-credential-listed-under-name", "issued credential listed under its name", true);
 const asIssued = await asMachine(issuedToken, "/organizations/acme/projects");
-check("issued credential authenticates as the machine (denied, not unauthenticated)", asIssued.status === 403, `status ${asIssued.status}`);
+check("access.issued-credential-authenticates-machine-denied-not", "issued credential authenticates as the machine (denied, not unauthenticated)", asIssued.status === 403, `status ${asIssued.status}`);
 await issuedRow.locator('[data-testid^="revoke-credential-"]').click();
 await confirmDialog();
 await issuedRow.locator("text=revoked").waitFor({ timeout: 10000 });
 const afterIssuedRevoke = await asMachine(issuedToken, "/organizations/acme/projects");
 const firstStillWorks = await asMachine(machineToken, "/organizations/acme/projects");
 check(
-  "revoking the issued credential leaves the first one working",
+  "access.revoking-issued-credential-leaves-first-one", "revoking the issued credential leaves the first one working",
   afterIssuedRevoke.status === 401 && firstStillWorks.status === 403,
   `issued ${afterIssuedRevoke.status}, first ${firstStillWorks.status}`,
 );
@@ -130,7 +127,7 @@ await page.click('[data-identity="ci-deployer"]');
 
 // 2. Default-deny: zero grants means the machine sees nothing.
 const before = await asMachine(machineToken, "/organizations/acme/projects");
-check("machine denied before any grant", !before.ok, `status ${before.status}`);
+check("access.machine-denied-before-any-grant", "machine denied before any grant", !before.ok, `status ${before.status}`);
 
 // 3. Preset grant compiles to real access.
 await page.click('[data-testid="access-tab-grants"]');
@@ -140,14 +137,14 @@ await page.selectOption('[data-testid="grant-permission"]', "preset:read-config"
 await page.click('[data-testid="create-grant"]');
 await page.waitForSelector('[data-grant-subject="ci-deployer"]', { timeout: 10000 });
 const grantRow = await page.textContent('[data-grant-subject="ci-deployer"]');
-check("grant row reads as a sentence and keeps its actions", grantRow.includes("Read configuration") && grantRow.includes("project.read"));
+check("access.grant-row-reads-sentence-keeps-actions", "grant row reads as a sentence and keeps its actions", grantRow.includes("Read configuration") && grantRow.includes("project.read"));
 const after = await asMachine(machineToken, "/organizations/acme/projects");
-check("machine can read configuration after grant", after.ok, `status ${after.status}`);
+check("access.machine-can-read-configuration-after-grant", "machine can read configuration after grant", after.ok, `status ${after.status}`);
 const secrets = await fetch(
   `${base}/v1/organizations/acme/projects/api/environments/development/disclosures`,
   { method: "POST", headers: { Authorization: `Bearer ${machineToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ scope: "all-authorized-secrets" }) },
 );
-check("read-config grant does NOT allow secret disclosure", !secrets.ok, `status ${secrets.status}`);
+check("access.read-config-grant-does-not-allow-secret", "read-config grant does NOT allow secret disclosure", !secrets.ok, `status ${secrets.status}`);
 
 // 4. Revocation takes effect immediately.
 const revokeBtn = page.locator('[data-grant-subject="ci-deployer"] [data-testid^="revoke-grant-"]');
@@ -159,7 +156,7 @@ await page.waitForFunction(
   { timeout: 10000 },
 );
 const revoked = await asMachine(machineToken, "/organizations/acme/projects");
-check("machine denied after grant revocation", !revoked.ok, `status ${revoked.status}`);
+check("access.machine-denied-after-grant-revocation", "machine denied after grant revocation", !revoked.ok, `status ${revoked.status}`);
 
 // 4b. Environment-scoped grant: access stops at the environment boundary.
 await page.selectOption('[data-testid="grant-subject"]', { label: "ci-deployer" });
@@ -172,19 +169,19 @@ await page.click('[data-testid="grant-environments"] [data-env="development"]');
 await page.click('[data-testid="create-grant"]');
 await page.waitForSelector('[data-grant-subject="ci-deployer"]', { timeout: 10000 });
 check(
-  "environment-scoped grant row lists its selector",
+  "access.environment-scoped-grant-row-lists-selector", "environment-scoped grant row lists its selector",
   (await page.textContent('[data-grant-subject="ci-deployer"]')).includes("development"),
 );
 const devCfg = await asMachine(
   machineToken,
   "/organizations/acme/projects/api/environments/development/effective-configuration",
 );
-check("granted environment readable", devCfg.ok, `status ${devCfg.status}`);
+check("access.granted-environment-readable", "granted environment readable", devCfg.ok, `status ${devCfg.status}`);
 const prodCfg = await asMachine(
   machineToken,
   "/organizations/acme/projects/api/environments/production/effective-configuration",
 );
-check("sibling environment still denied", !prodCfg.ok, `status ${prodCfg.status}`);
+check("access.sibling-environment-denied", "sibling environment still denied", !prodCfg.ok, `status ${prodCfg.status}`);
 await page.locator('[data-grant-subject="ci-deployer"] [data-testid^="revoke-grant-"]').click();
 await confirmDialog();
 await page.waitForFunction(
@@ -201,7 +198,7 @@ await page.fill('[data-testid="invite-name"]', "Sam");
 await page.click('[data-testid="create-invite"]');
 await page.waitForSelector('[data-testid="invite-url"]', { timeout: 10000 });
 const inviteText = await page.textContent('[data-testid="invite-url"]');
-check("invite link minted on dashboard origin", inviteText.includes(`${base}/enroll#`));
+check("access.invite-link-minted-dashboard-origin", "invite link minted on dashboard origin", inviteText.includes(`${base}/enroll#`));
 
 // 5b. OIDC federation: bind, list, revoke (Machines tab).
 await page.click('[data-testid="access-tab-machines"]');
@@ -215,7 +212,7 @@ await page.fill('[data-testid="oidc-subject"]', "repo:acme/api:*");
 await page.click('[data-testid="create-oidc-binding"]');
 await page.waitForSelector('[data-oidc-binding="repo:acme/api:*"]', { timeout: 10000 });
 check(
-  "oidc binding listed with issuer",
+  "access.oidc-binding-listed-issuer", "oidc binding listed with issuer",
   (await page.textContent('[data-oidc-binding="repo:acme/api:*"]')).includes(
     "token.actions.githubusercontent.com",
   ),
@@ -227,12 +224,12 @@ await page.waitForFunction(
   null,
   { timeout: 10000 },
 );
-check("oidc binding revoked from dashboard", true);
+check("access.oidc-binding-revoked-dashboard", "oidc binding revoked from dashboard", true);
 
 // 5c. Roles, Groups, Teams (ADR-0028): reuse compiles to real access.
 // ci-deployer is back to default-deny here (prior grants were revoked).
 const denyBefore = await asMachine(machineToken, "/organizations/acme/projects");
-check("machine denied before role/group grant", !denyBefore.ok);
+check("access.machine-denied-before-role-group-grant", "machine denied before role/group grant", !denyBefore.ok);
 
 await page.click('[data-testid="access-tab-roles"]');
 await page.waitForSelector('[data-testid="roles-section"]', { timeout: 10000 });
@@ -242,7 +239,7 @@ await page.click('[data-role-action="organization.read"]');
 await page.click('[data-role-action="project.read"]');
 await page.click('[data-testid="create-role"]');
 await page.waitForSelector('[data-role="reader-role"]', { timeout: 10000 });
-check("custom role created", true);
+check("access.custom-role-created", "custom role created", true);
 
 await page.click('[data-testid="new-group"]');
 await page.fill('[data-testid="group-name"]', "readers");
@@ -252,7 +249,7 @@ await page.click('[data-group="readers"] [data-testid^="expand-group-"]'); // me
 await page.locator('[data-group="readers"] select[data-testid^="member-select-"]').selectOption({ label: "ci-deployer" });
 await page.locator('[data-group="readers"] [data-testid^="add-member-"]').click();
 await page.waitForSelector('[data-group="readers"] [data-member="ci-deployer"]', { timeout: 10000 });
-check("identity added to group", true);
+check("access.identity-added-group", "identity added to group", true);
 
 // Grant the group the custom role, org-wide (Grants tab). Reset the scope
 // explicitly — the form may retain state from the earlier grant.
@@ -264,10 +261,10 @@ await page.selectOption('[data-testid="grant-permission"]', { label: "reader-rol
 await page.click('[data-testid="create-grant"]');
 await page.waitForSelector('[data-grant-subject="readers"]', { timeout: 10000 });
 const groupGrantRow = await page.textContent('[data-grant-subject="readers"]');
-check("group+role grant lists the role", groupGrantRow.includes("reader-role"));
+check("access.group-role-grant-lists-role", "group+role grant lists the role", groupGrantRow.includes("reader-role"));
 
 const allowAfter = await asMachine(machineToken, "/organizations/acme/projects");
-check("group member inherits role-granted access", allowAfter.ok, `status ${allowAfter.status}`);
+check("access.group-member-inherits-role-granted-access", "group member inherits role-granted access", allowAfter.ok, `status ${allowAfter.status}`);
 
 // 5c-bis. Role edit (ADR-0029): editing the role re-points the untouched
 // grant on the next authorization decision — no revoke window, no churn.
@@ -286,7 +283,7 @@ await page.waitForFunction(
   { timeout: 10000 },
 );
 const narrowed = await asMachine(machineToken, "/organizations/acme/projects");
-check("removing an action from the role narrows the member immediately", !narrowed.ok, `status ${narrowed.status}`);
+check("access.removing-action-role-narrows-member-immediately", "removing an action from the role narrows the member immediately", !narrowed.ok, `status ${narrowed.status}`);
 await page.locator('[data-role="reader-role"] [data-testid^="open-role-"]').click();
 await page.locator('[data-testid="role-drawer"] [data-edit-action="project.read"]').click(); // toggle back on
 await page.locator('[data-testid="role-drawer"] [data-testid^="save-role-"]').click();
@@ -299,7 +296,7 @@ await page.waitForFunction(
   { timeout: 10000 },
 );
 const widened = await asMachine(machineToken, "/organizations/acme/projects");
-check("adding the action back widens without touching the grant", widened.ok, `status ${widened.status}`);
+check("access.adding-action-back-widens-without-touching", "adding the action back widens without touching the grant", widened.ok, `status ${widened.status}`);
 
 // Team CRUD: create, own a project.
 await page.click('[data-testid="new-team"]');
@@ -310,7 +307,7 @@ await page.click('[data-team="backend"] [data-testid^="expand-team-"]'); // memb
 await page.locator('[data-team="backend"] select[data-testid^="project-select-"]').selectOption({ label: "api" });
 await page.locator('[data-team="backend"] [data-testid^="add-project-"]').click();
 await page.waitForSelector('[data-team="backend"] [data-owned-project="api"]', { timeout: 10000 });
-check("team owns a project", true);
+check("access.team-owns-project", "team owns a project", true);
 
 // Restore default-deny for the sections that follow (Grants tab).
 await page.click('[data-testid="access-tab-grants"]');
@@ -323,7 +320,7 @@ await page.waitForFunction(
   { timeout: 10000 },
 );
 const denyAfterRevoke = await asMachine(machineToken, "/organizations/acme/projects");
-check("revoking the group grant denies the member again", !denyAfterRevoke.ok);
+check("access.revoking-group-grant-denies-member-again", "revoking the group grant denies the member again", !denyAfterRevoke.ok);
 
 // 5d. Grant replace (ADR-0029): "editing" a grant keeps subject and scope
 // and atomically swaps the permission — one operation, linked audit events.
@@ -342,9 +339,9 @@ await page.waitForFunction(
   null,
   { timeout: 10000 },
 );
-check("replaced grant row now cites the role", true);
+check("access.replaced-grant-row-now-cites-role", "replaced grant row now cites the role", true);
 const replacedAccess = await asMachine(machineToken, "/organizations/acme/projects");
-check("successor grant authorizes via the role", replacedAccess.ok, `status ${replacedAccess.status}`);
+check("access.successor-grant-authorizes-via-role", "successor grant authorizes via the role", replacedAccess.ok, `status ${replacedAccess.status}`);
 await page.locator('[data-grant-subject="ci-deployer"] [data-testid^="revoke-grant-"]').click();
 await confirmDialog();
 await page.waitForFunction(
@@ -363,7 +360,7 @@ await page.locator('[data-testid^="rename-group-"]').click();
 await page.fill('[data-testid="prompt-input"]', "viewers");
 await page.click('[data-testid="prompt-ok"]');
 await page.waitForSelector('[data-group="viewers"]', { timeout: 10000 });
-check("group renamed in place", true);
+check("access.group-renamed-place", "group renamed in place", true);
 await page.locator('[data-team="backend"] button[aria-label="Actions for backend"]').click();
 await page.locator('[data-testid^="rename-team-"]').click();
 await page.fill('[data-testid="prompt-input"]', "platform");
@@ -374,7 +371,7 @@ if ((await page.locator('[data-team="platform"] [data-owned-project]').count()) 
 }
 await page.waitForSelector('[data-team="platform"] [data-owned-project="api"]', { timeout: 10000 });
 check(
-  "team renamed in place, still owning its project",
+  "access.team-renamed-place-owning-project", "team renamed in place, still owning its project",
   (await page.locator('[data-team="platform"] [data-owned-project="api"]').count()) === 1,
 );
 
@@ -387,7 +384,7 @@ await page.fill('[data-testid="req-tags-input"]', "tag:prod");
 await page.press('[data-testid="req-tags-input"]', "Enter");
 await page.click('[data-testid="create-requirement"]');
 await page.waitForSelector('[data-requirement]', { timeout: 10000 });
-check("tailnet requirement listed", (await page.textContent('[data-requirement]')).includes("example.ts.net"));
+check("access.tailnet-requirement-listed", "tailnet requirement listed", (await page.textContent('[data-requirement]')).includes("example.ts.net"));
 
 // 6b. Requirement edit (ADR-0029): an added tag loosens, so it is saved only
 // after a review that names the scope and the change, and an explicit
@@ -400,7 +397,7 @@ await page.click(`[data-testid="review-requirement-${firstReq}"]`);
 await page.waitForSelector('[data-testid="requirement-review"]', { timeout: 10000 });
 const reviewText = await page.textContent('[data-testid="requirement-review"]');
 check(
-  "a loosening edit is reviewed with its scope, before and after",
+  "access.loosening-edit-reviewed-scope-before-after", "a loosening edit is reviewed with its scope, before and after",
   reviewText.includes("the production tier") && reviewText.includes("Devices tagged tag:ci") && reviewText.includes("Loosen and save"),
   reviewText.slice(0, 300),
 );
@@ -410,7 +407,7 @@ await page.waitForFunction(
   null,
   { timeout: 10000 },
 );
-check("requirement selector edited in place after confirmation", true);
+check("access.requirement-selector-edited-place-after-confirmation", "requirement selector edited in place after confirmation", true);
 
 // 6c. A requirement scoped to one Environment with devices pinned by node ID
 // (as the API allows) is shown in full and now edited in the dashboard:
@@ -438,7 +435,7 @@ const pinned = await asHuman("POST", "/organizations/acme/requirements", {
   target: { kind: "environments", environmentIds: [prodEnv.json.id] },
   selector: { tailnet: "example.ts.net", nodes: ["nE2eDevice1CNTRL"] },
 });
-check("device-pinned requirement created through the API", pinned.status === 201, `status ${pinned.status}`);
+check("access.device-pinned-requirement-created-through-api", "device-pinned requirement created through the API", pinned.status === 201, `status ${pinned.status}`);
 await page.reload();
 await page.waitForSelector('[data-testid="access-tab-advanced"]', { timeout: 20000 });
 await page.click('[data-testid="access-tab-advanced"]');
@@ -446,7 +443,7 @@ const pinnedRow = `[data-requirement="${pinned.json.id}"]`;
 await page.waitForSelector(`${pinnedRow} [data-target-environment]`, { timeout: 10000 });
 const pinnedText = await page.textContent(pinnedRow);
 check(
-  "device-pinned requirement names its environment and device",
+  "access.device-pinned-requirement-names-environment-device", "device-pinned requirement names its environment and device",
   pinnedText.includes("api / production") && pinnedText.includes("nE2eDevice1CNTRL"),
   pinnedText,
 );
@@ -456,14 +453,14 @@ await page.press('[data-testid="req-tags-input"]', "Enter");
 await page.click(`[data-testid="review-requirement-${pinned.json.id}"]`);
 await page.waitForSelector('[data-testid="requirement-review"]', { timeout: 10000 });
 check(
-  "the review names the environment the change applies to",
+  "access.review-names-environment-change-applies", "the review names the environment the change applies to",
   (await page.textContent('[data-testid="requirement-review"]')).includes("api / production (and environments derived from it)"),
 );
 await page.click(`[data-testid="save-requirement-${pinned.json.id}"]`);
 await page.waitForFunction((row) => document.querySelector(row)?.textContent.includes("tag:e2e"), pinnedRow, { timeout: 10000 });
 const afterEdit = await requirementNow(pinned.json.id);
 check(
-  "editing keeps the environment target and the pinned device",
+  "access.editing-keeps-environment-target-pinned-device", "editing keeps the environment target and the pinned device",
   canonical(afterEdit.target) === canonical({ kind: "environments", environmentIds: [prodEnv.json.id] }) &&
     canonical(afterEdit.selector) === canonical({ tailnet: "example.ts.net", nodes: ["nE2eDevice1CNTRL"], tags: ["tag:e2e"] }),
   JSON.stringify(afterEdit),
@@ -478,7 +475,7 @@ const concurrent = await asHuman("PATCH", `/organizations/acme/requirements/${pi
   expectedVersion: afterEdit.version,
   selector: { tailnet: "example.ts.net", nodes: ["nE2eDevice1CNTRL"], tags: ["tag:e2e", "tag:other"] },
 });
-check("concurrent change through the API", concurrent.status === 200, `status ${concurrent.status}`);
+check("access.concurrent-change-through-api", "concurrent change through the API", concurrent.status === 200, `status ${concurrent.status}`);
 // Either the live update arrives first (the form shows the conflict), or
 // the save is refused with VERSION_CONFLICT. The live update can also land
 // between these steps: it closes the review, and the button being clicked
@@ -498,10 +495,10 @@ if (!(await conflictShown()) && !(await page.isDisabled(reviewButton))) {
   }
 }
 await page.waitForSelector('[data-testid="requirement-conflict"]', { timeout: 10000 });
-check("the review and its confirmation are gone", (await page.locator('[data-testid="requirement-review"]').count()) === 0);
+check("access.review-confirmation-gone", "the review and its confirmation are gone", (await page.locator('[data-testid="requirement-review"]').count()) === 0);
 const afterConflict = await requirementNow(pinned.json.id);
 check(
-  "nothing from the stale edit was saved",
+  "access.nothing-stale-edit-was-saved", "nothing from the stale edit was saved",
   !JSON.stringify(afterConflict.selector).includes("late@example.com") && afterConflict.selector.tags.includes("tag:other"),
   JSON.stringify(afterConflict.selector),
 );
@@ -509,13 +506,13 @@ await page.waitForSelector('[data-testid="requirement-start-over"]:not([disabled
 await page.click('[data-testid="requirement-start-over"]');
 await page.waitForSelector('[data-testid="req-tags"] [data-entry="tag:other"]', { timeout: 10000 });
 check(
-  "starting over loads the current version",
+  "access.starting-over-loads-current-version", "starting over loads the current version",
   (await page.locator('[data-testid="requirement-conflict"]').count()) === 0 &&
     (await page.locator('[data-testid="req-users"] [data-entry="late@example.com"]').count()) === 0,
 );
 await page.click(`[data-requirement="${pinned.json.id}"] button:has-text("Cancel")`);
 const removed = await asHuman("DELETE", `/organizations/acme/requirements/${pinned.json.id}`);
-check("device-pinned requirement removed", removed.status === 204, `status ${removed.status}`);
+check("access.device-pinned-requirement-removed", "device-pinned requirement removed", removed.status === 204, `status ${removed.status}`);
 
 // 7. Broker capabilities (ADR-0022): oversight list + revoke-from-dashboard.
 // Broker/agent identities are created on the Machines tab first.
@@ -545,7 +542,7 @@ const capRes = await fetch(
   },
 );
 const cap = await capRes.json();
-check("broker issued a capability for the UI test", capRes.status === 201, `status ${capRes.status}`);
+check("access.broker-issued-capability-ui-test", "broker issued a capability for the UI test", capRes.status === 201, `status ${capRes.status}`);
 
 await page.reload();
 await page.waitForSelector('[data-testid="access-tab-advanced"]', { timeout: 20000 });
@@ -556,7 +553,7 @@ await page.selectOption('[data-testid="capability-environment"]', "development")
 await page.waitForSelector(`[data-capability="${cap.id}"]`, { timeout: 10000 });
 const capRow = await page.textContent(`[data-capability="${cap.id}"]`);
 check(
-  "capability row shows agent, broker, items, destination, run",
+  "access.capability-row-shows-agent-broker-items", "capability row shows agent, broker, items, destination, run",
   capRow.includes("ui-agent") &&
     capRow.includes("ui-broker") &&
     capRow.includes("DATABASE_URL") &&
@@ -570,7 +567,7 @@ await page.waitForFunction(
   cap.id,
   { timeout: 10000 },
 );
-check("capability revoked from the dashboard", true);
+check("access.capability-revoked-dashboard", "capability revoked from the dashboard", true);
 const postRevoke = await fetch(
   `${base}/v1/organizations/acme/projects/api/environments/development/capabilities/${cap.id}/exercises`,
   {
@@ -583,7 +580,7 @@ const postRevoke = await fetch(
     }),
   },
 );
-check("dashboard revocation denies the next exercise", postRevoke.status === 403, `status ${postRevoke.status}`);
+check("access.dashboard-revocation-denies-next-exercise", "dashboard revocation denies the next exercise", postRevoke.status === 403, `status ${postRevoke.status}`);
 
 // 8. My credentials: current session visible and marked.
 await page.goto(`${base}/credentials`);
@@ -592,8 +589,8 @@ await page.waitForSelector('[data-testid="credentials-list"]', { timeout: 20000 
 const marked = await page
   .waitForFunction(() => document.querySelector('[data-testid="credentials-list"]')?.textContent?.includes("this session"), null, { timeout: 20000 })
   .then(() => true, () => false);
-check("own credential listed with session marker", marked);
+check("access.own-credential-listed-session-marker", "own credential listed with session marker", marked);
 
-check("no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
+check("access.no-content-security-policy-violations", "no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
 await browser.close();
-process.exit(failed ? 1 : 0);
+finish();

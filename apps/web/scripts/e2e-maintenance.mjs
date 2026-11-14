@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
+import { cliPath as cliUnderTest, reporter, targetOp } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Isolating maintenance E2E (ADR-0036 D6). The installation is put into the
  * same `503 MAINTENANCE` admission a restore uses, for a short lease:
@@ -10,7 +11,9 @@ import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch to
  *   continues into the app by itself;
  * - the CLI says once, on stderr, that it is waiting, and succeeds after.
  *
- * Usage: e2e-maintenance.mjs <enroll-url> <api-token> -- <docker compose command...>
+ * Usage: e2e-maintenance.mjs <enroll-url> <api-token>
+ * Run by scripts/conformance/run.mjs against a target with the maintenance
+ * capability, which opens the window.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { watchCsp } from "./e2e-csp.mjs";
@@ -19,27 +22,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 
-const sep = process.argv.indexOf("--");
-const [enrollUrl, apiToken] = process.argv.slice(2, sep < 0 ? undefined : sep);
-const compose = sep < 0 ? [] : process.argv.slice(sep + 1);
-if (!enrollUrl?.includes("#") || !apiToken || compose.length < 2) {
-  console.error("Usage: e2e-maintenance.mjs <enroll-url> <api-token> -- <docker compose command...>");
+const [enrollUrl, apiToken] = process.argv.slice(2);
+if (!enrollUrl?.includes("#") || !apiToken) {
+  console.error("Usage: e2e-maintenance.mjs <enroll-url> <api-token>");
   process.exit(1);
 }
 const base = new URL(enrollUrl).origin;
-const cliPath = new URL("../../cli/dist/varlatch.cjs", import.meta.url).pathname;
+// The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
+const cliPath = cliUnderTest();
 const LEASE_MS = 20_000;
 
-let failed = false;
-const check = (name, ok, detail = "") => {
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
-  if (!ok) failed = true;
-};
+const { check, error, finish } = reporter();
 const since = (t) => `${Math.round((Date.now() - t) / 100) / 10} s`;
+// The target's maintenance operation: the admission a restore uses, for a lease.
 const gate = () => {
-  const r = spawnSync(compose[0], [...compose.slice(1), "exec", "-T", "varlatchd", "node", "dist/cli.js", "admin", "backup-control", "capture-begin"],
-    { input: JSON.stringify({ ttlMs: LEASE_MS }), encoding: "utf8" });
-  if (r.status !== 0) throw new Error(`could not open a maintenance window: ${r.stdout}${r.stderr}`);
+  try {
+    targetOp("maintenance", [String(LEASE_MS)]);
+  } catch (err) {
+    throw new Error(`could not open a maintenance window: ${err.message}`);
+  }
 };
 
 const browser = await chromium.launch();
@@ -72,14 +73,14 @@ try {
   // A signed-in page: the next request meets MAINTENANCE.
   await page.click('nav a[href="/o/acme/audit"]');
   await page.waitForSelector('[data-testid="maintenance-status"]', { timeout: 15000 });
-  check("a signed-in dashboard shows the maintenance banner", true, since(opened));
-  check("…and not the sign-in screen", (await page.getByText("Sign in with passkey").count()) === 0);
+  check("maintenance.signed-in-dashboard-shows-maintenance-banner", "a signed-in dashboard shows the maintenance banner", true, since(opened));
+  check("maintenance.not-sign-in-screen", "…and not the sign-in screen", (await page.getByText("Sign in with passkey").count()) === 0);
 
   // A page opened during the window: its session exchange meets MAINTENANCE.
   const fresh = await context.newPage();
   await fresh.goto(`${base}/o/acme/projects`);
   await fresh.waitForSelector('[data-testid="maintenance-screen"]', { timeout: 15000 });
-  check("a dashboard opened during maintenance shows the maintenance screen, not sign-in",
+  check("maintenance.dashboard-opened-during-maintenance-shows", "a dashboard opened during maintenance shows the maintenance screen, not sign-in",
     (await fresh.getByText("Sign in with passkey").count()) === 0);
   await fresh.evaluate(() => { window.__varlatchNoReload = true; });
 
@@ -92,18 +93,18 @@ try {
     child.on("exit", (code) => resolve({ code, stdout, stderr }));
   });
   const notices = (run.stderr.match(/in maintenance/g) ?? []).length;
-  check("the CLI waits out maintenance and succeeds", run.code === 0 && /development/.test(run.stdout), `exit ${run.code}, ${since(opened)}`);
-  check("…saying so once, on stderr only", notices === 1 && !/maintenance/.test(run.stdout), run.stderr.trim().slice(0, 160));
+  check("maintenance.cli-waits-out-maintenance-succeeds", "the CLI waits out maintenance and succeeds", run.code === 0 && /development/.test(run.stdout), `exit ${run.code}, ${since(opened)}`);
+  check("maintenance.saying-once-stderr-only", "…saying so once, on stderr only", notices === 1 && !/maintenance/.test(run.stdout), run.stderr.trim().slice(0, 160));
 
   // ---- The window has closed: both pages continue without a reload.
   await fresh.waitForSelector('[data-testid="project-row"]', { timeout: LEASE_MS + 30000 });
-  check("the page opened during maintenance continues into the app by itself", await fresh.evaluate(() => window.__varlatchNoReload === true), since(opened));
+  check("maintenance.page-opened-during-maintenance-continues-app", "the page opened during maintenance continues into the app by itself", await fresh.evaluate(() => window.__varlatchNoReload === true), since(opened));
   await page.waitForSelector('[data-testid="maintenance-status"]', { state: "detached", timeout: 30000 });
-  check("the banner clears once the installation answers again", await page.evaluate(() => window.__varlatchNoReload === true), since(opened));
+  check("maintenance.banner-clears-once-installation-answers-again", "the banner clears once the installation answers again", await page.evaluate(() => window.__varlatchNoReload === true), since(opened));
 } catch (err) {
-  check("maintenance E2E", false, String(err).slice(0, 300));
+  error(`maintenance E2E: ${String(err).slice(0, 300)}`);
 } finally {
-  check("no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
+  check("maintenance.no-content-security-policy-violations", "no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
   await browser.close();
 }
-process.exit(failed ? 1 : 0);
+finish();

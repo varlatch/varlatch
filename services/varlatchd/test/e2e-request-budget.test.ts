@@ -2,11 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { buildApp } from "../src/http/app.js";
-import { assess, requestsIn } from "../../../apps/web/scripts/e2e-request-budget.mjs";
+import { assess } from "../../../scripts/conformance/lib/request-log.mjs";
+import { requestsFromNginxLog } from "../../../scripts/conformance/targets/nginx-log.mjs";
 
 /**
- * The e2e harness's budget report (apps/web/scripts/e2e-request-budget.mjs)
- * against varlatchd's production request window, unchanged: 600 requests
+ * The conformance runner's request-log check (scripts/conformance/lib/request-log.mjs,
+ * reading the TypeScript stack's nginx log through
+ * scripts/conformance/targets/nginx-log.mjs) against varlatchd's production
+ * request window, unchanged: 600 requests
  * per client per 60 s, the window opening at the first request's
  * millisecond. nginx logs whole seconds, so the report must rest on what
  * varlatchd answered, not on windows reconstructed from the log.
@@ -55,7 +58,7 @@ describe("the e2e budget report against the production request window", () => {
     expect(statuses.at(-1)).toBe(429); // the production limiter refused the 601st
     // The log shows 19:15:00, 19:15:59, 19:16:00: windows replayed from it would read [600, 1].
     expect(log.split("\n").at(-1)).toContain("[02/Oct/2026:19:16:00 +0000]");
-    const { refusals } = assess(requestsIn(log));
+    const { refusals } = assess(requestsFromNginxLog(log));
     expect(refusals).toHaveLength(1);
     expect(refusals[0]).toMatchObject({ path: "/v1/meta", status: 429 });
   });
@@ -67,6 +70,6 @@ describe("the e2e budget report against the production request window", () => {
     ];
     const { statuses, log } = await replay(times);
     expect(statuses.every((s) => s === 200)).toBe(true);
-    expect(assess(requestsIn(log)).refusals).toEqual([]);
+    expect(assess(requestsFromNginxLog(log)).refusals).toEqual([]);
   });
 });
