@@ -160,8 +160,9 @@ func loadJSON(t *testing.T, path string, v any) {
 // The SQLite side, read from a database Init created.
 
 type sqliteSchema struct {
-	tables   map[string]*sqliteTable
-	triggers map[string]string // name -> table
+	tables     map[string]*sqliteTable
+	triggers   map[string]string // name -> table
+	triggerSQL map[string]string // name -> CREATE TRIGGER statement
 }
 
 type sqliteTable struct {
@@ -204,7 +205,7 @@ func readSQLite(t *testing.T, db *sql.DB) *sqliteSchema {
 		}
 		return r
 	}
-	s := &sqliteSchema{tables: map[string]*sqliteTable{}, triggers: map[string]string{}}
+	s := &sqliteSchema{tables: map[string]*sqliteTable{}, triggers: map[string]string{}, triggerSQL: map[string]string{}}
 	r := rows("SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_schema WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name")
 	idxSQL := map[string]string{}
 	for r.Next() {
@@ -217,6 +218,7 @@ func readSQLite(t *testing.T, db *sql.DB) *sqliteSchema {
 			s.tables[name] = &sqliteTable{sql: text, columns: map[string]sqliteColumn{}, indexes: map[string]sqliteIndex{}}
 		case "trigger":
 			s.triggers[name] = tbl
+			s.triggerSQL[name] = text
 		case "index":
 			idxSQL[name] = text
 		}
@@ -353,33 +355,10 @@ func namedChecks(t *testing.T, table, text string) map[string]string {
 	return out
 }
 
-// Expressions are compared after both sides are brought to one spelling:
-// PostgreSQL's casts, = ANY (ARRAY[...]), char_length and IS DISTINCT FROM,
-// SQLite's BETWEEN, and every parenthesis and space removed.
-var (
-	pgCast        = regexp.MustCompile(`::(text|numeric|integer|bigint|boolean)\b`)
-	pgAny         = regexp.MustCompile(`= ANY \(ARRAY\[([^\]]*)\]\)`)
-	pgAll         = regexp.MustCompile(`<> ALL \(ARRAY\[([^\]]*)\]\)`)
-	pgNotDistinct = regexp.MustCompile(`NOT \((\w+) IS DISTINCT FROM ('[^']*')\)`)
-	sqliteBetween = regexp.MustCompile(`(\w+(?:\(\w+\))?) BETWEEN (\S+) AND (\S+?)(\)|\s|$)`)
-	spaceParens   = regexp.MustCompile(`[\s()]+`)
-)
+// Expressions (CHECK constraints, index predicates) are compared by
+// structure: canonicalExpr in expr_test.go.
 
-func normalizePG(e string) string {
-	e = strings.TrimPrefix(e, "CHECK ")
-	e = pgCast.ReplaceAllString(e, "")
-	e = pgAny.ReplaceAllString(e, "IN ($1)")
-	e = pgAll.ReplaceAllString(e, "NOT IN ($1)")
-	e = pgNotDistinct.ReplaceAllString(e, "$1 IS $2")
-	e = strings.ReplaceAll(e, " IS DISTINCT FROM ", " IS NOT ")
-	e = strings.ReplaceAll(e, "char_length(", "length(")
-	return strings.ToLower(spaceParens.ReplaceAllString(e, ""))
-}
-
-func normalizeSQLite(e string) string {
-	e = sqliteBetween.ReplaceAllString(e, "$1 >= $2 AND $1 <= $3$4")
-	return strings.ToLower(spaceParens.ReplaceAllString(e, ""))
-}
+var pgCast = regexp.MustCompile(`::(text|numeric|integer|bigint|boolean)\b`)
 
 // normalizeDefault brings a PostgreSQL default to SQLite's spelling.
 func normalizeDefault(d string) string {
@@ -429,6 +408,9 @@ func TestMapping(t *testing.T) {
 	usedFKs := map[string]bool{}      // table#n
 	usedChecks := map[string]bool{}   // table.name
 	usedTriggers := map[string]bool{} // name
+
+	var intColumns []intColumn
+	var arrayColumns [][2]string // table, column
 
 	pgTables := map[string]bool{}
 	for _, pt := range dump.Tables {
@@ -497,6 +479,12 @@ func TestMapping(t *testing.T) {
 				t.Errorf("column %s: type %s has no rule in mapping.json", where, pc.Type)
 			} else if lc.typ != want {
 				t.Errorf("column %s: %s should be %s by the type rule, is %s", where, pc.Type, want, lc.typ)
+			}
+			if _, ok := intRanges[pc.Type]; ok {
+				intColumns = append(intColumns, intColumn{table: tm.SQLite, column: cm.SQLite, class: pc.Type})
+			}
+			if strings.HasSuffix(pc.Type, "[]") {
+				arrayColumns = append(arrayColumns, [2]string{tm.SQLite, cm.SQLite})
 			}
 			if lc.notNull != pc.NotNull {
 				t.Errorf("column %s: NOT NULL is %v in PostgreSQL, %v in SQLite", where, pc.NotNull, lc.notNull)
@@ -586,7 +574,7 @@ func TestMapping(t *testing.T) {
 					t.Errorf("%s: a %s constraint mapped to a CHECK", where, pc.Type)
 				}
 				if cm.Rewritten == "" {
-					if a, b := normalizePG(pc.Definition), normalizeSQLite(expr); a != b {
+					if a, b := canonicalExpr(t, where, pc.Definition), canonicalExpr(t, where, expr); a != b {
 						t.Errorf("%s: the expressions differ (mark it rewritten, with the reason, if that is intended):\n  postgres: %s\n  sqlite:   %s", where, pc.Definition, expr)
 					}
 				}
@@ -646,7 +634,7 @@ func TestMapping(t *testing.T) {
 					px.Unique, px.Predicate != nil, keys, desc, im.SQLite, lx.unique, lx.partial, lx.keys, lx.desc)
 			}
 			if px.Predicate != nil {
-				if a, b := normalizePG(*px.Predicate), normalizeSQLite(lx.predicate); a != b {
+				if a, b := canonicalExpr(t, where, *px.Predicate), canonicalExpr(t, where, lx.predicate); a != b {
 					t.Errorf("%s: predicates differ:\n  postgres: %s\n  sqlite:   %s", where, *px.Predicate, lx.predicate)
 				}
 			}
@@ -733,6 +721,20 @@ func TestMapping(t *testing.T) {
 	for table := range m.SeedRows {
 		if _, ok := dump.SeedRows[table]; !ok {
 			t.Errorf("seed rows of %s: in mapping.json, not in the dump", table)
+		}
+	}
+
+	// The integer range checks (type rule) and the array element triggers.
+	for _, ic := range intColumns {
+		checkIntRange(t, s.Reader(), lite.tables[ic.table], ic)
+		usedChecks[ic.table+"."+rangePrefix[ic.class]+ic.column] = true
+	}
+	for _, ac := range arrayColumns {
+		for _, event := range []string{"insert", "update"} {
+			name := ac[0] + "_text_arrays_" + event
+			if lite.triggers[name] != ac[0] || !strings.Contains(lite.triggerSQL[name], "NEW."+ac[1]+")") {
+				t.Errorf("column %s.%s (an array): no trigger %s checking its elements", ac[0], ac[1], name)
+			}
 		}
 	}
 
@@ -862,4 +864,95 @@ func TestSQLCBooleanOverrides(t *testing.T) {
 			t.Errorf("sqlc.json: %s is overridden but is not a boolean column", col)
 		}
 	}
+}
+
+// intRanges are the PostgreSQL integer types SQLite's 64-bit INTEGER
+// widens, with their range (the type rule int4_<column>).
+var intRanges = map[string][2]int64{
+	"smallint": {-32768, 32767},
+	"integer":  {-2147483648, 2147483647},
+}
+
+// rangePrefix names a column's range check: int4_<column>, int2_<column>.
+var rangePrefix = map[string]string{"smallint": "int2_", "integer": "int4_"}
+
+type intColumn struct{ table, column, class string }
+
+// checkIntRange requires a column's checks to keep PostgreSQL's range: one
+// past either end is refused. The range check (int4_<column>) must accept
+// both ends, may only bound a side PostgreSQL's own checks leave open, and
+// must not exist when they bound both.
+func checkIntRange(t *testing.T, db *sql.DB, lt *sqliteTable, ic intColumn) {
+	t.Helper()
+	where := ic.table + "." + ic.column
+	lo, hi := intRanges[ic.class][0], intRanges[ic.class][1]
+	var own []string // the column's checks from PostgreSQL
+	for name, expr := range lt.checks {
+		if !strings.HasPrefix(name, "int4_") && !strings.HasPrefix(name, "int2_") && onlyColumn(expr, ic.column) {
+			own = append(own, expr)
+		}
+	}
+	rangeName := rangePrefix[ic.class] + ic.column
+	rangeCheck, hasRange := lt.checks[rangeName]
+	if hasRange && !onlyColumn(rangeCheck, ic.column) {
+		t.Errorf("%s: %s reads other columns", where, rangeName)
+		return
+	}
+	accepts := func(exprs []string, v int64) bool {
+		t.Helper()
+		q := "SELECT 1"
+		for _, e := range exprs {
+			q += " AND coalesce((" + e + "), 1)"
+		}
+		var ok bool
+		if err := db.QueryRow("SELECT ("+q+") FROM (SELECT ? AS "+ic.column+")", v).Scan(&ok); err != nil {
+			t.Fatalf("%s: %v", where, err)
+		}
+		return ok
+	}
+	all := own
+	if hasRange {
+		all = append(slices.Clone(own), rangeCheck)
+	}
+	for _, v := range []int64{lo - 1, hi + 1} {
+		if accepts(all, v) {
+			t.Errorf("%s: %d is accepted, outside PostgreSQL's %s", where, v, ic.class)
+		}
+	}
+	if !hasRange {
+		return
+	}
+	if !accepts([]string{rangeCheck}, lo) || !accepts([]string{rangeCheck}, hi) {
+		t.Errorf("%s: %s refuses a value of PostgreSQL's %s range", where, rangeName, ic.class)
+	}
+	needed := false
+	for _, v := range []int64{lo - 1, hi + 1} {
+		if accepts(own, v) {
+			needed = true
+		} else if !accepts([]string{rangeCheck}, v) {
+			t.Errorf("%s: %s bounds a side PostgreSQL's own check already bounds (%d)", where, rangeName, v)
+		}
+	}
+	if !needed {
+		t.Errorf("%s: %s is redundant: PostgreSQL's checks already bound both sides", where, rangeName)
+	}
+}
+
+// onlyColumn reports whether an expression reads exactly one column, col.
+func onlyColumn(expr, col string) bool {
+	toks, err := tokenize(expr)
+	if err != nil {
+		return false
+	}
+	seen := false
+	for i, tk := range toks {
+		if tk.kind != tokIdent || (i+1 < len(toks) && toks[i+1].kind == tokOp && toks[i+1].text == "(") {
+			continue
+		}
+		if tk.text != col {
+			return false
+		}
+		seen = true
+	}
+	return seen
 }

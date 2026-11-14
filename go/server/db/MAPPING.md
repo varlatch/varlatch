@@ -23,16 +23,22 @@ How the TypeScript server's PostgreSQL schema at v0.22.0 maps to
   - a primary key or unique index over the mapped columns;
   - a foreign key with the same columns, referenced table and columns, and
     `ON DELETE` and `ON UPDATE` actions;
-  - a `CHECK` of the same name whose expression is PostgreSQL's after a
-    fixed respelling (casts, `= ANY (ARRAY[...])` as `IN`, `char_length` as
-    `length`, `IS DISTINCT FROM` as `IS NOT`, `BETWEEN`), unless the entry
-    marks it rewritten and says why;
+  - a `CHECK` of the same name with PostgreSQL's expression, unless the
+    entry marks it rewritten and says why. Both sides are parsed into an
+    expression tree (`expr_test.go`) and compared by structure: grouping
+    and string literals count exactly; only dialect spellings are made
+    equal (casts such as `::text`, `= ANY (ARRAY[...])` as `IN`,
+    `char_length` as `length`, `IS DISTINCT FROM` as `IS NOT`, `BETWEEN` as
+    `>=` and `<=`, the case of keywords and identifiers, redundant
+    parentheses, the grouping of a chain of `AND`s or `OR`s);
   - an index with the same uniqueness, keys, key order (`DESC`) and
     predicate.
 
   The other way round, every SQLite table, column, index, foreign key,
-  named `CHECK` and trigger must be the image of something in PostgreSQL or
-  be listed under `added`. `TestSQLCBooleanOverrides` checks that sqlc maps
+  named `CHECK` and trigger must be the image of something in PostgreSQL,
+  follow from a type rule (`int4_<column>`), or be listed under `added`.
+  Every `integer` column is checked against its range (below), and every
+  `text[]` column for its element triggers. `TestSQLCBooleanOverrides` checks that sqlc maps
   exactly the boolean columns to Go's `bool`.
 
 ## Type rules
@@ -41,15 +47,83 @@ How the TypeScript server's PostgreSQL schema at v0.22.0 maps to
 | --- | --- | --- |
 | `text` | `TEXT` | Unchanged. |
 | `timestamp with time zone` | `INTEGER` | Microseconds since the Unix epoch, UTC. PostgreSQL stores microseconds, so no value changes. |
-| `integer` | `INTEGER` | 32 bits become 64. Every stored value fits. |
+| `integer` | `INTEGER` | Kept to PostgreSQL's range, -2147483648 to 2147483647, by `CHECK int4_<column>` (below). |
 | `bigint` | `INTEGER` | Unchanged. |
 | `boolean` | `INTEGER` | 0 or 1, with `CHECK (c IN (0, 1))`; sqlc maps it to `bool` or `sql.NullBool`. |
 | `jsonb` | `TEXT` | JSON text, with `CHECK (json_valid(c))`. SQLite compares it as text, PostgreSQL by value. |
-| `text[]` | `TEXT` | A JSON array of strings, with `CHECK (json_valid(c) AND json_type(c) = 'array')`. A query's `= ANY ($1)` becomes `json_each(?)` or `IN`. |
+| `text[]` | `TEXT` | A JSON array whose elements are strings or null, with `CHECK (json_valid(c) AND json_type(c) = 'array')` and element triggers (below). A query's `= ANY ($1)` becomes `json_each(?)` or `IN`. |
 | `bytea` | `BLOB` | The same bytes. |
 
 Every table is `STRICT`, so a value of the wrong type is refused rather than
 converted. Foreign keys are enforced on every connection (`lib/storage`).
+There is no `smallint` at v0.22.0; one would be kept to -32768 to 32767 by
+`CHECK int2_<column>` in the same way.
+
+### Integer ranges
+
+SQLite's `INTEGER` is 64-bit, PostgreSQL's `integer` 32-bit. So that every
+value varlatchd stores can go back to PostgreSQL (the reverse migration,
+Decision 9), each of the 30 `integer` columns keeps PostgreSQL's range, and
+`bigint` stays 64-bit:
+
+- where PostgreSQL has no bound of its own, `CHECK int4_<column>` holds
+  the whole range (18 columns);
+- where PostgreSQL bounds one side (`version > 0`, `failures >= 0`), the
+  check adds only the other, `<= 2147483647` (10 columns);
+- where PostgreSQL bounds both (`requested_ttl` 60 to 86400,
+  `retention_days` 1 to 3650), there is none.
+
+`mapping_test.go` holds every `integer` column to that: one past either end
+is refused, the range check accepts both ends, bounds no side PostgreSQL
+already bounds, and does not exist where PostgreSQL bounds both.
+
+WebAuthn signature counters (`passkeys.counter`,
+`passkey_quarantine.counter`) are unsigned 32-bit numbers, and the
+authenticator may send one above 2147483647. They keep PostgreSQL's signed
+range for now: such a counter is refused, never reinterpreted as a negative
+number. Widening them to the unsigned range needs an agreed change on the
+PostgreSQL side as well (a `bigint` column there), or the reverse migration
+could not write them back; that is a later decision.
+
+### Array elements
+
+PostgreSQL's `text[]` holds strings and NULL elements. SQLite's column holds
+the JSON array; a `CHECK` keeps it an array, but cannot look inside it (no
+subqueries in a `CHECK`). So each table with `text[]` columns has two
+triggers, `<table>_text_arrays_insert` and `<table>_text_arrays_update`
+(`BEFORE UPDATE OF` the array columns), which refuse an element that is not
+a string or null (`json_each`). Text that is not a JSON array is left to the
+`CHECK`. Nested arrays are refused: varlatchd never wrote a
+multidimensional array, and the migration refuses one. Any other array type
+would follow the same policy, with elements of its element type. The
+columns: `roles.actions`, `grants.actions`, `capabilities.items`,
+`capabilities.destinations`, `member_integrations.changes`,
+`webhooks.event_types`.
+
+### REPLACE
+
+SQLite carries out `INSERT OR REPLACE` (and `UPDATE OR REPLACE`) by
+deleting the row it conflicts with, and fires no delete trigger for that
+deletion while `recursive_triggers` is off, as it is in `lib/storage`. Every
+guarantee below that rests on a trigger could be bypassed that way: a
+replaced audit event disappears past `audit_events_no_delete` and leaves a
+gap; a replaced session ends without revoking its browser credentials; a
+replaced passkey starts again at any counter; a replaced GitHub App
+registration loses its pending conversion.
+
+So `audit_events`, `auth_sessions`, `passkeys` and
+`github_app_registrations` have `<table>_no_replace_insert` (and, except
+`audit_events`, whose updates are refused anyway, `_no_replace_update`):
+`BEFORE` triggers that refuse a row colliding with an existing row's unique
+key (its primary key or a `UNIQUE` column) before SQLite resolves the
+conflict. These tables take no `REPLACE`, no upsert and no `INSERT OR
+IGNORE`: an insert that collides is refused, and a change is an `UPDATE`.
+A collision is reported by the guard rather than by SQLite's unique check.
+
+A `REPLACE` of a parent row needs no guard: the foreign key cascade from
+it does fire the children's delete triggers. Replacing a user ends its
+sessions through `session_end_revokes_browser_credentials`
+(`TestReplacingAUserStillEndsItsSessions` holds SQLite to that).
 
 Defaults:
 
@@ -140,6 +214,9 @@ TypeScript server its keys back. Whether it goes is step 7's decision.
 | --- | --- |
 | table `schema_version` | The schema's version (`db.go`). |
 | triggers `audit_events_no_update`, `audit_events_no_delete` | Audit events are append-only. PostgreSQL withheld `UPDATE` and `DELETE` on `audit_events` from the runtime role (migration 0003); SQLite has no roles. |
+| triggers `*_no_replace_insert`, `*_no_replace_update` | REPLACE guards (above). |
+| triggers `*_text_arrays_insert`, `*_text_arrays_update` | Array elements (above). |
+| checks `int4_<column>` | Integer ranges (above): a type rule, not a PostgreSQL constraint. |
 
 ### Privileges
 
@@ -206,15 +283,17 @@ IMMEDIATE` transaction per batch, and a batch commits as a whole. So:
 What the database can enforce, it does: the trigger `audit_events_position`
 refuses an insert that is not the new highest position right after its
 predecessor (an insert naming its own `event_order`), and
-`audit_events_no_update` and `audit_events_no_delete` keep the table
-append-only, so the invariant cannot be broken afterwards.
+`audit_events_no_update`, `audit_events_no_delete` and
+`audit_events_no_replace_insert` keep the table append-only, so the
+invariant cannot be broken afterwards, by `REPLACE` either.
 
 Tests: `TestAuditPositionsFollowInsertOrder`,
 `TestAuditPositionsAreAssignedByTheDatabase`, `TestAuditEventsAreAppendOnly`,
 `TestAuditPositionNeverOvertakesAnUncommittedOne` (from
 `postgres-concurrency.test.ts`), and
 `TestAuditPositionsHaveNoGapsUnderConcurrentWrites` (concurrent writers with
-failing jobs, while readers check they only ever see positions 1 to n).
+failing jobs, while readers check they only ever see positions 1 to n), and
+`TestAuditEventsCannotBeReplaced`.
 
 ### Passkey counters only move forward (migration 0040)
 
@@ -228,7 +307,8 @@ write of one sign-in happen in one job, so two sign-ins cannot both verify
 against the same stored counter; the trigger still applies whoever writes.
 
 Tests: `TestPasskeyCounterOnlyMovesForward`, `TestPasskeyCounterRaces`,
-`TestPasskeyRenameIsNotACounterWrite` (from `passkey-evidence-postgres.test.ts`).
+`TestPasskeyRenameIsNotACounterWrite` (from `passkey-evidence-postgres.test.ts`),
+`TestPasskeysCannotBeReplaced`.
 
 ### A session's end revokes its browser credentials (migration 0043)
 
@@ -255,9 +335,8 @@ Differences from PostgreSQL:
   (128 bits). PostgreSQL hashed two random UUIDs.
 - The JSON is SQLite's `json_object` text (`{"identityId":"..."}`), not
   PostgreSQL's jsonb spelling.
-- A `REPLACE` that removes a session row would not fire the trigger
-  (SQLite fires delete triggers on `REPLACE` only with `recursive_triggers`,
-  which is off). varlatchd never writes sessions with `REPLACE`.
+- A `REPLACE` that would remove a session row is refused by
+  `auth_sessions_no_replace_*` (see "REPLACE").
 
 Tests (from `session-end-revocation.test.ts`):
 `TestSessionEndRevokesItsBrowserCredentials`,
@@ -267,7 +346,8 @@ Tests (from `session-end-revocation.test.ts`):
 `TestSessionEndAfterAnotherRevocationRecordsOnce`, and
 `TestSessionEndIsInTheDeletingTransaction` (a job that deletes a session and
 then fails leaves the session, its credentials and the audit log as they
-were).
+were); `TestSessionsCannotBeReplaced` and
+`TestReplacingAUserStillEndsItsSessions`.
 
 ### Pending GitHub App conversions are written once (migration 0050)
 
@@ -282,7 +362,8 @@ as well; PostgreSQL compared jsonb by value.
 
 Test (from `migrate.test.ts`):
 `TestGitHubAppRegistrationPendingMaterialIsWrittenOnce`, every guarded
-column changed to another value and to NULL.
+column changed to another value and to NULL;
+`TestGitHubAppRegistrationsCannotBeReplaced`.
 
 ## For the migration manifest (step 7)
 
@@ -293,7 +374,8 @@ same:
 - `jsonb`: PostgreSQL's text output, or a canonical JSON spelling the
   manifest fixes; equality checks must parse both sides, since SQLite
   compares text;
-- `boolean` to 0 or 1, `text[]` to a JSON array, `bytea` to the same bytes;
+- `boolean` to 0 or 1, `text[]` to a JSON array (a multidimensional array
+  is refused), `bytea` to the same bytes;
 - the renamed tables and columns above; `session` rows are not copied,
   their browser credentials are revoked with audit events instead (Decision
   9); `account` must be empty; `verification` is not copied;

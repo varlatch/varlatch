@@ -98,8 +98,8 @@ func TestAuditPositionsAreAssignedByTheDatabase(t *testing.T) {
 			_, err := tx.ExecContext(ctx, "INSERT INTO audit_events (event_order, id, event_type, decision) VALUES (?, ?, 'test', 'info')", pos, fmt.Sprint("chosen", pos))
 			return err
 		})
-		if pos == 1 {
-			refusedBy(t, err, "UNIQUE constraint failed: audit_events.event_order")
+		if pos == 1 { // taken: refused before SQLite's own unique check
+			refusedBy(t, err, "audit_events_no_replace")
 		} else {
 			refusedBy(t, err, "audit_events_position")
 		}
@@ -790,5 +790,141 @@ func TestGitHubAppRegistrationPendingMaterialIsWrittenOnce(t *testing.T) {
 	}
 	if r.PendingSlug.String != "varlatch-acme" || r.PendingKeyEnvelope.Valid || r.EndReason.String != "discarded" || r.AccountLogin != "acme-gh3" {
 		t.Fatalf("registration: %+v", r)
+	}
+}
+
+// --- REPLACE ---------------------------------------------------------------
+//
+// SQLite carries out INSERT OR REPLACE (and UPDATE OR REPLACE) by deleting
+// the conflicting row without firing its delete triggers (recursive_triggers
+// is off in lib/storage). The *_no_replace triggers refuse the collision
+// first, so no guarantee above can be bypassed that way.
+
+// The review's reproduction: insert a and b, replace a. Without the guard
+// all three succeed, leaving (2, b), (3, a): the original a gone, and a gap.
+func TestAuditEventsCannotBeReplaced(t *testing.T) {
+	s := openDB(t)
+	write(t, s, func(ctx context.Context, q *query.Queries, _ *storage.Tx) error {
+		for _, id := range []string{"a", "b"} {
+			if _, err := insertEvent(ctx, q, id, "original"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	for _, stmt := range []string{
+		"INSERT OR REPLACE INTO audit_events (id, event_type, decision) VALUES ('a', 'replaced', 'info')",
+		"REPLACE INTO audit_events (id, event_type, decision) VALUES ('a', 'replaced', 'info')",
+		"INSERT OR REPLACE INTO audit_events (event_order, id, event_type, decision) VALUES (1, 'c', 'replaced', 'info')",
+		"INSERT INTO audit_events (id, event_type, decision) VALUES ('a', 'x', 'info') ON CONFLICT (id) DO UPDATE SET event_type = 'replaced'",
+		"INSERT OR IGNORE INTO audit_events (id, event_type, decision) VALUES ('a', 'replaced', 'info')",
+	} {
+		refusedBy(t, tryExec(s, stmt), "audit_events_no_replace")
+	}
+	refusedBy(t, tryExec(s, "UPDATE OR REPLACE audit_events SET id = 'a' WHERE id = 'b'"), "audit_events_no_update")
+	events, err := query.New(s.Reader()).ListAuditEvents(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].ID != "a" || events[1].ID != "b" || events[0].EventType != "original" || events[1].EventType != "original" {
+		t.Fatalf("events: %+v", events)
+	}
+}
+
+func TestSessionsCannotBeReplaced(t *testing.T) {
+	f := newSessionFixture(t)
+	a := f.browser(t, "ses_a")
+	refusedBy(t, tryExec(f.s, "INSERT OR REPLACE INTO auth_sessions (id, expires_at, token_hash, user_id) VALUES ('ses_a', 1, 'hash-new', 'bau_p')"),
+		"auth_sessions_no_replace")
+	refusedBy(t, tryExec(f.s, "INSERT OR REPLACE INTO auth_sessions (id, expires_at, token_hash, user_id) VALUES ('ses_new', 1, 'hash-ses_a', 'bau_p')"),
+		"auth_sessions_no_replace")
+	refusedBy(t, tryExec(f.s, "UPDATE OR REPLACE auth_sessions SET token_hash = 'hash-ses_a' WHERE id = 'ses_b'"), "auth_sessions_no_replace")
+	refusedBy(t, tryExec(f.s, "UPDATE OR REPLACE auth_sessions SET id = 'ses_a' WHERE id = 'ses_b'"), "auth_sessions_no_replace")
+	if !f.live(t, a) {
+		t.Fatal("the session's credential was revoked")
+	}
+	var n int
+	if err := f.s.Reader().QueryRow("SELECT count(*) FROM auth_sessions WHERE (id, token_hash) IN (VALUES ('ses_a', 'hash-ses_a'), ('ses_b', 'hash-ses_b'))").Scan(&n); err != nil || n != 2 {
+		t.Fatalf("sessions: %d, %v", n, err)
+	}
+	// Ordinary updates go through, the keys included when they collide with nothing.
+	exec(t, f.s, "UPDATE auth_sessions SET expires_at = expires_at + 1, token_hash = 'hash-rotated' WHERE id = 'ses_b'")
+	// And ending a session still revokes.
+	f.endSession(t, "ses_a")
+	if f.live(t, a) {
+		t.Fatal("the ended session's credential is live")
+	}
+}
+
+func TestPasskeysCannotBeReplaced(t *testing.T) {
+	s := openDB(t)
+	passkeyFixture(t, s, 5)
+	write(t, s, func(ctx context.Context, q *query.Queries, _ *storage.Tx) error {
+		return q.CreatePasskey(ctx, query.CreatePasskeyParams{ID: "pk_2", PublicKey: "k2", UserID: "bau_p", CredentialID: "cred-2", DeviceType: "singleDevice"})
+	})
+	for _, stmt := range []string{
+		// A new row for the same passkey, its counter back at 0.
+		"INSERT OR REPLACE INTO passkeys (id, public_key, user_id, credential_id, counter, device_type, backed_up) VALUES ('pk_1', 'k', 'bau_p', 'cred-1', 0, 'singleDevice', 0)",
+		"INSERT OR REPLACE INTO passkeys (id, public_key, user_id, credential_id, counter, device_type, backed_up) VALUES ('pk_9', 'k', 'bau_p', 'cred-1', 0, 'singleDevice', 0)",
+		"UPDATE OR REPLACE passkeys SET credential_id = 'cred-1' WHERE id = 'pk_2'",
+		"UPDATE OR REPLACE passkeys SET id = 'pk_1' WHERE id = 'pk_2'",
+	} {
+		refusedBy(t, tryExec(s, stmt), "passkeys_no_replace")
+	}
+	if got := counterOf(t, s); got != 5 {
+		t.Fatalf("counter %d, want 5", got)
+	}
+}
+
+func TestGitHubAppRegistrationsCannotBeReplaced(t *testing.T) {
+	f := newRegistration(t)
+	f.convert(t)
+	write(t, f.s, func(ctx context.Context, q *query.Queries, _ *storage.Tx) error {
+		_, err := q.CreateGitHubAppRegistration(ctx, query.CreateGitHubAppRegistrationParams{
+			StateHash: "second", OrganizationID: "org_a", ActorIdentityID: "idn_admin",
+			AccountLogin: "acme-gh", AccountType: "organization", CreatedAt: f.now, ExpiresAt: f.now + time.Hour.Microseconds(),
+		})
+		return err
+	})
+	first, err := query.New(f.s.Reader()).GetGitHubAppRegistration(context.Background(), "inflight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		fmt.Sprintf(`INSERT OR REPLACE INTO github_app_registrations (state_hash, organization_id, actor_identity_id, account_login, account_type, created_at, expires_at)
+			VALUES ('inflight', 'org_a', 'idn_admin', 'acme-gh', 'organization', %d, %d)`, f.now, f.now+1),
+		fmt.Sprintf(`INSERT OR REPLACE INTO github_app_registrations (state_hash, organization_id, actor_identity_id, account_login, account_type, created_at, expires_at, id)
+			VALUES ('third', 'org_a', 'idn_admin', 'acme-gh', 'organization', %d, %d, '%s')`, f.now, f.now+1, first.ID),
+		"UPDATE OR REPLACE github_app_registrations SET state_hash = 'inflight' WHERE state_hash = 'second'",
+		fmt.Sprintf("UPDATE OR REPLACE github_app_registrations SET id = '%s' WHERE state_hash = 'second'", first.ID),
+	} {
+		refusedBy(t, tryExec(f.s, stmt), "github_app_registrations_no_replace")
+	}
+	again, err := query.New(f.s.Reader()).GetGitHubAppRegistration(context.Background(), "inflight")
+	if err != nil || again != first {
+		t.Fatalf("the converted registration changed: %+v, %v", again, err)
+	}
+}
+
+// A REPLACE of a session's parent (its user) needs no guard: the foreign
+// key cascade from the replaced row deletes the sessions through
+// session_end_revokes_browser_credentials, though recursive_triggers is
+// off. This test holds SQLite to that.
+func TestReplacingAUserStillEndsItsSessions(t *testing.T) {
+	f := newSessionFixture(t)
+	a, b := f.browser(t, "ses_a"), f.browser(t, "ses_b")
+	exec(t, f.s, "INSERT OR REPLACE INTO auth_users (id, name, email) VALUES ('bau_p', 'Jeremy', 'p@varlatch.placeholder.invalid')")
+	for _, id := range []string{a, b} {
+		if f.live(t, id) {
+			t.Fatalf("%s is live after its user was replaced", id)
+		}
+	}
+	var got []string
+	for _, l := range f.revocations(t) {
+		got = append(got, l.CredentialID.String)
+		jsonEqual(t, l.Metadata, map[string]any{"kind": "browser", "reason": "session-ended"})
+	}
+	if !slices.Equal(slices.Sorted(slices.Values(got)), []string{a, b}) {
+		t.Fatalf("revocation events for %v", got)
 	}
 }

@@ -127,11 +127,15 @@ migrations.
   enumerations (named as in PostgreSQL), indexes and the triggers that keep
   PostgreSQL's guarantees (commit-ordered, append-only audit positions;
   forward-only passkey counters; a session's end revoking its browser
-  credentials; GitHub App conversions written once). Times are integer
-  microseconds since the epoch, UTC; `jsonb` is JSON text.
+  credentials; GitHub App conversions written once), guarded against
+  `REPLACE`, which would bypass them. Times are integer microseconds since
+  the epoch, UTC; `jsonb` is JSON text; `text[]` is a JSON array of strings
+  or nulls (element triggers); `integer` keeps PostgreSQL's 32-bit range
+  (`int4_<column>` checks), so values can go back for a reverse migration.
 - `MAPPING.md` and `mapping.json`: every PostgreSQL table, column,
   constraint, index and trigger mapped to `schema.sql` or dropped with the
-  reason, and every type rule. `mapping_test.go` checks the mapping against
+  reason, and every type rule. `mapping_test.go` checks the mapping, CHECK
+  expressions and index predicates compared as parsed trees, against
   `testdata/pg-v0.22.0.json`, a dump of v0.22.0's schema made by
   `testdata/pgschema.mjs` on PGlite (MAPPING.md says how to regenerate it),
   and against a database `Init` created. The migration manifest (step 7)

@@ -16,8 +16,23 @@
 --     A default of now() is NOW below, the database clock at millisecond
 --     resolution; varlatchd passes its own times.
 --   * jsonb is TEXT holding JSON (json_valid), text[] is TEXT holding a JSON
---     array, boolean is INTEGER 0 or 1, bytea is BLOB, integer and bigint
---     are INTEGER.
+--     array of strings or nulls (a CHECK for the array, triggers for its
+--     elements), boolean is INTEGER 0 or 1, bytea is BLOB, bigint is
+--     INTEGER.
+--   * integer is INTEGER kept to PostgreSQL's 32-bit range by a CHECK named
+--     int4_<column>, so every value can go back to PostgreSQL (the reverse
+--     migration, Decision 9). Where PostgreSQL already bounds a side, the
+--     check adds only the other; where it bounds both, there is none.
+--   * REPLACE: SQLite carries out INSERT OR REPLACE (and UPDATE OR REPLACE)
+--     by deleting the conflicting row without firing delete triggers
+--     (recursive_triggers is off in lib/storage). Every table whose
+--     guarantee rests on a trigger refuses a write that collides with an
+--     existing row's unique key before any replacement can happen (the
+--     *_no_replace triggers). Those tables take no REPLACE, no upsert and
+--     no INSERT OR IGNORE: an insert that collides is refused, and a change
+--     is an UPDATE. A REPLACE of a parent row needs no guard: the foreign
+--     key cascade from it does fire the children's delete triggers
+--     (auth_users into auth_sessions, tested).
 --   * CHECK constraints keep their PostgreSQL names. Regular expressions
 --     (~) become GLOB patterns with length checks, since SQLite has no
 --     regular expressions; mapping_test.go compares them on generated input.
@@ -55,7 +70,7 @@ CREATE TABLE installation (
   kek_canary TEXT NOT NULL CHECK (json_valid(kek_canary)),
   bootstrapped_at INTEGER,
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
-  root_kek_version INTEGER NOT NULL DEFAULT 1 CONSTRAINT installation_root_kek_version_check CHECK (root_kek_version > 0),
+  root_kek_version INTEGER NOT NULL DEFAULT 1 CONSTRAINT installation_root_kek_version_check CHECK (root_kek_version > 0) CONSTRAINT int4_root_kek_version CHECK (root_kek_version <= 2147483647),
   key_rotation_state TEXT NOT NULL DEFAULT 'idle'
     CONSTRAINT installation_key_rotation_state_check CHECK (key_rotation_state IN ('idle', 'rewrapping', 'verifying')),
   public_url TEXT
@@ -104,8 +119,8 @@ CREATE TABLE credentials (
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   expires_at INTEGER,
   revoked_at INTEGER,
-  max_uses INTEGER CONSTRAINT credentials_max_uses_check CHECK (max_uses > 0),
-  use_count INTEGER NOT NULL DEFAULT 0,
+  max_uses INTEGER CONSTRAINT credentials_max_uses_check CHECK (max_uses > 0) CONSTRAINT int4_max_uses CHECK (max_uses <= 2147483647),
+  use_count INTEGER NOT NULL DEFAULT 0 CONSTRAINT int4_use_count CHECK (use_count BETWEEN -2147483648 AND 2147483647),
   last_used_at INTEGER,
   client TEXT CONSTRAINT credentials_client_check CHECK (client IS NULL OR length(client) BETWEEN 1 AND 64),
   auth_session_id TEXT,
@@ -177,6 +192,7 @@ CREATE TABLE auth_users (
   updated_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000)
 ) STRICT;
 
+
 -- PostgreSQL "session". A session's token is stored as its hash (step 3.4);
 -- no session is copied by the migration (ADR-0059 Decision 9: browser
 -- sessions end), so no plaintext token ever lands here.
@@ -192,6 +208,21 @@ CREATE TABLE auth_sessions (
 ) STRICT;
 CREATE INDEX auth_sessions_user_id_idx ON auth_sessions (user_id);
 
+-- No REPLACE (see the header): replacing a session would end it without
+-- session_end_revokes_browser_credentials.
+CREATE TRIGGER auth_sessions_no_replace_insert BEFORE INSERT ON auth_sessions
+FOR EACH ROW
+WHEN EXISTS (SELECT 1 FROM auth_sessions WHERE id = NEW.id OR token_hash = NEW.token_hash)
+BEGIN
+  SELECT RAISE(ABORT, 'auth_sessions_no_replace: the row collides with an existing one; auth_sessions takes no REPLACE or upsert');
+END;
+CREATE TRIGGER auth_sessions_no_replace_update BEFORE UPDATE OF id, token_hash ON auth_sessions
+FOR EACH ROW
+WHEN EXISTS (SELECT 1 FROM auth_sessions WHERE rowid <> OLD.rowid AND (id = NEW.id OR token_hash = NEW.token_hash))
+BEGIN
+  SELECT RAISE(ABORT, 'auth_sessions_no_replace: the row collides with an existing one; auth_sessions takes no REPLACE or upsert');
+END;
+
 -- A browser credential ends with the session it was minted from (PostgreSQL
 -- migration 0043): deleting a session row revokes, in the deleting
 -- statement, every live `browser` credential carrying its id, and records
@@ -205,9 +236,8 @@ CREATE INDEX auth_sessions_user_id_idx ON auth_sessions (user_id);
 -- writes their events session by session, each session's in credential id
 -- order. Event ids have the shape of the TypeScript server's ids: `evt_` and
 -- 26 lowercase base32 characters, the last one carrying 3 bits (128 bits in
--- all), from SQLite's random(). A REPLACE that removes a session row does
--- not fire delete triggers (recursive_triggers is off); varlatchd never
--- writes sessions with REPLACE.
+-- all), from SQLite's random(). auth_sessions_no_replace_* keep REPLACE
+-- from removing a session row without this trigger.
 CREATE TRIGGER session_end_revokes_browser_credentials AFTER DELETE ON auth_sessions
 FOR EACH ROW
 BEGIN
@@ -276,7 +306,7 @@ CREATE TABLE passkeys (
   public_key TEXT NOT NULL,
   user_id TEXT NOT NULL REFERENCES auth_users (id) ON DELETE CASCADE,
   credential_id TEXT NOT NULL,
-  counter INTEGER NOT NULL,
+  counter INTEGER NOT NULL CONSTRAINT int4_counter CHECK (counter BETWEEN -2147483648 AND 2147483647),
   device_type TEXT NOT NULL,
   backed_up INTEGER NOT NULL CHECK (backed_up IN (0, 1)),
   transports TEXT,
@@ -286,11 +316,31 @@ CREATE TABLE passkeys (
 CREATE INDEX passkeys_user_id_idx ON passkeys (user_id);
 CREATE UNIQUE INDEX passkeys_credential_id_unique ON passkeys (credential_id);
 
+-- No REPLACE (see the header): replacing a passkey would write a new row,
+-- counter and all, past passkey_counter_forward.
+CREATE TRIGGER passkeys_no_replace_insert BEFORE INSERT ON passkeys
+FOR EACH ROW
+WHEN EXISTS (SELECT 1 FROM passkeys WHERE id = NEW.id OR credential_id = NEW.credential_id)
+BEGIN
+  SELECT RAISE(ABORT, 'passkeys_no_replace: the row collides with an existing one; passkeys takes no REPLACE or upsert');
+END;
+CREATE TRIGGER passkeys_no_replace_update BEFORE UPDATE OF id, credential_id ON passkeys
+FOR EACH ROW
+WHEN EXISTS (SELECT 1 FROM passkeys WHERE rowid <> OLD.rowid AND (id = NEW.id OR credential_id = NEW.credential_id))
+BEGIN
+  SELECT RAISE(ABORT, 'passkeys_no_replace: the row collides with an existing one; passkeys takes no REPLACE or upsert');
+END;
+
 -- A passkey's signature counter only moves forward, whoever writes it
 -- (PostgreSQL migration 0040): when the stored or the new counter is above
 -- zero, the new one must be greater. 0 over 0 is allowed (authenticators
 -- without a counter). An UPDATE that does not set the counter is not
 -- checked.
+--
+-- WebAuthn counters are unsigned 32-bit numbers, but the column keeps
+-- PostgreSQL's signed range (int4_counter): a counter above 2147483647 is
+-- refused, never stored as a negative number. Widening it needs an agreed
+-- change on the PostgreSQL side too, for the reverse migration.
 CREATE TRIGGER passkey_counter_forward BEFORE UPDATE OF counter ON passkeys
 FOR EACH ROW
 WHEN (NEW.counter > 0 OR OLD.counter > 0) AND NEW.counter <= OLD.counter
@@ -322,7 +372,7 @@ CREATE TABLE passkey_quarantine (
   public_key TEXT NOT NULL,
   user_id TEXT NOT NULL,
   credential_id TEXT NOT NULL,
-  counter INTEGER NOT NULL,
+  counter INTEGER NOT NULL CONSTRAINT int4_counter CHECK (counter BETWEEN -2147483648 AND 2147483647),
   device_type TEXT NOT NULL,
   backed_up INTEGER NOT NULL CHECK (backed_up IN (0, 1)),
   transports TEXT,
@@ -365,7 +415,7 @@ CREATE TABLE device_sign_ins (
   approved_by_identity_id TEXT REFERENCES identities (id),
   decided_at INTEGER,
   last_polled_at INTEGER,
-  poll_interval INTEGER NOT NULL DEFAULT 5 CONSTRAINT device_sign_ins_poll_interval_check CHECK (poll_interval > 0),
+  poll_interval INTEGER NOT NULL DEFAULT 5 CONSTRAINT device_sign_ins_poll_interval_check CHECK (poll_interval > 0) CONSTRAINT int4_poll_interval CHECK (poll_interval <= 2147483647),
   issued_credential_id TEXT REFERENCES credentials (id),
   approval_user_verified INTEGER CHECK (approval_user_verified IN (0, 1)),
   approval_passkey_id TEXT,
@@ -390,7 +440,7 @@ CREATE TABLE device_code_attempt_windows (
   scope TEXT NOT NULL CONSTRAINT device_code_attempt_windows_scope_check CHECK (scope IN ('identity', 'peer', 'global')),
   key TEXT NOT NULL,
   window_started_at INTEGER NOT NULL,
-  failures INTEGER NOT NULL DEFAULT 0 CONSTRAINT device_code_attempt_windows_failures_check CHECK (failures >= 0),
+  failures INTEGER NOT NULL DEFAULT 0 CONSTRAINT device_code_attempt_windows_failures_check CHECK (failures >= 0) CONSTRAINT int4_failures CHECK (failures <= 2147483647),
   PRIMARY KEY (scope, key)
 ) STRICT;
 
@@ -405,7 +455,7 @@ CREATE TABLE organizations (
   wrapped_org_kek TEXT CHECK (json_valid(wrapped_org_kek)),
   deleted_at INTEGER,
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
-  root_kek_version INTEGER NOT NULL DEFAULT 1 CONSTRAINT organizations_root_kek_version_check CHECK (root_kek_version > 0),
+  root_kek_version INTEGER NOT NULL DEFAULT 1 CONSTRAINT organizations_root_kek_version_check CHECK (root_kek_version > 0) CONSTRAINT int4_root_kek_version CHECK (root_kek_version <= 2147483647),
   key_rotation_state TEXT NOT NULL DEFAULT 'idle'
     CONSTRAINT organizations_key_rotation_state_check CHECK (key_rotation_state IN ('idle', 'rewrapping', 'verifying')),
   org_kek_destroyed_at INTEGER,
@@ -453,7 +503,7 @@ CREATE TABLE removal_authority (
 CREATE TABLE removal_requirements (
   removal_id TEXT NOT NULL REFERENCES membership_removals (id),
   requirement_id TEXT NOT NULL,
-  requirement_version INTEGER,
+  requirement_version INTEGER CONSTRAINT int4_requirement_version CHECK (requirement_version BETWEEN -2147483648 AND 2147483647),
   target TEXT NOT NULL CHECK (json_valid(target)),
   selector TEXT NOT NULL CHECK (json_valid(selector)),
   PRIMARY KEY (removal_id, requirement_id)
@@ -477,6 +527,24 @@ CREATE TABLE member_integrations (
   last_at INTEGER NOT NULL,
   PRIMARY KEY (organization_id, identity_id, kind, resource_id)
 ) STRICT;
+
+-- changes: PostgreSQL text[], here a JSON array of strings or nulls. The
+-- CHECK keeps the array; these keep its elements (a CHECK cannot read
+-- json_each). Text that is not a JSON array is left to the CHECK.
+CREATE TRIGGER member_integrations_text_arrays_insert BEFORE INSERT ON member_integrations
+FOR EACH ROW
+WHEN (json_valid(NEW.changes) AND json_type(NEW.changes) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.changes) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'member_integrations_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
+CREATE TRIGGER member_integrations_text_arrays_update BEFORE UPDATE OF changes ON member_integrations
+FOR EACH ROW
+WHEN (json_valid(NEW.changes) AND json_type(NEW.changes) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.changes) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'member_integrations_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
 
 -- What a person received (ADR-0052 Decisions 6 and 7). No foreign key to
 -- value_versions: the evidence outlives the value.
@@ -650,10 +718,28 @@ CREATE TABLE roles (
   created_by TEXT REFERENCES identities (id),
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   revoked_at INTEGER,
-  version INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1 CONSTRAINT int4_version CHECK (version BETWEEN -2147483648 AND 2147483647),
   updated_at INTEGER
 ) STRICT;
 CREATE UNIQUE INDEX roles_org_name_key ON roles (organization_id, name) WHERE revoked_at IS NULL;
+
+-- actions: PostgreSQL text[], here a JSON array of strings or nulls. The
+-- CHECK keeps the array; these keep its elements (a CHECK cannot read
+-- json_each). Text that is not a JSON array is left to the CHECK.
+CREATE TRIGGER roles_text_arrays_insert BEFORE INSERT ON roles
+FOR EACH ROW
+WHEN (json_valid(NEW.actions) AND json_type(NEW.actions) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.actions) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'roles_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
+CREATE TRIGGER roles_text_arrays_update BEFORE UPDATE OF actions ON roles
+FOR EACH ROW
+WHEN (json_valid(NEW.actions) AND json_type(NEW.actions) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.actions) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'roles_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
 
 CREATE TABLE groups (
   id TEXT NOT NULL PRIMARY KEY,
@@ -663,7 +749,7 @@ CREATE TABLE groups (
   created_by TEXT REFERENCES identities (id),
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   revoked_at INTEGER,
-  version INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1 CONSTRAINT int4_version CHECK (version BETWEEN -2147483648 AND 2147483647),
   updated_at INTEGER
 ) STRICT;
 CREATE UNIQUE INDEX groups_org_name_key ON groups (organization_id, name) WHERE revoked_at IS NULL;
@@ -702,6 +788,24 @@ CREATE TABLE grants (
 CREATE INDEX grants_subject_idx ON grants (subject_identity_id) WHERE revoked_at IS NULL;
 CREATE INDEX grants_subject_group_idx ON grants (subject_group_id) WHERE revoked_at IS NULL;
 
+-- actions: PostgreSQL text[], here a JSON array of strings or nulls. The
+-- CHECK keeps the array; these keep its elements (a CHECK cannot read
+-- json_each). Text that is not a JSON array is left to the CHECK.
+CREATE TRIGGER grants_text_arrays_insert BEFORE INSERT ON grants
+FOR EACH ROW
+WHEN (json_valid(NEW.actions) AND json_type(NEW.actions) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.actions) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'grants_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
+CREATE TRIGGER grants_text_arrays_update BEFORE UPDATE OF actions ON grants
+FOR EACH ROW
+WHEN (json_valid(NEW.actions) AND json_type(NEW.actions) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.actions) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'grants_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
+
 CREATE TABLE requirements (
   id TEXT NOT NULL PRIMARY KEY,
   organization_id TEXT NOT NULL REFERENCES organizations (id),
@@ -711,7 +815,7 @@ CREATE TABLE requirements (
   created_by TEXT REFERENCES identities (id),
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   revoked_at INTEGER,
-  version INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1 CONSTRAINT int4_version CHECK (version BETWEEN -2147483648 AND 2147483647),
   updated_at INTEGER
 ) STRICT;
 
@@ -750,6 +854,28 @@ CREATE TABLE capabilities (
 CREATE INDEX capabilities_org_idx ON capabilities (organization_id, created_at);
 CREATE INDEX capabilities_broker_idx ON capabilities (broker_identity_id);
 
+-- items and destinations: PostgreSQL text[], here a JSON array of strings or nulls. The
+-- CHECK keeps the array; these keep its elements (a CHECK cannot read
+-- json_each). Text that is not a JSON array is left to the CHECK.
+CREATE TRIGGER capabilities_text_arrays_insert BEFORE INSERT ON capabilities
+FOR EACH ROW
+WHEN (json_valid(NEW.items) AND json_type(NEW.items) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.items) WHERE type NOT IN ('text', 'null')))
+  OR (json_valid(NEW.destinations) AND json_type(NEW.destinations) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.destinations) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'capabilities_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
+CREATE TRIGGER capabilities_text_arrays_update BEFORE UPDATE OF items, destinations ON capabilities
+FOR EACH ROW
+WHEN (json_valid(NEW.items) AND json_type(NEW.items) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.items) WHERE type NOT IN ('text', 'null')))
+  OR (json_valid(NEW.destinations) AND json_type(NEW.destinations) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.destinations) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'capabilities_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
+
 -- ---------------------------------------------------------------------------
 -- Security Controls and step-up approvals (ADR-0054, ADR-0055)
 -- ---------------------------------------------------------------------------
@@ -760,7 +886,7 @@ CREATE TABLE security_controls (
     CHECK (control IN ('requirement-protection', 'admin-step-up', 'passkey-verification', 'credential-lifetime')),
   mode TEXT NOT NULL CONSTRAINT security_controls_mode_check CHECK (mode IN ('off', 'report', 'enforce')),
   config TEXT CHECK (json_valid(config)),
-  version INTEGER NOT NULL CONSTRAINT security_controls_version_check CHECK (version > 0),
+  version INTEGER NOT NULL CONSTRAINT security_controls_version_check CHECK (version > 0) CONSTRAINT int4_version CHECK (version <= 2147483647),
   changed_by TEXT REFERENCES identities (id),
   changed_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   PRIMARY KEY (organization_id, control),
@@ -782,7 +908,7 @@ CREATE TABLE security_control_counters (
     CONSTRAINT security_control_counters_organization_id_check CHECK (length(organization_id) BETWEEN 1 AND 200),
   control TEXT NOT NULL CONSTRAINT security_control_counters_control_check
     CHECK (control IN ('requirement-protection', 'admin-step-up', 'passkey-verification', 'credential-lifetime')),
-  config_version INTEGER NOT NULL CONSTRAINT security_control_counters_config_version_check CHECK (config_version > 0),
+  config_version INTEGER NOT NULL CONSTRAINT security_control_counters_config_version_check CHECK (config_version > 0) CONSTRAINT int4_config_version CHECK (config_version <= 2147483647),
   -- PostgreSQL: operation ~ '^[a-z][a-z_-]*(\.[a-z][a-z_-]*)+$'.
   operation TEXT NOT NULL CONSTRAINT security_control_counters_operation_check CHECK (
     length(operation) <= 64
@@ -836,7 +962,7 @@ CREATE TABLE approval_intents (
   target TEXT NOT NULL CONSTRAINT approval_intents_target_check CHECK (json_valid(target) AND json_type(target) = 'object'),
   body_hash TEXT NOT NULL,
   query_hash TEXT NOT NULL,
-  expected_version INTEGER,
+  expected_version INTEGER CONSTRAINT int4_expected_version CHECK (expected_version BETWEEN -2147483648 AND 2147483647),
   summary TEXT NOT NULL CHECK (json_valid(summary)),
   origin TEXT NOT NULL CONSTRAINT approval_intents_origin_check CHECK (origin IN ('dashboard', 'cli')),
   created_at INTEGER NOT NULL,
@@ -848,7 +974,7 @@ CREATE TABLE approval_intents (
   closed_at INTEGER,
   close_reason TEXT CONSTRAINT approval_intents_close_reason_check
     CHECK (close_reason IN ('cancelled', 'reset', 'organization-deleted', 'frozen')),
-  poll_interval INTEGER NOT NULL CONSTRAINT approval_intents_poll_interval_check CHECK (poll_interval > 0),
+  poll_interval INTEGER NOT NULL CONSTRAINT approval_intents_poll_interval_check CHECK (poll_interval > 0) CONSTRAINT int4_poll_interval CHECK (poll_interval <= 2147483647),
   last_polled_at INTEGER,
   CONSTRAINT approval_intents_check CHECK (expires_at > created_at),
   CONSTRAINT approval_intents_check1 CHECK ((origin = 'dashboard') = (auth_session_id IS NOT NULL)),
@@ -919,7 +1045,7 @@ CREATE INDEX approval_intent_challenges_intent ON approval_intent_challenges (in
 CREATE TABLE audit_events (
   event_order INTEGER NOT NULL PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
-  schema_version INTEGER NOT NULL DEFAULT 1,
+  schema_version INTEGER NOT NULL DEFAULT 1 CONSTRAINT int4_schema_version CHECK (schema_version BETWEEN -2147483648 AND 2147483647),
   event_type TEXT NOT NULL,
   occurred_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   actor_identity_id TEXT,
@@ -938,6 +1064,17 @@ CREATE TABLE audit_events (
 ) STRICT;
 CREATE INDEX audit_events_org_time_idx ON audit_events (organization_id, occurred_at DESC, id DESC);
 CREATE INDEX audit_events_org_order_idx ON audit_events (organization_id, event_order);
+
+-- No REPLACE (see the header): replacing an event would delete it past
+-- audit_events_no_delete and leave a gap audit_events_position cannot see.
+-- UPDATE OR REPLACE is refused by audit_events_no_update, which runs first.
+-- An insert that leaves event_order to SQLite has none to collide with.
+CREATE TRIGGER audit_events_no_replace_insert BEFORE INSERT ON audit_events
+FOR EACH ROW
+WHEN EXISTS (SELECT 1 FROM audit_events WHERE id = NEW.id OR event_order = NEW.event_order)
+BEGIN
+  SELECT RAISE(ABORT, 'audit_events_no_replace: the row collides with an existing one; audit_events takes no REPLACE or upsert');
+END;
 
 -- The new row must be the last, right after its predecessor: an insert
 -- that names its own event_order is refused unless it names exactly that.
@@ -971,15 +1108,33 @@ CREATE TABLE webhooks (
   revoked_at INTEGER,
   cursor_occurred_at INTEGER NOT NULL,
   cursor_event_id TEXT NOT NULL DEFAULT '',
-  failure_count INTEGER NOT NULL DEFAULT 0,
+  failure_count INTEGER NOT NULL DEFAULT 0 CONSTRAINT int4_failure_count CHECK (failure_count BETWEEN -2147483648 AND 2147483647),
   last_attempt_at INTEGER,
   last_status TEXT,
-  version INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1 CONSTRAINT int4_version CHECK (version BETWEEN -2147483648 AND 2147483647),
   updated_at INTEGER,
   cursor_order INTEGER NOT NULL DEFAULT 0,
   suspended_by_deletion TEXT REFERENCES organization_deletions (id)
 ) STRICT;
 CREATE INDEX webhooks_org_idx ON webhooks (organization_id) WHERE revoked_at IS NULL;
+
+-- event_types: PostgreSQL text[], here a JSON array of strings or nulls. The
+-- CHECK keeps the array; these keep its elements (a CHECK cannot read
+-- json_each). Text that is not a JSON array is left to the CHECK.
+CREATE TRIGGER webhooks_text_arrays_insert BEFORE INSERT ON webhooks
+FOR EACH ROW
+WHEN (json_valid(NEW.event_types) AND json_type(NEW.event_types) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.event_types) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'webhooks_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
+CREATE TRIGGER webhooks_text_arrays_update BEFORE UPDATE OF event_types ON webhooks
+FOR EACH ROW
+WHEN (json_valid(NEW.event_types) AND json_type(NEW.event_types) = 'array'
+      AND EXISTS (SELECT 1 FROM json_each(NEW.event_types) WHERE type NOT IN ('text', 'null')))
+BEGIN
+  SELECT RAISE(ABORT, 'webhooks_text_arrays: a text[] column holds a JSON array of strings or nulls');
+END;
 
 -- Audit export to object storage (ADR-0056).
 CREATE TABLE audit_exports (
@@ -1017,7 +1172,7 @@ CREATE TABLE audit_exports (
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   updated_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   removed_at INTEGER,
-  version INTEGER NOT NULL DEFAULT 1 CONSTRAINT audit_exports_version_check CHECK (version > 0),
+  version INTEGER NOT NULL DEFAULT 1 CONSTRAINT audit_exports_version_check CHECK (version > 0) CONSTRAINT int4_version CHECK (version <= 2147483647),
   CONSTRAINT audit_exports_check CHECK ((retention_mode IS NULL) = (retention_days IS NULL)),
   CONSTRAINT audit_exports_check1 CHECK ((credential_envelope IS NOT NULL) = (state IN ('active', 'draining'))),
   CONSTRAINT audit_exports_check2 CHECK ((drain_deadline IS NOT NULL) = (state IN ('draining', 'completed', 'abandoned'))),
@@ -1029,7 +1184,7 @@ CREATE INDEX audit_exports_draining_idx ON audit_exports (drain_deadline) WHERE 
 CREATE TABLE audit_export_plans (
   id TEXT NOT NULL PRIMARY KEY,
   export_id TEXT NOT NULL UNIQUE REFERENCES audit_exports (id),
-  export_version INTEGER NOT NULL,
+  export_version INTEGER NOT NULL CONSTRAINT int4_export_version CHECK (export_version BETWEEN -2147483648 AND 2147483647),
   stream_id TEXT NOT NULL,
   generation INTEGER NOT NULL,
   kind TEXT NOT NULL CONSTRAINT audit_export_plans_kind_check CHECK (kind IN ('manifest', 'batch', 'heartbeat')),
@@ -1041,12 +1196,12 @@ CREATE TABLE audit_export_plans (
   md5 TEXT NOT NULL CONSTRAINT audit_export_plans_md5_check CHECK (length(md5) = 32 AND md5 NOT GLOB '*[^0-9a-f]*'),
   content_type TEXT NOT NULL,
   content_encoding TEXT CONSTRAINT audit_export_plans_content_encoding_check CHECK (content_encoding = 'gzip'),
-  format_version INTEGER NOT NULL CONSTRAINT audit_export_plans_format_version_check CHECK (format_version > 0),
+  format_version INTEGER NOT NULL CONSTRAINT audit_export_plans_format_version_check CHECK (format_version > 0) CONSTRAINT int4_format_version CHECK (format_version <= 2147483647),
   retention_mode TEXT CONSTRAINT audit_export_plans_retention_mode_check CHECK (retention_mode IN ('compliance', 'governance')),
   retain_until INTEGER,
   first_order INTEGER,
   last_order INTEGER,
-  event_count INTEGER,
+  event_count INTEGER CONSTRAINT int4_event_count CHECK (event_count BETWEEN -2147483648 AND 2147483647),
   heartbeat_hour INTEGER,
   planned_at INTEGER NOT NULL,
   CONSTRAINT audit_export_plans_check CHECK ((retention_mode IS NULL) = (retain_until IS NULL)),
@@ -1069,7 +1224,7 @@ CREATE TABLE platform_connections (
   created_by TEXT REFERENCES identities (id),
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   revoked_at INTEGER,
-  version INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1 CONSTRAINT int4_version CHECK (version BETWEEN -2147483648 AND 2147483647),
   updated_at INTEGER,
   credential_expires_at INTEGER,
   credential_expiry_seen_at INTEGER,
@@ -1110,7 +1265,7 @@ CREATE TABLE github_apps (
   created_by TEXT REFERENCES identities (id),
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   removed_at INTEGER,
-  version INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1 CONSTRAINT int4_version CHECK (version BETWEEN -2147483648 AND 2147483647),
   updated_at INTEGER,
   UNIQUE (id, organization_id),
   CONSTRAINT github_apps_key_until_removed CHECK ((removed_at IS NULL) = (key_envelope IS NOT NULL))
@@ -1163,6 +1318,21 @@ CREATE INDEX github_app_registrations_expiry ON github_app_registrations (expire
 CREATE INDEX github_app_registrations_pending_expiry ON github_app_registrations (pending_expires_at)
   WHERE converted_at IS NOT NULL AND ended_at IS NULL;
 
+-- No REPLACE (see the header): replacing a registration would delete its
+-- pending conversion past github_app_registrations_pending_once.
+CREATE TRIGGER github_app_registrations_no_replace_insert BEFORE INSERT ON github_app_registrations
+FOR EACH ROW
+WHEN EXISTS (SELECT 1 FROM github_app_registrations WHERE state_hash = NEW.state_hash OR id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'github_app_registrations_no_replace: the row collides with an existing one; github_app_registrations takes no REPLACE or upsert');
+END;
+CREATE TRIGGER github_app_registrations_no_replace_update BEFORE UPDATE OF state_hash, id ON github_app_registrations
+FOR EACH ROW
+WHEN EXISTS (SELECT 1 FROM github_app_registrations WHERE rowid <> OLD.rowid AND (state_hash = NEW.state_hash OR id = NEW.id))
+BEGIN
+  SELECT RAISE(ABORT, 'github_app_registrations_no_replace: the row collides with an existing one; github_app_registrations takes no REPLACE or upsert');
+END;
+
 -- Pending conversion material is written once (PostgreSQL migration 0050):
 -- once converted_at is set, nothing of the registration changes except the
 -- deletion of the key when the registration ends (ended_at, end_reason),
@@ -1200,7 +1370,7 @@ CREATE TABLE sync_targets (
   redeploy INTEGER NOT NULL DEFAULT 0 CHECK (redeploy IN (0, 1)),
   state TEXT NOT NULL DEFAULT 'active' CONSTRAINT sync_targets_state_check CHECK (state IN ('active', 'paused', 'disabled')),
   disabled_reason TEXT,
-  failure_count INTEGER NOT NULL DEFAULT 0,
+  failure_count INTEGER NOT NULL DEFAULT 0 CONSTRAINT int4_failure_count CHECK (failure_count BETWEEN -2147483648 AND 2147483647),
   needs_sync INTEGER NOT NULL DEFAULT 1 CHECK (needs_sync IN (0, 1)),
   next_attempt_at INTEGER,
   last_attempt_at INTEGER,
@@ -1211,14 +1381,14 @@ CREATE TABLE sync_targets (
   created_by TEXT REFERENCES identities (id),
   created_at INTEGER NOT NULL DEFAULT (CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
   revoked_at INTEGER,
-  version INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1 CONSTRAINT int4_version CHECK (version BETWEEN -2147483648 AND 2147483647),
   updated_at INTEGER,
   last_notes TEXT CHECK (json_valid(last_notes)),
   repair_cycle_started_at INTEGER,
   redeploy_owed INTEGER NOT NULL DEFAULT 0,
   redeploy_paid INTEGER NOT NULL DEFAULT 0,
   last_drift_at INTEGER,
-  last_drift_count INTEGER,
+  last_drift_count INTEGER CONSTRAINT int4_last_drift_count CHECK (last_drift_count BETWEEN -2147483648 AND 2147483647),
   last_drift_names TEXT CHECK (json_valid(last_drift_names)),
   last_drift_event_id TEXT
 ) STRICT;

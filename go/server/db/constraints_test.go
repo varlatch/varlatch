@@ -4,6 +4,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"math/rand/v2"
 	"regexp"
 	"strings"
@@ -154,6 +155,119 @@ func TestCredentialLifetimeConfigCheck(t *testing.T) {
 		}
 		if !tc.ok {
 			refusedBy(t, err, "CHECK constraint failed")
+		}
+	}
+}
+
+// PostgreSQL's integer is 32-bit; SQLite's INTEGER 64. Each widened column
+// keeps PostgreSQL's range (int4_<column>), intersected with its own
+// checks; bigint stays 64-bit. mapping_test.go checks every column; these
+// write through lib/storage at both edges of each class.
+func TestIntegerRanges(t *testing.T) {
+	s := openDB(t)
+	exec(t, s,
+		"INSERT INTO identities (id, kind, name) VALUES ('idn_a', 'human', 'A')",
+		"INSERT INTO auth_users (id, name, email) VALUES ('bau_a', 'A', 'a@varlatch.placeholder.invalid')",
+		"INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'acme', 'Acme', '{}')")
+	const lo, hi = int64(-2147483648), int64(2147483647)
+	n := 0
+	passkey := func(counter int64) error {
+		n++
+		return tryExec(s, `INSERT INTO passkeys (id, public_key, user_id, credential_id, counter, device_type, backed_up)
+			VALUES (?, 'k', 'bau_a', ?, ?, 'singleDevice', 0)`, fmt.Sprint("pk_", n), fmt.Sprint("cred-", n), counter)
+	}
+	credential := func(maxUses int64) error {
+		n++
+		return tryExec(s, "INSERT INTO credentials (id, identity_id, kind, token_hash, max_uses) VALUES (?, 'idn_a', 'cli', ?, ?)",
+			fmt.Sprint("crd_", n), fmt.Sprint("h", n), maxUses)
+	}
+	// integer with no bound of its own: the whole 32-bit range. A WebAuthn
+	// counter (unsigned 32-bit) above it is refused, never stored negative.
+	for _, v := range []int64{lo, hi, 0} {
+		if err := passkey(v); err != nil {
+			t.Fatalf("counter %d: %v", v, err)
+		}
+	}
+	for _, v := range []int64{lo - 1, hi + 1, 4294967295} {
+		refusedBy(t, passkey(v), "int4_counter")
+	}
+	// integer bounded below by PostgreSQL (max_uses > 0): its own lower
+	// bound, PostgreSQL's ceiling.
+	if err := credential(hi); err != nil {
+		t.Fatal(err)
+	}
+	refusedBy(t, credential(hi+1), "int4_max_uses")
+	refusedBy(t, credential(0), "credentials_max_uses_check")
+	// integer bounded on both sides by PostgreSQL (requested_ttl between 60
+	// and 86400): its own check, no range check.
+	for _, v := range []int64{59, 86401, hi + 1} {
+		refusedBy(t, tryExec(s, "INSERT INTO device_sign_ins (id, device_code_hash, user_code, requested_ttl, expires_at) VALUES ('dsi_a', 'h', 'BCDFGHJK', ?, 0)", v),
+			"device_sign_ins_requested_ttl_check")
+	}
+	// bigint: SQLite's whole range; beyond it a literal is a REAL, which a
+	// STRICT INTEGER column refuses.
+	for _, v := range []int64{-9223372036854775808, 9223372036854775807} {
+		exec(t, s, fmt.Sprintf("UPDATE organizations SET security_epoch = %d", v))
+	}
+	refusedBy(t, tryExec(s, "UPDATE organizations SET security_epoch = 9223372036854775808"), "cannot store REAL value in INTEGER column")
+}
+
+// text[] columns hold JSON arrays of strings or nulls (PostgreSQL arrays
+// allow NULL elements), on insert and on update.
+func TestTextArrayElements(t *testing.T) {
+	s := openDB(t)
+	exec(t, s,
+		"INSERT INTO identities (id, kind, name) VALUES ('idn_a', 'human', 'A')",
+		"INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'acme', 'Acme', '{}')",
+		"INSERT INTO identities (id, kind, name, organization_id) VALUES ('idn_b', 'broker', 'B', 'org_a'), ('idn_g', 'agent', 'G', 'org_a')",
+		"INSERT INTO projects (id, organization_id, slug, name, contract_authority) VALUES ('prj_a', 'org_a', 'api', 'API', 'managed')",
+		"INSERT INTO environments (id, project_id, name, kind, tier) VALUES ('env_a', 'prj_a', 'dev', 'shared', 'development')")
+	n := 0
+	inserts := map[string]func(string) error{
+		"roles.actions": func(v string) error {
+			n++
+			return tryExec(s, "INSERT INTO roles (id, organization_id, name, actions) VALUES (?, 'org_a', ?, ?)", fmt.Sprint("rol_", n), fmt.Sprint("r", n), v)
+		},
+		"grants.actions": func(v string) error {
+			n++
+			return tryExec(s, "INSERT INTO grants (id, organization_id, subject_identity_id, scope, actions) VALUES (?, 'org_a', 'idn_a', '{}', ?)", fmt.Sprint("grt_", n), v)
+		},
+		"capabilities.items": func(v string) error {
+			n++
+			return tryExec(s, `INSERT INTO capabilities (id, organization_id, broker_identity_id, agent_identity_id, project_id, environment_id, items, destinations, secret_hash, expires_at, created_by)
+				VALUES (?, 'org_a', 'idn_b', 'idn_g', 'prj_a', 'env_a', ?, '[]', 'h', 0, 'idn_a')`, fmt.Sprint("cap_", n), v)
+		},
+		"capabilities.destinations": func(v string) error {
+			n++
+			return tryExec(s, `INSERT INTO capabilities (id, organization_id, broker_identity_id, agent_identity_id, project_id, environment_id, items, destinations, secret_hash, expires_at, created_by)
+				VALUES (?, 'org_a', 'idn_b', 'idn_g', 'prj_a', 'env_a', '[]', ?, 'h', 0, 'idn_a')`, fmt.Sprint("cap_", n), v)
+		},
+		"member_integrations.changes": func(v string) error {
+			n++
+			return tryExec(s, "INSERT INTO member_integrations (organization_id, identity_id, kind, resource_id, changes, first_at, last_at) VALUES ('org_a', 'idn_a', 'target', ?, ?, 0, 0)", fmt.Sprint("syt_", n), v)
+		},
+		"webhooks.event_types": func(v string) error {
+			n++
+			return tryExec(s, "INSERT INTO webhooks (id, organization_id, url, event_types, secret_envelope, cursor_occurred_at) VALUES (?, 'org_a', 'https://h.invalid', ?, '{}', 0)", fmt.Sprint("whk_", n), v)
+		},
+	}
+	good := []string{`[]`, `["secret.use"]`, `["a", null, "b"]`}
+	bad := []string{`[1]`, `["a", 2.5]`, `[true]`, `[["a"]]`, `[{"a": "b"}]`}
+	for col, insert := range inserts {
+		table, column, _ := strings.Cut(col, ".")
+		for _, v := range good {
+			if err := insert(v); err != nil {
+				t.Fatalf("%s = %s: %v", col, v, err)
+			}
+		}
+		for _, v := range bad {
+			refusedBy(t, insert(v), table+"_text_arrays")
+			refusedBy(t, tryExec(s, fmt.Sprintf("UPDATE %s SET %s = ?", table, column), v), table+"_text_arrays")
+		}
+		// Not an array at all: the CHECK.
+		refusedBy(t, insert(`"a"`), "CHECK constraint failed")
+		if err := tryExec(s, fmt.Sprintf("UPDATE %s SET %s = ?", table, column), `["x", null]`); err != nil {
+			t.Fatalf("%s: a good update: %v", col, err)
 		}
 	}
 }

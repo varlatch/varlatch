@@ -18,7 +18,7 @@
     {
       "postgres": "integer",
       "sqlite": "INTEGER",
-      "rule": "32-bit becomes 64-bit; every stored value fits"
+      "rule": "32 bits become 64, kept to PostgreSQL range -2147483648..2147483647 by CHECK int4_<column>: the side(s) PostgreSQL does not already bound, none where it bounds both; every value can go back to PostgreSQL"
     },
     {
       "postgres": "bigint",
@@ -38,12 +38,17 @@
     {
       "postgres": "text[]",
       "sqlite": "TEXT",
-      "rule": "a JSON array of strings, with CHECK (json_valid(c) AND json_type(c) = 'array'); `= ANY ($1)` becomes json_each or IN"
+      "rule": "a JSON array whose elements are strings or null, with CHECK (json_valid(c) AND json_type(c) = 'array') and <table>_text_arrays_insert/_update triggers for the elements; `= ANY ($1)` becomes json_each or IN"
     },
     {
       "postgres": "bytea",
       "sqlite": "BLOB",
       "rule": "unchanged bytes"
+    },
+    {
+      "postgres": "smallint",
+      "sqlite": "INTEGER",
+      "rule": "none at v0.22.0; would be kept to -32768..32767 by CHECK int2_<column>"
     }
   ],
   "defaults": [
@@ -1672,8 +1677,25 @@
       "schema_version": "The schema's version (db.go): replaces varlatch_migrations."
     },
     "triggers": {
+      "audit_events_no_delete": "As audit_events_no_update.",
+      "audit_events_no_replace_insert": "REPLACE guard: SQLite carries out INSERT OR REPLACE by deleting the conflicting row without delete triggers (recursive_triggers is off); replacing an event would delete it past audit_events_no_delete and leave a gap audit_events_position cannot see. Refuses an insert that collides with an existing row's unique key.",
       "audit_events_no_update": "Audit events are append-only. PostgreSQL withheld UPDATE and DELETE on audit_events from the runtime role (migration 0003); SQLite has no roles.",
-      "audit_events_no_delete": "As audit_events_no_update."
+      "auth_sessions_no_replace_insert": "REPLACE guard: SQLite carries out INSERT OR REPLACE by deleting the conflicting row without delete triggers (recursive_triggers is off); replacing a session would end it without session_end_revokes_browser_credentials. Refuses an insert that collides with an existing row's unique key.",
+      "auth_sessions_no_replace_update": "REPLACE guard for UPDATE OR REPLACE: refuses an update that makes a unique key collide with another row.",
+      "capabilities_text_arrays_insert": "text[] elements: a CHECK cannot read json_each, so a trigger refuses array elements that are not strings or null.",
+      "capabilities_text_arrays_update": "As capabilities_text_arrays_insert, for updates of the array columns.",
+      "github_app_registrations_no_replace_insert": "REPLACE guard: SQLite carries out INSERT OR REPLACE by deleting the conflicting row without delete triggers (recursive_triggers is off); replacing a registration would delete its pending conversion past github_app_registrations_pending_once. Refuses an insert that collides with an existing row's unique key.",
+      "github_app_registrations_no_replace_update": "REPLACE guard for UPDATE OR REPLACE: refuses an update that makes a unique key collide with another row.",
+      "grants_text_arrays_insert": "text[] elements: a CHECK cannot read json_each, so a trigger refuses array elements that are not strings or null.",
+      "grants_text_arrays_update": "As grants_text_arrays_insert, for updates of the array columns.",
+      "member_integrations_text_arrays_insert": "text[] elements: a CHECK cannot read json_each, so a trigger refuses array elements that are not strings or null.",
+      "member_integrations_text_arrays_update": "As member_integrations_text_arrays_insert, for updates of the array columns.",
+      "passkeys_no_replace_insert": "REPLACE guard: SQLite carries out INSERT OR REPLACE by deleting the conflicting row without delete triggers (recursive_triggers is off); replacing a passkey would write a new row, counter and all, past passkey_counter_forward. Refuses an insert that collides with an existing row's unique key.",
+      "passkeys_no_replace_update": "REPLACE guard for UPDATE OR REPLACE: refuses an update that makes a unique key collide with another row.",
+      "roles_text_arrays_insert": "text[] elements: a CHECK cannot read json_each, so a trigger refuses array elements that are not strings or null.",
+      "roles_text_arrays_update": "As roles_text_arrays_insert, for updates of the array columns.",
+      "webhooks_text_arrays_insert": "text[] elements: a CHECK cannot read json_each, so a trigger refuses array elements that are not strings or null.",
+      "webhooks_text_arrays_update": "As webhooks_text_arrays_insert, for updates of the array columns."
     }
   }
 }
