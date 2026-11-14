@@ -4,13 +4,6 @@ package auth_test
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"net/url"
 	"path/filepath"
@@ -18,11 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
-	"github.com/go-webauthn/webauthn/protocol/webauthncose"
-
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
+	"github.com/varlatch/varlatch/go/server/auth/authtest"
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
@@ -75,122 +66,11 @@ func newEnv(t *testing.T) *env {
 	return &env{t: t, store: store, svc: auth.New(store, auth.Options{PublicURL: u, Now: c.now}), clock: c, ctx: ctx}
 }
 
-func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+func b64(b []byte) string { return authtest.B64(b) }
 
-// softKey is a software authenticator holding one credential.
-type softKey struct {
-	priv       *ecdsa.PrivateKey
-	id         []byte
-	counter    uint32
-	userHandle []byte
-	// noUV leaves user verification out of its assertions.
-	noUV bool
-	// fixedCounter keeps the counter where it is (an authenticator
-	// without one, or a clone).
-	fixedCounter bool
-}
+type softKey = authtest.Key
 
-func newSoftKey(t *testing.T) *softKey {
-	t.Helper()
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := make([]byte, 16)
-	_, _ = rand.Read(id)
-	return &softKey{priv: priv, id: id}
-}
-
-func (k *softKey) cose(t *testing.T) []byte {
-	t.Helper()
-	x, y := make([]byte, 32), make([]byte, 32)
-	k.priv.PublicKey.X.FillBytes(x)
-	k.priv.PublicKey.Y.FillBytes(y)
-	b, err := webauthncbor.Marshal(webauthncose.EC2PublicKeyData{
-		PublicKeyData: webauthncose.PublicKeyData{KeyType: int64(webauthncose.EllipticKey), Algorithm: int64(webauthncose.AlgES256)},
-		Curve:         1, XCoord: x, YCoord: y,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
-}
-
-func (k *softKey) flags(attested bool) byte {
-	f := byte(0x01) // UP
-	if !k.noUV {
-		f |= 0x04 // UV
-	}
-	if attested {
-		f |= 0x40 // AT
-	}
-	return f
-}
-
-func clientData(typ, challenge, from string) []byte {
-	b, _ := json.Marshal(map[string]any{"type": typ, "challenge": challenge, "origin": from, "crossOrigin": false})
-	return b
-}
-
-// register answers creation options as navigator.credentials.create would,
-// from the origin `from`.
-func (k *softKey) register(t *testing.T, o auth.CreationOptions, from string) json.RawMessage {
-	t.Helper()
-	k.userHandle, _ = base64.RawURLEncoding.DecodeString(o.User.ID)
-	rpHash := sha256.Sum256([]byte(o.RP.ID))
-	data := append([]byte{}, rpHash[:]...)
-	data = append(data, k.flags(true))
-	data = binary.BigEndian.AppendUint32(data, k.counter)
-	data = append(data, make([]byte, 16)...) // AAGUID
-	data = binary.BigEndian.AppendUint16(data, uint16(len(k.id)))
-	data = append(data, k.id...)
-	data = append(data, k.cose(t)...)
-	att, err := webauthncbor.Marshal(map[string]any{"fmt": "none", "attStmt": map[string]any{}, "authData": data})
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := json.Marshal(map[string]any{
-		"id": b64(k.id), "rawId": b64(k.id), "type": "public-key", "clientExtensionResults": map[string]any{},
-		"response": map[string]any{
-			"clientDataJSON": b64(clientData("webauthn.create", o.Challenge, from)), "attestationObject": b64(att),
-			"transports": []string{"internal"},
-		},
-	})
-	return b
-}
-
-// assertWith signs an assertion over challenge for rpID, from the origin
-// `from`, with the given counter.
-func (k *softKey) assertWith(t *testing.T, rpID, challenge, from string, counter uint32) json.RawMessage {
-	t.Helper()
-	rpHash := sha256.Sum256([]byte(rpID))
-	data := append([]byte{}, rpHash[:]...)
-	data = append(data, k.flags(false))
-	data = binary.BigEndian.AppendUint32(data, counter)
-	cd := clientData("webauthn.get", challenge, from)
-	cdHash := sha256.Sum256(cd)
-	digest := sha256.Sum256(append(append([]byte{}, data...), cdHash[:]...))
-	sig, err := ecdsa.SignASN1(rand.Reader, k.priv, digest[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := json.Marshal(map[string]any{
-		"id": b64(k.id), "rawId": b64(k.id), "type": "public-key", "clientExtensionResults": map[string]any{},
-		"response": map[string]any{
-			"clientDataJSON": b64(cd), "authenticatorData": b64(data), "signature": b64(sig), "userHandle": b64(k.userHandle),
-		},
-	})
-	return b
-}
-
-// assert answers request options, advancing its counter.
-func (k *softKey) assert(t *testing.T, o auth.RequestOptions, from string) json.RawMessage {
-	t.Helper()
-	if !k.fixedCounter {
-		k.counter++
-	}
-	return k.assertWith(t, o.RPID, o.Challenge, from, k.counter)
-}
+func newSoftKey(t *testing.T) *softKey { return authtest.New(t) }
 
 const browserCSRF = "csrf-token-of-the-browser-under-test-0123456789"
 
@@ -213,7 +93,7 @@ func (e *env) enrollWith(k *softKey, csrf, token string) auth.Registration {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	reg, err := e.svc.Register(e.ctx, binding, nil, k.register(e.t, o, origin), "Test passkey", "192.0.2.1", "Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0")
+	reg, err := e.svc.Register(e.ctx, binding, nil, k.Register(e.t, o, origin), "Test passkey", "192.0.2.1", "Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0")
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -227,7 +107,7 @@ func (e *env) signIn(k *softKey, csrf string) (auth.Started, error) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return e.svc.SignIn(e.ctx, binding, k.assert(e.t, o, origin), "192.0.2.1", "Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0")
+	return e.svc.SignIn(e.ctx, binding, k.Assert(e.t, o, origin), "192.0.2.1", "Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0")
 }
 
 func (e *env) session(token string) *auth.Session {

@@ -17,7 +17,8 @@ import { readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { getPath } from "hono/utils/url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { issueCredential } from "../src/auth/credentials.js";
+import { issueCredential, revokeCredential } from "../src/auth/credentials.js";
+import { ENROLL_HTML } from "../src/enroll/page.js";
 import { generateKey } from "../src/crypto/aead.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
@@ -29,7 +30,7 @@ const { buildApp } = await vi.importActual<typeof import("../src/http/app.js")>(
 interface RouteCase {
   method: string;
   target: string;
-  credential: "none" | "basic" | "valid" | "invalid";
+  credential: "none" | "basic" | "valid" | "invalid" | "revoked" | "expired" | "agent-run";
   status: number;
   expect: "text" | "code" | "meta" | "dashboard";
   code?: string;
@@ -46,7 +47,7 @@ const table = JSON.parse(
 };
 
 let ctx: AppCtx & { close: () => Promise<void> };
-let token: string;
+let tokens: Record<"valid" | "revoked" | "expired" | "agent-run", string>;
 
 beforeEach(async () => {
   const db = await migratedTestDb();
@@ -54,15 +55,23 @@ beforeEach(async () => {
   await ensureInstallation(ctx);
   const grant = await issueBootstrapGrant(ctx);
   const { identityId } = await consumeSetupGrant(ctx, grant.token, { adminName: "Parity" });
-  token = (await issueCredential(ctx.db, { identityId, kind: "cli" })).token;
+  const revoked = await issueCredential(ctx.db, { identityId, kind: "cli" });
+  await revokeCredential(ctx.db, revoked.credentialId, identityId);
+  tokens = {
+    valid: (await issueCredential(ctx.db, { identityId, kind: "cli" })).token,
+    revoked: revoked.token,
+    expired: (await issueCredential(ctx.db, { identityId, kind: "cli", expiresAt: new Date(Date.now() - 3_600_000).toISOString() })).token,
+    // An Agent Run's metadata credential: read-only at the HTTP layer (ADR-0023).
+    "agent-run": (await issueCredential(ctx.db, { identityId, kind: "agent-run" })).token,
+  };
 });
 afterEach(async () => {
   await ctx.close();
 });
 
 const authorization = (credential: RouteCase["credential"]): Record<string, string> =>
-  credential === "valid"
-    ? { Authorization: `Bearer ${token}` }
+  credential === "valid" || credential === "revoked" || credential === "expired" || credential === "agent-run"
+    ? { Authorization: `Bearer ${tokens[credential]}` }
     : credential === "invalid"
       ? { Authorization: "Bearer vlt_cli_notacredential" }
       : credential === "basic"
@@ -181,4 +190,12 @@ it("the request window refuses the request after the allowed ones, with PERMISSI
   } finally {
     vi.useRealTimers();
   }
+});
+
+// The Go server serves this server's enrollment page byte for byte
+// (go/server/httpserver/enroll.go), with a script of its own behind it.
+describe("the enrollment page", () => {
+  it("is the one varlatchd embeds", () => {
+    expect(readFileSync(new URL("../../../go/server/httpserver/enroll/enroll.html", import.meta.url), "utf8")).toBe(ENROLL_HTML);
+  });
 });

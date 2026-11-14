@@ -1,0 +1,433 @@
+{
+  "keys": {
+    "alice": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQguvT9AHcdT8qZ5g2P4ZbAAoY5CuSjhKfzaYgPUfd3ceahRANCAATL0zTtatWm1Oy979IClZitMxIDP+52CzIDihCSsuIuUoe27qfQlA0b0Gz38ZiPK5/2ATzE/FMMNeNvuvo3WVUw",
+    "bob": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgBE6XbNePsW1TGy+tmRVJbLda6k2xUFBl22Bst0nLDm+hRANCAARowP92CY00Px8tBHHyxwnV5TZ4DZWhn+TpPJ/pmQap7eFls0ysm7gKHMtGd8wFSNq3SAY9Pq5Zeqy5fpGhpx/a"
+  },
+  "rows": {
+    "identities": [
+      {
+        "id": "idn_alice",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_bob",
+        "kind": "human",
+        "name": "Bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_carol",
+        "kind": "human",
+        "name": "Carol",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      }
+    ],
+    "user": [
+      {
+        "id": "bau_idn_alice",
+        "name": "Alice",
+        "email": "idn_alice@varlatch.placeholder.invalid",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "bau_idn_bob",
+        "name": "Bob",
+        "email": "idn_bob@varlatch.placeholder.invalid",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "bau_idn_carol",
+        "name": "Carol",
+        "email": "idn_carol@varlatch.placeholder.invalid",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "auth_user_links": [
+      {
+        "better_auth_user_id": "bau_idn_alice",
+        "identity_id": "idn_alice",
+        "created_at": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "better_auth_user_id": "bau_idn_bob",
+        "identity_id": "idn_bob",
+        "created_at": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "better_auth_user_id": "bau_idn_carol",
+        "identity_id": "idn_carol",
+        "created_at": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "passkey": [
+      {
+        "id": "pk_alice_laptop",
+        "name": "pk_alice_laptop key",
+        "publicKey": "pQECAyYgASFYIMvTNO1q1abU7L3v0gKVmK0zEgM/7nYLMgOKEJKy4i5SIlggh7bup9CUDRvQbPfxmI8rn/YBPMT8Uww142+6+jdZVTA=",
+        "userId": "bau_idn_alice",
+        "credentialID": "Y3JlZC1hbGljZS1sYXB0b3A",
+        "counter": 41,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": "internal",
+        "createdAt": "2026-01-04T00:00:00.000Z",
+        "aaguid": "00000000-0000-0000-0000-000000000000"
+      },
+      {
+        "id": "pk_alice_phone",
+        "name": "pk_alice_phone key",
+        "publicKey": "pQECAyYgASFYIMvTNO1q1abU7L3v0gKVmK0zEgM/7nYLMgOKEJKy4i5SIlggh7bup9CUDRvQbPfxmI8rn/YBPMT8Uww142+6+jdZVTA=",
+        "userId": "bau_idn_alice",
+        "credentialID": "Y3JlZC1hbGljZS1waG9uZQ",
+        "counter": 0,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": "internal",
+        "createdAt": "2026-02-03T00:00:00.000Z",
+        "aaguid": "00000000-0000-0000-0000-000000000000"
+      },
+      {
+        "id": "pk_alice_shared",
+        "name": "pk_alice_shared key",
+        "publicKey": "pQECAyYgASFYIMvTNO1q1abU7L3v0gKVmK0zEgM/7nYLMgOKEJKy4i5SIlggh7bup9CUDRvQbPfxmI8rn/YBPMT8Uww142+6+jdZVTA=",
+        "userId": "bau_idn_alice",
+        "credentialID": "Y3JlZC1zaGFyZWQ",
+        "counter": 7,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": "internal",
+        "createdAt": "2026-01-02T00:00:00.000Z",
+        "aaguid": "00000000-0000-0000-0000-000000000000"
+      },
+      {
+        "id": "pk_bob_added",
+        "name": "pk_bob_added key",
+        "publicKey": "pQECAyYgASFYIGjA/3YJjTQ/Hy0EcfLHCdXlNngNlaGf5Ok8n+mZBqntIlgg4WWzTKybuAocy0Z3zAVI2rdIBj0+rll6rLl+kaGnH9o=",
+        "userId": "bau_idn_bob",
+        "credentialID": "Y3JlZC1ib2ItYWRkZWQ",
+        "counter": 0,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": "internal",
+        "createdAt": "2026-02-02T00:00:00.000Z",
+        "aaguid": "00000000-0000-0000-0000-000000000000"
+      },
+      {
+        "id": "pk_bob_reenrolled",
+        "name": "pk_bob_reenrolled key",
+        "publicKey": "pQECAyYgASFYIGjA/3YJjTQ/Hy0EcfLHCdXlNngNlaGf5Ok8n+mZBqntIlgg4WWzTKybuAocy0Z3zAVI2rdIBj0+rll6rLl+kaGnH9o=",
+        "userId": "bau_idn_bob",
+        "credentialID": "Y3JlZC1ib2ItcmVlbnJvbGxlZA",
+        "counter": 0,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": "internal",
+        "createdAt": "2026-02-01T00:00:00.000Z",
+        "aaguid": "00000000-0000-0000-0000-000000000000"
+      },
+      {
+        "id": "pk_carol_unrecorded",
+        "name": "pk_carol_unrecorded key",
+        "publicKey": "pQECAyYgASFYIGjA/3YJjTQ/Hy0EcfLHCdXlNngNlaGf5Ok8n+mZBqntIlgg4WWzTKybuAocy0Z3zAVI2rdIBj0+rll6rLl+kaGnH9o=",
+        "userId": "bau_idn_carol",
+        "credentialID": "Y3JlZC1jYXJvbA",
+        "counter": 0,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": "internal",
+        "createdAt": "2026-02-04T00:00:00.000Z",
+        "aaguid": "00000000-0000-0000-0000-000000000000"
+      }
+    ],
+    "passkey_provenance": [
+      {
+        "passkey_id": "pk_alice_laptop",
+        "trust": "trusted",
+        "trusted_via": "existing-at-upgrade",
+        "trusted_at": "2026-11-14T17:23:55.204Z",
+        "setup_grant_kind": null,
+        "confirmed_by_passkey_id": null,
+        "recorded_at": "2026-11-14T17:23:55.204Z"
+      },
+      {
+        "passkey_id": "pk_alice_phone",
+        "trust": "trusted",
+        "trusted_via": "confirmed",
+        "trusted_at": "2026-11-14T17:23:55.295Z",
+        "setup_grant_kind": null,
+        "confirmed_by_passkey_id": "pk_alice_laptop",
+        "recorded_at": "2026-11-14T17:23:55.294Z"
+      },
+      {
+        "passkey_id": "pk_alice_shared",
+        "trust": "trusted",
+        "trusted_via": "existing-at-upgrade",
+        "trusted_at": "2026-11-14T17:23:55.204Z",
+        "setup_grant_kind": null,
+        "confirmed_by_passkey_id": null,
+        "recorded_at": "2026-11-14T17:23:55.204Z"
+      },
+      {
+        "passkey_id": "pk_bob_added",
+        "trust": "unconfirmed",
+        "trusted_via": null,
+        "trusted_at": null,
+        "setup_grant_kind": null,
+        "confirmed_by_passkey_id": null,
+        "recorded_at": "2026-11-14T17:23:55.292Z"
+      },
+      {
+        "passkey_id": "pk_bob_reenrolled",
+        "trust": "trusted",
+        "trusted_via": "setup-grant",
+        "trusted_at": "2026-11-14T17:23:55.291Z",
+        "setup_grant_kind": "reenroll",
+        "confirmed_by_passkey_id": null,
+        "recorded_at": "2026-11-14T17:23:55.289Z"
+      }
+    ],
+    "passkey_quarantine": [
+      {
+        "id": "pk_bob_shared",
+        "name": "pk_bob_shared key",
+        "publicKey": "pQECAyYgASFYIGjA/3YJjTQ/Hy0EcfLHCdXlNngNlaGf5Ok8n+mZBqntIlgg4WWzTKybuAocy0Z3zAVI2rdIBj0+rll6rLl+kaGnH9o=",
+        "userId": "bau_idn_bob",
+        "credentialID": "Y3JlZC1zaGFyZWQ",
+        "counter": 3,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": "internal",
+        "createdAt": "2026-01-03T00:00:00.000Z",
+        "aaguid": "00000000-0000-0000-0000-000000000000",
+        "quarantined_at": "2026-11-14T17:23:55.204Z",
+        "reason": "duplicate-credential-id",
+        "kept_passkey_id": "pk_alice_shared"
+      }
+    ],
+    "auth_session_evidence": [
+      {
+        "session_id": "ses_alice",
+        "ceremony": "sign-in",
+        "user_verified": true,
+        "passkey_id": "pk_alice_laptop",
+        "recorded_at": "2026-11-14T17:23:55.300Z"
+      },
+      {
+        "session_id": "ses_bob",
+        "ceremony": "sign-in",
+        "user_verified": true,
+        "passkey_id": "pk_bob_added",
+        "recorded_at": "2026-11-14T17:23:55.303Z"
+      }
+    ],
+    "credentials": [
+      {
+        "id": "crd_alice_device",
+        "identity_id": "idn_alice",
+        "kind": "cli",
+        "name": "crd_alice_device",
+        "token_hash": "hash-of-crd_alice_device",
+        "created_at": "2026-02-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": null,
+        "evidence_user_verified": false,
+        "evidence_passkey_id": "pk_alice_laptop"
+      },
+      {
+        "id": "crd_alice_handoff",
+        "identity_id": "idn_alice",
+        "kind": "cli",
+        "name": "crd_alice_handoff",
+        "token_hash": "hash-of-crd_alice_handoff",
+        "created_at": "2026-02-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": "ses_alice",
+        "issued_by": null,
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_bob_handoff",
+        "identity_id": "idn_bob",
+        "kind": "cli",
+        "name": "crd_bob_handoff",
+        "token_hash": "hash-of-crd_bob_handoff",
+        "created_at": "2026-02-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": "ses_bob",
+        "issued_by": null,
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_carol_cli",
+        "identity_id": "idn_carol",
+        "kind": "cli",
+        "name": "crd_carol_cli",
+        "token_hash": "hash-of-crd_carol_cli",
+        "created_at": "2026-02-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": null,
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ]
+  },
+  "expected": {
+    "passkeys": {
+      "idn_alice": [
+        {
+          "id": "pk_alice_shared",
+          "name": "pk_alice_shared key",
+          "deviceType": "singleDevice",
+          "backedUp": false,
+          "createdAt": "2026-01-02T00:00:00.000Z",
+          "trust": "trusted",
+          "trustedVia": "existing-at-upgrade",
+          "trustedAt": "2026-11-14T17:23:55.204Z",
+          "setupGrantKind": null,
+          "confirmedByPasskeyId": null
+        },
+        {
+          "id": "pk_alice_laptop",
+          "name": "pk_alice_laptop key",
+          "deviceType": "singleDevice",
+          "backedUp": false,
+          "createdAt": "2026-01-04T00:00:00.000Z",
+          "trust": "trusted",
+          "trustedVia": "existing-at-upgrade",
+          "trustedAt": "2026-11-14T17:23:55.204Z",
+          "setupGrantKind": null,
+          "confirmedByPasskeyId": null
+        },
+        {
+          "id": "pk_alice_phone",
+          "name": "pk_alice_phone key",
+          "deviceType": "singleDevice",
+          "backedUp": false,
+          "createdAt": "2026-02-03T00:00:00.000Z",
+          "trust": "trusted",
+          "trustedVia": "confirmed",
+          "trustedAt": "2026-11-14T17:23:55.295Z",
+          "setupGrantKind": null,
+          "confirmedByPasskeyId": "pk_alice_laptop"
+        }
+      ],
+      "idn_bob": [
+        {
+          "id": "pk_bob_reenrolled",
+          "name": "pk_bob_reenrolled key",
+          "deviceType": "singleDevice",
+          "backedUp": false,
+          "createdAt": "2026-02-01T00:00:00.000Z",
+          "trust": "trusted",
+          "trustedVia": "setup-grant",
+          "trustedAt": "2026-11-14T17:23:55.291Z",
+          "setupGrantKind": "reenroll",
+          "confirmedByPasskeyId": null
+        },
+        {
+          "id": "pk_bob_added",
+          "name": "pk_bob_added key",
+          "deviceType": "singleDevice",
+          "backedUp": false,
+          "createdAt": "2026-02-02T00:00:00.000Z",
+          "trust": "unconfirmed",
+          "trustedVia": null,
+          "trustedAt": null,
+          "setupGrantKind": null,
+          "confirmedByPasskeyId": null
+        }
+      ],
+      "idn_carol": [
+        {
+          "id": "pk_carol_unrecorded",
+          "name": "pk_carol_unrecorded key",
+          "deviceType": "singleDevice",
+          "backedUp": false,
+          "createdAt": "2026-02-04T00:00:00.000Z",
+          "trust": "unconfirmed",
+          "trustedVia": null,
+          "trustedAt": null,
+          "setupGrantKind": null,
+          "confirmedByPasskeyId": null
+        }
+      ]
+    },
+    "gaps": {
+      "crd_alice_handoff": null,
+      "crd_alice_device": "not-user-verified",
+      "crd_bob_handoff": "untrusted-passkey",
+      "crd_carol_cli": "no-evidence"
+    },
+    "evidence": {
+      "crd_alice_handoff": {
+        "userVerified": true,
+        "passkeyId": "pk_alice_laptop",
+        "source": "session",
+        "passkeyTrusted": true
+      },
+      "crd_alice_device": {
+        "userVerified": false,
+        "passkeyId": "pk_alice_laptop",
+        "source": "credential",
+        "passkeyTrusted": true
+      },
+      "crd_bob_handoff": {
+        "userVerified": true,
+        "passkeyId": "pk_bob_added",
+        "source": "session",
+        "passkeyTrusted": false
+      },
+      "crd_carol_cli": null
+    }
+  }
+}

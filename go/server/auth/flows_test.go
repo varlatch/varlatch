@@ -77,11 +77,11 @@ func TestDeviceSignIn(t *testing.T) {
 	}
 	// Another session's challenge does not approve: the challenge is bound
 	// to the session (and spent by the attempt).
-	if err := e.svc.ApproveDeviceSignIn(e.ctx, signIn.ID, me.identityID, "ses_other", k.assert(t, *o, origin), "req_a"); codeOf(err) != "PERMISSION_DENIED" {
+	if err := e.svc.ApproveDeviceSignIn(e.ctx, signIn.ID, me.identityID, "ses_other", k.Assert(t, *o, origin), "req_a"); codeOf(err) != "PERMISSION_DENIED" {
 		t.Fatalf("other session: %v", err)
 	}
 	o, _ = e.svc.ApprovalChallenge(e.ctx, signIn.ID, me.identityID, me.session.ID)
-	resp := k.assert(t, *o, origin)
+	resp := k.Assert(t, *o, origin)
 	if err := e.svc.ApproveDeviceSignIn(e.ctx, signIn.ID, me.identityID, me.session.ID, resp, "req_a"); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestConcurrentApprovalsNeverMoveCounterBack(t *testing.T) {
 		s, _ := e.svc.FindSignInByCode(e.ctx, me.identityID, "p", req.UserCode, "r")
 		o, _ := e.svc.ApprovalChallenge(e.ctx, s.ID, me.identityID, me.session.ID)
 		// Highest counter first: later approvals carry lower counters.
-		approvals[i] = approval{s.ID, k.assertWith(t, o.RPID, o.Challenge, origin, uint32(100-i))}
+		approvals[i] = approval{s.ID, k.AssertWith(t, o.RPID, o.Challenge, origin, uint32(100-i))}
 	}
 	var wg sync.WaitGroup
 	for _, a := range approvals {
@@ -212,7 +212,7 @@ func TestPasskeyConfirmation(t *testing.T) {
 	if len(ro.ExcludeCredentials) != 1 {
 		t.Fatalf("exclude %+v", ro.ExcludeCredentials)
 	}
-	reg, err := e.svc.Register(e.ctx, auth.CSRFBinding(browserCSRF), me.session, added.register(t, ro, origin), "Laptop", "", "")
+	reg, err := e.svc.Register(e.ctx, auth.CSRFBinding(browserCSRF), me.session, added.Register(t, ro, origin), "Laptop", "", "")
 	if err != nil || reg.Session != nil {
 		t.Fatalf("%+v %v", reg, err)
 	}
@@ -227,27 +227,27 @@ func TestPasskeyConfirmation(t *testing.T) {
 		t.Fatalf("added passkey %+v", target)
 	}
 	o, err := e.svc.StartConfirmation(e.ctx, me.identityID, me.session.ID, reg.PasskeyID)
-	if err != nil || o.UserVerification != "required" || len(o.AllowCredentials) != 1 || o.AllowCredentials[0].ID != b64(trusted.id) {
+	if err != nil || o.UserVerification != "required" || len(o.AllowCredentials) != 1 || o.AllowCredentials[0].ID != b64(trusted.ID) {
 		t.Fatalf("%+v %v", o, err)
 	}
-	trusted.noUV = true
-	if _, err := e.svc.Confirm(e.ctx, me.identityID, me.session.ID, reg.PasskeyID, trusted.assert(t, o, origin), "r"); codeOf(err) != "PERMISSION_DENIED" || !strings.Contains(err.Error(), "PIN") {
+	trusted.NoUV = true
+	if _, err := e.svc.Confirm(e.ctx, me.identityID, me.session.ID, reg.PasskeyID, trusted.Assert(t, o, origin), "r"); codeOf(err) != "PERMISSION_DENIED" || !strings.Contains(err.Error(), "PIN") {
 		t.Fatalf("without UV: %v", err)
 	} else if reason := detailsReason(err); reason != "user-verification-required" {
 		t.Fatalf("reason %q", reason)
 	}
-	trusted.noUV = false
+	trusted.NoUV = false
 	// The challenge was spent by the refusal.
-	if _, err := e.svc.Confirm(e.ctx, me.identityID, me.session.ID, reg.PasskeyID, trusted.assert(t, o, origin), "r"); detailsReason(err) != "challenge" {
+	if _, err := e.svc.Confirm(e.ctx, me.identityID, me.session.ID, reg.PasskeyID, trusted.Assert(t, o, origin), "r"); detailsReason(err) != "challenge" {
 		t.Fatalf("spent challenge: %v", err)
 	}
 	// The passkey being confirmed cannot confirm itself.
 	o, _ = e.svc.StartConfirmation(e.ctx, me.identityID, me.session.ID, reg.PasskeyID)
-	if _, err := e.svc.Confirm(e.ctx, me.identityID, me.session.ID, reg.PasskeyID, added.assert(t, o, origin), "r"); detailsReason(err) != "unknown-passkey" {
+	if _, err := e.svc.Confirm(e.ctx, me.identityID, me.session.ID, reg.PasskeyID, added.Assert(t, o, origin), "r"); detailsReason(err) != "unknown-passkey" {
 		t.Fatalf("self-confirmation: %v", err)
 	}
 	o, _ = e.svc.StartConfirmation(e.ctx, me.identityID, me.session.ID, reg.PasskeyID)
-	confirmed, err := e.svc.Confirm(e.ctx, me.identityID, me.session.ID, reg.PasskeyID, trusted.assert(t, o, origin), "r")
+	confirmed, err := e.svc.Confirm(e.ctx, me.identityID, me.session.ID, reg.PasskeyID, trusted.Assert(t, o, origin), "r")
 	if err != nil || confirmed.Trust != "trusted" || *confirmed.TrustedVia != "confirmed" || *confirmed.ConfirmedByPasskeyID == "" {
 		t.Fatalf("%+v %v", confirmed, err)
 	}
@@ -274,7 +274,7 @@ func TestVerificationGaps(t *testing.T) {
 	if gap, _ := auth.VerificationGap(e.ctx, e.store.Reader(), me.principal.Credential.ID, auth.KindBrowser); gap != "" {
 		t.Fatalf("enrollment session: %q", gap)
 	}
-	k.noUV = true
+	k.NoUV = true
 	started := mustSignIn(t, e, k)
 	b, _ := e.svc.MintBearer(e.ctx, e.session(started.SessionToken), nil)
 	if gap, _ := auth.VerificationGap(e.ctx, e.store.Reader(), mustID(t, e, b.Token), auth.KindBrowser); gap != auth.GapNotUserVerified {

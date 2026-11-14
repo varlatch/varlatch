@@ -77,14 +77,15 @@ func newTestServerAuth(t *testing.T, mod func(*Options)) (*Server, *fakeBackend,
 	c := &clock{t: time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)}
 	var logBuf bytes.Buffer
 	pub, _ := url.Parse("http://127.0.0.1:8686")
-	ta := newTestAuth(t, pub, time.Now)
 	opts := Options{
-		Version: "0.50.0-test", PublicURL: pub, Sync: true, Web: webFS, Backend: b, Auth: ta.svc,
+		Version: "0.50.0-test", PublicURL: pub, Sync: true, Web: webFS, Backend: b,
 		AccessLog: NewAccessLog(&logBuf), Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: c.now,
 	}
 	if mod != nil {
 		mod(&opts)
 	}
+	ta := newTestAuth(t, opts.PublicURL, time.Now)
+	opts.Auth = ta.svc
 	s, err := New(opts)
 	if err != nil {
 		t.Fatal(err)

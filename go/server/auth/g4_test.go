@@ -84,7 +84,7 @@ func TestEnrollmentRaceConsumesOnce(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		responses[i] = newSoftKey(t).register(t, o, origin)
+		responses[i] = newSoftKey(t).Register(t, o, origin)
 	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -123,7 +123,7 @@ func TestChallengesSingleUseAndBound(t *testing.T) {
 
 	// Replayed: the same signed response twice.
 	o, _ := e.svc.SignInOptions(binding)
-	resp := k.assert(t, o, origin)
+	resp := k.Assert(t, o, origin)
 	if _, err := e.svc.SignIn(e.ctx, binding, resp, "", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestChallengesSingleUseAndBound(t *testing.T) {
 
 	// Another browser's challenge: refused, and spent.
 	o, _ = e.svc.SignInOptions(auth.CSRFBinding("another-browser-csrf-token-0123456789"))
-	resp = k.assert(t, o, origin)
+	resp = k.Assert(t, o, origin)
 	if _, err := e.svc.SignIn(e.ctx, binding, resp, "", ""); codeOf(err) != "INVALID_CREDENTIAL" {
 		t.Fatalf("foreign challenge: %v", err)
 	}
@@ -146,14 +146,14 @@ func TestChallengesSingleUseAndBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.SignIn(e.ctx, binding, k.assertWith(t, "varlatch.example.com", ro.Challenge, origin, k.counter+1), "", ""); codeOf(err) != "INVALID_CREDENTIAL" {
+	if _, err := e.svc.SignIn(e.ctx, binding, k.AssertWith(t, "varlatch.example.com", ro.Challenge, origin, k.Counter+1), "", ""); codeOf(err) != "INVALID_CREDENTIAL" {
 		t.Fatalf("registration challenge used to sign in: %v", err)
 	}
 
 	// Expired.
 	o, _ = e.svc.SignInOptions(binding)
 	e.clock.add(6 * time.Minute)
-	if _, err := e.svc.SignIn(e.ctx, binding, k.assert(t, o, origin), "", ""); codeOf(err) != "INVALID_CREDENTIAL" {
+	if _, err := e.svc.SignIn(e.ctx, binding, k.Assert(t, o, origin), "", ""); codeOf(err) != "INVALID_CREDENTIAL" {
 		t.Fatalf("expired challenge: %v", err)
 	}
 }
@@ -182,8 +182,8 @@ func TestOriginAndRPID(t *testing.T) {
 		{"another RP ID", "example.com", origin},
 	} {
 		o, _ := e.svc.SignInOptions(binding)
-		k.counter++
-		if _, err := e.svc.SignIn(e.ctx, binding, k.assertWith(t, c.rpID, o.Challenge, c.from, k.counter), "", ""); codeOf(err) != "INVALID_CREDENTIAL" {
+		k.Counter++
+		if _, err := e.svc.SignIn(e.ctx, binding, k.AssertWith(t, c.rpID, o.Challenge, c.from, k.Counter), "", ""); codeOf(err) != "INVALID_CREDENTIAL" {
 			t.Errorf("%s: %v", c.name, err)
 		}
 	}
@@ -193,7 +193,7 @@ func TestOriginAndRPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.Register(e.ctx, binding, nil, newSoftKey(t).register(t, o, "https://evil.example.net"), "", "", ""); codeOf(err) != "VALIDATION_FAILED" {
+	if _, err := e.svc.Register(e.ctx, binding, nil, newSoftKey(t).Register(t, o, "https://evil.example.net"), "", "", ""); codeOf(err) != "VALIDATION_FAILED" {
 		t.Fatalf("foreign registration: %v", err)
 	}
 	if _, err := e.svc.PeekSetupGrant(e.ctx, g.Token); err != nil {
@@ -239,7 +239,7 @@ func TestConcurrentAssertionsNeverMoveCounterBack(t *testing.T) {
 		csrf := fmt.Sprintf("browser-%02d-csrf-token-0123456789abcdef", i)
 		o, _ := e.svc.SignInOptions(auth.CSRFBinding(csrf))
 		c := uint32(i + 1)
-		attempts[i] = attempt{auth.CSRFBinding(csrf), k.assertWith(t, o.RPID, o.Challenge, origin, c), c}
+		attempts[i] = attempt{auth.CSRFBinding(csrf), k.AssertWith(t, o.RPID, o.Challenge, origin, c), c}
 	}
 	rand.Shuffle(n, func(i, j int) { attempts[i], attempts[j] = attempts[j], attempts[i] })
 	var wg sync.WaitGroup
@@ -273,7 +273,7 @@ func TestConcurrentAssertionsNeverMoveCounterBack(t *testing.T) {
 	}
 	// A replayed lower counter, now.
 	o, _ := e.svc.SignInOptions(auth.CSRFBinding(browserCSRF))
-	if _, err := e.svc.SignIn(e.ctx, auth.CSRFBinding(browserCSRF), k.assertWith(t, o.RPID, o.Challenge, origin, 3), "", ""); codeOf(err) != "INVALID_CREDENTIAL" {
+	if _, err := e.svc.SignIn(e.ctx, auth.CSRFBinding(browserCSRF), k.AssertWith(t, o.RPID, o.Challenge, origin, 3), "", ""); codeOf(err) != "INVALID_CREDENTIAL" {
 		t.Fatalf("lower counter: %v", err)
 	}
 	if storedCounter(t, e) != n {
@@ -285,7 +285,7 @@ func TestConcurrentAssertionsNeverMoveCounterBack(t *testing.T) {
 func TestZeroCounterAuthenticator(t *testing.T) {
 	e := newEnv(t)
 	k := newSoftKey(t)
-	k.fixedCounter = true
+	k.FixedCounter = true
 	e.enroll(k, browserCSRF)
 	for range 3 {
 		if _, err := e.signIn(k, browserCSRF); err != nil {
@@ -491,7 +491,7 @@ func TestDuplicateCredentialID(t *testing.T) {
 	reg, _ := e.enroll(k, browserCSRF)
 	g, _ := e.svc.IssueRecoveryGrant(e.ctx, auth.Recovery{IdentityID: reg.IdentityID})
 	o, _ := e.svc.RegistrationOptions(e.ctx, auth.CSRFBinding(browserCSRF), g.Token, nil)
-	_, err := e.svc.Register(e.ctx, auth.CSRFBinding(browserCSRF), nil, k.register(t, o, origin), "", "", "")
+	_, err := e.svc.Register(e.ctx, auth.CSRFBinding(browserCSRF), nil, k.Register(t, o, origin), "", "", "")
 	if !errors.Is(err, auth.ErrAlreadyRegistered) {
 		t.Fatalf("duplicate: %v", err)
 	}

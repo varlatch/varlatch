@@ -44,6 +44,13 @@ function specOperations(): Set<string> {
       currentPath = `/v1${path[1]!.replace(/\{([^}]+)\}/g, ":$1")}`;
       continue;
     }
+    // A path with a servers entry of its own is not under /v1: the browser
+    // session's (varlatchd's alone, ADR-0059 Decision 6), which this server
+    // does not serve.
+    if (/^ {4}servers:$/.test(line)) {
+      currentPath = null;
+      continue;
+    }
     const method = line.match(/^ {4}([a-z]+):$/);
     if (method && currentPath && METHODS.has(method[1]!)) {
       ops.add(`${method[1]!.toUpperCase()} ${currentPath}`);

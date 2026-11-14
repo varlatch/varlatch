@@ -2116,10 +2116,170 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The browser's session, if any, and its CSRF token (set as the varlatch_csrf cookie when the browser has none). Cache-Control no-store. */
+        get: operations["getBrowserSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/sign-in/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a passkey sign-in with a discoverable credential: WebAuthn request options naming no credential, user verification preferred. The challenge is bound to this browser's CSRF cookie and lasts 5 minutes. */
+        post: operations["startPasskeySignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/sign-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify the sign-in assertion and start a session (the varlatch_session cookie), recording the sign-in's evidence (ADR-0054 Decision 6): which passkey asserted and whether it verified the user. The passkey's signature counter only moves forward. A passkey this server does not hold answers 400 PASSKEY_NOT_FOUND, so the browser may forget it. */
+        post: operations["finishPasskeySignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/registration/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start registering a passkey. With a setup token (an enrollment link's bootstrap, recovery, invitation or re-enrollment grant) the grant is checked, not consumed: a cancelled prompt leaves it usable until it expires. Without one the browser's session adds a passkey to its person. The person's passkeys are excluded. */
+        post: operations["startPasskeyRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/registration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify the registration and store the passkey. An enrollment consumes its setup grant, records the passkey as trusted (ADR-0054 Decision 4) and starts a session; a passkey a signed-in person adds is unconfirmed. A credential id already registered, for anyone, answers 400 PASSKEY_ALREADY_REGISTERED, before the grant is consumed. */
+        post: operations["finishPasskeyRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/sign-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** End the browser's session: its browser bearers are revoked with it, and the CLI credentials of a browser hand-off are not. The cookie is cleared. */
+        post: operations["signOut"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/varlatch-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange the browser's session for a short-lived opaque /v1 bearer (ADR-0018 §6; never a JWT): 15 minutes, never past the session's end, revoked when the session ends. 401 AUTHENTICATION_REQUIRED without a live session. Cache-Control no-store. */
+        post: operations["mintBrowserBearer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        BrowserSession: {
+            /** @description The value every POST under /auth sends as Varlatch-CSRF. */
+            csrfToken: string;
+            /** @description The signed-in identity; null without a live session. */
+            identityId: string | null;
+            /** Format: date-time */
+            expiresAt: string | null;
+        };
+        BrowserSignedIn: {
+            identityId: string;
+            /**
+             * Format: date-time
+             * @description When the session ends unless it is used again.
+             */
+            expiresAt: string;
+        };
+        PasskeyRequestOptions: {
+            /** @description WebAuthn request options (PublicKeyCredentialRequestOptionsJSON). */
+            publicKey: {
+                [key: string]: unknown;
+            };
+        };
+        PasskeyCreationOptions: {
+            /** @description WebAuthn creation options (PublicKeyCredentialCreationOptionsJSON). */
+            publicKey: {
+                [key: string]: unknown;
+            };
+        };
+        PasskeyRegistered: {
+            passkeyId: string;
+            identityId: string;
+            /** @description An enrollment started a session (the varlatch_session cookie). */
+            signedIn: boolean;
+        };
+        BrowserBearer: {
+            /** @description An opaque browser credential (vlt_web_...), shown once. */
+            token: string;
+            identityId: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
         BackupVerification: {
             integrity: boolean;
             compatibility: boolean;
@@ -4074,6 +4234,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The browser's CSRF token, equal to its varlatch_csrf cookie (GET /auth/session gives it). Browser-session paths only. */
+        csrfHeader: string;
         /** @description Approval (Approval Intent) ID */
         approval: string;
         /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
@@ -9343,6 +9505,201 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SyncTarget"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getBrowserSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserSession"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    startPasskeySignIn: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The browser's CSRF token, equal to its varlatch_csrf cookie (GET /auth/session gives it). Browser-session paths only. */
+                "Varlatch-CSRF": components["parameters"]["csrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Request options */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyRequestOptions"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    finishPasskeySignIn: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The browser's CSRF token, equal to its varlatch_csrf cookie (GET /auth/session gives it). Browser-session paths only. */
+                "Varlatch-CSRF": components["parameters"]["csrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The assertion (AuthenticationResponseJSON). */
+                    response: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Signed in */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserSignedIn"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    startPasskeyRegistration: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The browser's CSRF token, equal to its varlatch_csrf cookie (GET /auth/session gives it). Browser-session paths only. */
+                "Varlatch-CSRF": components["parameters"]["csrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    token?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Creation options */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyCreationOptions"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    finishPasskeyRegistration: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The browser's CSRF token, equal to its varlatch_csrf cookie (GET /auth/session gives it). Browser-session paths only. */
+                "Varlatch-CSRF": components["parameters"]["csrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The new credential (RegistrationResponseJSON). */
+                    response: {
+                        [key: string]: unknown;
+                    };
+                    name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Registered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyRegistered"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    signOut: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The browser's CSRF token, equal to its varlatch_csrf cookie (GET /auth/session gives it). Browser-session paths only. */
+                "Varlatch-CSRF": components["parameters"]["csrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out (also when there was no session) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    mintBrowserBearer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The browser's CSRF token, equal to its varlatch_csrf cookie (GET /auth/session gives it). Browser-session paths only. */
+                "Varlatch-CSRF": components["parameters"]["csrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bearer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserBearer"];
                 };
             };
             429: components["responses"]["RequestWindow"];
