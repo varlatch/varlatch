@@ -27,12 +27,18 @@ func TestServe(t *testing.T) {
 		t.Skip("seeds W1 and probes the disk for a few seconds")
 	}
 	p := DefaultPlan()
-	p.Phases = []Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 1, Seconds: 5}}
+	// Nine seconds of load: room for converge runs after the timed backup's
+	// TRUNCATE (they grow the WAL to the WAL-triggered backup's fraction)
+	// even when, on a busy host, every other tick is skipped.
+	p.Phases = []Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 1, Seconds: 9}}
 	// The converge runs write past the small bound, so the WAL crosses
 	// half of it from below after the timed backup's TRUNCATE.
 	p.Backups = []Backup{{Phase: "p", AtSeconds: 1}, {Phase: "p", WALTriggered: WALTrigger{Fraction: 0.5, MaxAttempts: 2}}}
-	// 2.5 s: under load a converge run can take more than 1.5 s, and the next
-	// one is then refused ("previous converge still running").
+	// A converge every 2.5 s, so the phase has room for two. Under load a
+	// run can outlast the period, and the next tick is then refused
+	// (ErrConvergeRunning): this test counts that as a skipped tick and
+	// requires at least one complete run (below); a G9a report still fails
+	// a run on it.
 	p.ConvergeEverySeconds = 2.5
 	p.Targets = 3
 	p.IdleProbeSeconds = 3
@@ -112,7 +118,7 @@ func TestServe(t *testing.T) {
 	if code, _ := get(bad); code != 403 {
 		t.Fatalf("a wrong token: %d", code)
 	}
-	time.Sleep(5 * time.Second) // converge runs and the backups
+	time.Sleep(time.Duration(p.PhaseSeconds("p")) * time.Second) // converge runs and the backups
 	post("/run/stop", 200)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -148,8 +154,17 @@ func TestServe(t *testing.T) {
 		if e.Ev == EvMemory && e.Final {
 			seen["memory final"]++
 		}
-		if e.Ev == EvConvergeEnd && e.Err != "" {
-			t.Errorf("converge: %s", e.Err)
+		if e.Ev == EvConvergeEnd {
+			switch {
+			case e.Err == ErrConvergeRunning.Error():
+				seen["converge skipped"]++
+			case e.Err != "":
+				t.Errorf("converge: %s", e.Err)
+			case e.Targets == p.Targets:
+				seen["converge complete"]++
+			default:
+				t.Errorf("converge over %d of %d targets: %+v", e.Targets, p.Targets, e)
+			}
 		}
 		if e.Ev == EvBackupEnd && (e.Err != "" || e.Pages == 0) {
 			t.Errorf("backup: %+v", e)
@@ -161,7 +176,7 @@ func TestServe(t *testing.T) {
 			end = e
 		}
 	}
-	for _, want := range []string{EvRunStart, EvRunEnd, EvWAL, EvMemory, EvBackupStart, EvBackupEnd, EvConvergeEnd,
+	for _, want := range []string{EvRunStart, EvRunEnd, EvWAL, EvMemory, EvBackupStart, EvBackupEnd, EvConvergeEnd, "converge complete",
 		"checkpoint interval", "checkpoint snapshot", "checkpoint close", "fsync idle", "memory final"} {
 		if seen[want] == 0 {
 			t.Errorf("no %s event (saw %v)", want, seen)
