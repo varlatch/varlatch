@@ -223,3 +223,20 @@ test("compareVersions orders x.y.z numerically, and refuses anything else", () =
     assert.throws(() => compareVersions(bad, "0.22.0"), /not an x\.y\.z version/, bad);
   }
 });
+
+test("an external suite is a scripts/test-*.mjs suite the runner does not run, with a replacement", () => {
+  const withExternal = (suite) => ({ ...base(), externalSuites: { setup: { title: "setup", script: "scripts/test-setup.mjs", kind: "ts-stack", replacement: { open: "step 6" }, ...suite } } });
+  assert.deepEqual(validateInventory(withExternal({})), []);
+  assert.deepEqual(validateInventory(withExternal({ replacement: "web.csp-strict" })), []);
+  assert.deepEqual(validateInventory(withExternal({ replacement: { none: "nothing to replace" } })), []);
+  const problems = (suite) => validateInventory(withExternal(suite)).join("\n");
+  assert.match(problems({ script: "apps/web/scripts/e2e-web.mjs" }), /script must be scripts\/test-<name>\.mjs/);
+  assert.match(problems({ kind: "conformance" }), /kind must be ts-stack/);
+  assert.match(problems({ replacement: undefined }), /names its replacement/);
+  assert.match(problems({ replacement: "stack.convex" }), /is not a conformance check/);
+  assert.match(problems({ replacement: { open: "" } }), /replacement must be/);
+  assert.match(problems({ title: "" }), /no title/);
+  const clash = base();
+  clash.externalSuites = { web: { title: "web", script: "scripts/test-web.mjs", kind: "ts-stack", replacement: { open: "step 6" } } };
+  assert.match(validateInventory(clash).join(), /is also a suite the runner runs/);
+});

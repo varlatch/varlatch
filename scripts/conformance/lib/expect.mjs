@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Expected failures (scripts/conformance/README.md): the checks a target is
+ * known to fail, kept in scripts/conformance/expect/<target name>.json:
+ *
+ *   {
+ *     "schema": 1,
+ *     "expected": {
+ *       "<target key>": {                       ts-source, ts-release:<version>, go-binary
+ *         "<client>": {                         source, a pinned CLI version, or * for every CLI
+ *           "<check id>": { "reason": "<why it fails>", "removedBy": "<the step that removes it>" }
+ *         }
+ *       }
+ *     }
+ *   }
+ *
+ * A check expected to fail that fails is reported as an expected failure,
+ * never hidden; one that passes fails the run (remove its entry). The list
+ * only shrinks by default: CI compares the files with the pull request's
+ * merge base, and an added entry fails unless the pull request carries the
+ * `conformance-regression` label (expect-check.mjs).
+ */
+import { VERSION } from "./inventory.mjs";
+
+export const ANY_CLIENT = "*";
+export const REGRESSION_LABEL = "conformance-regression";
+
+/** Problems with one expectations file's shape; empty when it is valid. */
+export function validateExpectations(file, { targetName, inventory, cliVersions }) {
+  const where = `expect/${targetName}.json`;
+  if (file?.schema !== 1) return [`${where}: schema: expected 1`];
+  if (!file.expected || typeof file.expected !== "object" || Array.isArray(file.expected)) return [`${where}: expected must be an object`];
+  const problems = [];
+  for (const [key, clients] of Object.entries(file.expected)) {
+    if (key !== targetName && !key.startsWith(`${targetName}:`)) problems.push(`${where}: ${key} is not a ${targetName} target`);
+    if (!clients || typeof clients !== "object") {
+      problems.push(`${where}: ${key} must map clients to checks`);
+      continue;
+    }
+    const anyClient = new Set(Object.keys(clients[ANY_CLIENT] ?? {}));
+    for (const [client, checks] of Object.entries(clients)) {
+      const at = `${where}: ${key} / ${client}`;
+      if (client !== ANY_CLIENT && client !== "source" && !(VERSION.test(client) && cliVersions.includes(client))) {
+        problems.push(`${at}: the client must be source, ${ANY_CLIENT}, or a CLI clients.json pins (${cliVersions.join(", ")})`);
+      }
+      for (const [id, entry] of Object.entries(checks ?? {})) {
+        if (!(id in inventory.checks)) problems.push(`${at}: ${id} is not in the inventory`);
+        if (client !== ANY_CLIENT && anyClient.has(id)) problems.push(`${at}: ${id} is also expected for every client (${ANY_CLIENT})`);
+        const keys = Object.keys(entry ?? {}).sort().join(",");
+        if (keys !== "reason,removedBy" || !String(entry.reason).trim() || !String(entry.removedBy).trim()) {
+          problems.push(`${at}: ${id} must be { "reason": "<why it fails>", "removedBy": "<the step that removes it>" }`);
+        }
+      }
+    }
+  }
+  return problems;
+}
+
+/** The expected failures in force for one run: Map(check id → { reason, removedBy, client }). */
+export function expectationsFor(file, key, cliSpec) {
+  const clients = file?.expected?.[key] ?? {};
+  const out = new Map();
+  for (const client of [ANY_CLIENT, cliSpec]) {
+    for (const [id, entry] of Object.entries(clients[client] ?? {})) out.set(id, { ...entry, client });
+  }
+  return out;
+}
+
+/**
+ * Applies the expected failures to a judged run (lib/inventory.mjs
+ * evaluate): a failed check that is expected becomes `expected-fail`, still
+ * listed with why it failed and its entry; an expected check that passed
+ * becomes a failure. Other outcomes (not applicable, predates the CLI) stay
+ * as they are and are listed as not exercised. Problems outside checks are
+ * never expected.
+ */
+export function applyExpectations(judged, expected) {
+  const summary = { inForce: expected.size, failedAsExpected: [], passedUnexpectedly: [], notExercised: [] };
+  const checks = judged.checks.map((c) => {
+    const entry = expected.get(c.id);
+    if (!entry) return c;
+    const expectation = { reason: entry.reason, removedBy: entry.removedBy, client: entry.client };
+    if (c.outcome === "fail") {
+      summary.failedAsExpected.push(c.id);
+      return { ...c, outcome: "expected-fail", expected: expectation };
+    }
+    if (c.outcome === "pass") {
+      summary.passedUnexpectedly.push(c.id);
+      return { ...c, outcome: "fail", why: `expected to fail (${entry.reason}; removed by ${entry.removedBy}), but it passed: remove its entry from the expectations`, expected: expectation };
+    }
+    summary.notExercised.push(c.id);
+    return { ...c, expected: expectation };
+  });
+  const listed = new Set(judged.checks.map((c) => c.id));
+  const problems = [...judged.problems];
+  for (const id of expected.keys()) if (!listed.has(id)) problems.push(`expectations: ${id} is expected to fail, but the run has no such check`);
+  const ok = problems.length === 0 && !checks.some((c) => c.outcome === "fail");
+  return { checks, problems, ok, expectations: summary };
+}
+
+/** Every entry of a set of expectations files, as `<file>|<target key>|<client>|<check id>`. */
+export function entryKeys(files) {
+  const keys = new Set();
+  for (const [fileName, file] of Object.entries(files)) {
+    for (const [key, clients] of Object.entries(file?.expected ?? {})) {
+      for (const [client, checks] of Object.entries(clients ?? {})) {
+        for (const id of Object.keys(checks ?? {})) keys.add(`${fileName}|${key}|${client}|${id}`);
+      }
+    }
+  }
+  return keys;
+}
+
+/**
+ * The entries `head` has that `base` (the merge base) does not: what a pull
+ * request adds to the expected failures. Moving an entry to another client
+ * or target counts as adding one.
+ */
+export function addedEntries(base, head) {
+  const before = entryKeys(base);
+  return [...entryKeys(head)].filter((k) => !before.has(k)).sort();
+}

@@ -14,6 +14,12 @@
  *   component    tests this checkout's code, not the target; kept in the
  *                run, never counted as conformance.
  *
+ * External suites (`externalSuites`): the suites the runner does not run,
+ * the TypeScript installation's lifecycle and installer suites
+ * (scripts/test-*.mjs). Each names its replacement the way a ts-stack check
+ * does; gate mode (lib/gate.mjs) needs every replacement present and passing,
+ * so an `open` one keeps the gate shut until the step that writes it.
+ *
  * Features: a check that exercises a CLI feature names it (`feature`). A
  * feature cites the CHANGELOG entry that introduced it and is either part of
  * the compatibility core (`core: true`, never version-gated: every pinned
@@ -128,18 +134,7 @@ export function validateInventory(inventory) {
       continue;
     }
     if (check.kind === "ts-stack") {
-      const r = check.replacement;
-      if (typeof r === "string") {
-        if (!(r in checks)) problems.push(`${where}: replacement ${r} is not in the inventory`);
-        else if (checks[r].kind !== "conformance") problems.push(`${where}: replacement ${r} is not a conformance check`);
-      } else if (r && typeof r === "object") {
-        const keys = Object.keys(r);
-        if (keys.length !== 1 || !["none", "open"].includes(keys[0]) || typeof r[keys[0]] !== "string" || r[keys[0]].trim() === "") {
-          problems.push(`${where}: replacement must be a check ID, { "none": "<why>" } or { "open": "<the step that writes it>" }`);
-        }
-      } else {
-        problems.push(`${where}: a ts-stack check names its replacement`);
-      }
+      problems.push(...replacementProblems(where, check.replacement, checks));
     } else if ("replacement" in check) {
       problems.push(`${where}: only a ts-stack check has a replacement`);
     }
@@ -156,6 +151,15 @@ export function validateInventory(inventory) {
       }
     }
   }
+  for (const [name, suite] of Object.entries(inventory.externalSuites ?? {})) {
+    const where = `external suite ${name}`;
+    if (!SUITE.test(name)) problems.push(`${where}: not a suite name`);
+    if (name in suites) problems.push(`${where}: is also a suite the runner runs`);
+    if (typeof suite.title !== "string" || suite.title === "") problems.push(`${where}: no title`);
+    if (typeof suite.script !== "string" || !/^scripts\/test-[a-z0-9-]+\.mjs$/.test(suite.script)) problems.push(`${where}: script must be scripts/test-<name>.mjs`);
+    if (suite.kind !== "ts-stack") problems.push(`${where}: kind must be ts-stack (it tests the TypeScript installation)`);
+    problems.push(...replacementProblems(where, suite.replacement, checks));
+  }
   for (const [suite, count] of counts) if (count === 0) problems.push(`suite ${suite}: no checks`);
   for (const [feature, count] of featureChecks) if (count === 0) problems.push(`feature ${feature}: no checks`);
   for (const name of CORE_FEATURES) {
@@ -164,6 +168,26 @@ export function validateInventory(inventory) {
     }
   }
   return problems;
+}
+
+/**
+ * Problems with a replacement: a conformance check ID in the inventory,
+ * { "none": "<why>" } or { "open": "<the step that writes it>" }.
+ */
+function replacementProblems(where, r, checks) {
+  if (typeof r === "string") {
+    if (!(r in checks)) return [`${where}: replacement ${r} is not in the inventory`];
+    if (checks[r].kind !== "conformance") return [`${where}: replacement ${r} is not a conformance check`];
+    return [];
+  }
+  if (r && typeof r === "object") {
+    const keys = Object.keys(r);
+    if (keys.length !== 1 || !["none", "open"].includes(keys[0]) || typeof r[keys[0]] !== "string" || r[keys[0]].trim() === "") {
+      return [`${where}: replacement must be a check ID, { "none": "<why>" } or { "open": "<the step that writes it>" }`];
+    }
+    return [];
+  }
+  return [`${where}: a ts-stack check or external suite names its replacement`];
 }
 
 /**

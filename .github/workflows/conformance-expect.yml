@@ -1,0 +1,48 @@
+name: Conformance expectations
+
+# The conformance harness's expected failures only shrink by default
+# (scripts/conformance/README.md): a pull request that adds an entry to
+# scripts/conformance/expect/*.json fails here unless it carries the
+# conformance-regression label. Adding or removing the label runs the check
+# again. Like CI, a draft pull request runs nothing. Hosted runners only.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    paths:
+      - "scripts/conformance/expect/**"
+      - "scripts/conformance/inventory.json"
+      - "scripts/conformance/clients.json"
+      - "scripts/conformance/lib/expect.mjs"
+      - "scripts/conformance/expect-check.mjs"
+      - ".github/workflows/conformance-expect.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conformance-expect-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  expectations:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The merge base of the base and head commits must be present.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+      - name: Expected failures only shrink unless labeled
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          LABELED: ${{ contains(github.event.pull_request.labels.*.name, 'conformance-regression') }}
+        run: |
+          flags=()
+          if [ "$LABELED" = true ]; then flags+=(--labeled); fi
+          node scripts/conformance/expect-check.mjs --base "$BASE" --head "$HEAD" "${flags[@]}"

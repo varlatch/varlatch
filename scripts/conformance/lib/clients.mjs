@@ -28,6 +28,7 @@ export function validateClients(clients) {
   if (clients?.schema !== 1) return ["schema: expected 1"];
   if (!REPOSITORY.test(String(clients.repository))) problems.push("repository: expected owner/name");
   if (clients.issuer !== "https://token.actions.githubusercontent.com") problems.push("issuer: expected GitHub's OIDC issuer, https://token.actions.githubusercontent.com");
+  if (!/^[a-z0-9.-]+\/[a-z0-9._/-]+$/.test(String(clients.imageSignatures))) problems.push("imageSignatures: expected the registry repository that holds the release images' signatures");
   const cosign = clients.cosign;
   if (!cosign || !VERSION.test(String(cosign.version))) problems.push("cosign.version: expected x.y.z");
   const binaries = Object.entries(cosign?.binaries ?? {});
@@ -66,7 +67,8 @@ export function parseSha256Sums(text) {
 /**
  * Why a downloaded asset cannot be used; empty when it can. The signed
  * SHA256SUMS must list it exactly once, with the hash the download has, and
- * that hash must be the one clients.json pins.
+ * that hash must be the one clients.json pins (when it pins one: a release
+ * target's assets are trusted through the signature alone).
  */
 export function assetProblems({ entries, asset, actual, pinned }) {
   const listed = entries.filter((e) => e.name === asset);
@@ -74,7 +76,7 @@ export function assetProblems({ entries, asset, actual, pinned }) {
   if (listed.length > 1) return [`SHA256SUMS lists ${asset} ${listed.length} times`];
   const problems = [];
   if (listed[0].sha256 !== actual) problems.push(`${asset} has sha256 ${actual}, but SHA256SUMS lists ${listed[0].sha256}`);
-  if (actual !== pinned) problems.push(`${asset} has sha256 ${actual}, but clients.json pins ${pinned}`);
+  if (pinned !== undefined && actual !== pinned) problems.push(`${asset} has sha256 ${actual}, but clients.json pins ${pinned}`);
   return problems;
 }
 

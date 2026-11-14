@@ -6,7 +6,7 @@
  * script writes is in the inventory.
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -88,5 +88,26 @@ test("each version-gated feature is gated in every suite that has its checks, an
         .map((c) => c.feature),
     );
     assert.deepEqual([...gated].sort(), [...needed].sort(), suite);
+  }
+});
+
+test("every lifecycle and installer suite (scripts/test-*.mjs) is an external suite with its replacement, and only those", () => {
+  const scripts = readdirSync(join(repoRoot, "scripts")).filter((f) => /^test-.*\.mjs$/.test(f)).map((f) => `scripts/${f}`).sort();
+  const listed = Object.values(inventory.externalSuites ?? {}).map((s) => s.script).sort();
+  assert.deepEqual(listed, scripts);
+  for (const [name, suite] of Object.entries(inventory.externalSuites)) {
+    assert.equal(suite.script, `scripts/test-${name}.mjs`, name);
+  }
+});
+
+test("each expectations file is valid and named after a target", async () => {
+  const { validateExpectations } = await import("../lib/expect.mjs");
+  const { TARGET_NAMES } = await import("../targets/index.mjs");
+  const clients = JSON.parse(readFileSync(join(here, "..", "clients.json"), "utf8"));
+  for (const file of readdirSync(join(here, "..", "expect"))) {
+    const targetName = file.replace(/\.json$/, "");
+    assert.ok(file.endsWith(".json") && TARGET_NAMES.includes(targetName), `expect/${file} is not named after a target`);
+    const parsed = JSON.parse(readFileSync(join(here, "..", "expect", file), "utf8"));
+    assert.deepEqual(validateExpectations(parsed, { targetName, inventory, cliVersions: Object.keys(clients.cli) }), [], file);
   }
 });

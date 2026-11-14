@@ -1,0 +1,5 @@
+{
+  "schema": 1,
+  "description": "Checks the ts-source target is known to fail, by client (source, a pinned CLI version, or * for every CLI), each with why it fails and the step that removes it (scripts/conformance/README.md, Expected failures). An expected failure that passes fails the run. CI fails a pull request that adds an entry unless it carries the conformance-regression label.",
+  "expected": {}
+}

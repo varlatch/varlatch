@@ -11,6 +11,7 @@ scripts/ci-e2e.sh                     # = node scripts/conformance/run.mjs --tar
 scripts/ci-e2e.sh --report out.json   # also write the report as JSON
 scripts/ci-e2e.sh --suite values      # one suite (plus the setup it needs); a partial report
 node scripts/conformance/run.mjs --target ts-source --cli 0.22.0   # a released CLI, verified first
+node scripts/conformance/run.mjs --target ts-release:0.22.0 --cli source   # a signed release, verified, pulled by digest
 ```
 
 A run is as heavy as the old `ci-e2e.sh`: a Compose stack built from source
@@ -21,16 +22,19 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 
 | File | What it is |
 | --- | --- |
-| `run.mjs` | The runner: prepares the clients, starts the target, runs the suites of `plan.mjs` in order, paces them, collects results, judges the run against the inventory, removes the target. |
-| `inventory.json` | Every check a run must account for: its suite, kind, title, the CLI feature it exercises and, for ts-stack checks, its replacement. Each suite's script and the capabilities it needs. Each CLI feature, with the CHANGELOG entry that introduced it. |
+| `run.mjs` | The runner: prepares the clients, starts the target, runs the suites of `plan.mjs` in order, paces them, collects results, judges the run against the inventory and the target's expected failures (and, with `--gate`, the gate), removes the target. |
+| `inventory.json` | Every check a run must account for: its suite, kind, title, the CLI feature it exercises and, for ts-stack checks, its replacement. Each suite's script and the capabilities it needs. Each CLI feature, with the CHANGELOG entry that introduced it. The external suites the runner does not run, with their replacements. |
+| `expect/` | Expected failures, one file per target: `expect/<target name>.json`. |
+| `expect-check.mjs` | CI's check that a pull request adds no expected failure without the `conformance-regression` label. |
+| `source-images.mjs` | Builds the `ts-source` images once, for several runs to share (the weekly matrix). |
 | `clients.json` | The released CLIs a run can select, pinned by version, release commit and hash, and the pinned cosign that verifies them. |
 | `clients.mjs` | Downloads and verifies a pinned CLI; bundles `packages/sdk` for the sdk suite. |
 | `plan.mjs` | The order of the suites and how each gets its arguments. |
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
-| `targets/` | Target adapters (`ts-source`) and the registry. |
+| `targets/` | Target adapters (`ts-source`, `ts-release`, the `go-binary` stub; the first two share `compose-stack.mjs`) and the registry. |
 | `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), and the client suites: the CLI's compatibility core, `varlatch mcp`, and the sdk smoke. |
-| `lib/` | The runner's pure logic: result lines, inventory rules, the request-log check, the client pins. |
+| `lib/` | The runner's pure logic: result lines, inventory rules, the request-log check, the client pins, release verification, expected failures, gate mode. |
 | `test/` | Unit tests: `pnpm test:conformance`. |
 
 The runner and everything in this directory are Apache-2.0. The suites under
@@ -69,7 +73,8 @@ A run fails on any of these:
 
 - a check in the inventory that did not report;
 - a reported check that is not in the inventory, or that another suite reported;
-- a failed check;
+- a failed check, unless the target's expectations list it (see
+  [Expected failures](#expected-failures)); an expected failure that passes;
 - a conformance or component check reported not applicable;
 - a `PREDATES-CLI` result the runner cannot confirm. It is accepted only for
   a check whose feature names the version that introduced it
@@ -139,10 +144,147 @@ in `CONFORMANCE_TARGET_STATE`, which `target-op.mjs` reads.
 ### Targets
 
 - `ts-source`: the TypeScript stack built from this checkout, as a
-  disposable Compose project. It has every capability.
+  disposable Compose project. It has every capability. With
+  `CONFORMANCE_SOURCE_IMAGES=<tag>` it uses images `source-images.mjs <tag>`
+  built earlier instead of building, and refuses them unless their label
+  names the checkout's own commit (`git rev-parse HEAD`; `source-images.mjs`
+  refuses a checkout with changes, so the label is true).
+- `ts-release:<version>`: a released TypeScript stack, from the release's
+  own compose bundle (`varlatch-compose-<version>.tar.gz`) with every image
+  pulled by the digest `varlatch-release.json` pins. Nothing is built. The
+  bundle's Compose file is the canonical one with each `build:` replaced by
+  its digest-pinned image, so the stack is laid out as `ts-source`'s is:
+  the same services, the admin CLI inside the varlatchd image
+  (`node dist/cli.js admin`), the same ports and environment, the same
+  bootstrap and seed. It has every capability, through the same operations
+  (`targets/compose-stack.mjs`). The suites are this checkout's.
+- `go-binary:<path>`: the Go server. A stub that fails with "not built yet"
+  until ADR-0059 step 3 writes the server and its adapter.
 
-Released TypeScript stacks, expectations per target and the gate mode for
-ADR-0059's acceptance gates come later in step 2.
+Before a `ts-release` target starts, the release is verified as
+`docs/operations/verify-release.md` says, and any failure stops the run:
+
+1. only a signed release can be selected: 0.15.1 or later. 0.15.0 and
+   earlier were published unsigned and are refused;
+2. cosign (pinned in `clients.json`, checked by hash) verifies `SHA256SUMS`
+   with `SHA256SUMS.sigstore.json` against
+   `.github/workflows/release.yml@refs/tags/v<version>` of the pinned
+   repository and GitHub's OIDC issuer;
+3. `SHA256SUMS` lists the bundle and `varlatch-release.json` each exactly
+   once, with the hash of the download;
+4. the manifest is for `<version>` and pins every image by digest; the
+   bundle holds only regular files and directories under
+   `varlatch-<version>/` (checked before it is extracted), and its copy of
+   the manifest is the same bytes;
+5. cosign verifies each Varlatch image (varlatchd, varlatch-web,
+   convex-deploy) by its digest, for the same identity, with the signatures
+   in `ghcr.io/varlatch/varlatch-signatures` (`clients.json`
+   `imageSignatures`);
+6. the bundle's Compose file, as `docker compose config` resolves it, runs
+   only images the manifest pins, by digest, and builds nothing.
+
+The report's `targetDetails.release` records the verified hashes of
+`SHA256SUMS` and each asset, and every image digest with how it was
+verified. Third-party images (PostgreSQL, the Convex backend) are pinned by
+digest in the signed manifest; they have no signature of their own.
+
+## Expected failures
+
+`expect/<target name>.json` lists the checks a target is known to fail:
+
+```json
+{
+  "schema": 1,
+  "expected": {
+    "ts-release:0.22.0": {
+      "*": {
+        "<check id>": { "reason": "<why it fails>", "removedBy": "<the step that removes it>" }
+      }
+    }
+  }
+}
+```
+
+Entries are keyed by target (`ts-source`, `ts-release:<version>`,
+`go-binary` whatever its path), then by client (`source`, a version
+`clients.json` pins, or `*` for every CLI), then by check ID. In a run:
+
+- an expected check that fails is reported `EXPECTED-FAIL`, with its reason
+  and the step that removes it, in the output and the report. It is never
+  hidden, and it does not fail the run;
+- an expected check that passes fails the run: remove its entry;
+- an expected check that did not apply or predates the CLI is listed as
+  not exercised;
+- an entry covers only that check's failure. A run-level problem (an
+  `ERROR`, a setup step that failed) is never expected.
+
+The list only shrinks by default. `.github/workflows/conformance-expect.yml`
+runs `expect-check.mjs` on a pull request that changes it: it compares the
+files at the pull request's head with its merge base, and fails when the
+head adds an entry (moving one to another client or target counts as
+adding one), unless the pull request carries the `conformance-regression`
+label. Adding or removing the label runs the check again. For `go-binary`
+the file starts, in step 3, as the conformance checks the Go server does
+not pass yet, and is the step 4 parity tracker.
+
+## External suites
+
+The lifecycle and installer suites (`scripts/test-*.mjs`: setup, adopt,
+upgrade, backup, move, ingress, sidecar, installers, the manual tailnet and
+Coolify checks) test the TypeScript installation and do not run under the
+runner. `inventory.json` lists each in `externalSuites`, with its
+`replacement` the way a ts-stack check names one: the Go counterparts come
+in ADR-0059 steps 4, 6 and 7, so each is `{ "open": "<the step>" }` today.
+`pnpm test:conformance` fails when a `scripts/test-*.mjs` is not listed.
+
+## Gate mode
+
+`--gate` judges a run as ADR-0059's G1 (parity) and G2 (old clients) are
+judged:
+
+```sh
+node scripts/conformance/run.mjs --target go-binary:<path> --cli source \
+  --gate --walkthrough docs/evidence/<walkthrough record> [--recent-cli-report <report.json>]
+```
+
+Besides passing as an ordinary run, a gate run must have:
+
+- no expected failure in force for its target and client;
+- every ts-stack check's replacement, and every external suite's, present
+  and passing: a replacement check that passed in this run, or `none`
+  with its reason. An `open` replacement fails the gate;
+- the browser-walkthrough evidence file (G1's full browser walkthrough,
+  done by hand and kept under `docs/evidence/`), named with
+  `--walkthrough`. The run stops before the target starts when it is
+  missing; the report records its path and hash;
+- every suite (no `--suite`);
+- a CLI recent enough that nothing reports `PREDATES-CLI`, or, for a run
+  with an older CLI (G2), `--recent-cli-report` naming the report of a
+  passing gate run of the same target in which nothing did.
+
+The report's `gate` holds the verdict and each problem; a gate failure
+prints `CONFORMANCE GATE FAILED` and exits 1. Gate mode fails today on every
+target: the realtime checks' replacements (G11's checks, step 3), doctor's
+(step 6) and every external suite's are still open. `test/gate.test.mjs`
+shows this on the inventory as it stands.
+
+## The weekly matrix
+
+`.github/workflows/conformance.yml` runs weekly and on manual dispatch
+(`gh workflow run conformance.yml --ref <branch>`), on GitHub-hosted
+runners with only the read-only job token:
+
+| | CLI `source` | CLI `0.21.0` | CLI `0.22.0` |
+| --- | --- | --- | --- |
+| `ts-source` | ✓ | ✓ | ✓ |
+| `ts-release:0.22.0` | ✓ | ✓ | ✓ |
+
+The `images` job builds the source images once (`source-images.mjs`) and
+passes them to the `ts-source` cells as an artifact. Each cell is its own
+job, with its own stack on its own free ports, at most three at a time and
+60 minutes each, and uploads its `conformance-report.json`
+(`conformance-report-<target>-cli-<cli>`, tokens masked as in the logs). A
+`go-binary` row joins in step 3.
 
 ## Clients
 
