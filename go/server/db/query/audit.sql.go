@@ -10,7 +10,115 @@ package query
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
+
+const getAuditEvent = `-- name: GetAuditEvent :one
+SELECT event_order, id, schema_version, event_type, occurred_at, actor_identity_id, authentication_method_id, credential_id, organization_id, "action", resource, decision, authz, tailnet, listener, request_id, metadata, client FROM audit_events WHERE id = ?
+`
+
+func (q *Queries) GetAuditEvent(ctx context.Context, id string) (AuditEvent, error) {
+	row := q.db.QueryRowContext(ctx, getAuditEvent, id)
+	var i AuditEvent
+	err := row.Scan(
+		&i.EventOrder,
+		&i.ID,
+		&i.SchemaVersion,
+		&i.EventType,
+		&i.OccurredAt,
+		&i.ActorIdentityID,
+		&i.AuthenticationMethodID,
+		&i.CredentialID,
+		&i.OrganizationID,
+		&i.Action,
+		&i.Resource,
+		&i.Decision,
+		&i.Authz,
+		&i.Tailnet,
+		&i.Listener,
+		&i.RequestID,
+		&i.Metadata,
+		&i.Client,
+	)
+	return i, err
+}
+
+const humanIdentities = `-- name: HumanIdentities :many
+SELECT id FROM identities WHERE kind = 'human' AND id IN (/*SLICE:ids*/?)
+`
+
+// Which of these identities are people: only their exposure is indexed.
+func (q *Queries) HumanIdentities(ctx context.Context, ids []string) ([]string, error) {
+	query := humanIdentities
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const indexExposure = `-- name: IndexExposure :exec
+INSERT INTO member_exposure (organization_id, identity_id, version_id, item_name, environment_id, way, first_at, last_at)
+VALUES (?1, ?2, ?3, ?4,
+        ?5, ?6,
+        coalesce(?7, CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
+        coalesce(?8, CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000))
+ON CONFLICT (organization_id, identity_id, version_id, environment_id, way) DO UPDATE SET
+  first_at = min(member_exposure.first_at, excluded.first_at),
+  last_at = max(member_exposure.last_at, excluded.last_at)
+`
+
+type IndexExposureParams struct {
+	OrganizationID string
+	IdentityID     string
+	VersionID      string
+	ItemName       string
+	EnvironmentID  string
+	Way            string
+	FirstAt        interface{}
+	LastAt         interface{}
+}
+
+// One member_exposure row (ADR-0052 Decision 6, audit/exposure.ts
+// indexExposures); the caller indexes people only. A null time is now; the
+// first and last times only ever widen.
+func (q *Queries) IndexExposure(ctx context.Context, arg IndexExposureParams) error {
+	_, err := q.db.ExecContext(ctx, indexExposure,
+		arg.OrganizationID,
+		arg.IdentityID,
+		arg.VersionID,
+		arg.ItemName,
+		arg.EnvironmentID,
+		arg.Way,
+		arg.FirstAt,
+		arg.LastAt,
+	)
+	return err
+}
 
 const insertAuditEvent = `-- name: InsertAuditEvent :one
 INSERT INTO audit_events (id, event_type, decision, actor_identity_id, credential_id, organization_id, resource, metadata)
@@ -147,4 +255,61 @@ func (q *Queries) ListAuditEventsOfType(ctx context.Context, eventType string) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordAuditEvent = `-- name: RecordAuditEvent :one
+INSERT INTO audit_events
+  (id, schema_version, event_type, actor_identity_id, authentication_method_id,
+   credential_id, organization_id, action, resource, decision, authz, tailnet,
+   listener, request_id, metadata, client)
+VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING event_order, occurred_at
+`
+
+type RecordAuditEventParams struct {
+	ID                     string
+	EventType              string
+	ActorIdentityID        sql.NullString
+	AuthenticationMethodID sql.NullString
+	CredentialID           sql.NullString
+	OrganizationID         sql.NullString
+	Action                 sql.NullString
+	Resource               sql.NullString
+	Decision               string
+	Authz                  sql.NullString
+	Tailnet                sql.NullString
+	Listener               sql.NullString
+	RequestID              sql.NullString
+	Metadata               sql.NullString
+	Client                 sql.NullString
+}
+
+type RecordAuditEventRow struct {
+	EventOrder int64
+	OccurredAt int64
+}
+
+// One event (go/server/audit Record), at the next position: event_order is
+// left to SQLite, the rowid (MAPPING.md, "Audit positions in commit order").
+func (q *Queries) RecordAuditEvent(ctx context.Context, arg RecordAuditEventParams) (RecordAuditEventRow, error) {
+	row := q.db.QueryRowContext(ctx, recordAuditEvent,
+		arg.ID,
+		arg.EventType,
+		arg.ActorIdentityID,
+		arg.AuthenticationMethodID,
+		arg.CredentialID,
+		arg.OrganizationID,
+		arg.Action,
+		arg.Resource,
+		arg.Decision,
+		arg.Authz,
+		arg.Tailnet,
+		arg.Listener,
+		arg.RequestID,
+		arg.Metadata,
+		arg.Client,
+	)
+	var i RecordAuditEventRow
+	err := row.Scan(&i.EventOrder, &i.OccurredAt)
+	return i, err
 }

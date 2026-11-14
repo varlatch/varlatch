@@ -8,7 +8,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -25,11 +24,14 @@ import (
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/httpserver"
+	"github.com/varlatch/varlatch/go/server/ids"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/web"
 )
 
@@ -212,35 +214,9 @@ type installation struct {
 	Canary envelope.Envelope
 }
 
-// newInstallationID is a domain ID as the TypeScript server makes one
-// (db/ids.ts): "inst_" and 128 random bits in lowercase base32, unpadded.
-func newInstallationID() string {
-	const alphabet = "abcdefghijklmnopqrstuvwxyz234567"
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(err)
-	}
-	out := []byte("inst_")
-	acc, bits := 0, 0
-	for _, c := range b {
-		acc = acc<<8 | int(c)
-		bits += 8
-		for bits >= 5 {
-			out = append(out, alphabet[(acc>>(bits-5))&31])
-			bits -= 5
-		}
-		acc &= 1<<bits - 1
-	}
-	if bits > 0 {
-		out = append(out, alphabet[(acc<<(5-bits))&31])
-	}
-	return string(out)
-}
-
 // ensureInstallation returns the installation, creating it with its KEK
-// canary on first start, in one write job, as the TypeScript server's
-// ensureInstallation does. Its installation.initialized audit event comes
-// with audit (step 3.3).
+// canary and its installation.initialized audit event on first start, in
+// one write job, as the TypeScript server's ensureInstallation does.
 func ensureInstallation(ctx context.Context, store *storage.DB, rootKEK []byte) (installation, bool, error) {
 	var inst installation
 	created := false
@@ -249,7 +225,7 @@ func ensureInstallation(ctx context.Context, store *storage.DB, rootKEK []byte) 
 		q := query.New(tx)
 		row, err := q.GetInstallation(ctx)
 		if errors.Is(err, sql.ErrNoRows) {
-			id := newInstallationID()
+			id := ids.New(ids.Installation)
 			canary, err := envelope.NewCanary(rootKEK, id)
 			if err != nil {
 				return err
@@ -259,6 +235,13 @@ func ensureInstallation(ctx context.Context, store *storage.DB, rootKEK []byte) 
 				return err
 			}
 			if err := q.CreateInstallation(ctx, query.CreateInstallationParams{ID: id, KekCanary: string(b)}); err != nil {
+				return err
+			}
+			if _, err := audit.Record(ctx, tx, audit.Event{
+				Type:     "installation.initialized",
+				Decision: audit.Info,
+				Metadata: jsvalue.Object{{Key: "installationId", Value: id}},
+			}); err != nil {
 				return err
 			}
 			inst, created = installation{ID: id, Canary: canary}, true
