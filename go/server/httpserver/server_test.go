@@ -293,14 +293,14 @@ func TestRequestWindow(t *testing.T) {
 func TestRequestWindowCap(t *testing.T) {
 	rw := newRequestWindow(func() time.Time { return time.Unix(0, 0) })
 	for i := 0; i < MaxWindows; i++ {
-		if ok, _ := rw.admit("c" + strconv.Itoa(i)); !ok {
+		if ok, _, _ := rw.admit("c" + strconv.Itoa(i)); !ok {
 			t.Fatalf("client %d refused", i)
 		}
 	}
-	if ok, retry := rw.admit("one-more"); ok || retry != "60" {
+	if ok, retry, _ := rw.admit("one-more"); ok || retry != "60" {
 		t.Errorf("client %d: %v %q", MaxWindows+1, ok, retry)
 	}
-	if ok, _ := rw.admit("c0"); !ok {
+	if ok, _, _ := rw.admit("c0"); !ok {
 		t.Error("a client with an open window was refused")
 	}
 }
@@ -529,3 +529,45 @@ type panicking struct{}
 
 func (panicking) InstallationID(context.Context) (string, error) { panic("boom") }
 func (panicking) Ready(context.Context) (bool, bool, bool)       { panic("boom") }
+
+// The access log names the request window that counted each request, taken
+// at admission (G9a counts each address's windows from it, whatever order
+// the answers complete in); a request the window does not count has none.
+func TestAccessLogWindowOpened(t *testing.T) {
+	s, _, c, logBuf := newTestServer(t, nil)
+	from := func(addr, path string) {
+		r := httptest.NewRequest("GET", path, nil)
+		r.RemoteAddr = addr + ":1234"
+		s.ServeHTTP(httptest.NewRecorder(), r)
+	}
+	t0 := c.now()
+	from("192.0.2.1", "/v1/meta")
+	c.add(10 * time.Second)
+	from("192.0.2.1", "/v1/meta")
+	from("192.0.2.2", "/v1/meta")
+	from("192.0.2.1", "/healthz")
+	c.add(51 * time.Second)
+	from("192.0.2.1", "/v1/meta")
+	var got []string
+	for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+		var rec AccessRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatal(err)
+		}
+		opened := "-"
+		if rec.WindowOpened != nil {
+			opened = rec.WindowOpened.Sub(t0).String()
+		}
+		got = append(got, rec.Client+" "+rec.Path+" "+opened)
+	}
+	want := []string{
+		"192.0.2.1 /v1/meta 0s",
+		"192.0.2.1 /v1/meta 0s",
+		"192.0.2.2 /v1/meta 10s",
+		"192.0.2.1 /healthz -",
+		"192.0.2.1 /v1/meta 1m1s",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("access log:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

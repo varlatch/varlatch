@@ -5,6 +5,7 @@
 //	varlatchd serve [--config <file>]   serve (default /etc/varlatch/varlatchd.conf)
 //	varlatchd --version                 print the version
 //	varlatchd admin bootstrap|recover   one-time enrollment URLs or CLI credentials (daemon.Admin)
+//	varlatchd g9a -plan p -data d -out o   G9a's benchmark run, in a build with the g9a tag (daemon.Bench)
 //
 // Exit statuses of serve: 0 after a clean stop, 1 for a failure a restart
 // may fix, 78 for a configuration error no restart can fix, a wrong Root KEK
@@ -58,6 +59,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return daemon.Serve(daemon.Options{ConfigPath: path, Stderr: stderr})
 	case "admin":
 		return daemon.Admin(args[1:], stdout, stderr)
+	case "g9a":
+		// ADR-0059 G9a's benchmark: only in a build with the g9a tag.
+		return daemon.Bench(args[1:], stderr)
 	default:
 		return usage(stderr, "unknown command "+args[0])
 	}

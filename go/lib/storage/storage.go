@@ -132,7 +132,39 @@ type DB struct {
 	loops     sync.WaitGroup
 
 	m metrics
+
+	// settings is what Open read back from each connection.
+	settings Settings
 }
+
+// Settings are the engine's effective settings: the pragmas each kind of
+// connection reported when Open checked them, and the policy it runs.
+// varlatchd reports them at start, and the G9a build's must equal the
+// production build's (ADR-0059 varlatchd-core decision 7).
+type Settings struct {
+	// Pragmas are, per connection ("writer", "reader", "checkpointer"),
+	// each pragma Open checks, as the connection reported it.
+	Pragmas map[string]map[string]string `json:"pragmas"`
+	// WALBound is the WAL size above which the checkpointer runs TRUNCATE.
+	WALBound int64 `json:"walBoundBytes"`
+	// JournalSizeLimit is PRAGMA journal_size_limit.
+	JournalSizeLimit int64 `json:"journalSizeLimitBytes"`
+	// MaxBatch is the most jobs in one write transaction; QueueSize how many
+	// may wait for the writer.
+	MaxBatch  int `json:"maxBatch"`
+	QueueSize int `json:"queueSize"`
+	// ReadConns is the size of the read-only pool.
+	ReadConns int `json:"readConns"`
+	// PassiveEveryMs is the period of PASSIVE checkpoints; the size
+	// trigger is looked at on the same tick.
+	PassiveEveryMs int64 `json:"passiveEveryMs"`
+	// SnapshotStepPages and SnapshotPauseMs are a snapshot's default pacing.
+	SnapshotStepPages int   `json:"snapshotStepPages"`
+	SnapshotPauseMs   int64 `json:"snapshotPauseMs"`
+}
+
+// Settings returns the effective settings Open found.
+func (db *DB) Settings() Settings { return db.settings }
 
 // Open opens (or creates) the database at opts.Path and starts its writer
 // and checkpointer.
@@ -193,13 +225,22 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 		return nil, err
 	}
 
+	db.settings = Settings{
+		Pragmas:  map[string]map[string]string{},
+		WALBound: opts.WALBound, JournalSizeLimit: opts.JournalSizeLimit,
+		MaxBatch: opts.MaxBatch, QueueSize: opts.QueueSize, ReadConns: opts.ReadConns,
+		PassiveEveryMs:    opts.PassiveEvery.Milliseconds(),
+		SnapshotStepPages: defaultStepPages, SnapshotPauseMs: defaultStepPause.Milliseconds(),
+	}
 	for _, c := range []struct {
 		name string
 		q    queryer
 	}{{"writer", db.wconn}, {"reader", db.rdb}, {"checkpointer", db.cconn}} {
-		if err := checkSettings(ctx, c.q, db.opts.JournalSizeLimit); err != nil {
+		got, err := checkSettings(ctx, c.q, db.opts.JournalSizeLimit)
+		if err != nil {
 			return nil, fmt.Errorf("storage: %s connection: %w", c.name, err)
 		}
+		db.settings.Pragmas[c.name] = got
 	}
 
 	db.loops.Add(2)
@@ -235,8 +276,9 @@ type queryer interface {
 }
 
 // checkSettings verifies that a connection really runs with the settings
-// ADR-0059 fixes, so a driver change cannot silently weaken them.
-func checkSettings(ctx context.Context, q queryer, journalLimit int64) error {
+// ADR-0059 fixes, so a driver change cannot silently weaken them, and
+// returns what it read.
+func checkSettings(ctx context.Context, q queryer, journalLimit int64) (map[string]string, error) {
 	want := []struct {
 		pragma string
 		value  string
@@ -248,16 +290,18 @@ func checkSettings(ctx context.Context, q queryer, journalLimit int64) error {
 		{"wal_autocheckpoint", "0"},
 		{"journal_size_limit", fmt.Sprint(journalLimit)},
 	}
+	out := map[string]string{}
 	for _, w := range want {
 		var got string
 		if err := q.QueryRowContext(ctx, "PRAGMA "+w.pragma).Scan(&got); err != nil {
-			return fmt.Errorf("PRAGMA %s: %w", w.pragma, err)
+			return nil, fmt.Errorf("PRAGMA %s: %w", w.pragma, err)
 		}
 		if got != w.value {
-			return fmt.Errorf("PRAGMA %s is %s, want %s", w.pragma, got, w.value)
+			return nil, fmt.Errorf("PRAGMA %s is %s, want %s", w.pragma, got, w.value)
 		}
+		out[w.pragma] = got
 	}
-	return nil
+	return out, nil
 }
 
 // Reader is the pool of read-only connections. A statement that writes

@@ -54,9 +54,9 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
 - `bench/g9a/`: the G9a storage benchmark harness (`run.sh`, the k6
   script, the `g9a` command): G9a's load profile, every checkpoint and the
   WAL size logged, paced backups, converge runs, the disk record, and a
-  report that judges a run by G9a's criteria. Until step 3 builds
-  varlatchd it serves the load from a stand-in workload on `lib/storage`,
-  whose runs are inconclusive by design; see `bench/g9a/README.md`.
+  report that judges a run by G9a's criteria. It drives varlatchd built
+  with the `g9a` build tag (`varlatchd g9a`, step 3.6) as a process; see
+  `bench/g9a/README.md`.
 - `internal/spdxheader/`: puts the SPDX line on generated files.
 - `cmd/varlatch/`, `lib/` and everything else: Apache-2.0. No Apache-2.0
   package may depend on an AGPL-3.0-or-later one; `licensing_test.go`
@@ -395,8 +395,6 @@ passes, every failure in it listed with a reason.
   `varlatchd.service`, all in `SHA256SUMS`; `install.sh` attached with
   `@VARLATCH_VERSION@` replaced by the version; varlatch.com serving the
   latest one with a `Content-Length`.
-- Step 3 points the G9a harness at varlatchd (`bench/g9a/README.md`,
-  "Against varlatchd") before G9a is run as the gate.
 - List the Go module's dependencies (`go list -m all`, modernc.org/sqlite
   and its own) in THIRD-PARTY-NOTICES.md and its generator: the generator
   (`scripts/generate-third-party-notices.mjs`, `pnpm notices:check`)

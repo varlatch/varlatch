@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // The load of ADR-0059's G9a, open loop: one constant-arrival-rate scenario
-// per phase of the plan, started back to back. Every request is printed as
-// one line, R,<phase>,<scheduled µs>,<latency µs>,<service µs>,<status>,<error>,
+// per phase of the plan, started back to back. Each request is a Secret
+// retrieval with its audit write: varlatchd's disclosure of one Secret,
+// POST …/disclosures {"items":[name]}. Every request is printed as one
+// line, R,<phase>,<scheduled µs>,<latency µs>,<service µs>,<status>,<error>,<request id>,<identity>,
 // with the latency counted from the request's scheduled start (scenario
 // start + i / rate), so a request sent late counts its wait; a request k6
 // could not start at all is a dropped iteration. run.sh sends the lines to
 // requests.log and the summary to k6-summary.json.
+//
+// The load comes from 20 loopback source addresses (run.sh: k6
+// --local-ips), each with one identity's credential (ADR-0059
+// varlatchd-core decision 6): k6 gives virtual user n the (n - 1)th address,
+// in turn, and the manifest's entries are in the same order, so a virtual
+// user uses its address's entry. The report checks each address carried one
+// identity (the request id joins this log to varlatchd's access log).
 //
 // Environment: BASE (server URL), PLAN and MANIFEST (absolute paths),
 // SUMMARY (where to write the summary).
@@ -52,14 +61,19 @@ export function setup() {
 export function retrieve() {
   const sc = exec.scenario;
   const sched = sc.startTime + (sc.iterationInTest * 1000) / Number(__ENV.RATE);
-  const m = manifest[Math.floor(Math.random() * manifest.length)];
+  const m = manifest[(exec.vu.idInInstance - 1) % manifest.length];
+  const key = m.keys[Math.floor(Math.random() * m.keys.length)];
   const t0 = Date.now();
-  const r = http.get(`${__ENV.BASE}/v1/retrieve/${m.env}/${m.key}`, {
-    headers: { Authorization: `Bearer ${m.token}` },
-    timeout: '10s',
-    responseType: 'text',
-    tags: { name: 'retrieve' },
-  });
+  const r = http.post(
+    `${__ENV.BASE}/v1/organizations/${m.org}/projects/${m.project}/environments/${m.env}/disclosures`,
+    JSON.stringify({ items: [key] }),
+    {
+      headers: { Authorization: `Bearer ${m.token}`, 'Content-Type': 'application/json' },
+      timeout: '10s',
+      responseType: 'text',
+      tags: { name: 'retrieve' },
+    },
+  );
   const service = r.timings.blocked + r.timings.duration;
   const latency = Math.max(0, t0 - sched) + service;
   let err = '';
@@ -68,7 +82,8 @@ export function retrieve() {
   } else if (r.status !== 200) {
     err = String(r.body || '').includes('SQLITE_BUSY') ? 'busy' : `http_${r.status}`;
   }
-  console.log(`R,${sc.name},${Math.round(sched * 1000)},${Math.round(latency * 1000)},${Math.round(service * 1000)},${r.status},${err}`);
+  const id = (r.headers && r.headers['X-Request-Id']) || '';
+  console.log(`R,${sc.name},${Math.round(sched * 1000)},${Math.round(latency * 1000)},${Math.round(service * 1000)},${r.status},${err},${id},${m.identity}`);
 }
 
 export function handleSummary(data) {

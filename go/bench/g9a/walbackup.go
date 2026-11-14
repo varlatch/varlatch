@@ -66,7 +66,7 @@ func (w *walWatch) done() bool { return w.heldOff || w.attempts >= w.maxAttempts
 // end or at /run/stop finishes under work. Every attempt is logged as
 // wal_backup with the WAL size that started it and whether it held a
 // TRUNCATE off.
-func (s *server) walBackups(ctx, work context.Context, end time.Time, b Backup) {
+func (s *Runner) walBackups(ctx, work context.Context, end time.Time, b Backup) {
 	w := newWALWatch(b.WALTriggered, s.opts.Plan.WALBound)
 	t := time.NewTicker(walWatchEvery)
 	defer t.Stop()
@@ -100,7 +100,7 @@ func (s *server) walBackups(ctx, work context.Context, end time.Time, b Backup) 
 
 // walAttempt runs one WAL-triggered backup in the slot the caller took,
 // releases it, logs wal_backup and says whether it held a TRUNCATE off.
-func (s *server) walAttempt(work context.Context, phase string, attempt int, size int64) bool {
+func (s *Runner) walAttempt(work context.Context, phase string, attempt int, size int64) bool {
 	defer s.slot.release()
 	before := s.deferred.Load()
 	started := s.backup(work, Event{Phase: phase, Attempt: attempt, WALBefore: size})
