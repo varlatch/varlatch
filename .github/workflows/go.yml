@@ -41,6 +41,10 @@ on:
       - "scripts/conformance/lib/operations.mjs"
       - "scripts/conformance/targets/go-binary.mjs"
       - "scripts/conformance/expect/go-binary.json"
+      - "scripts/conformance/targets/capabilities.json"
+      # The read path's parity vectors and G3's reverse direction: the
+      # TypeScript server's answers, and its read path on values Go sealed.
+      - "services/varlatchd/test/go-values-fixture.test.ts"
   push:
     branches: [main, rewrite/go]
     # The same paths as pull_request's.
@@ -59,6 +63,8 @@ on:
       - "scripts/conformance/lib/operations.mjs"
       - "scripts/conformance/targets/go-binary.mjs"
       - "scripts/conformance/expect/go-binary.json"
+      - "scripts/conformance/targets/capabilities.json"
+      - "services/varlatchd/test/go-values-fixture.test.ts"
   workflow_dispatch:
 
 permissions:
@@ -126,9 +132,13 @@ jobs:
           git add -N .
           git diff --exit-code -- . || { echo "Generated files are stale: run go generate ./... in go/ and commit the result." >&2; exit 1; }
 
+      # Every build tag too: conformance (the harness's fixtures, probes and
+      # seed) is AGPL server code that ships in no release.
       - name: Vet
         working-directory: go
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet -tags conformance ./...
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
       # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
@@ -303,6 +313,19 @@ jobs:
           cd go
           go generate ./server/web
           go build -tags conformance -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+      # G3 (ADR-0059 step 3.6), the direction the Go tests cannot take: the
+      # TypeScript server's own read path (its effective-configuration and
+      # disclosure routes, in PGlite) opens a database fixture whose
+      # Organization KEKs and values this commit's Go code sealed, and must
+      # give the answers the fixture records. The same run checks that the
+      # committed fixtures (values-v0.22.0.json, values-v0.21.0.json, which
+      # the Go tests replay) are still this server's answers.
+      - name: The TypeScript server reads values Go sealed
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go test -count=1 -run '^TestGoSealedFixture$' ./server/values -args -write-go-sealed="$RUNNER_TEMP/go-sealed-values.json")
+          VARLATCH_GO_SEALED_VALUES="$RUNNER_TEMP/go-sealed-values.json" pnpm --filter @varlatch/varlatchd exec vitest run test/go-values-fixture.test.ts
       - name: The go-binary adapter and the stale-lacks probe against varlatchd
         env:
           VARLATCH_REQUIRE_GO_BINARY: "1"

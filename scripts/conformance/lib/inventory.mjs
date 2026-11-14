@@ -63,6 +63,9 @@ export const CAPABILITIES = [
   "serve-cli",
   "ts-stack",
   "go-server",
+  // Not one a suite needs: a target with it writes the runner's seed
+  // itself (lib/operations.mjs; the Go server until step 4's writes).
+  "seed",
 ];
 
 /**

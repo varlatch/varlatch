@@ -133,7 +133,10 @@ func (s *Server) answerError(w http.ResponseWriter, r *http.Request, err error) 
 	}
 	var de *domainerr.Error
 	var slow *auth.ErrSlowDown
+	var nb *notBuiltError
 	switch {
+	case errors.As(err, &nb):
+		writeError(w, r, http.StatusNotImplemented, NotImplementedYet, nb.detail)
 	case errors.As(err, &de):
 		status, ok := StatusByCode[de.Code]
 		if !ok {
@@ -241,7 +244,10 @@ func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.Handler
 		if schema, ok := bodySchemas[pattern]; ok {
 			r = readBody(r, schema)
 		}
-		if ignoresQuery[pattern] {
+		if readsItself[pattern] {
+			r = keepRaw(r)
+		}
+		if ignoresQuery[pattern] || readsItself[pattern] {
 			u := *r.URL
 			u.RawQuery = ""
 			r.URL = &u

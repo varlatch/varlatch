@@ -40,6 +40,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/realtime"
+	"github.com/varlatch/varlatch/go/server/values"
 )
 
 // MaxBody is the largest request body accepted (Hono's bodyLimit in
@@ -79,6 +80,9 @@ type Options struct {
 	// device sign-in (ADR-0059 step 3.4). Without it no bearer
 	// authenticates and the browser session is not served.
 	Auth *auth.Service
+	// Values is the read path of values (ADR-0059 step 3.6): the effective
+	// configuration and disclosures. Without it they answer 500.
+	Values *values.Service
 	// Realtime publishes the dashboard's live updates (GET /auth/events,
 	// events.go; ADR-0059 Decision 4). Served only with Auth, which
 	// authenticates the streams; /v1/meta then lists realtime.sse.
@@ -119,6 +123,9 @@ var BuiltOperations = []string{
 	"POST /v1/auth/device/lookup",
 	"POST /v1/auth/device/approve",
 	"GET /v1/organizations",
+	// Step 3.6: the read path of values (values.go).
+	effectivePattern,
+	disclosurePattern,
 }
 
 // Server is the handler.

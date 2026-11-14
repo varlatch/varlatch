@@ -169,8 +169,12 @@ try {
   for (const k of [...lacksBefore].filter((k) => !lacksNow.has(k)).sort()) console.log(`REMOVED-LACKS  ${k}`);
   const addedLacks = [...lacksNow].filter((k) => !lacksBefore.has(k)).sort();
   for (const k of addedLacks) console.log(`ADDED-LACKS    ${k}`);
-  const lackingBefore = lackingCheckKeys(baseFiles, baseInventory);
-  const lackingNow = lackingCheckKeys(headFiles, inventory);
+  // Each side with its own capabilities: a target that stops writing the
+  // seed itself makes the checks that need it newly lacking.
+  const capabilitiesAt = (rev) => JSON.parse(showOrNull(rev, CAPABILITIES_FILE) ?? "null");
+  const headCapabilities = capabilitiesAt(head);
+  const lackingBefore = lackingCheckKeys(baseFiles, baseInventory, capabilitiesAt(mergeBase) ?? headCapabilities);
+  const lackingNow = lackingCheckKeys(headFiles, inventory, headCapabilities);
   const newlyLacking = [...lackingNow].filter((k) => !lackingBefore.has(k)).sort();
   for (const k of newlyLacking) console.log(`NEWLY-LACKS    ${k}`);
   console.log(`--- checks reporting target-lacks: ${lackingBefore.size} at the merge base, ${lackingNow.size} now (${newlyLacking.length} newly)`);
@@ -187,8 +191,6 @@ try {
   // Checks that stop applying: a check of the merge base that the head
   // makes not applicable on a target where it applied (reclassified,
   // moved, a suite or capability change).
-  const capabilitiesAt = (rev) => JSON.parse(showOrNull(rev, CAPABILITIES_FILE) ?? "null");
-  const headCapabilities = capabilitiesAt(head);
   const newlyNA = newlyNotApplicable(
     { inventory: baseInventory, capabilities: capabilitiesAt(mergeBase) ?? headCapabilities },
     { inventory, capabilities: headCapabilities },

@@ -205,6 +205,31 @@ The server's packages:
   the incident freeze at Organization entry and in
   `RefuseIfIncidentFrozen` (ADR-0055); and Destination Selectors
   (`authz/destination.ts`).
+- `server/values` (step 3.6): the read path of values, served as
+  `getEffectiveConfiguration` and `discloseSecrets` (ADR-0059
+  varlatchd-core decision 2): a snapshot (one read transaction) resolves
+  the scope, decides authorization, captures the Contract, the items and
+  their ciphertext, and runs passkey-verification's checkpoint; then each
+  disclosure's audit events are one write job of the single writer, and
+  nothing is decrypted before it committed (Root KEK, Organization KEK,
+  DEK, value). References expand only within what the caller receives, one
+  audited level at a time. The one case not served is an export while
+  admin-step-up is at enforce (501 `NOT_IMPLEMENTED_YET`; its approval
+  comes with step 4's protected writes). `testdata/values-v0.22.0.json`
+  and `values-v0.21.0.json` hold a database the TypeScript server built
+  through its own `/v1` API (the v0.21.0 file's envelopes sealed by that
+  release's code), a table of requests and that server's answers, audit
+  events, exposure rows and report counts: the Go tests load the rows
+  through the schema mapping and must give the same answers, and the same
+  with every Organization KEK and value sealed again by Go, which go.yml
+  then hands to the TypeScript server's read path (G3, both directions).
+  `services/varlatchd/test/go-values-fixture.test.ts` writes them (and
+  `server/daemon/seed_contract.json`, the conformance seed's Contract) and
+  checks the committed files are still that server's answers:
+
+  ```sh
+  VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/varlatchd exec vitest run test/go-values-fixture.test.ts
+  ```
 - `server/jsvalue`: JSON as `JSON.parse` and `JSON.stringify` read and
   write it (member order, numbers, escapes, lone UTF-16 surrogates kept as
   `\udxxx`), and jsonb's key order and refusals.
