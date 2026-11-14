@@ -3,9 +3,11 @@
 /**
  * The expected failures only shrink by default (scripts/conformance/README.md):
  * compares scripts/conformance/expect/*.json at a pull request's head with
- * its merge base, and fails when the head adds an entry, unless the pull
- * request carries the `conformance-regression` label. It also validates the
- * head's files against the head's inventory and clients.json.
+ * its merge base, and fails when the head adds an entry, removes a target's
+ * file (or the whole directory), or deletes or renames this checker, a file
+ * it imports, inventory.json or clients.json, unless the pull request
+ * carries the `conformance-regression` label. It also validates the head's
+ * files against the head's inventory and clients.json.
  *
  *   node scripts/conformance/expect-check.mjs --base <rev> --head <rev> [--labeled] [--repo <dir>]
  *   node scripts/conformance/expect-check.mjs --validate-only --head <rev> [--repo <dir>]
@@ -29,7 +31,7 @@
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { addedEntries, entryKeys, REGRESSION_LABEL, validateExpectations } from "./lib/expect.mjs";
+import { addedEntries, entryKeys, importClosure, REGRESSION_LABEL, validateExpectations } from "./lib/expect.mjs";
 import { TARGET_NAMES } from "./targets/index.mjs";
 
 const CHECKOUT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -53,6 +55,14 @@ for (let i = 0; i < argv.length; i++) {
 if (!options.head) usage("--head is required");
 if (!options.validateOnly && !options.base) usage("--base is required (or --validate-only)");
 if (options.validateOnly && (options.base || options.labeled)) usage("--validate-only takes only --head");
+
+/**
+ * The files the checker cannot work without, relative to the repository:
+ * this script, every module it imports, and the data it reads. Computed
+ * from the checker that runs, which in CI is the base commit's.
+ */
+const protectedPaths = () =>
+  [...importClosure(fileURLToPath(import.meta.url), CHECKOUT), "scripts/conformance/inventory.json", "scripts/conformance/clients.json"].sort();
 
 function git(args) {
   const r = spawnSync("git", args, { cwd: options.repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -92,8 +102,18 @@ try {
   const baseFiles = filesAt(mergeBase);
   console.log(`--- expected failures at ${head.slice(0, 12)} against the merge base ${mergeBase.slice(0, 12)}: ${entryKeys(baseFiles).size} entries before, ${entryKeys(headFiles).size} now`);
 
-  const removed = [...entryKeys(baseFiles)].filter((k) => !entryKeys(headFiles).has(k)).sort();
-  for (const k of removed) console.log(`REMOVED  ${k}`);
+  // What the head takes away that this check needs: a target's expectations
+  // file (or the whole directory), the checker, a module it imports, or the
+  // data it reads. A rename counts: the old path is gone.
+  const exists = (rev, path) => spawnSync("git", ["cat-file", "-e", `${rev}:${path}`], { cwd: options.repo }).status === 0;
+  const removed = [
+    ...Object.keys(baseFiles).filter((name) => !(name in headFiles)).map((name) => `${DIR}/${name}.json`),
+    ...protectedPaths().filter((path) => exists(mergeBase, path) && !exists(head, path)),
+  ];
+  for (const path of removed) console.log(`DELETED  ${path}`);
+
+  const removedEntries = [...entryKeys(baseFiles)].filter((k) => !entryKeys(headFiles).has(k)).sort();
+  for (const k of removedEntries) console.log(`REMOVED  ${k}`);
   const added = addedEntries(baseFiles, headFiles);
   for (const k of added) console.log(`ADDED    ${k}`);
   if (added.length > 0 && !options.labeled) {
@@ -104,7 +124,16 @@ try {
   } else if (added.length > 0) {
     console.log(`--- ${added.length} expected failures added, allowed by the ${REGRESSION_LABEL} label`);
   }
-  process.exit(problems.length > 0 || (added.length > 0 && !options.labeled) ? 1 : 0);
+  if (removed.length > 0 && !options.labeled) {
+    console.log(
+      `--- this pull request deletes or renames ${removed.length} files the expectations check depends on. ` +
+        `Label the pull request ${REGRESSION_LABEL} and run this check again if that is intended.`,
+    );
+  } else if (removed.length > 0) {
+    console.log(`--- ${removed.length} files the check depends on deleted or renamed, allowed by the ${REGRESSION_LABEL} label`);
+  }
+  const refused = (added.length > 0 || removed.length > 0) && !options.labeled;
+  process.exit(problems.length > 0 || refused ? 1 : 0);
 } catch (err) {
   console.error(`--- expect-check failed: ${err.message}`);
   process.exit(1);

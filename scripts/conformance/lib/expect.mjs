@@ -20,6 +20,8 @@
  * merge base, and an added entry fails unless the pull request carries the
  * `conformance-regression` label (expect-check.mjs).
  */
+import { readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { VERSION } from "./inventory.mjs";
 
 export const ANY_CLIENT = "*";
@@ -129,4 +131,25 @@ export function entryKeys(files) {
 export function addedEntries(base, head) {
   const before = entryKeys(base);
   return [...entryKeys(head)].filter((k) => !before.has(k)).sort();
+}
+
+/**
+ * A module and every module it reaches through static relative imports
+ * (`... from "<relative path>"` and bare `import "<relative path>"`), as
+ * paths relative to `root` with forward slashes: what the expectations
+ * checker needs to run. Comments are ignored. Dynamic imports are not
+ * followed: the checker loads no module that way (it reads only target
+ * names from targets/index.mjs).
+ */
+export function importClosure(entry, root) {
+  const seen = new Set();
+  const visit = (file) => {
+    const path = relative(root, file).split("\\").join("/");
+    if (seen.has(path)) return;
+    seen.add(path);
+    const code = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    for (const m of code.matchAll(/(?:\bfrom\s*|^\s*import\s+)["'](\.{1,2}\/[^"']+)["']/gm)) visit(join(dirname(file), m[1]));
+  };
+  visit(entry);
+  return [...seen].sort();
 }

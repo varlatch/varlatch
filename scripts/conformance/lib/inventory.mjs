@@ -34,6 +34,8 @@
  * or the runner reports outside a check. An error is never a skip.
  */
 
+import { STATUSES } from "./results.mjs";
+
 export const KINDS = ["conformance", "ts-stack", "component"];
 
 /**
@@ -249,9 +251,18 @@ export function evaluate({ inventory, reports, errors = [], cliVersion = null })
     const judged = (outcome, why = "", failure = null) =>
       checks.push({ id, suite: entry.suite, kind: entry.kind, feature: entry.feature ?? null, outcome, why, reports: got.length, ...(failure ? { failure } : {}) });
     const reporting = (why) => judged("fail", why, "reporting");
+    // Inconsistency first: only a single, valid status is judged by its
+    // kind, so a FAIL mixed with any other result (PASS, a forbidden N/A, an
+    // unconfirmed PREDATES-CLI) is a reporting failure, never an assertion
+    // an expectation could excuse.
+    const invalid = [...statuses].filter((st) => !STATUSES.includes(st));
     if (got.length === 0) reporting("did not report");
+    else if (invalid.length > 0) reporting(`reported an invalid status: ${invalid.join(", ")}`);
+    else if (statuses.size > 1) {
+      const failed = got.find((r) => r.status === "FAIL");
+      reporting(`reported inconsistently: ${[...statuses].join(", ")} (${got.length} results)${failed ? `; a FAIL said: ${failed.text}` : ""}`);
+    }
     else if (statuses.has("FAIL")) judged("fail", got.find((r) => r.status === "FAIL").text, "assertion");
-    else if (statuses.size > 1) reporting(`reported inconsistently: ${[...statuses].join(", ")}`);
     else if (statuses.has("PASS")) judged("pass");
     else if (statuses.has("N/A")) {
       if (entry.kind === "ts-stack") judged("not-applicable", got[0].text);

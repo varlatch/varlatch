@@ -2,46 +2,51 @@ name: Conformance expectations
 
 # The conformance harness's expected failures only shrink by default
 # (scripts/conformance/README.md): a pull request that adds an entry to
-# scripts/conformance/expect/*.json fails here unless it carries the
+# scripts/conformance/expect/*.json, removes a target's file, or deletes or
+# renames the checker or a file it reads fails here unless it carries the
 # conformance-regression label. Adding or removing the label runs the check
-# again. Like CI, a draft pull request runs nothing. Hosted runners only.
+# again.
 #
-# The checker is trusted code: on a pull request it runs from the base
-# commit, never from the pull request, so a pull request cannot change the
-# checker and add entries in one go. The pull request's head is fetched as
-# git objects only, and the checker reads its expect/*.json, inventory.json
-# and clients.json with `git show` and parses them as JSON; nothing from the
-# head is executed. (This workflow file itself comes from the pull request,
-# as for every pull_request workflow, so a change to it is reviewed as code.
-# pull_request_target is not used: it would run with write access next to
-# the pull request's files.) A push to main validates the files it lands.
+# Trust model. This runs on pull_request_target, so the workflow definition
+# and every line of code that runs come from the base branch, never from the
+# pull request: a pull request cannot replace this check with a no-op, nor
+# change the checker that judges it. In return the job must never run the
+# pull request's code, and does not:
+#
+#   - it checks out the BASE commit and runs only scripts/conformance/
+#     expect-check.mjs and its imports from there (no install, no build);
+#   - it fetches the pull request's head (refs/pull/<n>/head) as git objects
+#     only; the checker reads the head's expect/*.json, inventory.json and
+#     clients.json with `git show` and parses them as JSON. Nothing from the
+#     head is checked out, installed, imported or executed;
+#   - the token is read-only (contents: read), it is not persisted in the
+#     checkout, and no secret is used;
+#   - the label comes from the event's payload.
+#
+# A missing checker on the base fails the job: the workflow exists only on a
+# base that also has the checker. A push to main validates the files it lands
+# with the pushed commit's own checker. Hosted runners only.
 on:
-  pull_request:
+  pull_request_target:
+    # ready_for_review: a draft runs nothing (as in CI), so the check runs
+    # when the pull request is marked ready.
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     paths:
-      - "scripts/conformance/expect/**"
-      - "scripts/conformance/inventory.json"
-      - "scripts/conformance/clients.json"
-      - "scripts/conformance/lib/expect.mjs"
-      - "scripts/conformance/lib/inventory.mjs"
-      - "scripts/conformance/expect-check.mjs"
+      - "scripts/conformance/**"
       - ".github/workflows/conformance-expect.yml"
   push:
     branches: [main]
     paths:
-      - "scripts/conformance/expect/**"
-      - "scripts/conformance/inventory.json"
-      - "scripts/conformance/clients.json"
-      - "scripts/conformance/lib/expect.mjs"
-      - "scripts/conformance/lib/inventory.mjs"
-      - "scripts/conformance/expect-check.mjs"
+      - "scripts/conformance/**"
       - ".github/workflows/conformance-expect.yml"
 
 permissions:
   contents: read
 
+# Per pull request: under pull_request_target github.ref is the base branch,
+# which every pull request shares.
 concurrency:
-  group: conformance-expect-${{ github.ref }}
+  group: conformance-expect-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -50,10 +55,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # The code that runs: the pull request's base commit, or the pushed commit on main.
+      # The code that runs: the base commit of the pull request, or the pushed commit on main.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
           # The merge base of the base and head commits must be present.
           fetch-depth: 0
           persist-credentials: false
@@ -62,22 +67,20 @@ jobs:
           node-version: 26
       # The pull request's commits, as objects only (a fork's too): nothing is checked out.
       - name: Fetch the pull request's head as data
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request_target'
         env:
           PR: ${{ github.event.pull_request.number }}
         run: git fetch --no-tags origin "+refs/pull/${PR}/head:refs/remotes/pull/head"
       - name: Expected failures only shrink unless labeled
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request_target'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           LABELED: ${{ contains(github.event.pull_request.labels.*.name, 'conformance-regression') }}
         run: |
           if [ ! -f scripts/conformance/expect-check.mjs ]; then
-            # Only the pull request that introduces the checker: its base has
-            # no checker to trust, and no expectations to add to.
-            echo "::notice::the base commit has no expectations checker yet; nothing to compare"
-            exit 0
+            echo "::error::the base commit has no scripts/conformance/expect-check.mjs: nothing trusted can judge this pull request"
+            exit 1
           fi
           flags=()
           if [ "$LABELED" = true ]; then flags+=(--labeled); fi

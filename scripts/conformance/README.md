@@ -55,7 +55,9 @@ ERROR  a problem outside any one check
 ```
 
 A check may report more than once (a loop over fixed cases); it passes only
-when every report passes.
+when every report passes. Mixed results for one check (a `FAIL` with a
+`PASS`, an `N/A` or a `PREDATES-CLI`) fail it as inconsistent reporting,
+which no expected failure covers.
 
 ## The inventory is the gate
 
@@ -232,10 +234,18 @@ runs `expect-check.mjs` on a pull request that changes it: it compares the
 files at the pull request's head with its merge base, and fails when the
 head adds an entry (moving one to another client or target counts as
 adding one), unless the pull request carries the `conformance-regression`
-label. Adding or removing the label runs the check again. The checker runs
-from the pull request's base commit, and reads the head's files with
-`git show` as data only, so a pull request cannot change the checker that
-judges it. A push to `main` validates the files it lands. For `go-binary`
+label. The same label is needed to delete or rename a target's file (or
+the whole directory), the checker, a module it imports, `inventory.json` or
+`clients.json`. Adding or removing the label runs the check again.
+
+The workflow runs on `pull_request_target`: its definition and the checker
+come from the base branch, so a pull request can change neither the check
+nor the checker that judges it. It checks out the base commit only, fetches
+the pull request's head as git objects, and reads the head's files with
+`git show` as JSON; nothing from the head is checked out, installed,
+imported or executed, the token is read-only and no secret is used. A base
+without the checker fails the job. A push to `main` validates the files it
+lands. For `go-binary`
 the file starts, in step 3, as the conformance checks the Go server does
 not pass yet, and is the step 4 parity tracker.
 

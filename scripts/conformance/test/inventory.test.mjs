@@ -171,7 +171,20 @@ test("not applicable: allowed for ts-stack checks only", () => {
 test("a check reported more than once passes only if every report passed and they agree", () => {
   let run = evaluate({ inventory: base(), reports: [...all(), { ...pass("web", "web.csp-strict"), status: "FAIL", text: "second case" }] });
   assert.equal(outcome(run, "web.csp-strict").outcome, "fail");
-  assert.equal(outcome(run, "web.csp-strict").why, "second case");
+  // A FAIL mixed with a PASS is a reporting failure, which keeps the FAIL's words.
+  assert.equal(outcome(run, "web.csp-strict").failure, "reporting");
+  assert.equal(outcome(run, "web.csp-strict").why, "reported inconsistently: PASS, FAIL (2 results); a FAIL said: second case");
+  // Every result failing is one assertion failure.
+  run = evaluate({
+    inventory: base(),
+    reports: [...all().filter((r) => r.id !== "web.csp-strict"), { ...pass("web", "web.csp-strict"), status: "FAIL", text: "first" }, { ...pass("web", "web.csp-strict"), status: "FAIL", text: "second" }],
+  });
+  assert.equal(outcome(run, "web.csp-strict").failure, "assertion");
+  assert.equal(outcome(run, "web.csp-strict").why, "first");
+  // A status the format does not have.
+  run = evaluate({ inventory: base(), reports: [...all().filter((r) => r.id !== "web.csp-strict"), { ...pass("web", "web.csp-strict"), status: "SKIP" }] });
+  assert.match(outcome(run, "web.csp-strict").why, /invalid status: SKIP/);
+  assert.equal(outcome(run, "web.csp-strict").failure, "reporting");
   run = evaluate({ inventory: base(), reports: [...all(), { suite: "stack", id: "stack.convex", status: "N/A", text: "" }] });
   assert.match(outcome(run, "stack.convex").why, /inconsistently/);
   run = evaluate({ inventory: base(), reports: [...all(), pass("web", "web.csp-strict")] });

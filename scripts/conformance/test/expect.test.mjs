@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { addedEntries, applyExpectations, entryKeys, expectationsFor, validateExpectations } from "../lib/expect.mjs";
+import { addedEntries, applyExpectations, entryKeys, expectationsFor, importClosure, validateExpectations } from "../lib/expect.mjs";
 import { evaluate } from "../lib/inventory.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -138,6 +138,15 @@ test("only a check's own FAIL line can be expected; a reporting failure always f
   fails(judgeWithExpectation([{ suite: "s", id: "s.a", status: "PREDATES-CLI", text: "" }], { cliVersion: "0.22.0" }), /is not older than 0\.20\.0/);
   // Inconsistent reports.
   fails(judgeWithExpectation([{ suite: "s", id: "s.a", status: "PASS", text: "" }, { suite: "s", id: "s.a", status: "N/A", text: "" }]), /reported inconsistently/);
+  // A FAIL mixed with anything else: never excused (Sol's re-check cases).
+  const FAIL = { suite: "s", id: "s.a", status: "FAIL", text: "s.a failed" };
+  fails(judgeWithExpectation([FAIL, { suite: "s", id: "s.a", status: "PASS", text: "" }]), /reported inconsistently: FAIL, PASS \(2 results\); a FAIL said: s\.a failed/);
+  fails(judgeWithExpectation([FAIL, { suite: "s", id: "s.a", status: "N/A", text: "no capability" }]), /reported inconsistently: FAIL, N\/A/);
+  fails(judgeWithExpectation([FAIL, { suite: "s", id: "s.a", status: "PREDATES-CLI", text: "" }]), /reported inconsistently: FAIL, PREDATES-CLI/);
+  fails(judgeWithExpectation([FAIL, { suite: "s", id: "s.a", status: "PREDATES-CLI", text: "" }], { cliVersion: "0.19.0" }), /reported inconsistently/);
+  fails(judgeWithExpectation([{ ...FAIL, status: "SKIP" }]), /invalid status: SKIP/);
+  // Two FAIL lines (a loop whose every case failed) stay one assertion failure.
+  assert.equal(judgeWithExpectation([FAIL, { ...FAIL, text: "second case" }]).checks.find((c) => c.id === "s.a").outcome, "expected-fail");
   // An infrastructure error fails the run even when the expected check failed as expected.
   const infra = judgeWithExpectation([{ suite: "s", id: "s.a", status: "FAIL", text: "" }], { errors: [{ suite: "runner", message: "the run stopped: docker compose up failed" }] });
   assert.equal(infra.ok, false);
@@ -247,4 +256,68 @@ test("expect-check.mjs: fails a branch that adds an entry, unless labeled; compa
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test("expect-check.mjs: deleting or renaming a target's file, the directory, the checker or what it imports needs the label", () => {
+  const repo = mkdtempSync(join(tmpdir(), "conformance-expect-removal-"));
+  const script = join(here, "..", "expect-check.mjs");
+  const check = (...args) => spawnSync(process.execPath, [script, "--repo", repo, ...args], { encoding: "utf8" });
+  const root = join(here, "..", "..", "..");
+  const checker = importClosure(script, root);
+  try {
+    git(repo, "init", "-q", "-b", "main");
+    // The base has the checker, everything it imports, its data, and two targets' files.
+    for (const path of [...checker, "scripts/conformance/inventory.json", "scripts/conformance/clients.json"]) {
+      mkdirSync(dirname(join(repo, path)), { recursive: true });
+      writeFileSync(join(repo, path), readFileSync(join(root, path)));
+    }
+    mkdirSync(join(repo, "scripts/conformance/expect"));
+    for (const t of ["ts-source", "ts-release"]) writeFileSync(join(repo, `scripts/conformance/expect/${t}.json`), JSON.stringify(file({})));
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "base");
+    const base = git(repo, "rev-parse", "HEAD");
+
+    const branch = (name, change) => {
+      git(repo, "checkout", "-q", "-b", name, base);
+      change();
+      git(repo, "add", "-A");
+      git(repo, "commit", "-q", "-m", name);
+    };
+    const refused = (pattern) => {
+      let r = check("--base", base, "--head", "HEAD");
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stdout, pattern);
+      assert.match(r.stdout, /Label the pull request conformance-regression/);
+      r = check("--base", base, "--head", "HEAD", "--labeled");
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /allowed by the conformance-regression label/);
+    };
+
+    branch("drops-target", () => rmSync(join(repo, "scripts/conformance/expect/ts-release.json")));
+    refused(/DELETED +scripts\/conformance\/expect\/ts-release\.json/);
+    branch("drops-dir", () => rmSync(join(repo, "scripts/conformance/expect"), { recursive: true }));
+    refused(/DELETED +scripts\/conformance\/expect\/ts-source\.json/);
+    branch("renames-checker", () => git(repo, "mv", "scripts/conformance/expect-check.mjs", "scripts/conformance/check.mjs"));
+    refused(/DELETED +scripts\/conformance\/expect-check\.mjs/);
+    branch("drops-import", () => rmSync(join(repo, "scripts/conformance/lib/results.mjs")));
+    refused(/DELETED +scripts\/conformance\/lib\/results\.mjs/);
+    // Emptying a file only shrinks the list; editing the checker in place is not a removal.
+    branch("edits", () => writeFileSync(join(repo, "scripts/conformance/lib/results.mjs"), "export const STATUSES = [];\n"));
+    const r = check("--base", base, "--head", "HEAD");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /DELETED/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("the checker's own files: static relative imports, comments ignored, dynamic imports not followed", () => {
+  const root = join(here, "..", "..", "..");
+  assert.deepEqual(importClosure(join(here, "..", "expect-check.mjs"), root), [
+    "scripts/conformance/expect-check.mjs",
+    "scripts/conformance/lib/expect.mjs",
+    "scripts/conformance/lib/inventory.mjs",
+    "scripts/conformance/lib/results.mjs",
+    "scripts/conformance/targets/index.mjs",
+  ]);
 });

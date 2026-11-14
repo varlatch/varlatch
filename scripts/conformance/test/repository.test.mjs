@@ -115,3 +115,31 @@ test("each expectations file is valid and named after a target", async () => {
     assert.deepEqual(validateExpectations(parsed, { targetName, inventory, cliVersions: Object.keys(clients.cli) }), [], file);
   }
 });
+
+test("conformance-expect.yml runs only base code on pull_request_target, read-only, and never the pull request's", async () => {
+  const { parse } = await import("yaml");
+  const text = readFileSync(join(repoRoot, ".github/workflows/conformance-expect.yml"), "utf8");
+  const wf = parse(text);
+  assert.deepEqual(Object.keys(wf.on).sort(), ["pull_request_target", "push"]);
+  assert.deepEqual(wf.on.push.branches, ["main"]);
+  assert.deepEqual(wf.permissions, { contents: "read" });
+  const job = wf.jobs.expectations;
+  assert.equal(job.permissions, undefined);
+  const checkouts = job.steps.filter((s) => String(s.uses ?? "").startsWith("actions/checkout@"));
+  assert.equal(checkouts.length, 1);
+  assert.equal(checkouts[0].with.ref, "${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}");
+  assert.equal(checkouts[0].with["persist-credentials"], false);
+  // No secret, no head ref anywhere it could be checked out or run.
+  assert.doesNotMatch(text, /secrets\./);
+  assert.doesNotMatch(text, /pull_request\.head\.(ref|repo)/);
+  for (const step of job.steps) {
+    if (!step.run) continue;
+    assert.doesNotMatch(step.run, /git (checkout|switch|worktree)|pnpm|npm |npx|\bpull\/head\b.*node/, step.name);
+    assert.doesNotMatch(step.run, /\$\{\{/, `${step.name}: expressions go through env, never inline`);
+  }
+  // The head reaches the checker only as a revision it reads with git show.
+  assert.match(text, /git fetch --no-tags origin "\+refs\/pull\/\$\{PR\}\/head:refs\/remotes\/pull\/head"/);
+  // A base without the checker fails; there is no success path without it.
+  assert.doesNotMatch(text, /::notice::/);
+  assert.match(text, /::error::the base commit has no scripts\/conformance\/expect-check\.mjs/);
+});
