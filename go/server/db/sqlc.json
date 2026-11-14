@@ -1,0 +1,111 @@
+{
+  "version": "2",
+  "sql": [
+    {
+      "engine": "sqlite",
+      "schema": "schema.sql",
+      "queries": "queries",
+      "gen": {
+        "go": {
+          "package": "query",
+          "out": "query",
+          "emit_prepared_queries": false,
+          "emit_interface": false,
+          "emit_exact_table_names": false,
+          "overrides": [
+            {
+              "column": "approval_intents.approval_user_verified",
+              "go_type": {
+                "import": "database/sql",
+                "type": "NullBool"
+              }
+            },
+            {
+              "column": "audit_exports.failing_recorded",
+              "go_type": "bool"
+            },
+            {
+              "column": "audit_exports.key_can_read",
+              "go_type": {
+                "import": "database/sql",
+                "type": "NullBool"
+              }
+            },
+            {
+              "column": "audit_exports.lock_verified",
+              "go_type": {
+                "import": "database/sql",
+                "type": "NullBool"
+              }
+            },
+            {
+              "column": "audit_exports.path_style",
+              "go_type": "bool"
+            },
+            {
+              "column": "audit_exports.retention_readable",
+              "go_type": {
+                "import": "database/sql",
+                "type": "NullBool"
+              }
+            },
+            {
+              "column": "auth_session_evidence.user_verified",
+              "go_type": "bool"
+            },
+            {
+              "column": "auth_users.email_verified",
+              "go_type": "bool"
+            },
+            {
+              "column": "credentials.evidence_user_verified",
+              "go_type": {
+                "import": "database/sql",
+                "type": "NullBool"
+              }
+            },
+            {
+              "column": "device_sign_ins.approval_user_verified",
+              "go_type": {
+                "import": "database/sql",
+                "type": "NullBool"
+              }
+            },
+            {
+              "column": "identities.disabled",
+              "go_type": "bool"
+            },
+            {
+              "column": "identities.installation_admin",
+              "go_type": "bool"
+            },
+            {
+              "column": "organization_deletions.approval_required",
+              "go_type": "bool"
+            },
+            {
+              "column": "passkey_quarantine.backed_up",
+              "go_type": "bool"
+            },
+            {
+              "column": "passkeys.backed_up",
+              "go_type": "bool"
+            },
+            {
+              "column": "sync_targets.needs_sync",
+              "go_type": "bool"
+            },
+            {
+              "column": "sync_targets.redeploy",
+              "go_type": "bool"
+            },
+            {
+              "column": "sync_targets.remove_orphans",
+              "go_type": "bool"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

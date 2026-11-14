@@ -1,0 +1,1679 @@
+{
+  "comment": "How the PostgreSQL schema of the TypeScript server (testdata/pg-v0.22.0.json) maps to schema.sql. MAPPING.md explains it; mapping_test.go checks it against both. A column, constraint or index named as a plain string maps to that name (a constraint to that kind: primary key, unique, foreign key, or a CHECK of the same name); 'dropped' gives the reason; a check marked 'rewritten' is not compared by expression.",
+  "source": {
+    "ref": "v0.22.0",
+    "dump": "testdata/pg-v0.22.0.json"
+  },
+  "types": [
+    {
+      "postgres": "text",
+      "sqlite": "TEXT",
+      "rule": "unchanged"
+    },
+    {
+      "postgres": "timestamp with time zone",
+      "sqlite": "INTEGER",
+      "rule": "microseconds since the Unix epoch, UTC: PostgreSQL's own resolution, so no value changes"
+    },
+    {
+      "postgres": "integer",
+      "sqlite": "INTEGER",
+      "rule": "32-bit becomes 64-bit; every stored value fits"
+    },
+    {
+      "postgres": "bigint",
+      "sqlite": "INTEGER",
+      "rule": "unchanged (64-bit)"
+    },
+    {
+      "postgres": "boolean",
+      "sqlite": "INTEGER",
+      "rule": "0 or 1, with CHECK (c IN (0, 1)); sqlc maps the column to bool (sqlc.json)"
+    },
+    {
+      "postgres": "jsonb",
+      "sqlite": "TEXT",
+      "rule": "JSON text, with CHECK (json_valid(c)); compared as text, not by value"
+    },
+    {
+      "postgres": "text[]",
+      "sqlite": "TEXT",
+      "rule": "a JSON array of strings, with CHECK (json_valid(c) AND json_type(c) = 'array'); `= ANY ($1)` becomes json_each or IN"
+    },
+    {
+      "postgres": "bytea",
+      "sqlite": "BLOB",
+      "rule": "unchanged bytes"
+    }
+  ],
+  "defaults": [
+    {
+      "postgres": "now()",
+      "sqlite": "CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000",
+      "rule": "the database clock in microseconds, at millisecond resolution; varlatchd passes its own times"
+    },
+    {
+      "postgres": "true",
+      "sqlite": "1"
+    },
+    {
+      "postgres": "false",
+      "sqlite": "0"
+    },
+    {
+      "postgres": "'<text>'::text",
+      "sqlite": "'<text>'"
+    }
+  ],
+  "tables": {
+    "account": {
+      "dropped": "Better Auth's provider accounts (passwords, OAuth tokens). Varlatch signs people in with passkeys only and creates their users itself, so no row is ever written; the migration (step 7) checks the table is empty."
+    },
+    "approval_intent_challenges": {
+      "sqlite": "approval_intent_challenges",
+      "columns": {
+        "id": "id",
+        "intent_id": "intent_id",
+        "identity_id": "identity_id",
+        "auth_session_id": "auth_session_id",
+        "challenge": "challenge",
+        "created_at": "created_at",
+        "expires_at": "expires_at",
+        "consumed_at": "consumed_at"
+      },
+      "constraints": {
+        "approval_intent_challenges_auth_session_id_check": "check",
+        "approval_intent_challenges_challenge_key": "unique",
+        "approval_intent_challenges_check": "check",
+        "approval_intent_challenges_identity_id_fkey": "foreign key",
+        "approval_intent_challenges_intent_id_fkey": "foreign key",
+        "approval_intent_challenges_pkey": "primary key"
+      },
+      "indexes": {
+        "approval_intent_challenges_identity": "approval_intent_challenges_identity",
+        "approval_intent_challenges_intent": "approval_intent_challenges_intent"
+      }
+    },
+    "approval_intents": {
+      "sqlite": "approval_intents",
+      "columns": {
+        "id": "id",
+        "credential_id": "credential_id",
+        "identity_id": "identity_id",
+        "auth_session_id": "auth_session_id",
+        "organization_id": "organization_id",
+        "operation": "operation",
+        "target": "target",
+        "body_hash": "body_hash",
+        "query_hash": "query_hash",
+        "expected_version": "expected_version",
+        "summary": "summary",
+        "origin": "origin",
+        "created_at": "created_at",
+        "expires_at": "expires_at",
+        "approved_at": "approved_at",
+        "approved_with_passkey_id": "approved_with_passkey_id",
+        "approval_user_verified": "approval_user_verified",
+        "consumed_at": "consumed_at",
+        "closed_at": "closed_at",
+        "close_reason": "close_reason",
+        "poll_interval": "poll_interval",
+        "last_polled_at": "last_polled_at"
+      },
+      "constraints": {
+        "approval_intents_admin_step_up_organization": "check",
+        "approval_intents_audit_export_organization": "check",
+        "approval_intents_auth_session_id_check": "check",
+        "approval_intents_check": "check",
+        "approval_intents_check1": "check",
+        "approval_intents_check2": "check",
+        "approval_intents_check3": "check",
+        "approval_intents_check4": "check",
+        "approval_intents_check5": "check",
+        "approval_intents_check6": "check",
+        "approval_intents_check7": "check",
+        "approval_intents_check8": "check",
+        "approval_intents_close_reason_check": "check",
+        "approval_intents_credential_id_fkey": "foreign key",
+        "approval_intents_identity_id_fkey": "foreign key",
+        "approval_intents_operation_check": "check",
+        "approval_intents_organization_id_fkey": "foreign key",
+        "approval_intents_origin_check": "check",
+        "approval_intents_pkey": "primary key",
+        "approval_intents_poll_interval_check": "check",
+        "approval_intents_requirement_organization": "check",
+        "approval_intents_target_check": {
+          "sqlite": "check",
+          "rewritten": "jsonb_typeof(target) = 'object' as json_type(target) = 'object', behind json_valid (json_type fails on text that is not JSON)."
+        },
+        "approval_intents_unfreeze_organization": "check"
+      },
+      "indexes": {
+        "approval_intents_expires": "approval_intents_expires",
+        "approval_intents_identity_created": "approval_intents_identity_created",
+        "approval_intents_open_by_credential": "approval_intents_open_by_credential",
+        "approval_intents_open_by_organization": "approval_intents_open_by_organization"
+      }
+    },
+    "audit_events": {
+      "sqlite": "audit_events",
+      "columns": {
+        "id": "id",
+        "schema_version": "schema_version",
+        "event_type": "event_type",
+        "occurred_at": "occurred_at",
+        "actor_identity_id": "actor_identity_id",
+        "authentication_method_id": "authentication_method_id",
+        "credential_id": "credential_id",
+        "organization_id": "organization_id",
+        "action": "action",
+        "resource": "resource",
+        "decision": "decision",
+        "authz": "authz",
+        "tailnet": "tailnet",
+        "listener": "listener",
+        "request_id": "request_id",
+        "metadata": "metadata",
+        "event_order": {
+          "sqlite": "event_order",
+          "note": "The rowid. Assigned by SQLite, checked by the trigger audit_events_position."
+        },
+        "client": "client"
+      },
+      "constraints": {
+        "audit_events_client_check": "check",
+        "audit_events_decision_check": "check",
+        "audit_events_listener_check": "check",
+        "audit_events_pkey": {
+          "sqlite": "unique",
+          "note": "id stays unique; the primary key is event_order, the table's rowid."
+        }
+      },
+      "indexes": {
+        "audit_events_order_idx": {
+          "sqlite": "primary key",
+          "note": "event_order is the INTEGER PRIMARY KEY (the rowid): SQLite assigns max + 1."
+        },
+        "audit_events_org_order_idx": "audit_events_org_order_idx",
+        "audit_events_org_time_idx": "audit_events_org_time_idx"
+      },
+      "triggers": {
+        "audit_position_insert": {
+          "sqlite": [
+            "audit_events_position"
+          ],
+          "note": "PostgreSQL assigned the position from a counter row locked until commit. SQLite assigns max(event_order) + 1 (the rowid); the single writer runs one job at a time and commits batches whole, so positions are in commit order without gaps; audit_events_position refuses any insert that is not the next position."
+        }
+      }
+    },
+    "audit_export_plans": {
+      "sqlite": "audit_export_plans",
+      "columns": {
+        "id": "id",
+        "export_id": "export_id",
+        "export_version": "export_version",
+        "stream_id": "stream_id",
+        "generation": "generation",
+        "kind": "kind",
+        "object_name": "object_name",
+        "body": "body",
+        "sha256": "sha256",
+        "md5": "md5",
+        "content_type": "content_type",
+        "content_encoding": "content_encoding",
+        "format_version": "format_version",
+        "retention_mode": "retention_mode",
+        "retain_until": "retain_until",
+        "first_order": "first_order",
+        "last_order": "last_order",
+        "event_count": "event_count",
+        "heartbeat_hour": "heartbeat_hour",
+        "planned_at": "planned_at"
+      },
+      "constraints": {
+        "audit_export_plans_check": "check",
+        "audit_export_plans_check1": "check",
+        "audit_export_plans_check2": "check",
+        "audit_export_plans_content_encoding_check": "check",
+        "audit_export_plans_export_id_fkey": "foreign key",
+        "audit_export_plans_export_id_key": "unique",
+        "audit_export_plans_format_version_check": "check",
+        "audit_export_plans_kind_check": "check",
+        "audit_export_plans_md5_check": {
+          "sqlite": "check",
+          "rewritten": "PostgreSQL's regular expression (~) as GLOB patterns and a length check, which accept exactly the same strings (mapping_test.go compares them on generated input)."
+        },
+        "audit_export_plans_object_name_check": "check",
+        "audit_export_plans_pkey": "primary key",
+        "audit_export_plans_retention_mode_check": "check",
+        "audit_export_plans_sha256_check": {
+          "sqlite": "check",
+          "rewritten": "PostgreSQL's regular expression (~) as GLOB patterns and a length check, which accept exactly the same strings (mapping_test.go compares them on generated input)."
+        }
+      },
+      "indexes": {}
+    },
+    "audit_exports": {
+      "sqlite": "audit_exports",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "endpoint": "endpoint",
+        "region": "region",
+        "bucket": "bucket",
+        "prefix": "prefix",
+        "path_style": "path_style",
+        "credential_envelope": "credential_envelope",
+        "retention_mode": "retention_mode",
+        "retention_days": "retention_days",
+        "stream_id": "stream_id",
+        "stream_started_at": "stream_started_at",
+        "cursor_order": "cursor_order",
+        "generation": "generation",
+        "lease_expires_at": "lease_expires_at",
+        "state": "state",
+        "drain_deadline": "drain_deadline",
+        "last_attempt_at": "last_attempt_at",
+        "last_success_at": "last_success_at",
+        "last_error": "last_error",
+        "failing_since": "failing_since",
+        "failing_recorded": "failing_recorded",
+        "key_can_read": "key_can_read",
+        "retention_readable": "retention_readable",
+        "stopped_reason": "stopped_reason",
+        "conditional_checked_at": "conditional_checked_at",
+        "lock_verified": "lock_verified",
+        "last_heartbeat_hour": "last_heartbeat_hour",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "updated_at": "updated_at",
+        "removed_at": "removed_at",
+        "version": "version"
+      },
+      "constraints": {
+        "audit_exports_bucket_check": "check",
+        "audit_exports_check": "check",
+        "audit_exports_check1": "check",
+        "audit_exports_check2": "check",
+        "audit_exports_check3": "check",
+        "audit_exports_created_by_fkey": "foreign key",
+        "audit_exports_cursor_order_check": "check",
+        "audit_exports_endpoint_check": "check",
+        "audit_exports_organization_id_fkey": "foreign key",
+        "audit_exports_pkey": "primary key",
+        "audit_exports_prefix_check": "check",
+        "audit_exports_region_check": "check",
+        "audit_exports_retention_days_check": "check",
+        "audit_exports_retention_mode_check": "check",
+        "audit_exports_state_check": "check",
+        "audit_exports_stopped_reason_check": "check",
+        "audit_exports_version_check": "check"
+      },
+      "indexes": {
+        "audit_exports_draining_idx": "audit_exports_draining_idx",
+        "audit_exports_live_idx": "audit_exports_live_idx"
+      }
+    },
+    "audit_position": {
+      "dropped": "PostgreSQL's commit-order counter, a row locked until commit. In SQLite event_order is the rowid of audit_events and the single writer orders commits; the highest position is max(event_order) (query.LastAuditPosition)."
+    },
+    "audit_tombstone_readers": {
+      "sqlite": "audit_tombstone_readers",
+      "columns": {
+        "organization_id": "organization_id",
+        "identity_id": "identity_id",
+        "added_at": "added_at",
+        "removed_at": "removed_at",
+        "removed_by": "removed_by"
+      },
+      "constraints": {
+        "audit_tombstone_readers_check": "check",
+        "audit_tombstone_readers_identity_id_fkey": "foreign key",
+        "audit_tombstone_readers_organization_id_fkey": "foreign key",
+        "audit_tombstone_readers_pkey": "primary key",
+        "audit_tombstone_readers_removed_by_fkey": "foreign key"
+      },
+      "indexes": {}
+    },
+    "auth_session_evidence": {
+      "sqlite": "auth_session_evidence",
+      "columns": {
+        "session_id": "session_id",
+        "ceremony": "ceremony",
+        "user_verified": "user_verified",
+        "passkey_id": "passkey_id",
+        "recorded_at": "recorded_at"
+      },
+      "constraints": {
+        "auth_session_evidence_ceremony_check": "check",
+        "auth_session_evidence_pkey": "primary key",
+        "auth_session_evidence_session_id_check": "check"
+      },
+      "indexes": {}
+    },
+    "auth_user_links": {
+      "sqlite": "auth_user_links",
+      "columns": {
+        "better_auth_user_id": "better_auth_user_id",
+        "identity_id": "identity_id",
+        "created_at": "created_at"
+      },
+      "constraints": {
+        "auth_user_links_better_auth_user_id_fkey": "foreign key",
+        "auth_user_links_identity_id_fkey": "foreign key",
+        "auth_user_links_identity_id_key": "unique",
+        "auth_user_links_pkey": "primary key"
+      },
+      "indexes": {}
+    },
+    "capabilities": {
+      "sqlite": "capabilities",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "broker_identity_id": "broker_identity_id",
+        "agent_identity_id": "agent_identity_id",
+        "project_id": "project_id",
+        "environment_id": "environment_id",
+        "items": "items",
+        "destinations": "destinations",
+        "secret_hash": "secret_hash",
+        "run_id": "run_id",
+        "expires_at": "expires_at",
+        "revoked_at": "revoked_at",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "targets": "targets"
+      },
+      "constraints": {
+        "capabilities_agent_identity_id_fkey": "foreign key",
+        "capabilities_broker_identity_id_fkey": "foreign key",
+        "capabilities_created_by_fkey": "foreign key",
+        "capabilities_environment_id_fkey": "foreign key",
+        "capabilities_organization_id_fkey": "foreign key",
+        "capabilities_pkey": "primary key",
+        "capabilities_project_id_fkey": "foreign key"
+      },
+      "indexes": {
+        "capabilities_broker_idx": "capabilities_broker_idx",
+        "capabilities_org_idx": "capabilities_org_idx"
+      }
+    },
+    "contract_revisions": {
+      "sqlite": "contract_revisions",
+      "columns": {
+        "id": "id",
+        "project_id": "project_id",
+        "content_hash": "content_hash",
+        "contract": "contract",
+        "provenance": "provenance",
+        "created_by": "created_by",
+        "created_at": "created_at"
+      },
+      "constraints": {
+        "contract_revisions_created_by_fkey": "foreign key",
+        "contract_revisions_pkey": "primary key",
+        "contract_revisions_project_id_content_hash_key": "unique",
+        "contract_revisions_project_id_fkey": "foreign key"
+      },
+      "indexes": {}
+    },
+    "credentials": {
+      "sqlite": "credentials",
+      "columns": {
+        "id": "id",
+        "identity_id": "identity_id",
+        "kind": "kind",
+        "name": "name",
+        "token_hash": "token_hash",
+        "created_at": "created_at",
+        "expires_at": "expires_at",
+        "revoked_at": "revoked_at",
+        "max_uses": "max_uses",
+        "use_count": "use_count",
+        "last_used_at": "last_used_at",
+        "client": "client",
+        "auth_session_id": "auth_session_id",
+        "issued_by": "issued_by",
+        "evidence_user_verified": "evidence_user_verified",
+        "evidence_passkey_id": "evidence_passkey_id"
+      },
+      "constraints": {
+        "credentials_auth_session_id_check": "check",
+        "credentials_client_check": "check",
+        "credentials_evidence_check": "check",
+        "credentials_identity_id_fkey": "foreign key",
+        "credentials_issued_by_fkey": "foreign key",
+        "credentials_kind_check": "check",
+        "credentials_max_uses_check": "check",
+        "credentials_pkey": "primary key",
+        "credentials_token_hash_key": "unique"
+      },
+      "indexes": {
+        "credentials_auth_session_id": "credentials_auth_session_id",
+        "credentials_identity_idx": "credentials_identity_idx",
+        "credentials_issued_by": "credentials_issued_by"
+      }
+    },
+    "device_code_attempt_windows": {
+      "sqlite": "device_code_attempt_windows",
+      "columns": {
+        "scope": "scope",
+        "key": "key",
+        "window_started_at": "window_started_at",
+        "failures": "failures"
+      },
+      "constraints": {
+        "device_code_attempt_windows_failures_check": "check",
+        "device_code_attempt_windows_pkey": "primary key",
+        "device_code_attempt_windows_scope_check": "check"
+      },
+      "indexes": {}
+    },
+    "device_sign_in_challenges": {
+      "sqlite": "device_sign_in_challenges",
+      "columns": {
+        "id": "id",
+        "device_sign_in_id": "device_sign_in_id",
+        "identity_id": "identity_id",
+        "auth_session_id": "auth_session_id",
+        "challenge": "challenge",
+        "created_at": "created_at",
+        "expires_at": "expires_at",
+        "consumed_at": "consumed_at"
+      },
+      "constraints": {
+        "device_sign_in_challenges_challenge_key": "unique",
+        "device_sign_in_challenges_device_sign_in_id_fkey": "foreign key",
+        "device_sign_in_challenges_identity_id_fkey": "foreign key",
+        "device_sign_in_challenges_pkey": "primary key"
+      },
+      "indexes": {
+        "device_sign_in_challenges_sign_in": "device_sign_in_challenges_sign_in"
+      }
+    },
+    "device_sign_ins": {
+      "sqlite": "device_sign_ins",
+      "columns": {
+        "id": "id",
+        "device_code_hash": "device_code_hash",
+        "user_code": "user_code",
+        "status": "status",
+        "requested_ttl": "requested_ttl",
+        "requested_name": "requested_name",
+        "requester_ip": "requester_ip",
+        "requester_user_agent": "requester_user_agent",
+        "created_at": "created_at",
+        "expires_at": "expires_at",
+        "approved_by_identity_id": "approved_by_identity_id",
+        "decided_at": "decided_at",
+        "last_polled_at": "last_polled_at",
+        "poll_interval": "poll_interval",
+        "issued_credential_id": "issued_credential_id",
+        "approval_user_verified": "approval_user_verified",
+        "approval_passkey_id": "approval_passkey_id"
+      },
+      "constraints": {
+        "device_sign_ins_approval_evidence_check": "check",
+        "device_sign_ins_approved_by_identity_id_fkey": "foreign key",
+        "device_sign_ins_device_code_hash_key": "unique",
+        "device_sign_ins_issued_credential_id_fkey": "foreign key",
+        "device_sign_ins_pkey": "primary key",
+        "device_sign_ins_poll_interval_check": "check",
+        "device_sign_ins_requested_name_check": "check",
+        "device_sign_ins_requested_ttl_check": "check",
+        "device_sign_ins_requester_user_agent_check": "check",
+        "device_sign_ins_status_check": "check",
+        "device_sign_ins_user_code_check": {
+          "sqlite": "check",
+          "rewritten": "PostgreSQL's regular expression (~) as GLOB patterns and a length check, which accept exactly the same strings (mapping_test.go compares them on generated input)."
+        }
+      },
+      "indexes": {
+        "device_sign_ins_expires_at": "device_sign_ins_expires_at",
+        "device_sign_ins_pending_user_code": "device_sign_ins_pending_user_code"
+      }
+    },
+    "env_values": {
+      "sqlite": "env_values",
+      "columns": {
+        "id": "id",
+        "environment_id": "environment_id",
+        "item_name": "item_name",
+        "current_version_id": "current_version_id",
+        "deleted_at": "deleted_at",
+        "created_at": "created_at",
+        "retiring_version_id": "retiring_version_id",
+        "rotation_deadline": "rotation_deadline",
+        "rotation_started_at": "rotation_started_at"
+      },
+      "constraints": {
+        "env_values_environment_id_fkey": "foreign key",
+        "env_values_environment_id_item_name_key": "unique",
+        "env_values_pkey": "primary key",
+        "env_values_retiring_version_id_fkey": "foreign key"
+      },
+      "indexes": {}
+    },
+    "environments": {
+      "sqlite": "environments",
+      "columns": {
+        "id": "id",
+        "project_id": "project_id",
+        "name": "name",
+        "kind": "kind",
+        "tier": "tier",
+        "parent_environment_id": "parent_environment_id",
+        "owner_identity_id": "owner_identity_id",
+        "expires_at": "expires_at",
+        "created_at": "created_at",
+        "deleted_at": "deleted_at"
+      },
+      "constraints": {
+        "derived_env_kind": "check",
+        "environments_kind_check": "check",
+        "environments_owner_identity_id_fkey": "foreign key",
+        "environments_parent_environment_id_fkey": "foreign key",
+        "environments_pkey": "primary key",
+        "environments_project_id_fkey": "foreign key",
+        "environments_tier_check": "check"
+      },
+      "indexes": {
+        "environments_live_name_key": "environments_live_name_key"
+      }
+    },
+    "exposure_backfill": {
+      "sqlite": "exposure_backfill",
+      "columns": {
+        "singleton": "singleton",
+        "cursor": "cursor",
+        "until_order": "until_order",
+        "finished_at": "finished_at"
+      },
+      "constraints": {
+        "exposure_backfill_pkey": "primary key",
+        "exposure_backfill_singleton_check": {
+          "sqlite": "check",
+          "rewritten": "CHECK (singleton) on a boolean as singleton = 1 on its INTEGER."
+        }
+      },
+      "indexes": {}
+    },
+    "exposure_confirmations": {
+      "sqlite": "exposure_confirmations",
+      "columns": {
+        "organization_id": "organization_id",
+        "version_id": "version_id",
+        "identity_id": "identity_id",
+        "actor_identity_id": "actor_identity_id",
+        "confirmed_at": "confirmed_at"
+      },
+      "constraints": {
+        "exposure_confirmations_actor_identity_id_fkey": "foreign key",
+        "exposure_confirmations_identity_id_fkey": "foreign key",
+        "exposure_confirmations_organization_id_fkey": "foreign key",
+        "exposure_confirmations_pkey": "primary key"
+      },
+      "indexes": {}
+    },
+    "github_app_registrations": {
+      "sqlite": "github_app_registrations",
+      "columns": {
+        "state_hash": "state_hash",
+        "organization_id": "organization_id",
+        "actor_identity_id": "actor_identity_id",
+        "account_login": "account_login",
+        "account_type": "account_type",
+        "created_at": "created_at",
+        "expires_at": "expires_at",
+        "consumed_at": "consumed_at",
+        "id": {
+          "sqlite": "id",
+          "default": "'ghr_' || lower(hex(randomblob(13)))",
+          "note": "PostgreSQL's default took 26 hex digits of an md5 of random() and the clock; SQLite takes 13 random bytes in hex. varlatchd names registrations itself."
+        },
+        "converted_at": "converted_at",
+        "pending_expires_at": "pending_expires_at",
+        "pending_github_app_id": "pending_github_app_id",
+        "pending_slug": "pending_slug",
+        "pending_client_id": "pending_client_id",
+        "pending_owner_login": "pending_owner_login",
+        "pending_owner_id": "pending_owner_id",
+        "pending_owner_type": "pending_owner_type",
+        "pending_key_envelope": "pending_key_envelope",
+        "ended_at": "ended_at",
+        "end_reason": "end_reason"
+      },
+      "constraints": {
+        "github_app_registrations_account_login_check": {
+          "sqlite": "check",
+          "rewritten": "PostgreSQL's regular expression (~) as GLOB patterns and a length check, which accept exactly the same strings (mapping_test.go compares them on generated input)."
+        },
+        "github_app_registrations_account_type_check": "check",
+        "github_app_registrations_actor_identity_id_fkey": "foreign key",
+        "github_app_registrations_check": "check",
+        "github_app_registrations_conversion_complete": "check",
+        "github_app_registrations_end_reason_check": "check",
+        "github_app_registrations_ended_after_conversion": "check",
+        "github_app_registrations_id_key": "unique",
+        "github_app_registrations_key_while_pending": "check",
+        "github_app_registrations_organization_id_fkey": "foreign key",
+        "github_app_registrations_pending_github_app_id_check": "check",
+        "github_app_registrations_pending_owner_id_check": "check",
+        "github_app_registrations_pending_owner_type_check": "check",
+        "github_app_registrations_pkey": "primary key"
+      },
+      "indexes": {
+        "github_app_registrations_expiry": "github_app_registrations_expiry",
+        "github_app_registrations_pending_expiry": "github_app_registrations_pending_expiry"
+      },
+      "triggers": {
+        "github_app_registrations_pending_once": {
+          "sqlite": [
+            "github_app_registrations_pending_once"
+          ],
+          "note": "IS DISTINCT FROM is IS NOT. jsonb compared by value, SQLite JSON text by its text: rewriting the pending key in another spelling is refused too."
+        }
+      }
+    },
+    "github_apps": {
+      "sqlite": "github_apps",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "github_app_id": "github_app_id",
+        "slug": "slug",
+        "client_id": "client_id",
+        "owner_login": "owner_login",
+        "owner_id": "owner_id",
+        "owner_type": "owner_type",
+        "key_envelope": "key_envelope",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "removed_at": "removed_at",
+        "version": "version",
+        "updated_at": "updated_at"
+      },
+      "constraints": {
+        "github_apps_created_by_fkey": "foreign key",
+        "github_apps_id_organization_id_key": "unique",
+        "github_apps_key_until_removed": "check",
+        "github_apps_organization_id_fkey": "foreign key",
+        "github_apps_owner_type_check": "check",
+        "github_apps_pkey": "primary key"
+      },
+      "indexes": {
+        "github_apps_live_app": "github_apps_live_app",
+        "github_apps_live_org": "github_apps_live_org"
+      }
+    },
+    "grants": {
+      "sqlite": "grants",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "subject_identity_id": "subject_identity_id",
+        "scope": "scope",
+        "actions": "actions",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "revoked_at": "revoked_at",
+        "subject_group_id": "subject_group_id",
+        "role_id": "role_id"
+      },
+      "constraints": {
+        "grants_created_by_fkey": "foreign key",
+        "grants_organization_id_fkey": "foreign key",
+        "grants_permission_one": "check",
+        "grants_pkey": "primary key",
+        "grants_role_id_fkey": "foreign key",
+        "grants_subject_group_id_fkey": "foreign key",
+        "grants_subject_identity_id_fkey": "foreign key",
+        "grants_subject_one": "check"
+      },
+      "indexes": {
+        "grants_subject_group_idx": "grants_subject_group_idx",
+        "grants_subject_idx": "grants_subject_idx"
+      }
+    },
+    "group_members": {
+      "sqlite": "group_members",
+      "columns": {
+        "group_id": "group_id",
+        "identity_id": "identity_id",
+        "created_at": "created_at"
+      },
+      "constraints": {
+        "group_members_group_id_fkey": "foreign key",
+        "group_members_identity_id_fkey": "foreign key",
+        "group_members_pkey": "primary key"
+      },
+      "indexes": {
+        "group_members_identity_idx": "group_members_identity_idx"
+      }
+    },
+    "groups": {
+      "sqlite": "groups",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "name": "name",
+        "kind": "kind",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "revoked_at": "revoked_at",
+        "version": "version",
+        "updated_at": "updated_at"
+      },
+      "constraints": {
+        "groups_created_by_fkey": "foreign key",
+        "groups_kind_check": "check",
+        "groups_organization_id_fkey": "foreign key",
+        "groups_pkey": "primary key"
+      },
+      "indexes": {
+        "groups_org_name_key": "groups_org_name_key"
+      }
+    },
+    "idempotency_keys": {
+      "sqlite": "idempotency_keys",
+      "columns": {
+        "identity_id": "identity_id",
+        "endpoint": "endpoint",
+        "idempotency_key": "idempotency_key",
+        "body_hash": "body_hash",
+        "response": "response",
+        "created_at": "created_at"
+      },
+      "constraints": {
+        "idempotency_keys_identity_id_fkey": "foreign key",
+        "idempotency_keys_pkey": "primary key"
+      },
+      "indexes": {}
+    },
+    "identities": {
+      "sqlite": "identities",
+      "columns": {
+        "id": "id",
+        "kind": "kind",
+        "name": "name",
+        "disabled": "disabled",
+        "installation_admin": "installation_admin",
+        "created_at": "created_at",
+        "organization_id": "organization_id",
+        "last_seen_at": "last_seen_at",
+        "suspended_by_deletion": "suspended_by_deletion"
+      },
+      "constraints": {
+        "identities_kind_check": "check",
+        "identities_organization_id_fkey": "foreign key",
+        "identities_pkey": "primary key",
+        "identities_suspended_by_deletion_fkey": "foreign key",
+        "identity_org_scope": "check"
+      },
+      "indexes": {
+        "identities_org_idx": "identities_org_idx"
+      }
+    },
+    "installation": {
+      "sqlite": "installation",
+      "columns": {
+        "id": "id",
+        "kek_canary": "kek_canary",
+        "bootstrapped_at": "bootstrapped_at",
+        "created_at": "created_at",
+        "root_kek_version": "root_kek_version",
+        "key_rotation_state": "key_rotation_state",
+        "public_url": "public_url"
+      },
+      "constraints": {
+        "installation_key_rotation_state_check": "check",
+        "installation_pkey": "primary key",
+        "installation_root_kek_version_check": "check",
+        "installation_singleton": {
+          "sqlite": "check",
+          "rewritten": "LIKE 'inst_%' (where _ is any one character) as GLOB 'inst?*'; GLOB is case-sensitive like PostgreSQL's LIKE."
+        }
+      },
+      "indexes": {}
+    },
+    "member_exposure": {
+      "sqlite": "member_exposure",
+      "columns": {
+        "organization_id": "organization_id",
+        "identity_id": "identity_id",
+        "version_id": "version_id",
+        "item_name": "item_name",
+        "environment_id": "environment_id",
+        "way": "way",
+        "first_at": "first_at",
+        "last_at": "last_at"
+      },
+      "constraints": {
+        "member_exposure_identity_id_fkey": "foreign key",
+        "member_exposure_organization_id_fkey": "foreign key",
+        "member_exposure_pkey": "primary key",
+        "member_exposure_way_check": "check"
+      },
+      "indexes": {}
+    },
+    "member_integrations": {
+      "sqlite": "member_integrations",
+      "columns": {
+        "organization_id": "organization_id",
+        "identity_id": "identity_id",
+        "kind": "kind",
+        "resource_id": "resource_id",
+        "changes": "changes",
+        "first_at": "first_at",
+        "last_at": "last_at"
+      },
+      "constraints": {
+        "member_integrations_identity_id_fkey": "foreign key",
+        "member_integrations_kind_check": "check",
+        "member_integrations_organization_id_fkey": "foreign key",
+        "member_integrations_pkey": "primary key"
+      },
+      "indexes": {}
+    },
+    "membership_removals": {
+      "sqlite": "membership_removals",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "identity_id": "identity_id",
+        "role": "role",
+        "actor_identity_id": "actor_identity_id",
+        "removed_at": "removed_at"
+      },
+      "constraints": {
+        "membership_removals_actor_identity_id_fkey": "foreign key",
+        "membership_removals_identity_id_fkey": "foreign key",
+        "membership_removals_organization_id_fkey": "foreign key",
+        "membership_removals_organization_id_identity_id_key": "unique",
+        "membership_removals_pkey": "primary key",
+        "membership_removals_role_check": "check"
+      },
+      "indexes": {}
+    },
+    "oidc_bindings": {
+      "sqlite": "oidc_bindings",
+      "columns": {
+        "id": "id",
+        "identity_id": "identity_id",
+        "organization_id": "organization_id",
+        "issuer": "issuer",
+        "audience": "audience",
+        "subject": "subject",
+        "claims": "claims",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "revoked_at": "revoked_at"
+      },
+      "constraints": {
+        "oidc_bindings_created_by_fkey": "foreign key",
+        "oidc_bindings_identity_id_fkey": "foreign key",
+        "oidc_bindings_organization_id_fkey": "foreign key",
+        "oidc_bindings_pkey": "primary key"
+      },
+      "indexes": {
+        "oidc_bindings_issuer_idx": "oidc_bindings_issuer_idx"
+      }
+    },
+    "org_memberships": {
+      "sqlite": "org_memberships",
+      "columns": {
+        "organization_id": "organization_id",
+        "identity_id": "identity_id",
+        "role": "role",
+        "created_at": "created_at",
+        "removed_at": "removed_at",
+        "version": "version"
+      },
+      "constraints": {
+        "org_memberships_identity_id_fkey": "foreign key",
+        "org_memberships_organization_id_fkey": "foreign key",
+        "org_memberships_pkey": "primary key",
+        "org_memberships_role_check": "check"
+      },
+      "indexes": {
+        "org_memberships_live_identity": "org_memberships_live_identity"
+      }
+    },
+    "organization_deletions": {
+      "sqlite": "organization_deletions",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "requested_by": "requested_by",
+        "scheduled_at": "scheduled_at",
+        "run_after": "run_after",
+        "approval_required": "approval_required",
+        "approved_by": "approved_by",
+        "approved_at": "approved_at",
+        "cancelled_by": "cancelled_by",
+        "cancelled_at": "cancelled_at",
+        "completed_at": "completed_at"
+      },
+      "constraints": {
+        "organization_deletions_approved_by_fkey": "foreign key",
+        "organization_deletions_cancelled_by_fkey": "foreign key",
+        "organization_deletions_check": "check",
+        "organization_deletions_check1": "check",
+        "organization_deletions_check2": "check",
+        "organization_deletions_check3": "check",
+        "organization_deletions_check4": "check",
+        "organization_deletions_check5": "check",
+        "organization_deletions_organization_id_fkey": "foreign key",
+        "organization_deletions_pkey": "primary key",
+        "organization_deletions_requested_by_fkey": "foreign key"
+      },
+      "indexes": {
+        "organization_deletions_due": "organization_deletions_due",
+        "organization_deletions_open": "organization_deletions_open"
+      }
+    },
+    "organization_freezes": {
+      "sqlite": "organization_freezes",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "frozen_by": "frozen_by",
+        "frozen_at": "frozen_at",
+        "reason": "reason",
+        "lifted_at": "lifted_at",
+        "lifted_by": "lifted_by",
+        "lift_method": "lift_method"
+      },
+      "constraints": {
+        "organization_freezes_check": "check",
+        "organization_freezes_check1": "check",
+        "organization_freezes_check2": "check",
+        "organization_freezes_check3": "check",
+        "organization_freezes_frozen_by_fkey": "foreign key",
+        "organization_freezes_lift_method_check": "check",
+        "organization_freezes_lifted_by_fkey": "foreign key",
+        "organization_freezes_organization_id_fkey": "foreign key",
+        "organization_freezes_pkey": "primary key",
+        "organization_freezes_reason_check": "check"
+      },
+      "indexes": {
+        "organization_freezes_by_organization": "organization_freezes_by_organization",
+        "organization_freezes_open": "organization_freezes_open"
+      }
+    },
+    "organizations": {
+      "sqlite": "organizations",
+      "columns": {
+        "id": "id",
+        "slug": "slug",
+        "name": "name",
+        "wrapped_org_kek": "wrapped_org_kek",
+        "deleted_at": "deleted_at",
+        "created_at": "created_at",
+        "root_kek_version": "root_kek_version",
+        "key_rotation_state": "key_rotation_state",
+        "org_kek_destroyed_at": "org_kek_destroyed_at",
+        "security_epoch": "security_epoch"
+      },
+      "constraints": {
+        "organizations_kek_present_or_destroyed": "check",
+        "organizations_key_rotation_state_check": "check",
+        "organizations_pkey": "primary key",
+        "organizations_root_kek_version_check": "check",
+        "organizations_slug_key": "unique"
+      },
+      "indexes": {}
+    },
+    "passkey": {
+      "sqlite": "passkeys",
+      "columns": {
+        "id": "id",
+        "name": "name",
+        "publicKey": "public_key",
+        "userId": "user_id",
+        "credentialID": "credential_id",
+        "counter": "counter",
+        "deviceType": "device_type",
+        "backedUp": "backed_up",
+        "transports": "transports",
+        "createdAt": "created_at",
+        "aaguid": "aaguid"
+      },
+      "constraints": {
+        "passkey_pkey": "primary key",
+        "passkey_userId_fkey": "foreign key"
+      },
+      "indexes": {
+        "passkey_credentialID_idx": {
+          "dropped": "Redundant: the unique index passkey_credential_id_unique (migration 0039) covers the same column."
+        },
+        "passkey_credential_id_unique": "passkeys_credential_id_unique",
+        "passkey_userId_idx": "passkeys_user_id_idx"
+      },
+      "triggers": {
+        "passkey_counter_forward": {
+          "sqlite": [
+            "passkey_counter_forward"
+          ],
+          "note": "The function's condition is the trigger's WHEN clause; RAISE(ABORT) is SQLite's constraint error (SQLITE_CONSTRAINT_TRIGGER), a job's own error in lib/storage."
+        }
+      },
+      "note": "Better Auth's table, in its adapter's shape; varlatchd owns it now, so it takes a snake_case name, and so do its columns. Row ids are kept. A passkey's user_id is its WebAuthn user handle."
+    },
+    "passkey_confirmation_challenges": {
+      "sqlite": "passkey_confirmation_challenges",
+      "columns": {
+        "id": "id",
+        "identity_id": "identity_id",
+        "auth_session_id": "auth_session_id",
+        "target_passkey_id": "target_passkey_id",
+        "challenge": "challenge",
+        "created_at": "created_at",
+        "expires_at": "expires_at",
+        "consumed_at": "consumed_at"
+      },
+      "constraints": {
+        "passkey_confirmation_challenges_challenge_key": "unique",
+        "passkey_confirmation_challenges_identity_id_fkey": "foreign key",
+        "passkey_confirmation_challenges_pkey": "primary key",
+        "passkey_confirmation_challenges_target_passkey_id_fkey": "foreign key"
+      },
+      "indexes": {
+        "passkey_confirmation_challenges_identity": "passkey_confirmation_challenges_identity"
+      }
+    },
+    "passkey_provenance": {
+      "sqlite": "passkey_provenance",
+      "columns": {
+        "passkey_id": "passkey_id",
+        "trust": "trust",
+        "trusted_via": "trusted_via",
+        "trusted_at": "trusted_at",
+        "setup_grant_kind": "setup_grant_kind",
+        "confirmed_by_passkey_id": "confirmed_by_passkey_id",
+        "recorded_at": "recorded_at"
+      },
+      "constraints": {
+        "passkey_provenance_check": "check",
+        "passkey_provenance_check1": "check",
+        "passkey_provenance_check2": "check",
+        "passkey_provenance_check3": "check",
+        "passkey_provenance_check4": "check",
+        "passkey_provenance_passkey_id_fkey": "foreign key",
+        "passkey_provenance_pkey": "primary key",
+        "passkey_provenance_setup_grant_kind_check": "check",
+        "passkey_provenance_trust_check": "check",
+        "passkey_provenance_trusted_via_check": "check"
+      },
+      "indexes": {}
+    },
+    "passkey_quarantine": {
+      "sqlite": "passkey_quarantine",
+      "columns": {
+        "id": "id",
+        "name": "name",
+        "publicKey": "public_key",
+        "userId": "user_id",
+        "credentialID": "credential_id",
+        "counter": "counter",
+        "deviceType": "device_type",
+        "backedUp": "backed_up",
+        "transports": "transports",
+        "createdAt": "created_at",
+        "aaguid": "aaguid",
+        "quarantined_at": "quarantined_at",
+        "reason": "reason",
+        "kept_passkey_id": "kept_passkey_id"
+      },
+      "constraints": {
+        "passkey_quarantine_pkey": "primary key",
+        "passkey_quarantine_reason_check": "check"
+      },
+      "indexes": {},
+      "note": "Copies passkey's columns, so they take the same snake_case names."
+    },
+    "platform_connections": {
+      "sqlite": "platform_connections",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "platform": "platform",
+        "base_identity": "base_identity",
+        "name": "name",
+        "credential_envelope": "credential_envelope",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "revoked_at": "revoked_at",
+        "version": "version",
+        "updated_at": "updated_at",
+        "credential_expires_at": "credential_expires_at",
+        "credential_expiry_seen_at": "credential_expiry_seen_at",
+        "credential_kind": "credential_kind",
+        "github_app_id": "github_app_id",
+        "github_installation_id": "github_installation_id"
+      },
+      "constraints": {
+        "platform_connections_created_by_fkey": "foreign key",
+        "platform_connections_credential_expiry_seen": "check",
+        "platform_connections_credential_kind_check": "check",
+        "platform_connections_credential_kind_shape": "check",
+        "platform_connections_github_app_fk": "foreign key",
+        "platform_connections_organization_id_fkey": "foreign key",
+        "platform_connections_pkey": "primary key"
+      },
+      "indexes": {
+        "platform_connections_github_app_idx": "platform_connections_github_app_idx",
+        "platform_connections_org_idx": "platform_connections_org_idx"
+      }
+    },
+    "projects": {
+      "sqlite": "projects",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "slug": "slug",
+        "name": "name",
+        "contract_authority": "contract_authority",
+        "active_contract_revision_id": "active_contract_revision_id",
+        "created_at": "created_at",
+        "deleted_at": "deleted_at"
+      },
+      "constraints": {
+        "projects_contract_authority_check": "check",
+        "projects_organization_id_fkey": "foreign key",
+        "projects_pkey": "primary key"
+      },
+      "indexes": {
+        "projects_live_slug": "projects_live_slug"
+      }
+    },
+    "removal_authority": {
+      "sqlite": "removal_authority",
+      "columns": {
+        "removal_id": "removal_id",
+        "environment_id": "environment_id",
+        "action": "action",
+        "source": "source",
+        "role": "role",
+        "grant_id": "grant_id",
+        "via_group_id": "via_group_id",
+        "role_id": "role_id"
+      },
+      "constraints": {
+        "removal_authority_action_check": "check",
+        "removal_authority_environment_id_fkey": "foreign key",
+        "removal_authority_pkey": "primary key",
+        "removal_authority_removal_id_fkey": "foreign key",
+        "removal_authority_role_check": "check"
+      },
+      "indexes": {}
+    },
+    "removal_conditions": {
+      "sqlite": "removal_conditions",
+      "columns": {
+        "removal_id": "removal_id",
+        "environment_id": "environment_id",
+        "requirement_id": "requirement_id"
+      },
+      "constraints": {
+        "removal_conditions_environment_id_fkey": "foreign key",
+        "removal_conditions_pkey": "primary key",
+        "removal_conditions_removal_id_fkey": "foreign key",
+        "removal_conditions_removal_id_requirement_id_fkey": "foreign key"
+      },
+      "indexes": {}
+    },
+    "removal_requirements": {
+      "sqlite": "removal_requirements",
+      "columns": {
+        "removal_id": "removal_id",
+        "requirement_id": "requirement_id",
+        "requirement_version": "requirement_version",
+        "target": "target",
+        "selector": "selector"
+      },
+      "constraints": {
+        "removal_requirements_pkey": "primary key",
+        "removal_requirements_removal_id_fkey": "foreign key"
+      },
+      "indexes": {}
+    },
+    "requirements": {
+      "sqlite": "requirements",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "kind": "kind",
+        "target": "target",
+        "config": "config",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "revoked_at": "revoked_at",
+        "version": "version",
+        "updated_at": "updated_at"
+      },
+      "constraints": {
+        "requirements_created_by_fkey": "foreign key",
+        "requirements_kind_check": "check",
+        "requirements_organization_id_fkey": "foreign key",
+        "requirements_pkey": "primary key"
+      },
+      "indexes": {}
+    },
+    "roles": {
+      "sqlite": "roles",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "name": "name",
+        "actions": "actions",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "revoked_at": "revoked_at",
+        "version": "version",
+        "updated_at": "updated_at"
+      },
+      "constraints": {
+        "roles_created_by_fkey": "foreign key",
+        "roles_organization_id_fkey": "foreign key",
+        "roles_pkey": "primary key"
+      },
+      "indexes": {
+        "roles_org_name_key": "roles_org_name_key"
+      }
+    },
+    "security_control_counters": {
+      "sqlite": "security_control_counters",
+      "columns": {
+        "organization_id": "organization_id",
+        "control": "control",
+        "config_version": "config_version",
+        "operation": "operation",
+        "actor_identity_id": "actor_identity_id",
+        "reason": "reason",
+        "bucket_hour": "bucket_hour",
+        "count": "count",
+        "first_seen": "first_seen",
+        "last_seen": "last_seen",
+        "emitted_at": "emitted_at"
+      },
+      "constraints": {
+        "security_control_counters_actor_identity_id_check": "check",
+        "security_control_counters_bucket_hour_check": {
+          "sqlite": "check",
+          "rewritten": "date_trunc('hour', bucket_hour, 'UTC') = bucket_hour as bucket_hour % 3600000000 = 0 on microseconds since the epoch."
+        },
+        "security_control_counters_check": "check",
+        "security_control_counters_config_version_check": "check",
+        "security_control_counters_control_check": "check",
+        "security_control_counters_count_check": "check",
+        "security_control_counters_operation_check": {
+          "sqlite": "check",
+          "rewritten": "PostgreSQL's regular expression (~) as GLOB patterns and a length check, which accept exactly the same strings (mapping_test.go compares them on generated input)."
+        },
+        "security_control_counters_organization_id_check": "check",
+        "security_control_counters_pkey": "primary key",
+        "security_control_counters_reason_check": "check"
+      },
+      "indexes": {
+        "security_control_counters_emitted": "security_control_counters_emitted",
+        "security_control_counters_organization": "security_control_counters_organization",
+        "security_control_counters_unemitted": "security_control_counters_unemitted"
+      }
+    },
+    "security_controls": {
+      "sqlite": "security_controls",
+      "columns": {
+        "organization_id": "organization_id",
+        "control": "control",
+        "mode": "mode",
+        "config": "config",
+        "version": "version",
+        "changed_by": "changed_by",
+        "changed_at": "changed_at"
+      },
+      "constraints": {
+        "security_controls_changed_by_fkey": "foreign key",
+        "security_controls_check": "check",
+        "security_controls_config_check": {
+          "sqlite": "check",
+          "rewritten": "jsonb_typeof(x) = 'number' as json_type(...) IN ('integer', 'real'), (config ->> k)::numeric as json_extract(config, '$.k'), behind json_valid."
+        },
+        "security_controls_control_check": "check",
+        "security_controls_mode_check": "check",
+        "security_controls_organization_id_fkey": "foreign key",
+        "security_controls_pkey": "primary key",
+        "security_controls_version_check": "check"
+      },
+      "indexes": {}
+    },
+    "session": {
+      "sqlite": "auth_sessions",
+      "columns": {
+        "id": "id",
+        "expiresAt": "expires_at",
+        "token": {
+          "sqlite": "token_hash",
+          "note": "Better Auth stored the session token itself; varlatchd stores its hash (step 3.4). Nothing is copied: sessions end at the migration."
+        },
+        "createdAt": "created_at",
+        "updatedAt": "updated_at",
+        "ipAddress": "ip_address",
+        "userAgent": "user_agent",
+        "userId": "user_id"
+      },
+      "constraints": {
+        "session_pkey": "primary key",
+        "session_token_key": "unique",
+        "session_userId_fkey": "foreign key"
+      },
+      "indexes": {
+        "session_userId_idx": "auth_sessions_user_id_idx"
+      },
+      "triggers": {
+        "session_end_revokes_browser_credentials": {
+          "sqlite": [
+            "session_end_revokes_browser_credentials"
+          ],
+          "note": "A row trigger (SQLite has no statement triggers) on auth_sessions: one statement deleting several sessions writes their events session by session, each session's in credential id order, where PostgreSQL wrote all of them in credential id order. No locks: the single writer holds the only write transaction."
+        }
+      },
+      "note": "Better Auth's table, in its adapter's shape; varlatchd owns it now, so it takes a snake_case name, and so do its columns. Row ids are kept. No session is copied by the migration: every browser session ends (ADR-0059 Decision 9)."
+    },
+    "setup_grants": {
+      "sqlite": "setup_grants",
+      "columns": {
+        "id": "id",
+        "kind": "kind",
+        "subject_identity_id": "subject_identity_id",
+        "token_hash": "token_hash",
+        "expires_at": "expires_at",
+        "consumed_at": "consumed_at",
+        "created_at": "created_at",
+        "invite_organization_id": "invite_organization_id",
+        "invite_role": "invite_role",
+        "invite_name": "invite_name",
+        "revoked_at": "revoked_at",
+        "created_by": "created_by"
+      },
+      "constraints": {
+        "invite_fields": "check",
+        "reenroll_subject": "check",
+        "setup_grants_created_by_fkey": "foreign key",
+        "setup_grants_invite_organization_id_fkey": "foreign key",
+        "setup_grants_invite_role_check": "check",
+        "setup_grants_kind_check": "check",
+        "setup_grants_pkey": "primary key",
+        "setup_grants_single_terminal_state": "check",
+        "setup_grants_subject_identity_id_fkey": "foreign key",
+        "setup_grants_token_hash_key": "unique"
+      },
+      "indexes": {
+        "setup_grants_invite_org_idx": "setup_grants_invite_org_idx"
+      }
+    },
+    "signing_keys": {
+      "sqlite": "signing_keys",
+      "columns": {
+        "id": "id",
+        "algorithm": "algorithm",
+        "public_jwk": "public_jwk",
+        "private_key_wrapped": "private_key_wrapped",
+        "created_at": "created_at",
+        "retired_at": "retired_at"
+      },
+      "constraints": {
+        "signing_keys_algorithm_check": "check",
+        "signing_keys_pkey": "primary key"
+      },
+      "indexes": {}
+    },
+    "sync_cursor": {
+      "sqlite": "sync_cursor",
+      "columns": {
+        "singleton": "singleton",
+        "occurred_at": "occurred_at",
+        "event_id": "event_id",
+        "cursor_order": "cursor_order"
+      },
+      "constraints": {
+        "sync_cursor_pkey": "primary key",
+        "sync_cursor_singleton_check": {
+          "sqlite": "check",
+          "rewritten": "CHECK (singleton) on a boolean as singleton = 1 on its INTEGER."
+        }
+      },
+      "indexes": {}
+    },
+    "sync_ledger": {
+      "sqlite": "sync_ledger",
+      "columns": {
+        "target_id": "target_id",
+        "dest_name": "dest_name",
+        "fingerprint": "fingerprint",
+        "state": "state",
+        "generation": "generation",
+        "updated_at": "updated_at",
+        "last_error": "last_error",
+        "repaired_at": "repaired_at"
+      },
+      "constraints": {
+        "sync_ledger_pkey": "primary key",
+        "sync_ledger_state_check": "check",
+        "sync_ledger_target_id_fkey": "foreign key"
+      },
+      "indexes": {}
+    },
+    "sync_runs": {
+      "sqlite": "sync_runs",
+      "columns": {
+        "target_id": "target_id",
+        "generation": "generation",
+        "started_at": "started_at",
+        "deadline": "deadline"
+      },
+      "constraints": {
+        "sync_runs_pkey": "primary key",
+        "sync_runs_target_id_fkey": "foreign key"
+      },
+      "indexes": {
+        "sync_runs_target_deadline": "sync_runs_target_deadline"
+      }
+    },
+    "sync_targets": {
+      "sqlite": "sync_targets",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "project_id": "project_id",
+        "environment_id": "environment_id",
+        "connection_id": "connection_id",
+        "destination": "destination",
+        "canonical_destination": "canonical_destination",
+        "mapping": "mapping",
+        "remove_orphans": "remove_orphans",
+        "redeploy": "redeploy",
+        "state": "state",
+        "disabled_reason": "disabled_reason",
+        "failure_count": "failure_count",
+        "needs_sync": "needs_sync",
+        "next_attempt_at": "next_attempt_at",
+        "last_attempt_at": "last_attempt_at",
+        "last_result": "last_result",
+        "last_repair_at": "last_repair_at",
+        "generation": "generation",
+        "lease_expires_at": "lease_expires_at",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "revoked_at": "revoked_at",
+        "version": "version",
+        "updated_at": "updated_at",
+        "last_notes": "last_notes",
+        "repair_cycle_started_at": "repair_cycle_started_at",
+        "redeploy_owed": "redeploy_owed",
+        "redeploy_paid": "redeploy_paid",
+        "last_drift_at": "last_drift_at",
+        "last_drift_count": "last_drift_count",
+        "last_drift_names": "last_drift_names",
+        "last_drift_event_id": "last_drift_event_id"
+      },
+      "constraints": {
+        "sync_targets_connection_id_fkey": "foreign key",
+        "sync_targets_created_by_fkey": "foreign key",
+        "sync_targets_environment_id_fkey": "foreign key",
+        "sync_targets_organization_id_fkey": "foreign key",
+        "sync_targets_pkey": "primary key",
+        "sync_targets_project_id_fkey": "foreign key",
+        "sync_targets_state_check": "check"
+      },
+      "indexes": {
+        "sync_targets_connection_idx": "sync_targets_connection_idx",
+        "sync_targets_destination_claim": "sync_targets_destination_claim",
+        "sync_targets_env_idx": "sync_targets_env_idx"
+      }
+    },
+    "team_projects": {
+      "sqlite": "team_projects",
+      "columns": {
+        "team_id": "team_id",
+        "project_id": "project_id",
+        "created_at": "created_at"
+      },
+      "constraints": {
+        "team_projects_pkey": "primary key",
+        "team_projects_project_id_fkey": "foreign key",
+        "team_projects_team_id_fkey": "foreign key"
+      },
+      "indexes": {}
+    },
+    "user": {
+      "sqlite": "auth_users",
+      "columns": {
+        "id": "id",
+        "name": "name",
+        "email": "email",
+        "emailVerified": "email_verified",
+        "image": "image",
+        "createdAt": "created_at",
+        "updatedAt": "updated_at"
+      },
+      "constraints": {
+        "user_email_key": "unique",
+        "user_pkey": "primary key"
+      },
+      "indexes": {},
+      "note": "Better Auth's table, in its adapter's shape; varlatchd owns it now, so it takes a snake_case name, and so do its columns. Row ids are kept."
+    },
+    "value_versions": {
+      "sqlite": "value_versions",
+      "columns": {
+        "id": "id",
+        "value_id": "value_id",
+        "payload": "payload",
+        "wrapped_dek": "wrapped_dek",
+        "previous_version_id": "previous_version_id",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "erased_at": "erased_at"
+      },
+      "constraints": {
+        "value_versions_created_by_fkey": "foreign key",
+        "value_versions_intact_or_erased": "check",
+        "value_versions_pkey": "primary key",
+        "value_versions_previous_version_id_fkey": "foreign key",
+        "value_versions_value_id_fkey": "foreign key"
+      },
+      "indexes": {
+        "value_versions_value_idx": "value_versions_value_idx"
+      }
+    },
+    "varlatch_migrations": {
+      "dropped": "The PostgreSQL migration runner's bookkeeping. The SQLite schema is created whole, not replayed, and records its version in schema_version."
+    },
+    "verification": {
+      "dropped": "Better Auth's short-lived ceremony challenges (minutes). varlatchd keeps its own ceremony challenges (step 3.4); no row needs to survive a migration, which ends every browser session anyway."
+    },
+    "webhooks": {
+      "sqlite": "webhooks",
+      "columns": {
+        "id": "id",
+        "organization_id": "organization_id",
+        "url": "url",
+        "event_types": "event_types",
+        "secret_envelope": "secret_envelope",
+        "created_by": "created_by",
+        "created_at": "created_at",
+        "revoked_at": "revoked_at",
+        "cursor_occurred_at": "cursor_occurred_at",
+        "cursor_event_id": "cursor_event_id",
+        "failure_count": "failure_count",
+        "last_attempt_at": "last_attempt_at",
+        "last_status": "last_status",
+        "version": "version",
+        "updated_at": "updated_at",
+        "cursor_order": "cursor_order",
+        "suspended_by_deletion": "suspended_by_deletion"
+      },
+      "constraints": {
+        "webhooks_created_by_fkey": "foreign key",
+        "webhooks_organization_id_fkey": "foreign key",
+        "webhooks_pkey": "primary key",
+        "webhooks_suspended_by_deletion_fkey": "foreign key"
+      },
+      "indexes": {
+        "webhooks_org_idx": "webhooks_org_idx"
+      }
+    }
+  },
+  "functions": {
+    "assign_audit_position": {
+      "sqlite": [
+        "audit_events_position"
+      ],
+      "note": "Replaced: the rowid assigns the position, the trigger checks it."
+    },
+    "new_audit_event_id": {
+      "sqlite": [
+        "session_end_revokes_browser_credentials"
+      ],
+      "note": "Inlined in the trigger: 'evt_' and 26 base32 characters from random()."
+    },
+    "passkey_counter_forward": {
+      "sqlite": [
+        "passkey_counter_forward"
+      ],
+      "note": "The trigger's WHEN clause."
+    },
+    "revoke_browser_credentials_of_ended_sessions": {
+      "sqlite": [
+        "session_end_revokes_browser_credentials"
+      ],
+      "note": "The trigger's body."
+    },
+    "github_app_registrations_pending_once": {
+      "sqlite": [
+        "github_app_registrations_pending_once"
+      ],
+      "note": "The trigger's WHEN clause."
+    }
+  },
+  "seedRows": {
+    "exposure_backfill": {
+      "sqlite": "exposure_backfill",
+      "note": "One row, finished at once: a new database has no audit history to backfill (migration 0036)."
+    },
+    "audit_position": {
+      "dropped": "The table is dropped; the position is max(event_order)."
+    }
+  },
+  "added": {
+    "tables": {
+      "schema_version": "The schema's version (db.go): replaces varlatch_migrations."
+    },
+    "triggers": {
+      "audit_events_no_update": "Audit events are append-only. PostgreSQL withheld UPDATE and DELETE on audit_events from the runtime role (migration 0003); SQLite has no roles.",
+      "audit_events_no_delete": "As audit_events_no_update."
+    }
+  }
+}
