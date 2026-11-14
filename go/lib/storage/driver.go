@@ -110,9 +110,7 @@ func (s *writerState) onCommit() int32 {
 		s.noteFatal(errors.New("storage: a commit was attempted while a job ran"))
 		return 1 // non-zero turns the commit into a rollback
 	}
-	if s.db != nil {
-		s.db.crash("commit")
-	}
+	crashPoint(s.db, "commit")
 	return 0
 }
 

@@ -44,20 +44,6 @@ const (
 	busyTimeout = 5 * time.Second
 )
 
-// crashPoint, when set (a build with the crashpoint tag, crashpoint.go),
-// is told when the engine reaches a point a crash test kills it at: "open"
-// (Open is done), "commit" (inside SQLite's commit of a write batch, before
-// its WAL frames are written), "committed" (the batch's COMMIT returned),
-// "checkpoint" and "checkpointed" (around every checkpoint). nil otherwise:
-// production builds only test for nil.
-var crashPoint func(db *DB, point string)
-
-func (db *DB) crash(point string) {
-	if crashPoint != nil {
-		crashPoint(db, point)
-	}
-}
-
 // ErrClosed is returned for work submitted after Close started.
 var ErrClosed = errors.New("storage: closed")
 
@@ -220,7 +206,7 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 	go db.writerLoop()
 	go db.checkpointLoop()
 	ok = true
-	db.crash("open")
+	crashPoint(db, "open")
 	return db, nil
 }
 

@@ -30,13 +30,15 @@ import (
 //   - inside a commit: paused in SQLite's commit of a write batch, before
 //     its WAL frames are written;
 //   - during a WAL write: while a large batch's frames are being written to
-//     the WAL (its size seen growing, its COMMIT not returned);
-//   - during a checkpoint: while a checkpoint copies those frames into the
-//     database file (its size seen growing, the checkpoint not returned).
+//     the WAL (its size seen growing), before its commit began;
+//   - during a checkpoint: while a checkpoint copies that batch, committed,
+//     into the database file (its size seen growing, the checkpoint not
+//     returned).
 //
 // After each kill, every disclosure a client received has its
-// secret.disclosed event, audit positions have no gap, the database is
-// consistent, and the large batch is there whole or not at all.
+// secret.disclosed event, audit positions have no gap and the database is
+// consistent; the large batch has none of its rows after the kill in its
+// WAL write, and all of them after the kill in a checkpoint.
 
 const ballastBytes = 48 << 20
 
@@ -166,8 +168,10 @@ func (c *crashRun) kill() {
 	c.wg.Wait()
 }
 
-// verify opens the database the killed process left and checks it.
-func (c *crashRun) verify() {
+// verify opens the database the killed process left and checks it;
+// ballastRows is how many rows of the large batch must be there (-1: the
+// scenario wrote none).
+func (c *crashRun) verify(ballastRows int) {
 	t := c.t
 	t.Helper()
 	store, err := storage.Open(context.Background(), storage.Options{Path: c.path(config.DatabaseFile)})
@@ -198,19 +202,15 @@ func (c *crashRun) verify() {
 			t.Fatalf("request %s received its values, but its secret.disclosed event is missing after the kill", id)
 		}
 	}
-	var tables int
-	if err := r.QueryRow(`SELECT count(*) FROM sqlite_schema WHERE name = 'crashpoint_ballast'`).Scan(&tables); err != nil {
-		t.Fatal(err)
-	}
-	if tables == 1 {
+	if ballastRows >= 0 {
 		var rows int
 		if err := r.QueryRow(`SELECT count(*) FROM crashpoint_ballast`).Scan(&rows); err != nil {
-			t.Fatal(err)
+			t.Fatalf("the large batch's table: %v", err)
 		}
-		if rows != 0 && rows != ballastBytes>>20 {
-			t.Fatalf("%d of the large batch's %d rows survived: not atomic", rows, ballastBytes>>20)
+		if rows != ballastRows {
+			t.Fatalf("%d of the large batch's %d rows after recovery, want %d", rows, ballastBytes>>20, ballastRows)
 		}
-		t.Logf("the large batch: %d rows after recovery", rows)
+		t.Logf("the large batch: %d rows after recovery, as required", rows)
 	}
 	t.Logf("%d disclosures answered before the kill, each with its audit event; %d events", len(c.answered), events)
 }
@@ -224,73 +224,82 @@ func TestKillAtCrashPoints(t *testing.T) {
 		c.waitFor("a paused commit", func() bool { return c.logged("paused commit") })
 		time.Sleep(100 * time.Millisecond) // more disclosures queue behind it
 		c.kill()
-		c.verify()
+		c.verify(-1)
 	})
 
-	// During a WAL write: the large batch's frames go to the WAL while its
-	// job runs and at its commit; the kill comes once the WAL has grown by
-	// 8 MiB and before its COMMIT returned. Retried when the batch wins the
-	// race.
+	// During a WAL write: the large batch's job writes its frames to the
+	// WAL as its inserts spill, before its commit begins. The kill comes once
+	// the WAL has grown 8 MiB; an attempt in which the batch's commit had
+	// begun by then ("ballast-commit", from the commit hook, before the
+	// commit's own frames) is retried, since its outcome may be either. So an
+	// accepted kill is inside the WAL write of an uncommitted batch, and
+	// none of its rows may survive.
 	t.Run("during a WAL write", func(t *testing.T) {
 		for attempt := 1; ; attempt++ {
 			c := startCrashRun(t, "VARLATCH_CRASHPOINT_BALLAST="+strconv.Itoa(ballastBytes))
+			wal := c.path(config.DatabaseFile) + "-wal"
 			c.armNow()
 			c.waitFor("the large batch", func() bool { return c.logged("ballast-start") })
-			start := size(c.path(config.DatabaseFile) + "-wal")
-			c.waitFor("the WAL to grow", func() bool {
-				return size(c.path(config.DatabaseFile)+"-wal") >= start+8<<20 || c.logged("ballast-committed")
-			})
+			start := size(wal)
+			c.waitFor("the WAL to grow", func() bool { return size(wal) >= start+8<<20 || c.logged("ballast-commit") })
 			c.kill()
-			if c.logged("ballast-committed") {
-				if attempt == 3 {
-					t.Fatal("three times the large batch committed before the kill")
+			if c.logged("ballast-commit") {
+				if attempt == 5 {
+					t.Fatal("five times the large batch's commit began before the kill")
 				}
 				continue
 			}
-			t.Logf("killed with the WAL at %d bytes (%d at the batch's start), the batch not committed", size(c.path(config.DatabaseFile)+"-wal"), start)
-			c.verify()
+			t.Logf("killed with the WAL at %d bytes (%d at the batch's start), its commit not begun (attempt %d)", size(wal), start, attempt)
+			c.verify(0)
 			return
 		}
 	})
 
-	// During a checkpoint: once the large batch committed, the next
-	// checkpoint copies its frames into the database file; the kill comes
-	// once that file has grown by 4 MiB and before the checkpoint returned.
+	// During a checkpoint: once the large batch committed ("ballast-durable",
+	// its COMMIT returned), a checkpoint copies its frames into the database
+	// file. The baseline is the file's size when the batch was queued, before
+	// any of its frames could be checkpointed. The kill comes once the file
+	// has grown 4 MiB in a checkpoint that started after the commit and has
+	// not returned; an attempt in which a checkpoint copied the batch and
+	// returned first is retried. The batch committed, so all its rows must
+	// survive.
 	t.Run("during a checkpoint", func(t *testing.T) {
 		for attempt := 1; ; attempt++ {
 			c := startCrashRun(t, "VARLATCH_CRASHPOINT_BALLAST="+strconv.Itoa(ballastBytes))
-			c.armNow()
-			c.waitFor("the large batch to commit", func() bool { return c.logged("ballast-committed") })
 			db := c.path(config.DatabaseFile)
-			start := size(db)
-			// A checkpoint started after the batch committed, not yet returned.
-			inCheckpoint := func() bool {
-				l := c.lines()
+			c.armNow()
+			c.waitFor("the large batch", func() bool { return c.logged("ballast-start") })
+			base := size(db)
+			// After the commit: whether a checkpoint is running, and
+			// whether one has finished.
+			state := func() (running, finished bool) {
 				after := false
-				open := false
-				for _, x := range l {
+				for _, x := range c.lines() {
 					switch {
-					case x == "ballast-committed":
+					case x == "ballast-durable":
 						after = true
 					case after && x == "checkpoint":
-						open = true
-					case after && x == "checkpointed":
-						open = false
+						running = true
+					case after && x == "checkpointed" && running:
+						running, finished = false, true
 					}
 				}
-				return open
+				return
 			}
-			c.waitFor("the database file to grow in a checkpoint", func() bool { return size(db) >= start+4<<20 && inCheckpoint() || size(db) >= start+ballastBytes })
-			copying := inCheckpoint()
+			copied := func() bool { return size(db) >= base+ballastBytes*3/4 }
+			c.waitFor("a checkpoint copying the batch", func() bool {
+				running, finished := state()
+				return running && size(db) >= base+4<<20 || finished && copied()
+			})
 			c.kill()
-			if !copying || !inCheckpoint() {
-				if attempt == 3 {
-					t.Fatal("three times the checkpoint finished before the kill")
+			if running, _ := state(); !running || size(db) < base+4<<20 {
+				if attempt == 5 {
+					t.Fatal("five times a checkpoint copied the batch and returned before the kill")
 				}
 				continue
 			}
-			t.Logf("killed in a checkpoint with the database file at %d bytes (%d before)", size(db), start)
-			c.verify()
+			t.Logf("killed in a checkpoint with the database file at %d bytes (%d before the batch; attempt %d)", size(db), base, attempt)
+			c.verify(ballastBytes >> 20)
 			return
 		}
 	})
