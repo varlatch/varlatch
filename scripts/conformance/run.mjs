@@ -302,14 +302,19 @@ async function main() {
         continue;
       }
       if (entry.setup === "seed") {
+        // The admin identity's CLI credential, which later suites use: issued
+        // whenever the target can recover, seed or not (a target that lacks
+        // the seed's writes still signs in with it; cli-core's token sign-in).
+        if (!setupLacks(inventory, "admin-recover", lacks)) {
+          if (!ctx.adminId) throw new Error("the passkey suite named no identity: nothing after it can run");
+          ctx.token = await ctx.cliCredential();
+        }
         if (setupLacks(inventory, "seed", lacks)) {
           const missing = inventory.operations.seed.uses.filter((op) => lacks.has(op));
           console.log(`--- seed: not run, the target lacks ${missing.join(", ")}`);
           continue;
         }
-        if (!ctx.adminId) throw new Error("the passkey suite named no identity: nothing after it can run");
         console.log(`--- seed data as ${ctx.adminId}`);
-        ctx.token = await ctx.cliCredential();
         await seed(ctx.origin, ctx.token);
         await target.settle?.(state);
         continue;

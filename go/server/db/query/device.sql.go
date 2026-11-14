@@ -249,6 +249,33 @@ func (q *Queries) DeviceSignInByCodeHash(ctx context.Context, deviceCodeHash str
 	return i, err
 }
 
+const deviceSignInRequesters = `-- name: DeviceSignInRequesters :many
+SELECT requester_ip FROM device_sign_ins WHERE requested_name = ? ORDER BY created_at, id
+`
+
+func (q *Queries) DeviceSignInRequesters(ctx context.Context, requestedName sql.NullString) ([]sql.NullString, error) {
+	rows, err := q.db.QueryContext(ctx, deviceSignInRequesters, requestedName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullString
+	for rows.Next() {
+		var requester_ip sql.NullString
+		if err := rows.Scan(&requester_ip); err != nil {
+			return nil, err
+		}
+		items = append(items, requester_ip)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const ensureDeviceCodeWindow = `-- name: EnsureDeviceCodeWindow :exec
 INSERT INTO device_code_attempt_windows (scope, key, window_started_at, failures) VALUES (?, ?, ?, 0)
 ON CONFLICT DO NOTHING
@@ -276,6 +303,18 @@ WHERE status IN ('pending', 'approved') AND expires_at <= ?
 // so the single writer orders them; "now" is read inside the job.
 func (q *Queries) ExpireLapsedDeviceSignIns(ctx context.Context, expiresAt int64) error {
 	_, err := q.db.ExecContext(ctx, expireLapsedDeviceSignIns, expiresAt)
+	return err
+}
+
+const expirePendingDeviceSignIns = `-- name: ExpirePendingDeviceSignIns :exec
+
+UPDATE device_sign_ins SET expires_at = ? WHERE status = 'pending'
+`
+
+// The conformance harness's probes (daemon/probe_conformance.go, built
+// only with the conformance build tag).
+func (q *Queries) ExpirePendingDeviceSignIns(ctx context.Context, expiresAt int64) error {
+	_, err := q.db.ExecContext(ctx, expirePendingDeviceSignIns, expiresAt)
 	return err
 }
 

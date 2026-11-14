@@ -89,3 +89,12 @@ DELETE FROM device_sign_in_challenges WHERE device_sign_in_id = ?;
 UPDATE device_sign_ins SET status = 'approved', approved_by_identity_id = sqlc.arg(identity_id), decided_at = sqlc.arg(now),
        approval_user_verified = sqlc.arg(user_verified), approval_passkey_id = sqlc.arg(passkey_id)
 WHERE id = sqlc.arg(id) AND status = 'pending' AND expires_at > sqlc.arg(now);
+
+-- The conformance harness's probes (daemon/probe_conformance.go, built
+-- only with the conformance build tag).
+
+-- name: ExpirePendingDeviceSignIns :exec
+UPDATE device_sign_ins SET expires_at = ? WHERE status = 'pending';
+
+-- name: DeviceSignInRequesters :many
+SELECT requester_ip FROM device_sign_ins WHERE requested_name = ? ORDER BY created_at, id;

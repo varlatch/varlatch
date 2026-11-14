@@ -40,7 +40,8 @@ export const TARGET_OPERATIONS = ["bootstrap", "recover", "serveCli"];
 
 /**
  * The operations of the OpenAPI document: Map(operationId → { method, path }),
- * the path with the document's server URL (/v1) in front. The document is
+ * the path with the document's server URL (/v1) in front, or a path's own
+ * (the browser session's paths, served at the root). The document is
  * read line by line, as it is written (two-space indentation: paths at 2,
  * methods at 4, operationId at 6), so that this module needs nothing but
  * Node; test/operations.test.mjs checks the result against the routes the Go
@@ -53,6 +54,7 @@ export function openapiOperations(text) {
   let inPaths = false;
   let path = null;
   let method = null;
+  let pathServer = null;
   for (const line of lines) {
     if (/^\S/.test(line)) {
       inPaths = line.startsWith("paths:");
@@ -64,11 +66,19 @@ export function openapiOperations(text) {
     if ((m = /^ {2}(\/\S*):\s*$/.exec(line))) {
       path = m[1];
       method = null;
+      pathServer = null;
+    } else if (/^ {4}servers:\s*$/.test(line)) {
+      // A path with a servers entry of its own: served there, not under
+      // the document's /v1 (the browser session's paths, at the root).
+      method = null;
+      pathServer = "";
+    } else if ((m = /^ {6}- url:\s*(\S+)\s*$/.exec(line)) && pathServer === "") {
+      pathServer = m[1].replace(/\/$/, "");
     } else if ((m = /^ {4}([a-z]+):\s*$/.exec(line))) {
       method = METHODS.includes(m[1]) ? m[1].toUpperCase() : null;
     } else if ((m = /^ {6}operationId:\s*(\S+)\s*$/.exec(line)) && path && method) {
       if (ops.has(m[1])) throw new Error(`openapi: operationId ${m[1]} appears twice`);
-      ops.set(m[1], { method, path: `${server}${path}` });
+      ops.set(m[1], { method, path: `${pathServer ?? server}${path}` });
       method = null;
     }
   }

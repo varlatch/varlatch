@@ -42,6 +42,9 @@ func Admin(args []string, stdout, stderr io.Writer) int {
 		return usage("no command")
 	}
 	sub := args[0]
+	if sub == "conformance-probe" && conformanceProbe != nil {
+		return conformanceProbe(args[1:], stdout, stderr)
+	}
 	if sub != "bootstrap" && sub != "recover" {
 		return usage("unknown command " + sub)
 	}
@@ -164,6 +167,10 @@ func Admin(args []string, stdout, stderr io.Writer) int {
 		"  "+base+"/enroll#"+grant.Token,
 		"Expires: "+auth.ISO(grant.ExpiresAt)+".")
 }
+
+// conformanceProbe is `varlatchd admin conformance-probe`, in a build with
+// the conformance tag only (probe_conformance.go); nil otherwise.
+var conformanceProbe func(args []string, stdout, stderr io.Writer) int
 
 // issuer is the base of the enrollment URLs: the public URL as configured,
 // else http://localhost and the listener's port, as the TypeScript

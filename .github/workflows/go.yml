@@ -302,7 +302,7 @@ jobs:
         run: |
           cd go
           go generate ./server/web
-          go build -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+          go build -tags conformance -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
       - name: The go-binary adapter and the stale-lacks probe against varlatchd
         env:
           VARLATCH_REQUIRE_GO_BINARY: "1"

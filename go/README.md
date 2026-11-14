@@ -100,8 +100,15 @@ error no restart can fix: an unparsable file, an unknown or repeated
 setting, an invalid value, missing or unparsable Root KEK material, and a
 Root KEK that does not open this installation's canary (the installation
 was read; a failure to read it stays 1). The unit has `RestartPreventExitStatus=78`, pinned in
-`install/unit_test.go`. `varlatchd admin bootstrap|recover` answer
-`NOT_IMPLEMENTED_YET` (exit 69) until step 3.4.
+`install/unit_test.go`.
+
+`varlatchd admin bootstrap [--cli-credential]` and `varlatchd admin
+recover --identity <id> [--enable] | --new-admin [--cli-credential]`
+(with `--config <file>`) print exactly what the TypeScript admin CLI
+prints: a one-time enrollment URL, or a CLI credential on the last line.
+They open the database beside a running varlatchd. A build with the
+`conformance` tag also has `varlatchd admin conformance-probe`, the
+conformance harness's device sign-in probes; a release has none.
 
 The server's packages:
 
@@ -115,12 +122,17 @@ The server's packages:
     generated code binds parameters or decodes the body, so before any
     authentication, validation or storage access (varlatchd-core decision
     5; the conformance harness's stale-`lacks` probe relies on it).
-    `BuiltOperations` lists the ones served (`GET /v1/meta` so far);
+    `BuiltOperations` lists the ones served (`GET /v1/meta`, and step
+    3.4's: who am I, the caller's credentials, passkeys and profile,
+    the CLI credential exchange, device sign-in, the caller's
+    organizations); a built operation authenticates its bearer first
+    (`authn.go`), unless it authenticates otherwise;
   - the TypeScript server's error envelope, and its two known differences
     (decision 4): an unknown route answers the plain-text `404 Not Found`
     (under `/v1` only after authentication, as the TypeScript server
     orders it: without a bearer credential, `401 AUTHENTICATION_REQUIRED`;
-    until step 3.4 verifies credentials, any bearer reaches the 404), and
+    with an invalid, revoked or expired one, `401 INVALID_CREDENTIAL`; with
+    an agent-run credential on a write, `403 PERMISSION_DENIED`), and
     the request window (600 requests per 60 s per client address, before
     authentication) answers `429` with `PERMISSION_DENIED` and Retry-After.
     `server/httpserver/testdata/known-differences.json` holds these
@@ -148,8 +160,20 @@ The server's packages:
     `index.html` for every other path (single-page routing), with the
     dashboard's Content-Security-Policy (`connect-src 'self'`: there is no
     Convex in the Go server). `/v1`, `/auth`, `/enroll`, `/healthz`,
-    `/readyz` and `/.well-known` never serve it; `/auth` and `/enroll`
-    answer the stub until step 3.4.
+    `/readyz` and `/.well-known` never serve it;
+  - the browser session (`browser.go`), generated from the OpenAPI
+    document's browser-session section (`server/api/browser`), served at
+    `/auth/...` and listed as `auth.session` in `/v1/meta`: its cookies,
+    the CSRF and Origin checks on every POST, and the ceremonies; and the
+    enrollment page, `/enroll` (the TypeScript server's page, byte for
+    byte) with its own script, `/enroll.js`.
+- `server/auth`: authentication (ADR-0059 Decision 6): opaque credentials
+  stored hashed, setup grants, browser sessions of its own, WebAuthn with
+  go-webauthn's `protocol` package (BSD-3-Clause), passkey provenance,
+  sign-in evidence and passkey-verification, device sign-in. Its tests are
+  G4's server side, with a software authenticator (`auth/authtest`) and a
+  v0.22.0 fixture the TypeScript code makes
+  (`services/varlatchd/test/go-passkey-fixture.test.ts`).
 - `server/web`: the dashboard varlatchd embeds (decision 8).
   `go generate ./server/web` builds `apps/web` as its image does, with the
   pinned Node and pnpm, and stages it in `server/web/dist/` with a record of

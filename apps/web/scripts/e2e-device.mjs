@@ -72,6 +72,16 @@ await page.click("#enroll");
 await page.waitForFunction(() => /API credential|failed/.test(document.getElementById("status").textContent), null, { timeout: 20000 });
 check("device.passkey-enrolled", "passkey enrolled", /API credential/.test(await page.textContent("#status")));
 
+// 1b. The dashboard's own sign-in: without its session cookie the dashboard
+// shows its sign-in screen, and the passkey signs in through the
+// dashboard's session client (Better Auth's on the TypeScript server, the
+// Go server's own when /v1/meta lists auth.session).
+await context.clearCookies();
+await page.goto(`${base}/device`);
+await page.click('button:has-text("Continue with passkey")', { timeout: 20000 });
+const dashboardSignedIn = await page.waitForSelector('[data-testid="device-code-input"]', { timeout: 20000 }).then(() => true, () => false);
+check("device.dashboard-passkey-sign-in", "the dashboard's sign-in screen signs in with the passkey", dashboardSignedIn, dashboardSignedIn ? "" : (await page.textContent("#signin-status").catch(() => null)) ?? "");
+
 // 2. The CLI starts a sign-in: address and code printed, the device code only in the 0600 file.
 const started = await cli(["login", "--server", base, "--start", "--json"]);
 const doc = started.code === 0 ? JSON.parse(started.stdout) : {};

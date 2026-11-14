@@ -4,22 +4,6 @@
   "expected": {},
   "lacks": {
     "go-binary": {
-      "admin-bootstrap": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
-      "admin-recover": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
-      "enroll-page": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
-      "browser-session": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
       "serve-cli": {
         "reason": "the Go server cannot serve the CLI and install scripts yet (ADR-0058 Decision 3)",
         "step": "ADR-0059 step 4"
@@ -88,10 +72,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "collectDeviceSignIn": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
       "completeGitHubAppRegistration": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -103,10 +83,6 @@
       "confirmExposureRevocation": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
-      },
-      "confirmMyPasskey": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
       },
       "createAuditExport": {
         "reason": "not ported to the Go server yet",
@@ -172,10 +148,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "decideDeviceSignIn": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
       "deleteEnvironment": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -215,10 +187,6 @@
       "discloseSecrets": {
         "reason": "the read path of values is not built yet in the Go server",
         "step": "ADR-0059 step 3.6"
-      },
-      "exchangeCliCredential": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
       },
       "exchangeOidcToken": {
         "reason": "not ported to the Go server yet",
@@ -285,10 +253,6 @@
         "step": "ADR-0059 step 4"
       },
       "getInstallationRelease": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "getMyProfile": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -384,23 +348,11 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "listMyCredentials": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
-      "listMyPasskeys": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
       "listOidcBindings": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
       "listOrgSyncTargets": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "listOrganizations": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -447,10 +399,6 @@
       "listWebhooks": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
-      },
-      "lookupDeviceSignIn": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
       },
       "machineReach": {
         "reason": "not ported to the Go server yet",
@@ -503,10 +451,6 @@
       "removeMember": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
-      },
-      "removeMyPasskey": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
       },
       "removeTeamMember": {
         "reason": "not ported to the Go server yet",
@@ -564,10 +508,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "revokeMyCredential": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
       "revokeOidcBinding": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -612,17 +552,9 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "startDeviceSignIn": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
-      },
       "startGitHubAppRegistration": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
-      },
-      "startPasskeyConfirmation": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
       },
       "strictRetrieval": {
         "reason": "not ported to the Go server yet",
@@ -659,10 +591,6 @@
       "validateEnvironment": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
-      },
-      "whoami": {
-        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
-        "step": "ADR-0059 step 3.4"
       }
     }
   }

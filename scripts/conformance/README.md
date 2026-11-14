@@ -181,13 +181,15 @@ in `CONFORMANCE_TARGET_STATE`, which `target-op.mjs` reads.
   `request-log` is its access log: the requests its request window counted,
   with millisecond arrival and completion times, the client address and
   the X-Forwarded-For header. `bootstrap` and `recover` run
-  `varlatchd admin bootstrap|recover`, which answer `NOT_IMPLEMENTED_YET`
-  until step 3.4; `serveCli` restarts varlatchd with `serve_cli` set, which
-  it refuses until it knows the setting. It has no optional capability yet.
-  It signals only the process it started, by the PID it recorded, after
-  checking that PID still runs its configuration. Build the binary with the
-  dashboard first: `go generate ./server/web` then
-  `go build ./cmd/varlatchd` in `go/`.
+  `varlatchd admin bootstrap|recover`; `serveCli` restarts varlatchd with
+  `serve_cli` set, which it refuses until it knows the setting. Its
+  optional capabilities are device sign-in's probes, which it runs as
+  `varlatchd admin conformance-probe`, a command only a build with the
+  `conformance` tag has; `up` refuses a binary without it. It signals only
+  the process it started, by the PID it recorded, after checking that PID
+  still runs its configuration. Build the binary with the dashboard first:
+  `go generate ./server/web` then
+  `go build -tags conformance ./cmd/varlatchd` in `go/`.
 
 Before a `ts-release` target starts, the release is verified as
 `docs/operations/verify-release.md` says, and any failure stops the run:

@@ -12,6 +12,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createAuthClient } from "better-auth/client";
 import { passkeyClient } from "@better-auth/passkey/client";
 import { VarlatchClient, type Approval } from "@varlatch/sdk";
+import { backend } from "./backend";
+import * as varlatchd from "./varlatchdSession";
 
 /**
  * Session lifecycle (design R2 §Q4): the /v1 bearer lives in memory only.
@@ -24,12 +26,24 @@ import { VarlatchClient, type Approval } from "@varlatch/sdk";
  * 503 MAINTENANCE — including to the session exchange. That is never shown
  * as being signed out: `maintenance` flips instead, the exchange retries on
  * its own, and any normal answer clears it.
+ *
+ * Two session clients (lib/backend.ts): Better Auth's for the TypeScript
+ * server, and the Go server's own (/auth/session, lib/varlatchdSession.ts)
+ * when /v1/meta lists auth.session. Both end in the same bearer exchange,
+ * POST /auth/varlatch-token.
  */
 
-const authClient = createAuthClient({
-  baseURL: `${location.origin}/auth`,
-  plugins: [passkeyClient()],
-});
+let betterAuthClient: ReturnType<typeof makeAuthClient> | null = null;
+function makeAuthClient() {
+  return createAuthClient({
+    baseURL: `${location.origin}/auth`,
+    plugins: [passkeyClient()],
+  });
+}
+/** Better Auth's client, for the TypeScript server only; created on first use. */
+function authClient() {
+  return (betterAuthClient ??= makeAuthClient());
+}
 
 interface SessionState {
   identityId: string | null;
@@ -101,7 +115,8 @@ const SessionContext = createContext<SessionState | null>(null);
  * and confirming passkeys go through /v1/me/passkeys (the SDK).
  */
 export async function addPasskey(name: string): Promise<void> {
-  const result = await authClient.passkey.addPasskey({ name });
+  if (backend().session === "varlatchd") return varlatchd.addPasskey(name);
+  const result = await authClient().passkey.addPasskey({ name });
   if (result?.error) throw new Error(result.error.message ?? "passkey enrollment failed");
 }
 
@@ -111,7 +126,7 @@ export async function addPasskey(name: string): Promise<void> {
  * the browser to forget it (WebAuthn Signal API, where supported) so the
  * stale passkey stops being offered, and explain what happened.
  */
-async function signInPasskeyWithStaleCleanup(client: typeof authClient): Promise<void> {
+async function signInPasskeyWithStaleCleanup(client: ReturnType<typeof makeAuthClient>): Promise<void> {
   const result = await client.signIn.passkey({ returnWebAuthnResponse: true });
   if (!result?.error) return;
   const stale =
@@ -173,7 +188,24 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | null | undef
 }
 
 async function exchange(): Promise<Exchange> {
-  const res = await fetch("/auth/varlatch-token", { method: "POST", credentials: "include" });
+  let res: Response;
+  if (backend().session === "varlatchd") {
+    // The Go server: the session state first (no exchange without one),
+    // then the exchange with the CSRF token.
+    try {
+      const state = await varlatchd.browserSession(true);
+      if (!state.identityId) return { kind: "signed-out" };
+    } catch (err) {
+      if (err instanceof varlatchd.SessionRequestError && (await isMaintenance(err.response))) {
+        const after = Number(err.response.headers.get("Retry-After"));
+        return { kind: "maintenance", retryAfterMs: (Number.isFinite(after) && after > 0 ? after : 5) * 1000 };
+      }
+      return { kind: "signed-out" };
+    }
+    res = await varlatchd.authPost("/auth/varlatch-token");
+  } else {
+    res = await fetch("/auth/varlatch-token", { method: "POST", credentials: "include" });
+  }
   if (res.ok) return { kind: "ok", ...((await res.json()) as { token: string; identityId: string }) };
   if (await isMaintenance(res)) {
     const after = Number(res.headers.get("Retry-After"));
@@ -315,7 +347,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithPasskey = useCallback(async () => {
     const started = generation.current;
-    await signInPasskeyWithStaleCleanup(authClient);
+    if (backend().session === "varlatchd") await varlatchd.signInWithPasskey();
+    else await signInPasskeyWithStaleCleanup(authClient());
     const r = await exchange();
     if (started !== generation.current) throw new DOMException("Session changed", "AbortError");
     if (r.kind === "maintenance") throw new Error("Varlatch is in maintenance; try again in a moment");
@@ -332,7 +365,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     clearSession();
-    await authClient.signOut().catch(() => undefined);
+    if (backend().session === "varlatchd") await varlatchd.signOut().catch(() => undefined);
+    else await authClient().signOut().catch(() => undefined);
   }, [clearSession]);
 
   const value = useMemo(

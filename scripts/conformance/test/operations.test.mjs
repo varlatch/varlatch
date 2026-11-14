@@ -30,13 +30,20 @@ const openapi = openapiOperations(readFileSync(join(repoRoot, "packages/protocol
 const goExpect = JSON.parse(readFileSync(join(here, "..", "expect", "go-binary.json"), "utf8"));
 
 test("the OpenAPI table is the routes the Go server is generated with", () => {
-  const gen = readFileSync(join(repoRoot, "go/server/api/api.gen.go"), "utf8");
-  const routes = [...gen.matchAll(/^\tm\.HandleFunc\(http\.Method(\w+)\+" "\+options\.BaseURL\+"([^"]+)", wrapper\.(\w+)\)/gm)];
-  assert.ok(routes.length > 150);
-  assert.equal(openapi.size, routes.length);
-  for (const [, method, path, wrapper] of routes) {
+  // /v1 (go/server/api, served under /v1) and the browser session's paths
+  // (go/server/api/browser, served at the root).
+  const routesOf = (file, base) =>
+    [...readFileSync(join(repoRoot, file), "utf8").matchAll(/^\tm\.HandleFunc\(http\.Method(\w+)\+" "\+options\.BaseURL\+"([^"]+)", wrapper\.(\w+)\)/gm)].map(
+      ([, method, path, wrapper]) => ({ method, path: `${base}${path}`, wrapper }),
+    );
+  const v1 = routesOf("go/server/api/api.gen.go", "/v1");
+  const browser = routesOf("go/server/api/browser/browser.gen.go", "");
+  assert.ok(v1.length > 150);
+  assert.ok(browser.length >= 7 && browser.every((r) => r.path.startsWith("/auth/")));
+  assert.equal(openapi.size, v1.length + browser.length);
+  for (const { method, path, wrapper } of [...v1, ...browser]) {
     const id = wrapper[0].toLowerCase() + wrapper.slice(1);
-    assert.deepEqual(openapi.get(id), { method: method.toUpperCase(), path: `/v1${path}` }, id);
+    assert.deepEqual(openapi.get(id), { method: method.toUpperCase(), path }, id);
   }
   assert.equal(placeholderPath("/v1/organizations/{org}/projects/{project}"), "/v1/organizations/placeholder/projects/placeholder");
 });
@@ -79,7 +86,8 @@ test("a check needs its suite's operations and its own; the seed lacks when an o
   // An operation only the seed uses: every check whose suite needs the seed lacks it, by name.
   const bySeed = lackingChecks(inventory, ["pushContractRevision"]);
   assert.deepEqual(bySeed.get("mcp.lists-read-tools-only"), ["seed"]);
-  assert.ok(bySeed.has("cli-core.login-token-stores-credential"));
+  // cli-core: its env list group needs the seed; its token sign-in does not.
+  assert.ok(bySeed.has("cli-core.env-list-json") && !bySeed.has("cli-core.login-token-stores-credential"));
   assert.ok(!bySeed.has("cli-download-off.install-sh-404"));
   assert.ok(setupLacks(inventory, "seed", ["admin-recover"]));
   assert.ok(!setupLacks(inventory, "seed", ["getMeta"]));
@@ -103,15 +111,32 @@ test("lacks entries: a known operation (never the seed itself), a reason and the
 test("expect/go-binary.json lacks every operation but the ones the Go server has, each with a step of ADR-0059 step 3 or 4", () => {
   assert.deepEqual(validateExpectations(goExpect, { targetName: "go-binary", inventory, cliVersions: ["0.21.0", "0.22.0"], openapi }), []);
   const lacks = lacksFor(goExpect, "go-binary");
-  const built = ["getMeta"];
+  // ADR-0059 step 3.4: the browser session's paths, and the /v1 operations
+  // sessions, passkeys, credentials and device sign-in need.
+  const built = [
+    "getMeta",
+    "whoami", "getMyProfile", "listMyCredentials", "exchangeCliCredential", "revokeMyCredential",
+    "listMyPasskeys", "removeMyPasskey", "startPasskeyConfirmation", "confirmMyPasskey",
+    "startDeviceSignIn", "collectDeviceSignIn", "lookupDeviceSignIn", "decideDeviceSignIn", "listOrganizations",
+    "getBrowserSession", "startPasskeySignIn", "finishPasskeySignIn", "startPasskeyRegistration", "finishPasskeyRegistration",
+    "signOut", "mintBrowserBearer",
+  ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
-  for (const [name, op] of Object.entries(inventory.operations)) assert.equal(lacks.has(name), !op.uses, name);
+  // Of the named operations only serving the CLI is lacking (the seed is
+  // lacking through the writes it uses, never listed).
+  for (const [name, op] of Object.entries(inventory.operations)) assert.equal(lacks.has(name), !op.uses && name === "serve-cli", name);
   for (const [op, e] of lacks) assert.match(e.step, /^ADR-0059 step (3\.[3-6]|4)$/, op);
-  // Every conformance check that needs the target lacks something on it, but
-  // the CLI-download-off checks, which need only /v1/meta.
+  // The conformance checks the Go server runs (step 3.4): the passkey
+  // bootstrap, the CLI's token sign-in and whoami, the CLI browser login,
+  // device sign-in with the dashboard's sign-in and the proxy probe's
+  // pending cap, and the CLI-download-off checks, which need only /v1/meta.
+  // Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
-  assert.deepEqual(runs.sort(), Object.keys(inventory.checks).filter((id) => id.startsWith("cli-download-off.")).sort());
+  const expected = Object.keys(inventory.checks).filter((id) =>
+    /^(passkey|cli-login|device|proxy-probe|cli-download-off)\./.test(id) ||
+    ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format"].includes(id));
+  assert.deepEqual(runs.sort(), expected.sort());
 });
 
 test("probes: a /v1 or named HTTP operation is asked by its route; a target operation through the adapter; the seed never", () => {

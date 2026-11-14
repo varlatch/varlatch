@@ -41,10 +41,24 @@ async function newPageWithAuthenticator(context) {
 // registration (what a cancelled prompt or closed tab leaves behind) must not
 // consume the grant; the same link must still enroll in step 1.
 const setupToken = decodeURIComponent(new URL(enrollUrl).hash.slice(1));
-const abandoned = await fetch(
-  `${base}/auth/passkey/generate-register-options?context=${encodeURIComponent(setupToken)}`,
-  { headers: { Origin: base } },
-);
+// The ceremony's start on the target's own session endpoints: the Go
+// server's when /v1/meta lists auth.session (a CSRF token from
+// /auth/session, sent back with its cookie), Better Auth's otherwise.
+const meta = await fetch(`${base}/v1/meta`).then((r) => r.json(), () => null);
+const abandoned = Array.isArray(meta?.capabilities) && meta.capabilities.includes("auth.session")
+  ? await fetch(`${base}/auth/session`).then(async (session) => {
+      const { csrfToken } = await session.json();
+      const cookie = (session.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]).join("; ");
+      return fetch(`${base}/auth/passkey/registration/options`, {
+        method: "POST",
+        headers: { Origin: base, "Content-Type": "application/json", "Varlatch-CSRF": csrfToken, Cookie: cookie },
+        body: JSON.stringify({ token: setupToken }),
+      });
+    })
+  : await fetch(
+      `${base}/auth/passkey/generate-register-options?context=${encodeURIComponent(setupToken)}`,
+      { headers: { Origin: base } },
+    );
 check("passkey.abandoned-ceremony-start-accepted", "abandoned ceremony start is accepted", abandoned.status === 200, `status ${abandoned.status}`);
 
 // ---- 1. Enrollment consumes the setup token and yields a working credential.
