@@ -357,4 +357,9 @@ passes, every failure in it listed with a reason.
 - Step 3 points the G9a harness at varlatchd (`bench/g9a/README.md`,
   "Against varlatchd") before G9a is run as the gate.
 - List the Go module's dependencies (`go list -m all`, modernc.org/sqlite
-  and its own) in THIRD-PARTY-NOTICES.md and its generator.
+  and its own) in THIRD-PARTY-NOTICES.md and its generator: the generator
+  (`scripts/generate-third-party-notices.mjs`, `pnpm notices:check`)
+  covers npm packages only, so no Go binary ships before it lists the
+  modules each binary links, go-webauthn and its dependencies
+  (fxamacker/cbor, go-webauthn/x, golang-jwt/jwt, google/go-tpm,
+  tinylib/msgp, philhofer/fwd, x448/float16) included.
