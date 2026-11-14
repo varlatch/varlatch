@@ -12,6 +12,8 @@ import (
 // varlatch doctor reports them).
 type Metrics struct {
 	WALBytes int64
+	// Queued is how many jobs wait for the writer now.
+	Queued int
 
 	Batches       uint64 // committed or failed write transactions
 	Jobs          uint64 // jobs the writer ran
@@ -49,6 +51,7 @@ func (db *DB) Metrics() Metrics {
 	m := db.m.m
 	db.m.mu.Unlock()
 	m.WALBytes = db.walSize()
+	m.Queued = len(db.jobs)
 	return m
 }
 

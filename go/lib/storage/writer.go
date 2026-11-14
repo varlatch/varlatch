@@ -320,6 +320,7 @@ func (db *DB) runBatch(batch []*job) {
 		db.m.batch(len(batch), 0, true, time.Since(t0), 0)
 		return
 	}
+	db.crash("committed")
 	if db.opts.OnCommit != nil {
 		db.opts.OnCommit()
 	}

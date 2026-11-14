@@ -66,6 +66,8 @@ func (db *DB) checkpointLoop() {
 // Any mode but PASSIVE needs ckptMu held.
 func (db *DB) checkpointLocked(ctx context.Context, mode, trigger string) (CheckpointResult, error) {
 	r := CheckpointResult{Mode: mode, Trigger: trigger, WALBefore: db.walSize()}
+	db.crash("checkpoint")
+	defer db.crash("checkpointed")
 	r.Start = time.Now()
 	var busy int
 	err := db.cconn.QueryRowContext(ctx, "PRAGMA wal_checkpoint("+mode+")").Scan(&busy, &r.LogFrames, &r.Checkpointed)
