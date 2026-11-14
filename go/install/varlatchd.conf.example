@@ -21,8 +21,9 @@
 listen = 127.0.0.1:8686
 
 # The origin people reach Varlatch at, such as https://varlatch.example.com
-# (no path). Device sign-in needs it over https (plain http only on
-# localhost). Default: none.
+# (no path). It must be https, except on this machine: plain http is
+# accepted only for localhost, 127.0.0.1 and [::1], and varlatchd refuses
+# to start with any other plain-http address. Default: none.
 public_url =
 
 # The data directory, which holds the database (varlatch.db). Default: the

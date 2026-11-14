@@ -174,6 +174,23 @@ func (q *Queries) MarkInstallationBootstrapped(ctx context.Context, bootstrapped
 	return err
 }
 
+const openOrganizationDeletion = `-- name: OpenOrganizationDeletion :one
+SELECT id, run_after FROM organization_deletions
+WHERE organization_id = ? AND cancelled_at IS NULL AND completed_at IS NULL
+`
+
+type OpenOrganizationDeletionRow struct {
+	ID       string
+	RunAfter int64
+}
+
+func (q *Queries) OpenOrganizationDeletion(ctx context.Context, organizationID string) (OpenOrganizationDeletionRow, error) {
+	row := q.db.QueryRowContext(ctx, openOrganizationDeletion, organizationID)
+	var i OpenOrganizationDeletionRow
+	err := row.Scan(&i.ID, &i.RunAfter)
+	return i, err
+}
+
 const peekSetupGrant = `-- name: PeekSetupGrant :one
 SELECT g.id, g.kind, g.invite_name, i.name AS subject_name, coalesce(i.disabled, 0) AS subject_disabled
 FROM setup_grants g LEFT JOIN identities i ON i.id = g.subject_identity_id

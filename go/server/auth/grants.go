@@ -12,6 +12,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/ids"
@@ -240,10 +241,11 @@ func consumeSetupGrant(ctx context.Context, tx query.DBTX, now int64, token, adm
 		return Consumed{}, false, nil
 	}
 	if g.InviteOrganizationID.Valid {
-		// A deleted Organization's invitation is refused like a dead one.
-		if _, err := q.LiveOrganization(ctx, g.InviteOrganizationID.String); errors.Is(err, sql.ErrNoRows) {
-			return Consumed{}, false, nil
-		} else if err != nil {
+		// An invitation needs its Organization live, as lockLiveScope's
+		// writer protocol (ADR-0051, ADR-0055): not deleted, no deletion
+		// open, not frozen for an incident. One that is not is refused like
+		// a dead grant, before anything is consumed or created.
+		if live, err := invitationOrganizationLive(ctx, tx, g.InviteOrganizationID.String); err != nil || !live {
 			return Consumed{}, false, err
 		}
 	}
@@ -335,4 +337,30 @@ func (s *Service) ConsumeForCLICredential(ctx context.Context, token, adminName,
 		err = s.rejectSetupGrant(ctx)
 	}
 	return c, issued, err
+}
+
+// invitationOrganizationLive reports whether an invitation's Organization
+// takes writes: it exists and is not deleted, has no open deletion
+// (refuseIfFrozen), and is not frozen for an incident
+// (refuseIfIncidentFrozen, no exception).
+func invitationOrganizationLive(ctx context.Context, tx query.DBTX, organizationID string) (bool, error) {
+	q := query.New(tx)
+	if _, err := q.LiveOrganization(ctx, organizationID); errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if _, err := q.OpenOrganizationDeletion(ctx, organizationID); err == nil {
+		return false, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if err := authz.RefuseIfIncidentFrozen(ctx, tx, organizationID, ""); err != nil {
+		var frozen *authz.FrozenError
+		if errors.As(err, &frozen) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }

@@ -143,7 +143,12 @@ func TestBrowserCookieAttributes(t *testing.T) {
 		secure         bool
 	}{
 		{browserOrigin, "", false},
+		{"http://127.0.0.1:8686", "", false},
+		{"http://[::1]:8686", "", false},
 		{"https://varlatch.example.com", "__Host-", true},
+		// Refused by the configuration (config.LoopbackHost); a handler
+		// built with one anyway keeps its cookies Secure.
+		{"http://varlatch.example.com", "__Host-", true},
 	} {
 		s, ta := browserServer(t, c.public)
 		b := newBrowser(t, s, c.public)

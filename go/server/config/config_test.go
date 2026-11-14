@@ -54,22 +54,25 @@ func TestParseEverySetting(t *testing.T) {
 func TestParseErrors(t *testing.T) {
 	kek := "root_kek_file = /k\n"
 	for name, file := range map[string]string{
-		"no equals sign":          kek + "listen 127.0.0.1:1\n",
-		"unknown setting":         kek + "port = 8686\n",
-		"repeated setting":        kek + "listen = 127.0.0.1:1\nlisten = 127.0.0.1:2\n",
-		"listen without a port":   kek + "listen = 127.0.0.1\n",
-		"listen port too large":   kek + "listen = 127.0.0.1:65536\n",
-		"listen on a host name":   kek + "listen = localhost:8686\n",
-		"public_url not a URL":    kek + "public_url = varlatch.example.com\n",
-		"public_url with a query": kek + "public_url = https://x.example?a=1\n",
-		"relative data_dir":       kek + "data_dir = data\n",
-		"relative root_kek_file":  "root_kek_file = root-kek\n",
-		"no Root KEK at all":      "listen = 127.0.0.1:1\n",
-		"bad trusted proxy":       kek + "trusted_proxies = under_score\n",
-		"bad access_log":          kek + "access_log = access.log\n",
-		"bad sync":                kek + "sync = yes\n",
-		"unknown sync adapter":    kek + "sync_adapters = heroku\n",
-		"overlong line":           kek + "public_url = https://" + strings.Repeat("a", 70*1024) + "\n",
+		"no equals sign":                   kek + "listen 127.0.0.1:1\n",
+		"unknown setting":                  kek + "port = 8686\n",
+		"repeated setting":                 kek + "listen = 127.0.0.1:1\nlisten = 127.0.0.1:2\n",
+		"listen without a port":            kek + "listen = 127.0.0.1\n",
+		"listen port too large":            kek + "listen = 127.0.0.1:65536\n",
+		"listen on a host name":            kek + "listen = localhost:8686\n",
+		"public_url not a URL":             kek + "public_url = varlatch.example.com\n",
+		"public_url with a query":          kek + "public_url = https://x.example?a=1\n",
+		"public_url plain http":            kek + "public_url = http://varlatch.example.com\n",
+		"public_url http on a LAN address": kek + "public_url = http://192.168.1.20:8686\n",
+		"public_url http on 127.0.0.2":     kek + "public_url = http://127.0.0.2\n",
+		"relative data_dir":                kek + "data_dir = data\n",
+		"relative root_kek_file":           "root_kek_file = root-kek\n",
+		"no Root KEK at all":               "listen = 127.0.0.1:1\n",
+		"bad trusted proxy":                kek + "trusted_proxies = under_score\n",
+		"bad access_log":                   kek + "access_log = access.log\n",
+		"bad sync":                         kek + "sync = yes\n",
+		"unknown sync adapter":             kek + "sync_adapters = heroku\n",
+		"overlong line":                    kek + "public_url = https://" + strings.Repeat("a", 70*1024) + "\n",
 	} {
 		_, err := Parse(strings.NewReader(file), env(nil))
 		var cerr *Error
@@ -100,5 +103,16 @@ func TestExampleParses(t *testing.T) {
 	defer f.Close()
 	if _, err := Parse(f, env(map[string]string{"CREDENTIALS_DIRECTORY": "/c"})); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Plain http is accepted only on this machine: localhost, 127.0.0.1 and
+// [::1] (ADR-0059 Decision 6); https anywhere.
+func TestPublicURLPlainHTTPOnlyOnLoopback(t *testing.T) {
+	for _, v := range []string{"http://localhost:8686", "http://LOCALHOST", "http://127.0.0.1:8686", "http://[::1]:8686", "https://varlatch.example.com", "https://192.168.1.20"} {
+		c, err := Parse(strings.NewReader("root_kek_file = /k\npublic_url = "+v+"\n"), env(nil))
+		if err != nil || c.PublicURL == nil {
+			t.Errorf("%s: %v", v, err)
+		}
 	}
 }

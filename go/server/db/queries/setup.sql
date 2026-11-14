@@ -45,3 +45,7 @@ SELECT count(*) FROM identities WHERE installation_admin AND NOT disabled;
 
 -- name: EnableIdentity :exec
 UPDATE identities SET disabled = 0 WHERE id = ?;
+
+-- name: OpenOrganizationDeletion :one
+SELECT id, run_after FROM organization_deletions
+WHERE organization_id = ? AND cancelled_at IS NULL AND completed_at IS NULL;

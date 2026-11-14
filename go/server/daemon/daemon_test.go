@@ -173,6 +173,7 @@ func TestExitStatuses(t *testing.T) {
 		{"unknown setting", func(t *testing.T, in install) { in.write(t, "port = 1\n") }, ExitConfig},
 		{"repeated setting", func(t *testing.T, in install) { in.write(t, "listen = 127.0.0.1:0\n") }, ExitConfig},
 		{"invalid value", func(t *testing.T, in install) { in.write(t, "sync = maybe\n") }, ExitConfig},
+		{"plain-http public URL on another host", func(t *testing.T, in install) { in.write(t, "public_url = http://varlatch.example.com\n") }, ExitConfig},
 		{"no Root KEK configured", func(t *testing.T, in install) {
 			os.WriteFile(in.conf, []byte("data_dir = "+in.data+"\n"), 0o644)
 		}, ExitConfig},

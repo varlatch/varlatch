@@ -12,6 +12,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/server/api/browser"
 	"github.com/varlatch/varlatch/go/server/auth"
+	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 )
@@ -24,9 +25,9 @@ import (
 //
 // Cookies: the session cookie holds the session's token (HttpOnly); the
 // CSRF cookie holds the CSRF token, readable by the page. Both are
-// SameSite=Strict and Path=/; with an https public URL they are Secure and
-// carry the __Host- prefix, and with a plain-http one (a local
-// installation, as the TypeScript server's useSecureCookies) neither.
+// SameSite=Strict and Path=/, Secure and with the __Host- prefix, except
+// with a plain-http public URL on this machine (localhost, 127.0.0.1,
+// [::1]), the plain-http localhost exception of ADR-0059 Decision 6.
 //
 // CSRF: every POST under /auth must come from the public URL's origin
 // (the Origin header, exactly) and carry the CSRF cookie's value in the
@@ -42,8 +43,13 @@ const (
 	CSRFHeader = "Varlatch-CSRF"
 )
 
+// secureCookies is false only for a plain-http public URL on this machine
+// (localhost, 127.0.0.1, [::1]), the one exception ADR-0059 Decision 6
+// allows; the configuration refuses plain http anywhere else, and a
+// handler built with one anyway still marks its cookies Secure.
 func (s *Server) secureCookies() bool {
-	return s.opts.PublicURL != nil && s.opts.PublicURL.Scheme == "https"
+	u := s.opts.PublicURL
+	return u == nil || u.Scheme != "http" || !config.LoopbackHost(u.Hostname())
 }
 
 func (s *Server) cookieName(base string) string {

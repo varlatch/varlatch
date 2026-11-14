@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
 )
 
@@ -286,5 +287,76 @@ func TestVerificationGaps(t *testing.T) {
 	refusal := auth.PasskeyVerificationRequired("org_x", auth.GapUntrusted)
 	if refusal.Domain.Code != "PASSKEY_VERIFICATION_REQUIRED" || reasonOf(refusal) != "untrusted-passkey" || refusal.SelfLockout {
 		t.Fatalf("%+v", refusal)
+	}
+}
+
+// An invitation enrolls a person into its Organization only while that
+// Organization takes writes, as TypeScript's lockLiveScope requires: a
+// deleted Organization, one with a deletion open, or one frozen for an
+// incident refuses it like a dead grant (INVALID_CREDENTIAL,
+// setup.grant_rejected), and nothing is consumed or created.
+func TestInvitationNeedsALiveOrganization(t *testing.T) {
+	e := newEnv(t)
+	me := e.dashboard(newSoftKey(t))
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if err := e.store.Write(e.ctx, func(tx *storage.Tx) error {
+			_, err := tx.ExecContext(e.ctx, sql, args...)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	invite := func(org string) string {
+		t.Helper()
+		token := "vlt_invite_" + org + "-0123456789abcdefghijklmnopqrstuvwxyzABCD"
+		exec(`INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES (?, ?, ?, '{}')`, org, org, org)
+		exec(`INSERT INTO setup_grants (id, kind, token_hash, expires_at, invite_organization_id, invite_role, invite_name, created_by, created_at)
+		      VALUES (?, 'invite', ?, ?, ?, 'member', 'Dana', ?, ?)`,
+			"sgr_"+org, auth.HashToken(token), e.clock.now().Add(time.Hour).UnixMicro(), org, me.identityID, e.clock.now().UnixMicro())
+		return token
+	}
+	live := invite("org_live")
+	deleted := invite("org_deleted")
+	deleting := invite("org_deleting")
+	frozen := invite("org_frozen")
+	now := e.clock.now().UnixMicro()
+	exec(`UPDATE organizations SET deleted_at = ?, wrapped_org_kek = NULL, org_kek_destroyed_at = ? WHERE id = 'org_deleted'`, now, now)
+	exec(`INSERT INTO organization_deletions (id, organization_id, requested_by, scheduled_at, run_after, approval_required)
+	      VALUES ('odl_x', 'org_deleting', ?, ?, ?, 0)`, me.identityID, now, now+time.Hour.Microseconds())
+	exec(`INSERT INTO organization_freezes (id, organization_id, frozen_by, frozen_at, reason) VALUES ('ofz_x', 'org_frozen', ?, ?, 'incident')`, me.identityID, now)
+
+	for name, token := range map[string]string{"deleted": deleted, "deleting": deleting, "frozen": frozen} {
+		binding := auth.CSRFBinding(browserCSRF)
+		// The ceremony's start only checks the grant (issue #23).
+		o, err := e.svc.RegistrationOptions(e.ctx, binding, token, nil)
+		if err != nil {
+			t.Fatalf("%s: options: %v", name, err)
+		}
+		before := e.count(`SELECT count(*) FROM audit_events WHERE event_type = 'setup.grant_rejected'`)
+		_, err = e.svc.Register(e.ctx, binding, nil, newSoftKey(t).Register(t, o, origin), "", "", "")
+		if codeOf(err) != "INVALID_CREDENTIAL" {
+			t.Errorf("%s: %v", name, err)
+		}
+		if n := e.count(`SELECT count(*) FROM audit_events WHERE event_type = 'setup.grant_rejected'`); n != before+1 {
+			t.Errorf("%s: %d rejections", name, n-before)
+		}
+		if n := e.count(`SELECT count(*) FROM setup_grants WHERE token_hash = ? AND consumed_at IS NULL`, auth.HashToken(token)); n != 1 {
+			t.Errorf("%s: the grant was consumed", name)
+		}
+	}
+	if n := e.count(`SELECT count(*) FROM org_memberships`); n != 0 {
+		t.Fatalf("%d memberships from refused invitations", n)
+	}
+	if n := e.count(`SELECT count(*) FROM passkeys`); n != 1 {
+		t.Fatalf("%d passkeys: a refused invitation stored one", n)
+	}
+	reg := e.enrollWith(newSoftKey(t), browserCSRF, live)
+	if n := e.count(`SELECT count(*) FROM org_memberships WHERE organization_id = 'org_live' AND identity_id = ? AND role = 'member'`, reg.IdentityID); n != 1 {
+		t.Fatal("no membership from the live invitation")
+	}
+	list, _ := e.svc.ListOwnPasskeys(e.ctx, reg.IdentityID)
+	if len(list) != 1 || *list[0].SetupGrantKind != "invite" {
+		t.Fatalf("%+v", list)
 	}
 }
