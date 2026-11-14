@@ -13,8 +13,9 @@ name: Conformance
 # ts-source cells as an artifact. Each cell uploads its conformance report.
 # A known failure is listed in scripts/conformance/expect/<target>.json with
 # its reason; anything else that fails, fails the cell. Weekly, and on
-# manual dispatch (on any branch that has this file). Hosted runners only;
-# no secret beyond the read-only job token.
+# manual dispatch (GitHub accepts a dispatch only once this file is on the
+# default branch; it can then run on any branch that has it). Hosted runners
+# only; no secret beyond the read-only job token.
 on:
   schedule:
     - cron: "23 4 * * 1"
