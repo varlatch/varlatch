@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/varlatch/varlatch/go/server/domainerr"
@@ -26,7 +27,8 @@ import (
 // (parseBody). The wrapper (builtOperation) checks the body against the
 // operation's schema before the generated decoder sees it; a body that
 // fails reaches the decoder as {} and the operation answers the issues
-// where TypeScript would (bodyError).
+// where TypeScript would (bodyError). The body's size was judged before
+// (ServeHTTP, Hono's bodyLimit): an oversized one never gets here.
 
 // fieldKind is what a body field must be.
 type fieldKind int
@@ -98,14 +100,17 @@ func jsType(raw json.RawMessage) string {
 }
 
 // validateBody is zod's verdict on a parsed body: its issues, none when it
-// fits the schema.
-func validateBody(schema []bodyField, raw []byte) []string {
+// fits the schema, and the body as the generated decoder is to read it.
+// An integer field arrives as JavaScript reads it (JSON.parse gives 60.0,
+// 6e1 and 60 the same number), so a number zod's .int() accepts is written
+// back in its plain integer form.
+func validateBody(schema []bodyField, raw []byte) ([]byte, []string) {
 	if t := jsType(raw); t != "object" {
-		return []string{"(root): Invalid input: expected object, received " + t}
+		return nil, []string{"(root): Invalid input: expected object, received " + t}
 	}
 	var obj map[string]json.RawMessage
 	if json.Unmarshal(raw, &obj) != nil {
-		return []string{"(root): Invalid input: expected object, received object"}
+		return nil, []string{"(root): Invalid input: expected object, received object"}
 	}
 	var issues []string
 	for _, f := range schema {
@@ -135,17 +140,26 @@ func validateBody(schema []bodyField, raw []byte) []string {
 				issues = append(issues, fmt.Sprintf("%s: Too big: expected string to have <=%s characters", f.name, jsNumber(int64(f.max))))
 			}
 		case kindInt:
-			var x float64
-			if got != "number" || json.Unmarshal(v, &x) != nil {
+			if got != "number" {
 				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected number, received %s", f.name, got))
 				continue
 			}
-			if x != math.Trunc(x) || math.Abs(x) > 1<<53-1 {
+			// JSON.parse's number: a literal beyond a double is Infinity,
+			// which z.number() refuses.
+			x, err := strconv.ParseFloat(string(bytes.TrimSpace(v)), 64)
+			if err != nil || math.IsInf(x, 0) {
+				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected number, received Infinity", f.name))
+				continue
+			}
+			switch {
+			case x != math.Trunc(x) || math.Abs(x) > 1<<53-1:
 				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected int, received number", f.name))
-			} else if x < f.min {
+			case x < f.min:
 				issues = append(issues, fmt.Sprintf("%s: Too small: expected number to be >=%s", f.name, jsNumber(int64(f.min))))
-			} else if x > f.max {
+			case x > f.max:
 				issues = append(issues, fmt.Sprintf("%s: Too big: expected number to be <=%s", f.name, jsNumber(int64(f.max))))
+			default:
+				obj[f.name] = json.RawMessage(strconv.FormatInt(int64(x), 10))
 			}
 		case kindRecord:
 			if got != "object" {
@@ -158,7 +172,14 @@ func validateBody(schema []bodyField, raw []byte) []string {
 			}
 		}
 	}
-	return issues
+	if len(issues) > 0 {
+		return nil, issues
+	}
+	normalized, err := json.Marshal(obj)
+	if err != nil {
+		return nil, []string{"(root): Invalid input: expected object, received object"}
+	}
+	return normalized, nil
 }
 
 func containsString(list []string, s string) bool {
@@ -187,22 +208,27 @@ func readBody(r *http.Request, schema []bodyField) *http.Request {
 	var raw []byte
 	if r.Body != nil {
 		var err error
+		// ServeHTTP has judged the size already (bodyLimit); a body this
+		// cannot read is one the server could not receive.
 		raw, err = io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		if err != nil {
-			raw = nil
+			r.Body = io.NopCloser(strings.NewReader("{}"))
+			return r.WithContext(context.WithValue(r.Context(), bodyErrorKey{}, error(domainerr.New("VALIDATION_FAILED", "Request body could not be read"))))
 		}
 	}
 	empty := io.NopCloser(strings.NewReader("{}"))
 	if !json.Valid(raw) {
+		// Not JSON at all: c.req.json().catch(() => ({})).
 		r.Body = empty
 		return r
 	}
-	if issues := validateBody(schema, raw); len(issues) > 0 {
+	normalized, issues := validateBody(schema, raw)
+	if len(issues) > 0 {
 		r.Body = empty
 		return r.WithContext(context.WithValue(r.Context(), bodyErrorKey{}, domainerr.New("VALIDATION_FAILED", strings.Join(issues, "; "))))
 	}
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	r.Body = io.NopCloser(bytes.NewReader(normalized))
 	return r
 }
 

@@ -5,6 +5,7 @@ package httpserver
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,8 @@ type parityTable struct {
 	Routes       []struct {
 		Method, Target, Credential, Expect, Code, Text string
 		Body                                           *string
+		BodySize                                       int  `json:"bodySize"`
+		Chunked                                        bool `json:"chunked"`
 		Status                                         int
 	} `json:"routes"`
 	ForwardedFor []struct {
@@ -80,15 +83,23 @@ func TestParityNginxPaths(t *testing.T) {
 // (httptest.NewRequest reads the request line): Path, RawPath and RawQuery
 // are what a client's request gives.
 func TestParityRoutes(t *testing.T) {
-	s, _, _, logBuf, ta := newTestServerAuth(t, nil)
 	index, _ := webFS.ReadFile("index.html")
 	for _, c := range loadParity(t).Routes {
-		logBuf.Reset()
+		// A fresh installation per case, as the TypeScript side has: a
+		// case that succeeds spends a credential or a device sign-in.
+		s, _, _, logBuf, ta := newTestServerAuth(t, nil)
 		status, expect, text := c.Status, c.Expect, c.Text
 		var r *http.Request
-		if c.Body != nil {
-			r = httptest.NewRequest(c.Method, c.Target, strings.NewReader(*c.Body))
+		body := parityBody(c.Body, c.BodySize)
+		if body != nil {
+			r = httptest.NewRequest(c.Method, c.Target, strings.NewReader(*body))
 			r.Header.Set("Content-Type", "application/json")
+			if c.Chunked {
+				// No Content-Length: Transfer-Encoding chunked.
+				r.ContentLength = -1
+				r.TransferEncoding = []string{"chunked"}
+				r.Body = io.NopCloser(strings.NewReader(*body))
+			}
 		} else {
 			r = httptest.NewRequest(c.Method, c.Target, nil)
 		}
@@ -152,6 +163,16 @@ func TestParityRoutes(t *testing.T) {
 			t.Errorf("%s: unknown expectation %q", name, expect)
 		}
 	}
+}
+
+// parityBody is a case's body: as written, or a JSON object of exactly
+// size bytes ({"pad":"aaa..."}).
+func parityBody(body *string, size int) *string {
+	if size > 0 {
+		b := `{"pad":"` + strings.Repeat("a", size-len(`{"pad":""}`)) + `"}`
+		return &b
+	}
+	return body
 }
 
 // Every 404 varlatchd gives outside a handler is Hono's: no Go mux text

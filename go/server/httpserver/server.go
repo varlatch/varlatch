@@ -22,9 +22,11 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -289,9 +291,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	if isAPI {
 		rec.Header().Set("X-Request-Id", id)
+		// Hono's bodyLimit, on every route, before the request window,
+		// authentication and any handler: a declared length is judged by
+		// the header; a body without one (chunked) is read up to the limit
+		// first, and one byte more refuses it.
 		if r.ContentLength > MaxBody {
 			writeError(rec, r, http.StatusRequestEntityTooLarge, "VALIDATION_FAILED", "Request body exceeds 1 MiB")
 			return
+		}
+		if r.ContentLength < 0 && r.Body != nil && r.Body != http.NoBody {
+			body, err := io.ReadAll(io.LimitReader(r.Body, MaxBody+1))
+			_ = r.Body.Close()
+			if err != nil {
+				// The client stopped sending: nothing can be answered usefully.
+				writeError(rec, r, http.StatusBadRequest, "VALIDATION_FAILED", "Request body could not be read")
+				return
+			}
+			if len(body) > MaxBody {
+				writeError(rec, r, http.StatusRequestEntityTooLarge, "VALIDATION_FAILED", "Request body exceeds 1 MiB")
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		r.Body = http.MaxBytesReader(rec, r.Body, MaxBody)
 	}

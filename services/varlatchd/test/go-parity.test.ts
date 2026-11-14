@@ -149,11 +149,29 @@ describe("routes, as raw request targets", () => {
     expect(nginxSends(c.target)).toBe("varlatchd");
     // The public URL both servers run with: device sign-in is available.
     const app = buildApp(ctx, { publicUrl: "http://127.0.0.1:8686" });
+    // A body as written, or a JSON object of exactly bodySize bytes; chunked
+    // sends it as a stream, without a Content-Length.
+    const text = c.bodySize ? `{"pad":"${"a".repeat(c.bodySize - '{"pad":""}'.length)}"}` : c.body;
+    const bytes = text === undefined ? undefined : new TextEncoder().encode(text);
+    const payload = bytes === undefined
+      ? undefined
+      : c.chunked
+        ? new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let i = 0; i < bytes.length; i += 64 * 1024) controller.enqueue(bytes.slice(i, i + 64 * 1024));
+              controller.close();
+            },
+          })
+        : bytes;
     const res = await app.request(c.target, {
       method: c.method,
-      headers: { ...authorization(c.credential), ...(c.body !== undefined ? { "Content-Type": "application/json" } : {}) },
-      ...(c.body !== undefined ? { body: c.body } : {}),
-    });
+      headers: {
+        ...authorization(c.credential),
+        ...(payload !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(payload !== undefined && !c.chunked ? { "Content-Length": String(bytes!.length) } : {}),
+      },
+      ...(payload !== undefined ? { body: payload, ...(c.chunked ? { duplex: "half" } : {}) } : {}),
+    } as RequestInit);
     expect(res.status).toBe(c.status);
     const body = await res.text();
     if (c.expect === "text") {
