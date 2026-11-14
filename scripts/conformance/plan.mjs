@@ -13,11 +13,15 @@
  * `setup` entries are the runner's own steps (run.mjs): the first
  * enrollment, and the seed data every later suite uses. `around` names a
  * condition the runner holds while the suite runs, on targets that can.
+ * `always` marks a suite whose work later steps need, so a run limited with
+ * --suite still runs it (its checks are judged only when it is chosen): the
+ * reconcile suite deploys the Convex functions the seed step's mirror sync
+ * calls, and the passkey suite enrolls the identity everything after it uses.
  */
 export const PLAN = [
-  { suite: "reconcile", args: () => [] },
+  { suite: "reconcile", args: () => [], always: true },
   { setup: "bootstrap" },
-  { suite: "passkey", args: (ctx) => [ctx.bootstrapUrl] },
+  { suite: "passkey", args: (ctx) => [ctx.bootstrapUrl], always: true },
   { setup: "seed" },
   // The CLI's compatibility core that no other suite reports on its own:
   // token sign-in, whoami and env list, before anything changes the seed.

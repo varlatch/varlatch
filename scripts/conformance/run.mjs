@@ -286,8 +286,8 @@ async function main() {
         continue;
       }
       const suite = inventory.suites[entry.suite];
-      // The passkey suite enrolls the identity everything after it uses.
-      if (!inScope(entry.suite) && entry.suite !== "passkey") continue;
+      // Suites whose work later steps need run even when not chosen (plan.mjs `always`).
+      if (!inScope(entry.suite) && !entry.always) continue;
       if (entry.runner) {
         if (entry.suite === "request-budget") await requestBudget();
         continue;

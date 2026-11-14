@@ -32,6 +32,10 @@ test("the plan runs every suite in the inventory once, and nothing else", () => 
   }
   // The passkey suite enrolls the identity the seed step uses.
   assert.ok(PLAN.findIndex((e) => e.suite === "passkey") < PLAN.findIndex((e) => e.setup === "seed"));
+  // A run limited with --suite still deploys Convex (the seed step's mirror
+  // sync needs it) and enrolls the identity: exactly these always run.
+  assert.deepEqual(PLAN.filter((e) => e.always).map((e) => e.suite), ["reconcile", "passkey"]);
+  assert.ok(PLAN.findIndex((e) => e.suite === "reconcile") < PLAN.findIndex((e) => e.setup === "seed"));
 });
 
 test("each suite script exists and writes exactly its inventory's check IDs", () => {
