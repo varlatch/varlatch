@@ -7,3 +7,6 @@ generate:
 output-options:
   resolve-type-name-collisions: true
   nullable-type: true
+  # The browser session's paths are not /v1 (their own servers entry):
+  # generated into browser/ and served at the root.
+  exclude-tags: [browser-session]

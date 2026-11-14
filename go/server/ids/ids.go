@@ -12,6 +12,19 @@ const (
 	Installation       = "inst"
 	AuditEvent         = "evt"
 	OrganizationFreeze = "ofz"
+	Identity           = "idn"
+	Credential         = "crd"
+	SetupGrant         = "sgr"
+	DeviceSignIn       = "dsi"
+	// DeviceSignInChallenge and PasskeyConfirmationChallenge are the
+	// challenges of a device sign-in approval and a passkey confirmation.
+	DeviceSignInChallenge        = "dsc"
+	PasskeyConfirmationChallenge = "pcc"
+	// AuthSession and Passkey name rows of the tables varlatchd owns since
+	// Better Auth left (ADR-0059 Decision 6); the TypeScript server's rows
+	// keep the ids Better Auth gave them.
+	AuthSession = "ses"
+	Passkey     = "pky"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"

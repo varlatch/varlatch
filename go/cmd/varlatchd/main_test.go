@@ -29,14 +29,18 @@ func TestUsage(t *testing.T) {
 	}
 }
 
-// The admin commands the conformance harness calls answer NOT_IMPLEMENTED_YET
-// until step 3.4 builds them.
-func TestAdminNotBuilt(t *testing.T) {
-	for _, cmd := range []string{"bootstrap", "recover"} {
+// The admin commands refuse arguments they do not take before reading any
+// configuration (daemon/admin_test.go runs them on an installation).
+func TestAdminUsage(t *testing.T) {
+	for _, args := range [][]string{
+		{"admin", "bootstrap", "--identity", "idn_x"},
+		{"admin", "recover"},
+		{"admin", "recover", "--identity", "idn_x", "--new-admin"},
+		{"admin", "recover", "--identity"},
+	} {
 		var out, errOut bytes.Buffer
-		if code := run([]string{"admin", cmd, "--identity", "idn_x"}, &out, &errOut); code != exitNotBuilt ||
-			!strings.HasPrefix(errOut.String(), "NOT_IMPLEMENTED_YET: ") || out.Len() != 0 {
-			t.Errorf("admin %s: exit %d, %q", cmd, code, errOut.String())
+		if code := run(args, &out, &errOut); code != exitUsage || out.Len() != 0 || !strings.Contains(errOut.String(), "Usage") {
+			t.Errorf("%q: exit %d, %q", args, code, errOut.String())
 		}
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
@@ -160,6 +161,7 @@ func Serve(opts Options) int {
 		AccessLog:      httpserver.NewAccessLog(accessOut),
 		Web:            web.FS(),
 		Backend:        &backend{store: store, rootKEK: rootKEK},
+		Auth:           auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log}),
 		Log:            log,
 	})
 	if err != nil {

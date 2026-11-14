@@ -76,6 +76,13 @@ var Capabilities = []string{
 	"security.enforce.admin-step-up",
 }
 
+// GoCapabilities are the capabilities only varlatchd lists, after the
+// TypeScript server's: auth.session, its own browser session (ADR-0059
+// Decision 6; varlatchd-core decision 1), which tells the dashboard and the
+// enrollment page to use /auth/session and the paths beside it instead of
+// Better Auth's. The TypeScript server never lists it.
+var GoCapabilities = []string{"auth.session"}
+
 // SemanticsVersions are the Contract Semantics versions the server
 // evaluates (packages/contract/src/semantics.ts SEMANTICS_VERSIONS).
 var SemanticsVersions = []int{1, 2, 3}
@@ -112,6 +119,9 @@ func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (a
 		hidden["auth.device"] = true
 	}
 	caps := slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return hidden[c] })
+	if s.opts.Auth != nil {
+		caps = append(caps, GoCapabilities...)
+	}
 	semantics := slices.Clone(SemanticsVersions)
 	meta := api.Meta{ApiMajor: 1, ServerVersion: s.opts.Version, SemanticsVersions: &semantics, Capabilities: caps}
 	if s.opts.Sync {

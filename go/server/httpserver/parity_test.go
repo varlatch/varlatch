@@ -22,10 +22,6 @@ type parityTable struct {
 	Routes       []struct {
 		Method, Target, Credential, Expect, Code, Text string
 		Status                                         int
-		GoUntilStep34                                  *struct {
-			Status       int
-			Expect, Text string
-		} `json:"goUntilStep3_4"`
 	} `json:"routes"`
 	ForwardedFor []struct {
 		Peer    string
@@ -83,21 +79,23 @@ func TestParityNginxPaths(t *testing.T) {
 // (httptest.NewRequest reads the request line): Path, RawPath and RawQuery
 // are what a client's request gives.
 func TestParityRoutes(t *testing.T) {
-	s, _, _, logBuf := newTestServer(t, nil)
+	s, _, _, logBuf, ta := newTestServerAuth(t, nil)
 	index, _ := webFS.ReadFile("index.html")
 	for _, c := range loadParity(t).Routes {
 		logBuf.Reset()
 		status, expect, text := c.Status, c.Expect, c.Text
-		if c.GoUntilStep34 != nil {
-			status, expect, text = c.GoUntilStep34.Status, c.GoUntilStep34.Expect, c.GoUntilStep34.Text
-		}
 		r := httptest.NewRequest(c.Method, c.Target, nil)
 		r.RemoteAddr = "192.0.2.10:40000"
 		switch c.Credential {
-		case "valid", "invalid":
-			r.Header.Set("Authorization", "Bearer vlt_cli_"+c.Credential)
+		case "valid", "revoked", "expired", "agent-run":
+			r.Header.Set("Authorization", "Bearer "+ta.tokens[c.Credential])
+		case "invalid":
+			r.Header.Set("Authorization", "Bearer vlt_cli_notacredential")
 		case "basic":
 			r.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+		case "none":
+		default:
+			t.Fatalf("unknown credential %q", c.Credential)
 		}
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)

@@ -1,0 +1,11 @@
+package: browser
+output: browser.gen.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+output-options:
+  resolve-type-name-collisions: true
+  nullable-type: true
+  # Only the browser session's paths, served at the server's root.
+  include-tags: [browser-session]

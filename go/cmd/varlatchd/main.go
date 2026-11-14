@@ -4,12 +4,11 @@
 //
 //	varlatchd serve [--config <file>]   serve (default /etc/varlatch/varlatchd.conf)
 //	varlatchd --version                 print the version
-//	varlatchd admin bootstrap|recover   not built yet (ADR-0059 step 3.4)
+//	varlatchd admin bootstrap|recover   one-time enrollment URLs or CLI credentials (daemon.Admin)
 //
 // Exit statuses of serve: 0 after a clean stop, 1 for a failure a restart
 // may fix, 78 for a configuration error no restart can fix, a wrong Root KEK
-// included (the unit's RestartPreventExitStatus). 64 is a usage error; 69
-// an admin command that is not built yet.
+// included (the unit's RestartPreventExitStatus). 64 is a usage error.
 package main
 
 import (
@@ -23,14 +22,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/daemon"
 )
 
-const (
-	exitUsage = 64
-	// exitNotBuilt is EX_UNAVAILABLE: an admin command this build does not
-	// have yet. Its message starts with NOT_IMPLEMENTED_YET, the code the
-	// HTTP stub answers with, which the conformance harness's go-binary
-	// adapter recognizes.
-	exitNotBuilt = 69
-)
+const exitUsage = 64
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -65,11 +57,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return daemon.Serve(daemon.Options{ConfigPath: path, Stderr: stderr})
 	case "admin":
-		if len(args) > 1 && (args[1] == "bootstrap" || args[1] == "recover") {
-			fmt.Fprintf(stderr, "NOT_IMPLEMENTED_YET: varlatchd admin %s is not built yet (ADR-0059 step 3.4)\n", args[1])
-			return exitNotBuilt
-		}
-		return usage(stderr, "admin: unknown command")
+		return daemon.Admin(args[1:], stdout, stderr)
 	default:
 		return usage(stderr, "unknown command "+args[0])
 	}

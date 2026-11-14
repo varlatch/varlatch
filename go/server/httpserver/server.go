@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/server/api"
+	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 )
 
@@ -71,6 +72,10 @@ type Options struct {
 	Web fs.FS
 	// Backend reads server state.
 	Backend Backend
+	// Auth is authentication: credentials, browser sessions, passkeys and
+	// device sign-in (ADR-0059 step 3.4). Without it no bearer
+	// authenticates and the browser session is not served.
+	Auth *auth.Service
 	// Log receives errors (never request bodies or credentials).
 	Log *slog.Logger
 	// Now is the clock (tests); nil is time.Now.
@@ -87,6 +92,22 @@ type Options struct {
 // Every other operation answers the shared stub (NotImplementedYet).
 var BuiltOperations = []string{
 	"GET /v1/meta",
+	// Step 3.4: who am I, the caller's credentials and passkeys, device
+	// sign-in, the profile and the caller's organizations.
+	"GET /v1/me",
+	"GET /v1/me/profile",
+	"GET /v1/me/credentials",
+	"POST /v1/me/credentials/cli",
+	"DELETE /v1/me/credentials/{credential}",
+	"GET /v1/me/passkeys",
+	"DELETE /v1/me/passkeys/{passkey}",
+	"POST /v1/me/passkeys/{passkey}/confirmation/options",
+	"POST /v1/me/passkeys/{passkey}/confirmation",
+	"POST /v1/auth/device",
+	"POST /v1/auth/device/token",
+	"POST /v1/auth/device/lookup",
+	"POST /v1/auth/device/approve",
+	"GET /v1/organizations",
 }
 
 // Server is the handler.
@@ -98,6 +119,7 @@ type Server struct {
 	stubbed   []string // the ones answered by the stub
 	webIndex  []byte
 	webExists bool
+	browser   http.Handler
 }
 
 // New builds the handler.
@@ -116,15 +138,12 @@ func New(opts Options) (*Server, error) {
 	for _, p := range append(append([]string{}, BuiltOperations...), opts.Built...) {
 		built[p] = true
 	}
-	mux := &operationMux{ServeMux: http.NewServeMux(), built: built}
+	mux := &operationMux{ServeMux: http.NewServeMux(), built: built, wrap: s.builtOperation}
 	strict := api.NewStrictHandlerWithOptions(&operations{s: s}, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeError(w, r, http.StatusBadRequest, "VALIDATION_FAILED", err.Error())
 		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			s.opts.Log.Error("answering a request failed", "method", r.Method, "path", r.URL.Path, "requestId", requestIDOf(r), "error", err)
-			writeError(w, r, http.StatusInternalServerError, "INTERNAL", "Internal error")
-		},
+		ResponseErrorHandlerFunc: s.answerError,
 	})
 	api.HandlerWithOptions(strict, api.StdHTTPServerOptions{
 		BaseURL:    "/v1",
@@ -143,6 +162,9 @@ func New(opts Options) (*Server, error) {
 	s.apiMux = mux.ServeMux
 	s.patterns = mux.patterns
 	s.stubbed = mux.stubbed
+	if opts.Auth != nil {
+		s.browser = s.newBrowserHandler()
+	}
 	if opts.Web != nil {
 		if b, err := fs.ReadFile(opts.Web, "index.html"); err == nil {
 			s.webIndex, s.webExists = b, true
@@ -164,7 +186,9 @@ func (s *Server) Stubbed() []string { return append([]string{}, s.stubbed...) }
 // authenticated, validated, decoded or stored.
 type operationMux struct {
 	*http.ServeMux
-	built      map[string]bool
+	built map[string]bool
+	// wrap adds what a built operation runs first (authentication).
+	wrap       func(pattern string, h http.HandlerFunc) http.HandlerFunc
 	registered map[string]bool
 	patterns   []string
 	stubbed    []string
@@ -177,7 +201,7 @@ func (m *operationMux) HandleFunc(pattern string, h func(http.ResponseWriter, *h
 	m.registered[pattern] = true
 	m.patterns = append(m.patterns, pattern)
 	if m.built[pattern] {
-		m.ServeMux.HandleFunc(pattern, h)
+		m.ServeMux.HandleFunc(pattern, m.wrap(pattern, h))
 		return
 	}
 	m.stubbed = append(m.stubbed, pattern)
@@ -196,6 +220,10 @@ func notBuilt(operation string) http.Handler {
 type ctxKey int
 
 const requestIDKey ctxKey = 0
+
+// clientKey carries the request's client address, as the request window
+// counts it.
+type clientKey struct{}
 
 func requestIDOf(r *http.Request) string {
 	id, _ := r.Context().Value(requestIDKey).(string)
@@ -239,6 +267,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// adds a line of its own instead of appending to the caller's is read
 	// from the right like any other (the caller's forged line stays left).
 	client := clientaddr.Of(r.RemoteAddr, headerValue(r, "X-Forwarded-For"), s.opts.TrustedProxies)
+	r = r.WithContext(context.WithValue(r.Context(), clientKey{}, client))
 	defer func() {
 		if v := recover(); v != nil {
 			if v == http.ErrAbortHandler {
@@ -310,12 +339,15 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("Not found"))
 	case p == "/auth" || strings.HasPrefix(p, "/auth/"):
-		// The browser's session endpoints (Better Auth's today; varlatchd's
-		// own, ADR-0059 step 3.4).
-		notBuilt("browser session endpoints "+r.Method+" "+p).ServeHTTP(w, r)
+		// The browser session (browser.go).
+		if s.browser == nil {
+			writeNotFound(w)
+			return
+		}
+		s.browser.ServeHTTP(w, r)
 	case (p == "/enroll" || p == "/enroll.js") && isGet(r):
-		// The enrollment page (step 3.4).
-		notBuilt("GET "+p).ServeHTTP(w, r)
+		// The enrollment page (enroll.go).
+		serveEnroll(w, r)
 	case p == "/v1" || strings.HasPrefix(p, "/v1/"):
 		// Hono matches the path as sent; Go's mux would redirect a path
 		// that is not clean (// or a dot segment, a trailing slash). Such a
@@ -363,17 +395,16 @@ func authenticates(method, p string) bool {
 // Known operations not built yet never get here: the stub answers them
 // first, before any authentication (operationMux).
 func (s *Server) unknownV1(w http.ResponseWriter, r *http.Request) {
-	if authenticates(r.Method, r.URL.Path) && !strings.HasPrefix(headerValue(r, "Authorization"), "Bearer ") {
-		writeError(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Provide a Varlatch bearer credential")
-		return
+	if authenticates(r.Method, r.URL.Path) {
+		// The credential is verified first, as the TypeScript server does:
+		// an invalid, revoked or expired one answers 401 INVALID_CREDENTIAL
+		// (with its authentication.failed audit event), and an agent-run
+		// credential on a method other than GET or HEAD answers 403
+		// PERMISSION_DENIED.
+		if _, ok := s.authenticate(w, r); !ok {
+			return
+		}
 	}
-	// TODO(ADR-0059 step 3.4): verify the presented credential first, as
-	// the TypeScript server does, before this 404: an invalid, revoked or
-	// expired one answers 401 INVALID_CREDENTIAL (with its
-	// authentication.failed audit event), and an agent-run credential on a
-	// method other than GET or HEAD answers 403 PERMISSION_DENIED. Until
-	// credentials exist, any bearer is let through to the 404
-	// (testdata/known-differences.json, goUntilStep3_4).
 	writeNotFound(w)
 }
 

@@ -1,5 +1,5 @@
 {
-  "description": "Answers the Go server must give exactly as the TypeScript deployment does (ADR-0059 step 3, varlatchd-core decision 4). go/server/httpserver/parity_test.go and services/varlatchd/test/go-parity.test.ts both run every case, the TypeScript one against buildApp and Hono's own getPath, from raw request targets. pathVectors: the path varlatchd's router (Hono) routes a raw request target on, after the WHATWG URL parser and decodeURI. nginxVectors: the URI the dashboard's nginx selects a location with ($uri), as nginx 1.29 (the dashboard image's) gave it for each raw target: escapes decoded first, then dot segments resolved and slashes merged. routes: requests and their answers; expect is text (plain-text body), code (the JSON error envelope's code), meta (the /v1/meta document) or dashboard (the dashboard's nginx serves its app and never forwards the request to varlatchd, which Go reproduces; the TypeScript side decides forwarding from apps/web/nginx.conf's own locations); a HEAD answer is compared by status and Content-Type only. A case's goUntilStep3_4, when present, is what the Go server answers until step 3.4 can verify a credential; the TypeScript answer is the target. forwardedFor: X-Forwarded-For sent as several header lines. requestWindow: the 601st request of a window, with the clock held still.",
+  "description": "Answers the Go server must give exactly as the TypeScript deployment does (ADR-0059 step 3, varlatchd-core decision 4). go/server/httpserver/parity_test.go and services/varlatchd/test/go-parity.test.ts both run every case, the TypeScript one against buildApp and Hono's own getPath, from raw request targets. pathVectors: the path varlatchd's router (Hono) routes a raw request target on, after the WHATWG URL parser and decodeURI. nginxVectors: the URI the dashboard's nginx selects a location with ($uri), as nginx 1.29 (the dashboard image's) gave it for each raw target: escapes decoded first, then dot segments resolved and slashes merged. routes: requests and their answers; expect is text (plain-text body), code (the JSON error envelope's code), meta (the /v1/meta document) or dashboard (the dashboard's nginx serves its app and never forwards the request to varlatchd, which Go reproduces; the TypeScript side decides forwarding from apps/web/nginx.conf's own locations); a HEAD answer is compared by status and Content-Type only. credential is none, basic (not a bearer), valid (a live CLI credential), invalid (no such credential), revoked, expired, or agent-run (an Agent Run's read-only credential). forwardedFor: X-Forwarded-For sent as several header lines. requestWindow: the 601st request of a window, with the clock held still.",
   "pathVectors": [
     {
       "target": "/v1/meta",
@@ -238,11 +238,6 @@
       "credential": "invalid",
       "status": 401,
       "code": "INVALID_CREDENTIAL",
-      "goUntilStep3_4": {
-        "status": 404,
-        "expect": "text",
-        "text": "404 Not Found"
-      },
       "target": "/v1/nothing-here",
       "expect": "code"
     },
@@ -473,6 +468,78 @@
       "status": 404,
       "expect": "text",
       "text": "404 Not Found"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/nothing-here",
+      "credential": "revoked",
+      "status": 401,
+      "expect": "code",
+      "code": "INVALID_CREDENTIAL"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/nothing-here",
+      "credential": "expired",
+      "status": 401,
+      "expect": "code",
+      "code": "INVALID_CREDENTIAL"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/nothing-here",
+      "credential": "agent-run",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "DELETE",
+      "target": "/v1/organizations",
+      "credential": "agent-run",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/nothing-here",
+      "credential": "agent-run",
+      "status": 404,
+      "expect": "text",
+      "text": "404 Not Found"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/nothing-here",
+      "credential": "invalid",
+      "status": 401,
+      "expect": "code",
+      "code": "INVALID_CREDENTIAL"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/me",
+      "credential": "invalid",
+      "status": 401,
+      "expect": "code",
+      "code": "INVALID_CREDENTIAL"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/me",
+      "credential": "none",
+      "status": 401,
+      "expect": "code",
+      "code": "AUTHENTICATION_REQUIRED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "agent-run",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
     }
   ],
   "forwardedFor": [
