@@ -249,6 +249,38 @@ func TestCanaryStored(t *testing.T) {
 	}
 }
 
+// The first start records installation.initialized, as the TypeScript
+// server's ensureInstallation does, at the first position; a restart
+// records nothing.
+func TestInstallationInitializedAudited(t *testing.T) {
+	in := newInstall(t, "")
+	start(t, in).stop(t)
+	start(t, in).stop(t)
+	ctx := context.Background()
+	s, err := storage.Open(ctx, storage.Options{Path: filepath.Join(in.data, "varlatch.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	q := query.New(s.Reader())
+	inst, err := q.GetInstallation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := q.ListAuditEvents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("%d audit events, want installation.initialized alone", len(events))
+	}
+	e := events[0]
+	if e.EventType != "installation.initialized" || e.EventOrder != 1 || e.Decision != "info" ||
+		e.Metadata.String != `{"installationId":"`+inst.ID+`"}` || e.ActorIdentityID.Valid || e.CredentialID.Valid {
+		t.Errorf("event %+v", e)
+	}
+}
+
 func TestDumpable(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("varlatchd runs on Linux")

@@ -19,13 +19,19 @@
 #       code=false and tests=affected (no package), so it runs the test job's
 #       repository-wide checks (licenses, notices, the changelog section,
 #       the build) and the secret scan, and skips every TypeScript test. A
-#       mixed change answers for its other paths. The paths behind each
-#       answer go to stderr.
+#       mixed change answers for its other paths. The exception is the Go
+#       test data that varlatchd's own tests produce or read (SHARED: the
+#       authorization and audit vectors, the Node.js IDNA table, the HTTP
+#       known differences): it
+#       counts as code in @varlatch/varlatchd, so a change to it runs the
+#       tests that check it against the TypeScript server. The paths behind
+#       each answer go to stderr.
 #
 #   scripts/ci-changes.sh affected <base>
 #       Prints the names of the packages to test when tests=affected: those
 #       with a changed file since <base> (committed or not), and every package
-#       that depends on them. Documentation inside a package selects nothing.
+#       that depends on them, and @varlatch/varlatchd for a SHARED file.
+#       Documentation inside a package selects nothing.
 #
 # pnpm's own selector (`--filter "...[<base>]"`) maps a changed file outside
 # every package to the workspace root project, which no package depends on
@@ -41,6 +47,9 @@ DOCS='\.md$|^docs/'
 CHECKED_DOCS='^(CHANGELOG|THIRD-PARTY-NOTICES)\.md$'
 # The Go rewrite, which go.yml checks.
 GO='^go/|^\.github/workflows/go\.yml$'
+# Go test data that services/varlatchd's tests produce from the TypeScript
+# server or Node.js, or read (go-authz-vectors, go-audit-vectors, go-parity).
+SHARED='^go/server/(authz|audit)/testdata/ts-vectors\.json$|^go/server/httpserver/testdata/known-differences\.json$|^go/server/whatwg/(nodeidna_table\.go|testdata/node-idna\.json|testdata/nodeidna\.mjs)$'
 
 # True when a path lies inside a workspace package (pnpm-workspace.yaml).
 in_package() {
@@ -58,6 +67,7 @@ classify() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     total=$((total + 1))
+    if [[ $path =~ $SHARED ]]; then code=$((code + 1)); continue; fi
     if [[ $path =~ $GO ]]; then go=$((go + 1)); continue; fi
     if [[ $path =~ $CHECKED_DOCS ]] || ! [[ $path =~ $DOCS ]]; then code=$((code + 1)); fi
     if ! [[ $path =~ $DOCS ]] && ! in_package "$path"; then global+=("$path"); fi
@@ -101,6 +111,12 @@ affected() {
     rest=${rest%%:*}
     names+=("${rest%@*}")
   done <<< "$listing"
+  # varlatchd's tests check the shared Go test data (SHARED) against the
+  # TypeScript server; pnpm sees those files as the workspace root's.
+  if (cd "$REPO_ROOT" && { git diff --name-only "$base"; git ls-files --others --exclude-standard; }) | grep -E "$SHARED" >/dev/null &&
+    [[ " ${names[*]} " != *" @varlatch/varlatchd "* ]]; then
+    names+=("@varlatch/varlatchd")
+  fi
   # The Python accessor's tests read the contract and accessor vectors and
   # run the CLI's generator without depending on those packages; each of them
   # selects the CLI, so the CLI stands in for all three.

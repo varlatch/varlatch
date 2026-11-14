@@ -9,4 +9,4 @@ package db
 // version is go.mod's; its SQLite engine needs no cgo.
 //
 //go:generate go tool sqlc generate -f sqlc.json
-//go:generate go run ../../internal/spdxheader AGPL-3.0-or-later query/db.go query/models.go query/audit.sql.go query/auth.sql.go query/github.sql.go query/installation.sql.go query/schema_version.sql.go
+//go:generate go run ../../internal/spdxheader AGPL-3.0-or-later query/db.go query/models.go query/audit.sql.go query/auth.sql.go query/authz.sql.go query/github.sql.go query/installation.sql.go query/schema_version.sql.go
