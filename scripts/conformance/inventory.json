@@ -199,11 +199,9 @@
       "script": "scripts/conformance/suites/cli-core.mjs",
       "operations": [
         "admin-recover",
-        "seed",
         "getMeta",
         "listOrganizations",
-        "whoami",
-        "listEnvironments"
+        "whoami"
       ]
     },
     "dashboard": {
@@ -494,8 +492,6 @@
         "getMeta",
         "listOrganizations",
         "getMyProfile",
-        "getInstallationBackups",
-        "getInstallationRelease",
         "startDeviceSignIn",
         "collectDeviceSignIn",
         "lookupDeviceSignIn",
@@ -715,13 +711,21 @@
       "suite": "cli-core",
       "kind": "conformance",
       "feature": "env-list",
-      "title": "env list prints each environment as `<name>  (<tier>, <kind>[, selected])`"
+      "title": "env list prints each environment as `<name>  (<tier>, <kind>[, selected])`",
+      "operations": [
+        "seed",
+        "listEnvironments"
+      ]
     },
     "cli-core.env-list-json": {
       "suite": "cli-core",
       "kind": "conformance",
       "feature": "env-list",
-      "title": "env list --json lists the same environments with tier and kind"
+      "title": "env list --json lists the same environments with tier and kind",
+      "operations": [
+        "seed",
+        "listEnvironments"
+      ]
     },
     "dashboard.enrollment-dashboard-origin": {
       "suite": "dashboard",
@@ -2197,6 +2201,11 @@
       "kind": "conformance",
       "feature": "login-device",
       "title": "passkey enrolled"
+    },
+    "device.dashboard-passkey-sign-in": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the dashboard's sign-in screen signs in with the passkey"
     },
     "device.login-start-exits-0-address-code": {
       "suite": "device",

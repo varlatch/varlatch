@@ -2,9 +2,8 @@
 import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useConvexConnectionState } from "convex/react";
 import { Download } from "lucide-react";
-import { useMirrorInvalidation } from "../../lib/realtime";
+import { useMirrorInvalidation, useRealtimeConnected } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { Button, Status } from "../../components/ui";
 import { PageHeader } from "../../components/PageHeader";
@@ -25,8 +24,7 @@ export function AuditPage() {
   const orgName = useOrgName(org);
   const orgQuery = useQuery({ queryKey: ["org", org], queryFn: () => api.getOrganization(org) });
   useMirrorInvalidation(orgQuery.data?.id, "*", [["audit", org]]);
-  const connection = useConvexConnectionState();
-  const live = connection.isWebSocketConnected && Boolean(orgQuery.data);
+  const live = useRealtimeConnected() && Boolean(orgQuery.data);
 
   const [params] = useSearchParams();
   const [filters, setFilters] = useState<AuditFilterState>(() => ({

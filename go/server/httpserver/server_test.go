@@ -65,6 +65,13 @@ var webFS = fstest.MapFS{
 }
 
 func newTestServer(t *testing.T, mod func(*Options)) (*Server, *fakeBackend, *clock, *bytes.Buffer) {
+	s, b, c, logBuf, _ := newTestServerAuth(t, mod)
+	return s, b, c, logBuf
+}
+
+// newTestServerAuth is newTestServer with its authentication: a database
+// with one person and their credentials (authkit_test.go).
+func newTestServerAuth(t *testing.T, mod func(*Options)) (*Server, *fakeBackend, *clock, *bytes.Buffer, *testAuth) {
 	t.Helper()
 	b := &fakeBackend{id: "inst_test", schema: true, kek: true, installation: true}
 	c := &clock{t: time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)}
@@ -77,11 +84,13 @@ func newTestServer(t *testing.T, mod func(*Options)) (*Server, *fakeBackend, *cl
 	if mod != nil {
 		mod(&opts)
 	}
+	ta := newTestAuth(t, opts.PublicURL, time.Now)
+	opts.Auth = ta.svc
 	s, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s, b, c, &logBuf
+	return s, b, c, &logBuf, ta
 }
 
 func do(s http.Handler, method, target, body string, header map[string]string) *httptest.ResponseRecorder {
@@ -153,14 +162,10 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 	cases := []struct{ method, path, body string }{
 		{"POST", "/v1/organizations", "{not json"},
 		{"POST", "/v1/organizations", strings.Repeat("x", 4096)},
-		{"GET", "/v1/organizations", ""},
+		{"GET", "/v1/organizations/acme/projects", ""},
 		{"GET", "/v1/organizations/acme?limit=not-a-number", ""},
 		{"DELETE", "/v1/organizations/acme/projects/api/environments/development/values/DATABASE_URL", ""},
-		{"POST", "/v1/auth/device", ""},
-		{"POST", "/auth/varlatch-token", ""},
-		{"POST", "/auth/passkey/verify-authentication", "{}"},
-		{"GET", "/enroll", ""},
-		{"GET", "/enroll.js", ""},
+		{"PATCH", "/v1/me/profile", "{}"},
 	}
 	for _, c := range cases {
 		w := do(s, c.method, c.path, c.body, map[string]string{"Content-Type": "application/json", "Authorization": "Bearer nonsense"})
@@ -190,8 +195,8 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 // its generated handler, not the stub (here one this package does not
 // implement, so the handler is reached and fails as an internal error).
 func TestBuiltOperationLeavesTheStub(t *testing.T) {
-	s, _, _, _ := newTestServer(t, func(o *Options) { o.Built = []string{"GET /v1/organizations"} })
-	w := do(s, "GET", "/v1/organizations", "", nil)
+	s, _, _, _ := newTestServer(t, func(o *Options) { o.Built = []string{"GET /v1/organizations/{org}/projects"} })
+	w := do(s, "GET", "/v1/organizations/acme/projects", "", map[string]string{"Authorization": "Bearer x"})
 	if w.Code == http.StatusNotImplemented {
 		t.Fatalf("still the stub: %s", w.Body.String())
 	}
@@ -361,14 +366,14 @@ func TestHealthReadyMeta(t *testing.T) {
 		!slices.Equal(m.SyncAdapters, []string{"github-actions", "coolify", "convex"}) || m.InstallationID != "inst_test" {
 		t.Errorf("meta: %+v", m)
 	}
-	want := slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return c == "tailnet.browser-reads" || c == "cli.download" })
+	// The TypeScript server's, then varlatchd's own browser session
+	// (auth.session); server-sent events (realtime.sse) come with step 3.5.
+	want := append(slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return c == "tailnet.browser-reads" || c == "cli.download" }), "auth.session")
 	if !slices.Equal(m.Capabilities, want) || !slices.Contains(m.Capabilities, "auth.device") {
 		t.Errorf("capabilities: %q", m.Capabilities)
 	}
-	for _, c := range []string{"auth.session", "realtime.sse"} {
-		if slices.Contains(m.Capabilities, c) {
-			t.Errorf("%s before its step", c)
-		}
+	if slices.Contains(m.Capabilities, "realtime.sse") {
+		t.Error("realtime.sse before its step")
 	}
 
 	// Sync off and no device sign-in base: sync.targets, syncAdapters and
@@ -496,7 +501,7 @@ func TestAccessLog(t *testing.T) {
 		recs = append(recs, rec)
 	}
 	first := recs[0]
-	if first.Client != "198.18.0.7" || first.Method != "POST" || first.Path != "/v1/auth/device" || first.Status != 501 ||
+	if first.Client != "198.18.0.7" || first.Method != "POST" || first.Path != "/v1/auth/device" || first.Status != 201 ||
 		first.ForwardedFor == nil || *first.ForwardedFor != "198.18.0.7" || !first.Window || first.Arrived.IsZero() || first.Completed.Before(first.Arrived) ||
 		!requestIDPattern.MatchString(first.RequestID) {
 		t.Errorf("record %+v", first)

@@ -102,7 +102,7 @@ jobs:
         run: |
           cd go
           go generate ./server/web
-          go build -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+          go build -tags conformance -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
       - name: Install Chromium
         run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

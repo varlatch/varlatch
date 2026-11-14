@@ -30,6 +30,10 @@ security:
   - bearerAuth: []
 tags:
   - name: meta
+  - name: browser-session
+    description: >
+      The browser's session, outside /v1 (paths with their own servers
+      entry): varlatchd only, behind the capability auth.session.
   - name: organizations
   - name: projects
   - name: environments
@@ -4904,6 +4908,217 @@ paths:
         "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
+  # ---- The browser session (ADR-0059 Decision 6; varlatchd-core decision 1).
+  # Not /v1: these paths are served at the server's root (each path's own
+  # servers entry), by varlatchd only, and only when /v1/meta lists the
+  # capability auth.session. They are implementation-facing, outside the /v1
+  # compatibility contract: the dashboard and the enrollment page are their
+  # only clients, and they read /v1/meta before choosing them. Cookies
+  # authenticate these paths and nothing else; /v1 takes only the bearer
+  # credential POST /auth/varlatch-token mints.
+  #
+  # Cookies: varlatch_session (HttpOnly) holds the session's token, stored
+  # by the server only as its SHA-256; varlatch_csrf holds the CSRF token.
+  # Both are SameSite=Strict and Path=/; with an https public URL they are
+  # Secure and named with the __Host- prefix (__Host-varlatch_session,
+  # __Host-varlatch_csrf), and with a plain-http one (a local installation)
+  # neither. Every POST here is refused with 403 PERMISSION_DENIED
+  # (details.reason "origin" or "csrf") unless its Origin header is the
+  # public URL's origin and its Varlatch-CSRF header equals the
+  # varlatch_csrf cookie, which GET /auth/session sets. Each ceremony's
+  # challenge is bound to the browser that asked for it (its CSRF cookie,
+  # or its session for adding a passkey) and is used once.
+  /auth/session:
+    servers:
+      - url: /
+    get:
+      tags: [browser-session]
+      operationId: getBrowserSession
+      security: []
+      summary: >
+        The browser's session, if any, and its CSRF token (set as the
+        varlatch_csrf cookie when the browser has none). Cache-Control
+        no-store.
+      responses:
+        "200":
+          description: The session state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowserSession" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/passkey/sign-in/options:
+    servers:
+      - url: /
+    post:
+      tags: [browser-session]
+      operationId: startPasskeySignIn
+      security: []
+      summary: >
+        Start a passkey sign-in with a discoverable credential: WebAuthn
+        request options naming no credential, user verification preferred.
+        The challenge is bound to this browser's CSRF cookie and lasts 5
+        minutes.
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: Request options
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyRequestOptions" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/passkey/sign-in:
+    servers:
+      - url: /
+    post:
+      tags: [browser-session]
+      operationId: finishPasskeySignIn
+      security: []
+      summary: >
+        Verify the sign-in assertion and start a session (the
+        varlatch_session cookie), recording the sign-in's evidence (ADR-0054
+        Decision 6): which passkey asserted and whether it verified the user.
+        The passkey's signature counter only moves forward. A passkey this
+        server does not hold answers 400 PASSKEY_NOT_FOUND, so the browser
+        may forget it.
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [response]
+              properties:
+                response:
+                  type: object
+                  additionalProperties: true
+                  description: The assertion (AuthenticationResponseJSON).
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowserSignedIn" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/passkey/registration/options:
+    servers:
+      - url: /
+    post:
+      tags: [browser-session]
+      operationId: startPasskeyRegistration
+      security: []
+      summary: >
+        Start registering a passkey. With a setup token (an enrollment link's
+        bootstrap, recovery, invitation or re-enrollment grant) the grant is
+        checked, not consumed: a cancelled prompt leaves it usable until it
+        expires. Without one the browser's session adds a passkey to its
+        person. The person's passkeys are excluded.
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Creation options
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyCreationOptions" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/passkey/registration:
+    servers:
+      - url: /
+    post:
+      tags: [browser-session]
+      operationId: finishPasskeyRegistration
+      security: []
+      summary: >
+        Verify the registration and store the passkey. An enrollment
+        consumes its setup grant, records the passkey as trusted (ADR-0054
+        Decision 4) and starts a session; a passkey a signed-in person adds
+        is unconfirmed. A credential id already registered, for anyone,
+        answers 400 PASSKEY_ALREADY_REGISTERED, before the grant is consumed.
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [response]
+              properties:
+                response:
+                  type: object
+                  additionalProperties: true
+                  description: The new credential (RegistrationResponseJSON).
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyRegistered" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/sign-out:
+    servers:
+      - url: /
+    post:
+      tags: [browser-session]
+      operationId: signOut
+      security: []
+      summary: >
+        End the browser's session: its browser bearers are revoked with it,
+        and the CLI credentials of a browser hand-off are not. The cookie is
+        cleared.
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "204":
+          description: Signed out (also when there was no session)
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/varlatch-token:
+    servers:
+      - url: /
+    post:
+      tags: [browser-session]
+      operationId: mintBrowserBearer
+      security: []
+      summary: >
+        Exchange the browser's session for a short-lived opaque /v1 bearer
+        (ADR-0018 §6; never a JWT): 15 minutes, never past the session's end,
+        revoked when the session ends. 401 AUTHENTICATION_REQUIRED without a
+        live session. Cache-Control no-store.
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: The bearer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowserBearer" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4917,6 +5132,14 @@ components:
         the Varlatch-Credential-Expires header (components/headers).
 
   parameters:
+    csrfHeader:
+      name: Varlatch-CSRF
+      in: header
+      required: true
+      description: >
+        The browser's CSRF token, equal to its varlatch_csrf cookie (GET
+        /auth/session gives it). Browser-session paths only.
+      schema: { type: string, minLength: 1, maxLength: 200 }
     approval:
       name: approval
       in: path
@@ -5105,6 +5328,66 @@ components:
           schema: { $ref: "#/components/schemas/ApiError" }
 
   schemas:
+
+    BrowserSession:
+      type: object
+      required: [csrfToken, identityId, expiresAt]
+      properties:
+        csrfToken:
+          type: string
+          description: The value every POST under /auth sends as Varlatch-CSRF.
+        identityId:
+          type: [string, "null"]
+          description: The signed-in identity; null without a live session.
+        expiresAt: { type: [string, "null"], format: date-time }
+
+    BrowserSignedIn:
+      type: object
+      required: [identityId, expiresAt]
+      properties:
+        identityId: { type: string }
+        expiresAt:
+          type: string
+          format: date-time
+          description: When the session ends unless it is used again.
+
+    PasskeyRequestOptions:
+      type: object
+      required: [publicKey]
+      properties:
+        publicKey:
+          type: object
+          additionalProperties: true
+          description: WebAuthn request options (PublicKeyCredentialRequestOptionsJSON).
+
+    PasskeyCreationOptions:
+      type: object
+      required: [publicKey]
+      properties:
+        publicKey:
+          type: object
+          additionalProperties: true
+          description: WebAuthn creation options (PublicKeyCredentialCreationOptionsJSON).
+
+    PasskeyRegistered:
+      type: object
+      required: [passkeyId, identityId, signedIn]
+      properties:
+        passkeyId: { type: string }
+        identityId: { type: string }
+        signedIn:
+          type: boolean
+          description: An enrollment started a session (the varlatch_session cookie).
+
+    BrowserBearer:
+      type: object
+      required: [token, identityId, expiresAt]
+      properties:
+        token:
+          type: string
+          description: An opaque browser credential (vlt_web_...), shown once.
+        identityId: { type: string }
+        expiresAt: { type: string, format: date-time }
     BackupVerification:
       type: object
       required: [integrity, compatibility, keyMatch, targetRelease, checkedAt]

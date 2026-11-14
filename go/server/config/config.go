@@ -68,6 +68,17 @@ type Config struct {
 	SyncAdapters []string
 }
 
+// LoopbackHost reports whether a URL's host name (URL.Hostname: an IPv6
+// address without its brackets) is one a plain-http public URL may name:
+// localhost, 127.0.0.1 or ::1.
+func LoopbackHost(hostname string) bool {
+	switch strings.ToLower(hostname) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
+}
+
 // DatabasePath is the database file in the data directory.
 func (c *Config) DatabasePath() string { return filepath.Join(c.DataDir, DatabaseFile) }
 
@@ -160,6 +171,11 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		u, err := url.Parse(v)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return nil, at("public_url", "%q is not an http or https URL such as https://varlatch.example.com", v)
+		}
+		// Plain http only on this machine (ADR-0059 Decision 6: the
+		// browser session's cookies are Secure everywhere else).
+		if u.Scheme == "http" && !LoopbackHost(u.Hostname()) {
+			return nil, at("public_url", "%q uses plain http on a host other than this machine; use an https URL (plain http is allowed only for localhost, 127.0.0.1 and [::1])", v)
 		}
 		c.PublicURL = u
 	}

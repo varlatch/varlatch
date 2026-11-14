@@ -3,7 +3,8 @@ import React, { lazy, Suspense, useEffect, useMemo } from "react";
 import { createBrowserRouter, Navigate, Outlet, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
-import { LiveUpdatesStatus } from "./components/LiveUpdatesStatus";
+import { LiveUpdatesStatus, RealtimeUnavailable } from "./components/LiveUpdatesStatus";
+import { backend } from "./lib/backend";
 import { SessionProvider, useSession } from "./lib/session";
 import { TailnetConnectionProvider } from "./lib/tailnetConnection";
 import { showPreferredTheme } from "./lib/theme";
@@ -61,7 +62,9 @@ const CONVEX_URL =
   (window as { __VARLATCH__?: { convexUrl?: string } }).__VARLATCH__?.convexUrl ||
   (import.meta as { env?: Record<string, string> }).env?.VITE_CONVEX_URL ||
   "http://localhost:3210";
-const convex = new ConvexReactClient(CONVEX_URL);
+// No Convex client at all on a server without it (lib/backend.ts): the Go
+// server until it serves events.
+const convex = backend().realtime === "convex" ? new ConvexReactClient(CONVEX_URL) : null;
 
 // Secrets never enter this cache: disclosures are imperative mutations only.
 const queryClient = new QueryClient({
@@ -107,6 +110,14 @@ function ConvexWithSession({ children }: { children: React.ReactNode }) {
     }),
     [identityId, mintConvexToken, accessEpoch],
   );
+  if (!convex) {
+    return (
+      <>
+        <RealtimeUnavailable />
+        {children}
+      </>
+    );
+  }
   return (
     <ConvexProviderWithAuth client={convex} useAuth={() => auth}>
       <LiveUpdatesStatus />

@@ -11,6 +11,21 @@ import { LiveUpdatesController, type LiveStatus } from "../lib/liveUpdates";
  */
 export function LiveUpdatesStatus() {
   const convex = useConvex();
+  return <Status connected={() => convex.connectionState().isWebSocketConnected} subscribe={(on) => convex.subscribeToConnectionState((s) => on(s.isWebSocketConnected))} />;
+}
+
+const NEVER_CONNECTED = { connected: () => false, subscribe: () => () => {} };
+
+/**
+ * The same indicator on a server without live updates yet (lib/backend.ts:
+ * the Go server until it serves events): never connected, so it says live
+ * updates are unavailable and keeps what is on screen fresh by polling.
+ */
+export function RealtimeUnavailable() {
+  return <Status {...NEVER_CONNECTED} />;
+}
+
+function Status({ connected, subscribe }: { connected: () => boolean; subscribe: (on: (connected: boolean) => void) => () => void }) {
   const qc = useQueryClient();
   const [state, setState] = useState<{ status: LiveStatus; pollEveryMs: number | null }>({ status: "connecting", pollEveryMs: null });
 
@@ -25,8 +40,8 @@ export function LiveUpdatesStatus() {
       clearTimer: (handle) => window.clearTimeout(handle as number),
       onStatus: (status, pollEveryMs) => setState({ status, pollEveryMs }),
     });
-    controller.connection(convex.connectionState().isWebSocketConnected);
-    const unsubscribe = convex.subscribeToConnectionState((s) => controller.connection(s.isWebSocketConnected));
+    controller.connection(connected());
+    const unsubscribe = subscribe((c) => controller.connection(c));
     const onVisibility = () => controller.visibility();
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
@@ -34,7 +49,8 @@ export function LiveUpdatesStatus() {
       document.removeEventListener("visibilitychange", onVisibility);
       controller.dispose();
     };
-  }, [convex, qc]);
+    // The source is fixed for the page's lifetime (lib/backend.ts).
+  }, [qc]);
 
   if (state.status !== "reconnecting" && state.status !== "unavailable") return null;
   const every = state.pollEveryMs ? ` · refreshing every ${Math.round(state.pollEveryMs / 1000)} s` : "";

@@ -1,0 +1,396 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package auth
+
+import (
+	"context"
+	"crypto/subtle"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"time"
+
+	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/db/query"
+	"github.com/varlatch/varlatch/go/server/domainerr"
+	"github.com/varlatch/varlatch/go/server/ids"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
+)
+
+// Identity is the identity a credential belongs to (IdentityRow).
+type Identity struct {
+	ID                string
+	Kind              string
+	Name              string
+	Disabled          bool
+	InstallationAdmin bool
+	OrganizationID    *string
+}
+
+// Credential is an authenticated credential (CredentialRow).
+type Credential struct {
+	ID         string
+	IdentityID string
+	Kind       string
+	Name       *string
+	ExpiresAt  *int64
+	MaxUses    *int64
+	UseCount   int64
+	// AuthSessionID is the browser session a browser bearer was minted
+	// from, or a browser-handoff CLI credential came from.
+	AuthSessionID *string
+}
+
+// Principal is who a /v1 request authenticated as.
+type Principal struct {
+	Identity   Identity
+	Credential Credential
+}
+
+// Reasons a bearer does not authenticate, for the audit log only: callers
+// answer every one as INVALID_CREDENTIAL.
+const (
+	ReasonInvalid          = "invalid"
+	ReasonRevoked          = "revoked"
+	ReasonExpired          = "expired"
+	ReasonExhausted        = "exhausted"
+	ReasonIdentityDisabled = "identity-disabled"
+)
+
+// lastUsedEvery throttles the last-used write (ADR-0034): at most one per
+// credential per 60 seconds.
+const lastUsedEvery = 60 * time.Second
+
+func nullStr(p *string) sql.NullString {
+	if p == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *p, Valid: true}
+}
+
+func nullInt(p *int64) sql.NullInt64 {
+	if p == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: *p, Valid: true}
+}
+
+func ptrStr(n sql.NullString) *string {
+	if !n.Valid {
+		return nil
+	}
+	return &n.String
+}
+
+func ptrInt(n sql.NullInt64) *int64 {
+	if !n.Valid {
+		return nil
+	}
+	return &n.Int64
+}
+
+// Authenticate resolves a bearer token, as authenticateBearer does: the
+// credential and its identity, or the reason it does not authenticate. A
+// credential with a use limit spends one use, in a write job that refuses
+// the use past the limit; a credential not used for a minute records that
+// it was, with its identity's last-seen time.
+func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, string, error) {
+	digest := HashToken(token)
+	row, err := query.New(s.store.Reader()).CredentialByTokenHash(ctx, digest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ReasonInvalid, nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	// Defense in depth against lookup-layer surprises.
+	stored, err1 := hex.DecodeString(row.TokenHash)
+	want, _ := hex.DecodeString(digest)
+	if err1 != nil || subtle.ConstantTimeCompare(stored, want) != 1 {
+		return nil, ReasonInvalid, nil
+	}
+	now := s.micros()
+	if row.RevokedAt.Valid {
+		return nil, ReasonRevoked, nil
+	}
+	if row.ExpiresAt.Valid && row.ExpiresAt.Int64 <= now {
+		return nil, ReasonExpired, nil
+	}
+	if row.Disabled {
+		return nil, ReasonIdentityDisabled, nil
+	}
+	touch := !row.LastUsedAt.Valid || row.LastUsedAt.Int64 < now-lastUsedEvery.Microseconds()
+	if row.MaxUses.Valid || touch {
+		exhausted := false
+		err := s.store.Write(ctx, func(tx *storage.Tx) error {
+			exhausted = false
+			q := query.New(tx)
+			now := s.micros()
+			if row.MaxUses.Valid {
+				// The single writer runs this check and the increment with
+				// nothing between: concurrent requests never overspend.
+				n, err := q.ConsumeCredentialUse(ctx, row.ID)
+				if err != nil {
+					return err
+				}
+				if n == 0 {
+					exhausted = true
+					return nil
+				}
+			}
+			n, err := q.TouchCredential(ctx, query.TouchCredentialParams{
+				Now: sql.NullInt64{Int64: now, Valid: true}, ID: row.ID,
+				Before: sql.NullInt64{Int64: now - lastUsedEvery.Microseconds(), Valid: true},
+			})
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				return q.TouchIdentity(ctx, query.TouchIdentityParams{LastSeenAt: sql.NullInt64{Int64: now, Valid: true}, ID: row.IdentityID})
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, "", err
+		}
+		if exhausted {
+			return nil, ReasonExhausted, nil
+		}
+	}
+	return &Principal{
+		Identity: Identity{
+			ID: row.IdentityID, Kind: row.IdentityKind, Name: row.IdentityName, Disabled: row.Disabled,
+			InstallationAdmin: row.InstallationAdmin, OrganizationID: ptrStr(row.OrganizationID),
+		},
+		Credential: Credential{
+			ID: row.ID, IdentityID: row.IdentityID, Kind: row.Kind, Name: ptrStr(row.Name),
+			ExpiresAt: ptrInt(row.ExpiresAt), MaxUses: ptrInt(row.MaxUses), UseCount: row.UseCount,
+			AuthSessionID: ptrStr(row.AuthSessionID),
+		},
+	}, "", nil
+}
+
+// RecordAuthenticationFailed records the refusal of a bearer: the /v1
+// middleware's authentication.failed, with the reason.
+func (s *Service) RecordAuthenticationFailed(ctx context.Context, requestID, reason string) error {
+	return s.store.Write(ctx, func(tx *storage.Tx) error {
+		_, err := audit.Record(ctx, tx, audit.Event{
+			Type: "authentication.failed", Decision: audit.Deny, RequestID: &requestID,
+			Metadata: jsvalue.Object{{Key: "reason", Value: reason}},
+		})
+		return err
+	})
+}
+
+// CredentialExpiresWarning is how close to its expiry a machine credential
+// names it on every response (ADR-0054 Decision 8).
+const CredentialExpiresWarning = 7 * 24 * time.Hour
+
+// ExpiresNotice is the Varlatch-Credential-Expires header's value for a
+// principal, or "": only for a service credential of a non-human identity
+// that expires within 7 days (credentialExpiresNotice).
+func (s *Service) ExpiresNotice(p *Principal) string {
+	c := p.Credential
+	if c.Kind != KindService || p.Identity.Kind == "human" || c.ExpiresAt == nil {
+		return ""
+	}
+	if *c.ExpiresAt-s.micros() > CredentialExpiresWarning.Microseconds() {
+		return ""
+	}
+	return ISO(*c.ExpiresAt)
+}
+
+// Issue is what issueCredential takes.
+type Issue struct {
+	IdentityID string
+	Kind       string
+	Name       *string
+	// ExpiresAt in microseconds; nil for none.
+	ExpiresAt *int64
+	MaxUses   *int64
+	// ActorIdentityID is who was shown the token (issued_by and the event's
+	// actor); the identity itself when nil.
+	ActorIdentityID *string
+	OrganizationID  *string
+	Metadata        jsvalue.Object
+	// Client is the readable client label (ClientLabel), never a raw
+	// User-Agent.
+	Client *string
+	// AuthSessionID: browser bearers and browser-handoff CLI credentials.
+	AuthSessionID *string
+	// Evidence: CLI credentials from device sign-in.
+	Evidence *Evidence
+}
+
+// Issued is a credential issued: the token is returned once and never
+// stored.
+type Issued struct {
+	CredentialID string
+	Token        string
+}
+
+// IssueCredential issues a credential in the caller's write job, with its
+// credential.issued event (issueCredential).
+func IssueCredential(ctx context.Context, tx query.DBTX, now int64, in Issue) (Issued, error) {
+	token := GenerateToken(in.Kind)
+	id := ids.New(ids.Credential)
+	actor := in.IdentityID
+	if in.ActorIdentityID != nil {
+		actor = *in.ActorIdentityID
+	}
+	params := query.InsertCredentialParams{
+		ID: id, IdentityID: in.IdentityID, Kind: in.Kind, Name: nullStr(in.Name), TokenHash: HashToken(token),
+		CreatedAt: now, ExpiresAt: nullInt(in.ExpiresAt), MaxUses: nullInt(in.MaxUses), Client: nullStr(in.Client),
+		AuthSessionID: nullStr(in.AuthSessionID), IssuedBy: sql.NullString{String: actor, Valid: true},
+	}
+	if in.Evidence != nil {
+		params.EvidenceUserVerified = sql.NullBool{Bool: in.Evidence.UserVerified, Valid: true}
+		params.EvidencePasskeyID = sql.NullString{String: in.Evidence.PasskeyID, Valid: true}
+	}
+	if err := query.New(tx).InsertCredential(ctx, params); err != nil {
+		return Issued{}, err
+	}
+	metadata := jsvalue.Object{{Key: "kind", Value: in.Kind}}
+	if in.ExpiresAt != nil {
+		metadata = append(metadata, jsvalue.Member{Key: "expiresAt", Value: ISO(*in.ExpiresAt)})
+	}
+	if in.MaxUses != nil && *in.MaxUses != 0 {
+		metadata = append(metadata, jsvalue.Member{Key: "maxUses", Value: *in.MaxUses})
+	}
+	for _, m := range in.Metadata {
+		metadata = metadata.Set(m.Key, m.Value)
+	}
+	_, err := audit.Record(ctx, tx, audit.Event{
+		Type: "credential.issued", Decision: audit.Info, ActorIdentityID: &actor,
+		CredentialID: audit.Value(id), OrganizationID: in.OrganizationID,
+		Resource: jsvalue.Object{{Key: "identityId", Value: in.IdentityID}},
+		Metadata: metadata,
+	})
+	if err != nil {
+		return Issued{}, err
+	}
+	return Issued{CredentialID: id, Token: token}, nil
+}
+
+// RevokeCredential revokes a credential in the caller's write job, with its
+// credential.revoked event naming its kind and identity (revokeCredential).
+// Revoking one already revoked records the event without them.
+func RevokeCredential(ctx context.Context, tx query.DBTX, now int64, credentialID, actorIdentityID string, organizationID *string) error {
+	row, err := query.New(tx).RevokeCredential(ctx, query.RevokeCredentialParams{Now: sql.NullInt64{Int64: now, Valid: true}, ID: credentialID})
+	found := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	e := audit.Event{
+		Type: "credential.revoked", Decision: audit.Info, ActorIdentityID: &actorIdentityID,
+		CredentialID: audit.Value(credentialID), OrganizationID: organizationID,
+	}
+	if found {
+		e.Resource = jsvalue.Object{{Key: "identityId", Value: row.IdentityID}}
+		e.Metadata = jsvalue.Object{{Key: "kind", Value: row.Kind}}
+	}
+	_, err = audit.Record(ctx, tx, e)
+	return err
+}
+
+// OwnCredential is one of the caller's credentials, as GET
+// /v1/me/credentials lists it.
+type OwnCredential struct {
+	ID        string
+	Kind      string
+	Name      *string
+	CreatedAt int64
+	ExpiresAt *int64
+	RevokedAt *int64
+	MaxUses   *int64
+	UseCount  int64
+	Client    *string
+}
+
+// ListOwnCredentials lists an identity's credentials, newest first.
+func (s *Service) ListOwnCredentials(ctx context.Context, identityID string) ([]OwnCredential, error) {
+	rows, err := query.New(s.store.Reader()).ListCredentialsOfIdentity(ctx, identityID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OwnCredential, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, OwnCredential{
+			ID: r.ID, Kind: r.Kind, Name: ptrStr(r.Name), CreatedAt: r.CreatedAt, ExpiresAt: ptrInt(r.ExpiresAt),
+			RevokedAt: ptrInt(r.RevokedAt), MaxUses: ptrInt(r.MaxUses), UseCount: r.UseCount, Client: ptrStr(r.Client),
+		})
+	}
+	return out, nil
+}
+
+// RevokeOwnCredential revokes one of the caller's credentials (DELETE
+// /v1/me/credentials/{credential}); another's, or an unknown one, is not
+// found. A machine identity's Organization must be live: its credentials
+// belong to the Organization (lockLiveScope with the recovery exception).
+func (s *Service) RevokeOwnCredential(ctx context.Context, p *Principal, credentialID string) error {
+	return s.store.Write(ctx, func(tx *storage.Tx) error {
+		q := query.New(tx)
+		if p.Identity.OrganizationID != nil {
+			if _, err := q.LiveOrganization(ctx, *p.Identity.OrganizationID); errors.Is(err, sql.ErrNoRows) {
+				return domainerr.NotFound("Organization")
+			} else if err != nil {
+				return err
+			}
+		}
+		if _, err := q.CredentialOfIdentity(ctx, query.CredentialOfIdentityParams{ID: credentialID, IdentityID: p.Identity.ID}); errors.Is(err, sql.ErrNoRows) {
+			return domainerr.New("RESOURCE_NOT_FOUND", "Credential not found")
+		} else if err != nil {
+			return err
+		}
+		return RevokeCredential(ctx, tx, s.micros(), credentialID, p.Identity.ID, nil)
+	})
+}
+
+// CLI credential lifetimes for the browser hand-off exchange (ADR-0024).
+const (
+	CLIDefaultTTL = 43_200
+	CLIMinTTL     = 60
+	CLIMaxTTL     = 86_400
+)
+
+// ExchangeCLI trades the dashboard's browser bearer for a CLI credential,
+// revoking the bearer: one exchange per bearer (POST
+// /v1/me/credentials/cli). Only a person's browser bearer may be exchanged.
+// The new credential carries the bearer's session, and so its sign-in
+// evidence (ADR-0054 Decision 6).
+func (s *Service) ExchangeCLI(ctx context.Context, p *Principal, ttlSeconds int64, name *string, client *string) (Issued, int64, error) {
+	if p.Identity.Kind != "human" || p.Credential.Kind != KindBrowser {
+		return Issued{}, 0, domainerr.New("PERMISSION_DENIED", "Only a browser session bearer may be exchanged for a CLI credential")
+	}
+	var issued Issued
+	var expiresAt int64
+	err := s.store.Write(ctx, func(tx *storage.Tx) error {
+		q := query.New(tx)
+		now := s.micros()
+		expiresAt = (now/1000 + ttlSeconds*1000) * 1000
+		n, err := q.ConsumeBrowserCredential(ctx, query.ConsumeBrowserCredentialParams{Now: sql.NullInt64{Int64: now, Valid: true}, ID: p.Credential.ID})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return domainerr.New("INVALID_CREDENTIAL", "Browser credential was already consumed or expired")
+		}
+		if _, err := audit.Record(ctx, tx, audit.Event{
+			Type: "credential.revoked", Decision: audit.Info, ActorIdentityID: &p.Identity.ID,
+			CredentialID: audit.Value(p.Credential.ID),
+		}); err != nil {
+			return err
+		}
+		if name == nil {
+			name = str("browser-handoff login")
+		}
+		issued, err = IssueCredential(ctx, tx, now, Issue{
+			IdentityID: p.Identity.ID, Kind: KindCLI, Name: name, ExpiresAt: &expiresAt, ActorIdentityID: &p.Identity.ID,
+			Metadata: jsvalue.Object{{Key: "exchangedFromCredentialId", Value: p.Credential.ID}, {Key: "ttlSeconds", Value: ttlSeconds}},
+			Client:   client, AuthSessionID: p.Credential.AuthSessionID,
+		})
+		return err
+	})
+	return issued, expiresAt, err
+}

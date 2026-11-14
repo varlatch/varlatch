@@ -5,6 +5,7 @@ package httpserver
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,11 +22,10 @@ type parityTable struct {
 	NginxVectors []struct{ Target, Nginx string } `json:"nginxVectors"`
 	Routes       []struct {
 		Method, Target, Credential, Expect, Code, Text string
+		Body                                           *string
+		BodySize                                       int  `json:"bodySize"`
+		Chunked                                        bool `json:"chunked"`
 		Status                                         int
-		GoUntilStep34                                  *struct {
-			Status       int
-			Expect, Text string
-		} `json:"goUntilStep3_4"`
 	} `json:"routes"`
 	ForwardedFor []struct {
 		Peer    string
@@ -41,16 +41,22 @@ type parityTable struct {
 	} `json:"requestWindow"`
 }
 
-func loadParity(t *testing.T) parityTable {
+// loadParityInto reads the table into v.
+func loadParityInto(t *testing.T, v any) {
 	t.Helper()
 	b, err := os.ReadFile("testdata/known-differences.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var p parityTable
-	if err := json.Unmarshal(b, &p); err != nil {
+	if err := json.Unmarshal(b, v); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func loadParity(t *testing.T) parityTable {
+	t.Helper()
+	var p parityTable
+	loadParityInto(t, &p)
 	if len(p.PathVectors) == 0 || len(p.NginxVectors) == 0 || len(p.Routes) == 0 || len(p.ForwardedFor) == 0 || p.RequestWindow.Allowed != WindowLimit {
 		t.Fatalf("the table is incomplete: %+v", p)
 	}
@@ -83,21 +89,37 @@ func TestParityNginxPaths(t *testing.T) {
 // (httptest.NewRequest reads the request line): Path, RawPath and RawQuery
 // are what a client's request gives.
 func TestParityRoutes(t *testing.T) {
-	s, _, _, logBuf := newTestServer(t, nil)
 	index, _ := webFS.ReadFile("index.html")
 	for _, c := range loadParity(t).Routes {
-		logBuf.Reset()
+		// A fresh installation per case, as the TypeScript side has: a
+		// case that succeeds spends a credential or a device sign-in.
+		s, _, _, logBuf, ta := newTestServerAuth(t, nil)
 		status, expect, text := c.Status, c.Expect, c.Text
-		if c.GoUntilStep34 != nil {
-			status, expect, text = c.GoUntilStep34.Status, c.GoUntilStep34.Expect, c.GoUntilStep34.Text
+		var r *http.Request
+		body := parityBody(c.Body, c.BodySize)
+		if body != nil {
+			r = httptest.NewRequest(c.Method, c.Target, strings.NewReader(*body))
+			r.Header.Set("Content-Type", "application/json")
+			if c.Chunked {
+				// No Content-Length: Transfer-Encoding chunked.
+				r.ContentLength = -1
+				r.TransferEncoding = []string{"chunked"}
+				r.Body = io.NopCloser(strings.NewReader(*body))
+			}
+		} else {
+			r = httptest.NewRequest(c.Method, c.Target, nil)
 		}
-		r := httptest.NewRequest(c.Method, c.Target, nil)
 		r.RemoteAddr = "192.0.2.10:40000"
 		switch c.Credential {
-		case "valid", "invalid":
-			r.Header.Set("Authorization", "Bearer vlt_cli_"+c.Credential)
+		case "valid", "revoked", "expired", "agent-run", "browser":
+			r.Header.Set("Authorization", "Bearer "+ta.tokens[c.Credential])
+		case "invalid":
+			r.Header.Set("Authorization", "Bearer vlt_cli_notacredential")
 		case "basic":
 			r.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+		case "none":
+		default:
+			t.Fatalf("unknown credential %q", c.Credential)
 		}
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
@@ -112,7 +134,9 @@ func TestParityRoutes(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimSpace(logBuf.String())), &rec); err != nil {
 			t.Fatalf("%s: access log %q: %v", name, logBuf.String(), err)
 		}
-		if want := expect != "dashboard" && rec.Path != "/healthz" && rec.Path != "/readyz"; rec.Window != want {
+		// The body limit refuses before the request window: a 413 is not
+		// charged, and the access log says so.
+		if want := expect != "dashboard" && rec.Path != "/healthz" && rec.Path != "/readyz" && status != http.StatusRequestEntityTooLarge; rec.Window != want {
 			t.Errorf("%s: counted in the request window %v, want %v (routed on %q)", name, rec.Window, want, rec.Path)
 		}
 		head := c.Method == http.MethodHead // a real server sends no body
@@ -131,6 +155,11 @@ func TestParityRoutes(t *testing.T) {
 			if ct != "application/json" || (!head && (json.Unmarshal(w.Body.Bytes(), &m) != nil || m.ApiMajor != 1)) {
 				t.Errorf("%s: %q %q", name, ct, w.Body.String())
 			}
+		case "json":
+			var body map[string]any
+			if ct != "application/json" || json.Unmarshal(w.Body.Bytes(), &body) != nil || body["error"] != nil {
+				t.Errorf("%s: %q %q", name, ct, w.Body.String())
+			}
 		case "code":
 			if ct != "application/json" {
 				t.Errorf("%s: Content-Type %q", name, ct)
@@ -142,6 +171,16 @@ func TestParityRoutes(t *testing.T) {
 			t.Errorf("%s: unknown expectation %q", name, expect)
 		}
 	}
+}
+
+// parityBody is a case's body: as written, or a JSON object of exactly
+// size bytes ({"pad":"aaa..."}).
+func parityBody(body *string, size int) *string {
+	if size > 0 {
+		b := `{"pad":"` + strings.Repeat("a", size-len(`{"pad":""}`)) + `"}`
+		return &b
+	}
+	return body
 }
 
 // Every 404 varlatchd gives outside a handler is Hono's: no Go mux text

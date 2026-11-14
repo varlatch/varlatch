@@ -14,10 +14,13 @@
  * does not model.
  */
 import { readFileSync } from "node:fs";
+import { connect, type AddressInfo } from "node:net";
+import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { getPath } from "hono/utils/url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { issueCredential } from "../src/auth/credentials.js";
+import { issueCredential, revokeCredential } from "../src/auth/credentials.js";
+import { ENROLL_HTML } from "../src/enroll/page.js";
 import { generateKey } from "../src/crypto/aead.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
@@ -29,9 +32,10 @@ const { buildApp } = await vi.importActual<typeof import("../src/http/app.js")>(
 interface RouteCase {
   method: string;
   target: string;
-  credential: "none" | "basic" | "valid" | "invalid";
+  credential: "none" | "basic" | "valid" | "invalid" | "revoked" | "expired" | "agent-run" | "browser";
   status: number;
-  expect: "text" | "code" | "meta" | "dashboard";
+  expect: "text" | "code" | "json" | "meta" | "dashboard";
+  body?: string;
   code?: string;
   text?: string;
 }
@@ -43,10 +47,11 @@ const table = JSON.parse(
   routes: RouteCase[];
   forwardedFor: { peer: string; trusted: string[]; lines: string[]; client: string }[];
   requestWindow: { path: string; allowed: number; status: number; code: string; message: string; retryAfterAtStart: string };
+  transportBodies: { method: string; target: string; framing: "chunked" | "length"; size: number; status: number }[];
 };
 
 let ctx: AppCtx & { close: () => Promise<void> };
-let token: string;
+let tokens: Record<"valid" | "revoked" | "expired" | "agent-run" | "browser", string>;
 
 beforeEach(async () => {
   const db = await migratedTestDb();
@@ -54,15 +59,25 @@ beforeEach(async () => {
   await ensureInstallation(ctx);
   const grant = await issueBootstrapGrant(ctx);
   const { identityId } = await consumeSetupGrant(ctx, grant.token, { adminName: "Parity" });
-  token = (await issueCredential(ctx.db, { identityId, kind: "cli" })).token;
+  const revoked = await issueCredential(ctx.db, { identityId, kind: "cli" });
+  await revokeCredential(ctx.db, revoked.credentialId, identityId);
+  tokens = {
+    valid: (await issueCredential(ctx.db, { identityId, kind: "cli" })).token,
+    revoked: revoked.token,
+    expired: (await issueCredential(ctx.db, { identityId, kind: "cli", expiresAt: new Date(Date.now() - 3_600_000).toISOString() })).token,
+    // An Agent Run's metadata credential: read-only at the HTTP layer (ADR-0023).
+    "agent-run": (await issueCredential(ctx.db, { identityId, kind: "agent-run" })).token,
+    // A dashboard bearer of a session (any id: nothing references it).
+    browser: (await issueCredential(ctx.db, { identityId, kind: "browser", authSessionId: "ses_parity" })).token,
+  };
 });
 afterEach(async () => {
   await ctx.close();
 });
 
 const authorization = (credential: RouteCase["credential"]): Record<string, string> =>
-  credential === "valid"
-    ? { Authorization: `Bearer ${token}` }
+  credential === "valid" || credential === "revoked" || credential === "expired" || credential === "agent-run" || credential === "browser"
+    ? { Authorization: `Bearer ${tokens[credential]}` }
     : credential === "invalid"
       ? { Authorization: "Bearer vlt_cli_notacredential" }
       : credential === "basic"
@@ -135,8 +150,31 @@ describe("routes, as raw request targets", () => {
       return;
     }
     expect(nginxSends(c.target)).toBe("varlatchd");
-    const app = buildApp(ctx);
-    const res = await app.request(c.target, { method: c.method, headers: authorization(c.credential) });
+    // The public URL both servers run with: device sign-in is available.
+    const app = buildApp(ctx, { publicUrl: "http://127.0.0.1:8686" });
+    // A body as written, or a JSON object of exactly bodySize bytes; chunked
+    // sends it as a stream, without a Content-Length.
+    const text = c.bodySize ? `{"pad":"${"a".repeat(c.bodySize - '{"pad":""}'.length)}"}` : c.body;
+    const bytes = text === undefined ? undefined : new TextEncoder().encode(text);
+    const payload = bytes === undefined
+      ? undefined
+      : c.chunked
+        ? new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let i = 0; i < bytes.length; i += 64 * 1024) controller.enqueue(bytes.slice(i, i + 64 * 1024));
+              controller.close();
+            },
+          })
+        : bytes;
+    const res = await app.request(c.target, {
+      method: c.method,
+      headers: {
+        ...authorization(c.credential),
+        ...(payload !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(payload !== undefined && !c.chunked ? { "Content-Length": String(bytes!.length) } : {}),
+      },
+      ...(payload !== undefined ? { body: payload, ...(c.chunked ? { duplex: "half" } : {}) } : {}),
+    } as RequestInit);
     expect(res.status).toBe(c.status);
     const body = await res.text();
     if (c.expect === "text") {
@@ -147,6 +185,7 @@ describe("routes, as raw request targets", () => {
     expect(res.headers.get("Content-Type")).toBe("application/json");
     if (c.method === "HEAD") return;
     if (c.expect === "meta") expect(JSON.parse(body).apiMajor).toBe(1);
+    else if (c.expect === "json") expect(JSON.parse(body).error).toBeUndefined();
     else expect(JSON.parse(body).error.code).toBe(c.code);
   });
 });
@@ -181,4 +220,66 @@ it("the request window refuses the request after the allowed ones, with PERMISSI
   } finally {
     vi.useRealTimers();
   }
+});
+
+// The Go server serves this server's enrollment page byte for byte
+// (go/server/httpserver/enroll.go), with a script of its own behind it.
+describe("the enrollment page", () => {
+  it("is the one varlatchd embeds", () => {
+    expect(readFileSync(new URL("../../../go/server/httpserver/enroll/enroll.html", import.meta.url), "utf8")).toBe(ENROLL_HTML);
+  });
+});
+
+/**
+ * A request with a body of `size` bytes over a real connection, framed
+ * chunked or with a Content-Length, and the status of the answer. The body
+ * is written while the answer is read: the server may answer first.
+ */
+function rawRequest(port: number, method: string, target: string, framing: "chunked" | "length", size: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1");
+    let answer = "";
+    socket.setEncoding("latin1");
+    socket.on("data", (d: string) => {
+      answer += d;
+      const m = /^HTTP\/1\.1 (\d{3}) /.exec(answer);
+      if (m) {
+        resolve(Number(m[1]));
+        socket.destroy();
+      }
+    });
+    socket.on("error", (err) => (answer ? resolve(Number(/^HTTP\/1\.1 (\d{3}) /.exec(answer)?.[1] ?? 0)) : reject(err)));
+    socket.on("connect", () => {
+      socket.write(
+        `${method} ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nConnection: close\r\n` +
+          (framing === "chunked" ? "Transfer-Encoding: chunked\r\n\r\n" : `Content-Length: ${size}\r\n\r\n`),
+      );
+      const piece = 64 * 1024;
+      for (let sent = 0; sent < size; sent += piece) {
+        const n = Math.min(piece, size - sent);
+        if (framing === "chunked") socket.write(`${n.toString(16)}\r\n`);
+        socket.write("a".repeat(n));
+        if (framing === "chunked") socket.write("\r\n");
+      }
+      if (framing === "chunked") socket.write("0\r\n\r\n");
+    });
+  });
+}
+
+// The body limit through the Node adapter, as this server runs: app.request
+// cannot give a GET a body, so these go over a real listener
+// (@hono/node-server on an ephemeral port). parity_test.go runs the same
+// table against the Go server's listener.
+describe("request bodies over a real connection", () => {
+  it.each(table.transportBodies.map((c) => [`${c.method} ${c.target} (${c.framing}, ${c.size} bytes)`, c] as const))("%s", async (_, c) => {
+    const app = buildApp(ctx, { publicUrl: "http://127.0.0.1:8686" });
+    const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" });
+    await new Promise<void>((r) => (server.listening ? r() : server.once("listening", () => r())));
+    try {
+      const { port } = server.address() as AddressInfo;
+      expect(await rawRequest(port, c.method, c.target, c.framing, c.size)).toBe(c.status);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
 });

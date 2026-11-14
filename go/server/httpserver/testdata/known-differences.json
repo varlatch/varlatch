@@ -1,5 +1,5 @@
 {
-  "description": "Answers the Go server must give exactly as the TypeScript deployment does (ADR-0059 step 3, varlatchd-core decision 4). go/server/httpserver/parity_test.go and services/varlatchd/test/go-parity.test.ts both run every case, the TypeScript one against buildApp and Hono's own getPath, from raw request targets. pathVectors: the path varlatchd's router (Hono) routes a raw request target on, after the WHATWG URL parser and decodeURI. nginxVectors: the URI the dashboard's nginx selects a location with ($uri), as nginx 1.29 (the dashboard image's) gave it for each raw target: escapes decoded first, then dot segments resolved and slashes merged. routes: requests and their answers; expect is text (plain-text body), code (the JSON error envelope's code), meta (the /v1/meta document) or dashboard (the dashboard's nginx serves its app and never forwards the request to varlatchd, which Go reproduces; the TypeScript side decides forwarding from apps/web/nginx.conf's own locations); a HEAD answer is compared by status and Content-Type only. A case's goUntilStep3_4, when present, is what the Go server answers until step 3.4 can verify a credential; the TypeScript answer is the target. forwardedFor: X-Forwarded-For sent as several header lines. requestWindow: the 601st request of a window, with the clock held still.",
+  "description": "Answers the Go server must give exactly as the TypeScript deployment does (ADR-0059 step 3, varlatchd-core decision 4). go/server/httpserver/parity_test.go and services/varlatchd/test/go-parity.test.ts both run every case, the TypeScript one against buildApp and Hono's own getPath, from raw request targets. pathVectors: the path varlatchd's router (Hono) routes a raw request target on, after the WHATWG URL parser and decodeURI. nginxVectors: the URI the dashboard's nginx selects a location with ($uri), as nginx 1.29 (the dashboard image's) gave it for each raw target: escapes decoded first, then dot segments resolved and slashes merged. routes: requests and their answers; expect is text (plain-text body), code (the JSON error envelope's code), json (a JSON answer that is not an error), meta (the /v1/meta document) or dashboard (the dashboard's nginx serves its app and never forwards the request to varlatchd, which Go reproduces; the TypeScript side decides forwarding from apps/web/nginx.conf's own locations); a HEAD answer is compared by status and Content-Type only. credential is none, basic (not a bearer), valid (a live CLI credential), browser (a dashboard bearer of a session), invalid (no such credential), revoked, expired, or agent-run (an Agent Run's read-only credential). forwardedFor: X-Forwarded-For sent as several header lines. requestWindow: the 601st request of a window, with the clock held still. body, when present, is sent as written, with Content-Type application/json; bodySize sends a JSON object of exactly that many bytes instead ({\"pad\":\"aaa...\"}); chunked sends the body without a Content-Length (Transfer-Encoding: chunked). Each case runs against a fresh installation. Both servers run with the public URL http://127.0.0.1:8686, so device sign-in is available. transportBodies: requests sent over a real connection (app.request cannot give a GET a body): a body of size bytes, framed chunked or with a Content-Length, and the status. The Node adapter (@hono/node-server) passes GET, HEAD and TRACE on without their body, so the body limit never sees one; every other method's body is limited.",
   "pathVectors": [
     {
       "target": "/v1/meta",
@@ -238,11 +238,6 @@
       "credential": "invalid",
       "status": 401,
       "code": "INVALID_CREDENTIAL",
-      "goUntilStep3_4": {
-        "status": 404,
-        "expect": "text",
-        "text": "404 Not Found"
-      },
       "target": "/v1/nothing-here",
       "expect": "code"
     },
@@ -473,6 +468,632 @@
       "status": 404,
       "expect": "text",
       "text": "404 Not Found"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/nothing-here",
+      "credential": "revoked",
+      "status": 401,
+      "expect": "code",
+      "code": "INVALID_CREDENTIAL"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/nothing-here",
+      "credential": "expired",
+      "status": 401,
+      "expect": "code",
+      "code": "INVALID_CREDENTIAL"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/nothing-here",
+      "credential": "agent-run",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "DELETE",
+      "target": "/v1/organizations",
+      "credential": "agent-run",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/nothing-here",
+      "credential": "agent-run",
+      "status": 404,
+      "expect": "text",
+      "text": "404 Not Found"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/nothing-here",
+      "credential": "invalid",
+      "status": 401,
+      "expect": "code",
+      "code": "INVALID_CREDENTIAL"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/me",
+      "credential": "invalid",
+      "status": 401,
+      "expect": "code",
+      "code": "INVALID_CREDENTIAL"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/me",
+      "credential": "none",
+      "status": 401,
+      "expect": "code",
+      "code": "AUTHENTICATION_REQUIRED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "agent-run",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "valid",
+      "status": 403,
+      "expect": "code",
+      "body": "{\"ttlSeconds\":\"3600\"}",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"ttlSeconds\":\"3600\"}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"ttlSeconds\":1.5}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"ttlSeconds\":30}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"name\":null}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "[\"ttlSeconds\"]",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"name\":\"\"}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "status": 201,
+      "expect": "json",
+      "body": "not json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "status": 201,
+      "expect": "json",
+      "body": ""
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "status": 201,
+      "expect": "json",
+      "body": "{\"ttlSeconds\":3600,\"unknown\":true}"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "status": 422,
+      "expect": "code",
+      "body": "null",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "status": 422,
+      "expect": "code",
+      "body": "\"text\"",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"ttlSeconds\":\"x\"}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"ttlSeconds\":86401}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/token",
+      "credential": "none",
+      "status": 422,
+      "expect": "code",
+      "body": "{}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/token",
+      "credential": "none",
+      "status": 422,
+      "expect": "code",
+      "body": "garbage",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/token",
+      "credential": "none",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"deviceCode\":5}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/token",
+      "credential": "none",
+      "status": 410,
+      "expect": "code",
+      "body": "{\"deviceCode\":\"x\"}",
+      "code": "EXPIRED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/lookup",
+      "credential": "valid",
+      "status": 403,
+      "expect": "code",
+      "body": "{\"userCode\":5}",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/lookup",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"userCode\":5}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/lookup",
+      "credential": "browser",
+      "status": 404,
+      "expect": "code",
+      "body": "{\"userCode\":\"BBBB-BBBB\"}",
+      "code": "RESOURCE_NOT_FOUND"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/approve",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"userCode\":\"BBBB-BBBB\",\"decision\":\"maybe\"}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/approve",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"userCode\":\"BBBB-BBBB\",\"decision\":\"approve\"}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/passkeys/pk_none/confirmation",
+      "credential": "valid",
+      "status": 403,
+      "expect": "code",
+      "body": "{}",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/passkeys/pk_none/confirmation",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"assertion\":\"x\"}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/passkeys/pk_none/confirmation",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{}",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/organizations?limit=abc&cursor=%zz",
+      "credential": "valid",
+      "status": 200,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "bodySize": 1048577,
+      "chunked": false,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "bodySize": 1048577,
+      "chunked": true,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/token",
+      "credential": "none",
+      "bodySize": 1048577,
+      "chunked": false,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device/token",
+      "credential": "none",
+      "bodySize": 1048577,
+      "chunked": true,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/nothing-here",
+      "credential": "none",
+      "bodySize": 1048577,
+      "chunked": false,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/nothing-here",
+      "credential": "none",
+      "bodySize": 1048577,
+      "chunked": true,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/organizations",
+      "credential": "valid",
+      "bodySize": 1048577,
+      "chunked": false,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/organizations",
+      "credential": "valid",
+      "bodySize": 1048577,
+      "chunked": true,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "bodySize": 1048577,
+      "chunked": false,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "bodySize": 1048577,
+      "chunked": true,
+      "status": 413,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "bodySize": 1048576,
+      "chunked": true,
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "bodySize": 1048576,
+      "chunked": false,
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "body": "{\"ttlSeconds\":3600}",
+      "chunked": true,
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":60}",
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":60.0}",
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":6e1}",
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":6.0E+1}",
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":0.6e2}",
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":1e2}",
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":60.000000000000001}",
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":86400.0}",
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":6.5}",
+      "status": 422,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":86400.5}",
+      "status": 422,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":1e400}",
+      "status": 422,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":-0}",
+      "status": 422,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":-0.0}",
+      "status": 422,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":59.99999}",
+      "status": 422,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "body": "{\"ttlSeconds\":1e-400}",
+      "status": 422,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "valid",
+      "body": "{\"ttlSeconds\":60}",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "valid",
+      "body": "{\"ttlSeconds\":60.0}",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "valid",
+      "body": "{\"ttlSeconds\":6e1}",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "valid",
+      "body": "{\"ttlSeconds\":6.5}",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "valid",
+      "body": "{\"ttlSeconds\":1e400}",
+      "status": 403,
+      "expect": "code",
+      "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "body": "{\"ttlSeconds\":6e1}",
+      "status": 201,
+      "expect": "json"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "body": "{\"ttlSeconds\":-0}",
+      "status": 422,
+      "expect": "code",
+      "code": "VALIDATION_FAILED"
     }
   ],
   "forwardedFor": [
@@ -529,5 +1150,112 @@
     "code": "PERMISSION_DENIED",
     "message": "Request rate exceeded",
     "retryAfterAtStart": "60"
-  }
+  },
+  "transportBodies": [
+    {
+      "method": "GET",
+      "target": "/v1/meta",
+      "framing": "chunked",
+      "size": 1048577,
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "target": "/v1/meta",
+      "framing": "length",
+      "size": 1048577,
+      "status": 200
+    },
+    {
+      "method": "HEAD",
+      "target": "/v1/meta",
+      "framing": "chunked",
+      "size": 1048577,
+      "status": 200
+    },
+    {
+      "method": "HEAD",
+      "target": "/v1/meta",
+      "framing": "length",
+      "size": 1048577,
+      "status": 200
+    },
+    {
+      "method": "OPTIONS",
+      "target": "/v1/meta",
+      "framing": "chunked",
+      "size": 1048577,
+      "status": 413
+    },
+    {
+      "method": "OPTIONS",
+      "target": "/v1/meta",
+      "framing": "length",
+      "size": 1048577,
+      "status": 413
+    },
+    {
+      "method": "DELETE",
+      "target": "/v1/meta",
+      "framing": "chunked",
+      "size": 1048577,
+      "status": 413
+    },
+    {
+      "method": "DELETE",
+      "target": "/v1/meta",
+      "framing": "length",
+      "size": 1048577,
+      "status": 413
+    },
+    {
+      "method": "POST",
+      "target": "/v1/meta",
+      "framing": "chunked",
+      "size": 1048577,
+      "status": 413
+    },
+    {
+      "method": "POST",
+      "target": "/v1/meta",
+      "framing": "length",
+      "size": 1048577,
+      "status": 413
+    },
+    {
+      "method": "GET",
+      "target": "/v1/me",
+      "framing": "chunked",
+      "size": 1048577,
+      "status": 401
+    },
+    {
+      "method": "TRACE",
+      "target": "/v1/meta",
+      "framing": "chunked",
+      "size": 1048577,
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "target": "/v1/meta",
+      "framing": "chunked",
+      "size": 1048576,
+      "status": 404
+    },
+    {
+      "method": "OPTIONS",
+      "target": "/v1/meta",
+      "framing": "chunked",
+      "size": 10,
+      "status": 404
+    },
+    {
+      "method": "DELETE",
+      "target": "/v1/meta",
+      "framing": "length",
+      "size": 1048576,
+      "status": 404
+    }
+  ]
 }

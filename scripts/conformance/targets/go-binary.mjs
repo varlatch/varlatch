@@ -18,14 +18,20 @@
  *             path, status and X-Forwarded-For
  *   bootstrap, recover
  *             `varlatchd admin bootstrap|recover`, whose output is the
- *             TypeScript admin CLI's; until ADR-0059 step 3.4 they answer
- *             NOT_IMPLEMENTED_YET, and so does this adapter
+ *             TypeScript admin CLI's (an admin command a varlatchd does not
+ *             have answers NOT_IMPLEMENTED_YET, and so does this adapter)
  *   serveCli  restarts varlatchd with serve_cli set; until varlatchd knows
  *             the setting it refuses it (exit 78), and this adapter answers
  *             NOT_IMPLEMENTED_YET
+ *   probe     device sign-in's probes (expire-pending-device-sign-ins,
+ *             device-sign-in-addresses, proxy-addresses), through
+ *             `varlatchd admin conformance-probe`, which a varlatchd built
+ *             with the conformance build tag has (go build -tags
+ *             conformance); `up` refuses a binary without it
  *
- * No optional capability yet: the probes, maintenance and serve-cli come
- * with the operations that need them (expect/go-binary.json lists them).
+ * Optional capabilities: the device sign-in probes. Maintenance and
+ * serve-cli come with the operations that need them (expect/go-binary.json
+ * lists them).
  * The only processes it signals are the ones it started, by the PID it
  * recorded, after checking that PID still runs this installation's
  * configuration.
@@ -46,7 +52,7 @@ import { fileURLToPath } from "node:url";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
 
 export const name = "go-binary";
-export const capabilities = [];
+export const capabilities = ["probe:device-sign-in-addresses", "probe:expire-pending-device-sign-ins", "probe:proxy-addresses"];
 
 const READY_TIMEOUT_MS = 30_000;
 /** One /readyz request's deadline: a server that accepts and never answers must not hold up the loop. */
@@ -100,6 +106,11 @@ export async function up({ argument, onState = () => {} }) {
     if (!statSync(binary).isFile()) throw new Error("not a file");
   } catch (err) {
     throw new Error(`go-binary: ${binary} is not an executable file (${err.message})`);
+  }
+  // The probes are in a conformance build only.
+  const probe = spawnSync(binary, ["admin", "conformance-probe", "proxy-addresses"], { encoding: "utf8", timeout: 30_000 });
+  if (probe.status !== 0 || probe.stdout.trim() !== "[]") {
+    throw new Error(`go-binary: ${binary} has no conformance probes; build it with: go build -tags conformance ./cmd/varlatchd (${(probe.stderr || probe.stdout).trim().slice(0, 200)})`);
   }
   const dir = mkdtempSync(join(tmpdir(), "conformance-go-"));
   const port = await freePort();
@@ -299,6 +310,12 @@ export async function bootstrap(state) {
 
 export async function recover(state, identity, { cliCredential = false } = {}) {
   return admin(state, ["recover", "--identity", identity, ...(cliCredential ? ["--cli-credential"] : [])]);
+}
+
+/** A fixed, named probe of server state (the target contract): `varlatchd admin conformance-probe`. */
+export async function probe(state, probeName, ...args) {
+  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
+  return JSON.parse(admin(state, ["conformance-probe", probeName, ...args]));
 }
 
 /**

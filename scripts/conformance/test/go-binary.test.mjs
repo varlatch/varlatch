@@ -54,9 +54,13 @@ test("a real varlatchd: up, the operations, restart with its data, the request l
     const meta = await fetch(`${state.origin}/v1/meta`).then((r) => r.json());
     assert.match(meta.installationId, /^inst_[a-z2-7]{26}$/);
     assert.ok(!meta.capabilities.includes("cli.download"));
-    for (const op of ["bootstrap", "recover"]) {
-      await assert.rejects(goBinary[op](state, "idn_x", {}), (err) => err.code === NOT_IMPLEMENTED_YET && /not built yet/.test(err.message));
-    }
+    // The admin commands (step 3.4): the TypeScript admin CLI's output.
+    assert.match(await goBinary.bootstrap(state), new RegExp(`^ {2}${state.origin}/enroll#vlt_setup_[A-Za-z0-9_-]{43}$`, "m"));
+    await assert.rejects(goBinary.recover(state, "idn_x", {}), /not bootstrapped yet/);
+    // The device sign-in probes, in a conformance build.
+    assert.deepEqual(await goBinary.probe(state, "proxy-addresses"), []);
+    assert.deepEqual(await goBinary.probe(state, "device-sign-in-addresses", "nobody"), []);
+    assert.equal(await goBinary.probe(state, "expire-pending-device-sign-ins"), true);
     await assert.rejects(goBinary.serveCli(state, true), (err) => err.code === NOT_IMPLEMENTED_YET);
     assert.equal((await fetch(`${state.origin}/readyz`)).status, 200, "varlatchd runs again after the serve_cli probe");
     await goBinary.restart(state);
@@ -83,8 +87,8 @@ test("the stale-lacks probe against a real varlatchd", needBinary, async () => {
     state = await goBinary.up({ argument: binary, onState: (s) => (state = s) });
     const ask = (list) => probeLacks({ inventory, openapi, lacks: list, origin: state.origin, target: goBinary, state });
     assert.deepEqual(await ask(lacks), []);
-    const stale = await ask(["listOrganizations", "getMeta", "enroll-page"]);
-    assert.deepEqual(stale.map((s) => s.operation), ["getMeta"]);
+    const stale = await ask(["listProjects", "getMeta", "whoami"]);
+    assert.deepEqual(stale.map((s) => s.operation), ["getMeta", "whoami"]);
     assert.match(stale[0].why, /answered 200, not 501 NOT_IMPLEMENTED_YET/);
     // The runner turns a stale entry into a problem: the run fails.
     const { evaluate } = await import("../lib/inventory.mjs");
@@ -106,6 +110,7 @@ test("the stale-lacks probe against a real varlatchd", needBinary, async () => {
 const FAKE = `#!/usr/bin/env node
 const fs = require("node:fs");
 const http = require("node:http");
+if (process.argv.includes("conformance-probe")) { console.log("[]"); process.exit(0); }
 const conf = fs.readFileSync(process.argv[process.argv.indexOf("--config") + 1], "utf8");
 const [, host, port] = /^listen = (.+):(\\d+)$/m.exec(conf);
 let first = true;

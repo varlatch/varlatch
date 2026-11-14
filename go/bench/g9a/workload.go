@@ -419,11 +419,17 @@ type ConvergeResult struct {
 	Err                         error
 }
 
+// ErrConvergeRunning is a converge tick that found the previous run still
+// going: it does nothing (Targets 0), and a G9a report counts it as a
+// failure of the run.
+var ErrConvergeRunning = errors.New("previous converge still running")
+
 // Converge runs one simulated converge over every Sync Target, a few at a
-// time. A run already in progress makes it return at once (Targets 0).
+// time. A run already in progress makes it return at once
+// (ErrConvergeRunning).
 func (w *Workload) Converge(ctx context.Context) ConvergeResult {
 	if !w.convergeRunning.CompareAndSwap(false, true) {
-		return ConvergeResult{Err: errors.New("previous converge still running")}
+		return ConvergeResult{Err: ErrConvergeRunning}
 	}
 	defer w.convergeRunning.Store(false)
 	type target struct{ id, env string }
