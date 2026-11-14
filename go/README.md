@@ -223,6 +223,14 @@ The server's packages:
   through the schema mapping and must give the same answers, and the same
   with every Organization KEK and value sealed again by Go, which go.yml
   then hands to the TypeScript server's read path (G3, both directions).
+  The rows include the installation's Root KEK canary, which both servers
+  open through their readiness check (and varlatchd at startup,
+  `server/daemon/canary_test.go`). `testdata/g3-matrix.json` lists every
+  encryption class (each envelope purpose `lib/envelope` defines) × fixture
+  release × envelope version × direction, at the level it is proven
+  (database or envelope) with the tests that prove it; `g3_test.go` fails
+  when an entry names a test that does not exist or that CI does not run,
+  or when a purpose has no entry.
   `services/varlatchd/test/go-values-fixture.test.ts` writes them (and
   `server/daemon/seed_contract.json`, the conformance seed's Contract) and
   checks the committed files are still that server's answers:
@@ -374,6 +382,14 @@ passes, every failure in it listed with a reason.
 
 ## Before the first Go release
 
+- G3 at the database level: `go test ./server/values -run TestG3Gate
+  -args -g3-gate` passes, so every encryption class in
+  `server/values/testdata/g3-matrix.json` but the JWT signing keys (only
+  Convex uses them) is proven through both servers' code that reads its
+  rows, in both directions. Until step 4 builds the features that store
+  them, webhook secrets, Platform credentials, GitHub App keys and audit
+  export credentials and drain copies are proven at the envelope level
+  only, and the check fails.
 - The Go release workflow: binaries named `varlatch-<version>-<os>-<arch>`
   (`.exe` on Windows) and `varlatchd-<version>-linux-<arch>`, plus
   `varlatchd.service`, all in `SHA256SUMS`; `install.sh` attached with

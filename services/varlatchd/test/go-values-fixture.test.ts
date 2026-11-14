@@ -8,11 +8,15 @@
  * expired environments, an active Contract, values with references,
  * escapes, cycles, inheritance and a rotation in progress, Grants of
  * several shapes, a machine identity and an Agent Run credential, a
- * Tailnet Requirement, an incident freeze and Security Controls. Then a
- * table of requests runs against it, and the file records, for each, this
- * server's answer (status, the headers that matter, the body byte for
- * byte) and the audit events, exposure rows and report counts it wrote.
- * The rows are exported as PostgreSQL holds them.
+ * Tailnet Requirement, an incident freeze, Security Controls, rotations
+ * whose window has passed or that completed, a machine that may use
+ * Secrets but not reveal them, and assisted-mode requests. Then a table of
+ * requests (requestTable) runs against it, and the file records, for
+ * each, this server's answer (status, the headers that matter, the body
+ * byte for byte) and the audit events, exposure rows and report counts it
+ * wrote. The rows are exported as PostgreSQL holds them, the
+ * installation's Root KEK canary included: the readiness request makes
+ * each server open it (G3 at the database level for the canary).
  *
  * go/server/values loads the rows through the schema mapping
  * (go/server/db/mapping.json), as the migration will copy them, runs the
@@ -20,18 +24,21 @@
  *
  * Two files, one per release whose envelopes must open (G3):
  *   - values-v0.22.0.json: every envelope sealed by this code;
- *   - values-v0.21.0.json: the same rows, every Organization KEK and value
- *     sealed again by v0.21.0's crypto code (services/varlatchd/src/crypto
+ *   - values-v0.21.0.json: the same rows, the canary and every
+ *     Organization KEK and value sealed again by v0.21.0's crypto code (services/varlatchd/src/crypto
  *     at the tag, loaded with git show), which is what a v0.21.0
  *     installation's data is after its upgrade to 0.22.0: no migration
  *     between the two touches a ciphertext.
  *
- * Here, every run loads each committed file into a fresh database and
- * requires this server to give the recorded answers again, so a file never
- * drifts from this code. With VARLATCH_GO_SEALED_VALUES=<file>, the same
+ * Here, every run checks that each committed file's requests are
+ * requestTable()'s, by id (a request added, removed or changed without
+ * regenerating fails), loads its rows into a fresh database and requires
+ * this server to give the recorded answers again, so a file never drifts
+ * from this code. With VARLATCH_GO_SEALED_VALUES=<file>, the same
  * check runs on a file the Go tests wrote (go test ./server/values -run
  * TestGoSealedFixture -args -write-go-sealed=<file>): the same rows with
- * every Organization KEK and value sealed again by the Go code, so this
+ * the canary and every Organization KEK and value sealed again by the Go
+ * code, so this
  * server's own read path opens what Go sealed (go.yml, go-binary job).
  *
  * After a change, regenerate both files and commit them:
@@ -83,6 +90,9 @@ const REPO_ROOT = new URL("../../../", import.meta.url);
 
 /** The tables the read path reads, in an order that satisfies their foreign keys once each is sorted (rowOrder). */
 const TABLES = [
+  // The Root KEK canary (G3 at the database level: both servers check it
+  // with the readiness request below).
+  "installation",
   "identities",
   "user",
   "auth_user_links",
@@ -102,6 +112,7 @@ const TABLES = [
 
 /** Rows in an order their self-references allow: parents and previous versions first. */
 const ORDER_BY: Record<string, string> = {
+  installation: "id",
   identities: "id",
   user: "id",
   auth_user_links: "better_auth_user_id",
@@ -120,9 +131,15 @@ const ORDER_BY: Record<string, string> = {
 };
 
 type Row = Record<string, unknown>;
-type Credential = "alice" | "bob" | "carol" | "dave" | "erin" | "ci" | "viewer" | "agent" | "none" | "invalid";
+type Credential = "alice" | "bob" | "carol" | "dave" | "erin" | "ci" | "viewer" | "runner" | "agent" | "none" | "invalid";
+
+/** The CLI's User-Agent, and in assisted mode (ADR-0043 Decision 3). */
+const CLI_AGENT = "varlatch-cli/0.22.0 (linux; x64)";
+const ASSISTED_AGENT = "varlatch-cli/0.22.0 (linux; x64; assisted)";
 
 interface RequestCase {
+  /** Stable: the method and the name, unique in the table. */
+  id: string;
   name: string;
   method: "GET" | "POST";
   path: string;
@@ -130,6 +147,8 @@ interface RequestCase {
   /** A JSON body, or the exact text of one that is not JSON. */
   body?: unknown;
   rawBody?: string;
+  /** The User-Agent sent (CLI_AGENT when absent). */
+  userAgent?: string;
 }
 
 interface Recorded extends RequestCase {
@@ -157,7 +176,9 @@ const ORG = "/v1/organizations/acme/projects/api/environments";
 /** The table of requests, the same for both releases. */
 function requestTable(ids: { devId: string }): RequestCase[] {
   const all = { scope: "all-authorized-secrets" };
-  const cases: RequestCase[] = [
+  const cases: Omit<RequestCase, "id">[] = [
+    // Readiness: the loaded Root KEK opens the installation's canary.
+    { name: "readiness", method: "GET", path: "/readyz", credential: "none" },
     // Effective configuration: metadata, values, purposes, parameters.
     { name: "metadata only", method: "GET", path: `${ORG}/development/effective-configuration`, credential: "alice" },
     { name: "with values", method: "GET", path: `${ORG}/development/effective-configuration?include=values`, credential: "alice" },
@@ -189,6 +210,8 @@ function requestTable(ids: { devId: string }): RequestCase[] {
     { name: "a frozen organization", method: "GET", path: `/v1/organizations/frozen/projects/api/environments/development/effective-configuration`, credential: "alice" },
     { name: "passkey-verification enforced", method: "GET", path: `/v1/organizations/guarded/projects/api/environments/development/effective-configuration?include=values`, credential: "alice" },
     { name: "passkey-verification reported", method: "GET", path: `/v1/organizations/reported/projects/api/environments/development/effective-configuration?include=values`, credential: "alice" },
+    { name: "secret.use without reveal", method: "GET", path: `${ORG}/development/effective-configuration?include=values`, credential: "runner" },
+    { name: "assisted mode", method: "GET", path: `${ORG}/development/effective-configuration?include=values`, credential: "alice", userAgent: ASSISTED_AGENT },
     { name: "an empty environment", method: "GET", path: `${ORG}/staging/effective-configuration?include=values`, credential: "alice" },
     // Disclosures.
     { name: "every authorized Secret", method: "POST", path: `${ORG}/development/disclosures`, credential: "alice", body: all },
@@ -224,9 +247,14 @@ function requestTable(ids: { devId: string }): RequestCase[] {
     { name: "a frozen organization", method: "POST", path: `/v1/organizations/frozen/projects/api/environments/development/disclosures`, credential: "alice", body: all },
     { name: "passkey-verification enforced", method: "POST", path: `/v1/organizations/guarded/projects/api/environments/development/disclosures`, credential: "alice", body: all },
     { name: "passkey-verification reported", method: "POST", path: `/v1/organizations/reported/projects/api/environments/development/disclosures`, credential: "alice", body: all },
+    { name: "secret.use without reveal", method: "POST", path: `${ORG}/development/disclosures`, credential: "runner", body: all },
+    { name: "assisted mode", method: "POST", path: `${ORG}/development/disclosures`, credential: "alice", body: all, userAgent: ASSISTED_AGENT },
+    { name: "rotation boundaries", method: "POST", path: `${ORG}/development/disclosures`, credential: "alice", body: { items: ["TOKEN", "TOKEN_EXPIRED", "TOKEN_DONE"] } },
     { name: "an environment with no Secrets", method: "POST", path: `${ORG}/staging/disclosures`, credential: "alice", body: all },
   ];
-  return cases;
+  const out = cases.map((c) => ({ id: `${c.method} ${c.name}`, ...c }));
+  if (new Set(out.map((c) => c.id)).size !== out.length) throw new Error("requestTable: two requests share an id");
+  return out;
 }
 
 const CONTRACT_ITEMS: [string, boolean][] = [
@@ -242,6 +270,9 @@ const CONTRACT_ITEMS: [string, boolean][] = [
   ["DEEP", true],
   ["API_KEY", true],
   ["TOKEN", true],
+  // Rotation boundaries: a window that has passed, and a completed rotation.
+  ["TOKEN_EXPIRED", true],
+  ["TOKEN_DONE", true],
   ["UNICODE", true],
   ["GONE", true],
 ];
@@ -261,6 +292,8 @@ const VALUES: Record<string, [string, string][]> = {
     ["DEEP", "${GREETING} / ${API_KEY}"],
     ["API_KEY", "ak-dev-0001"],
     ["TOKEN", "tok-old-old-old"],
+    ["TOKEN_EXPIRED", "exp-old-old-old"],
+    ["TOKEN_DONE", "done-old-old-old"],
     ["UNICODE", "héllo wörld ✓ 𝄞"],
     ["STRAY", "not in the contract"],
     ["GONE", "deleted soon"],
@@ -320,6 +353,9 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
     if (slug === "acme") {
       await call("DELETE", `${P}/environments/development/values/GONE`);
       await call("POST", `${P}/environments/development/values/TOKEN/rotations`, { value: "tok-new-new-new" });
+      await call("POST", `${P}/environments/development/values/TOKEN_EXPIRED/rotations`, { value: "exp-new-new-new" });
+      await call("POST", `${P}/environments/development/values/TOKEN_DONE/rotations`, { value: "done-new-new-new" });
+      await call("POST", `${P}/environments/development/values/TOKEN_DONE/rotations/complete`, {});
     }
   }
   // The runner's seed Contract, pushed to a Project of its own.
@@ -330,6 +366,9 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   // Fixed times, so the file holds whatever day the Go tests run: the
   // rotation window open, one preview expired.
   await db.query("UPDATE env_values SET rotation_deadline = '2099-06-01T00:00:00.000Z' WHERE rotation_deadline IS NOT NULL");
+  // A rotation whose window has passed: its retiring version is no longer
+  // returned (lazy expiry, ADR-0027 §4).
+  await db.query("UPDATE env_values SET rotation_deadline = '2001-06-01T00:00:00.000Z' WHERE item_name = 'TOKEN_EXPIRED'");
   await db.query("UPDATE environments SET expires_at = '2001-01-01T00:00:00.000Z' WHERE name = 'development/pr-old'");
 
   // People: bob is a member with a Grant on the Project, carol is no
@@ -369,6 +408,14 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
     subjectIdentityId: viewer.id,
     scope: { kind: "project", projectId: ids.projectId },
     actions: ["config.metadata.read"],
+  });
+  // A machine that may use Secrets but not reveal them.
+  const runner = await call("POST", "/v1/organizations/acme/identities", { name: "runner", kind: "service" });
+  tokens.runner = runner.credential;
+  await call("POST", "/v1/organizations/acme/grants", {
+    subjectIdentityId: runner.id,
+    scope: { kind: "project", projectId: ids.projectId },
+    actions: ["config.metadata.read", "secret.use"],
   });
   const agent = await call("POST", "/v1/organizations/acme/identities", { name: "helper", kind: "agent" });
   tokens.agent = (await issueCredential(ctx.db, { identityId: agent.id, kind: "agent-run" })).token;
@@ -420,9 +467,10 @@ async function exportRows(db: AppCtx["db"]): Promise<Record<string, Row[]>> {
   return out;
 }
 
-/** Every v0.21.0 envelope the read path opens: each Organization KEK and value sealed again by that release's code. */
+/** Every v0.21.0 envelope the read path opens: the canary, each Organization KEK and value sealed again by that release's code. */
 async function resealWith(ref: string, rootKek: Buffer, rows: Record<string, Row[]>, plaintexts: Record<string, string>): Promise<void> {
   const crypto = await loadHierarchy(ref);
+  for (const inst of rows.installation!) inst.kek_canary = crypto.createCanary(rootKek, inst.id as string) as Envelope;
   const kekOf = new Map<string, Buffer>();
   for (const org of rows.organizations!) {
     const { orgKek, wrapped } = crypto.createWrappedOrgKek(rootKek, org.id as string) as { orgKek: Buffer; wrapped: Envelope };
@@ -445,7 +493,7 @@ async function resealWith(ref: string, rootKek: Buffer, rows: Record<string, Row
   }
 }
 
-/** A release's hierarchy.ts with its aead.ts and the canonical JSON it uses, from git (as go/lib/envelope/testdata/tsfixtures.mjs loads them). */
+/** A release's hierarchy.ts and canary.ts with their aead.ts and canonical JSON, from git (as go/lib/envelope/testdata/tsfixtures.mjs loads them). */
 async function loadHierarchy(ref: string): Promise<Record<string, (...args: unknown[]) => unknown>> {
   const show = (path: string) => execFileSync("git", ["-C", REPO_ROOT.pathname, "show", `${ref}:${path}`], { encoding: "utf8" });
   const dir = mkdtempSync(join(tmpdir(), "varlatch-values-"));
@@ -454,14 +502,16 @@ async function loadHierarchy(ref: string): Promise<Record<string, (...args: unkn
     for (const [name, path] of [
       ["aead.ts", "services/varlatchd/src/crypto/aead.ts"],
       ["hierarchy.ts", "services/varlatchd/src/crypto/hierarchy.ts"],
+      ["canary.ts", "services/varlatchd/src/crypto/canary.ts"],
       ["canonical.ts", "packages/contract/src/canonical.ts"],
     ]) {
       writeFileSync(
         join(dir, name!),
-        show(path!).replaceAll('from "@varlatch/contract"', 'from "./canonical.ts"').replace(/from "\.\/(aead|hierarchy)\.js"/g, 'from "./$1.ts"'),
+        show(path!).replaceAll('from "@varlatch/contract"', 'from "./canonical.ts"').replace(/from "\.\/(aead|hierarchy|canary)\.js"/g, 'from "./$1.ts"'),
       );
     }
-    return (await import(/* @vite-ignore */ pathToFileURL(join(dir, "hierarchy.ts")).href)) as Record<string, (...args: unknown[]) => unknown>;
+    const load = (name: string) => import(/* @vite-ignore */ pathToFileURL(join(dir, name)).href);
+    return { ...(await load("hierarchy.ts")), ...(await load("canary.ts")) } as Record<string, (...args: unknown[]) => unknown>;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -500,7 +550,7 @@ async function record(ctx: AppCtx, tokens: Record<string, string>, cases: Reques
     const exposureBefore = new Set(
       ((await ctx.db.query("SELECT identity_id, version_id, environment_id, way FROM member_exposure")).rows as Row[]).map((r) => JSON.stringify(r)),
     );
-    const headers: Record<string, string> = { "Content-Type": "application/json", "User-Agent": "varlatch-cli/0.22.0 (linux; x64)" };
+    const headers: Record<string, string> = { "Content-Type": "application/json", "User-Agent": c.userAgent ?? CLI_AGENT };
     if (c.credential !== "none") headers.Authorization = `Bearer ${tokens[c.credential]}`;
     const path = c.path.replace("{orgId}", ids.orgId).replace("{projectId}", ids.projectId);
     const init: RequestInit = { method: c.method, headers };
@@ -549,6 +599,27 @@ async function replay(f: Fixture): Promise<{ requests: Recorded[]; counters: Row
   } finally {
     await db.close();
   }
+}
+
+/** The request definitions of a file, by id, without its answers. */
+function definitions(cases: RequestCase[]): Map<string, RequestCase> {
+  return new Map(cases.map((c) => [c.id, { id: c.id, name: c.name, method: c.method, path: c.path, credential: c.credential,
+    ...("body" in c ? { body: c.body } : {}), ...(c.rawBody !== undefined ? { rawBody: c.rawBody } : {}), ...(c.userAgent !== undefined ? { userAgent: c.userAgent } : {}) }]));
+}
+
+/**
+ * A committed file's requests must be requestTable()'s: a request added,
+ * removed or changed here, and not regenerated, fails (the ids of the
+ * file's own database fill the table).
+ */
+function expectCurrentTable(f: Fixture) {
+  const org = f.rows.organizations!.find((o) => o.slug === "acme")!;
+  const project = f.rows.projects!.find((p) => p.organization_id === org.id && p.slug === "api")!;
+  const dev = f.rows.environments!.find((e) => e.project_id === project.id && e.name === "development")!;
+  const want = definitions(requestTable({ devId: dev.id as string }));
+  const have = definitions(f.requests);
+  expect([...have.keys()].sort(), "the file's requests are not requestTable()'s: regenerate it").toEqual([...want.keys()].sort());
+  for (const [id, def] of want) expect(have.get(id), `${id}: changed since the file was written; regenerate it`).toEqual(def);
 }
 
 function expectSameAnswers(f: Fixture, got: { requests: Recorded[]; counters: Row[] }) {
@@ -626,7 +697,7 @@ describe("the fixtures are this server's answers", () => {
   for (const file of Object.values(FILES)) {
     it(file, async () => {
       const f = readFixture(new URL(file, OUT_DIR).pathname);
-      expect(f.requests.length).toBeGreaterThan(50);
+      expectCurrentTable(f);
       expectSameAnswers(f, await replay(f));
     }, 120_000);
   }
@@ -635,6 +706,7 @@ describe("the fixtures are this server's answers", () => {
     if (!existsSync(goSealed!)) throw new Error(`${goSealed}: no such file`);
     const f = readFixture(goSealed!);
     expect(f.comment).toMatch(/Go/);
+    expectCurrentTable(f);
     expectSameAnswers(f, await replay(f));
   }, 120_000);
 });

@@ -1,0 +1,606 @@
+{
+  "comment": "G3 (ADR-0059 Acceptance): for every encryption class (envelope purpose in go/lib/envelope) x fixture release x envelope version x direction, the level at which it is proven and the tests that prove it. database: through both servers' code that reads the rows (a database fixture); envelope: lib/envelope's sealed fixtures only. go/server/values/g3_test.go checks every entry against the code and CI; go test ./server/values -run TestG3Gate -args -g3-gate fails while any class but the JWT signing keys is envelope-only (the 0.50.0 gate).",
+  "releases": [
+    "v0.21.0",
+    "v0.22.0"
+  ],
+  "envelopeVersions": [
+    1
+  ],
+  "entries": [
+    {
+      "purpose": "value",
+      "class": "Secret values (payload)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestTypeScriptFixtures/values-v0.21.0.json"
+        }
+      ]
+    },
+    {
+      "purpose": "value",
+      "class": "Secret values (payload)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "Go-sealed envelopes are opened by the TypeScript line only through the reverse migration (ADR-0059 Decision 9), whose target is the last TypeScript release: this checkout's code, frozen since v0.22.0 (the v0.22.0 entry). No path hands a Go-sealed envelope to v0.21.0's code."
+    },
+    {
+      "purpose": "value",
+      "class": "Secret values (payload)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestTypeScriptFixtures/values-v0.22.0.json"
+        }
+      ]
+    },
+    {
+      "purpose": "value",
+      "class": "Secret values (payload)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestGoSealedFixture"
+        },
+        {
+          "vitest": "services/varlatchd/test/go-values-fixture.test.ts",
+          "test": "values the Go server sealed open here with the same answers"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "VARLATCH_GO_SEALED_VALUES=\"$RUNNER_TEMP/go-sealed-values.json\" pnpm --filter @varlatch/varlatchd exec vitest run test/go-values-fixture.test.ts"
+        }
+      ]
+    },
+    {
+      "purpose": "dek",
+      "class": "Secret values (wrapped DEK)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestTypeScriptFixtures/values-v0.21.0.json"
+        }
+      ]
+    },
+    {
+      "purpose": "dek",
+      "class": "Secret values (wrapped DEK)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "Go-sealed envelopes are opened by the TypeScript line only through the reverse migration (ADR-0059 Decision 9), whose target is the last TypeScript release: this checkout's code, frozen since v0.22.0 (the v0.22.0 entry). No path hands a Go-sealed envelope to v0.21.0's code."
+    },
+    {
+      "purpose": "dek",
+      "class": "Secret values (wrapped DEK)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestTypeScriptFixtures/values-v0.22.0.json"
+        }
+      ]
+    },
+    {
+      "purpose": "dek",
+      "class": "Secret values (wrapped DEK)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestGoSealedFixture"
+        },
+        {
+          "vitest": "services/varlatchd/test/go-values-fixture.test.ts",
+          "test": "values the Go server sealed open here with the same answers"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "VARLATCH_GO_SEALED_VALUES=\"$RUNNER_TEMP/go-sealed-values.json\" pnpm --filter @varlatch/varlatchd exec vitest run test/go-values-fixture.test.ts"
+        }
+      ]
+    },
+    {
+      "purpose": "org-kek",
+      "class": "Organization KEKs",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestTypeScriptFixtures/values-v0.21.0.json"
+        }
+      ]
+    },
+    {
+      "purpose": "org-kek",
+      "class": "Organization KEKs",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "Go-sealed envelopes are opened by the TypeScript line only through the reverse migration (ADR-0059 Decision 9), whose target is the last TypeScript release: this checkout's code, frozen since v0.22.0 (the v0.22.0 entry). No path hands a Go-sealed envelope to v0.21.0's code."
+    },
+    {
+      "purpose": "org-kek",
+      "class": "Organization KEKs",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestTypeScriptFixtures/values-v0.22.0.json"
+        }
+      ]
+    },
+    {
+      "purpose": "org-kek",
+      "class": "Organization KEKs",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestGoSealedFixture"
+        },
+        {
+          "vitest": "services/varlatchd/test/go-values-fixture.test.ts",
+          "test": "values the Go server sealed open here with the same answers"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "VARLATCH_GO_SEALED_VALUES=\"$RUNNER_TEMP/go-sealed-values.json\" pnpm --filter @varlatch/varlatchd exec vitest run test/go-values-fixture.test.ts"
+        }
+      ]
+    },
+    {
+      "purpose": "kek-canary",
+      "class": "Root KEK canary",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/daemon/canary_test.go",
+          "test": "TestCanaryFromFixtures/sealed by v0.21.0"
+        },
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestTypeScriptFixtures/values-v0.21.0.json"
+        }
+      ]
+    },
+    {
+      "purpose": "kek-canary",
+      "class": "Root KEK canary",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "Go-sealed envelopes are opened by the TypeScript line only through the reverse migration (ADR-0059 Decision 9), whose target is the last TypeScript release: this checkout's code, frozen since v0.22.0 (the v0.22.0 entry). No path hands a Go-sealed envelope to v0.21.0's code."
+    },
+    {
+      "purpose": "kek-canary",
+      "class": "Root KEK canary",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/daemon/canary_test.go",
+          "test": "TestCanaryFromFixtures/sealed by v0.22.0"
+        },
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestTypeScriptFixtures/values-v0.22.0.json"
+        }
+      ]
+    },
+    {
+      "purpose": "kek-canary",
+      "class": "Root KEK canary",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "database",
+      "tests": [
+        {
+          "go": "server/values/parity_test.go",
+          "test": "TestGoSealedFixture"
+        },
+        {
+          "vitest": "services/varlatchd/test/go-values-fixture.test.ts",
+          "test": "values the Go server sealed open here with the same answers"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "VARLATCH_GO_SEALED_VALUES=\"$RUNNER_TEMP/go-sealed-values.json\" pnpm --filter @varlatch/varlatchd exec vitest run test/go-values-fixture.test.ts"
+        }
+      ]
+    },
+    {
+      "purpose": "webhook-secret",
+      "class": "Webhook secrets",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "webhooks",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "webhook-secret",
+      "class": "Webhook secrets",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "Go-sealed envelopes are opened by the TypeScript line only through the reverse migration (ADR-0059 Decision 9), whose target is the last TypeScript release: this checkout's code, frozen since v0.22.0 (the v0.22.0 entry). No path hands a Go-sealed envelope to v0.21.0's code."
+    },
+    {
+      "purpose": "webhook-secret",
+      "class": "Webhook secrets",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "webhooks",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "webhook-secret",
+      "class": "Webhook secrets",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "envelope",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestGoFixtures"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "platform-credential",
+      "class": "Platform Connection credentials",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "connections",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "platform-credential",
+      "class": "Platform Connection credentials",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "Go-sealed envelopes are opened by the TypeScript line only through the reverse migration (ADR-0059 Decision 9), whose target is the last TypeScript release: this checkout's code, frozen since v0.22.0 (the v0.22.0 entry). No path hands a Go-sealed envelope to v0.21.0's code."
+    },
+    {
+      "purpose": "platform-credential",
+      "class": "Platform Connection credentials",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "connections",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "platform-credential",
+      "class": "Platform Connection credentials",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "envelope",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestGoFixtures"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "github-app-key",
+      "class": "GitHub App keys",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "githubApps",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "github-app-key",
+      "class": "GitHub App keys",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "Go-sealed envelopes are opened by the TypeScript line only through the reverse migration (ADR-0059 Decision 9), whose target is the last TypeScript release: this checkout's code, frozen since v0.22.0 (the v0.22.0 entry). No path hands a Go-sealed envelope to v0.21.0's code."
+    },
+    {
+      "purpose": "github-app-key",
+      "class": "GitHub App keys",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "githubApps",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "github-app-key",
+      "class": "GitHub App keys",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "envelope",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestGoFixtures"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "audit-export-credential",
+      "class": "Audit export credentials",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-in-release",
+      "fixtureKey": "auditExports",
+      "reason": "the class was added in v0.22.0: v0.21.0 sealed none (its envelope fixture has none)"
+    },
+    {
+      "purpose": "audit-export-credential",
+      "class": "Audit export credentials",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-in-release",
+      "fixtureKey": "auditExports",
+      "reason": "the class was added in v0.22.0: v0.21.0 sealed none (its envelope fixture has none)"
+    },
+    {
+      "purpose": "audit-export-credential",
+      "class": "Audit export credentials",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "auditExports",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "audit-export-credential",
+      "class": "Audit export credentials",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "envelope",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestGoFixtures"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "audit-export-drain",
+      "class": "Audit export drain copies",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-in-release",
+      "fixtureKey": "auditExports",
+      "reason": "the class was added in v0.22.0: v0.21.0 sealed none (its envelope fixture has none)"
+    },
+    {
+      "purpose": "audit-export-drain",
+      "class": "Audit export drain copies",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-in-release",
+      "fixtureKey": "auditExports",
+      "reason": "the class was added in v0.22.0: v0.21.0 sealed none (its envelope fixture has none)"
+    },
+    {
+      "purpose": "audit-export-drain",
+      "class": "Audit export drain copies",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "auditExports",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "audit-export-drain",
+      "class": "Audit export drain copies",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "envelope",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestGoFixtures"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+        }
+      ],
+      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+    },
+    {
+      "purpose": "jwt-signing-key",
+      "class": "JWT signing keys (Convex only)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "jwtSigningKeys",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "never: only Convex uses it, and it goes with Convex (step 7)"
+    },
+    {
+      "purpose": "jwt-signing-key",
+      "class": "JWT signing keys (Convex only)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "Go-sealed envelopes are opened by the TypeScript line only through the reverse migration (ADR-0059 Decision 9), whose target is the last TypeScript release: this checkout's code, frozen since v0.22.0 (the v0.22.0 entry). No path hands a Go-sealed envelope to v0.21.0's code."
+    },
+    {
+      "purpose": "jwt-signing-key",
+      "class": "JWT signing keys (Convex only)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "envelope",
+      "fixtureKey": "jwtSigningKeys",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestTypeScriptFixtures"
+        }
+      ],
+      "databaseLevelWith": "never: only Convex uses it, and it goes with Convex (step 7)"
+    },
+    {
+      "purpose": "jwt-signing-key",
+      "class": "JWT signing keys (Convex only)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "envelope",
+      "tests": [
+        {
+          "go": "lib/envelope/envelope_test.go",
+          "test": "TestGoFixtures"
+        },
+        {
+          "ci": ".github/workflows/go.yml",
+          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+        }
+      ],
+      "databaseLevelWith": "never: only Convex uses it, and it goes with Convex (step 7)"
+    }
+  ]
+}

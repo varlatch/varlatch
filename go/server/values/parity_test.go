@@ -16,18 +16,16 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
-	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
-	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/daemon"
 	"github.com/varlatch/varlatch/go/server/httpserver"
 	"github.com/varlatch/varlatch/go/server/values"
+	"github.com/varlatch/varlatch/go/server/values/valuestest"
 )
 
 // The read path's parity with the TypeScript server, and G3 for the values
@@ -45,155 +43,17 @@ import (
 
 var writeGoSealed = flag.String("write-go-sealed", "", "write the v0.22.0 fixture with every Organization KEK and value sealed again by Go to this path")
 
-type row = map[string]any
+type row = valuestest.Row
 
-type recorded struct {
-	Name       string  `json:"name"`
-	Method     string  `json:"method"`
-	Path       string  `json:"path"`
-	Credential string  `json:"credential"`
-	Body       *any    `json:"body,omitempty"`
-	RawBody    *string `json:"rawBody,omitempty"`
-	Expect     struct {
-		Status  int               `json:"status"`
-		Headers map[string]string `json:"headers"`
-		Body    string            `json:"body"`
-	} `json:"expect"`
-	Audit    []row `json:"audit"`
-	Exposure []row `json:"exposure"`
-}
-
-// bodyGiven tells a JSON null body from none.
-func (r *recorded) UnmarshalJSON(b []byte) error {
-	type plain recorded
-	if err := json.Unmarshal(b, (*plain)(r)); err != nil {
-		return err
-	}
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(b, &probe); err != nil {
-		return err
-	}
-	if raw, ok := probe["body"]; ok && r.Body == nil {
-		var v any
-		_ = json.Unmarshal(raw, &v)
-		r.Body = &v
-	}
-	return nil
-}
-
-type fixture struct {
-	Comment    string            `json:"comment"`
-	Ref        string            `json:"ref"`
-	RootKEK    string            `json:"rootKek"`
-	Tokens     map[string]string `json:"tokens"`
-	Plaintexts map[string]string `json:"plaintexts"`
-	Rows       map[string][]row  `json:"rows"`
-	Requests   []recorded        `json:"requests"`
-	Counters   []row             `json:"counters"`
-}
-
-// tables is the order the generator exports them in (TABLES there).
-var tables = []string{"identities", "user", "auth_user_links", "credentials", "organizations", "org_memberships", "projects",
-	"environments", "contract_revisions", "env_values", "value_versions", "grants", "requirements", "security_controls", "organization_freezes"}
+type fixture = valuestest.Fixture
 
 func readFixture(t *testing.T, path string) fixture {
 	t.Helper()
-	b, err := os.ReadFile(path)
+	f, err := valuestest.Read(path)
 	if err != nil {
-		t.Fatal(err)
-	}
-	var f fixture
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.UseNumber()
-	if err := dec.Decode(&f); err != nil {
 		t.Fatal(err)
 	}
 	return f
-}
-
-type mapping struct {
-	Tables map[string]struct {
-		SQLite  string                     `json:"sqlite"`
-		Columns map[string]json.RawMessage `json:"columns"`
-	} `json:"tables"`
-}
-
-var isoTime = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$`)
-
-// load writes the fixture's rows into the database at path (schema made by
-// db.Init), each PostgreSQL table and column by its mapping: booleans as 0
-// and 1, times as microseconds, jsonb and arrays as JSON text. Foreign keys
-// are the source database's, so they are not checked while loading.
-func load(t *testing.T, path string, f fixture) {
-	t.Helper()
-	raw, err := os.ReadFile("../db/mapping.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m mapping
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	conn, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(0)&_pragma=busy_timeout(5000)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	for _, table := range tables {
-		tm, ok := m.Tables[table]
-		if !ok {
-			t.Fatalf("no mapping for %s", table)
-		}
-		for _, r := range f.Rows[table] {
-			var cols, marks []string
-			var args []any
-			keys := make([]string, 0, len(r))
-			for k := range r {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, pg := range keys {
-				v := r[pg]
-				var col string
-				if err := json.Unmarshal(tm.Columns[pg], &col); err != nil {
-					t.Fatalf("%s.%s has no column name in the mapping: %v", table, pg, err)
-				}
-				switch x := v.(type) {
-				case bool:
-					if x {
-						v = 1
-					} else {
-						v = 0
-					}
-				case json.Number:
-					n, err := x.Int64()
-					if err != nil {
-						t.Fatalf("%s.%s: %v", table, pg, err)
-					}
-					v = n
-				case string:
-					if isoTime.MatchString(x) {
-						ts, err := time.Parse(time.RFC3339Nano, x)
-						if err != nil {
-							t.Fatal(err)
-						}
-						v = ts.UnixMicro()
-					}
-				case map[string]any, []any:
-					b, err := json.Marshal(x)
-					if err != nil {
-						t.Fatal(err)
-					}
-					v = string(b)
-				}
-				cols, marks, args = append(cols, col), append(marks, "?"), append(args, v)
-			}
-			q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tm.SQLite, strings.Join(cols, ", "), strings.Join(marks, ", "))
-			if _, err := conn.Exec(q, args...); err != nil {
-				t.Fatalf("%s: %v", q, err)
-			}
-		}
-	}
 }
 
 type server struct {
@@ -206,21 +66,12 @@ type server struct {
 
 func newServer(t *testing.T, f fixture) *server {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "varlatch.db")
-	ctx := context.Background()
-	store, err := storage.Open(ctx, storage.Options{Path: path})
+	path := filepath.Join(t.TempDir(), "varlatch.db")
+	if err := valuestest.Prepare(path, f); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.Open(context.Background(), storage.Options{Path: path})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Init(ctx, store, "test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	load(t, path, f)
-	if store, err = storage.Open(ctx, storage.Options{Path: path}); err != nil {
 		t.Fatal(err)
 	}
 	rootKEK, err := hex.DecodeString(f.RootKEK)
@@ -230,7 +81,9 @@ func newServer(t *testing.T, f fixture) *server {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	vs := values.New(store, rootKEK, values.Options{Log: log})
 	h, err := httpserver.New(httpserver.Options{
-		Version: "test", Backend: backend{}, Log: log,
+		// The Backend serve uses: readiness opens the installation's
+		// canary with the Root KEK (G3 at the database level).
+		Version: "test", Backend: daemon.NewBackend(store, rootKEK), Log: log,
 		Auth:   auth.New(store, auth.Options{Log: log, RootKEK: rootKEK}),
 		Values: vs,
 	})
@@ -243,11 +96,6 @@ func newServer(t *testing.T, f fixture) *server {
 	})
 	return &server{t: t, store: store, handler: h, values: vs, rootKEK: rootKEK}
 }
-
-type backend struct{}
-
-func (backend) InstallationID(context.Context) (string, error) { return "", nil }
-func (backend) Ready(context.Context) (bool, bool, bool)       { return true, true, true }
 
 // canonical parses JSON text or a value into plain Go values, so two
 // objects compare without their member order (jsonb's differs from ours).
@@ -337,7 +185,11 @@ func replay(t *testing.T, f fixture) {
 		}
 		req := httptest.NewRequest(c.Method, path, body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "varlatch-cli/0.22.0 (linux; x64)")
+		ua := c.UserAgent
+		if ua == "" {
+			ua = valuestest.CLIAgent
+		}
+		req.Header.Set("User-Agent", ua)
 		if c.Credential != "none" {
 			req.Header.Set("Authorization", "Bearer "+f.Tokens[c.Credential])
 		}
@@ -428,6 +280,14 @@ func goSealed(t *testing.T) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The Root KEK canary, as varlatchd writes it on first start.
+	for _, inst := range f.Rows["installation"] {
+		canary, err := envelope.NewCanary(rootKEK, inst["id"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst["kek_canary"] = envelopeValue(t, canary)
+	}
 	kekOf := map[string][]byte{}
 	for _, o := range f.Rows["organizations"] {
 		id := o["id"].(string)
@@ -463,7 +323,7 @@ func goSealed(t *testing.T) fixture {
 		}
 		v["payload"], v["wrapped_dek"] = envelopeValue(t, sealed.Payload), envelopeValue(t, sealed.WrappedDEK)
 	}
-	f.Comment = "Written by the Go tests (go test ./server/values -run TestGoSealedFixture -args -write-go-sealed=<file>): the v0.22.0 fixture with every Organization KEK and value sealed again by Go; services/varlatchd/test/go-values-fixture.test.ts opens it with the TypeScript server."
+	f.Comment = "Written by the Go tests (go test ./server/values -run TestGoSealedFixture -args -write-go-sealed=<file>): the v0.22.0 fixture with the Root KEK canary and every Organization KEK and value sealed again by Go; services/varlatchd/test/go-values-fixture.test.ts opens it with the TypeScript server."
 	f.Ref = "go"
 	return f
 }

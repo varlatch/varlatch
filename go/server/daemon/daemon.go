@@ -310,6 +310,12 @@ func verify(rootKEK []byte, inst installation) bool {
 	return envelope.VerifyCanary(rootKEK, inst.Canary, inst.ID)
 }
 
+// NewBackend is the HTTP layer's Backend serve uses: the installation and
+// readiness, read from store (the read path's parity tests use it).
+func NewBackend(store *storage.DB, rootKEK []byte) httpserver.Backend {
+	return &backend{store: store, rootKEK: rootKEK}
+}
+
 // backend answers the HTTP layer's reads.
 type backend struct {
 	store   *storage.DB
