@@ -127,11 +127,15 @@ The server's packages:
     answers, and both servers' tests run it from raw request targets
     (`services/varlatchd/test/go-parity.test.ts`);
   - routing on the paths the TypeScript deployment uses (`target.go`): the
-    dashboard's nginx chose dashboard or API on the fully decoded URI with
-    slashes merged; varlatchd's router (Hono) routes, authenticates and
+    dashboard's nginx chose dashboard or API on the raw target decoded
+    first (`%2f` included), then with dot segments resolved and slashes
+    merged; varlatchd's router (Hono) routes, authenticates and
     counts on the WHATWG-normalized path after `decodeURI` (dot segments
     and `%2e` resolved, `%2f` kept, slashes never merged), so for example
-    `/v1/organizations/../meta` is `/v1/meta` and `/v1%2fmeta` is no route;
+    `/v1/organizations/../meta` is `/v1/meta` and `/v1%2fmeta` is no route.
+    The two are derived separately from the raw target, since they do not
+    commute: `/v1%2fx/../dashboard` reaches the API (nginx sees
+    `/v1/dashboard`) as `/dashboard`, a 404;
   - an access log (`access_log`): a JSON line per request with arrival and
     completion time, client address, method, path (never the query),
     status, X-Forwarded-For and whether the request window counted it.

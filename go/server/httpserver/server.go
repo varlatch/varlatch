@@ -220,8 +220,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// whether the request reaches the API side at all; varlatchd's router
 	// (Hono's) routes, authenticates and counts it there. Handlers see the
 	// path they route on as URL.Path.
-	normalized := normalizeTarget(requestTarget(r))
-	front := nginxPath(normalized)
+	// Each from the raw target, in its own order: the two do not commute
+	// (nginx decodes %2f before resolving dot segments; the URL parser
+	// resolves them first and keeps %2f).
+	target := requestTarget(r)
+	normalized := normalizeTarget(target)
+	front := nginxPath(target)
 	isAPI := apiPrefix.MatchString(front) || cliPaths[front]
 	p := front
 	if isAPI {

@@ -39,6 +39,7 @@ const table = JSON.parse(
   readFileSync(new URL("../../../go/server/httpserver/testdata/known-differences.json", import.meta.url), "utf8"),
 ) as {
   pathVectors: { target: string; hono: string }[];
+  nginxVectors: { target: string; nginx: string }[];
   routes: RouteCase[];
   forwardedFor: { peer: string; trusted: string[]; lines: string[]; client: string }[];
   requestWindow: { path: string; allowed: number; status: number; code: string; message: string; retryAfterAtStart: string };
@@ -76,26 +77,64 @@ describe("the path varlatchd routes on", () => {
   });
 });
 
-// The dashboard's nginx forwards a request to varlatchd when one of its API
-// locations matches the URI it decoded, with slashes merged; anything else
-// is the dashboard's own page (location /).
-const nginx = readFileSync(new URL("../../../apps/web/nginx.conf", import.meta.url), "utf8");
-const decodeBytes = (s: string): string =>
-  Buffer.from(s.replace(/%([0-9A-Fa-f]{2})/g, (_, h: string) => String.fromCharCode(parseInt(h, 16))), "latin1").toString("latin1");
-const forwardedByNginx = (target: string): boolean => {
-  const uri = decodeBytes(target.split("?")[0]!).replace(/\/+/g, "/");
-  const regexes = [...nginx.matchAll(/location ~ (\S+) \{/g)].map((m) => new RegExp(m[1]!));
-  const exact = [...nginx.matchAll(/location = (\S+) \{/g)].map((m) => m[1]);
-  return regexes.some((r) => r.test(uri)) || exact.includes(uri);
+// The dashboard's nginx (apps/web/nginx.conf) in front of varlatchd: the
+// URI it selects a location with ($uri) is the raw target with every escape
+// decoded first, then dot segments resolved and slashes merged
+// (ngx_http_parse_complex_uri; nginxVectors are nginx 1.29's own answers).
+// It selects an exact location first, else the first regex location that
+// matches, else the longest prefix; the location either proxies to
+// varlatchd (the request target passed on unchanged), serves the dashboard
+// (try_files), or proxies elsewhere (Convex).
+const nginxUri = (target: string): string => {
+  const raw = target.split("?")[0]!;
+  const decoded = raw.replace(/%([0-9A-Fa-f]{2})/g, (_, h: string) => String.fromCharCode(parseInt(h, 16)));
+  const segments = decoded.slice(1).split("/");
+  const out: string[] = [];
+  for (const segment of segments) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") out.pop();
+    else out.push(segment);
+  }
+  const last = segments[segments.length - 1];
+  return `/${out.join("/")}${out.length > 0 && (last === "" || last === "." || last === "..") ? "/" : ""}`;
 };
+
+type Location = { modifier: "=" | "~" | ""; pattern: string; to: "varlatchd" | "dashboard" | "elsewhere" };
+const locations: Location[] = [
+  ...readFileSync(new URL("../../../apps/web/nginx.conf", import.meta.url), "utf8").matchAll(/location\s+(?:(=|~)\s+)?(\S+)\s*\{([^}]*)\}/g),
+].map((m) => ({
+  modifier: (m[1] ?? "") as Location["modifier"],
+  pattern: m[2]!,
+  to: /proxy_pass http:\/\/varlatchd[:/;]/.test(m[3]!) ? "varlatchd" : /try_files/.test(m[3]!) ? "dashboard" : "elsewhere",
+}));
+
+const nginxSends = (target: string): Location["to"] => {
+  const uri = nginxUri(target);
+  const exact = locations.find((l) => l.modifier === "=" && l.pattern === uri);
+  if (exact) return exact.to;
+  const regex = locations.find((l) => l.modifier === "~" && new RegExp(l.pattern).test(uri));
+  if (regex) return regex.to;
+  const prefixes = locations.filter((l) => l.modifier === "" && uri.startsWith(l.pattern)).sort((a, b) => b.pattern.length - a.pattern.length);
+  return prefixes[0]?.to ?? "elsewhere";
+};
+
+describe("the URI the dashboard's nginx selects a location with", () => {
+  it("reads nginx.conf's locations: which proxy to varlatchd and which serve the dashboard", () => {
+    expect(locations.filter((l) => l.to === "dashboard").map((l) => `${l.modifier}${l.pattern}`).sort()).toEqual(["/", "=/device"]);
+    expect(locations.filter((l) => l.to === "varlatchd").length).toBeGreaterThanOrEqual(4);
+  });
+  it.each(table.nginxVectors.map((v) => [v.target, v] as const))("%s", (_, v) => {
+    expect(nginxUri(v.target)).toBe(v.nginx);
+  });
+});
 
 describe("routes, as raw request targets", () => {
   it.each(table.routes.map((c) => [`${c.method} ${c.target} (${c.credential})`, c] as const))("%s", async (_, c) => {
     if (c.expect === "dashboard") {
-      expect(forwardedByNginx(c.target)).toBe(false);
+      expect(nginxSends(c.target)).toBe("dashboard");
       return;
     }
-    expect(forwardedByNginx(c.target)).toBe(true);
+    expect(nginxSends(c.target)).toBe("varlatchd");
     const app = buildApp(ctx);
     const res = await app.request(c.target, { method: c.method, headers: authorization(c.credential) });
     expect(res.status).toBe(c.status);

@@ -25,10 +25,14 @@ func TestTargetPaths(t *testing.T) {
 		{"/v1/a{b", "/v1/a%7Bb", "/v1/a{b", "/v1/a{b"},
 		{"/v1/organizations/..%2fmeta", "/v1/organizations/..%2fmeta", "/v1/organizations/..%2fmeta", "/v1/meta"},
 		{"/V1/meta", "/V1/meta", "/V1/meta", "/V1/meta"},
+		// The orders differ: nginx decodes %2f before dot segments.
+		{"/foo%2fbar/../v1/meta", "/v1/meta", "/v1/meta", "/foo/v1/meta"},
+		{"/v1%2fx/../dashboard", "/dashboard", "/dashboard", "/v1/dashboard"},
+		{"/x%2f..%2fv1/meta", "/x%2f..%2fv1/meta", "/x%2f..%2fv1/meta", "/v1/meta"},
 	} {
 		n := normalizeTarget(c.target)
-		if n != c.normalized || honoPath(n) != c.hono || nginxPath(n) != c.nginx {
-			t.Errorf("%s: normalized %q hono %q nginx %q, want %q %q %q", c.target, n, honoPath(n), nginxPath(n), c.normalized, c.hono, c.nginx)
+		if n != c.normalized || honoPath(n) != c.hono || nginxPath(c.target) != c.nginx {
+			t.Errorf("%s: normalized %q hono %q nginx %q, want %q %q %q", c.target, n, honoPath(n), nginxPath(c.target), c.normalized, c.hono, c.nginx)
 		}
 	}
 }

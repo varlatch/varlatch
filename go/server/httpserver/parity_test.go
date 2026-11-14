@@ -17,8 +17,9 @@ import (
 // exactly as the TypeScript server does; services/varlatchd/test/
 // go-parity.test.ts runs the same table against the TypeScript app.
 type parityTable struct {
-	PathVectors []struct{ Target, Hono string } `json:"pathVectors"`
-	Routes      []struct {
+	PathVectors  []struct{ Target, Hono string }  `json:"pathVectors"`
+	NginxVectors []struct{ Target, Nginx string } `json:"nginxVectors"`
+	Routes       []struct {
 		Method, Target, Credential, Expect, Code, Text string
 		Status                                         int
 		GoUntilStep34                                  *struct {
@@ -50,7 +51,7 @@ func loadParity(t *testing.T) parityTable {
 	if err := json.Unmarshal(b, &p); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.PathVectors) == 0 || len(p.Routes) == 0 || len(p.ForwardedFor) == 0 || p.RequestWindow.Allowed != WindowLimit {
+	if len(p.PathVectors) == 0 || len(p.NginxVectors) == 0 || len(p.Routes) == 0 || len(p.ForwardedFor) == 0 || p.RequestWindow.Allowed != WindowLimit {
 		t.Fatalf("the table is incomplete: %+v", p)
 	}
 	return p
@@ -67,13 +68,25 @@ func TestParityPaths(t *testing.T) {
 	}
 }
 
+// The URI the dashboard's nginx selected a location with, from the raw
+// target (the vectors are nginx 1.29's own answers).
+func TestParityNginxPaths(t *testing.T) {
+	for _, v := range loadParity(t).NginxVectors {
+		r := httptest.NewRequest("GET", v.Target, nil)
+		if got := nginxPath(requestTarget(r)); got != v.Nginx {
+			t.Errorf("%s: %q, want %q", v.Target, got, v.Nginx)
+		}
+	}
+}
+
 // Requests from raw targets, parsed as the server parses them
 // (httptest.NewRequest reads the request line): Path, RawPath and RawQuery
 // are what a client's request gives.
 func TestParityRoutes(t *testing.T) {
-	s, _, _, _ := newTestServer(t, nil)
+	s, _, _, logBuf := newTestServer(t, nil)
 	index, _ := webFS.ReadFile("index.html")
 	for _, c := range loadParity(t).Routes {
+		logBuf.Reset()
 		status, expect, text := c.Status, c.Expect, c.Text
 		if c.GoUntilStep34 != nil {
 			status, expect, text = c.GoUntilStep34.Status, c.GoUntilStep34.Expect, c.GoUntilStep34.Text
@@ -92,6 +105,15 @@ func TestParityRoutes(t *testing.T) {
 		if w.Code != status {
 			t.Errorf("%s: %d, want %d: %q", name, w.Code, status, w.Body.String())
 			continue
+		}
+		// What nginx forwarded is counted by varlatchd's request window
+		// (but /healthz and /readyz); the dashboard's requests never are.
+		var rec AccessRecord
+		if err := json.Unmarshal([]byte(strings.TrimSpace(logBuf.String())), &rec); err != nil {
+			t.Fatalf("%s: access log %q: %v", name, logBuf.String(), err)
+		}
+		if want := expect != "dashboard" && rec.Path != "/healthz" && rec.Path != "/readyz"; rec.Window != want {
+			t.Errorf("%s: counted in the request window %v, want %v (routed on %q)", name, rec.Window, want, rec.Path)
 		}
 		head := c.Method == http.MethodHead // a real server sends no body
 		ct := w.Header().Get("Content-Type")
