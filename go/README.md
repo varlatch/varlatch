@@ -157,7 +157,60 @@ The server's packages:
   varlatchd embeds a placeholder page, so `go build` works in a clean
   checkout. A test checks that the embedded build comes from the
   checkout's sources (and, in CI, its commit).
-- `server/daemon`: `serve` itself.
+- `server/daemon`: `serve` itself. The first start records
+  `installation.initialized`.
+- `server/audit` (step 3.3): Security Audit Events (ADR-0016). `Record`
+  writes events inside the caller's write job, exposure index rows first
+  (ADR-0052 Decision 6), and returns their positions: the rowid, so under
+  the single writer they are contiguous and in commit order, a job rolled
+  back to its savepoint gives its positions back, and a failed batch keeps
+  none (`positions_test.go`). Inside a request (`WithAttribution`) an event
+  whose actor is the request's identity names its credential, client,
+  listener and tailnet resolution (ADR-0045, ADR-0046 Decision 8), unless
+  the caller set them. `Serialize`, `EventJSON`, `ExportLines` and
+  `ExportStreamLine` give the audit listing's, webhook delivery's and the
+  exports' bytes as the TypeScript server gives them, which read every JSON
+  column back through PostgreSQL's jsonb (key order: shorter keys first)
+  and `JSON.parse` (integer-like keys first). Webhook URLs are redacted on
+  the way out, as there.
+- `server/authz` (step 3.3): the authorization evaluator (ADR-0015), a
+  port of `authz/evaluate.ts`; `LoadGrants` and `LoadRequirements` as
+  `loadGrants` and `loadTailnetRequirements` (Roles, Groups and Teams
+  expanded, ADR-0028; decision-time provenance, ADR-0029); `Decide` as
+  `decide` (existence hiding, denial classes, the denial's audit event);
+  the incident freeze at Organization entry and in
+  `RefuseIfIncidentFrozen` (ADR-0055); and Destination Selectors
+  (`authz/destination.ts`).
+- `server/jsvalue`: JSON as `JSON.parse` and `JSON.stringify` read and
+  write it (member order, numbers, escapes), and jsonb's key order.
+- `server/whatwg`: what the TypeScript code gets from Node.js's URL
+  parser, `url.domainToASCII`, `net.isIP` and string functions, as far as
+  audit redaction and Destination Selectors use them.
+- `server/ids`, `server/domainerr`: domain IDs (`db/ids.ts`) and
+  `DomainError`.
+
+`server/authz/testdata/ts-vectors.json` and
+`server/audit/testdata/ts-vectors.json` are vectors the TypeScript server's
+own code produced: the evaluator's decisions and reasons (every Grant
+scope, Roles live, revoked and empty, Groups and Teams, Requirements and
+Tailnet Contexts, the denial classes with and without existence hiding,
+the incident freeze before authorization), what `loadGrants` loads from a
+database fixture, and audit events of every type recorded and serialized.
+The Go tests must give the same answers. `services/varlatchd/test/go-authz-vectors.test.ts`
+and `go-audit-vectors.test.ts` produce them and fail when the committed
+files differ from what the TypeScript code produces now; they run with
+varlatchd's tests, which a change to these files also selects
+(`scripts/ci-changes.sh`). To regenerate after a change on either side:
+
+```sh
+VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/varlatchd exec vitest run test/go-authz-vectors.test.ts test/go-audit-vectors.test.ts
+```
+
+The TypeScript `loadGrants` query has no `ORDER BY`, so PostgreSQL returns
+Grants in whatever order its plan gives; the Go query orders by rowid
+(insertion order). The vectors compare the Grants a database loads, and
+the lists derived from them (`grantIds`, `groupIds`, `roleIds`,
+`applied`), as sets; the pure evaluator vectors check their order.
 
 ## The OpenAPI document
 
