@@ -591,12 +591,8 @@ it("the Go authorization vectors are current", { timeout: 300_000 }, async () =>
 
 it("go/server/whatwg's table of Node's host parser is current", { timeout: 300_000 }, async () => {
   // @ts-expect-error: a plain ES module without types
-  const idna = (await import("../../../go/server/whatwg/testdata/nodeidna.mjs")) as {
-    build: () => { go: string; json: string };
-    TABLE: string;
-    VECTORS: string;
-  };
-  const { go, json } = idna.build();
-  const stale = [[idna.TABLE, go], [idna.VECTORS, json]].filter(([file, want]) => readFileSync(file!, "utf8") !== want);
-  expect(stale.map(([file]) => file), "regenerate them: node go/server/whatwg/testdata/nodeidna.mjs").toEqual([]);
+  const idna = (await import("../../../go/server/whatwg/testdata/nodeidna.mjs")) as { stale: () => string[] };
+  // Node's answers and ada's version must match; the Node.js patch release
+  // the files were generated with may differ from the one running here.
+  expect(idna.stale(), "regenerate them: node go/server/whatwg/testdata/nodeidna.mjs").toEqual([]);
 });

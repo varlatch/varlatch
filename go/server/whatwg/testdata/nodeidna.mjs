@@ -21,7 +21,10 @@
  *   code point, per block of 256, which whatwg's tests recompute in Go.
  *
  * The services/varlatchd vector test runs the check, so a Node.js release
- * whose host parser answers differently fails CI until this is rerun.
+ * whose host parser answers differently fails CI until this is rerun. The
+ * Node.js version in both files records where they were generated; the
+ * check compares Node's answers and ada's version, not the Node.js patch
+ * release (CI installs the latest Node.js 26, whose ada may be the same).
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -156,15 +159,30 @@ export function build() {
   return { go, json };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+/**
+ * The files whose content differs from what this Node.js answers, ignoring
+ * only the Node.js version each file records (its first vX.Y.Z).
+ */
+export function stale() {
   const { go, json } = build();
+  return [[TABLE, go], [VECTORS, json]]
+    .filter(([file, want]) => {
+      const have = readFileSync(file, "utf8");
+      const recorded = /v\d+\.\d+\.\d+/.exec(have)?.[0];
+      return have !== (recorded ? want.replaceAll(process.version, recorded) : want);
+    })
+    .map(([file]) => file);
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === "check") {
-    const stale = [[TABLE, go], [VECTORS, json]].filter(([f, want]) => readFileSync(f, "utf8") !== want).map(([f]) => f);
-    if (stale.length) {
-      console.error(`stale (rerun node ${fileURLToPath(import.meta.url)}): ${stale.join(", ")}`);
+    const files = stale();
+    if (files.length) {
+      console.error(`stale (rerun node ${fileURLToPath(import.meta.url)}): ${files.join(", ")}`);
       process.exit(1);
     }
   } else {
+    const { go, json } = build();
     writeFileSync(TABLE, go);
     writeFileSync(VECTORS, json);
   }
