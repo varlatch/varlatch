@@ -66,10 +66,10 @@ test("a whole-second log time counts in a window that starts inside that second"
   assert.equal(expectedRefusal(probe429, { "proxy-probe": [{ start: T0 + 1_000, end: T0 + 3_000 }] }), false);
 });
 
-test("a target that does not record the forwarded header: suite, method and path decide", () => {
+test("a target that does not record the forwarded header: the probe's 429 is not excused", () => {
   const { forwardedFor, ...bare } = probe429;
   void forwardedFor;
-  assert.equal(assess([bare], { windows: { "proxy-probe": [PROBE] } }).refusals.length, 0);
+  assert.equal(assess([bare], { windows: { "proxy-probe": [PROBE] } }).refusals.length, 1);
   assert.equal(assess([{ ...bare, path: "/v1/meta" }], { windows: { "proxy-probe": [PROBE] } }).refusals.length, 1);
 });
 

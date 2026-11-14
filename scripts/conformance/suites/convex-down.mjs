@@ -38,10 +38,10 @@ try {
   const started = Date.now();
   const convex = await code("/convex/version");
   const seconds = Math.round((Date.now() - started) / 1000);
-  compose("restart", "varlatch-web");
+  if (compose("restart", "varlatch-web").status !== 0) throw new Error("could not restart varlatch-web");
   for (let i = 0; i < 30 && (await code("/")) !== 200; i++) await sleep(1000);
   const restarted = await code("/");
-  compose("start", "convex-backend");
+  if (compose("start", "convex-backend").status !== 0) throw new Error("could not start convex-backend");
   stopped = false;
   for (let i = 0; i < 60 && (await code("/convex/version")) !== 200; i++) await sleep(2000);
   const back = await code("/convex/version");

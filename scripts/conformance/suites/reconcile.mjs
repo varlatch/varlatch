@@ -22,9 +22,17 @@ if (built.status !== 0) {
 }
 const first = compose("--profile", "deploy", "run", "--rm", "convex-deploy");
 console.log(first.stdout.trimEnd());
+if (first.status !== 0) {
+  error(`the first reconcile exited ${first.status}: ${first.stderr.trim().slice(-500)}`);
+  finish();
+}
 check("reconcile.derives-deployment-authority", "the reconcile job derives its admin key inside the job", /deployment authority derived/.test(first.stdout), "admin key was not derived inside the job");
 check("reconcile.first-run-deploys", "the first reconcile deploys the functions", /reconcile: deployed functions/.test(first.stdout), "first reconcile did not deploy");
 const second = compose("--profile", "deploy", "run", "--rm", "convex-deploy");
+if (second.status !== 0) {
+  error(`the second reconcile exited ${second.status}: ${second.stderr.trim().slice(-500)}`);
+  finish();
+}
 check(
   "reconcile.unchanged-installation-no-op",
   "a reconcile of an unchanged installation changes nothing",

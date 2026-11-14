@@ -290,31 +290,40 @@ async function main() {
     report.requestBudget = { requests: records.length, unexpected429: refusals.length, busiest };
   }
 
-  // Judge the run; on a partial run, only the checks of the chosen suites.
-  const scoped = options.suites.length === 0 ? inventory : {
-    ...inventory,
-    checks: Object.fromEntries(Object.entries(inventory.checks).filter(([, c]) => inScope(c.suite))),
-  };
-  const judged = evaluate({ inventory: scoped, reports: reports.filter((r) => inScope(r.suite)), errors: errors.filter((e) => e.suite === "runner" || inScope(e.suite)), cliVersion: cli.version });
-  report.finishedAt = new Date().toISOString();
-  report.checks = judged.checks;
-  report.problems = judged.problems;
-  report.ok = judged.ok;
+  // Everything after the target came up stays inside this block, so a
+  // failure while judging or writing the report still removes the stack.
+  let judged = { ok: false };
+  try {
+    // Judge the run; on a partial run, only the checks of the chosen suites.
+    const scoped = options.suites.length === 0 ? inventory : {
+      ...inventory,
+      checks: Object.fromEntries(Object.entries(inventory.checks).filter(([, c]) => inScope(c.suite))),
+    };
+    judged = evaluate({ inventory: scoped, reports: reports.filter((r) => inScope(r.suite)), errors: errors.filter((e) => e.suite === "runner" || inScope(e.suite)), cliVersion: cli.version });
+    report.finishedAt = new Date().toISOString();
+    report.checks = judged.checks;
+    report.problems = judged.problems;
+    report.ok = judged.ok;
 
-  console.log(`\n--- conformance report: target ${options.target}, CLI ${cli.spec}${report.partial ? ` (only ${report.partial.join(", ")})` : ""}`);
-  for (const c of judged.checks) {
-    console.log(`${c.outcome.toUpperCase().padEnd(15)}${c.kind.padEnd(13)}${c.id}${c.outcome === "fail" ? `  (${c.why.slice(0, 200)})` : ""}`);
-  }
-  const count = (o) => judged.checks.filter((c) => c.outcome === o).length;
-  console.log(`--- ${judged.checks.length} checks: ${count("pass")} passed, ${count("fail")} failed, ${count("not-applicable")} not applicable, ${count("predates-cli")} predate the CLI`);
-  for (const p of judged.problems) console.log(`PROBLEM  ${p}`);
-  if (options.report) writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`);
+    console.log(`\n--- conformance report: target ${options.target}, CLI ${cli.spec}${report.partial ? ` (only ${report.partial.join(", ")})` : ""}`);
+    for (const c of judged.checks) {
+      console.log(`${c.outcome.toUpperCase().padEnd(15)}${c.kind.padEnd(13)}${c.id}${c.outcome === "fail" ? `  (${c.why.slice(0, 200)})` : ""}`);
+    }
+    const count = (o) => judged.checks.filter((c) => c.outcome === o).length;
+    console.log(`--- ${judged.checks.length} checks: ${count("pass")} passed, ${count("fail")} failed, ${count("not-applicable")} not applicable, ${count("predates-cli")} predate the CLI`);
+    for (const p of judged.problems) console.log(`PROBLEM  ${p}`);
+    if (options.report) writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`);
 
-  if (!judged.ok && state && target.diagnostics) {
-    console.log("--- the target's recent logs");
-    console.log(await target.diagnostics(state).catch((err) => `diagnostics failed: ${err.message}`));
+    if (!judged.ok && state && target.diagnostics) {
+      console.log("--- the target's recent logs");
+      console.log(await target.diagnostics(state).catch((err) => `diagnostics failed: ${err.message}`));
+    }
+  } catch (err) {
+    judged = { ...judged, ok: false };
+    console.log(`--- judging or reporting the run failed: ${err.message}`);
+  } finally {
+    await cleanup();
   }
-  await cleanup();
   if (stopped) console.log(`--- the run stopped early: ${stopped}`);
   if (!judged.ok) console.log("CONFORMANCE RUN FAILED");
   else if (report.partial) console.log(`PARTIAL RUN PASSED (only ${report.partial.join(", ")}; target ${targetName}, CLI ${cli.spec})`);

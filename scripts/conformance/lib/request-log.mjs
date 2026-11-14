@@ -49,7 +49,9 @@ export function within(record, window) {
 /**
  * Whether a 429 is one a rule expects: the rule's method and exact path,
  * logged while the rule's suite ran (`windows[suite]` lists when it ran),
- * and, when the record carries the forwarded header, a matching value.
+ * and, when the rule names a forwarded header, a record that carries one
+ * matching it. A record without the header never matches such a rule: missing
+ * evidence fails closed.
  */
 export function expectedRefusal(record, windows, rules = EXPECTED_429) {
   return rules.some(
@@ -57,7 +59,7 @@ export function expectedRefusal(record, windows, rules = EXPECTED_429) {
       record.method === rule.method &&
       record.path === rule.path &&
       (windows[rule.suite] ?? []).some((w) => within(record, w)) &&
-      (record.forwardedFor === undefined || !rule.forwardedFor || rule.forwardedFor.test(record.forwardedFor)),
+      (!rule.forwardedFor || (typeof record.forwardedFor === "string" && rule.forwardedFor.test(record.forwardedFor))),
   );
 }
 

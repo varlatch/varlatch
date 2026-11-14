@@ -190,7 +190,7 @@ export async function logs(state) {
 
 /** One record per request varlatchd answered, from the dashboard's nginx access log. */
 export async function requestLog(state) {
-  return requestsFromNginxLog(compose(state, ["logs", "--no-log-prefix", "varlatch-web"]).stdout);
+  return requestsFromNginxLog(mustCompose(state, ["logs", "--no-log-prefix", "varlatch-web"]));
 }
 
 /** Brings derived read models up to date before the dashboard suites: the Convex audit mirror. */
