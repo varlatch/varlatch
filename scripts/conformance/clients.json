@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "description": "The released TypeScript CLIs a conformance run can select with --cli <version> (scripts/conformance/README.md), pinned by version, release commit and the hash of varlatch-cli-<version>.cjs. Never 'latest': a later release is added here by hand. Each download is verified as docs/operations/verify-release.md says, with the cosign binary pinned below.",
+  "repository": "varlatch/varlatch",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "cosign": {
+    "version": "2.6.5",
+    "binaries": {
+      "linux-x64": {
+        "asset": "cosign-linux-amd64",
+        "sha256": "c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644"
+      },
+      "linux-arm64": {
+        "asset": "cosign-linux-arm64",
+        "sha256": "426193b4c5da4d4d643e822f48fe0cc8a476ca1782a272704831f5a0cef716d7"
+      }
+    }
+  },
+  "cli": {
+    "0.21.0": {
+      "commit": "97d1f9db6a8dfaafe32dd71dc26a8ec99549d734",
+      "sha256": "d23e40ed5af7f43581109091c84179314ff59a4795d26b79c9d01183ea8cbc34"
+    },
+    "0.22.0": {
+      "commit": "bf177b40c238de9a5618dccd38429a2e1772fe95",
+      "sha256": "84d3ea55fafecb1b2bc87efc51be4b089d72e8741920d4a57cd3c15093d56e2a"
+    }
+  }
+}

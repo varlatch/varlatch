@@ -58,3 +58,35 @@ test("suites name the CLI under test through VARLATCH_CLI, never a path of their
     assert.doesNotMatch(source, /\bpsql\b|spawn(Sync)?\(\s*["']docker["']|compose\[0\]/, suite);
   }
 });
+
+/** The text of one release's section of CHANGELOG.md, whitespace collapsed. */
+function changelogSection(release) {
+  const text = readFileSync(join(repoRoot, "CHANGELOG.md"), "utf8");
+  const start = text.search(new RegExp(`^## ${release.replace(/\./g, "\\.")} `, "m"));
+  if (start < 0) return null;
+  const rest = text.slice(start + 3);
+  const end = rest.search(/^## /m);
+  return (end < 0 ? rest : rest.slice(0, end)).replace(/\s+/g, " ");
+}
+
+test("each feature cites words that its release's CHANGELOG section contains", () => {
+  for (const [name, feature] of Object.entries(inventory.features)) {
+    const section = changelogSection(feature.changelog.release);
+    assert.ok(section, `${name}: CHANGELOG.md has no section for ${feature.changelog.release}`);
+    assert.ok(section.includes(feature.changelog.quote.replace(/\s+/g, " ")), `${name}: the ${feature.changelog.release} section does not say: ${feature.changelog.quote}`);
+  }
+});
+
+test("each version-gated feature is gated in every suite that has its checks, and nothing else is", () => {
+  for (const [suite, entry] of Object.entries(inventory.suites)) {
+    if (entry.runner) continue;
+    const source = readFileSync(join(repoRoot, entry.script), "utf8");
+    const gated = new Set([...source.matchAll(/\bsupports\(\s*["']([a-z0-9-]+)["']\s*\)/g)].map((m) => m[1]));
+    const needed = new Set(
+      Object.values(inventory.checks)
+        .filter((c) => c.suite === suite && c.feature && inventory.features[c.feature].core !== true)
+        .map((c) => c.feature),
+    );
+    assert.deepEqual([...gated].sort(), [...needed].sort(), suite);
+  }
+});

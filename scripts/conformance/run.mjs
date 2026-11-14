@@ -7,11 +7,15 @@ import "../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
  * as its own process, collects one result per check ID, and judges the run
  * against inventory.json.
  *
- *   node scripts/conformance/run.mjs --target ts-source --cli source
+ *   node scripts/conformance/run.mjs --target ts-source --cli source|<version>
  *        [--report <file.json>] [--suite <name>]...
  *
  *   --target   the server under test (targets/index.mjs)
- *   --cli      the CLI under test; `source` is apps/cli/dist/varlatch.cjs
+ *   --cli      the CLI under test: `source` is apps/cli/dist/varlatch.cjs; a
+ *              version is a released CLI pinned in clients.json, downloaded
+ *              and verified before anything starts (clients.mjs). The sdk
+ *              suite drives packages/sdk from the same source: this
+ *              checkout, or the pinned release's commit.
  *   --report   also write the report as JSON to this file
  *   --suite    run only these suites (and the setup they need); the report
  *              then covers only their checks
@@ -20,11 +24,11 @@ import "../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
  * inventory requires; 1 otherwise; 64 on a usage error.
  */
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildSdk, resolveCli } from "./clients.mjs";
 import { evaluate, validateInventory } from "./lib/inventory.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
 import { parseSuiteOutput, resultLine } from "./lib/results.mjs";
@@ -38,7 +42,7 @@ const SEEDED_SECRET = "postgres://dev-db";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function usage(message) {
-  console.error(`${message}\nUsage: run.mjs --target ts-source --cli source [--report <file.json>] [--suite <name>]...`);
+  console.error(`${message}\nUsage: run.mjs --target ts-source --cli source|<version> [--report <file.json>] [--suite <name>]...`);
   process.exit(64);
 }
 
@@ -56,14 +60,6 @@ function parseArgs(argv) {
   if (!options.target) usage("--target is required");
   if (!options.cli) usage("--cli is required");
   return options;
-}
-
-/** The CLI under test. Released CLIs, pinned by version and hash, come with clients.json. */
-function resolveCli(spec) {
-  if (spec !== "source") usage(`--cli ${spec}: only --cli source is available so far`);
-  const path = join(REPO_ROOT, "apps/cli/dist/varlatch.cjs");
-  if (!existsSync(path)) throw new Error(`${path} does not exist: build the CLI first (pnpm build)`);
-  return { spec, path, version: null, sha256: createHash("sha256").update(readFileSync(path)).digest("hex") };
 }
 
 /** Runs one suite as its own process group; streams its output and returns it. */
@@ -120,13 +116,29 @@ async function main() {
   for (const s of options.suites) if (!inventory.suites[s]) usage(`--suite ${s}: no such suite`);
   const inScope = (suite) => options.suites.length === 0 || options.suites.includes(suite);
 
-  const cli = resolveCli(options.cli);
   const { name: targetName, target, capabilities } = await loadTarget(options.target);
   const scratch = mkdtempSync(join(tmpdir(), "conformance-run-"));
   const stateFile = join(scratch, "target.json");
+  // The clients, verified before the target starts: a CLI that fails
+  // verification or reports another version stops the run here.
+  let cli;
+  let sdk;
+  try {
+    cli = await resolveCli(options.cli, { repoRoot: REPO_ROOT, workDir: scratch });
+    if (!options.suites.length || options.suites.some((s) => s === "sdk")) {
+      sdk = await buildSdk(cli, { repoRoot: REPO_ROOT, workDir: scratch });
+    }
+  } catch (err) {
+    rmSync(scratch, { recursive: true, force: true });
+    if (err.usage) usage(err.message);
+    console.error(`--- the clients could not be prepared: ${err.message}`);
+    console.log("CONFORMANCE RUN FAILED");
+    process.exit(1);
+  }
   const report = {
     target: options.target,
-    cli: { spec: cli.spec, version: cli.version, sha256: cli.sha256 },
+    cli: { spec: cli.spec, version: cli.version, commit: cli.commit, sha256: cli.sha256, verified: cli.verified },
+    sdk: sdk ? { from: cli.commit ? `release ${cli.version} (${cli.commit})` : "this checkout", commit: sdk.commit, sha256: sdk.sha256 } : null,
     partial: options.suites.length > 0 ? options.suites : false,
     startedAt: new Date().toISOString(),
     suites: [],
@@ -156,6 +168,7 @@ async function main() {
 
   try {
     console.log(`--- target ${options.target}, CLI ${cli.spec} (${cli.path}, sha256 ${cli.sha256})`);
+    if (sdk) console.log(`--- sdk from ${report.sdk.from}: ${sdk.path}, sha256 ${sdk.sha256}`);
     try {
       // `onState` hands over the state before up creates anything, so a
       // signal during startup still removes what up has created so far.
@@ -165,7 +178,16 @@ async function main() {
       throw err;
     }
     writeFileSync(stateFile, JSON.stringify(state));
-    const suiteEnv = { ...process.env, VARLATCH_CLI: cli.path, CONFORMANCE_TARGET_STATE: stateFile };
+    // VARLATCH_CLI_VERSION is the verified version (empty for source): the
+    // suites gate feature groups on it, and the runner checks every
+    // predates-cli result against it again.
+    const suiteEnv = {
+      ...process.env,
+      VARLATCH_CLI: cli.path,
+      VARLATCH_CLI_VERSION: cli.version ?? "",
+      VARLATCH_SDK: sdk?.path ?? "",
+      CONFORMANCE_TARGET_STATE: stateFile,
+    };
     const ctx = { origin: target.origin(state) };
     const admin = (args) => target.recover(state, ctx.adminId, args);
     ctx.grant = async () => {
@@ -219,7 +241,7 @@ async function main() {
       await pace(entry.suite);
       const around = entry.around === "convex-down" ? await convexDown(entry.suite) : null;
       const start = Date.now();
-      const out = await runSuite(join(REPO_ROOT, suite.script), args, suiteEnv, scratch);
+      const out = await runSuite(join(REPO_ROOT, suite.script), args, { ...suiteEnv, CONFORMANCE_SUITE: entry.suite }, scratch);
       const end = Date.now();
       (windows[entry.suite] ??= []).push({ start, end });
       if (around) await around.finish();
@@ -313,6 +335,7 @@ async function main() {
     }
     const count = (o) => judged.checks.filter((c) => c.outcome === o).length;
     console.log(`--- ${judged.checks.length} checks: ${count("pass")} passed, ${count("fail")} failed, ${count("not-applicable")} not applicable, ${count("predates-cli")} predate the CLI`);
+    for (const c of judged.checks.filter((c) => c.outcome === "predates-cli")) console.log(`PREDATES-CLI   ${c.id}: ${c.why}`);
     for (const p of judged.problems) console.log(`PROBLEM  ${p}`);
     if (options.report) writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`);
 

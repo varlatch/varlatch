@@ -4,9 +4,14 @@ import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch to
 import { cliPath as cliUnderTest, reporter, tryTargetOp } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live E2E for the client runtime against the clean-room stack, with the
- * bundled CLI: `varlatch run --redact`, `varlatch run --export-context`,
- * `varlatch types` and the module it writes (compiled and run), and
- * `varlatch scan`, checked against the server's own state and audit log.
+ * CLI under test: `varlatch run --redact`, `varlatch run --export-context`,
+ * `varlatch types` and the modules it writes (TypeScript compiled and run,
+ * Python run with python3), and `varlatch scan`, checked against the
+ * server's own state and audit log.
+ *
+ * Each CLI feature's checks form a group (scripts/conformance/inventory.json):
+ * a version-gated group is skipped, and reported predates-cli, when the CLI
+ * under test is older than the feature.
  *
  * Every value here is a low-entropy test value; none resembles a credential.
  *
@@ -229,7 +234,7 @@ setTimeout(() => {
   process.exitCode = 7;
 }, 200);
 `;
-{
+if (kit.supports("run-redact")) {
   const b64 = Buffer.from(SECRET).toString("base64");
   const r = await admin.cli(["run", "-e", "development", "--redact", "--", process.execPath, "-e", LOUD]);
   check("client-runtime.redact-run-exits-child-status", "--redact: the run exits with the child's status", r.code === 7, `exit ${r.code}${r.timedOut ? " (timed out)" : ""}: ${r.out}`);
@@ -473,6 +478,68 @@ async function startApp(ws) {
   check("client-runtime.types-application-output-holds-no-secret", "types: the application's output holds no Secret", !r.out.includes(SECRET));
 }
 
+// --- varlatch types for Python, and the module it writes -------------------------------
+// The generated module reads the run context `varlatch run --export-context`
+// wrote, from the real server, as the TypeScript one does.
+const PY_OUT = "app/varlatch_config.py";
+const pyOutPath = join(admin.dir, PY_OUT);
+const PY_APP = `import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import varlatch_config as generated
+
+seen = []
+try:
+    result = generated.load_config(on_warning=seen.append)
+except generated.ConfigError as err:
+    print(json.dumps({"ok": False, "issues": [[i.name, i.reason] for i in err.issues]}))
+    sys.exit(3)
+c = result.config
+print(json.dumps({
+    "ok": True,
+    "values": {"PORT": c.PORT, "DEBUG": c.DEBUG, "LEVEL": c.LEVEL},
+    "types": {"PORT": type(c.PORT).__name__, "DEBUG": type(c.DEBUG).__name__, "LEVEL": type(c.LEVEL).__name__, "RT_SECRET": type(c.RT_SECRET).__name__},
+    "context": result.context,
+    "warnings": list(result.warnings) + seen,
+    "generatedFrom": dict(generated.GENERATED_FROM),
+}))
+`;
+{
+  mkdirSync(join(admin.dir, "app"), { recursive: true });
+  writeFileSync(join(admin.dir, "app", "main.py"), PY_APP);
+  const wrote = await admin.cli(["types", "--out", PY_OUT]);
+  const source = existsSync(pyOutPath) ? readFileSync(pyOutPath, "utf8") : "";
+  check(
+    "client-runtime.types-python-module-generated-active-revision", "types (Python): the module is generated from the active revision and holds no value",
+    wrote.code === 0 && /^Wrote /.test(wrote.stdout) && source.includes(active.id) && source.includes(active.contentHash) && noValueIn(source) && !source.includes("8080"),
+    wrote.out,
+  );
+  const current = await admin.cli(["types", "--out", PY_OUT, "--check"]);
+  check("client-runtime.types-python-check-passes-module-matches", "types --check (Python) passes while the module matches the active revision", current.code === 0 && /is current with/.test(current.stdout), current.out);
+  // -I: the host's Python settings cannot change what runs; the app adds its own directory.
+  const r = await admin.cli(["run", "-e", "development", "--export-context", "--", "python3", "-I", join(admin.dir, "app", "main.py")]);
+  let report = null;
+  try {
+    report = JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "");
+  } catch {
+    // Reported by the checks below.
+  }
+  check(
+    "client-runtime.types-python-reads-exported-context", "types (Python): the module reads the exported context of the same revision, with typed values and no warnings",
+    r.code === 0 &&
+      report?.ok === true &&
+      report?.context === "exported" &&
+      report?.warnings?.length === 0 &&
+      report?.generatedFrom?.revision_id === active.id &&
+      canonical(report?.values) === canonical({ PORT: 8080, DEBUG: true, LEVEL: "warn" }) &&
+      canonical(report?.types) === canonical({ PORT: "int", DEBUG: "bool", LEVEL: "str", RT_SECRET: "str" }),
+    r.out,
+  );
+  check("client-runtime.types-python-output-holds-no-secret", "types (Python): the application's output holds no Secret", r.stdout.length > 0 && !r.out.includes(SECRET));
+}
+
 // A changed Contract: --check fails, and the old module reports stale types at runtime.
 active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Added after the module was generated" })]);
 {
@@ -541,7 +608,7 @@ const scanEvents = async () =>
   (await auditEvents()).events.filter(
     (e) => e.eventType === "secret.disclosed" && e.resource?.projectId === projectId && e.metadata?.purpose === "scan",
   );
-{
+if (kit.supports("scan")) {
   const repo = await workspace(adminToken, { gitRepo: true });
   const nothing = await repo.cli(["scan", "--staged", "-e", "development"]);
   check("client-runtime.scan-nothing-staged-scan-reads-nothing", "scan: with nothing staged, the scan reads nothing and exits 0", nothing.code === 0 && /nothing is staged/.test(nothing.stdout), nothing.out);
