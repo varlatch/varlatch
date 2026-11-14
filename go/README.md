@@ -8,6 +8,11 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
 `scripts/ci-changes.sh` keeps a Go-only change out of the TypeScript tests.
 
 - `cmd/varlatchd/`, `server/`: the server, AGPL-3.0-or-later.
+- `server/api/`: the `/v1` contract in Go (Decision 3, spec-first
+  OpenAPI), generated from `packages/protocol/openapi.yaml`: the request
+  and response types, `StrictServerInterface` (one method per operation)
+  and its `net/http` wiring on a `ServeMux`. See "The OpenAPI document"
+  below.
 - `lib/storage/`: the SQLite storage engine (Decision 2): the single
   writer with group commit, the checkpointer that bounds the WAL, paced
   snapshots, metrics.
@@ -49,6 +54,7 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   report that judges a run by G9a's criteria. Until step 3 builds
   varlatchd it serves the load from a stand-in workload on `lib/storage`,
   whose runs are inconclusive by design; see `bench/g9a/README.md`.
+- `internal/spdxheader/`: puts the SPDX line on generated files.
 - `cmd/varlatch/`, `lib/` and everything else: Apache-2.0. No Apache-2.0
   package may depend on an AGPL-3.0-or-later one; `licensing_test.go`
   enforces it.
@@ -59,18 +65,55 @@ Checks (Go 1.27, `CGO_ENABLED=0`), as `.github/workflows/go.yml` runs them:
 cd go
 gofmt -l .
 go mod tidy -diff
+go generate ./...   # then: git diff --exit-code
 go vet ./...
 go test ./...
 CGO_ENABLED=1 go test -race ./...
 ```
 
-## The rest of step 1 (before step 2)
+## The OpenAPI document
 
-ADR-0059's Order step 1 also covers the OpenAPI document: derived from
-`packages/protocol`, generating the Go server interfaces and the
-TypeScript types, and checked against the TypeScript server. It lands in
-its own pull request after this branch reaches `main`, and step 2 (the
-conformance harness) does not start before it.
+The `/v1` contract is `packages/protocol/openapi.yaml` (OpenAPI 3.1),
+derived from `packages/protocol` (ADR-0059 Order, step 1). It stays there
+while the TypeScript server and dashboard use it; the TypeScript types are
+generated from it with openapi-typescript (`pnpm --filter
+@varlatch/protocol generate`), and ci.yml fails when they are stale.
+
+- **Go**: `go generate ./server/api` runs oapi-codegen, pinned by the
+  `tool` directive in `go.mod` (v2.8.1, `go tool oapi-codegen`), with
+  `server/api/oapi-codegen.yaml`: models, the standard library server
+  (`net/http` `ServeMux` patterns) and the strict server, whose methods
+  take a typed request and return a typed response. v2.8.1 reads OpenAPI
+  3.1 itself (`type: [T, "null"]` included), so the document is used as it
+  is. Its option `resolve-type-name-collisions` names the parameters and
+  headers that share a name with a schema (`ApprovalParameter`,
+  `ApprovalHeader`, `EnvironmentParameter`, `ProjectParameter`).
+  `internal/spdxheader` then adds the package's SPDX line, which the
+  generator cannot write. Never edit `api.gen.go`; change the document and
+  generate again.
+- **Licensing**: the types and the server interface are one AGPL package.
+  A models-only Apache package that the server imports does not work:
+  the strict server's response types for `oneOf` bodies use the models'
+  unexported fields, which only the same package can reach. The CLI (step
+  5) will not import `server/api` (G12); it gets its own client and types,
+  generated from the same document into an Apache package (for example
+  `lib/apiclient`), so both sides follow one contract without sharing Go
+  code.
+- **CI** (`go.yml`, which runs when the document changes):
+  - "Generated code is current" regenerates and fails on any difference
+    (G12, stale output).
+  - The `openapi` job compares the document of a pull request with its
+    base using oasdiff (pinned image) and fails on a breaking change (G12).
+    Before product 1.0 a breaking change may be made on purpose (ADR-0018):
+    label the pull request `api-breaking`, add a CHANGELOG.md entry to it
+    and re-run the job, which then reports the changes as warnings. Without
+    a CHANGELOG.md change the label does not help.
+
+Left for step 1: "checked against the TypeScript server". The spec
+coverage test (`services/varlatchd/test/spec-coverage.test.ts`) already
+fails when a served route and the document disagree; the TypeScript
+server's responses are validated against the document in a pull request of
+its own. Step 2 (the conformance harness) starts after that.
 
 ## Before the first Go release
 

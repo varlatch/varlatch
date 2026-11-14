@@ -5,8 +5,10 @@ name: Go
 # ran these checks instead of ci.yml. Since the branch merged into main
 # (Order, step 1), CI is routed by path: these checks run on pull requests
 # into main (and into rewrite/go while it exists) and on pushes to them,
-# whenever a change touches go/, this workflow, or the TypeScript crypto
-# code the cross-language envelope step loads. ci.yml classifies Go-only
+# whenever a change touches go/, this workflow, the TypeScript crypto
+# code the cross-language envelope step loads, or the OpenAPI document
+# go/server/api is generated from (the openapi job checks a pull request's
+# change to it for breaking ones). ci.yml classifies Go-only
 # changes too (scripts/ci-changes.sh): they run its repository-wide checks
 # and no TypeScript tests. No ruleset requires these jobs, so a pull request
 # the path filter skips is never left waiting for them. They run on
@@ -28,6 +30,9 @@ on:
       - "packages/contract/src/canonical.ts"
       # The license map, which checks go/ too.
       - "scripts/check-licenses.mjs"
+      # The /v1 contract: go/server/api is generated from it, and the
+      # openapi job checks a change for breaking ones.
+      - "packages/protocol/openapi.yaml"
   push:
     branches: [main, rewrite/go]
     # The same paths as pull_request's.
@@ -39,6 +44,7 @@ on:
       - "services/varlatchd/src/config.ts"
       - "packages/contract/src/canonical.ts"
       - "scripts/check-licenses.mjs"
+      - "packages/protocol/openapi.yaml"
   workflow_dispatch:
 
 permissions:
@@ -71,6 +77,18 @@ jobs:
       - name: go.mod and go.sum are tidy
         working-directory: go
         run: go mod tidy -diff
+
+      # G12: the Go side of the /v1 contract (go/server/api/api.gen.go) is
+      # what packages/protocol/openapi.yaml generates, with the generator
+      # pinned in go.mod (its tool directive). A stale or hand-edited file
+      # fails here; `go generate ./...` in go/ repairs it. ci.yml checks the
+      # TypeScript types generated from the same document.
+      - name: Generated code is current
+        working-directory: go
+        run: |
+          go generate ./...
+          git add -N .
+          git diff --exit-code -- . || { echo "Generated files are stale: run go generate ./... in go/ and commit the result." >&2; exit 1; }
 
       - name: Vet
         working-directory: go
@@ -206,6 +224,61 @@ jobs:
       # too. The script uses Node's standard library only.
       - name: Every file matches the license map
         run: node scripts/check-licenses.mjs
+
+  # G12: a pull request must not break the /v1 contract. oasdiff (pinned
+  # image) compares packages/protocol/openapi.yaml in the pull request's
+  # merge commit with its base (the merge commit's first parent) and fails on
+  # an ERR-level breaking change. A pull request that does not change the
+  # document stops after the comparison of the two commits.
+  #
+  # Before product 1.0 a breaking change may still be made on purpose
+  # (ADR-0018), with a CHANGELOG.md entry. To make one: add the label
+  # api-breaking to the pull request, add the CHANGELOG.md entry, and re-run
+  # this job. The labels are read when the job runs (a re-run sees a label
+  # added after the push), and with the label the breaking changes are
+  # reported as warnings, provided the pull request changes CHANGELOG.md.
+  openapi:
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The merge commit and its parents: the first is the base.
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: The /v1 contract has no breaking change
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          OASDIFF: tufin/oasdiff:v1.35.0@sha256:82b1840a77335562bb11ce95f77ad31745a0c6f3a770929333ed1c5ef466e400
+        run: |
+          spec=packages/protocol/openapi.yaml
+          if git diff --quiet HEAD^1 HEAD -- "$spec"; then
+            echo "$spec is unchanged."
+            exit 0
+          fi
+          specs="$RUNNER_TEMP/openapi"
+          mkdir -p "$specs"
+          git show "HEAD^1:$spec" > "$specs/base.yaml"
+          cp "$spec" "$specs/head.yaml"
+          labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
+          if printf '%s\n' "$labels" | grep -qx api-breaking; then
+            if git diff --quiet HEAD^1 HEAD -- CHANGELOG.md; then
+              echo "::error::The pull request is labelled api-breaking but does not change CHANGELOG.md (ADR-0018)."
+              exit 1
+            fi
+            docker run --rm -v "$specs:/specs:ro" "$OASDIFF" breaking /specs/base.yaml /specs/head.yaml --fail-on ERR \
+              || echo "::warning::Breaking /v1 changes accepted by the api-breaking label; see the log above."
+          else
+            docker run --rm -v "$specs:/specs:ro" "$OASDIFF" breaking /specs/base.yaml /specs/head.yaml --fail-on ERR \
+              || { echo "::error::Breaking /v1 change. If it is intended (before 1.0, ADR-0018), label the pull request api-breaking, add a CHANGELOG.md entry and re-run this job."; exit 1; }
+          fi
 
   # install.ps1 under Windows PowerShell 5.1 and PowerShell 7: every prefix
   # (G8) and the end-to-end install, which changes the runner user's PATH
