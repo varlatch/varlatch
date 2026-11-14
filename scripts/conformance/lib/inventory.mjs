@@ -34,7 +34,7 @@
  * or the runner reports outside a check. An error is never a skip.
  */
 
-import { STATUSES } from "./results.mjs";
+import { RUNNER_STATUSES, STATUSES } from "./results.mjs";
 
 export const KINDS = ["conformance", "ts-stack", "component"];
 
@@ -220,12 +220,16 @@ export function predates(inventory, feature, cliVersion) {
  *
  * `reports`: every result line, { suite, id, status, text }, status one of
  * PASS, FAIL, N/A, PREDATES-CLI (the runner adds N/A lines for a suite it
- * did not start because the target lacks what the suite needs).
+ * did not start because the target lacks what the suite needs), or
+ * TARGET-LACKS, which only the runner gives (`runner: true`).
  * `errors`: { suite, message } for anything outside a check.
  * `cliVersion`: the CLI's verified version, or null for a CLI built from
  * source (no `predates-cli` result is accepted then).
+ * `lacking`: Map(check id → the lacking operations it needs), from
+ * lib/operations.mjs lackingChecks; a target-lacks result is accepted only
+ * for a check in it.
  */
-export function evaluate({ inventory, reports, errors = [], cliVersion = null }) {
+export function evaluate({ inventory, reports, errors = [], cliVersion = null, lacking = new Map() }) {
   const problems = errors.map((e) => `${e.suite}: ${e.message}`);
   const byId = new Map();
   for (const r of reports) {
@@ -255,12 +259,18 @@ export function evaluate({ inventory, reports, errors = [], cliVersion = null })
     // kind, so a FAIL mixed with any other result (PASS, a forbidden N/A, an
     // unconfirmed PREDATES-CLI) is a reporting failure, never an assertion
     // an expectation could excuse.
-    const invalid = [...statuses].filter((st) => !STATUSES.includes(st));
+    const invalid = [...statuses].filter((st) => !STATUSES.includes(st) && !RUNNER_STATUSES.includes(st));
     if (got.length === 0) reporting("did not report");
     else if (invalid.length > 0) reporting(`reported an invalid status: ${invalid.join(", ")}`);
     else if (statuses.size > 1) {
       const failed = got.find((r) => r.status === "FAIL");
       reporting(`reported inconsistently: ${[...statuses].join(", ")} (${got.length} results)${failed ? `; a FAIL said: ${failed.text}` : ""}`);
+    }
+    else if (statuses.has("TARGET-LACKS")) {
+      // Only the runner, from the inventory and the target's declared gaps.
+      if (got.some((r) => r.runner !== true)) reporting("a suite reported target-lacks, which only the runner can");
+      else if (!lacking.has(id)) reporting("reported target-lacks, but it needs no operation the target lacks");
+      else judged("target-lacks", `the target lacks ${lacking.get(id).join(", ")}`);
     }
     else if (statuses.has("FAIL")) judged("fail", got.find((r) => r.status === "FAIL").text, "assertion");
     else if (statuses.has("PASS")) judged("pass");

@@ -106,14 +106,22 @@ test("every lifecycle and installer suite (scripts/test-*.mjs) is an external su
 
 test("each expectations file is valid and named after a target", async () => {
   const { validateExpectations } = await import("../lib/expect.mjs");
+  const { openapiOperations } = await import("../lib/operations.mjs");
   const { TARGET_NAMES } = await import("../targets/index.mjs");
   const clients = JSON.parse(readFileSync(join(here, "..", "clients.json"), "utf8"));
+  const openapi = openapiOperations(readFileSync(join(repoRoot, "packages/protocol/openapi.yaml"), "utf8"));
   for (const file of readdirSync(join(here, "..", "expect"))) {
     const targetName = file.replace(/\.json$/, "");
     assert.ok(file.endsWith(".json") && TARGET_NAMES.includes(targetName), `expect/${file} is not named after a target`);
     const parsed = JSON.parse(readFileSync(join(here, "..", "expect", file), "utf8"));
-    assert.deepEqual(validateExpectations(parsed, { targetName, inventory, cliVersions: Object.keys(clients.cli) }), [], file);
+    assert.deepEqual(validateExpectations(parsed, { targetName, inventory, cliVersions: Object.keys(clients.cli), openapi }), [], file);
   }
+});
+
+test("every operation the inventory names is an OpenAPI operationId or a named operation", async () => {
+  const { openapiOperations, operationProblems } = await import("../lib/operations.mjs");
+  const openapi = openapiOperations(readFileSync(join(repoRoot, "packages/protocol/openapi.yaml"), "utf8"));
+  assert.deepEqual(operationProblems(inventory, openapi), []);
 });
 
 test("conformance-expect.yml runs only base code on pull_request_target, read-only, and never the pull request's", async () => {

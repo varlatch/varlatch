@@ -1,0 +1,6 @@
+# The dashboard build `go generate ./server/web` stages for embedding
+# (ADR-0059 step 3, decision 8): never committed. dist/.gitkeep stays, so
+# that go:embed finds the directory in a clean checkout.
+!/dist/
+/dist/*
+!/dist/.gitkeep

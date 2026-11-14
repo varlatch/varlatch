@@ -7,7 +7,8 @@ start of step 1 (ADR-0059 "Order"). Nothing here ships until the first Go
 release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
 `scripts/ci-changes.sh` keeps a Go-only change out of the TypeScript tests.
 
-- `cmd/varlatchd/`, `server/`: the server, AGPL-3.0-or-later.
+- `cmd/varlatchd/`, `server/`: the server, AGPL-3.0-or-later. See
+  "varlatchd" below.
 - `server/api/`: the `/v1` contract in Go (Decision 3, spec-first
   OpenAPI), generated from `packages/protocol/openapi.yaml`: the request
   and response types, `StrictServerInterface` (one method per operation)
@@ -72,6 +73,91 @@ go vet ./...
 go test ./...
 CGO_ENABLED=1 go test -race ./...
 ```
+
+`go generate ./...` includes `go generate ./server/web`, which builds the
+dashboard and needs the pinned Node (26) and pnpm (the root
+`package.json`'s `packageManager`, 12.3.4) on the `PATH`. go.yml sets
+`VARLATCH_REQUIRE_DASHBOARD=1` for the tests, so a build without the
+dashboard fails there instead of skipping the check that the embedded
+dashboard comes from the checkout.
+
+## varlatchd
+
+`varlatchd serve [--config /etc/varlatch/varlatchd.conf]` (ADR-0059 step
+3.2) reads its configuration (`server/config`; the format, every setting
+and its default are in `install/varlatchd.conf.example`), sets
+`PR_SET_DUMPABLE` to 0, reads the Root KEK from its file (by default the
+unit's `root-kek` credential), opens `varlatch.db` in the data directory with
+`lib/storage` (ADR-0059 Decision 2's settings, which are not options),
+creates the schema on an empty file (`server/db` `Init`), creates the
+installation and its Root KEK canary on first start and checks the canary
+on every start, then serves HTTP until SIGTERM or SIGINT, when it lets
+requests in flight finish (20 seconds at most) and closes the database.
+
+Exit statuses: 0 after a clean stop; 1 for anything a restart may fix (the
+disk, the database, the network, a port in use); 78 for a configuration
+error no restart can fix: an unparsable file, an unknown or repeated
+setting, an invalid value, missing or unparsable Root KEK material, and a
+Root KEK that does not open this installation's canary (the installation
+was read; a failure to read it stays 1). The unit has `RestartPreventExitStatus=78`, pinned in
+`install/unit_test.go`. `varlatchd admin bootstrap|recover` answer
+`NOT_IMPLEMENTED_YET` (exit 69) until step 3.4.
+
+The server's packages:
+
+- `server/config`: `varlatchd.conf`.
+- `server/clientaddr`: the client address behind trusted proxies, as the
+  TypeScript server finds it (`trusted_proxies`).
+- `server/httpserver`: the HTTP layer, on the strict server generated
+  from the OpenAPI document (`server/api`):
+  - every `/v1` operation not built yet is routed to one shared stub,
+    which answers `501` with the code `NOT_IMPLEMENTED_YET` before the
+    generated code binds parameters or decodes the body, so before any
+    authentication, validation or storage access (varlatchd-core decision
+    5; the conformance harness's stale-`lacks` probe relies on it).
+    `BuiltOperations` lists the ones served (`GET /v1/meta` so far);
+  - the TypeScript server's error envelope, and its two known differences
+    (decision 4): an unknown route answers the plain-text `404 Not Found`
+    (under `/v1` only after authentication, as the TypeScript server
+    orders it: without a bearer credential, `401 AUTHENTICATION_REQUIRED`;
+    until step 3.4 verifies credentials, any bearer reaches the 404), and
+    the request window (600 requests per 60 s per client address, before
+    authentication) answers `429` with `PERMISSION_DENIED` and Retry-After.
+    `server/httpserver/testdata/known-differences.json` holds these
+    answers, and both servers' tests run it from raw request targets
+    (`services/varlatchd/test/go-parity.test.ts`);
+  - routing on the paths the TypeScript deployment uses (`target.go`): the
+    dashboard's nginx chose dashboard or API on the raw target decoded
+    first (`%2f` included), then with dot segments resolved and slashes
+    merged; varlatchd's router (Hono) routes, authenticates and
+    counts on the WHATWG-normalized path after `decodeURI` (dot segments
+    and `%2e` resolved, `%2f` kept, slashes never merged), so for example
+    `/v1/organizations/../meta` is `/v1/meta` and `/v1%2fmeta` is no route.
+    The two are derived separately from the raw target, since they do not
+    commute: `/v1%2fx/../dashboard` reaches the API (nginx sees
+    `/v1/dashboard`) as `/dashboard`, a 404;
+  - an access log (`access_log`): a JSON line per request with arrival and
+    completion time, client address, method, path (never the query),
+    status, X-Forwarded-For and whether the request window counted it.
+    X-Forwarded-For is read from all its lines, joined as Node joins them;
+  - `/healthz`, `/readyz` (schema, Root KEK, installation) and `/v1/meta`,
+    whose capabilities are the TypeScript server's list (checked against
+    `packages/protocol/src/errors.ts`), less what this installation does not
+    offer;
+  - the dashboard: a file of its build where the path names one, its
+    `index.html` for every other path (single-page routing), with the
+    dashboard's Content-Security-Policy (`connect-src 'self'`: there is no
+    Convex in the Go server). `/v1`, `/auth`, `/enroll`, `/healthz`,
+    `/readyz` and `/.well-known` never serve it; `/auth` and `/enroll`
+    answer the stub until step 3.4.
+- `server/web`: the dashboard varlatchd embeds (decision 8).
+  `go generate ./server/web` builds `apps/web` as its image does, with the
+  pinned Node and pnpm, and stages it in `server/web/dist/` with a record of
+  the sources' hash and the commit; `dist/` is not committed, and without it
+  varlatchd embeds a placeholder page, so `go build` works in a clean
+  checkout. A test checks that the embedded build comes from the
+  checkout's sources (and, in CI, its commit).
+- `server/daemon`: `serve` itself.
 
 ## The OpenAPI document
 
@@ -160,21 +246,19 @@ Step 2's harness is `scripts/conformance/` (its README has the details):
 the end-to-end suites, the released CLIs 0.21.0 and 0.22.0 and the app
 libraries, run against a chosen target: `ts-source` (this checkout),
 `ts-release:<version>` (a signed release, verified and pulled by digest)
-and `go-binary:<path>`, a stub step 3 replaces with the Go server. Each
-target keeps its known failures in `scripts/conformance/expect/`, with a
-reason and the step that removes them, and `--gate` is how G1 and G2 are
-judged. Step 2 is complete once its last pull request (the release
+and `go-binary:<path>`, this server, run as a process. Each target keeps
+its known failures in `scripts/conformance/expect/`, with a reason and the
+step that removes them, and the operations it does not have yet (`lacks`,
+step 3): `expect/go-binary.json` lists every operation varlatchd does not
+serve, a check that needs one reports `target-lacks`, and the runner first
+asks varlatchd that each really answers `NOT_IMPLEMENTED_YET`. `--gate` is
+how G1 and G2 are judged. Step 2 is complete once its last pull request (the release
 target, expected failures, gate mode and the weekly matrix,
 `.github/workflows/conformance.yml`) is merged and the weekly matrix
 passes, every failure in it listed with a reason.
 
 ## Before the first Go release
 
-- When varlatchd itself is written: configuration errors that a retry
-  cannot fix (an unparsable file, a missing key, conflicting options;
-  nothing touching DNS, network, disk or the database) exit 78, and the
-  unit gets `RestartPreventExitStatus=78`, pinned in `unit_test.go`;
-  varlatchd sets `PR_SET_DUMPABLE` to 0.
 - The Go release workflow: binaries named `varlatch-<version>-<os>-<arch>`
   (`.exe` on Windows) and `varlatchd-<version>-linux-<arch>`, plus
   `varlatchd.service`, all in `SHA256SUMS`; `install.sh` attached with

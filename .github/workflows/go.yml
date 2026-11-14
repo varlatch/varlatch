@@ -33,6 +33,14 @@ on:
       # The /v1 contract: go/server/api is generated from it, and the
       # openapi job checks a change for breaking ones.
       - "packages/protocol/openapi.yaml"
+      # The conformance harness's go-binary target and declared gaps, which
+      # the go-binary job runs against varlatchd.
+      - "scripts/conformance/run.mjs"
+      - "scripts/conformance/inventory.json"
+      - "scripts/conformance/lacks-probe.mjs"
+      - "scripts/conformance/lib/operations.mjs"
+      - "scripts/conformance/targets/go-binary.mjs"
+      - "scripts/conformance/expect/go-binary.json"
   push:
     branches: [main, rewrite/go]
     # The same paths as pull_request's.
@@ -45,6 +53,12 @@ on:
       - "packages/contract/src/canonical.ts"
       - "scripts/check-licenses.mjs"
       - "packages/protocol/openapi.yaml"
+      - "scripts/conformance/run.mjs"
+      - "scripts/conformance/inventory.json"
+      - "scripts/conformance/lacks-probe.mjs"
+      - "scripts/conformance/lib/operations.mjs"
+      - "scripts/conformance/targets/go-binary.mjs"
+      - "scripts/conformance/expect/go-binary.json"
   workflow_dispatch:
 
 permissions:
@@ -78,6 +92,18 @@ jobs:
         working-directory: go
         run: go mod tidy -diff
 
+      # The dashboard varlatchd embeds is built by go generate ./server/web
+      # with the pinned Node (26) and pnpm (package.json packageManager), and
+      # this file's later steps (the TypeScript server's crypto code) use
+      # Node too.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+
       # G12: generated Go code is what its sources generate, with the
       # generators pinned in go.mod (its tool directives):
       #   - the Go side of the /v1 contract (go/server/api/api.gen.go), from
@@ -86,7 +112,9 @@ jobs:
       #   - the typed queries (go/server/db/query/), from
       #     go/server/db/schema.sql and queries/ by sqlc.
       # A stale or hand-edited file fails here; `go generate ./...` in go/
-      # repairs it. Without cgo, sqlc parses with its WebAssembly build of
+      # repairs it. go generate ./server/web also builds the dashboard into
+      # go/server/web/dist/, which is not committed (so not compared) and
+      # which every later step embeds. Without cgo, sqlc parses with its WebAssembly build of
       # the PostgreSQL parser instead of compiling the C one (it uses neither
       # for SQLite); the output is the same.
       - name: Generated code is current
@@ -103,12 +131,15 @@ jobs:
         run: go vet ./...
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
-      # shared libraries) may depend on an AGPL-3.0-or-later one (G12).
+      # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
+      # go/server/web's check that the embedded dashboard was built from this
+      # checkout's sources and commit (required here, not skipped).
       - name: Test
         working-directory: go
         env:
           CGO_ENABLED: "0"
-        run: go test ./...
+          VARLATCH_REQUIRE_DASHBOARD: "1"
+        run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test ./...
 
       # The storage engine is concurrent (writer, checkpointer, snapshots);
       # the race detector needs cgo, which only this step uses.
@@ -116,6 +147,7 @@ jobs:
         working-directory: go
         env:
           CGO_ENABLED: "1"
+          VARLATCH_REQUIRE_DASHBOARD: "1"
         # The installer tests run shells, not Go concurrency; once is enough.
         run: go test -race $(go list ./... | grep -v '/go/install$')
 
@@ -209,12 +241,10 @@ jobs:
       # ADR-0059 Order step 3: envelopes cross between the servers in both
       # directions. The Go tests open what TypeScript releases sealed
       # (ts-v0.21.0.json, ts-v0.22.0.json); here the TypeScript server's own
-      # crypto code (this checkout's, loaded with Node's type stripping)
-      # opens what Go sealed, and the TypeScript fixtures too.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 26
-
+      # crypto code (this checkout's, loaded with Node's type stripping, the
+      # Node set up above) opens what Go sealed, and the TypeScript fixtures
+      # too.
+      #
       # The Go envelopes are sealed now, by this commit's code, not taken
       # from the committed file (which only the Go tests read).
       - name: The TypeScript server opens what Go sealed
@@ -232,6 +262,62 @@ jobs:
       # too. The script uses Node's standard library only.
       - name: Every file matches the license map
         run: node scripts/check-licenses.mjs
+
+  # The conformance harness's go-binary target (ADR-0059 step 3,
+  # varlatchd-core decision 5) against this commit's varlatchd: the adapter
+  # and the stale-lacks probe against the real server (a listed operation
+  # on the stub passes; one with a handler fails), then a whole run with the
+  # CLI built from source, which must pass with every check that needs an
+  # operation varlatchd lacks reporting target-lacks
+  # (scripts/conformance/expect/go-binary.json). The weekly matrix
+  # (conformance.yml) has the same row.
+  go-binary:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @varlatch/protocol generate && pnpm build
+      - name: Build varlatchd with the dashboard
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          cd go
+          go generate ./server/web
+          go build -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+      - name: The go-binary adapter and the stale-lacks probe against varlatchd
+        env:
+          VARLATCH_REQUIRE_GO_BINARY: "1"
+        run: VARLATCH_GO_BINARY="$RUNNER_TEMP/varlatchd" node --test scripts/conformance/test/go-binary.test.mjs
+      - name: Install Chromium
+        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+      - name: Run the conformance suites against varlatchd
+        run: node scripts/conformance/run.mjs --target "go-binary:$RUNNER_TEMP/varlatchd" --cli source --report conformance-report.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: conformance-report-go-binary-cli-source
+          path: conformance-report.json
+          retention-days: 30
+          if-no-files-found: warn
 
   # G12: a pull request must not break the /v1 contract. oasdiff (pinned
   # image) compares packages/protocol/openapi.yaml in the pull request's

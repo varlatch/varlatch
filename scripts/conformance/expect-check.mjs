@@ -1,13 +1,26 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The expected failures only shrink by default (scripts/conformance/README.md):
- * compares scripts/conformance/expect/*.json at a pull request's head with
- * its merge base, and fails when the head adds an entry, removes a target's
- * file (or the whole directory), or deletes or renames this checker, a file
- * it imports, inventory.json or clients.json, unless the pull request
- * carries the `conformance-regression` label. It also validates the head's
- * files against the head's inventory and clients.json.
+ * The expected failures and declared gaps only shrink by default
+ * (scripts/conformance/README.md): compares scripts/conformance/expect/*.json
+ * and inventory.json at a pull request's head with its merge base, and fails
+ * unless the pull request carries the `conformance-regression` label when
+ * the head:
+ *
+ *   - adds an expected failure (moving one to another client or target
+ *     counts);
+ *   - adds a `lacks` entry (an operation a target does not have);
+ *   - makes a check newly report target-lacks on a target: from a new
+ *     `lacks` entry, or from a new operation in the inventory that a check
+ *     needs and the target lacks. So an operation a target provides cannot
+ *     quietly disappear from what is checked;
+ *   - removes a target's file (or the whole directory), or deletes or
+ *     renames this checker, a file it imports, inventory.json or
+ *     clients.json.
+ *
+ * Removing an expected failure or a `lacks` entry needs nothing. It also
+ * validates the head's files against the head's inventory, clients.json and
+ * OpenAPI document.
  *
  *   node scripts/conformance/expect-check.mjs --base <rev> --head <rev> [--labeled] [--repo <dir>]
  *   node scripts/conformance/expect-check.mjs --validate-only --head <rev> [--repo <dir>]
@@ -20,8 +33,8 @@
  *   --repo           the repository to read (default: this checkout)
  *
  * Everything it reads from the commits (the expectations, inventory.json,
- * clients.json) is read with `git show` and parsed as JSON: data, never
- * code. CI runs this script from the pull request's base commit
+ * clients.json, packages/protocol/openapi.yaml) is read with `git show` and
+ * parsed as data, never run as code. CI runs this script from the pull request's base commit
  * (.github/workflows/conformance-expect.yml), so a pull request cannot
  * change the checker that judges it.
  *
@@ -31,7 +44,8 @@
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { addedEntries, entryKeys, importClosure, REGRESSION_LABEL, validateExpectations } from "./lib/expect.mjs";
+import { addedEntries, entryKeys, importClosure, lackingCheckKeys, lacksKeys, REGRESSION_LABEL, validateExpectations } from "./lib/expect.mjs";
+import { openapiOperations } from "./lib/operations.mjs";
 import { TARGET_NAMES } from "./targets/index.mjs";
 
 const CHECKOUT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -82,14 +96,21 @@ function filesAt(rev) {
   return files;
 }
 
+/** A file at `rev`, or null when the commit does not have it. */
+function showOrNull(rev, path) {
+  const r = spawnSync("git", ["show", `${rev}:${path}`], { cwd: options.repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  return r.status === 0 ? r.stdout : null;
+}
+
 try {
   const head = git(["rev-parse", "--verify", `${options.head}^{commit}`]).trim();
   const headFiles = filesAt(head);
   const inventory = JSON.parse(git(["show", `${head}:scripts/conformance/inventory.json`]));
   const clients = JSON.parse(git(["show", `${head}:scripts/conformance/clients.json`]));
+  const openapi = openapiOperations(showOrNull(head, "packages/protocol/openapi.yaml") ?? "");
   const problems = Object.entries(headFiles).flatMap(([targetName, file]) =>
     TARGET_NAMES.includes(targetName)
-      ? validateExpectations(file, { targetName, inventory, cliVersions: Object.keys(clients.cli ?? {}) })
+      ? validateExpectations(file, { targetName, inventory, cliVersions: Object.keys(clients.cli ?? {}), openapi })
       : [`expect/${targetName}.json: not named after a target (${TARGET_NAMES.join(", ")})`],
   );
   for (const p of problems) console.log(`INVALID  ${p}`);
@@ -132,7 +153,31 @@ try {
   } else if (removed.length > 0) {
     console.log(`--- ${removed.length} files the check depends on deleted or renamed, allowed by the ${REGRESSION_LABEL} label`);
   }
-  const refused = (added.length > 0 || removed.length > 0) && !options.labeled;
+
+  // Declared gaps: entries added and removed, and the checks that report
+  // target-lacks, each side judged with its own inventory.
+  const baseInventory = JSON.parse(showOrNull(mergeBase, "scripts/conformance/inventory.json") ?? '{"checks":{}}');
+  const lacksBefore = lacksKeys(baseFiles);
+  const lacksNow = lacksKeys(headFiles);
+  for (const k of [...lacksBefore].filter((k) => !lacksNow.has(k)).sort()) console.log(`REMOVED-LACKS  ${k}`);
+  const addedLacks = [...lacksNow].filter((k) => !lacksBefore.has(k)).sort();
+  for (const k of addedLacks) console.log(`ADDED-LACKS    ${k}`);
+  const lackingBefore = lackingCheckKeys(baseFiles, baseInventory);
+  const lackingNow = lackingCheckKeys(headFiles, inventory);
+  const newlyLacking = [...lackingNow].filter((k) => !lackingBefore.has(k)).sort();
+  for (const k of newlyLacking) console.log(`NEWLY-LACKS    ${k}`);
+  console.log(`--- checks reporting target-lacks: ${lackingBefore.size} at the merge base, ${lackingNow.size} now (${newlyLacking.length} newly)`);
+  const gaps = addedLacks.length + newlyLacking.length;
+  if (gaps > 0 && !options.labeled) {
+    console.log(
+      `--- this pull request adds ${addedLacks.length} lacking operations and makes ${newlyLacking.length} checks newly report target-lacks. ` +
+        `Declared gaps only shrink by default: keep the operations, or label the pull request ${REGRESSION_LABEL} and run this check again if the gap is intended.`,
+    );
+  } else if (gaps > 0) {
+    console.log(`--- ${addedLacks.length} lacking operations added and ${newlyLacking.length} checks newly lacking, allowed by the ${REGRESSION_LABEL} label`);
+  }
+
+  const refused = (added.length > 0 || removed.length > 0 || gaps > 0) && !options.labeled;
   process.exit(problems.length > 0 || refused ? 1 : 0);
 } catch (err) {
   console.error(`--- expect-check failed: ${err.message}`);

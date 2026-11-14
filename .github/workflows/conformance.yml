@@ -5,7 +5,11 @@ name: Conformance
 # disposable stack on its own free ports.
 #
 #   targets  ts-source (this checkout, built) and ts-release:0.22.0 (the
-#            signed release, verified and pulled by digest)
+#            signed release, verified and pulled by digest), each with every
+#            CLI; go-binary (the Go varlatchd, built here with its
+#            dashboard) with the CLI built from source, its missing
+#            operations declared in scripts/conformance/expect/go-binary.json
+#            (ADR-0059 step 3)
 #   CLIs     source (this checkout), 0.21.0 and 0.22.0 (pinned in
 #            scripts/conformance/clients.json, verified before use)
 #
@@ -64,6 +68,9 @@ jobs:
       matrix:
         target: [ts-source, "ts-release:0.22.0"]
         cli: [source, "0.21.0", "0.22.0"]
+        include:
+          - target: go-binary
+            cli: source
     # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
     defaults:
       run:
@@ -81,6 +88,21 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: matrix.target == 'go-binary'
+        with:
+          go-version: 1.27.4
+          cache: false
+      # The dashboard first (go generate ./server/web, with the Node and pnpm
+      # set up above), then varlatchd, which embeds it.
+      - name: Build varlatchd
+        if: matrix.target == 'go-binary'
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          cd go
+          go generate ./server/web
+          go build -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
       - name: Install Chromium
         run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -102,7 +124,9 @@ jobs:
           TARGET: ${{ matrix.target }}
           CLI: ${{ matrix.cli }}
           CONFORMANCE_SOURCE_IMAGES: ${{ matrix.target == 'ts-source' && 'ci' || '' }}
-        run: node scripts/conformance/run.mjs --target "$TARGET" --cli "$CLI" --report conformance-report.json
+        run: |
+          if [ "$TARGET" = go-binary ]; then TARGET="go-binary:$RUNNER_TEMP/varlatchd"; fi
+          node scripts/conformance/run.mjs --target "$TARGET" --cli "$CLI" --report conformance-report.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

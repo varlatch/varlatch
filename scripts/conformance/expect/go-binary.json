@@ -1,0 +1,669 @@
+{
+  "schema": 1,
+  "description": "The Go server (go-binary, whatever its path). expected: the checks it is known to fail, by client, each with why and the step that removes it. lacks: the operations it does not have yet (OpenAPI operationIds and the inventory's named operations), each with why and the step that adds it; a check that needs one reports target-lacks, and the runner first asks the server that each one really answers 501 NOT_IMPLEMENTED_YET (scripts/conformance/README.md, Declared gaps). This is the parity tracker: entries are removed as operations are built. CI fails a pull request that adds an entry, or makes a check newly lack an operation, unless it carries the conformance-regression label.",
+  "expected": {},
+  "lacks": {
+    "go-binary": {
+      "admin-bootstrap": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "admin-recover": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "enroll-page": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "browser-session": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "serve-cli": {
+        "reason": "the Go server cannot serve the CLI and install scripts yet (ADR-0058 Decision 3)",
+        "step": "ADR-0059 step 4"
+      },
+      "activateContractRevision": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "addGroupMember": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "addTeamMember": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "addTeamProject": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "applyChangeSet": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "approveApproval": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "approveOrganizationDeletion": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "attachGitHubAppRegistration": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "beginRotation": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "cancelApproval": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "cancelOrganizationDeletion": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "changeAuditExport": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "changeMemberRole": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "changeSecurityControl": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "checkAuditExport": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "checkPlatformAccess": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "collectDeviceSignIn": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "completeGitHubAppRegistration": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "completeRotation": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "confirmExposureRevocation": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "confirmMyPasskey": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "createAuditExport": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createEnvironment": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createGrant": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createGroup": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createInvitation": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createOidcBinding": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createOrganization": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createPlatformConnection": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createProject": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createRequirement": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createRole": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createServiceIdentity": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createSyncTarget": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createTeam": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "createWebhook": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "credentialReview": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "decideDeviceSignIn": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "deleteEnvironment": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "deleteGrant": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "deleteGroup": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "deleteProject": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "deleteRequirement": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "deleteRole": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "deleteTeam": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "deleteValue": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "discardGitHubAppRegistration": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "discloseSecrets": {
+        "reason": "the read path of values is not built yet in the Go server",
+        "step": "ADR-0059 step 3.6"
+      },
+      "exchangeCliCredential": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "exchangeOidcToken": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "exerciseCapability": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "exportAuditEvents": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "exportDeletedOrganizationAuditEvents": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "freezeOrganization": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getActiveContract": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getApproval": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getAuditExport": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getContractRevision": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getEffectiveConfiguration": {
+        "reason": "the read path of values is not built yet in the Go server",
+        "step": "ADR-0059 step 3.6"
+      },
+      "getEnvironment": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getGitHubApp": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getIncidentFreeze": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getInstallationBackups": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getInstallationListeners": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getInstallationOutbound": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getInstallationRelease": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getMyProfile": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getOrganization": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getOrganizationDeletion": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getPlatformConnection": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getProject": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getSyncTarget": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getTailnetContext": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "getTailnetEndpoint": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "importGitHubApp": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "issueCapability": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "issueIdentityCredential": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "liftIncidentFreeze": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listAuditEvents": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listCapabilities": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listDeletedOrganizationAuditEvents": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listDeletedOrganizations": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listEnvironments": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listGitHubAppInstallations": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listGrants": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listGroupMembers": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listGroups": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listIdentities": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listIdentityCredentials": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listInvitations": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listMyCredentials": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "listMyPasskeys": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "listOidcBindings": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listOrgSyncTargets": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listOrganizations": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listPlatformConnections": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listPlatformDestinations": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listProjects": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listRequirements": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listRoles": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listSecurityControls": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listSyncTargets": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listTeamMembers": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listTeamProjects": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listTeams": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "listWebhooks": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "lookupDeviceSignIn": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "machineReach": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "memberExposure": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "myOrganizationPermissions": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "pauseSyncTarget": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "pushContractRevision": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "pushSyncTarget": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "reactivateIdentity": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "refusedDestinations": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "removeAuditExport": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "removeDeletedOrganizationReader": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "removeGitHubApp": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "removeGroupMember": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "removeMember": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "removeMyPasskey": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "removeTeamMember": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "removeTeamProject": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "renameIdentity": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "renameOrganization": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "renameProject": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "replaceAuditExportCredential": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "replaceGrant": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "replacePlatformCredential": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "resumeSyncTarget": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "retireIdentity": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "reviewMember": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "revokeCapability": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "revokeIdentityCredential": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "revokeInvitation": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "revokeMyCredential": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "revokeOidcBinding": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "revokePlatformConnection": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "revokeSyncTarget": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "revokeWebhook": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "rotateGitHubAppKey": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "scheduleOrganizationDeletion": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "searchConfigItems": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "securityApprovalKeys": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "securityControlReport": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "setValue": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "startApproval": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "startDeviceSignIn": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "startGitHubAppRegistration": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "startPasskeyConfirmation": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      },
+      "strictRetrieval": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "updateGroup": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "updateMyProfile": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "updateRequirement": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "updateRole": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "updateSyncTarget": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "updateTeam": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "updateWebhook": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "validateEnvironment": {
+        "reason": "not ported to the Go server yet",
+        "step": "ADR-0059 step 4"
+      },
+      "whoami": {
+        "reason": "sessions, passkeys, enrollment and credentials are not built yet in the Go server",
+        "step": "ADR-0059 step 3.4"
+      }
+    }
+  }
+}

@@ -13,7 +13,7 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *
  *   --target   the server under test (targets/index.mjs): ts-source,
  *              ts-release:<version> (a signed release, verified and pulled
- *              by digest), go-binary:<path> (a stub until ADR-0059 step 3)
+ *              by digest), go-binary:<path> (the Go varlatchd at <path>)
  *   --cli      the CLI under test: `source` is apps/cli/dist/varlatch.cjs; a
  *              version is a released CLI pinned in clients.json, downloaded
  *              and verified before anything starts (clients.mjs). The sdk
@@ -32,6 +32,14 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  * are applied to the result: an expected failure is reported as one, and an
  * expected failure that passes fails the run.
  *
+ * The target's declared gaps (the same file's `lacks`, lib/operations.mjs):
+ * before the suites, the runner asks the target, once per lacking
+ * operation, and requires the stub's answer (501 NOT_IMPLEMENTED_YET); any
+ * other answer fails the run, naming the stale entry. A check that needs a
+ * lacking operation is reported target-lacks by the runner, and its suite
+ * is not started when every one of its checks lacks something; a setup step
+ * (the first enrollment, the seed) that needs one is skipped.
+ *
  * Exit status 0 only when every check in scope accounted for itself as the
  * inventory and the expectations require (and, with --gate, the gate
  * passed); 1 otherwise; 64 on a usage error.
@@ -42,9 +50,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
-import { applyExpectations, expectationsFor, validateExpectations } from "./lib/expect.mjs";
+import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
 import { judgeGate } from "./lib/gate.mjs";
 import { evaluate, validateInventory } from "./lib/inventory.mjs";
+import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks } from "./lib/operations.mjs";
+import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
 import { parseSuiteOutput, resultLine } from "./lib/results.mjs";
 import { PLAN } from "./plan.mjs";
@@ -95,11 +105,11 @@ function walkthroughEvidence(file) {
 }
 
 /** The target's expected failures file (expect/<name>.json), validated; an empty one when there is none. */
-function loadExpectations(targetName, inventory) {
+function loadExpectations(targetName, inventory, openapi) {
   const file = join(HERE, "expect", `${targetName}.json`);
   if (!existsSync(file)) return { schema: 1, expected: {} };
   const parsed = JSON.parse(readFileSync(file, "utf8"));
-  const problems = validateExpectations(parsed, { targetName, inventory, cliVersions: Object.keys(loadClients().cli) });
+  const problems = validateExpectations(parsed, { targetName, inventory, cliVersions: Object.keys(loadClients().cli), openapi });
   if (problems.length > 0) throw new Error(`expect/${targetName}.json is not valid:\n  ${problems.join("\n  ")}`);
   return parsed;
 }
@@ -151,6 +161,9 @@ async function main() {
   const inventory = JSON.parse(readFileSync(join(HERE, "inventory.json"), "utf8"));
   const shape = validateInventory(inventory);
   if (shape.length > 0) throw new Error(`inventory.json is not valid:\n  ${shape.join("\n  ")}`);
+  const openapi = openapiOperations(readFileSync(join(REPO_ROOT, "packages", "protocol", "openapi.yaml"), "utf8"));
+  const opShape = operationProblems(inventory, openapi);
+  if (opShape.length > 0) throw new Error(`inventory.json names operations that do not exist:\n  ${opShape.join("\n  ")}`);
   const planned = PLAN.filter((e) => e.setup || inventory.suites[e.suite]);
   const unknown = PLAN.filter((e) => !e.setup && !inventory.suites[e.suite]).map((e) => e.suite);
   const unplanned = Object.keys(inventory.suites).filter((s) => !PLAN.some((e) => e.suite === s));
@@ -165,7 +178,10 @@ async function main() {
     usage(err.message);
   }
   const { name: targetName, argument: targetArgument, target, capabilities, expectKey } = loaded;
-  const expectations = loadExpectations(targetName, inventory);
+  const expectations = loadExpectations(targetName, inventory, openapi);
+  // The target's declared gaps, and the checks that need one.
+  const lacks = lacksFor(expectations, expectKey);
+  const lacking = lackingChecks(inventory, lacks.keys());
   // Gate evidence is checked before anything starts: a gate run without it
   // cannot pass, so it does not spend an hour finding that out.
   const walkthrough = options.walkthrough ? walkthroughEvidence(options.walkthrough) : null;
@@ -203,6 +219,7 @@ async function main() {
     cli: { spec: cli.spec, version: cli.version, commit: cli.commit, sha256: cli.sha256, verified: cli.verified },
     sdk: sdk ? { from: cli.commit ? `release ${cli.version} (${cli.commit})` : "this checkout", commit: sdk.commit, sha256: sdk.sha256 } : null,
     partial: options.suites.length > 0 ? options.suites : false,
+    lacks: { declared: Object.fromEntries(lacks), stale: [] },
     startedAt: new Date().toISOString(),
     suites: [],
   };
@@ -255,6 +272,7 @@ async function main() {
       CONFORMANCE_TARGET_STATE: stateFile,
     };
     const ctx = { origin: target.origin(state) };
+    if (lacks.size > 0) await checkLacks(ctx.origin);
     const admin = (args) => target.recover(state, ctx.adminId, args);
     ctx.grant = async () => {
       const url = (await admin({})).match(/http:\/\/\S*enroll#\S*/)?.[0];
@@ -274,12 +292,21 @@ async function main() {
 
     for (const entry of planned) {
       if (entry.setup === "bootstrap") {
+        if (setupLacks(inventory, "admin-bootstrap", lacks)) {
+          console.log("--- bootstrap: not run, the target lacks admin-bootstrap");
+          continue;
+        }
         console.log("--- bootstrap: the first enrollment URL");
         ctx.bootstrapUrl = (await target.bootstrap(state)).match(/http:\/\/\S*enroll#\S*/)?.[0];
         if (!ctx.bootstrapUrl) throw new Error("bootstrap printed no enrollment URL");
         continue;
       }
       if (entry.setup === "seed") {
+        if (setupLacks(inventory, "seed", lacks)) {
+          const missing = inventory.operations.seed.uses.filter((op) => lacks.has(op));
+          console.log(`--- seed: not run, the target lacks ${missing.join(", ")}`);
+          continue;
+        }
         if (!ctx.adminId) throw new Error("the passkey suite named no identity: nothing after it can run");
         console.log(`--- seed data as ${ctx.adminId}`);
         ctx.token = await ctx.cliCredential();
@@ -295,11 +322,26 @@ async function main() {
         continue;
       }
       const missing = (suite.needs ?? []).filter((c) => !capabilities.includes(c));
+      const ids = Object.entries(inventory.checks).filter(([, c]) => c.suite === entry.suite).map(([id]) => id);
+      // A check needing an operation the target lacks: target-lacks, from
+      // the runner; a ts-stack check on a target without the stack stays
+      // not applicable.
+      const lacked = new Set(ids.filter((id) => lacking.has(id) && !(missing.length > 0 && inventory.checks[id].kind === "ts-stack")));
+      const reportLacks = () => {
+        for (const id of lacked) reports.push({ suite: entry.suite, id, status: "TARGET-LACKS", text: `the target lacks ${lacking.get(id).join(", ")}`, runner: true });
+      };
       if (missing.length > 0) {
         console.log(`--- ${suite.title}: not run, the target lacks ${missing.join(", ")}`);
-        for (const [id, check] of Object.entries(inventory.checks)) {
-          if (check.suite === entry.suite) reports.push({ suite: entry.suite, id, status: "N/A", text: `the target lacks ${missing.join(", ")}` });
+        reportLacks();
+        for (const id of ids) {
+          if (!lacked.has(id)) reports.push({ suite: entry.suite, id, status: "N/A", text: `the target lacks ${missing.join(", ")}` });
         }
+        continue;
+      }
+      if (lacked.size === ids.length) {
+        const ops = [...new Set([...lacked].flatMap((id) => lacking.get(id)))].sort();
+        console.log(`--- ${suite.title}: not run, the target lacks ${ops.length === 1 ? "an operation" : `${ops.length} operations`} it needs (${ops.slice(0, 8).join(", ")}${ops.length > 8 ? ", ..." : ""})`);
+        reportLacks();
         continue;
       }
       console.log(`--- ${suite.title}`);
@@ -312,7 +354,10 @@ async function main() {
       (windows[entry.suite] ??= []).push({ start, end });
       if (around) await around.finish();
       const parsed = parseSuiteOutput(`${out.stdout}\n${out.stderr}`);
-      for (const r of parsed.results) reports.push({ suite: entry.suite, ...r });
+      // What the suite printed for a check that lacks an operation is
+      // replaced by the runner's target-lacks.
+      for (const r of parsed.results) if (!lacked.has(r.id)) reports.push({ suite: entry.suite, ...r });
+      reportLacks();
       for (const message of parsed.errors) errors.push({ suite: entry.suite, message });
       const failedResults = parsed.results.some((r) => r.status === "FAIL");
       if (out.timedOut) errors.push({ suite: entry.suite, message: `did not finish within ${SUITE_TIMEOUT_MS / 60_000} minutes` });
@@ -330,6 +375,18 @@ async function main() {
     if (state && !report.requestBudget && inScope("request-budget")) {
       await requestBudget().catch((e) => errors.push({ suite: "runner", message: `request-log: ${e.message}` }));
     }
+  }
+
+  // Asks the target about every operation it declares it lacks
+  // (lacks-probe.mjs); a stale entry fails the run, named.
+  async function checkLacks(origin) {
+    console.log(`--- the target declares ${lacks.size} lacking operations; asking it about each`);
+    report.lacks.stale = await probeLacks({ inventory, openapi, lacks: [...lacks.keys()], origin, target, state });
+    for (const { operation, why } of report.lacks.stale) {
+      console.log(`STALE-LACKS  ${operation}: ${why}`);
+      errors.push({ suite: "runner", message: `expect/${targetName}.json lacks ${operation}, but ${why}` });
+    }
+    if (report.lacks.stale.length === 0) console.log(`--- every one answered ${NOT_IMPLEMENTED_YET}`);
   }
 
   // Holds Convex down around a suite on the TypeScript stack, and reports
@@ -390,7 +447,13 @@ async function main() {
       ...inventory,
       checks: Object.fromEntries(Object.entries(inventory.checks).filter(([, c]) => inScope(c.suite))),
     };
-    judged = evaluate({ inventory: scoped, reports: reports.filter((r) => inScope(r.suite)), errors: errors.filter((e) => e.suite === "runner" || inScope(e.suite)), cliVersion: cli.version });
+    judged = evaluate({
+      inventory: scoped,
+      reports: reports.filter((r) => inScope(r.suite)),
+      errors: errors.filter((e) => e.suite === "runner" || inScope(e.suite)),
+      cliVersion: cli.version,
+      lacking,
+    });
     // The expected failures of this target and client, for the checks in scope.
     const inForce = new Map([...expected].filter(([id]) => id in scoped.checks));
     judged = applyExpectations(judged, inForce);
@@ -402,7 +465,15 @@ async function main() {
     if (options.gate) {
       report.gate = judgeGate({
         inventory,
-        run: { target: options.target, partial: report.partial, ok: judged.ok, checks: judged.checks, expectedInForce: [...inForce.keys()], implementation: report.implementation ?? null },
+        run: {
+          target: options.target,
+          partial: report.partial,
+          ok: judged.ok,
+          checks: judged.checks,
+          expectedInForce: [...inForce.keys()],
+          lacksInForce: [...lacks.keys()],
+          implementation: report.implementation ?? null,
+        },
         walkthrough,
         recentCli,
       });
@@ -417,8 +488,17 @@ async function main() {
     const count = (o) => judged.checks.filter((c) => c.outcome === o).length;
     console.log(
       `--- ${judged.checks.length} checks: ${count("pass")} passed, ${count("fail")} failed, ${count("expected-fail")} failed as expected, ` +
-        `${count("not-applicable")} not applicable, ${count("predates-cli")} predate the CLI`,
+        `${count("not-applicable")} not applicable, ${count("predates-cli")} predate the CLI, ${count("target-lacks")} need an operation the target lacks`,
     );
+    if (count("target-lacks") > 0) {
+      // The parity tracker: which lacking operations hold back how many checks.
+      const holding = new Map();
+      for (const c of judged.checks.filter((c) => c.outcome === "target-lacks")) {
+        for (const op of lacking.get(c.id) ?? []) holding.set(op, (holding.get(op) ?? 0) + 1);
+      }
+      const ranked = [...holding].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      console.log(`--- the lacking operations checks need (${lacks.size} declared): ${ranked.map(([op, n]) => `${op} ${n}`).join(", ")}`);
+    }
     for (const c of judged.checks.filter((c) => c.outcome === "predates-cli")) console.log(`PREDATES-CLI   ${c.id}: ${c.why}`);
     // Expected failures are listed with their reason, never hidden.
     for (const c of judged.checks.filter((c) => c.outcome === "expected-fail")) {

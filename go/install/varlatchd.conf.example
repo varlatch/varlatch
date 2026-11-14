@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# /etc/varlatch/varlatchd.conf: varlatchd's configuration (ADR-0059).
+# varlatch setup writes it; varlatchd.service reads it, read-only, with
+#   varlatchd serve --config /etc/varlatch/varlatchd.conf
+# It holds no secrets: the Root KEK reaches varlatchd as the systemd
+# credential root-kek, never through this file or the environment.
+#
+# Format: one setting per line, `name = value`. Blank lines and lines that
+# start with # are ignored. The value is the rest of the line with the
+# blanks around it removed, taken as written: no quotes, escapes or comments
+# after it. An empty value means the default. An unknown name, a name given
+# twice, a line without = or a value varlatchd cannot use is a configuration
+# error: varlatchd exits with status 78 and systemd does not restart it
+# (RestartPreventExitStatus=78) until the file is fixed.
+#
+# Every setting, with its default:
+
+# The HTTP listener, address:port. An empty address listens on every
+# address.
+listen = 127.0.0.1:8686
+
+# The origin people reach Varlatch at, such as https://varlatch.example.com
+# (no path). Device sign-in needs it over https (plain http only on
+# localhost). Default: none.
+public_url =
+
+# The data directory, which holds the database (varlatch.db). Default: the
+# unit's state directory, /var/lib/varlatch.
+data_dir =
+
+# The file the Root KEK is read from. Default: the root-kek credential
+# systemd hands the unit ($CREDENTIALS_DIRECTORY/root-kek).
+root_kek_file =
+
+# Proxies whose X-Forwarded-For varlatchd believes: comma-separated IP
+# addresses, CIDR ranges and host names. The client address is read from the
+# right of the header, through these proxies only. Default: none.
+trusted_proxies =
+
+# Where the access log goes: one JSON line per request, with its arrival
+# and completion time, client address, method, path (never the query),
+# status and X-Forwarded-For. An absolute path, stdout (the journal) or off.
+access_log = stdout
+
+# Outbound sync (ADR-0031): on lets authorized users configure Sync
+# Targets; off turns the feature off for the installation.
+sync = on
+
+# The sync adapters to allow, comma-separated, out of github-actions,
+# coolify and convex. Default: all.
+sync_adapters =

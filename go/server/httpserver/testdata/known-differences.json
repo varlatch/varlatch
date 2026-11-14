@@ -1,0 +1,533 @@
+{
+  "description": "Answers the Go server must give exactly as the TypeScript deployment does (ADR-0059 step 3, varlatchd-core decision 4). go/server/httpserver/parity_test.go and services/varlatchd/test/go-parity.test.ts both run every case, the TypeScript one against buildApp and Hono's own getPath, from raw request targets. pathVectors: the path varlatchd's router (Hono) routes a raw request target on, after the WHATWG URL parser and decodeURI. nginxVectors: the URI the dashboard's nginx selects a location with ($uri), as nginx 1.29 (the dashboard image's) gave it for each raw target: escapes decoded first, then dot segments resolved and slashes merged. routes: requests and their answers; expect is text (plain-text body), code (the JSON error envelope's code), meta (the /v1/meta document) or dashboard (the dashboard's nginx serves its app and never forwards the request to varlatchd, which Go reproduces; the TypeScript side decides forwarding from apps/web/nginx.conf's own locations); a HEAD answer is compared by status and Content-Type only. A case's goUntilStep3_4, when present, is what the Go server answers until step 3.4 can verify a credential; the TypeScript answer is the target. forwardedFor: X-Forwarded-For sent as several header lines. requestWindow: the 601st request of a window, with the clock held still.",
+  "pathVectors": [
+    {
+      "target": "/v1/meta",
+      "hono": "/v1/meta"
+    },
+    {
+      "target": "/v1/organizations/../meta",
+      "hono": "/v1/meta"
+    },
+    {
+      "target": "/v1/organizations/%2e%2E/meta",
+      "hono": "/v1/meta"
+    },
+    {
+      "target": "/v1/./meta/.",
+      "hono": "/v1/meta/"
+    },
+    {
+      "target": "/v1/..",
+      "hono": "/"
+    },
+    {
+      "target": "/v1//organizations",
+      "hono": "/v1//organizations"
+    },
+    {
+      "target": "/v1%2fmeta",
+      "hono": "/v1%2fmeta"
+    },
+    {
+      "target": "/v1/%6deta",
+      "hono": "/v1/meta"
+    },
+    {
+      "target": "/v1/%25",
+      "hono": "/v1/%25"
+    },
+    {
+      "target": "/v1/%ff",
+      "hono": "/v1/%ff"
+    },
+    {
+      "target": "/v1/%ff/%6deta",
+      "hono": "/v1/%ff/meta"
+    },
+    {
+      "target": "/v1/%E2%82%AC%3B",
+      "hono": "/v1/€%3B"
+    },
+    {
+      "target": "/v1/%EF%BF%BD",
+      "hono": "/v1/�"
+    },
+    {
+      "target": "/v1/a{b",
+      "hono": "/v1/a{b"
+    },
+    {
+      "target": "/v1/organizations/..%2fmeta",
+      "hono": "/v1/organizations/..%2fmeta"
+    },
+    {
+      "target": "/V1/meta",
+      "hono": "/V1/meta"
+    },
+    {
+      "target": "//v1/meta",
+      "hono": "//v1/meta"
+    },
+    {
+      "target": "/v1/meta?x=1",
+      "hono": "/v1/meta"
+    }
+  ],
+  "nginxVectors": [
+    {
+      "target": "/foo%2fbar/../v1/meta",
+      "nginx": "/foo/v1/meta"
+    },
+    {
+      "target": "/v1%2fx/../dashboard",
+      "nginx": "/v1/dashboard"
+    },
+    {
+      "target": "/v1/../V1/meta",
+      "nginx": "/V1/meta"
+    },
+    {
+      "target": "/v1/../device",
+      "nginx": "/device"
+    },
+    {
+      "target": "/dashboard/%2e%2e/v1/meta",
+      "nginx": "/v1/meta"
+    },
+    {
+      "target": "/x%2f..%2fv1/meta",
+      "nginx": "/v1/meta"
+    },
+    {
+      "target": "/v1/../install.sh",
+      "nginx": "/install.sh"
+    },
+    {
+      "target": "//install.sh",
+      "nginx": "/install.sh"
+    },
+    {
+      "target": "/v1//organizations",
+      "nginx": "/v1/organizations"
+    },
+    {
+      "target": "/v1/organizations/../meta",
+      "nginx": "/v1/meta"
+    },
+    {
+      "target": "/v1%2fmeta",
+      "nginx": "/v1/meta"
+    },
+    {
+      "target": "/v1/./meta/.",
+      "nginx": "/v1/meta/"
+    },
+    {
+      "target": "/v1/a/..",
+      "nginx": "/v1/"
+    },
+    {
+      "target": "/v1/%2e%2e%2fmeta",
+      "nginx": "/meta"
+    },
+    {
+      "target": "/v1/%6deta",
+      "nginx": "/v1/meta"
+    }
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "credential": "none",
+      "status": 401,
+      "code": "AUTHENTICATION_REQUIRED",
+      "target": "/v1/nothing-here",
+      "expect": "code"
+    },
+    {
+      "method": "GET",
+      "credential": "none",
+      "status": 401,
+      "code": "AUTHENTICATION_REQUIRED",
+      "target": "/v1/organizations/",
+      "expect": "code"
+    },
+    {
+      "method": "PUT",
+      "credential": "none",
+      "status": 401,
+      "code": "AUTHENTICATION_REQUIRED",
+      "target": "/v1/organizations",
+      "expect": "code"
+    },
+    {
+      "method": "GET",
+      "credential": "none",
+      "status": 401,
+      "code": "AUTHENTICATION_REQUIRED",
+      "target": "/v1//organizations",
+      "expect": "code"
+    },
+    {
+      "method": "GET",
+      "credential": "none",
+      "status": 401,
+      "code": "AUTHENTICATION_REQUIRED",
+      "target": "/v1/meta/",
+      "expect": "code"
+    },
+    {
+      "method": "GET",
+      "credential": "none",
+      "status": 401,
+      "code": "AUTHENTICATION_REQUIRED",
+      "target": "/v1/auth/device",
+      "expect": "code"
+    },
+    {
+      "method": "GET",
+      "credential": "basic",
+      "status": 401,
+      "code": "AUTHENTICATION_REQUIRED",
+      "target": "/v1/nothing-here",
+      "expect": "code"
+    },
+    {
+      "method": "DELETE",
+      "credential": "none",
+      "status": 404,
+      "text": "404 Not Found",
+      "target": "/v1/meta",
+      "expect": "text"
+    },
+    {
+      "method": "POST",
+      "credential": "none",
+      "status": 404,
+      "text": "404 Not Found",
+      "target": "/v1/meta",
+      "expect": "text"
+    },
+    {
+      "method": "GET",
+      "credential": "valid",
+      "status": 404,
+      "text": "404 Not Found",
+      "target": "/v1/nothing-here",
+      "expect": "text"
+    },
+    {
+      "method": "GET",
+      "credential": "valid",
+      "status": 404,
+      "text": "404 Not Found",
+      "target": "/v1/organizations/",
+      "expect": "text"
+    },
+    {
+      "method": "PUT",
+      "credential": "valid",
+      "status": 404,
+      "text": "404 Not Found",
+      "target": "/v1/organizations",
+      "expect": "text"
+    },
+    {
+      "method": "GET",
+      "credential": "invalid",
+      "status": 401,
+      "code": "INVALID_CREDENTIAL",
+      "goUntilStep3_4": {
+        "status": 404,
+        "expect": "text",
+        "text": "404 Not Found"
+      },
+      "target": "/v1/nothing-here",
+      "expect": "code"
+    },
+    {
+      "method": "GET",
+      "credential": "none",
+      "status": 401,
+      "code": "AUTHENTICATION_REQUIRED",
+      "target": "/v1",
+      "expect": "code"
+    },
+    {
+      "method": "GET",
+      "credential": "valid",
+      "status": 404,
+      "text": "404 Not Found",
+      "target": "/v1",
+      "expect": "text"
+    },
+    {
+      "method": "GET",
+      "credential": "none",
+      "status": 404,
+      "text": "404 Not Found",
+      "target": "/v1x",
+      "expect": "text"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/organizations/../meta",
+      "credential": "none",
+      "status": 200,
+      "expect": "meta"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/organizations/%2e%2e/meta",
+      "credential": "none",
+      "status": 200,
+      "expect": "meta"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/%6deta",
+      "credential": "none",
+      "status": 200,
+      "expect": "meta"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/meta?x=1",
+      "credential": "none",
+      "status": 200,
+      "expect": "meta"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/nothing-here?x=1",
+      "credential": "none",
+      "status": 401,
+      "expect": "code",
+      "code": "AUTHENTICATION_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/",
+      "credential": "none",
+      "status": 401,
+      "expect": "code",
+      "code": "AUTHENTICATION_REQUIRED"
+    },
+    {
+      "method": "HEAD",
+      "target": "/v1/meta",
+      "credential": "none",
+      "status": 200,
+      "expect": "meta"
+    },
+    {
+      "method": "HEAD",
+      "target": "/v1/nothing-here",
+      "credential": "none",
+      "status": 401,
+      "expect": "code",
+      "code": "AUTHENTICATION_REQUIRED"
+    },
+    {
+      "method": "OPTIONS",
+      "target": "/v1/meta",
+      "credential": "none",
+      "status": 404,
+      "expect": "text",
+      "text": "404 Not Found"
+    },
+    {
+      "method": "OPTIONS",
+      "target": "/v1/organizations",
+      "credential": "none",
+      "status": 401,
+      "expect": "code",
+      "code": "AUTHENTICATION_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "target": "/v1%2fmeta",
+      "credential": "none",
+      "status": 404,
+      "expect": "text",
+      "text": "404 Not Found"
+    },
+    {
+      "method": "GET",
+      "target": "/v1%2Fmeta",
+      "credential": "valid",
+      "status": 404,
+      "expect": "text",
+      "text": "404 Not Found"
+    },
+    {
+      "method": "GET",
+      "target": "//v1/meta",
+      "credential": "none",
+      "status": 404,
+      "expect": "text",
+      "text": "404 Not Found"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/%25",
+      "credential": "none",
+      "status": 401,
+      "expect": "code",
+      "code": "AUTHENTICATION_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/%ff",
+      "credential": "none",
+      "status": 401,
+      "expect": "code",
+      "code": "AUTHENTICATION_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "target": "/V1/meta",
+      "credential": "none",
+      "status": 200,
+      "expect": "dashboard"
+    },
+    {
+      "method": "GET",
+      "target": "/Healthz",
+      "credential": "none",
+      "status": 200,
+      "expect": "dashboard"
+    },
+    {
+      "method": "GET",
+      "target": "/foo%2fbar/../v1/meta",
+      "credential": "none",
+      "status": 200,
+      "expect": "dashboard"
+    },
+    {
+      "method": "GET",
+      "target": "/v1%2fx/../dashboard",
+      "credential": "none",
+      "status": 404,
+      "expect": "text",
+      "text": "404 Not Found"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/../V1/meta",
+      "credential": "none",
+      "status": 200,
+      "expect": "dashboard"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/../device",
+      "credential": "none",
+      "status": 200,
+      "expect": "dashboard"
+    },
+    {
+      "method": "GET",
+      "target": "/device",
+      "credential": "none",
+      "status": 200,
+      "expect": "dashboard"
+    },
+    {
+      "method": "GET",
+      "target": "/dashboard/%2e%2e/v1/meta",
+      "credential": "none",
+      "status": 200,
+      "expect": "meta"
+    },
+    {
+      "method": "GET",
+      "target": "/x%2f..%2fv1/meta",
+      "credential": "none",
+      "status": 404,
+      "expect": "text",
+      "text": "404 Not Found"
+    },
+    {
+      "method": "GET",
+      "target": "/install.sh",
+      "credential": "none",
+      "status": 404,
+      "expect": "text",
+      "text": "Not found"
+    },
+    {
+      "method": "GET",
+      "target": "/v1/../install.sh",
+      "credential": "none",
+      "status": 404,
+      "expect": "text",
+      "text": "Not found"
+    },
+    {
+      "method": "GET",
+      "target": "//install.sh",
+      "credential": "none",
+      "status": 404,
+      "expect": "text",
+      "text": "404 Not Found"
+    }
+  ],
+  "forwardedFor": [
+    {
+      "peer": "10.0.0.2",
+      "trusted": [
+        "10.0.0.2"
+      ],
+      "lines": [
+        "198.51.100.99",
+        "203.0.113.7"
+      ],
+      "client": "203.0.113.7"
+    },
+    {
+      "peer": "10.0.0.2",
+      "trusted": [
+        "10.0.0.2",
+        "10.0.0.3"
+      ],
+      "lines": [
+        "198.51.100.99, 203.0.113.7",
+        "10.0.0.3"
+      ],
+      "client": "203.0.113.7"
+    },
+    {
+      "peer": "10.0.0.2",
+      "trusted": [
+        "10.0.0.2"
+      ],
+      "lines": [
+        "198.51.100.99",
+        "garbage"
+      ],
+      "client": "10.0.0.2"
+    },
+    {
+      "peer": "192.0.2.50",
+      "trusted": [
+        "10.0.0.2"
+      ],
+      "lines": [
+        "198.51.100.99",
+        "203.0.113.7"
+      ],
+      "client": "192.0.2.50"
+    }
+  ],
+  "requestWindow": {
+    "path": "/v1/meta",
+    "allowed": 600,
+    "status": 429,
+    "code": "PERMISSION_DENIED",
+    "message": "Request rate exceeded",
+    "retryAfterAtStart": "60"
+  }
+}

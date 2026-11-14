@@ -109,14 +109,6 @@ test("targets: ts-release needs a version, go-binary a path, ts-source nothing; 
   assert.equal(created, false);
 });
 
-test("go-binary is a stub: it fails clearly, and creates nothing", async () => {
-  const { target } = await loadTarget("go-binary:/opt/varlatchd");
-  await assert.rejects(target.up({ argument: "/opt/varlatchd", onState: () => assert.fail("created state") }), /not built yet/);
-  await assert.rejects(target.bootstrap({}), /not built yet/);
-  assert.throws(() => target.origin({}), /not built yet/);
-  await target.down({});
-});
-
 /**
  * A fake signed release 9.9.9: a bundle (built with tar from `layout`),
  * its manifest, and SHA256SUMS listing both. `change` edits the parts

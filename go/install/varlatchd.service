@@ -41,6 +41,12 @@ Type=exec
 ExecStart=/usr/local/bin/varlatchd serve --config /etc/varlatch/varlatchd.conf
 Restart=on-failure
 RestartSec=15s
+# 78 (EX_CONFIG) is a configuration error no restart can fix: an unparsable
+# varlatchd.conf, an unknown or repeated setting, an invalid value, missing
+# or unparsable Root KEK material, a Root KEK that is not this
+# installation's. varlatchd says which in the journal, and stays stopped
+# until it is fixed and started again.
+RestartPreventExitStatus=78
 # Long enough to let requests in flight finish and the writer commit.
 TimeoutStopSec=30s
 User=varlatch

@@ -4,7 +4,9 @@
  * clients) are judged with. A gate run passes only when, besides the run
  * itself passing:
  *
- *   - no expected failure is in force for its target and client;
+ *   - no expected failure is in force for its target and client, and the
+ *     target declares no lacking operation (expect/<target>.json `lacks`):
+ *     no check reports target-lacks;
  *   - every ts-stack check's replacement, and every outside suite's
  *     (inventory.externalSuites: the lifecycle and installer suites the
  *     runner does not run), is present and passing: a replacement check that
@@ -66,6 +68,14 @@ function runRules(inventory, run) {
   if (run.expectedInForce.length > 0) {
     problems.push(`no expected failure is allowed, and ${run.expectedInForce.length} are in force for ${run.target}: ${run.expectedInForce.join(", ")}`);
   }
+  const lacksInForce = run.lacksInForce ?? [];
+  if (lacksInForce.length > 0) {
+    problems.push(`no lacking operation is allowed, and ${run.target} declares ${lacksInForce.length}: ${lacksInForce.slice(0, 20).join(", ")}${lacksInForce.length > 20 ? ", ..." : ""}`);
+  }
+  const lacked = run.checks.filter((c) => c.outcome === "target-lacks").map((c) => c.id);
+  if (lacked.length > 0) {
+    problems.push(`no check may report target-lacks, and ${lacked.length} do: ${lacked.slice(0, 20).join(", ")}${lacked.length > 20 ? ", ..." : ""}`);
+  }
   const outcome = new Map(run.checks.map((c) => [c.id, c.outcome]));
   const open = [];
   for (const { of, replacement } of replacements(inventory)) {
@@ -86,7 +96,7 @@ function runRules(inventory, run) {
  * Judges a run in gate mode.
  *
  *   run         { target, partial, ok, checks: [{ id, outcome }], expectedInForce: [check ids],
- *                 implementation (the target's fingerprint, or null) }
+ *                 lacksInForce: [operations], implementation (the target's fingerprint, or null) }
  *   walkthrough null, or { path (relative to the checkout), exists, size, sha256 }
  *   recentCli   null, or the parsed report (conformance-report.json) of a
  *               run with a recent CLI
