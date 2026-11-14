@@ -11,10 +11,12 @@ package db
 // canonical form:
 //
 //   - redundant parentheses vanish, since the tree holds the grouping;
-//   - identifiers and keywords are case-insensitive, quotes around
-//     identifiers are dropped; string literals are kept exactly;
+//   - identifiers and keywords are case-insensitive, quoted or not; string
+//     literals are kept exactly; an identifier, a number and a string stay
+//     distinct, so "64", 64 and '64' are three different leaves;
 //   - PostgreSQL's casts (x::text) are dropped; x = ANY (ARRAY[...]) is
-//     x IN (...), x <> ALL (ARRAY[...]) is x NOT IN (...); IS DISTINCT FROM
+//     x IN (...), x <> ALL (ARRAY[...]) is x NOT IN (...), and any other
+//     operator and quantifier stay as they are; IS DISTINCT FROM
 //     is IS NOT, NOT (a IS DISTINCT FROM b) is a IS b; char_length is length;
 //   - SQLite's a BETWEEN b AND c is a >= b AND a <= c, as PostgreSQL prints
 //     it; == is =, != is <>;
@@ -130,9 +132,14 @@ type node struct {
 	args []*node
 }
 
+// String keeps every leaf's kind: an identifier is printed in double
+// quotes, a number bare, a string in single quotes, so "64" (which SQLite
+// may read as the text '64') never equals 64.
 func (n *node) String() string {
 	switch n.op {
-	case "id", "num", "null", "bool":
+	case "id":
+		return `"` + n.text + `"`
+	case "num", "null", "bool":
 		return n.text
 	case "str":
 		return "'" + strings.ReplaceAll(n.text, "'", "''") + "'"
@@ -347,7 +354,7 @@ func (p *parser) expr(min int) (*node, error) {
 		case "=", "==", "<>", "!=":
 			eq := op == "=" || op == "=="
 			if p.is(tokKeyword, "ANY") || p.is(tokKeyword, "ALL") {
-				p.pos++
+				quantifier := p.next().text
 				if err := p.expect(tokOp, "("); err != nil {
 					return nil, err
 				}
@@ -361,9 +368,15 @@ func (p *parser) expr(min int) (*node, error) {
 				if arr.op != "array" {
 					return nil, fmt.Errorf("ANY/ALL over something other than ARRAY[...]")
 				}
-				left = &node{op: "in", args: append([]*node{left}, arr.args...)}
-				if !eq {
-					left = &node{op: "not", args: []*node{left}}
+				// Only = ANY is IN, and <> ALL is NOT IN; any other pairing
+				// keeps its operator and quantifier.
+				switch {
+				case eq && quantifier == "ANY":
+					left = &node{op: "in", args: append([]*node{left}, arr.args...)}
+				case !eq && quantifier == "ALL":
+					left = &node{op: "not", args: []*node{{op: "in", args: append([]*node{left}, arr.args...)}}}
+				default:
+					left = &node{op: map[bool]string{true: "=", false: "<>"}[eq] + " " + quantifier, args: []*node{left, arr}}
 				}
 				continue
 			}
@@ -467,6 +480,7 @@ func TestExpressionComparison(t *testing.T) {
 		{`((consumed_at IS NULL) AND (closed_at IS NULL))`, `consumed_at IS NULL AND closed_at IS NULL`},
 		{`CHECK (("Counter" > 0))`, `counter > 0`},
 		{`CHECK ((a AND b AND c))`, `a AND (b AND c)`},
+		{`CHECK ((kind = ALL (ARRAY['a'::text])))`, `kind = ALL (ARRAY['a'])`},
 	}
 	for _, c := range same {
 		if a, b := canonicalExpr(t, "postgres", c[0]), canonicalExpr(t, "sqlite", c[1]); a != b {
@@ -483,6 +497,17 @@ func TestExpressionComparison(t *testing.T) {
 		{`CHECK ((x > 0))`, `x >= 0`},
 		{`CHECK ((kind = ANY (ARRAY['a'::text, 'b'::text])))`, `kind NOT IN ('a', 'b')`},
 		{`CHECK ((n <= 5))`, `n BETWEEN 1 AND 5`},
+		// A quoted name is an identifier, which SQLite reads as the text
+		// '64' when no column has that name: length(client) <= '64' then
+		// holds for any length, a 65-character client included.
+		{`CHECK (((char_length(client) >= 1) AND (char_length(client) <= 64)))`, `length(client) BETWEEN 1 AND "64"`},
+		{`CHECK ((n = 64))`, `n = '64'`},
+		{`CHECK ((n = 64))`, `"n" = "64"`},
+		// Only = ANY is IN; = ALL, <> ANY keep their quantifier.
+		{`CHECK ((kind = ANY (ARRAY['a'::text])))`, `kind = ALL (ARRAY['a'])`},
+		{`CHECK ((kind = ALL (ARRAY['a'::text])))`, `kind IN ('a')`},
+		{`CHECK ((kind <> ALL (ARRAY['a'::text, 'b'::text])))`, `kind <> ANY (ARRAY['a', 'b'])`},
+		{`CHECK ((kind <> ANY (ARRAY['a'::text, 'b'::text])))`, `kind NOT IN ('a', 'b')`},
 	}
 	for _, c := range different {
 		if a, b := canonicalExpr(t, "postgres", c[0]), canonicalExpr(t, "sqlite", c[1]); a == b {

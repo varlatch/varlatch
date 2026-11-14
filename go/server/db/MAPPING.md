@@ -25,9 +25,12 @@ How the TypeScript server's PostgreSQL schema at v0.22.0 maps to
     `ON DELETE` and `ON UPDATE` actions;
   - a `CHECK` of the same name with PostgreSQL's expression, unless the
     entry marks it rewritten and says why. Both sides are parsed into an
-    expression tree (`expr_test.go`) and compared by structure: grouping
-    and string literals count exactly; only dialect spellings are made
-    equal (casts such as `::text`, `= ANY (ARRAY[...])` as `IN`,
+    expression tree (`expr_test.go`) and compared by structure: grouping,
+    string literals and the kind of every leaf count exactly (an
+    identifier, a number and a string stay distinct, so `"64"` is not
+    `64`); only dialect spellings are made equal (casts such as `::text`,
+    `= ANY (ARRAY[...])` as `IN` and `<> ALL (ARRAY[...])` as `NOT IN`,
+    other quantified comparisons kept as they are,
     `char_length` as `length`, `IS DISTINCT FROM` as `IS NOT`, `BETWEEN` as
     `>=` and `<=`, the case of keywords and identifiers, redundant
     parentheses, the grouping of a chain of `AND`s or `OR`s);
@@ -119,6 +122,24 @@ key (its primary key or a `UNIQUE` column) before SQLite resolves the
 conflict. These tables take no `REPLACE`, no upsert and no `INSERT OR
 IGNORE`: an insert that collides is refused, and a change is an `UPDATE`.
 A collision is reported by the guard rather than by SQLite's unique check.
+
+The guards compare the table's keys, so no key may be hidden from them. A
+rowid table has one, reachable as `rowid`, `oid` and `_rowid_`:
+`UPDATE OR REPLACE auth_sessions SET rowid = 1 WHERE id = 's2'` would delete
+the session in rowid 1 without its trigger. So the guarded tables whose
+primary key is text, `auth_sessions`, `passkeys` and
+`github_app_registrations`, are `WITHOUT ROWID`: there is no hidden key to
+collide on, and naming one is an error. `audit_events` keeps its rowid,
+because the rowid is `event_order`: its guards see it under every alias
+(an insert naming a taken position is refused by
+`audit_events_no_replace_insert`, any other but the next by
+`audit_events_position`), and every update is refused by
+`audit_events_no_update`. `mapping_test.go` requires every table with a
+`_no_replace` guard to be `WITHOUT ROWID` or keyed by its rowid;
+`TestGuardedTablesHaveNoHiddenRowid` and
+`TestAuditPositionUnderEveryRowidAlias` try every alias, on insert and on
+update. sqlc and the mapping test read `WITHOUT ROWID` tables like the
+others.
 
 A `REPLACE` of a parent row needs no guard: the foreign key cascade from
 it does fire the children's delete triggers. Replacing a user ends its

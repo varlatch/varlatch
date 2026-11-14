@@ -928,3 +928,87 @@ func TestReplacingAUserStillEndsItsSessions(t *testing.T) {
 		t.Fatalf("revocation events for %v", got)
 	}
 }
+
+// --- Hidden rowids -----------------------------------------------------------
+//
+// A rowid table has a hidden integer key, reachable as rowid, oid and
+// _rowid_, which the REPLACE guards did not compare: the review reproduced
+// UPDATE OR REPLACE auth_sessions SET rowid = 1 deleting another session
+// without its trigger. The guarded tables with text keys are WITHOUT ROWID,
+// so the path does not exist. audit_events keeps its rowid, which is
+// event_order under every alias.
+
+func TestGuardedTablesHaveNoHiddenRowid(t *testing.T) {
+	f := newSessionFixture(t)
+	s1 := f.browser(t, "ses_a")
+	// The review's reproduction.
+	refusedBy(t, tryExec(f.s, "UPDATE OR REPLACE auth_sessions SET rowid = 1 WHERE id = 'ses_b'"), "no such column: rowid")
+	write(t, f.s, func(ctx context.Context, q *query.Queries, _ *storage.Tx) error {
+		return q.CreatePasskey(ctx, query.CreatePasskeyParams{ID: "pk_1", PublicKey: "k", UserID: "bau_p", CredentialID: "cred-1", DeviceType: "singleDevice"})
+	})
+	newRegistrationIn(t, f.s, "reg_1")
+	for _, tc := range []struct{ table, insert, where string }{
+		{"auth_sessions", "(%s, id, expires_at, token_hash, user_id) VALUES (1, 'ses_x', 1, 'hash-x', 'bau_p')", "id = 'ses_b'"},
+		{"passkeys", "(%s, id, public_key, user_id, credential_id, counter, device_type, backed_up) VALUES (1, 'pk_x', 'k', 'bau_p', 'cred-x', 0, 'singleDevice', 0)", "id = 'pk_1'"},
+		{"github_app_registrations", "(%s, state_hash, organization_id, actor_identity_id, account_login, account_type, created_at, expires_at) VALUES (1, 'reg_x', 'org_a', 'idn_person', 'acme-gh', 'user', 0, 1)", "state_hash = 'reg_1'"},
+	} {
+		for _, alias := range []string{"rowid", "oid", "_rowid_"} {
+			refusedBy(t, tryExec(f.s, "INSERT OR REPLACE INTO "+tc.table+" "+fmt.Sprintf(tc.insert, alias)), "has no column named "+alias)
+			refusedBy(t, tryExec(f.s, fmt.Sprintf("UPDATE OR REPLACE %s SET %s = 1 WHERE %s", tc.table, alias, tc.where)), "no such column: "+alias)
+		}
+	}
+	if !f.live(t, s1) {
+		t.Fatal("ses_a's browser credential was revoked")
+	}
+	var n int
+	if err := f.s.Reader().QueryRow("SELECT count(*) FROM auth_sessions").Scan(&n); err != nil || n != 2 {
+		t.Fatalf("sessions: %d, %v", n, err)
+	}
+	if ids := auditIDs(t, f.s); len(ids) != 0 {
+		t.Fatalf("audit events: %v", ids)
+	}
+}
+
+func TestAuditPositionUnderEveryRowidAlias(t *testing.T) {
+	s := openDB(t)
+	write(t, s, func(ctx context.Context, q *query.Queries, _ *storage.Tx) error {
+		for _, id := range []string{"a", "b"} {
+			if _, err := insertEvent(ctx, q, id, "test"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	for _, alias := range []string{"event_order", "rowid", "oid", "_rowid_"} {
+		for _, pos := range []int64{1, 2} { // taken
+			refusedBy(t, tryExec(s, fmt.Sprintf("INSERT OR REPLACE INTO audit_events (%s, id, event_type, decision) VALUES (%d, 'x', 'test', 'info')", alias, pos)),
+				"audit_events_no_replace")
+		}
+		for _, pos := range []int64{4, 100, 0, -1} { // not the next one
+			refusedBy(t, tryExec(s, fmt.Sprintf("INSERT INTO audit_events (%s, id, event_type, decision) VALUES (%d, 'x', 'test', 'info')", alias, pos)),
+				"audit_events_position")
+		}
+		for _, stmt := range []string{"UPDATE audit_events SET %s = 9 WHERE id = 'a'", "UPDATE OR REPLACE audit_events SET %s = 2 WHERE id = 'a'"} {
+			refusedBy(t, tryExec(s, fmt.Sprintf(stmt, alias)), "audit_events_no_update")
+		}
+	}
+	// Naming exactly the next position, under any alias, is the same as
+	// naming none.
+	exec(t, s, "INSERT INTO audit_events (_rowid_, id, event_type, decision) VALUES (3, 'c', 'test', 'info')")
+	if got := auditIDs(t, s); !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Fatalf("events: %v", got)
+	}
+}
+
+// newRegistrationIn adds an unconverted GitHub App registration to a
+// session fixture's database (its organization and person).
+func newRegistrationIn(t *testing.T, s *storage.DB, stateHash string) {
+	t.Helper()
+	write(t, s, func(ctx context.Context, q *query.Queries, _ *storage.Tx) error {
+		_, err := q.CreateGitHubAppRegistration(ctx, query.CreateGitHubAppRegistrationParams{
+			StateHash: stateHash, OrganizationID: "org_a", ActorIdentityID: "idn_person",
+			AccountLogin: "acme-gh", AccountType: "organization", CreatedAt: 0, ExpiresAt: 1,
+		})
+		return err
+	})
+}

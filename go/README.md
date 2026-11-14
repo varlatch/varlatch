@@ -128,7 +128,8 @@ migrations.
   PostgreSQL's guarantees (commit-ordered, append-only audit positions;
   forward-only passkey counters; a session's end revoking its browser
   credentials; GitHub App conversions written once), guarded against
-  `REPLACE`, which would bypass them. Times are integer microseconds since
+  `REPLACE`, which would bypass them (the guarded tables with text keys are
+  `WITHOUT ROWID`, so no hidden rowid escapes the guards). Times are integer microseconds since
   the epoch, UTC; `jsonb` is JSON text; `text[]` is a JSON array of strings
   or nulls (element triggers); `integer` keeps PostgreSQL's 32-bit range
   (`int4_<column>` checks), so values can go back for a reverse migration.

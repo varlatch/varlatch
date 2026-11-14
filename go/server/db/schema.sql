@@ -33,6 +33,11 @@
 --     is an UPDATE. A REPLACE of a parent row needs no guard: the foreign
 --     key cascade from it does fire the children's delete triggers
 --     (auth_users into auth_sessions, tested).
+--   * Hidden rowids: a guarded table whose primary key is not an integer
+--     is WITHOUT ROWID (auth_sessions, passkeys, github_app_registrations),
+--     so no write can collide on a rowid, oid or _rowid_ the guards do not
+--     see. audit_events keeps its rowid: it is event_order, which its
+--     guards check under every alias, and no update of it is allowed.
 --   * CHECK constraints keep their PostgreSQL names. Regular expressions
 --     (~) become GLOB patterns with length checks, since SQLite has no
 --     regular expressions; mapping_test.go compares them on generated input.
@@ -205,7 +210,7 @@ CREATE TABLE auth_sessions (
   ip_address TEXT,
   user_agent TEXT,
   user_id TEXT NOT NULL REFERENCES auth_users (id) ON DELETE CASCADE
-) STRICT;
+) STRICT, WITHOUT ROWID;
 CREATE INDEX auth_sessions_user_id_idx ON auth_sessions (user_id);
 
 -- No REPLACE (see the header): replacing a session would end it without
@@ -218,7 +223,7 @@ BEGIN
 END;
 CREATE TRIGGER auth_sessions_no_replace_update BEFORE UPDATE OF id, token_hash ON auth_sessions
 FOR EACH ROW
-WHEN EXISTS (SELECT 1 FROM auth_sessions WHERE rowid <> OLD.rowid AND (id = NEW.id OR token_hash = NEW.token_hash))
+WHEN EXISTS (SELECT 1 FROM auth_sessions WHERE id <> OLD.id AND (id = NEW.id OR token_hash = NEW.token_hash))
 BEGIN
   SELECT RAISE(ABORT, 'auth_sessions_no_replace: the row collides with an existing one; auth_sessions takes no REPLACE or upsert');
 END;
@@ -312,7 +317,7 @@ CREATE TABLE passkeys (
   transports TEXT,
   created_at INTEGER,
   aaguid TEXT
-) STRICT;
+) STRICT, WITHOUT ROWID;
 CREATE INDEX passkeys_user_id_idx ON passkeys (user_id);
 CREATE UNIQUE INDEX passkeys_credential_id_unique ON passkeys (credential_id);
 
@@ -326,7 +331,7 @@ BEGIN
 END;
 CREATE TRIGGER passkeys_no_replace_update BEFORE UPDATE OF id, credential_id ON passkeys
 FOR EACH ROW
-WHEN EXISTS (SELECT 1 FROM passkeys WHERE rowid <> OLD.rowid AND (id = NEW.id OR credential_id = NEW.credential_id))
+WHEN EXISTS (SELECT 1 FROM passkeys WHERE id <> OLD.id AND (id = NEW.id OR credential_id = NEW.credential_id))
 BEGIN
   SELECT RAISE(ABORT, 'passkeys_no_replace: the row collides with an existing one; passkeys takes no REPLACE or upsert');
 END;
@@ -1313,7 +1318,7 @@ CREATE TABLE github_app_registrations (
     CHECK ((ended_at IS NULL) = (end_reason IS NULL) AND (ended_at IS NULL OR converted_at IS NOT NULL)),
   CONSTRAINT github_app_registrations_key_while_pending
     CHECK ((pending_key_envelope IS NOT NULL) = (converted_at IS NOT NULL AND ended_at IS NULL))
-) STRICT;
+) STRICT, WITHOUT ROWID;
 CREATE INDEX github_app_registrations_expiry ON github_app_registrations (expires_at);
 CREATE INDEX github_app_registrations_pending_expiry ON github_app_registrations (pending_expires_at)
   WHERE converted_at IS NOT NULL AND ended_at IS NULL;
@@ -1328,7 +1333,7 @@ BEGIN
 END;
 CREATE TRIGGER github_app_registrations_no_replace_update BEFORE UPDATE OF state_hash, id ON github_app_registrations
 FOR EACH ROW
-WHEN EXISTS (SELECT 1 FROM github_app_registrations WHERE rowid <> OLD.rowid AND (state_hash = NEW.state_hash OR id = NEW.id))
+WHEN EXISTS (SELECT 1 FROM github_app_registrations WHERE state_hash <> OLD.state_hash AND (state_hash = NEW.state_hash OR id = NEW.id))
 BEGIN
   SELECT RAISE(ABORT, 'github_app_registrations_no_replace: the row collides with an existing one; github_app_registrations takes no REPLACE or upsert');
 END;

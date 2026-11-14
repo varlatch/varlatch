@@ -167,6 +167,8 @@ type sqliteSchema struct {
 
 type sqliteTable struct {
 	sql     string
+	strict  bool
+	noRowid bool // WITHOUT ROWID
 	columns map[string]sqliteColumn
 	pk      []string
 	indexes map[string]sqliteIndex
@@ -221,6 +223,18 @@ func readSQLite(t *testing.T, db *sql.DB) *sqliteSchema {
 			s.triggerSQL[name] = text
 		case "index":
 			idxSQL[name] = text
+		}
+	}
+	r.Close()
+	r = rows("SELECT name, strict, wr FROM pragma_table_list WHERE schema = 'main' AND type = 'table'")
+	for r.Next() {
+		var name string
+		var strict, wr bool
+		if err := r.Scan(&name, &strict, &wr); err != nil {
+			t.Fatal(err)
+		}
+		if tb := s.tables[name]; tb != nil {
+			tb.strict, tb.noRowid = strict, wr
 		}
 	}
 	r.Close()
@@ -434,7 +448,7 @@ func TestMapping(t *testing.T) {
 			t.Errorf("table %s: maps to %s, which schema.sql does not create", pt.Name, tm.SQLite)
 			continue
 		}
-		if !strings.HasSuffix(strings.TrimSpace(lt.sql), "STRICT") {
+		if !lt.strict {
 			t.Errorf("table %s is not STRICT", tm.SQLite)
 		}
 		if usedTables[tm.SQLite] {
@@ -774,6 +788,19 @@ func TestMapping(t *testing.T) {
 	for name := range m.Added.Tables {
 		if lite.tables[name] == nil {
 			t.Errorf("table %s: listed as added, but schema.sql has no such table", name)
+		}
+	}
+	// A table guarded against REPLACE has no hidden rowid to collide on:
+	// either its primary key is the rowid (one INTEGER column) or it is
+	// WITHOUT ROWID.
+	for name, tbl := range lite.triggers {
+		if !strings.HasSuffix(name, "_no_replace_insert") {
+			continue
+		}
+		lt := lite.tables[tbl]
+		rowidKey := len(lt.pk) == 1 && lt.columns[lt.pk[0]].typ == "INTEGER"
+		if !rowidKey && !lt.noRowid {
+			t.Errorf("table %s: guarded against REPLACE, with a hidden rowid its guards do not see; make it WITHOUT ROWID", tbl)
 		}
 	}
 	for name := range lite.triggers {
