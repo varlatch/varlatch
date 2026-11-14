@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// G7 runs varlatchd as a process and fills a small filesystem (statfs):
+// Linux and macOS only; varlatchd itself only ships for Linux.
+
+//go:build !windows
+
 package daemon
 
 import (
@@ -242,7 +247,7 @@ func smallFS(t *testing.T) string {
 	if err := syscall.Statfs(dir, &st); err != nil {
 		t.Fatal(err)
 	}
-	if size := int64(st.Blocks) * st.Bsize; size > 256<<20 {
+	if size := int64(st.Blocks) * int64(st.Bsize); size > 256<<20 {
 		t.Fatalf("%s is %d MiB: the disk tests fill it, so it must be a small filesystem of its own", dir, size>>20)
 	}
 	sub, err := os.MkdirTemp(dir, "g7-")
