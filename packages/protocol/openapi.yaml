@@ -39,6 +39,10 @@ paths:
               schema: { $ref: "#/components/schemas/InstallationBackups" }
         "403":
           description: Installation Admin authority required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        default: { $ref: "#/components/responses/Error" }
 
   /installation/listeners:
     get:
@@ -59,6 +63,10 @@ paths:
               schema: { $ref: "#/components/schemas/InstallationListeners" }
         "403":
           description: Installation Admin authority required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        default: { $ref: "#/components/responses/Error" }
 
   /installation/release:
     get:
@@ -77,6 +85,10 @@ paths:
               schema: { $ref: "#/components/schemas/InstallationRelease" }
         "403":
           description: Installation Admin authority required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        default: { $ref: "#/components/responses/Error" }
 
   /installation/outbound:
     get:
@@ -102,6 +114,10 @@ paths:
               schema: { $ref: "#/components/schemas/InstallationOutbound" }
         "403":
           description: Installation Admin authority required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        default: { $ref: "#/components/responses/Error" }
 
   /meta:
     get:
@@ -115,6 +131,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Meta" }
+        default: { $ref: "#/components/responses/Error" }
 
   /tailnet/endpoint:
     get:
@@ -133,6 +150,10 @@ paths:
               schema: { $ref: "#/components/schemas/TailnetEndpoint" }
         "401":
           description: No valid bearer credential
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        default: { $ref: "#/components/responses/Error" }
 
   /tailnet/context:
     get:
@@ -154,8 +175,18 @@ paths:
               schema: { $ref: "#/components/schemas/TailnetDevice" }
         "401":
           description: No valid bearer credential
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "404":
-          description: Not the tailnet browser endpoint
+          description: >
+            Not the tailnet browser endpoint: the route does not exist on
+            this listener, so the answer is the router's plain-text
+            "404 Not Found", not the error envelope.
+          content:
+            text/plain:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Error" }
 
   /organizations:
     get:
@@ -245,9 +276,10 @@ paths:
               properties:
                 name:
                   type: string
-                  minLength: 1
-                  maxLength: 200
-                  description: 1 to 200 characters once surrounding whitespace is trimmed.
+                  description: >
+                    1 to 200 characters once surrounding whitespace is
+                    trimmed; the limits apply to the trimmed name, so they
+                    are not schema bounds.
       responses:
         "200":
           description: Renamed organization
@@ -5529,7 +5561,8 @@ components:
 
     Identity:
       type: object
-      required: [id, name, kind, createdAt]
+      description: An identity in an Organization's identity listing.
+      required: [id, name, kind, disabled, lastSeenAt, orgRole, removedAt, email, image]
       properties:
         id: { type: string }
         name: { type: string }
@@ -5537,7 +5570,6 @@ components:
           type: string
           enum: [human, service, workload, ci, broker, agent]
         disabled: { type: boolean }
-        createdAt: { type: string, format: date-time }
         lastSeenAt:
           type: [string, "null"]
           format: date-time
@@ -5986,20 +6018,30 @@ components:
             allowed.
 
     CreatedIdentity:
-      allOf:
-        - $ref: "#/components/schemas/Identity"
-        - type: object
-          properties:
-            credential:
-              type: [string, "null"]
-              description: Shown exactly once at creation; stored hashed; never retrievable.
-            credentialExpiresAt:
-              type: [string, "null"]
-              format: date-time
-              description: >
-                Expiry of the issued credential: from credentialTtlSeconds,
-                or from the Organization's default lifetime while it
-                enforces credential-lifetime; null for no expiry.
+      type: object
+      description: >
+        The new machine identity and its first credential. Not an Identity:
+        it carries no createdAt, lastSeenAt or member fields.
+      required: [id, name, kind, disabled, credential, credentialExpiresAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind:
+          type: string
+          enum: [service, workload, ci, broker, agent]
+        disabled:
+          type: boolean
+          const: false
+        credential:
+          type: [string, "null"]
+          description: Shown exactly once at creation; stored hashed; never retrievable.
+        credentialExpiresAt:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            Expiry of the issued credential: from credentialTtlSeconds,
+            or from the Organization's default lifetime while it
+            enforces credential-lifetime; null for no expiry.
 
     InvitationStatus:
       type: string
@@ -7815,14 +7857,14 @@ components:
             (capability audit.attribution).
         organizationId: { type: [string, "null"] }
         action: { type: [string, "null"] }
-        resource: { type: object }
+        resource: { type: [object, "null"] }
         decision:
           type: string
           enum: [allow, deny, info]
-        authorization: { type: object }
-        tailnetContext: { type: object }
+        authorization: { type: [object, "null"] }
+        tailnetContext: { type: [object, "null"] }
         listener:
           type: [string, "null"]
           enum: [ordinary, tailnet, null]
         requestId: { type: [string, "null"] }
-        metadata: { type: object }
+        metadata: { type: [object, "null"] }

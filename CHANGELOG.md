@@ -5,6 +5,33 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased
+
+### API
+
+- **The published OpenAPI document now matches what the server returns.**
+  The test suite checks the `/v1` responses it receives against
+  `openapi.yaml` (status, content type and JSON body, errors included),
+  and the bodies of requests the server accepted; query parameters and
+  headers are not checked, nor is `POST /v1/tokens/convex`, which is
+  outside the contract. The document was corrected where it differed. The
+  server itself did not change, so these are corrections, not API
+  changes, though a client generated from the document may notice them:
+  - An identity in the identity listing carries no `createdAt`. It never
+    did.
+  - A newly created identity (`POST /v1/organizations/{org}/identities`)
+    is no longer described as a full identity. It carries `id`, `name`,
+    `kind`, `disabled`, `credential` and `credentialExpiresAt` only: no
+    `createdAt`, `lastSeenAt`, `email`, `image`, `orgRole` or
+    `removedAt`. Its `kind` is one of the machine kinds (never `human`),
+    and `disabled` is always `false`.
+  - An audit event's `resource`, `authorization`, `tailnetContext` and
+    `metadata` may be `null`.
+  - Every operation now documents its error responses, including the
+    installation endpoints' 403 and the tailnet endpoints' 401.
+  - An Organization rename's `name` is limited to 200 characters after
+    trimming, which the schema no longer states as a raw length.
+
 ## 0.22.0 (2026-11-13)
 
 ### Sign-in

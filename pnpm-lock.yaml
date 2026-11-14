@@ -512,6 +512,12 @@ importers:
       '@varlatch/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: 3.0.1
+        version: 3.0.1(ajv@8.20.0)
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -524,6 +530,9 @@ importers:
       vitest:
         specifier: 4.1.12
         version: 4.1.12(@types/node@26.5.0)(vite@7.3.7(@types/node@26.5.0)(jiti@2.7.0)(lightningcss@1.30.1)(yaml@2.9.1))
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
 packages:
 
