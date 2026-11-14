@@ -12,8 +12,10 @@
 import { spawnSync } from "node:child_process";
 import { cliPath, reporter, targetOp } from "../suite-kit.mjs";
 
-const { check, error, finish } = reporter();
+const { check, error, finish, supports } = reporter();
 try {
+  // One feature group: every check here reads `varlatch doctor`'s report.
+  if (!supports("doctor")) finish();
   // The host CLI resolves the project the way plain `docker compose` does
   // in --dir; point it at the disposable project through Compose's own
   // environment variables.

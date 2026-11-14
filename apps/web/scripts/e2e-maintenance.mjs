@@ -32,7 +32,7 @@ const base = new URL(enrollUrl).origin;
 const cliPath = cliUnderTest();
 const LEASE_MS = 20_000;
 
-const { check, error, finish } = reporter();
+const { check, error, finish, supports } = reporter();
 const since = (t) => `${Math.round((Date.now() - t) / 100) / 10} s`;
 // The target's maintenance operation: the admission a restore uses, for a lease.
 const gate = () => {
@@ -85,16 +85,19 @@ try {
   await fresh.evaluate(() => { window.__varlatchNoReload = true; });
 
   // The CLI waits, says so once on stderr, and succeeds after the window.
-  const run = await new Promise((resolve) => {
-    const child = spawn("node", [cliPath, "env", "list"], { cwd: repo, env: cliEnv });
-    let stdout = "", stderr = "";
-    child.stdout.on("data", (d) => { stdout += d; });
-    child.stderr.on("data", (d) => { stderr += d; });
-    child.on("exit", (code) => resolve({ code, stdout, stderr }));
-  });
-  const notices = (run.stderr.match(/in maintenance/g) ?? []).length;
-  check("maintenance.cli-waits-out-maintenance-succeeds", "the CLI waits out maintenance and succeeds", run.code === 0 && /development/.test(run.stdout), `exit ${run.code}, ${since(opened)}`);
-  check("maintenance.saying-once-stderr-only", "…saying so once, on stderr only", notices === 1 && !/maintenance/.test(run.stdout), run.stderr.trim().slice(0, 160));
+  // Its own feature group: a CLI that predates waiting skips only this.
+  if (supports("maintenance-wait")) {
+    const run = await new Promise((resolve) => {
+      const child = spawn("node", [cliPath, "env", "list"], { cwd: repo, env: cliEnv });
+      let stdout = "", stderr = "";
+      child.stdout.on("data", (d) => { stdout += d; });
+      child.stderr.on("data", (d) => { stderr += d; });
+      child.on("exit", (code) => resolve({ code, stdout, stderr }));
+    });
+    const notices = (run.stderr.match(/in maintenance/g) ?? []).length;
+    check("maintenance.cli-waits-out-maintenance-succeeds", "the CLI waits out maintenance and succeeds", run.code === 0 && /development/.test(run.stdout), `exit ${run.code}, ${since(opened)}`);
+    check("maintenance.saying-once-stderr-only", "…saying so once, on stderr only", notices === 1 && !/maintenance/.test(run.stdout), run.stderr.trim().slice(0, 160));
+  }
 
   // ---- The window has closed: both pages continue without a reload.
   await fresh.waitForSelector('[data-testid="project-row"]', { timeout: LEASE_MS + 30000 });

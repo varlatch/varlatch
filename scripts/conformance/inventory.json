@@ -1,6 +1,144 @@
 {
   "schema": 1,
   "description": "Every check a conformance run must account for (scripts/conformance/README.md). Check IDs are stable: rename one only together with every record that names it.",
+  "features": {
+    "login-token": {
+      "title": "varlatch login --token: sign in with an existing credential",
+      "core": true,
+      "changelog": {
+        "release": "0.14.0",
+        "quote": "\"not authenticated\" message now suggests browser sign-in or `--token-stdin` instead of `--token <credential>`."
+      }
+    },
+    "whoami": {
+      "title": "varlatch whoami",
+      "core": true,
+      "changelog": {
+        "release": "0.17.0",
+        "quote": "CLI: `varlatch whoami [--server <url>] [--json]` prints the identity, organization, credential, listener, and device for the credential the CLI would use"
+      }
+    },
+    "env-list": {
+      "title": "varlatch env list",
+      "core": true,
+      "changelog": {
+        "release": "0.1.0",
+        "quote": "The `/v1` API, the SDK, and the CLI, including sign-in through the browser."
+      }
+    },
+    "run": {
+      "title": "varlatch run: a default run",
+      "core": true,
+      "changelog": {
+        "release": "0.1.0",
+        "quote": "The `/v1` API, the SDK, and the CLI, including sign-in through the browser."
+      }
+    },
+    "run-export-context": {
+      "title": "varlatch run --export-context",
+      "core": true,
+      "changelog": {
+        "release": "0.11.0",
+        "quote": "`varlatch run --export-context` gives the command `VARLATCH_RUN_CONTEXT` from a default run, with `mode: \"exported\"`"
+      }
+    },
+    "types-typescript": {
+      "title": "varlatch types: the TypeScript module and its Typed Accessor",
+      "core": true,
+      "changelog": {
+        "release": "0.11.0",
+        "quote": "`varlatch types --out <file.ts>` generates one TypeScript module from the active Contract Revision"
+      }
+    },
+    "types-python": {
+      "title": "varlatch types: the Python module and its Typed Accessor",
+      "core": true,
+      "changelog": {
+        "release": "0.12.0",
+        "quote": "`varlatch types --out app/varlatch_config.py` generates typed configuration for Python"
+      }
+    },
+    "login-browser": {
+      "title": "varlatch login: sign-in through the browser",
+      "core": true,
+      "changelog": {
+        "release": "0.1.0",
+        "quote": "The `/v1` API, the SDK, and the CLI, including sign-in through the browser."
+      }
+    },
+    "login-device": {
+      "title": "varlatch login --start and --wait: device sign-in",
+      "core": true,
+      "changelog": {
+        "release": "0.14.0",
+        "quote": "**Device sign-in.** `varlatch login --server <url> --start` prints an address and a short code and exits."
+      }
+    },
+    "run-redact": {
+      "title": "varlatch run --redact",
+      "introducedIn": "0.11.0",
+      "changelog": {
+        "release": "0.11.0",
+        "quote": "`varlatch run --redact` masks the Secrets delivered to the command in its stdout and stderr"
+      }
+    },
+    "scan": {
+      "title": "varlatch scan",
+      "introducedIn": "0.11.0",
+      "changelog": {
+        "release": "0.11.0",
+        "quote": "`varlatch scan --staged` checks what the next commit records, and `varlatch scan <path>...` checks build output"
+      }
+    },
+    "run-strict": {
+      "title": "varlatch run --strict",
+      "introducedIn": "0.11.0",
+      "changelog": {
+        "release": "0.11.0",
+        "quote": "`varlatch run --strict` starts the command only if the environment it would receive satisfies the active Contract."
+      }
+    },
+    "run-strict-agent-safe": {
+      "title": "varlatch run --strict --agent-safe",
+      "introducedIn": "0.11.0",
+      "changelog": {
+        "release": "0.11.0",
+        "quote": "`varlatch run --strict --agent-safe` applies the same checks while the Agent receives Placeholders for Secrets."
+      }
+    },
+    "agent-safe-run": {
+      "title": "varlatch run --agent-safe with --target and --omit, and --agent-metadata",
+      "introducedIn": "0.11.0",
+      "changelog": {
+        "release": "0.11.0",
+        "quote": "`varlatch run --agent-safe` takes `--target NAME=kind:location` (repeatable) and `--omit NAME`. Every stored Secret needs one or the other."
+      }
+    },
+    "maintenance-wait": {
+      "title": "the CLI waits out a maintenance window",
+      "introducedIn": "0.10.0",
+      "changelog": {
+        "release": "0.10.0",
+        "quote": "API clients, the CLI, and the dashboard wait out maintenance windows and say so, instead of failing."
+      }
+    },
+    "doctor": {
+      "title": "varlatch doctor",
+      "introducedIn": "0.10.0",
+      "changelog": {
+        "release": "0.10.0",
+        "quote": "`varlatch doctor` checks an installation's health without changing anything."
+      }
+    },
+    "mcp": {
+      "title": "varlatch mcp",
+      "introducedIn": "0.14.0",
+      "changelog": {
+        "release": "0.14.0",
+        "quote": "The MCP server ships inside the CLI as `varlatch mcp`, in every release and under the CLI's version."
+      }
+    }
+  },
   "suites": {
     "reconcile": {
       "title": "Application Plane reconciliation (ADR-0035 D3/D4; no admin key anywhere)",
@@ -12,6 +150,10 @@
     "passkey": {
       "title": "passkey bootstrap (ADR-0006/0008)",
       "script": "services/varlatchd/scripts/e2e-passkey.mjs"
+    },
+    "cli-core": {
+      "title": "the CLI's compatibility core: token sign-in, whoami, env list",
+      "script": "scripts/conformance/suites/cli-core.mjs"
     },
     "dashboard": {
       "title": "dashboard (production container)",
@@ -83,6 +225,14 @@
     "strict-run": {
       "title": "strict startup (varlatch run --strict)",
       "script": "services/varlatchd/scripts/e2e-strict-run.mjs"
+    },
+    "mcp": {
+      "title": "varlatch mcp over stdio",
+      "script": "scripts/conformance/suites/mcp.mjs"
+    },
+    "sdk": {
+      "title": "packages/sdk smoke (the pinned release's sdk for --cli <version>)",
+      "script": "scripts/conformance/suites/sdk.mjs"
     },
     "doctor": {
       "title": "read-only doctor of the Compose installation (ADR-0035 D8)",
@@ -179,6 +329,36 @@
       "suite": "passkey",
       "kind": "conformance",
       "title": "sign-in without an authenticator fails"
+    },
+    "cli-core.login-token-stores-credential": {
+      "suite": "cli-core",
+      "kind": "conformance",
+      "feature": "login-token",
+      "title": "login --token signs in and says so, without printing the credential"
+    },
+    "cli-core.whoami-names-signed-in-identity": {
+      "suite": "cli-core",
+      "kind": "conformance",
+      "feature": "whoami",
+      "title": "whoami --json names the identity and credential the server sees for the stored credential"
+    },
+    "cli-core.whoami-human-format": {
+      "suite": "cli-core",
+      "kind": "conformance",
+      "feature": "whoami",
+      "title": "whoami prints the identity and the server, one labeled line each"
+    },
+    "cli-core.env-list-frozen-format": {
+      "suite": "cli-core",
+      "kind": "conformance",
+      "feature": "env-list",
+      "title": "env list prints each environment as `<name>  (<tier>, <kind>[, selected])`"
+    },
+    "cli-core.env-list-json": {
+      "suite": "cli-core",
+      "kind": "conformance",
+      "feature": "env-list",
+      "title": "env list --json lists the same environments with tier and kind"
     },
     "dashboard.enrollment-dashboard-origin": {
       "suite": "dashboard",
@@ -1259,6 +1439,7 @@
     "realtime.cli-env-list-works-convex-down": {
       "suite": "realtime",
       "kind": "ts-stack",
+      "feature": "env-list",
       "title": "CLI env list works while Convex is down",
       "replacement": {
         "none": "Convex is not part of the Go server (ADR-0059): writes through the API, the dashboard and the CLI are conformance checks in values, onboarding and client-runtime."
@@ -1267,6 +1448,7 @@
     "realtime.cli-run-injects-current-value-convex": {
       "suite": "realtime",
       "kind": "ts-stack",
+      "feature": "run",
       "title": "CLI run injects the current value while Convex is down",
       "replacement": {
         "none": "Convex is not part of the Go server (ADR-0059): writes through the API, the dashboard and the CLI are conformance checks in values, onboarding and client-runtime."
@@ -1310,146 +1492,175 @@
     "broker.run-untargeted-secret-refuses-start-naming": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "a run with an untargeted Secret refuses to start, naming the item and the flags"
     },
     "broker.refused-run-issued-no-capability": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "the refused run issued no Capability"
     },
     "broker.agent-env-contains-no-stored-secret": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "agent env contains no stored Secret plaintext"
     },
     "broker.agent-holds-no-reusable-varlatch-credential": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "agent holds no reusable Varlatch credential"
     },
     "broker.secret-injected-opaque-placeholder": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "Secret injected as an opaque placeholder"
     },
     "broker.non-sensitive-value-injected-plaintext": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "non-sensitive value injected as plaintext"
     },
     "broker.omitted-secret-shell-stale-copies-never": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "an omitted Secret and the shell's stale copies never reach the Agent"
     },
     "broker.run-names-inherited-secrets-removed": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "the run names the inherited Secrets it removed"
     },
     "broker.node-fetch-pointed-broker-node-use": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "Node's fetch is pointed at the Broker (NODE_USE_ENV_PROXY=1)"
     },
     "broker.reflected-credential-comes-back-placeholder-body": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "a reflected credential comes back as the Placeholder (body and header)"
     },
     "broker.gzip-coded-reflection-decoded-scrubbed": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "a gzip-coded reflection is decoded and scrubbed"
     },
     "broker.no-response-agent-carries-secret": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "no response to the Agent carries the Secret"
     },
     "broker.destination-received-real-credential-asked-echo": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "the destination still received the real credential when asked to echo it"
     },
     "broker.run-reports-what-scrubbed-item-count": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "the run reports what it scrubbed, by item and count"
     },
     "broker.placeholder-outside-targets-blocks-diagnostic-naming": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "a Placeholder outside its targets blocks with a diagnostic naming item and location"
     },
     "broker.blocked-request-never-reached-destination": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "the blocked request never reached the destination"
     },
     "broker.stray-placeholder-untargeted-surface-forwarded": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "a stray Placeholder in an untargeted surface is forwarded unchanged"
     },
     "broker.allowed-inspectable-request-succeeded-through-broker": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "allowed inspectable request succeeded through the broker"
     },
     "broker.proxy-requires-per-run-token": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "proxy requires the per-run token"
     },
     "broker.redirect-relayed-agent-not-followed": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "redirect relayed to the agent, not followed"
     },
     "broker.connect-secret-using-destination-refused-diagnostic": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "CONNECT to secret-using destination refused with diagnostic"
     },
     "broker.upstream-received-real-credential-over-tls": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "upstream received the real credential over TLS"
     },
     "broker.redirect-request-itself-carried-real-credential": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "redirect request itself carried the real credential to the allowed host"
     },
     "broker.unauthorized-host-received-only-placeholders-never": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "unauthorized host received only placeholders, never the secret"
     },
     "broker.metadata-mode-injects-short-lived-agent-run-bearer": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "metadata mode injects a short-lived agent-run bearer"
     },
     "broker.agent-reads-configuration-metadata-directly": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "agent reads configuration metadata directly"
     },
     "broker.metadata-response-carries-no-secret-plaintext": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "metadata response carries no Secret plaintext"
     },
     "broker.agent-run-credential-read-only-http-layer": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "agent-run credential is read-only at the HTTP layer"
     },
     "broker.agent-run-credential-revoked-run-exits": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "agent-run credential is revoked when the run exits"
     },
     "broker.issuance-without-targets-refused-naming-minimum": {
@@ -1525,6 +1736,7 @@
     "broker.issuance-audit-records-targets-exercise-audit": {
       "suite": "broker",
       "kind": "conformance",
+      "feature": "agent-safe-run",
       "title": "issuance audit records the targets, exercise audit the placements"
     },
     "broker.bound-dependency-audited-reference-expansion-before": {
@@ -1564,11 +1776,13 @@
     "maintenance.cli-waits-out-maintenance-succeeds": {
       "suite": "maintenance",
       "kind": "conformance",
+      "feature": "maintenance-wait",
       "title": "the CLI waits out maintenance and succeeds"
     },
     "maintenance.saying-once-stderr-only": {
       "suite": "maintenance",
       "kind": "conformance",
+      "feature": "maintenance-wait",
       "title": "…saying so once, on stderr only"
     },
     "maintenance.page-opened-during-maintenance-continues-app": {
@@ -1594,131 +1808,157 @@
     "cli-login.recovery-passkey-enrolled": {
       "suite": "cli-login",
       "kind": "conformance",
+      "feature": "login-browser",
       "title": "recovery passkey enrolled"
     },
     "cli-login.cli-printed-handoff-url": {
       "suite": "cli-login",
       "kind": "conformance",
+      "feature": "login-browser",
       "title": "CLI printed handoff URL"
     },
     "cli-login.browser-delivered-credential-cli-callback": {
       "suite": "cli-login",
       "kind": "conformance",
+      "feature": "login-browser",
       "title": "browser delivered the credential to the CLI callback"
     },
     "cli-login.login-completed": {
       "suite": "cli-login",
       "kind": "conformance",
+      "feature": "login-browser",
       "title": "varlatch login completed"
     },
     "device.passkey-enrolled": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "passkey enrolled"
     },
     "device.login-start-exits-0-address-code": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "login --start exits 0 with the address and code"
     },
     "device.device-code-only-pending-file": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "the device code is only in the pending file"
     },
     "device.pending-file-0600-0700-directory": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "the pending file is 0600 in a 0700 directory"
     },
     "device.login-wait-before-approval-exits-75": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "login --wait before approval exits 75 and keeps the entry"
     },
     "device.get-device-served-cache-control-no-store": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "GET /device is served with Cache-Control: no-store"
     },
     "device.code-never-prefilled-url": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "the code is never prefilled from the URL"
     },
     "device.wrong-code-refused": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "a wrong code is refused"
     },
     "device.confirmation-says-cli-signs-you-how": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "the confirmation says the CLI signs in as you, for how long"
     },
     "device.confirmation-names-requester-address-user-agent": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "the confirmation names the requester's address and user agent"
     },
     "device.approval-fresh-passkey-assertion": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "approval with a fresh passkey assertion"
     },
     "device.login-wait-exits-0-stores-credential": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "login --wait exits 0 and stores the credential"
     },
     "device.credential-never-appears-cli-output": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "the credential never appears in the CLI's output"
     },
     "device.pending-entry-removed": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "the pending entry is removed"
     },
     "device.stored-credential-works": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "the stored credential works"
     },
     "device.second-wait-finds-nothing-collect-64": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "a second --wait finds nothing to collect (64)"
     },
     "device.assisted-login-no-method-starts-device": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "assisted login with no method starts a device sign-in"
     },
     "device.denial-recorded": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "denial recorded"
     },
     "device.login-wait-after-denial-exits-77": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "login --wait after a denial exits 77 and keeps the existing credential"
     },
     "device.no-passkey-no-approval": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "no passkey, no approval"
     },
     "device.sign-in-pending-75": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "the sign-in is still pending (75)"
     },
     "device.no-content-security-policy-violations": {
       "suite": "device",
       "kind": "conformance",
+      "feature": "login-device",
       "title": "no Content-Security-Policy violations"
     },
     "proxy-probe.forged-addresses-meet-pending-cap": {
@@ -1734,246 +1974,319 @@
     "client-runtime.redact-run-exits-child-status": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-redact",
       "title": "--redact: the run exits with the child's status"
     },
     "client-runtime.redact-secret-never-appears-stdout-stderr": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-redact",
       "title": "--redact: the Secret never appears on stdout or stderr"
     },
     "client-runtime.redact-stdout-keeps-lines-order-secret": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-redact",
       "title": "--redact: stdout keeps its lines and order, with each Secret replaced by its marker"
     },
     "client-runtime.redact-stderr-masked-too-including-value": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-redact",
       "title": "--redact: stderr is masked too, including a value split across writes"
     },
     "client-runtime.redact-non-sensitive-value-passes-through": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-redact",
       "title": "--redact: a non-sensitive value passes through"
     },
     "client-runtime.redact-secret-shorter-than-8-bytes": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-redact",
       "title": "--redact: a Secret shorter than 8 bytes is named, never shown, as passing through"
     },
     "client-runtime.without-redact-same-run-relays-output": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-redact",
       "title": "without --redact the same run relays the output unchanged"
     },
     "client-runtime.export-context-default-run-starts-child": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: a default run starts the child"
     },
     "client-runtime.export-context-delivered-secret-replaces": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: a delivered Secret replaces the parent's copy"
     },
     "client-runtime.export-context-item-not-stored-inherited": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: an item that is not stored is inherited from the parent"
     },
     "client-runtime.export-context-no-default-applied-nothing": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: no default is applied and nothing is invented"
     },
     "client-runtime.export-context-context-names-active-revision": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: the context names the active revision, its hash, semantics, the environment, and each item's status"
     },
     "client-runtime.export-context-context-holds-no-value": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: the context holds no value"
     },
     "client-runtime.export-context-identity-without-secret-reveal": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: an identity without secret.reveal still starts the child"
     },
     "client-runtime.export-context-withheld-secret-left-parent": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: a withheld Secret is left to the parent's copy"
     },
     "client-runtime.export-context-withheld-secrets-recorded": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: withheld Secrets are recorded as withheld, inherited or absent"
     },
     "client-runtime.export-context-withheld-run-context-holds-no": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: the withheld run's context holds no value"
     },
     "client-runtime.export-context-without-contract-read-starts": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context without contract.read starts nothing and says why"
     },
     "client-runtime.export-context-run-cannot-export-context": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run-export-context",
       "title": "--export-context: a run that cannot export its context discloses no Secret"
     },
     "client-runtime.same-identity-default-run-without-flag": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run",
       "title": "the same identity's default run, without the flag, gets no context"
     },
     "client-runtime.types-module-generated-active-revision": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the module is generated from the active revision"
     },
     "client-runtime.types-header-records-active-revision-content": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the header records the active revision and its content hash"
     },
     "client-runtime.types-module-holds-no-value": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the module holds no value"
     },
     "client-runtime.types-regenerating-unchanged-revision-leaves": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: regenerating an unchanged revision leaves the file untouched"
     },
     "client-runtime.types-check-passes-module-matches-active": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types --check passes while the module matches the active revision"
     },
     "client-runtime.types-module-application-using-compile-under": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the module and an application using it compile under strict settings"
     },
     "client-runtime.types-application-starts-under-export-context": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the application starts under --export-context"
     },
     "client-runtime.types-accessor-returns-typed-values-number": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the accessor returns typed values (number, boolean, enum)"
     },
     "client-runtime.types-accessor-reads-exported-context-same": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the accessor reads the exported context of the same revision, without warnings"
     },
     "client-runtime.types-application-output-holds-no-secret": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the application's output holds no Secret"
+    },
+    "client-runtime.types-python-module-generated-active-revision": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "feature": "types-python",
+      "title": "types (Python): the module is generated from the active revision and holds no value"
+    },
+    "client-runtime.types-python-check-passes-module-matches": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "feature": "types-python",
+      "title": "types --check (Python) passes while the module matches the active revision"
+    },
+    "client-runtime.types-python-reads-exported-context": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "feature": "types-python",
+      "title": "types (Python): the module reads the exported context of the same revision, with typed values and no warnings"
+    },
+    "client-runtime.types-python-output-holds-no-secret": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "feature": "types-python",
+      "title": "types (Python): the application's output holds no Secret"
     },
     "client-runtime.types-check-fails-once-changed-contract": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types --check fails once a changed Contract is active"
     },
     "client-runtime.types-old-module-warns-types-stale": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the old module warns that its types are stale for this run"
     },
     "client-runtime.types-regenerating-makes-check-pass-again": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: regenerating makes --check pass again"
     },
     "client-runtime.types-regenerated-module-compiles": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the regenerated module compiles"
     },
     "client-runtime.types-regenerated-module-reads-run-without": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the regenerated module reads the run without warnings"
     },
     "client-runtime.types-required-secret-withheld-server-one": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: a required Secret withheld by the server is one ConfigError issue"
     },
     "client-runtime.types-invalid-values-throw-one-configerror": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: invalid values throw one ConfigError listing every item"
     },
     "client-runtime.types-error-names-items-reasons-never": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "types-typescript",
       "title": "types: the error names items and reasons, never a value"
     },
     "client-runtime.scan-nothing-staged-scan-reads-nothing": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan: with nothing staged, the scan reads nothing and exits 0"
     },
     "client-runtime.scan-nothing-read-nothing-disclosed": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan: with nothing to read, nothing is disclosed"
     },
     "client-runtime.scan-staged-staged-secret-finding-scan": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan --staged: a staged Secret is a finding and the scan exits non-zero"
     },
     "client-runtime.scan-staged-finding-names-path-line": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan --staged: each finding names the path, line, column, item, and stored version"
     },
     "client-runtime.scan-staged-output-never-shows-value": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan --staged: the output never shows the value"
     },
     "client-runtime.scan-staged-secret-shorter-than-8": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan --staged: a Secret shorter than 8 bytes is named as not checked"
     },
     "client-runtime.scan-staged-json-report-matches-server": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan --staged --json: the report matches the server's stored version"
     },
     "client-runtime.scan-staged-json-report-never-shows": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan --staged --json: the report never shows the value"
     },
     "client-runtime.scan-path-clean-path-exits-0": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan <path>: a clean path exits 0 with no findings"
     },
     "client-runtime.scan-scan-read-files-one-audited": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "scan",
       "title": "scan: each scan that read files is one audited disclosure with purpose \"scan\""
     },
     "client-runtime.run-disclosures-audited-without-purpose": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "feature": "run",
       "title": "run disclosures are audited without a purpose"
     },
     "client-runtime.audit-export-holds-no-value": {
@@ -1989,176 +2302,266 @@
     "strict-run.valid-configuration-starts-child": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "a valid configuration starts the child"
     },
     "strict-run.child-receives-delivered-secret": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "the child receives the delivered Secret"
     },
     "strict-run.contract-default-fills-item-not-stored": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "a Contract default fills an item that is not stored"
     },
     "strict-run.run-context-replaces-inherited-one": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "the run context replaces an inherited one"
     },
     "strict-run.run-context-records-server-status-delivery": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "the run context records server status and delivery separately"
     },
     "strict-run.run-context-holds-names-only": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "the run context holds names only"
     },
     "strict-run.missing-required-item-stops-startup-exit": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "a missing required item stops startup with exit 78"
     },
     "strict-run.violation-named": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "the violation is named"
     },
     "strict-run.no-value-printed": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "no value is printed"
     },
     "strict-run.parent-only-value-violation-without-allowance": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "a parent-only value is a violation without an allowance"
     },
     "strict-run.allow-inherited-accepts-parent-value": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "--allow-inherited accepts the parent's value"
     },
     "strict-run.allow-inherited-name-outside-contract-usage-error": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "an --allow-inherited name outside the Contract is a usage error"
     },
     "strict-run.invalid-delivered-value-stops-startup": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "an invalid delivered value stops startup"
     },
     "strict-run.invalid-value-not-printed": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "the invalid value is not printed"
     },
     "strict-run.reference-left-literal-stops-startup": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "a reference left literal stops startup"
     },
     "strict-run.withheld-required-secret-stops-startup-default": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "a withheld required Secret stops startup; its default does not replace it"
     },
     "strict-run.parent-value-does-not-replace-withheld": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "a parent value does not replace a withheld one without an allowance"
     },
     "strict-run.allowed-inherited-value-stands-withheld-one": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "an allowed inherited value stands in for a withheld one"
     },
     "strict-run.run-context-records-withheld-inherited": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "the run context records it as withheld and inherited"
     },
     "strict-run.allowed-inherited-value-validated": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "an allowed inherited value is validated"
     },
     "strict-run.without-contract-read-strict-startup-does-not": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict",
       "title": "without contract.read, strict startup does not start the child"
     },
     "strict-run.agent-safe-strict-starts-agent-preflight-passes": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "agent-safe strict starts the Agent when the preflight passes"
     },
     "strict-run.agent-receives-placeholder-never-secret-parent": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "the Agent receives a Placeholder, never the Secret or the parent's copy"
     },
     "strict-run.non-sensitive-values-defaults-arrive": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "non-sensitive values and defaults still arrive"
     },
     "strict-run.run-context-records-secret-delivered-varlatch": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "the run context records the Secret as delivered by Varlatch"
     },
     "strict-run.no-secret-value-appears-agent-environment": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "no Secret value appears in the Agent's environment or the output"
     },
     "strict-run.agent-without-secret-use-issuance-does-not": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "an Agent without secret.use at issuance does not start"
     },
     "strict-run.operator-who-cannot-validate-secrets-does": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "an operator who cannot validate Secrets does not start the Agent"
     },
     "strict-run.agent-safe-strict-run-untargeted-secret-does": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "an agent-safe strict run with an untargeted Secret does not start"
     },
     "strict-run.omitting-required-secret-startup-violation": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "omitting a required Secret is a startup violation"
     },
     "strict-run.allow-inherited-may-not-name-secret-agent-safe": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "--allow-inherited may not name a Secret in an agent-safe run"
     },
     "strict-run.refused-run-leaves-no-live-capability": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run-strict-agent-safe",
       "title": "a refused run leaves no live Capability behind"
     },
     "strict-run.default-run-starts-delivers": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run",
       "title": "a default run still starts and delivers"
     },
     "strict-run.default-run-removes-inherited-run-context": {
       "suite": "strict-run",
       "kind": "conformance",
+      "feature": "run",
       "title": "a default run removes an inherited run context"
+    },
+    "mcp.initializes-over-stdio": {
+      "suite": "mcp",
+      "kind": "conformance",
+      "feature": "mcp",
+      "title": "varlatch mcp answers initialize over stdio and offers tools"
+    },
+    "mcp.lists-read-tools-only": {
+      "suite": "mcp",
+      "kind": "conformance",
+      "feature": "mcp",
+      "title": "tools/list names the read tools, and no write or disclosure tool without --allow-writes"
+    },
+    "mcp.reads-effective-configuration": {
+      "suite": "mcp",
+      "kind": "conformance",
+      "feature": "mcp",
+      "title": "a read tool answers with the target's own data: every item of acme/api development's effective configuration"
+    },
+    "mcp.read-holds-no-secret": {
+      "suite": "mcp",
+      "kind": "conformance",
+      "feature": "mcp",
+      "title": "no message from varlatch mcp carries the Secret's value or the credential"
+    },
+    "mcp.exits-when-stdin-closes": {
+      "suite": "mcp",
+      "kind": "conformance",
+      "feature": "mcp",
+      "title": "varlatch mcp exits 0 when the host closes its input"
+    },
+    "sdk.token-sign-in": {
+      "suite": "sdk",
+      "kind": "conformance",
+      "title": "with a token the sdk is signed in: whoami names an identity and its credential"
+    },
+    "sdk.reads": {
+      "suite": "sdk",
+      "kind": "conformance",
+      "title": "the sdk reads organizations, projects and environments"
+    },
+    "sdk.value-write": {
+      "suite": "sdk",
+      "kind": "conformance",
+      "title": "a value written through the sdk is stored: its version is the one the effective configuration shows"
+    },
+    "sdk.no-value-in-metadata": {
+      "suite": "sdk",
+      "kind": "conformance",
+      "title": "the write's answer and the metadata read hold no value"
+    },
+    "sdk.refused-credential-is-api-error": {
+      "suite": "sdk",
+      "kind": "conformance",
+      "title": "a refused credential surfaces as the sdk's VarlatchApiError with status 401"
     },
     "doctor.exits-0": {
       "suite": "doctor",
       "kind": "ts-stack",
+      "feature": "doctor",
       "title": "doctor exits 0 (no mandatory failure)",
       "replacement": {
         "open": "ADR-0059 step 6: the Go server's doctor"
@@ -2167,6 +2570,7 @@
     "doctor.services-running": {
       "suite": "doctor",
       "kind": "ts-stack",
+      "feature": "doctor",
       "title": "doctor: services.running passes",
       "replacement": {
         "open": "ADR-0059 step 6: the Go server's doctor"
@@ -2175,6 +2579,7 @@
     "doctor.secret-plane-ready": {
       "suite": "doctor",
       "kind": "ts-stack",
+      "feature": "doctor",
       "title": "doctor: secret-plane.ready passes",
       "replacement": {
         "open": "ADR-0059 step 6: the Go server's doctor"
@@ -2183,6 +2588,7 @@
     "doctor.config-public-url": {
       "suite": "doctor",
       "kind": "ts-stack",
+      "feature": "doctor",
       "title": "doctor: config.public-url passes",
       "replacement": {
         "open": "ADR-0059 step 6: the Go server's doctor"
@@ -2191,6 +2597,7 @@
     "doctor.mirror-catch-up": {
       "suite": "doctor",
       "kind": "ts-stack",
+      "feature": "doctor",
       "title": "doctor: mirror.catch-up passes",
       "replacement": {
         "none": "Convex is not part of the Go server (ADR-0059): no audit mirror to catch up."
@@ -2199,6 +2606,7 @@
     "doctor.application-plane-functions": {
       "suite": "doctor",
       "kind": "ts-stack",
+      "feature": "doctor",
       "title": "doctor: application-plane.functions passes",
       "replacement": {
         "none": "Convex is not part of the Go server (ADR-0059): no Application Plane functions."
@@ -2207,6 +2615,7 @@
     "doctor.release-pending-upgrade": {
       "suite": "doctor",
       "kind": "ts-stack",
+      "feature": "doctor",
       "title": "doctor: release.pending-upgrade passes",
       "replacement": {
         "open": "ADR-0059 step 6: the Go server's doctor"
@@ -2215,6 +2624,7 @@
     "doctor.browser-reachability-unknown": {
       "suite": "doctor",
       "kind": "ts-stack",
+      "feature": "doctor",
       "title": "doctor: browser reachability is reported unknown",
       "replacement": {
         "open": "ADR-0059 step 6: the Go server's doctor"
@@ -2223,6 +2633,7 @@
     "doctor.no-audit-events": {
       "suite": "doctor",
       "kind": "ts-stack",
+      "feature": "doctor",
       "title": "doctor wrote no audit events",
       "replacement": {
         "open": "ADR-0059 step 6: the Go server's doctor"

@@ -130,82 +130,85 @@ await contract(base);
 await setValue("DATABASE_URL", DB);
 await setValue("LEVEL", "info");
 
-// --- a valid configuration ------------------------------------------------------
-{
-  const r = await run(admin, ["--strict"], { VARLATCH_RUN_CONTEXT: '{"stale":true}' });
-  check("strict-run.valid-configuration-starts-child", "a valid configuration starts the child", r.code === 0 && r.received !== null, r.out);
-  check("strict-run.child-receives-delivered-secret", "the child receives the delivered Secret", r.received?.DATABASE_URL === DB);
-  check("strict-run.contract-default-fills-item-not-stored", "a Contract default fills an item that is not stored", r.received?.PORT === "3000");
-  const context = r.received?.context ? JSON.parse(r.received.context) : null;
-  check("strict-run.run-context-replaces-inherited-one", "the run context replaces an inherited one", context?.mode === "strict" && !("stale" in (context ?? {})));
-  check(
-    "strict-run.run-context-records-server-status-delivery", "the run context records server status and delivery separately",
-    JSON.stringify(context?.items) ===
-      JSON.stringify({
-        DATABASE_URL: { server: "delivered", delivery: "varlatch" },
-        LEVEL: { server: "delivered", delivery: "varlatch" },
-        PORT: { server: "notStored", delivery: "default" },
-      }),
-    JSON.stringify(context?.items),
-  );
-  check("strict-run.run-context-holds-names-only", "the run context holds names only", !r.received?.context?.includes("strict-db") && !r.received?.context?.includes("3000"));
-}
+// Feature group run-strict: `varlatch run --strict`.
+if (kit.supports("run-strict")) {
+  // --- a valid configuration ------------------------------------------------------
+  {
+    const r = await run(admin, ["--strict"], { VARLATCH_RUN_CONTEXT: '{"stale":true}' });
+    check("strict-run.valid-configuration-starts-child", "a valid configuration starts the child", r.code === 0 && r.received !== null, r.out);
+    check("strict-run.child-receives-delivered-secret", "the child receives the delivered Secret", r.received?.DATABASE_URL === DB);
+    check("strict-run.contract-default-fills-item-not-stored", "a Contract default fills an item that is not stored", r.received?.PORT === "3000");
+    const context = r.received?.context ? JSON.parse(r.received.context) : null;
+    check("strict-run.run-context-replaces-inherited-one", "the run context replaces an inherited one", context?.mode === "strict" && !("stale" in (context ?? {})));
+    check(
+      "strict-run.run-context-records-server-status-delivery", "the run context records server status and delivery separately",
+      JSON.stringify(context?.items) ===
+        JSON.stringify({
+          DATABASE_URL: { server: "delivered", delivery: "varlatch" },
+          LEVEL: { server: "delivered", delivery: "varlatch" },
+          PORT: { server: "notStored", delivery: "default" },
+        }),
+      JSON.stringify(context?.items),
+    );
+    check("strict-run.run-context-holds-names-only", "the run context holds names only", !r.received?.context?.includes("strict-db") && !r.received?.context?.includes("3000"));
+  }
 
-// --- violations: nothing starts, every violation is named, no value printed --------
-await contract([...base, item("NEEDED")]);
-{
-  const r = await run(admin, ["--strict"]);
-  check("strict-run.missing-required-item-stops-startup-exit", "a missing required item stops startup with exit 78", r.code === 78 && r.received === null, `exit ${r.code}`);
-  check("strict-run.violation-named", "the violation is named", /NEEDED: missing/.test(r.out), r.out);
-  check("strict-run.no-value-printed", "no value is printed", !r.out.includes("strict-db"));
-  const inherited = await run(admin, ["--strict"], { NEEDED: "from-parent" });
-  check("strict-run.parent-only-value-violation-without-allowance", "a parent-only value is a violation without an allowance", inherited.code === 78 && /NEEDED: inherited/.test(inherited.out), inherited.out);
-  const allowed = await run(admin, ["--strict", "--allow-inherited", "NEEDED"], { NEEDED: "from-parent" });
-  check("strict-run.allow-inherited-accepts-parent-value", "--allow-inherited accepts the parent's value", allowed.code === 0 && allowed.received?.NEEDED === "from-parent", allowed.out);
-  const typo = await run(admin, ["--strict", "--allow-inherited", "NEEDDED"], { NEEDED: "from-parent" });
-  check("strict-run.allow-inherited-name-outside-contract-usage-error", "an --allow-inherited name outside the Contract is a usage error", typo.code !== 0 && typo.received === null && /not in the Contract/.test(typo.out), typo.out);
-}
-await contract(base);
+  // --- violations: nothing starts, every violation is named, no value printed --------
+  await contract([...base, item("NEEDED")]);
+  {
+    const r = await run(admin, ["--strict"]);
+    check("strict-run.missing-required-item-stops-startup-exit", "a missing required item stops startup with exit 78", r.code === 78 && r.received === null, `exit ${r.code}`);
+    check("strict-run.violation-named", "the violation is named", /NEEDED: missing/.test(r.out), r.out);
+    check("strict-run.no-value-printed", "no value is printed", !r.out.includes("strict-db"));
+    const inherited = await run(admin, ["--strict"], { NEEDED: "from-parent" });
+    check("strict-run.parent-only-value-violation-without-allowance", "a parent-only value is a violation without an allowance", inherited.code === 78 && /NEEDED: inherited/.test(inherited.out), inherited.out);
+    const allowed = await run(admin, ["--strict", "--allow-inherited", "NEEDED"], { NEEDED: "from-parent" });
+    check("strict-run.allow-inherited-accepts-parent-value", "--allow-inherited accepts the parent's value", allowed.code === 0 && allowed.received?.NEEDED === "from-parent", allowed.out);
+    const typo = await run(admin, ["--strict", "--allow-inherited", "NEEDDED"], { NEEDED: "from-parent" });
+    check("strict-run.allow-inherited-name-outside-contract-usage-error", "an --allow-inherited name outside the Contract is a usage error", typo.code !== 0 && typo.received === null && /not in the Contract/.test(typo.out), typo.out);
+  }
+  await contract(base);
 
-await setValue("LEVEL", "loud");
-{
-  const r = await run(admin, ["--strict"]);
-  check("strict-run.invalid-delivered-value-stops-startup", "an invalid delivered value stops startup", r.code === 78 && r.received === null && /LEVEL: invalid/.test(r.out), r.out);
-  check("strict-run.invalid-value-not-printed", "the invalid value is not printed", !r.out.includes("loud"));
-}
-await setValue("LEVEL", "info");
+  await setValue("LEVEL", "loud");
+  {
+    const r = await run(admin, ["--strict"]);
+    check("strict-run.invalid-delivered-value-stops-startup", "an invalid delivered value stops startup", r.code === 78 && r.received === null && /LEVEL: invalid/.test(r.out), r.out);
+    check("strict-run.invalid-value-not-printed", "the invalid value is not printed", !r.out.includes("loud"));
+  }
+  await setValue("LEVEL", "info");
 
-await contract([...base, item("REF", { required: { kind: "never" } })]);
-await setValue("REF", "${DATABASE_URL}");
-{
-  const r = await run(admin, ["--strict"]);
-  check("strict-run.reference-left-literal-stops-startup", "a reference left literal stops startup", r.code === 78 && r.received === null && /REF: unresolved-reference/.test(r.out), r.out);
-}
-await deleteValue("REF");
-await contract(base);
+  await contract([...base, item("REF", { required: { kind: "never" } })]);
+  await setValue("REF", "${DATABASE_URL}");
+  {
+    const r = await run(admin, ["--strict"]);
+    check("strict-run.reference-left-literal-stops-startup", "a reference left literal stops startup", r.code === 78 && r.received === null && /REF: unresolved-reference/.test(r.out), r.out);
+  }
+  await deleteValue("REF");
+  await contract(base);
 
-// --- withheld Secrets and inherited allowances -------------------------------------
-{
-  const r = await run(reader, ["--strict"]);
-  check("strict-run.withheld-required-secret-stops-startup-default", "a withheld required Secret stops startup; its default does not replace it", r.code === 78 && r.received === null && /DATABASE_URL: withheld/.test(r.out), r.out);
-  const parent = await run(reader, ["--strict"], { DATABASE_URL: "postgres://parent.internal/app" });
-  check("strict-run.parent-value-does-not-replace-withheld", "a parent value does not replace a withheld one without an allowance", parent.code === 78 && /--allow-inherited DATABASE_URL/.test(parent.out), parent.out);
-  const allowed = await run(reader, ["--strict", "--allow-inherited", "DATABASE_URL"], { DATABASE_URL: "postgres://parent.internal/app" });
-  check("strict-run.allowed-inherited-value-stands-withheld-one", "an allowed inherited value stands in for a withheld one", allowed.code === 0 && allowed.received?.DATABASE_URL === "postgres://parent.internal/app", allowed.out);
-  const context = allowed.received?.context ? JSON.parse(allowed.received.context) : null;
-  check("strict-run.run-context-records-withheld-inherited", "the run context records it as withheld and inherited", JSON.stringify(context?.items?.DATABASE_URL) === JSON.stringify({ server: "withheld", delivery: "inherited" }));
-  const invalid = await run(reader, ["--strict", "--allow-inherited", "DATABASE_URL"], { DATABASE_URL: "not a url" });
-  check("strict-run.allowed-inherited-value-validated", "an allowed inherited value is validated", invalid.code === 78 && /DATABASE_URL: invalid/.test(invalid.out), invalid.out);
-}
+  // --- withheld Secrets and inherited allowances -------------------------------------
+  {
+    const r = await run(reader, ["--strict"]);
+    check("strict-run.withheld-required-secret-stops-startup-default", "a withheld required Secret stops startup; its default does not replace it", r.code === 78 && r.received === null && /DATABASE_URL: withheld/.test(r.out), r.out);
+    const parent = await run(reader, ["--strict"], { DATABASE_URL: "postgres://parent.internal/app" });
+    check("strict-run.parent-value-does-not-replace-withheld", "a parent value does not replace a withheld one without an allowance", parent.code === 78 && /--allow-inherited DATABASE_URL/.test(parent.out), parent.out);
+    const allowed = await run(reader, ["--strict", "--allow-inherited", "DATABASE_URL"], { DATABASE_URL: "postgres://parent.internal/app" });
+    check("strict-run.allowed-inherited-value-stands-withheld-one", "an allowed inherited value stands in for a withheld one", allowed.code === 0 && allowed.received?.DATABASE_URL === "postgres://parent.internal/app", allowed.out);
+    const context = allowed.received?.context ? JSON.parse(allowed.received.context) : null;
+    check("strict-run.run-context-records-withheld-inherited", "the run context records it as withheld and inherited", JSON.stringify(context?.items?.DATABASE_URL) === JSON.stringify({ server: "withheld", delivery: "inherited" }));
+    const invalid = await run(reader, ["--strict", "--allow-inherited", "DATABASE_URL"], { DATABASE_URL: "not a url" });
+    check("strict-run.allowed-inherited-value-validated", "an allowed inherited value is validated", invalid.code === 78 && /DATABASE_URL: invalid/.test(invalid.out), invalid.out);
+  }
 
-// --- Contract access -------------------------------------------------------------------
-{
-  const r = await run(noContract, ["--strict"]);
-  check("strict-run.without-contract-read-strict-startup-does-not", "without contract.read, strict startup does not start the child", r.code === 78 && r.received === null && /contract\.read/.test(r.out), r.out);
+  // --- Contract access -------------------------------------------------------------------
+  {
+    const r = await run(noContract, ["--strict"]);
+    check("strict-run.without-contract-read-strict-startup-does-not", "without contract.read, strict startup does not start the child", r.code === 78 && r.received === null && /contract\.read/.test(r.out), r.out);
+  }
 }
 
 // --- agent-safe strict: the operator's preflight, then the Broker's issuance ------------
-{
+if (kit.supports("run-strict-agent-safe")) {
   const broker = await api("POST", "/v1/organizations/acme/identities", { name: "strict broker", kind: "broker" });
   const agent = await api("POST", "/v1/organizations/acme/identities", { name: "strict agent", kind: "agent" });
   await api("POST", "/v1/organizations/acme/identities", { name: "strict agent without use", kind: "agent" });

@@ -19,6 +19,9 @@ export const PLAN = [
   { setup: "bootstrap" },
   { suite: "passkey", args: (ctx) => [ctx.bootstrapUrl] },
   { setup: "seed" },
+  // The CLI's compatibility core that no other suite reports on its own:
+  // token sign-in, whoami and env list, before anything changes the seed.
+  { suite: "cli-core", args: (ctx) => [ctx.origin, ctx.token, ctx.seededSecret] },
   { suite: "dashboard", args: async (ctx) => [await ctx.grant()] },
   // The enroll page's next steps against a stub server (ADR-0058 Decision 4).
   { suite: "enroll-steps", args: () => [] },
@@ -40,6 +43,10 @@ export const PLAN = [
   { suite: "proxy-probe", args: (ctx) => [ctx.origin] },
   { suite: "client-runtime", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "strict-run", args: (ctx) => [ctx.origin, ctx.token] },
+  // `varlatch mcp` over stdio, and packages/sdk from the same source as the
+  // CLI under test (this checkout, or the pinned release's commit).
+  { suite: "mcp", args: (ctx) => [ctx.origin, ctx.token, ctx.seededSecret] },
+  { suite: "sdk", args: (ctx) => [ctx.origin, ctx.token, ctx.seededSecret] },
   { suite: "doctor", args: () => [] },
   { suite: "convex-down", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "cli-download-off", args: (ctx) => [ctx.origin] },

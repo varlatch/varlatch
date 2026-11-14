@@ -383,6 +383,37 @@ jobs:
       - name: Run clean-room E2E suites
         run: ./scripts/ci-e2e.sh
 
+  # The conformance harness with a released CLI (ADR-0059 step 2): the same
+  # suites against the stack built from this checkout, driven by the pinned
+  # CLI 0.22.0 (scripts/conformance/clients.json), downloaded and verified
+  # with cosign before anything starts, and the sdk built from its release
+  # commit. A pull request runs it when it touches the harness, a suite, or
+  # ci-e2e.sh; every other event runs it too. Hosted runners only.
+  e2e-cli:
+    needs: changes
+    if: needs.changes.outputs.conformance == 'true' && needs.changes.outputs.hosted == 'true' && !vars.CI_RUNNER
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @varlatch/protocol generate && pnpm build
+      - name: Install Chromium
+        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+      - name: Run the conformance suites with CLI 0.22.0
+        run: node scripts/conformance/run.mjs --target ts-source --cli 0.22.0
+
   # Which tiers run. A draft pull request runs nothing. Any other pull request
   # runs the fast checks, except that one changing only documentation no check
   # reads, or only Go files (go.yml checks them), skips python-accessor,
@@ -411,6 +442,7 @@ jobs:
       recovery: ${{ steps.filter.outputs.recovery }}
       lifecycle: ${{ steps.filter.outputs.lifecycle }}
       installers: ${{ steps.filter.outputs.installers }}
+      conformance: ${{ steps.filter.outputs.conformance }}
     steps:
       - name: Runner for this run
         id: runner
@@ -438,7 +470,7 @@ jobs:
           REF: ${{ github.ref }}
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          tiers="multiarch contributor recovery lifecycle installers"
+          tiers="multiarch contributor recovery lifecycle installers conformance"
           if [ "$EVENT" = schedule ] && [ -z "$(git log -1 --since='25 hours ago' --format=%H)" ]; then
             echo "No commits on main since the last nightly run; skipping."
             for t in run code $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
@@ -482,6 +514,9 @@ jobs:
             # Installing, upgrading and adopting an installation, and its ingress.
             # The install scripts an installation serves (ADR-0058), on Windows too.
             [installers]='^\.github/workflows/ci\.yml$|^services/varlatchd/src/http/cliDownload\.ts$|^scripts/test-installers\.mjs$'
+            # The conformance harness, its suites, and ci-e2e.sh: the run with a
+            # released CLI (e2e-cli) checks the harness before merge.
+            [conformance]='^\.github/workflows/ci\.yml$|^scripts/conformance/|^scripts/ci-e2e\.sh$|^apps/web/scripts/e2e-[^/]*\.mjs$|^services/varlatchd/scripts/e2e-[^/]*\.mjs$'
             [lifecycle]="$shared|^services/varlatchd/src/(tailnet|enroll)/|^services/varlatchd/src/(control-entry|config|netns-watchdog)\.ts$|^services/varlatchd/src/(domain/bootstrap|auth/humanauth|cli)\.ts$|^apps/cli/src/(setup|adopt|upgrade|doctor|move|moveState)\.ts$|^infra/|^scripts/(test-backup-upgrade|test-prod-shape|test-adopt|test-sidecar-restart|test-ingress|test-setup|test-move|fixtures/)"
           )
           for t in $tiers; do
