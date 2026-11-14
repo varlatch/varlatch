@@ -317,7 +317,96 @@ test("the checker's own files: static relative imports, comments ignored, dynami
     "scripts/conformance/expect-check.mjs",
     "scripts/conformance/lib/expect.mjs",
     "scripts/conformance/lib/inventory.mjs",
+    "scripts/conformance/lib/operations.mjs",
     "scripts/conformance/lib/results.mjs",
     "scripts/conformance/targets/index.mjs",
   ]);
+});
+
+// Declared gaps (lacks): a new lacking operation, or a check newly needing
+// one, needs the label; removing an entry needs nothing.
+test("expect-check.mjs: a new gap or a new dependency on a lacking operation needs the label; removing a gap does not", () => {
+  const repo = mkdtempSync(join(tmpdir(), "conformance-expect-test-"));
+  const script = join(here, "..", "expect-check.mjs");
+  const check = (...args) => spawnSync(process.execPath, [script, "--repo", repo, ...args], { encoding: "utf8" });
+  const gap = (reason = "not built yet", step = "ADR-0059 step 4") => ({ reason, step });
+  const writeLacks = (lacks) =>
+    writeFileSync(join(repo, "scripts/conformance/expect/go-binary.json"), JSON.stringify({ schema: 1, expected: {}, lacks: { "go-binary": lacks } }));
+  const inv = structuredClone(inventory);
+  const writeInventory = () => writeFileSync(join(repo, "scripts/conformance/inventory.json"), JSON.stringify(inv));
+  try {
+    git(repo, "init", "-q", "-b", "main");
+    mkdirSync(join(repo, "scripts/conformance/expect"), { recursive: true });
+    mkdirSync(join(repo, "packages/protocol"), { recursive: true });
+    writeFileSync(join(repo, "scripts/conformance/clients.json"), readFileSync(join(here, "..", "clients.json")));
+    writeFileSync(join(repo, "packages/protocol/openapi.yaml"), readFileSync(join(here, "..", "..", "..", "packages/protocol/openapi.yaml")));
+    writeInventory();
+    // The base: go-binary lacks strictRetrieval, which only strict-run needs.
+    writeLacks({ strictRetrieval: gap() });
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "base");
+    const base = git(repo, "rev-parse", "HEAD");
+    let r = check("--base", base, "--head", "HEAD");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+
+    // A new gap: whoami lacking makes cli-core and sdk checks newly lack.
+    git(repo, "checkout", "-q", "-b", "new-gap", base);
+    writeLacks({ strictRetrieval: gap(), whoami: gap("not built yet", "ADR-0059 step 3.4") });
+    git(repo, "commit", "-q", "-am", "new gap");
+    r = check("--base", base, "--head", "HEAD");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /ADDED-LACKS {4}go-binary\|go-binary\|whoami/);
+    assert.match(r.stdout, /NEWLY-LACKS {4}go-binary\|go-binary\|cli-core\.whoami-names-signed-in-identity/);
+    assert.match(r.stdout, /label the pull request conformance-regression/);
+    assert.equal(check("--base", base, "--head", "HEAD", "--labeled").status, 0);
+
+    // A new dependency: the mcp suite now needs strictRetrieval, which the
+    // target already lacks: its checks newly report target-lacks.
+    git(repo, "checkout", "-q", "-b", "new-dependency", base);
+    inv.suites.mcp.operations = [...inv.suites.mcp.operations, "strictRetrieval"];
+    writeInventory();
+    git(repo, "commit", "-q", "-am", "new dependency");
+    r = check("--base", base, "--head", "HEAD");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /ADDED-LACKS/);
+    assert.match(r.stdout, /NEWLY-LACKS {4}go-binary\|go-binary\|mcp\.lists-read-tools-only/);
+    assert.match(r.stdout, /0 lacking operations and makes 5 checks newly report target-lacks/);
+    assert.equal(check("--base", base, "--head", "HEAD", "--labeled").status, 0);
+    inv.suites.mcp.operations = inv.suites.mcp.operations.filter((op) => op !== "strictRetrieval");
+
+    // A check-level dependency counts the same way.
+    git(repo, "checkout", "-q", "-b", "check-dependency", base);
+    inv.checks["sdk.reads"] = { ...inv.checks["sdk.reads"], operations: ["strictRetrieval"] };
+    writeInventory();
+    git(repo, "commit", "-q", "-am", "check dependency");
+    r = check("--base", base, "--head", "HEAD");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /NEWLY-LACKS {4}go-binary\|go-binary\|sdk\.reads\n--- checks/);
+    delete inv.checks["sdk.reads"].operations;
+
+    // Removing the gap, or a dependency on one, needs nothing.
+    git(repo, "checkout", "-q", "-b", "removes", base);
+    writeLacks({});
+    writeInventory();
+    git(repo, "commit", "-q", "-am", "strictRetrieval built");
+    r = check("--base", base, "--head", "HEAD");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /REMOVED-LACKS {2}go-binary\|go-binary\|strictRetrieval/);
+    git(repo, "checkout", "-q", "-b", "drops-dependency", base);
+    inv.suites["strict-run"].operations = inv.suites["strict-run"].operations.filter((op) => op !== "strictRetrieval");
+    writeInventory();
+    git(repo, "commit", "-q", "-am", "strict-run no longer needs it");
+    assert.equal(check("--base", base, "--head", "HEAD").status, 0);
+
+    // A lacks entry that names no operation, or the seed, is invalid even with the label.
+    git(repo, "checkout", "-q", "-b", "invalid-gap", base);
+    writeLacks({ strictRetrieval: gap(), noSuchOperation: gap(), seed: gap() });
+    git(repo, "commit", "-q", "-am", "invalid");
+    r = check("--base", base, "--head", "HEAD", "--labeled");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /INVALID .*noSuchOperation is neither an OpenAPI operationId nor a named operation/);
+    assert.match(r.stdout, /INVALID .*seed is never listed/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

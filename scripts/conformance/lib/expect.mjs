@@ -11,8 +11,17 @@
  *           "<check id>": { "reason": "<why it fails>", "removedBy": "<the step that removes it>" }
  *         }
  *       }
+ *     },
+ *     "lacks": {
+ *       "<target key>": {                       the operations the target does not have yet
+ *         "<operation>": { "reason": "<why the target lacks it>", "step": "<the step that adds it>" }
+ *       }
  *     }
  *   }
+ *
+ * `lacks` (lib/operations.mjs) declares the target's gaps: a check that
+ * needs a lacking operation reports target-lacks, and the runner asks the
+ * target that each entry is really missing before the suites run.
  *
  * A check expected to fail that fails is reported as an expected failure,
  * never hidden; one that passes fails the run (remove its entry). The list
@@ -23,16 +32,30 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { VERSION } from "./inventory.mjs";
+import { lackingChecks, lacksProblems } from "./operations.mjs";
 
 export const ANY_CLIENT = "*";
 export const REGRESSION_LABEL = "conformance-regression";
 
-/** Problems with one expectations file's shape; empty when it is valid. */
-export function validateExpectations(file, { targetName, inventory, cliVersions }) {
+/**
+ * Problems with one expectations file's shape; empty when it is valid.
+ * `openapi` (lib/operations.mjs openapiOperations) checks that each lacking
+ * operation exists; without it, only named operations are known.
+ */
+export function validateExpectations(file, { targetName, inventory, cliVersions, openapi = new Map() }) {
   const where = `expect/${targetName}.json`;
   if (file?.schema !== 1) return [`${where}: schema: expected 1`];
   if (!file.expected || typeof file.expected !== "object" || Array.isArray(file.expected)) return [`${where}: expected must be an object`];
   const problems = [];
+  if ("lacks" in file) {
+    if (!file.lacks || typeof file.lacks !== "object" || Array.isArray(file.lacks)) problems.push(`${where}: lacks must be an object`);
+    else {
+      for (const [key, entries] of Object.entries(file.lacks)) {
+        if (key !== targetName && !key.startsWith(`${targetName}:`)) problems.push(`${where}: lacks: ${key} is not a ${targetName} target`);
+        problems.push(...lacksProblems(`${where}: lacks / ${key}`, entries, { inventory, openapi }));
+      }
+    }
+  }
   for (const [key, clients] of Object.entries(file.expected)) {
     if (key !== targetName && !key.startsWith(`${targetName}:`)) problems.push(`${where}: ${key} is not a ${targetName} target`);
     if (!clients || typeof clients !== "object") {
@@ -56,6 +79,36 @@ export function validateExpectations(file, { targetName, inventory, cliVersions 
     }
   }
   return problems;
+}
+
+/** The operations a target lacks: Map(operation → { reason, step }). */
+export function lacksFor(file, key) {
+  return new Map(Object.entries(file?.lacks?.[key] ?? {}));
+}
+
+/**
+ * Every check that reports target-lacks under a set of expectations files,
+ * judged with one inventory: `<file>|<target key>|<check id>`.
+ */
+export function lackingCheckKeys(files, inventory) {
+  const keys = new Set();
+  for (const [fileName, file] of Object.entries(files)) {
+    for (const [key, entries] of Object.entries(file?.lacks ?? {})) {
+      for (const id of lackingChecks(inventory, Object.keys(entries ?? {})).keys()) keys.add(`${fileName}|${key}|${id}`);
+    }
+  }
+  return keys;
+}
+
+/** Every `lacks` entry of a set of expectations files: `<file>|<target key>|<operation>`. */
+export function lacksKeys(files) {
+  const keys = new Set();
+  for (const [fileName, file] of Object.entries(files)) {
+    for (const [key, entries] of Object.entries(file?.lacks ?? {})) {
+      for (const op of Object.keys(entries ?? {})) keys.add(`${fileName}|${key}|${op}`);
+    }
+  }
+  return keys;
 }
 
 /** The expected failures in force for one run: Map(check id → { reason, removedBy, client }). */

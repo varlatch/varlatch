@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Every check a conformance run must account for (scripts/conformance/README.md). Check IDs are stable: rename one only together with every record that names it. externalSuites lists the suites the runner does not run (the lifecycle and installer suites, scripts/test-*.mjs), each with its replacement for gate mode.",
+  "description": "Every check a conformance run must account for (scripts/conformance/README.md). Check IDs are stable: rename one only together with every record that names it. externalSuites lists the suites the runner does not run (the lifecycle and installer suites, scripts/test-*.mjs), each with its replacement for gate mode. operations names the operations outside the OpenAPI document that suites need (the seed, the admin commands, browser routes outside /v1); each suite's operations lists every operation it needs (ADR-0059 step 3, decision 5), and a check may add its own.",
   "features": {
     "login-token": {
       "title": "varlatch login --token: sign in with an existing credential",
@@ -139,6 +139,42 @@
       }
     }
   },
+  "operations": {
+    "seed": {
+      "title": "the runner's seed: as the admin identity (a CLI credential from admin-recover), organization acme, project api with two environments, an active Contract and two values (run.mjs seed)",
+      "uses": [
+        "admin-recover",
+        "createOrganization",
+        "createProject",
+        "createEnvironment",
+        "pushContractRevision",
+        "activateContractRevision",
+        "setValue"
+      ]
+    },
+    "admin-bootstrap": {
+      "title": "varlatchd admin bootstrap: the first enrollment URL (the target's bootstrap operation)",
+      "target": "bootstrap"
+    },
+    "admin-recover": {
+      "title": "varlatchd admin recover: an enrollment URL, or a CLI credential with --cli-credential (the target's recover operation)",
+      "target": "recover"
+    },
+    "serve-cli": {
+      "title": "the host operator turns serving the CLI and install scripts on and off (ADR-0058 Decision 3; the target's serveCli operation)",
+      "target": "serveCli"
+    },
+    "enroll-page": {
+      "title": "the enrollment page a grant URL opens, and its passkey registration",
+      "method": "GET",
+      "path": "/enroll"
+    },
+    "browser-session": {
+      "title": "the browser's session: passkey sign-in, sign-out and the bearer mint under /auth (POST /auth/varlatch-token)",
+      "method": "POST",
+      "path": "/auth/varlatch-token"
+    }
+  },
   "suites": {
     "reconcile": {
       "title": "Application Plane reconciliation (ADR-0035 D3/D4; no admin key anywhere)",
@@ -149,15 +185,54 @@
     },
     "passkey": {
       "title": "passkey bootstrap (ADR-0006/0008)",
-      "script": "services/varlatchd/scripts/e2e-passkey.mjs"
+      "script": "services/varlatchd/scripts/e2e-passkey.mjs",
+      "operations": [
+        "admin-bootstrap",
+        "enroll-page",
+        "browser-session",
+        "getMeta",
+        "listOrganizations"
+      ]
     },
     "cli-core": {
       "title": "the CLI's compatibility core: token sign-in, whoami, env list",
-      "script": "scripts/conformance/suites/cli-core.mjs"
+      "script": "scripts/conformance/suites/cli-core.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "getMeta",
+        "listOrganizations",
+        "whoami",
+        "listEnvironments"
+      ]
     },
     "dashboard": {
       "title": "dashboard (production container)",
-      "script": "apps/web/scripts/e2e-web.mjs"
+      "script": "apps/web/scripts/e2e-web.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "enroll-page",
+        "browser-session",
+        "getMeta",
+        "listOrganizations",
+        "getMyProfile",
+        "getInstallationBackups",
+        "getInstallationRelease",
+        "getOrganization",
+        "listProjects",
+        "listEnvironments",
+        "getActiveContract",
+        "getEffectiveConfiguration",
+        "listIdentities",
+        "listAuditEvents",
+        "listPlatformConnections",
+        "listOrgSyncTargets",
+        "listRoles",
+        "listGroups",
+        "listTeams",
+        "listWebhooks"
+      ]
     },
     "enroll-steps": {
       "title": "the enroll page's next steps against a stub server (ADR-0058 Decision 4)",
@@ -165,19 +240,166 @@
     },
     "values": {
       "title": "values and matrix",
-      "script": "apps/web/scripts/e2e-values.mjs"
+      "script": "apps/web/scripts/e2e-values.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "enroll-page",
+        "browser-session",
+        "getMeta",
+        "listOrganizations",
+        "getMyProfile",
+        "getInstallationBackups",
+        "getInstallationRelease",
+        "setValue",
+        "deleteValue",
+        "discloseSecrets",
+        "createRequirement",
+        "deleteRequirement",
+        "listEnvironments",
+        "createEnvironment",
+        "listProjects",
+        "listOrgSyncTargets",
+        "getActiveContract",
+        "getEffectiveConfiguration",
+        "listPlatformConnections",
+        "applyChangeSet",
+        "beginRotation",
+        "completeRotation",
+        "listSyncTargets",
+        "listAuditEvents",
+        "listIdentities",
+        "listRequirements",
+        "deleteEnvironment",
+        "getOrganization"
+      ]
     },
     "access": {
       "title": "access",
-      "script": "apps/web/scripts/e2e-access.mjs"
+      "script": "apps/web/scripts/e2e-access.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "enroll-page",
+        "browser-session",
+        "getMeta",
+        "listOrganizations",
+        "getMyProfile",
+        "getInstallationBackups",
+        "getInstallationRelease",
+        "listGrants",
+        "listIdentities",
+        "getOrganization",
+        "listInvitations",
+        "createInvitation",
+        "listProjects",
+        "listEnvironments",
+        "listRoles",
+        "listGroups",
+        "listTeams",
+        "listSecurityControls",
+        "createServiceIdentity",
+        "issueIdentityCredential",
+        "revokeIdentityCredential",
+        "listIdentityCredentials",
+        "listOidcBindings",
+        "createOidcBinding",
+        "revokeOidcBinding",
+        "machineReach",
+        "createGrant",
+        "deleteGrant",
+        "replaceGrant",
+        "createRole",
+        "updateRole",
+        "createGroup",
+        "updateGroup",
+        "addGroupMember",
+        "listGroupMembers",
+        "createTeam",
+        "updateTeam",
+        "addTeamProject",
+        "listTeamProjects",
+        "listRequirements",
+        "createRequirement",
+        "updateRequirement",
+        "deleteRequirement",
+        "getEnvironment",
+        "listCapabilities",
+        "revokeCapability",
+        "issueCapability",
+        "exerciseCapability",
+        "discloseSecrets",
+        "getEffectiveConfiguration",
+        "listMyCredentials"
+      ]
     },
     "p4": {
       "title": "audit, contract and palette (P4)",
-      "script": "apps/web/scripts/e2e-p4.mjs"
+      "script": "apps/web/scripts/e2e-p4.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "enroll-page",
+        "browser-session",
+        "getMeta",
+        "listOrganizations",
+        "getMyProfile",
+        "getInstallationBackups",
+        "getInstallationRelease",
+        "createProject",
+        "createEnvironment",
+        "pushContractRevision",
+        "activateContractRevision",
+        "getActiveContract",
+        "listMyCredentials",
+        "revokeMyCredential",
+        "getOrganization",
+        "listAuditEvents",
+        "listIdentities",
+        "listProjects",
+        "listEnvironments",
+        "listPlatformConnections",
+        "listOrgSyncTargets",
+        "listRoles",
+        "listGroups",
+        "listTeams",
+        "listWebhooks",
+        "createWebhook",
+        "updateWebhook",
+        "revokeWebhook",
+        "searchConfigItems",
+        "getEffectiveConfiguration",
+        "listSyncTargets",
+        "getOrganizationDeletion"
+      ]
     },
     "onboarding": {
       "title": "onboarding",
-      "script": "apps/web/scripts/e2e-onboarding.mjs"
+      "script": "apps/web/scripts/e2e-onboarding.mjs",
+      "operations": [
+        "admin-recover",
+        "enroll-page",
+        "browser-session",
+        "getMeta",
+        "listOrganizations",
+        "getMyProfile",
+        "getInstallationBackups",
+        "getInstallationRelease",
+        "createOrganization",
+        "pushContractRevision",
+        "activateContractRevision",
+        "setValue",
+        "getOrganization",
+        "listProjects",
+        "listEnvironments",
+        "getActiveContract",
+        "listIdentities",
+        "getEffectiveConfiguration",
+        "createProject",
+        "createEnvironment",
+        "renameProject",
+        "listAuditEvents"
+      ]
     },
     "realtime": {
       "title": "degraded realtime: Convex down (ADR-0035 D10)",
@@ -188,26 +410,97 @@
     },
     "broker": {
       "title": "credential broker (ADR-0022)",
-      "script": "services/varlatchd/scripts/e2e-broker.mjs"
+      "script": "services/varlatchd/scripts/e2e-broker.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "createServiceIdentity",
+        "getProject",
+        "createGrant",
+        "deleteGrant",
+        "issueCapability",
+        "exerciseCapability",
+        "revokeCapability",
+        "listCapabilities",
+        "setValue",
+        "deleteValue",
+        "getEffectiveConfiguration",
+        "exportAuditEvents",
+        "getMeta",
+        "listOrganizations",
+        "listIdentities",
+        "getActiveContract",
+        "issueIdentityCredential",
+        "revokeIdentityCredential"
+      ]
     },
     "maintenance": {
       "title": "isolating maintenance: dashboard and CLI ride it out (ADR-0036 D6)",
       "script": "apps/web/scripts/e2e-maintenance.mjs",
       "needs": [
         "maintenance"
+      ],
+      "operations": [
+        "admin-recover",
+        "seed",
+        "enroll-page",
+        "browser-session",
+        "getMeta",
+        "listOrganizations",
+        "getMyProfile",
+        "getInstallationBackups",
+        "getInstallationRelease",
+        "getOrganization",
+        "listProjects",
+        "listEnvironments",
+        "getActiveContract",
+        "getEffectiveConfiguration",
+        "listIdentities",
+        "listAuditEvents",
+        "listPlatformConnections",
+        "listOrgSyncTargets",
+        "listRoles",
+        "listGroups",
+        "listTeams",
+        "listWebhooks"
       ]
     },
     "server-logs": {
       "title": "no secret plaintext in the server's logs",
-      "script": "scripts/conformance/suites/server-logs.mjs"
+      "script": "scripts/conformance/suites/server-logs.mjs",
+      "operations": [
+        "seed"
+      ]
     },
     "cli-login": {
       "title": "CLI browser-handoff login (ADR-0017)",
-      "script": "services/varlatchd/scripts/e2e-cli-login.mjs"
+      "script": "services/varlatchd/scripts/e2e-cli-login.mjs",
+      "operations": [
+        "admin-recover",
+        "enroll-page",
+        "browser-session",
+        "exchangeCliCredential",
+        "getMeta",
+        "listOrganizations"
+      ]
     },
     "device": {
       "title": "device sign-in (login --start/--wait, dashboard /device approval with a passkey)",
-      "script": "apps/web/scripts/e2e-device.mjs"
+      "script": "apps/web/scripts/e2e-device.mjs",
+      "operations": [
+        "admin-recover",
+        "enroll-page",
+        "browser-session",
+        "getMeta",
+        "listOrganizations",
+        "getMyProfile",
+        "getInstallationBackups",
+        "getInstallationRelease",
+        "startDeviceSignIn",
+        "collectDeviceSignIn",
+        "lookupDeviceSignIn",
+        "decideDeviceSignIn"
+      ]
     },
     "proxy-probe": {
       "title": "device sign-in behind a proxy: the caller's own address, forged headers ignored",
@@ -216,23 +509,86 @@
         "probe:expire-pending-device-sign-ins",
         "probe:device-sign-in-addresses",
         "probe:proxy-addresses"
+      ],
+      "operations": [
+        "startDeviceSignIn"
       ]
     },
     "client-runtime": {
       "title": "client runtime (run --redact, run --export-context, types, scan)",
-      "script": "services/varlatchd/scripts/e2e-client-runtime.mjs"
+      "script": "services/varlatchd/scripts/e2e-client-runtime.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "createProject",
+        "getProject",
+        "createEnvironment",
+        "createServiceIdentity",
+        "createGrant",
+        "pushContractRevision",
+        "activateContractRevision",
+        "getActiveContract",
+        "setValue",
+        "exportAuditEvents",
+        "getMeta",
+        "listOrganizations",
+        "getEffectiveConfiguration",
+        "discloseSecrets",
+        "getContractRevision"
+      ]
     },
     "strict-run": {
       "title": "strict startup (varlatch run --strict)",
-      "script": "services/varlatchd/scripts/e2e-strict-run.mjs"
+      "script": "services/varlatchd/scripts/e2e-strict-run.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "createProject",
+        "getProject",
+        "createEnvironment",
+        "createServiceIdentity",
+        "createGrant",
+        "pushContractRevision",
+        "activateContractRevision",
+        "setValue",
+        "deleteValue",
+        "listIdentities",
+        "listCapabilities",
+        "getMeta",
+        "listOrganizations",
+        "strictRetrieval",
+        "issueCapability",
+        "revokeCapability",
+        "getEffectiveConfiguration",
+        "discloseSecrets"
+      ]
     },
     "mcp": {
       "title": "varlatch mcp over stdio",
-      "script": "scripts/conformance/suites/mcp.mjs"
+      "script": "scripts/conformance/suites/mcp.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "getMeta",
+        "listOrganizations",
+        "getEffectiveConfiguration"
+      ]
     },
     "sdk": {
       "title": "packages/sdk smoke (the pinned release's sdk for --cli <version>)",
-      "script": "scripts/conformance/suites/sdk.mjs"
+      "script": "scripts/conformance/suites/sdk.mjs",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "whoami",
+        "listOrganizations",
+        "listProjects",
+        "listEnvironments",
+        "createEnvironment",
+        "setValue",
+        "getEffectiveConfiguration",
+        "deleteEnvironment"
+      ]
     },
     "doctor": {
       "title": "read-only doctor of the Compose installation (ADR-0035 D8)",
@@ -251,13 +607,20 @@
     },
     "cli-download-off": {
       "title": "CLI and install scripts while serving is off (ADR-0058 Decision 3)",
-      "script": "scripts/conformance/suites/cli-download-off.mjs"
+      "script": "scripts/conformance/suites/cli-download-off.mjs",
+      "operations": [
+        "getMeta"
+      ]
     },
     "cli-download-on": {
       "title": "CLI and install scripts while serving is on (ADR-0058 Decision 3)",
       "script": "scripts/conformance/suites/cli-download-on.mjs",
       "needs": [
         "serve-cli"
+      ],
+      "operations": [
+        "serve-cli",
+        "getMeta"
       ]
     },
     "request-budget": {

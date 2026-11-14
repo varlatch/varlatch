@@ -7,6 +7,18 @@ info:
     pagination, idempotency semantics and the audit NDJSON schema are part of
     the compatibility contract. Pre-product-1.0 releases may still contain
     breaking changes while the contract is being established.
+
+
+    Errors are the JSON error envelope (ApiError), domain errors included,
+    with two exceptions, kept as served (ADR-0059 step 3; changing them is
+    an API change for after 1.0). A request to a route this document does
+    not describe (a path it does not list, or a method that path does not
+    have) answers 404 with the plain-text body "404 Not Found", not the
+    envelope. And the request window, which allows each client address 600
+    requests per 60 seconds before any authentication, refuses with 429
+    and Retry-After (seconds), the envelope with code PERMISSION_DENIED and
+    message "Request rate exceeded", not RATE_LIMITED; an operation's own
+    limits answer RATE_LIMITED or SLOW_DOWN, as its description says.
   version: 0.22.0
 servers:
   - url: /v1
@@ -42,6 +54,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /installation/listeners:
@@ -66,6 +79,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /installation/release:
@@ -88,6 +102,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /installation/outbound:
@@ -117,6 +132,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /meta:
@@ -131,6 +147,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Meta" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /tailnet/endpoint:
@@ -153,6 +170,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /tailnet/context:
@@ -186,6 +204,7 @@ paths:
           content:
             text/plain:
               schema: { type: string }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations:
@@ -209,6 +228,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Organization" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [organizations]
@@ -230,6 +250,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Organization" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}:
@@ -255,6 +276,7 @@ paths:
                         oneOf:
                           - $ref: "#/components/schemas/IncidentFreeze"
                           - type: "null"
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     patch:
       tags: [organizations]
@@ -286,6 +308,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Organization" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/config-items:
@@ -329,6 +352,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/ConfigItemSearchResult" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects:
@@ -352,6 +376,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Project" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [projects]
@@ -374,6 +399,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}:
@@ -389,6 +415,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     patch:
       tags: [projects]
@@ -416,6 +443,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [projects]
@@ -462,6 +490,7 @@ paths:
                   targetsRevoked: { type: integer }
                   teamLinksRemoved: { type: integer }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments:
@@ -486,6 +515,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Environment" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [environments]
@@ -520,6 +550,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Environment" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}:
@@ -536,6 +567,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Environment" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [environments]
@@ -546,6 +578,7 @@ paths:
         - $ref: "#/components/parameters/environment"
       responses:
         "204": { description: Deleted }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/values/{item}:
@@ -577,6 +610,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ValueVersion" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [values]
@@ -589,6 +623,7 @@ paths:
         - $ref: "#/components/parameters/item"
       responses:
         "204": { description: Deleted }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/values/{item}/rotations:
@@ -632,6 +667,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ValueRotation" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/values/{item}/rotations/complete:
@@ -653,6 +689,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ValueRotation" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/effective-configuration:
@@ -689,6 +726,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EffectiveConfiguration" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/retrievals:
@@ -732,6 +770,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StrictRetrieval" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/disclosures:
@@ -811,6 +850,7 @@ paths:
                   stateDigest: { $ref: "#/components/schemas/StateDigest" }
                   callerView: { $ref: "#/components/schemas/CallerView" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/capabilities:
@@ -882,6 +922,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IssuedCapability" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     get:
       tags: [capabilities]
@@ -906,6 +947,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Capability" }
                   nextCursor: { type: [string, "null"] }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}:
@@ -925,6 +967,7 @@ paths:
           schema: { type: string }
       responses:
         "204": { description: Revoked }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}/exercises:
@@ -989,6 +1032,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CapabilityExercise" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/changes:
@@ -1050,6 +1094,7 @@ paths:
                         item: { type: string }
                         op: { type: string, enum: [set, delete] }
                         versionId: { type: [string, "null"] }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/validate:
@@ -1083,6 +1128,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ValidationReport" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/contract:
@@ -1098,6 +1144,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ContractRevision" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/contract/revisions:
@@ -1137,6 +1184,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ContractRevision" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/contract/revisions/{revision}:
@@ -1161,6 +1209,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ContractRevision" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/contract/revisions/{revision}/activate:
@@ -1181,6 +1230,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ContractRevision" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities:
@@ -1204,6 +1254,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Identity" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [identities]
@@ -1258,6 +1309,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CreatedIdentity" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/credentials:
@@ -1288,6 +1340,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/CredentialMetadata" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [identities]
@@ -1342,6 +1395,7 @@ paths:
                   - $ref: "#/components/schemas/IssuedAgentCredential"
                   - $ref: "#/components/schemas/IssuedMachineCredential"
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/security/credential-review:
@@ -1368,6 +1422,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CredentialReview" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/security/controls:
@@ -1393,6 +1448,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SecurityControlList" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/security/control-report:
@@ -1428,6 +1484,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SecurityControlReport" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/me/permissions:
@@ -1453,6 +1510,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrganizationPermissions" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/security/refused-destinations:
@@ -1482,6 +1540,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RefusedDestinations" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/security/approval-keys:
@@ -1505,6 +1564,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApprovalKeys" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/security/controls/{control}:
@@ -1559,6 +1619,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SecurityControlChange" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/audit-export:
@@ -1582,6 +1643,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuditExportStatus" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [organizations]
@@ -1618,6 +1680,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuditExport" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     patch:
       tags: [organizations]
@@ -1655,6 +1718,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AuditExportChange" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [organizations]
@@ -1685,6 +1749,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AuditExport" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/audit-export/credential:
@@ -1717,6 +1782,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AuditExport" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/audit-export/check:
@@ -1747,6 +1813,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuditExportCheck" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/credentials/{credential}:
@@ -1774,6 +1841,7 @@ paths:
           schema: { type: string }
       responses:
         "204": { description: Revoked }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}:
@@ -1812,6 +1880,7 @@ paths:
                 properties:
                   id: { type: string }
                   name: { type: string }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/retire:
@@ -1841,6 +1910,7 @@ paths:
                 properties:
                   id: { type: string }
                   disabled: { type: boolean }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/reactivate:
@@ -1871,6 +1941,7 @@ paths:
                   id: { type: string }
                   disabled: { type: boolean }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/reach:
@@ -1903,6 +1974,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MachineReach" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/oidc-bindings:
@@ -1929,6 +2001,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/OidcBinding" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [identities]
@@ -1969,6 +2042,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/OidcBinding" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/oidc-bindings/{binding}:
@@ -1990,6 +2064,7 @@ paths:
       responses:
         "204": { description: Revoked }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /oidc/token:
@@ -2021,6 +2096,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IssuedOidcCredential" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/invitations:
@@ -2056,6 +2132,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Invitation" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [identities]
@@ -2092,6 +2169,7 @@ paths:
                   token: { type: string }
                   expiresAt: { type: string, format: date-time }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/invitations/{invitation}:
@@ -2110,6 +2188,7 @@ paths:
         - { name: invitation, in: path, required: true, schema: { type: string } }
       responses:
         "204": { description: Revoked }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/deletion:
@@ -2134,6 +2213,7 @@ paths:
                     oneOf:
                       - $ref: "#/components/schemas/OrganizationDeletion"
                       - type: "null"
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [organizations]
@@ -2174,6 +2254,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/OrganizationDeletion" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/deletion/{deletion}/approve:
@@ -2195,6 +2276,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrganizationDeletion" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/deletion/{deletion}/cancel:
@@ -2216,6 +2298,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrganizationDeletion" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/incident-freeze:
@@ -2253,6 +2336,7 @@ paths:
                     type: array
                     description: The last 20 freezes, newest first, the open one included.
                     items: { $ref: "#/components/schemas/IncidentFreeze" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [organizations]
@@ -2296,6 +2380,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IncidentFreeze" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/incident-freeze/{freeze}/lift:
@@ -2333,6 +2418,7 @@ paths:
                     description: Null for a caller without config.sync.manage; the approval's summary then gives their number only.
                     items: { $ref: "#/components/schemas/ResumingTarget" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /deleted-organizations/{organization}/audit-events:
@@ -2362,6 +2448,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/AuditEvent" }
                   nextCursor: { type: [string, "null"] }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /deleted-organizations/{organization}/audit-events/export:
@@ -2380,6 +2467,7 @@ paths:
           content:
             application/x-ndjson:
               schema: { $ref: "#/components/schemas/AuditEvent" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /installation/deleted-organizations:
@@ -2418,6 +2506,7 @@ paths:
                               identityId: { type: string }
                               name: { type: string }
                               removedAt: { type: [string, "null"], format: date-time }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /installation/deleted-organizations/{organization}/readers/{identity}:
@@ -2433,6 +2522,7 @@ paths:
         - { name: identity, in: path, required: true, schema: { type: string } }
       responses:
         "204": { description: Removed }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/members/{member}:
@@ -2472,6 +2562,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MemberRemoval" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     patch:
       tags: [identities]
@@ -2510,6 +2601,7 @@ paths:
                   role: { type: string, enum: [admin, member] }
                   previousRole: { type: string, enum: [admin, member] }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/members/{member}/review:
@@ -2530,6 +2622,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MemberReview" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/members/{member}/exposure:
@@ -2562,6 +2655,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExposureReport" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/members/{member}/exposure/confirmations:
@@ -2600,6 +2694,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExposureConfirmation" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me:
@@ -2625,6 +2720,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WhoAmI" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/profile:
@@ -2641,6 +2737,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Profile" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     patch:
       tags: [identities]
@@ -2667,6 +2764,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Profile" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/credentials:
@@ -2690,6 +2788,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/OwnCredential" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/credentials/{credential}:
@@ -2701,6 +2800,7 @@ paths:
         - { name: credential, in: path, required: true, schema: { type: string } }
       responses:
         "204": { description: Revoked }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/credentials/cli:
@@ -2729,6 +2829,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IssuedCliCredential" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/passkeys:
@@ -2755,6 +2856,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/OwnPasskey" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/passkeys/{passkey}:
@@ -2780,6 +2882,7 @@ paths:
       responses:
         "204": { description: Removed }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/passkeys/{passkey}/confirmation/options:
@@ -2805,6 +2908,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PasskeyConfirmationOptions" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/passkeys/{passkey}/confirmation:
@@ -2843,6 +2947,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OwnPasskey" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/approvals/{approval}:
@@ -2866,6 +2971,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Approval" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/approvals/{approval}/options:
@@ -2891,6 +2997,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApprovalOptions" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/approvals/{approval}/approve:
@@ -2927,6 +3034,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Approval" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/approvals/{approval}/cancel:
@@ -2947,6 +3055,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Approval" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /auth/device:
@@ -2984,6 +3093,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DeviceSignInStarted" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /auth/device/token:
@@ -3014,6 +3124,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IssuedCliCredential" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /auth/device/lookup:
@@ -3047,6 +3158,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DeviceSignInLookup" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /auth/device/approve:
@@ -3089,6 +3201,7 @@ paths:
                 required: [decision]
                 properties:
                   decision: { type: string, enum: [approved, denied] }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/grants:
@@ -3112,6 +3225,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Grant" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [grants]
@@ -3143,6 +3257,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Grant" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/roles:
@@ -3161,6 +3276,7 @@ paths:
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/Role" } }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [grants]
@@ -3187,6 +3303,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Role" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/roles/{role}:
@@ -3224,6 +3341,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Role" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [grants]
@@ -3235,6 +3353,7 @@ paths:
       responses:
         "204": { description: Deleted }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/groups:
@@ -3253,6 +3372,7 @@ paths:
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/Group" } }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [grants]
@@ -3275,6 +3395,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Group" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/groups/{group}:
@@ -3307,6 +3428,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Group" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [grants]
@@ -3318,6 +3440,7 @@ paths:
       responses:
         "204": { description: Deleted }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/groups/{group}/members:
@@ -3343,6 +3466,7 @@ paths:
                       required: [identityId]
                       properties: { identityId: { type: string } }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [grants]
@@ -3362,6 +3486,7 @@ paths:
       responses:
         "204": { description: Added }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/groups/{group}/members/{identity}:
@@ -3376,6 +3501,7 @@ paths:
       responses:
         "204": { description: Removed }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams:
@@ -3394,6 +3520,7 @@ paths:
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/Group" } }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [grants]
@@ -3416,6 +3543,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Group" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}:
@@ -3448,6 +3576,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Group" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [grants]
@@ -3459,6 +3588,7 @@ paths:
       responses:
         "204": { description: Deleted }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}/members:
@@ -3484,6 +3614,7 @@ paths:
                       required: [identityId]
                       properties: { identityId: { type: string } }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [grants]
@@ -3503,6 +3634,7 @@ paths:
       responses:
         "204": { description: Added }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}/members/{identity}:
@@ -3517,6 +3649,7 @@ paths:
       responses:
         "204": { description: Removed }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}/projects:
@@ -3542,6 +3675,7 @@ paths:
                       required: [projectId]
                       properties: { projectId: { type: string } }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [grants]
@@ -3561,6 +3695,7 @@ paths:
       responses:
         "204": { description: Added }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}/projects/{project}:
@@ -3575,6 +3710,7 @@ paths:
       responses:
         "204": { description: Removed }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/grants/{grant}:
@@ -3591,6 +3727,7 @@ paths:
       responses:
         "204": { description: Revoked }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/grants/{grant}/replace:
@@ -3641,6 +3778,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/GrantReplacement" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/requirements:
@@ -3665,6 +3803,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Requirement" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [grants]
@@ -3692,6 +3831,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Requirement" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/requirements/{requirement}:
@@ -3733,6 +3873,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Requirement" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [grants]
@@ -3754,6 +3895,7 @@ paths:
       responses:
         "204": { description: Revoked }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/audit-events:
@@ -3802,6 +3944,7 @@ paths:
                       listing, not part of the event schema, so the export and
                       webhook deliveries do not carry it. Absent from older
                       servers.
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/audit-events/export:
@@ -3830,6 +3973,7 @@ paths:
           content:
             application/x-ndjson:
               schema: { $ref: "#/components/schemas/AuditEvent" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/webhooks:
@@ -3851,6 +3995,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Webhook" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [audit]
@@ -3886,6 +4031,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CreatedWebhook" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/webhooks/{webhook}:
@@ -3929,6 +4075,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Webhook" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [audit]
@@ -3944,6 +4091,7 @@ paths:
       responses:
         "204": { description: Revoked }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/platform-connections:
@@ -3965,6 +4113,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/PlatformConnection" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [sync]
@@ -4011,6 +4160,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PlatformConnection" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/platform-connections/check:
@@ -4047,6 +4197,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccessCheck" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/platform-connections/destinations:
@@ -4081,6 +4232,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DestinationListing" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/platform-connections/{connection}:
@@ -4108,6 +4260,7 @@ paths:
                       targets:
                         type: array
                         items: { $ref: "#/components/schemas/SyncTarget" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [sync]
@@ -4120,6 +4273,7 @@ paths:
       responses:
         "204": { description: Revoked }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/platform-connections/{connection}/credential:
@@ -4153,6 +4307,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PlatformConnection" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app:
@@ -4180,6 +4335,7 @@ paths:
       responses:
         "204": { description: Removed }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     get:
       tags: [sync]
@@ -4194,6 +4350,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GitHubApp" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/registrations:
@@ -4225,6 +4382,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GitHubAppRegistrationStart" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/registrations/complete:
@@ -4289,6 +4447,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/registrations/{registration}/attach:
@@ -4322,6 +4481,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/GitHubAppRegistrationRefused" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/registrations/{registration}:
@@ -4358,6 +4518,7 @@ paths:
                     properties:
                       githubAppId: { type: integer }
                       slug: { type: string }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/import:
@@ -4400,6 +4561,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/GitHubAppImportFailed" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/key:
@@ -4443,6 +4605,7 @@ paths:
                       app: { $ref: "#/components/schemas/GitHubApp" }
                   - { $ref: "#/components/schemas/GitHubAppImportFailed" }
         "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/installations:
@@ -4463,6 +4626,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GitHubAppInstallationListing" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/sync-targets:
@@ -4484,6 +4648,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/SyncTarget" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/sync-targets:
@@ -4508,6 +4673,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/SyncTarget" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [sync]
@@ -4575,6 +4741,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SyncTarget" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}:
@@ -4601,6 +4768,7 @@ paths:
                       names:
                         type: array
                         items: { $ref: "#/components/schemas/SyncLedgerName" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     patch:
       tags: [sync]
@@ -4639,6 +4807,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SyncTarget" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [sync]
@@ -4654,6 +4823,7 @@ paths:
         - { name: target, in: path, required: true, schema: { type: string } }
       responses:
         "204": { description: Revoked }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/push:
@@ -4678,6 +4848,7 @@ paths:
                 required: [scheduled]
                 properties:
                   scheduled: { type: boolean }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/pause:
@@ -4704,6 +4875,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SyncTarget" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/resume:
@@ -4725,6 +4897,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SyncTarget" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
 components:
@@ -4879,6 +5052,23 @@ components:
       schema: { type: string, format: date-time, examples: ["2026-11-17T12:00:00.000Z"] }
 
   responses:
+    RequestWindow:
+      description: >
+        The request window refused the request: more than 600 requests from
+        this client address in its current 60-second window (the address
+        behind the proxies the server trusts). The error envelope with code
+        PERMISSION_DENIED and message "Request rate exceeded", whatever the
+        operation; Retry-After says how many seconds remain in the window.
+        It is answered before authentication. An operation with a limit of
+        its own may also answer 429 with that limit's code (RATE_LIMITED,
+        SLOW_DOWN), as its description says.
+      headers:
+        Retry-After:
+          description: Seconds until the client's window ends (at least 1).
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
     StepUpRequired:
       description: >
         STEP_UP_REQUIRED (ADR-0054 Decision 3): a Security Control of the

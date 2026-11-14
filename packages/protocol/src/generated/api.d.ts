@@ -4043,6 +4043,17 @@ export interface components {
         };
     };
     responses: {
+        /** @description The request window refused the request: more than 600 requests from this client address in its current 60-second window (the address behind the proxies the server trusts). The error envelope with code PERMISSION_DENIED and message "Request rate exceeded", whatever the operation; Retry-After says how many seconds remain in the window. It is answered before authentication. An operation with a limit of its own may also answer 429 with that limit's code (RATE_LIMITED, SLOW_DOWN), as its description says. */
+        RequestWindow: {
+            headers: {
+                /** @description Seconds until the client's window ends (at least 1). */
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
         /** @description STEP_UP_REQUIRED (ADR-0054 Decision 3): a Security Control of the Organization at enforce (admin-step-up, capability security.enforce.admin-step-up; requirement-protection), a loosening Security Control change, or the removal of a trusted passkey needs the requester's step-up approval of exactly this request, and the request carried none. Nothing was changed, and no Idempotency-Key claim was kept. details.approval is the Approval Intent (schema Approval: its id, operation, summary, url and expiresAt). The person who asked approves it with a trusted passkey that verifies them (the dashboard's approval dialog, or its url; the CLI prints the url and polls GET /v1/me/approvals/{approval}), then repeats the identical request with the Varlatch-Approval header set to its id (parameter approvalHeader). Only that person can approve it, within its lifetime: 2 minutes for a dashboard request, 10 for a CLI one. A machine credential can never give an approval: under enforce it is refused with PERMISSION_DENIED (details.reason machine-credential), and no intent is created. Refusals that do not depend on the approval (validation, not-found, conflicts, a frozen or deleting Organization, passkey-verification) come first. The error envelope is the same as every other error's. */
         StepUpRequired: {
             headers: {
@@ -4135,6 +4146,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4165,6 +4177,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4195,6 +4208,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4225,6 +4239,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4246,6 +4261,7 @@ export interface operations {
                     "application/json": components["schemas"]["Meta"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4276,6 +4292,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4315,6 +4332,7 @@ export interface operations {
                     "text/plain": string;
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4343,6 +4361,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4371,6 +4390,7 @@ export interface operations {
                     "application/json": components["schemas"]["Organization"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4397,6 +4417,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4428,6 +4449,7 @@ export interface operations {
                     "application/json": components["schemas"]["Organization"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4462,6 +4484,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4493,6 +4516,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4525,6 +4549,7 @@ export interface operations {
                     "application/json": components["schemas"]["Project"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4551,6 +4576,7 @@ export interface operations {
                     "application/json": components["schemas"]["Project"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4591,6 +4617,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4623,6 +4650,7 @@ export interface operations {
                     "application/json": components["schemas"]["Project"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4656,6 +4684,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4698,6 +4727,7 @@ export interface operations {
                     "application/json": components["schemas"]["Environment"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4726,6 +4756,7 @@ export interface operations {
                     "application/json": components["schemas"]["Environment"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4752,6 +4783,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4793,6 +4825,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValueVersion"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4821,6 +4854,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4861,6 +4895,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValueRotation"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4891,6 +4926,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValueRotation"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4923,6 +4959,7 @@ export interface operations {
                     "application/json": components["schemas"]["EffectiveConfiguration"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -4961,6 +4998,7 @@ export interface operations {
                     "application/json": components["schemas"]["StrictRetrieval"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5020,6 +5058,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5051,6 +5090,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5100,6 +5140,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssuedCapability"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5127,6 +5168,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5171,6 +5213,7 @@ export interface operations {
                     "application/json": components["schemas"]["CapabilityExercise"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5227,6 +5270,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5255,6 +5299,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationReport"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5281,6 +5326,7 @@ export interface operations {
                     "application/json": components["schemas"]["ContractRevision"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5320,6 +5366,7 @@ export interface operations {
                     "application/json": components["schemas"]["ContractRevision"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5347,6 +5394,7 @@ export interface operations {
                     "application/json": components["schemas"]["ContractRevision"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5374,6 +5422,7 @@ export interface operations {
                     "application/json": components["schemas"]["ContractRevision"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5405,6 +5454,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5445,6 +5495,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5473,6 +5524,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5510,6 +5562,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5534,6 +5587,7 @@ export interface operations {
                     "application/json": components["schemas"]["CredentialReview"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5558,6 +5612,7 @@ export interface operations {
                     "application/json": components["schemas"]["SecurityControlList"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5585,6 +5640,7 @@ export interface operations {
                     "application/json": components["schemas"]["SecurityControlReport"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5609,6 +5665,7 @@ export interface operations {
                     "application/json": components["schemas"]["OrganizationPermissions"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5633,6 +5690,7 @@ export interface operations {
                     "application/json": components["schemas"]["RefusedDestinations"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5657,6 +5715,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApprovalKeys"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5690,6 +5749,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5714,6 +5774,7 @@ export interface operations {
                     "application/json": components["schemas"]["AuditExportStatus"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5742,6 +5803,7 @@ export interface operations {
                     "application/json": components["schemas"]["AuditExport"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5772,6 +5834,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5804,6 +5867,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5836,6 +5900,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5864,6 +5929,7 @@ export interface operations {
                     "application/json": components["schemas"]["AuditExportCheck"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5889,6 +5955,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5923,6 +5990,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5951,6 +6019,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -5983,6 +6052,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6008,6 +6078,7 @@ export interface operations {
                     "application/json": components["schemas"]["MachineReach"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6036,6 +6107,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6077,6 +6149,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6105,6 +6178,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6135,6 +6209,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssuedOidcCredential"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6168,6 +6243,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6210,6 +6286,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6233,6 +6310,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6259,6 +6337,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6293,6 +6372,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6318,6 +6398,7 @@ export interface operations {
                     "application/json": components["schemas"]["OrganizationDeletion"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6343,6 +6424,7 @@ export interface operations {
                     "application/json": components["schemas"]["OrganizationDeletion"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6373,6 +6455,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6403,6 +6486,7 @@ export interface operations {
                     "application/json": components["schemas"]["IncidentFreeze"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6436,6 +6520,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6467,6 +6552,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6491,6 +6577,7 @@ export interface operations {
                     "application/x-ndjson": components["schemas"]["AuditEvent"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6526,6 +6613,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6548,6 +6636,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6578,6 +6667,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6621,6 +6711,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6647,6 +6738,7 @@ export interface operations {
                     "application/json": components["schemas"]["MemberReview"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6673,6 +6765,7 @@ export interface operations {
                     "application/json": components["schemas"]["ExposureReport"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6714,6 +6807,7 @@ export interface operations {
                     "application/json": components["schemas"]["ExposureConfirmation"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6735,6 +6829,7 @@ export interface operations {
                     "application/json": components["schemas"]["WhoAmI"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6756,6 +6851,7 @@ export interface operations {
                     "application/json": components["schemas"]["Profile"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6784,6 +6880,7 @@ export interface operations {
                     "application/json": components["schemas"]["Profile"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6808,6 +6905,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6829,6 +6927,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6858,6 +6957,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssuedCliCredential"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6882,6 +6982,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6907,6 +7008,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6930,6 +7032,7 @@ export interface operations {
                     "application/json": components["schemas"]["PasskeyConfirmationOptions"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6962,6 +7065,7 @@ export interface operations {
                     "application/json": components["schemas"]["OwnPasskey"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -6986,6 +7090,7 @@ export interface operations {
                     "application/json": components["schemas"]["Approval"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7010,6 +7115,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApprovalOptions"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7043,6 +7149,7 @@ export interface operations {
                     "application/json": components["schemas"]["Approval"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7067,6 +7174,7 @@ export interface operations {
                     "application/json": components["schemas"]["Approval"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7099,6 +7207,7 @@ export interface operations {
                     "application/json": components["schemas"]["DeviceSignInStarted"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7126,6 +7235,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssuedCliCredential"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7154,6 +7264,7 @@ export interface operations {
                     "application/json": components["schemas"]["DeviceSignInLookup"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7190,6 +7301,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7221,6 +7333,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7259,6 +7372,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7286,6 +7400,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7321,6 +7436,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7348,6 +7464,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7387,6 +7504,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7414,6 +7532,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7448,6 +7567,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7475,6 +7595,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7513,6 +7634,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7543,6 +7665,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7576,6 +7699,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7604,6 +7728,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7631,6 +7756,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7665,6 +7791,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7692,6 +7819,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7730,6 +7858,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7760,6 +7889,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7793,6 +7923,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7821,6 +7952,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7851,6 +7983,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7884,6 +8017,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7913,6 +8047,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7940,6 +8075,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -7981,6 +8117,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8012,6 +8149,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8045,6 +8183,7 @@ export interface operations {
                     "application/json": components["schemas"]["Requirement"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8072,6 +8211,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8111,6 +8251,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8164,6 +8305,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8207,6 +8349,7 @@ export interface operations {
                     "application/x-ndjson": components["schemas"]["AuditEvent"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8234,6 +8377,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8270,6 +8414,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8297,6 +8442,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8336,6 +8482,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8363,6 +8510,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8407,6 +8555,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8444,6 +8593,7 @@ export interface operations {
                     "application/json": components["schemas"]["AccessCheck"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8477,6 +8627,7 @@ export interface operations {
                     "application/json": components["schemas"]["DestinationListing"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8504,6 +8655,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8531,6 +8683,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8567,6 +8720,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8591,6 +8745,7 @@ export interface operations {
                     "application/json": components["schemas"]["GitHubApp"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8620,6 +8775,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8650,6 +8806,7 @@ export interface operations {
                     "application/json": components["schemas"]["GitHubAppRegistrationStart"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8699,6 +8856,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8737,6 +8895,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8773,6 +8932,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8818,6 +8978,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8858,6 +9019,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8882,6 +9044,7 @@ export interface operations {
                     "application/json": components["schemas"]["GitHubAppInstallationListing"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8909,6 +9072,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8940,6 +9104,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -8983,6 +9148,7 @@ export interface operations {
                     "application/json": components["schemas"]["SyncTarget"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -9014,6 +9180,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -9041,6 +9208,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -9083,6 +9251,7 @@ export interface operations {
                     "application/json": components["schemas"]["SyncTarget"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -9114,6 +9283,7 @@ export interface operations {
                     };
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -9145,6 +9315,7 @@ export interface operations {
                     "application/json": components["schemas"]["SyncTarget"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };
@@ -9174,6 +9345,7 @@ export interface operations {
                     "application/json": components["schemas"]["SyncTarget"];
                 };
             };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };

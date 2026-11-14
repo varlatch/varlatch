@@ -23,18 +23,19 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 | File | What it is |
 | --- | --- |
 | `run.mjs` | The runner: prepares the clients, starts the target, runs the suites of `plan.mjs` in order, paces them, collects results, judges the run against the inventory and the target's expected failures (and, with `--gate`, the gate), removes the target. |
-| `inventory.json` | Every check a run must account for: its suite, kind, title, the CLI feature it exercises and, for ts-stack checks, its replacement. Each suite's script and the capabilities it needs. Each CLI feature, with the CHANGELOG entry that introduced it. The external suites the runner does not run, with their replacements. |
-| `expect/` | Expected failures, one file per target: `expect/<target name>.json`. |
-| `expect-check.mjs` | CI's check that a pull request adds no expected failure without the `conformance-regression` label. |
+| `inventory.json` | Every check a run must account for: its suite, kind, title, the CLI feature it exercises and, for ts-stack checks, its replacement. Each suite's script, the capabilities it needs and the operations it needs. The named operations outside the OpenAPI document. Each CLI feature, with the CHANGELOG entry that introduced it. The external suites the runner does not run, with their replacements. |
+| `expect/` | Expected failures and declared gaps (`lacks`), one file per target: `expect/<target name>.json`. |
+| `expect-check.mjs` | CI's check that a pull request adds no expected failure and no gap without the `conformance-regression` label. |
+| `lacks-probe.mjs` | Asks the target about each operation it declares it lacks (the stale-`lacks` probe). |
 | `source-images.mjs` | Builds the `ts-source` images once, for several runs to share (the weekly matrix). |
 | `clients.json` | The released CLIs a run can select, pinned by version, release commit and hash, and the pinned cosign that verifies them. |
 | `clients.mjs` | Downloads and verifies a pinned CLI; bundles `packages/sdk` for the sdk suite. |
 | `plan.mjs` | The order of the suites and how each gets its arguments. |
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
-| `targets/` | Target adapters (`ts-source`, `ts-release`, the `go-binary` stub; the first two share `compose-stack.mjs`) and the registry. |
+| `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`) and the registry. |
 | `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), and the client suites: the CLI's compatibility core, `varlatch mcp`, and the sdk smoke. |
-| `lib/` | The runner's pure logic: result lines, inventory rules, the request-log check, the client pins, release verification, expected failures, gate mode. |
+| `lib/` | The runner's pure logic: result lines, inventory rules, operations and declared gaps, the request-log check, the client pins, release verification, expected failures, gate mode. |
 | `test/` | Unit tests: `pnpm test:conformance`. |
 
 The runner and everything in this directory are Apache-2.0. The suites under
@@ -58,6 +59,10 @@ A check may report more than once (a loop over fixed cases); it passes only
 when every report passes. Mixed results for one check (a `FAIL` with a
 `PASS`, an `N/A` or a `PREDATES-CLI`) fail it as inconsistent reporting,
 which no expected failure covers.
+
+One more result exists, which only the runner gives:
+`TARGET-LACKS [<id>] the target lacks <operations>` (see
+[Declared gaps](#declared-gaps)). A suite that prints it has made an error.
 
 ## The inventory is the gate
 
@@ -165,8 +170,24 @@ in `CONFORMANCE_TARGET_STATE`, which `target-op.mjs` reads.
   (`node dist/cli.js admin`), the same ports and environment, the same
   bootstrap and seed. It has every capability, through the same operations
   (`targets/compose-stack.mjs`). The suites are this checkout's.
-- `go-binary:<path>`: the Go server. A stub that fails with "not built yet"
-  until ADR-0059 step 3 writes the server and its adapter.
+- `go-binary:<path>`: the Go `varlatchd` at `<path>`, run as a process
+  (`targets/go-binary.mjs`). `up` makes a fresh installation in a new
+  temporary directory: the data directory, a random Root KEK (mode 0600),
+  `varlatchd.conf` listening on a free loopback port with the access log
+  in the directory, and the server's own output; it starts
+  `varlatchd serve` and waits for `/readyz`. The origin is `varlatchd`
+  itself (it serves the dashboard and the API), `restart` stops it with
+  SIGTERM and serves again on the same data, `logs` is its output, and
+  `request-log` is its access log: the requests its request window counted,
+  with millisecond arrival and completion times, the client address and
+  the X-Forwarded-For header. `bootstrap` and `recover` run
+  `varlatchd admin bootstrap|recover`, which answer `NOT_IMPLEMENTED_YET`
+  until step 3.4; `serveCli` restarts varlatchd with `serve_cli` set, which
+  it refuses until it knows the setting. It has no optional capability yet.
+  It signals only the process it started, by the PID it recorded, after
+  checking that PID still runs its configuration. Build the binary with the
+  dashboard first: `go generate ./server/web` then
+  `go build ./cmd/varlatchd` in `go/`.
 
 Before a `ts-release` target starts, the release is verified as
 `docs/operations/verify-release.md` says, and any failure stops the run:
@@ -245,9 +266,81 @@ the pull request's head as git objects, and reads the head's files with
 `git show` as JSON; nothing from the head is checked out, installed,
 imported or executed, the token is read-only and no secret is used. A base
 without the checker fails the job. A push to `main` validates the files it
-lands. For `go-binary`
-the file starts, in step 3, as the conformance checks the Go server does
-not pass yet, and is the step 4 parity tracker.
+lands.
+
+The same check covers the declared gaps: see [Declared gaps](#declared-gaps).
+This pull request's own run of the check, like any, uses the base's
+checker; a change to the checker takes effect for the pull requests after
+it merges.
+
+## Declared gaps
+
+A target that does not yet have an operation declares it, instead of
+failing every check that needs it (ADR-0059 step 3, varlatchd-core
+decision 5). This is how the Go server runs the whole inventory before its
+features are ported, and `expect/go-binary.json` is the parity tracker.
+
+**Operations.** An operation is an OpenAPI `operationId`
+(`packages/protocol/openapi.yaml`, read by `lib/operations.mjs`) or a named
+operation outside `/v1`, listed in `inventory.json` `operations`:
+
+- `{ "method", "path" }`: an HTTP route outside `/v1` (`enroll-page`, the
+  enrollment page; `browser-session`, the browser's session under `/auth`);
+- `{ "target" }`: a target operation (`admin-bootstrap` and
+  `admin-recover`, the targets' `bootstrap` and `recover`; `serve-cli`,
+  `serveCli`);
+- `{ "uses": [...] }`: the `seed`, the runner's own writes, which lacks
+  exactly when an operation it uses does. It is never listed itself.
+
+Each suite lists the operations it needs (`suites.<name>.operations`), and a
+check may add its own (`checks.<id>.operations`), for a feature group that
+needs more than the rest of its suite. Suites whose checks are all ts-stack
+list none: they never run on a target without the stack. `pnpm
+test:conformance` fails on a name that is neither.
+
+**`lacks`.** `expect/<target>.json` lists, per target key, the operations
+the target does not have, each with a reason and the step that adds it:
+
+```json
+"lacks": {
+  "go-binary": {
+    "whoami": { "reason": "sessions ... are not built yet in the Go server", "step": "ADR-0059 step 3.4" }
+  }
+}
+```
+
+**In a run:**
+
+- before the suites, the runner asks the target about every listed
+  operation (`lacks-probe.mjs`): a request to its method and path (path
+  parameters filled with `placeholder`, a body `{}` where the method takes
+  one), or the target operation for a named one. The answer must be
+  exactly the Go server's shared stub: `501` with the code
+  `NOT_IMPLEMENTED_YET` (an error with that code from a target operation).
+  Any other answer means the target provides the operation: the run fails,
+  naming the stale entry (`STALE-LACKS` in the output). The stub answers
+  before authentication, validation, body decoding or storage, so the probe
+  needs no fixtures;
+- a check whose operations include a lacking one is reported
+  `target-lacks`, with the operations, by the runner. A suite all of whose
+  checks lack something is not started; otherwise it runs, and the runner
+  replaces what it printed for the lacking checks. A ts-stack check on a
+  target without the stack stays not applicable;
+- the first enrollment and the seed are skipped when they need a lacking
+  operation;
+- the report counts the checks each lacking operation holds back, and
+  records the declared and any stale entries (`lacks`);
+- `--gate` refuses any `target-lacks` result and any `lacks` entry in
+  force.
+
+**The merge-base check** (`expect-check.mjs`) treats gaps like expected
+failures: with each side's own inventory, it computes which checks report
+`target-lacks` on each target at the merge base and at the head. A pull
+request that adds a `lacks` entry, or makes any check newly report
+`target-lacks` (a new entry, or a new operation in the inventory that a
+lacking target does not have), needs the `conformance-regression` label, so
+an operation a target provides cannot quietly drop out of what is checked.
+Removing an entry, or a dependency, needs nothing.
 
 ## External suites
 
@@ -271,7 +364,8 @@ node scripts/conformance/run.mjs --target go-binary:<path> --cli source \
 
 Besides passing as an ordinary run, a gate run must have:
 
-- no expected failure in force for its target and client;
+- no expected failure in force for its target and client, no `lacks` entry
+  in force for its target, and no `target-lacks` result;
 - every ts-stack check's replacement, and every external suite's, present
   and passing: a replacement check that passed in this run, or `none`
   with its reason. An `open` replacement fails the gate;
@@ -309,7 +403,8 @@ workflow run gives the same assurance.
 The report's `gate` holds the verdict and each problem; a gate failure
 prints `CONFORMANCE GATE FAILED` and exits 1. Gate mode fails today on every
 target: the realtime checks' replacements (G11's checks, step 3), doctor's
-(step 6) and every external suite's are still open. `test/gate.test.mjs`
+(step 6) and every external suite's are still open; on `go-binary`, its
+declared gaps too. `test/gate.test.mjs`
 shows this on the inventory as it stands.
 
 ## The weekly matrix
@@ -322,13 +417,16 @@ runners with only the read-only job token:
 | --- | --- | --- | --- |
 | `ts-source` | ✓ | ✓ | ✓ |
 | `ts-release:0.22.0` | ✓ | ✓ | ✓ |
+| `go-binary` | ✓ | | |
 
 The `images` job builds the source images once (`source-images.mjs`) and
-passes them to the `ts-source` cells as an artifact. Each cell is its own
-job, with its own stack on its own free ports, at most three at a time and
-60 minutes each, and uploads its `conformance-report.json`
-(`conformance-report-<target>-cli-<cli>`, tokens masked as in the logs). A
-`go-binary` row joins in step 3.
+passes them to the `ts-source` cells as an artifact. The `go-binary` cell
+builds the dashboard and `varlatchd` from the checkout. Each cell is its own
+job, with its own stack (or server) on its own free ports, at most three at
+a time and 60 minutes each, and uploads its `conformance-report.json`
+(`conformance-report-<target>-cli-<cli>`, tokens masked as in the logs).
+`go.yml` also runs the `go-binary` target with the source CLI on every pull
+request that changes `go/` or the harness's `go-binary` pieces.
 
 ## Clients
 

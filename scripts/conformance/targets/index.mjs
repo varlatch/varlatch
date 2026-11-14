@@ -7,7 +7,7 @@
  *
  *   ts-source            the TypeScript stack built from this checkout
  *   ts-release:<x.y.z>   a signed TypeScript release, verified, pulled by digest
- *   go-binary:<path>     the Go server (a stub until ADR-0059 step 3)
+ *   go-binary:<path>     the Go varlatchd at <path>, run as a process
  */
 const TARGETS = {
   "ts-source": { load: () => import("./ts-source.mjs"), argument: "none" },

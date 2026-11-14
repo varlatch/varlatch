@@ -84,12 +84,15 @@ var securitySettings = map[string][]string{
 
 // How the service starts, stops and restarts.
 var lifecycleSettings = map[string][]string{
-	"Type":           {"exec"},
-	"ExecStart":      {"/usr/local/bin/varlatchd serve --config /etc/varlatch/varlatchd.conf"},
-	"Restart":        {"on-failure"},
-	"RestartSec":     {"15s"},
-	"TimeoutStopSec": {"30s"},
-	"LimitNOFILE":    {"65536"},
+	"Type":       {"exec"},
+	"ExecStart":  {"/usr/local/bin/varlatchd serve --config /etc/varlatch/varlatchd.conf"},
+	"Restart":    {"on-failure"},
+	"RestartSec": {"15s"},
+	// varlatchd exits 78 for a configuration error no restart can fix
+	// (go/server/daemon ExitConfig).
+	"RestartPreventExitStatus": {"78"},
+	"TimeoutStopSec":           {"30s"},
+	"LimitNOFILE":              {"65536"},
 }
 
 func TestUnitSettings(t *testing.T) {
