@@ -112,11 +112,13 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   assert.deepEqual(validateExpectations(goExpect, { targetName: "go-binary", inventory, cliVersions: ["0.21.0", "0.22.0"], openapi }), []);
   const lacks = lacksFor(goExpect, "go-binary");
   // ADR-0059 step 3.4: the browser session's paths, and the /v1 operations
-  // sessions, passkeys, credentials and device sign-in need.
+  // sessions, passkeys (with the step-up approval a trusted passkey's
+  // removal can need), credentials and device sign-in need.
   const built = [
     "getMeta",
     "whoami", "getMyProfile", "listMyCredentials", "exchangeCliCredential", "revokeMyCredential",
     "listMyPasskeys", "removeMyPasskey", "startPasskeyConfirmation", "confirmMyPasskey",
+    "getApproval", "startApproval", "approveApproval", "cancelApproval",
     "startDeviceSignIn", "collectDeviceSignIn", "lookupDeviceSignIn", "decideDeviceSignIn", "listOrganizations",
     "getBrowserSession", "startPasskeySignIn", "finishPasskeySignIn", "startPasskeyRegistration", "finishPasskeyRegistration",
     "signOut", "mintBrowserBearer",

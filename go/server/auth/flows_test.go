@@ -256,11 +256,12 @@ func TestPasskeyConfirmation(t *testing.T) {
 		t.Fatalf("already trusted: %v", err)
 	}
 	// Removal of one's own passkey; another's is not found.
-	if err := e.svc.RemoveOwnPasskey(e.ctx, me.identityID, reg.PasskeyID); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.svc.RemoveOwnPasskey(e.ctx, "idn_someone", me.principal.Identity.ID); codeOf(err) != "RESOURCE_NOT_FOUND" {
+	someone := auth.Requester{IdentityID: "idn_someone", IdentityKind: "human", CredentialID: "crd_x", CredentialKind: auth.KindBrowser}
+	if err := e.svc.RemoveOwnPasskey(e.ctx, someone, reg.PasskeyID, ""); codeOf(err) != "RESOURCE_NOT_FOUND" {
 		t.Fatalf("another's: %v", err)
+	}
+	if err := e.svc.RemoveOwnPasskey(e.ctx, auth.RequesterOf(me.principal), reg.PasskeyID, ""); err != nil {
+		t.Fatal(err)
 	}
 }
 

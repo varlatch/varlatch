@@ -161,7 +161,7 @@ func Serve(opts Options) int {
 		AccessLog:      httpserver.NewAccessLog(accessOut),
 		Web:            web.FS(),
 		Backend:        &backend{store: store, rootKEK: rootKEK},
-		Auth:           auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log}),
+		Auth:           auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK}),
 		Log:            log,
 	})
 	if err != nil {

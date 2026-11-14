@@ -20,6 +20,10 @@ const (
 	// challenges of a device sign-in approval and a passkey confirmation.
 	DeviceSignInChallenge        = "dsc"
 	PasskeyConfirmationChallenge = "pcc"
+	// ApprovalIntent and ApprovalIntentChallenge are a step-up approval
+	// and its challenges (ADR-0054 Decision 3).
+	ApprovalIntent          = "apr"
+	ApprovalIntentChallenge = "apc"
 	// AuthSession and Passkey name rows of the tables varlatchd owns since
 	// Better Auth left (ADR-0059 Decision 6); the TypeScript server's rows
 	// keep the ids Better Auth gave them.

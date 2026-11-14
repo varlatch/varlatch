@@ -269,16 +269,35 @@ func dashboardSession(ctx context.Context, refusal string) (string, string, erro
 
 const passkeyOwnerRefusal = "Only a person signed in to the dashboard may change their passkeys"
 
-// RemoveMyPasskey is DELETE /v1/me/passkeys/{passkey}.
+// RemoveMyPasskey is DELETE /v1/me/passkeys/{passkey}: a trusted
+// passkey under an enforced Security Control needs the step-up approval
+// the Varlatch-Approval header names (auth.RemoveOwnPasskey).
 func (o *operations) RemoveMyPasskey(ctx context.Context, req api.RemoveMyPasskeyRequestObject) (api.RemoveMyPasskeyResponseObject, error) {
-	identityID, _, err := dashboardSession(ctx, passkeyOwnerRefusal)
+	if _, _, err := dashboardSession(ctx, passkeyOwnerRefusal); err != nil {
+		return nil, err
+	}
+	approvalID, err := approvalHeader(req.Params.VarlatchApproval)
 	if err != nil {
 		return nil, err
 	}
-	if err := o.s.opts.Auth.RemoveOwnPasskey(ctx, identityID, req.Passkey); err != nil {
+	if err := o.s.opts.Auth.RemoveOwnPasskey(ctx, auth.RequesterOf(principalOf(ctx)), req.Passkey, approvalID); err != nil {
 		return nil, err
 	}
 	return reply{status: http.StatusNoContent}, nil
+}
+
+// approvalHeader is the Varlatch-Approval header's approval id, "" when the
+// request has none; one that cannot be an approval id is not found
+// (approvalOf).
+func approvalHeader(h *api.ApprovalHeader) (string, error) {
+	if h == nil {
+		return "", nil
+	}
+	id := auth.ParseApprovalID(string(*h))
+	if id == "" {
+		return "", auth.ApprovalInvalid("not-found", nil)
+	}
+	return id, nil
 }
 
 func optionsJS(v any) (any, error) {

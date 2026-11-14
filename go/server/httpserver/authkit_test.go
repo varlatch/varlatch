@@ -37,7 +37,7 @@ func newTestAuth(t *testing.T, pub *url.URL, now func() time.Time) *testAuth {
 	if _, err := db.Init(ctx, store, "test"); err != nil {
 		t.Fatal(err)
 	}
-	ta := &testAuth{svc: auth.New(store, auth.Options{PublicURL: pub, Now: now}), store: store, tokens: map[string]string{}}
+	ta := &testAuth{svc: auth.New(store, auth.Options{PublicURL: pub, Now: now, RootKEK: make([]byte, 32)}), store: store, tokens: map[string]string{}}
 	err = store.Write(ctx, func(tx *storage.Tx) error {
 		q := query.New(tx)
 		if err := q.CreateInstallation(ctx, query.CreateInstallationParams{ID: "inst_test", KekCanary: "{}"}); err != nil {

@@ -122,8 +122,8 @@ func writeJS(w http.ResponseWriter, status int, body any) {
 }
 
 // answerError answers an operation's error: a domain error with its code's
-// status and envelope, an approval this build does not have as the stub
-// does, anything else as an internal error, logged.
+// status and envelope, an approval polled too soon as SLOW_DOWN with
+// Retry-After, anything else as an internal error, logged.
 func (s *Server) answerError(w http.ResponseWriter, r *http.Request, err error) {
 	var he *headerError
 	if errors.As(err, &he) {
@@ -132,6 +132,7 @@ func (s *Server) answerError(w http.ResponseWriter, r *http.Request, err error) 
 		}
 	}
 	var de *domainerr.Error
+	var slow *auth.ErrSlowDown
 	switch {
 	case errors.As(err, &de):
 		status, ok := StatusByCode[de.Code]
@@ -139,8 +140,9 @@ func (s *Server) answerError(w http.ResponseWriter, r *http.Request, err error) 
 			status = http.StatusInternalServerError
 		}
 		writeErrorDetails(w, r, status, de.Code, de.Message, de.Details)
-	case errors.Is(err, auth.ErrRemovalNeedsApproval):
-		writeError(w, r, http.StatusNotImplemented, NotImplementedYet, err.Error()+" (ADR-0059 step 4)")
+	case errors.As(err, &slow):
+		w.Header().Set("Retry-After", strconv.FormatInt(slow.Interval, 10))
+		writeErrorDetails(w, r, http.StatusTooManyRequests, "SLOW_DOWN", slow.Error(), jsvalue.Object{{Key: "interval", Value: slow.Interval}})
 	default:
 		s.opts.Log.Error("answering a request failed", "method", r.Method, "path", r.URL.Path, "requestId", requestIDOf(r), "error", err)
 		writeError(w, r, http.StatusInternalServerError, "INTERNAL", "Internal error")
@@ -205,7 +207,8 @@ func withPrincipal(r *http.Request, p *auth.Principal) *http.Request {
 }
 
 // noStore are the operations answered with Cache-Control: no-store
-// whatever their outcome: device sign-in and passkey confirmation.
+// whatever their outcome: device sign-in, passkey confirmation and step-up
+// approvals.
 var noStore = map[string]bool{
 	"POST /v1/auth/device":                                true,
 	"POST /v1/auth/device/token":                          true,
@@ -213,6 +216,10 @@ var noStore = map[string]bool{
 	"POST /v1/auth/device/approve":                        true,
 	"POST /v1/me/passkeys/{passkey}/confirmation/options": true,
 	"POST /v1/me/passkeys/{passkey}/confirmation":         true,
+	"GET /v1/me/approvals/{approval}":                     true,
+	"POST /v1/me/approvals/{approval}/options":            true,
+	"POST /v1/me/approvals/{approval}/approve":            true,
+	"POST /v1/me/approvals/{approval}/cancel":             true,
 }
 
 // ignoresQuery are the operations whose query the TypeScript server never

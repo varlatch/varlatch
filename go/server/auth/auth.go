@@ -47,7 +47,11 @@ import (
 type Service struct {
 	store *storage.DB
 	// rp is the relying party, from the public URL; nil without one.
-	rp *RelyingParty
+	rp        *RelyingParty
+	publicURL *url.URL
+	// rootKEK keys the hashes an approval binds a request's body and query
+	// with (approvalHash).
+	rootKEK []byte
 	// now is the clock (tests replace it).
 	now        func() time.Time
 	ceremonies *ceremonyStore
@@ -63,11 +67,13 @@ type Options struct {
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 	Log *slog.Logger
+	// RootKEK keys step-up approvals' request hashes (approvals.go).
+	RootKEK []byte
 }
 
 // New returns the Service for store.
 func New(store *storage.DB, opts Options) *Service {
-	s := &Service{store: store, now: opts.Now, log: opts.Log, ceremonies: newCeremonyStore()}
+	s := &Service{store: store, now: opts.Now, log: opts.Log, ceremonies: newCeremonyStore(), publicURL: opts.PublicURL, rootKEK: opts.RootKEK}
 	if s.now == nil {
 		s.now = time.Now
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/auth/authtest"
 )
@@ -295,5 +296,64 @@ func TestEnrollPage(t *testing.T) {
 	}
 	if w := do(s, "POST", "/enroll", "", nil); w.Code != 404 {
 		t.Fatalf("POST /enroll %d", w.Code)
+	}
+}
+
+// The step-up approval of a trusted passkey's removal over HTTP: a header
+// that cannot be an approval id is APPROVAL_INVALID (409, approvalId
+// null); without one, STEP_UP_REQUIRED (403) with the approval; its
+// person's polls too close together answer SLOW_DOWN (429, Retry-After).
+func TestPasskeyRemovalStepUpOverHTTP(t *testing.T) {
+	s, ta := browserServer(t, browserOrigin)
+	b := newBrowser(t, s, browserOrigin)
+	identity := enrollOver(t, b, ta)
+	if err := ta.store.Write(context.Background(), func(tx *storage.Tx) error {
+		for _, q := range []string{
+			`INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_acme', 'acme', 'Acme', '{}')`,
+			`INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_acme', '` + identity + `', 'admin')`,
+			`INSERT INTO security_controls (organization_id, control, mode, version) VALUES ('org_acme', 'passkey-verification', 'enforce', 1)`,
+		} {
+			if _, err := tx.ExecContext(context.Background(), q); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var bearer struct{ Token string }
+	decodeInto(t, b.post("/auth/varlatch-token", nil), &bearer)
+	var list struct{ Items []struct{ ID string } }
+	decodeInto(t, do(s, "GET", "/v1/me/passkeys", "", map[string]string{"Authorization": "Bearer " + bearer.Token}), &list)
+	path := "/v1/me/passkeys/" + list.Items[0].ID
+	auth := map[string]string{"Authorization": "Bearer " + bearer.Token}
+
+	w := do(s, "DELETE", path, "", map[string]string{"Authorization": "Bearer " + bearer.Token, "Varlatch-Approval": "not-an-approval"})
+	if e := decode(t, w); w.Code != 409 || e.Error.Code != "APPROVAL_INVALID" || e.Error.Details["reason"] != "not-found" || e.Error.Details["approvalId"] != nil {
+		t.Fatalf("bad header: %d %s", w.Code, w.Body.String())
+	}
+	w = do(s, "DELETE", path, "", auth)
+	e := decode(t, w)
+	approval, _ := e.Error.Details["approval"].(map[string]any)
+	if w.Code != 403 || e.Error.Code != "STEP_UP_REQUIRED" || approval["state"] != "pending" || approval["operation"] != "passkey.remove" {
+		t.Fatalf("step-up: %d %s", w.Code, w.Body.String())
+	}
+	id, _ := approval["id"].(string)
+	if g := do(s, "GET", "/v1/me/approvals/"+id, "", auth); g.Code != 200 || g.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("get: %d %s", g.Code, g.Body.String())
+	}
+	if g := do(s, "GET", "/v1/me/approvals/"+id, "", auth); g.Code != 429 || g.Header().Get("Retry-After") != "10" || decode(t, g).Error.Code != "SLOW_DOWN" {
+		t.Fatalf("slow down: %d %q %s", g.Code, g.Header().Get("Retry-After"), g.Body.String())
+	}
+	if g := do(s, "GET", "/v1/me/approvals/apr_nothing", "", auth); g.Code != 404 {
+		t.Fatalf("bad id: %d", g.Code)
+	}
+	// Approving takes the dashboard's session bearer.
+	cli := do(s, "POST", "/v1/me/approvals/"+id+"/options", "", map[string]string{"Authorization": "Bearer " + ta.tokens["valid"]})
+	if cli.Code != 403 && cli.Code != 404 {
+		t.Fatalf("options with a CLI credential: %d", cli.Code)
+	}
+	if c := do(s, "POST", "/v1/me/approvals/"+id+"/cancel", "", auth); c.Code != 200 || !strings.Contains(c.Body.String(), `"state":"closed"`) {
+		t.Fatalf("cancel: %d %s", c.Code, c.Body.String())
 	}
 }

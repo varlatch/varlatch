@@ -393,19 +393,19 @@ func (s *Service) Confirm(ctx context.Context, identityID, sessionID, passkeyID 
 	return confirmed, nil
 }
 
-// ErrRemovalNeedsApproval is the removal of a trusted passkey while the
-// person belongs to an Organization with a Security Control at enforce,
-// which needs a step-up approval (ADR-0054 Decision 4). Approvals are not
-// built yet in varlatchd (ADR-0059 step 4); the HTTP layer answers it as
-// the stub does.
-var ErrRemovalNeedsApproval = errors.New("removing a trusted passkey under an enforced Security Control needs a step-up approval, which this varlatchd does not have yet")
-
 // RemoveOwnPasskey is DELETE /v1/me/passkeys/{passkey} (removeOwnPasskey):
-// another person's passkey, or an unknown id, is not found.
-func (s *Service) RemoveOwnPasskey(ctx context.Context, identityID, passkeyID string) error {
-	return s.store.Write(ctx, func(tx *storage.Tx) error {
+// another person's passkey, or an unknown id, is not found. Removing a
+// trusted passkey while the person belongs to a live Organization with a
+// Security Control at enforce needs a step-up approval (ADR-0054 Decision
+// 4) for passkey.remove of this passkey: approvalID is the request's
+// Varlatch-Approval header ("" for none), consumed in the removal's job.
+// Without one the intent is created and the answer is STEP_UP_REQUIRED.
+func (s *Service) RemoveOwnPasskey(ctx context.Context, req Requester, passkeyID, approvalID string) error {
+	var needed *errApprovalNeeded
+	err := s.store.Write(ctx, func(tx *storage.Tx) error {
+		needed = nil
 		q := query.New(tx)
-		list, err := ownPasskeys(ctx, tx, identityID)
+		list, err := ownPasskeys(ctx, tx, req.IdentityID)
 		if err != nil {
 			return err
 		}
@@ -414,17 +414,35 @@ func (s *Service) RemoveOwnPasskey(ctx context.Context, identityID, passkeyID st
 			return domainerr.New("RESOURCE_NOT_FOUND", "Passkey not found")
 		}
 		if p.Trust == "trusted" {
-			orgs, err := q.PasskeyRemovalRestriction(ctx, identityID)
+			orgs, err := q.PasskeyRemovalRestriction(ctx, req.IdentityID)
 			if err != nil {
 				return err
 			}
 			if len(orgs) > 0 {
-				return ErrRemovalNeedsApproval
+				name := p.ID
+				if p.Name != nil {
+					name = `"` + *p.Name + `"`
+				}
+				b := Binding{
+					Operation: "passkey.remove", Target: map[string]string{"passkeyId": p.ID}, Body: nil, Query: map[string]string{},
+					Summary: ApprovalSummary{Title: "Remove your trusted passkey " + name},
+				}
+				if approvalID == "" {
+					needed = &errApprovalNeeded{binding: b}
+					return needed
+				}
+				if err := s.consumeApproval(ctx, tx, req, approvalID, b); err != nil {
+					return err
+				}
 			}
 		}
 		_, err = q.DeletePasskey(ctx, passkeyID)
 		return err
 	})
+	if needed != nil && errors.Is(err, needed) {
+		return s.stepUpRequired(ctx, req, needed.binding)
+	}
+	return err
 }
 
 // passkey-verification (ADR-0054 Decision 7; domain/passkeyverification.ts):

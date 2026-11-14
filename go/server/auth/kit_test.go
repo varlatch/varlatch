@@ -63,7 +63,8 @@ func newEnv(t *testing.T) *env {
 	}
 	c := &clock{t: time.Now().UTC().Truncate(time.Millisecond)}
 	u, _ := url.Parse(origin)
-	return &env{t: t, store: store, svc: auth.New(store, auth.Options{PublicURL: u, Now: c.now}), clock: c, ctx: ctx}
+	key := make([]byte, 32)
+	return &env{t: t, store: store, svc: auth.New(store, auth.Options{PublicURL: u, Now: c.now, RootKEK: key}), clock: c, ctx: ctx}
 }
 
 func b64(b []byte) string { return authtest.B64(b) }
@@ -146,4 +147,44 @@ func reasonOf(err error) string {
 	r, _ := de.Details.Get("reason")
 	s, _ := r.(string)
 	return s
+}
+
+func domainErr(err error) *domainerr.Error {
+	var de *domainerr.Error
+	errors.As(err, &de)
+	return de
+}
+
+// mustPasskey is one of the person's passkeys other than `not`.
+func mustPasskey(t *testing.T, e *env, identityID, not string) string {
+	t.Helper()
+	list, err := e.svc.ListOwnPasskeys(e.ctx, identityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range list {
+		if p.ID != not {
+			return p.ID
+		}
+	}
+	t.Fatal("no other passkey")
+	return ""
+}
+
+// cliOf issues a CLI credential for the person and authenticates it.
+func (e *env) cliOf(identityID string) *auth.Principal {
+	e.t.Helper()
+	var token string
+	if err := e.store.Write(e.ctx, func(tx *storage.Tx) error {
+		issued, err := auth.IssueCredential(e.ctx, tx, e.clock.now().UnixMicro(), auth.Issue{IdentityID: identityID, Kind: auth.KindCLI})
+		token = issued.Token
+		return err
+	}); err != nil {
+		e.t.Fatal(err)
+	}
+	p, _, err := e.svc.Authenticate(e.ctx, token)
+	if err != nil || p == nil {
+		e.t.Fatal(err)
+	}
+	return p
 }

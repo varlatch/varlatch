@@ -28,10 +28,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "approveApproval": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "approveOrganizationDeletion": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -41,10 +37,6 @@
         "step": "ADR-0059 step 4"
       },
       "beginRotation": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "cancelApproval": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -209,10 +201,6 @@
         "step": "ADR-0059 step 4"
       },
       "getActiveContract": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "getApproval": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -545,10 +533,6 @@
         "step": "ADR-0059 step 4"
       },
       "setValue": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "startApproval": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
