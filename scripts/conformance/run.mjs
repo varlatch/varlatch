@@ -157,7 +157,9 @@ async function main() {
   try {
     console.log(`--- target ${options.target}, CLI ${cli.spec} (${cli.path}, sha256 ${cli.sha256})`);
     try {
-      state = await target.up({ repoRoot: REPO_ROOT });
+      // `onState` hands over the state before up creates anything, so a
+      // signal during startup still removes what up has created so far.
+      state = await target.up({ repoRoot: REPO_ROOT, onState: (s) => (state = s) });
     } catch (err) {
       state = err.state ?? null;
       throw err;

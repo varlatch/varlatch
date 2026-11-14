@@ -92,9 +92,14 @@ async function status(url) {
 }
 
 /** Builds and starts a fresh installation; returns the state every other operation takes. */
-export async function up({ repoRoot }) {
+/**
+ * Starts a fresh installation. `onState` receives the state before anything
+ * is created, so the runner can remove a partly started installation.
+ */
+export async function up({ repoRoot, onState = () => {} }) {
   const dir = mkdtempSync(join(tmpdir(), "varlatch-conformance-"));
   const state = { target: name, dir, project: `varlatch-e2e-${dir.split("-").pop().toLowerCase().replace(/[^a-z0-9]/g, "")}`, env: {} };
+  onState(state);
   try {
     cpSync(join(repoRoot, "infra/compose/docker-compose.yml"), join(dir, "docker-compose.yml"));
     cpSync(join(repoRoot, "infra/compose/convex-supervisor.cjs"), join(dir, "convex-supervisor.cjs"));

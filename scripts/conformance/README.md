@@ -90,7 +90,7 @@ implements these operations:
 
 | Operation | Gives |
 | --- | --- |
-| `up` / `down` | a fresh installation on free loopback ports; `down` removes all of it |
+| `up` / `down` | a fresh installation on free loopback ports; `up` hands its state to `onState` before it creates anything, so a cancelled start can be removed; `down` removes all of it |
 | `origin` | the dashboard origin the suites use (the TypeScript nginx; `varlatchd` itself in Go) |
 | `bootstrap` | the first enrollment URL, as `varlatchd admin bootstrap` prints it |
 | `recover <identity> [--cli-credential]` | an enrollment URL, or a CLI token on the last line, as `varlatchd admin recover` prints them |
