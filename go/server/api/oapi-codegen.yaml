@@ -1,0 +1,9 @@
+package: api
+output: api.gen.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+output-options:
+  resolve-type-name-collisions: true
+  nullable-type: true
