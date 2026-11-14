@@ -34,11 +34,13 @@ export type MismatchKind =
   | "missing-response-body"
   | "response-content-type"
   | "response-schema"
+  | "response-undocumented-field"
   | "response-not-json"
   | "undocumented-request-body"
   | "missing-request-body"
   | "request-content-type"
-  | "request-schema";
+  | "request-schema"
+  | "request-undocumented-field";
 
 export interface Mismatch {
   kind: MismatchKind;
@@ -115,7 +117,7 @@ function load() {
   ajv.addFormat("password", () => true);
   ajv.addFormat("byte", /^[A-Za-z0-9+/]*={0,2}$/);
   ajv.addFormat("binary", () => true);
-  ajv.addSchema({ ...spec, $id: SPEC_ID } as never);
+  ajv.addSchema({ ...closeWorld(spec), $id: SPEC_ID } as never);
   state = { spec, ops, ajv, compiled: new Map() };
   return state;
 }
@@ -172,6 +174,59 @@ function deref(node: unknown): Json | undefined {
   return cur;
 }
 
+/**
+ * The spec as the validator sees it: every object schema closed, so a field
+ * the server sends (or a test sends) that the spec does not name is a
+ * mismatch rather than silently allowed. A schema the spec leaves open on
+ * purpose (additionalProperties or unevaluatedProperties set, or an object
+ * without properties) stays open.
+ *
+ * unevaluatedProperties: false goes on every place a schema is used, not
+ * where a component is defined, and never on a direct allOf member, so
+ * that an allOf composition sees the properties of all its members.
+ */
+function closeWorld(spec: Json): Json {
+  const copy = structuredClone(spec);
+  const seen = new Set<object>();
+  const close = (node: unknown, inAllOf: boolean): void => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    const n = node as Json;
+    const open = "additionalProperties" in n || "unevaluatedProperties" in n;
+    const objectish = typeof n.$ref === "string" || "properties" in n || "allOf" in n || "oneOf" in n || "anyOf" in n;
+    if (!inAllOf && !open && objectish) n.unevaluatedProperties = false;
+    if (seen.has(n)) return;
+    seen.add(n);
+    for (const child of Object.values((n.properties ?? {}) as Json)) close(child, false);
+    for (const key of ["patternProperties", "$defs"]) for (const child of Object.values((n[key] ?? {}) as Json)) close(child, false);
+    if (n.items && typeof n.items === "object") close(n.items, false);
+    if (n.additionalProperties && typeof n.additionalProperties === "object") close(n.additionalProperties, false);
+    for (const child of (n.prefixItems ?? []) as unknown[]) close(child, false);
+    for (const child of (n.allOf ?? []) as unknown[]) close(child, true);
+    for (const key of ["oneOf", "anyOf"]) for (const child of (n[key] ?? []) as unknown[]) close(child, false);
+  };
+  const components = (copy.components ?? {}) as Json;
+  // A component's own root stays open: it is closed where it is used.
+  for (const schema of Object.values((components.schemas ?? {}) as Json)) close(schema, true);
+  const contents = (holder: unknown) => {
+    for (const media of Object.values(((holder as Json | undefined)?.content ?? {}) as Json)) close((media as Json).schema, false);
+  };
+  for (const r of Object.values((components.responses ?? {}) as Json)) contents(r);
+  for (const r of Object.values((components.requestBodies ?? {}) as Json)) contents(r);
+  for (const item of Object.values(copy.paths as Json)) {
+    for (const method of METHODS) {
+      const op = (item as Json)[method] as Json | undefined;
+      if (!op) continue;
+      contents(op.requestBody);
+      for (const r of Object.values((op.responses ?? {}) as Json)) contents(r);
+    }
+  }
+  return copy;
+}
+
+function onlyUndocumentedFields(errors: ErrorObject[] | null | undefined): boolean {
+  return (errors ?? []).length > 0 && (errors ?? []).every((e) => e.keyword === "unevaluatedProperties");
+}
+
 function validator(schemaPointer: string): ValidateFunction {
   const s = load();
   let fn = s.compiled.get(schemaPointer);
@@ -187,9 +242,9 @@ function describeErrors(errors: ErrorObject[] | null | undefined): string {
   // find the field, and the full set is reproducible from the test.
   const seen = new Set<string>();
   for (const e of errors ?? []) {
-    const p = e.params as { additionalProperty?: string; allowedValues?: unknown; passingSchemas?: unknown };
-    const params = e.keyword === "additionalProperties"
-      ? ` (${String(p.additionalProperty)})`
+    const p = e.params as { additionalProperty?: string; unevaluatedProperty?: string; allowedValues?: unknown; passingSchemas?: unknown };
+    const params = e.keyword === "additionalProperties" || e.keyword === "unevaluatedProperties"
+      ? ` (${String(p.additionalProperty ?? p.unevaluatedProperty)})`
       : e.keyword === "enum"
         ? ` (${JSON.stringify(p.allowedValues)})`
         : e.keyword === "oneOf"
@@ -291,7 +346,7 @@ export function checkExchange(input: {
             ? (raw.$ref as string).slice(1)
             : `${pointer(opPointer)}/responses/${pointer([statusKey])}`;
           const fn = validator(`${base}/content/${pointer([key])}/schema`);
-          if (!fn(body)) add("response-schema", describeErrors(fn.errors));
+          if (!fn(body)) add(onlyUndocumentedFields(fn.errors) ? "response-undocumented-field" : "response-schema", describeErrors(fn.errors));
         }
       }
     }
@@ -323,7 +378,7 @@ export function checkExchange(input: {
           const raw = matched.op.requestBody as Json;
           const base = typeof raw.$ref === "string" ? (raw.$ref as string).slice(1) : `${pointer(opPointer)}/requestBody`;
           const fn = validator(`${base}/content/${pointer([key])}/schema`);
-          if (!fn(body)) add("request-schema", describeErrors(fn.errors));
+          if (!fn(body)) add(onlyUndocumentedFields(fn.errors) ? "request-undocumented-field" : "request-schema", describeErrors(fn.errors));
         }
       }
     }
