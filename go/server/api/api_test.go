@@ -3,6 +3,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 )
@@ -32,6 +33,34 @@ func TestRoutesRegister(t *testing.T) {
 		}
 		if _, pattern := mux.Handler(req); pattern != c.pattern {
 			t.Errorf("%s %s: pattern %q, want %q", c.method, c.path, pattern, c.pattern)
+		}
+	}
+}
+
+// A nullable field keeps three states (nullable-type in oapi-codegen.yaml):
+// the TypeScript server treats an omitted field and an explicit null
+// differently, for example PATCH /v1/me/profile leaves the avatar as it is
+// when image is omitted and removes it when image is null. The Go server
+// must be able to tell them apart.
+func TestNullableKeepsThreeStates(t *testing.T) {
+	for _, c := range []struct {
+		body           string
+		specified, nul bool
+		value          string
+	}{
+		{`{}`, false, false, ""},
+		{`{"image":null}`, true, true, ""},
+		{`{"image":"https://example.com/a.png"}`, true, false, "https://example.com/a.png"},
+	} {
+		var b UpdateMyProfileJSONBody
+		if err := json.Unmarshal([]byte(c.body), &b); err != nil {
+			t.Fatalf("%s: %v", c.body, err)
+		}
+		if b.Image.IsSpecified() != c.specified || b.Image.IsNull() != c.nul {
+			t.Errorf("%s: specified %v null %v, want %v %v", c.body, b.Image.IsSpecified(), b.Image.IsNull(), c.specified, c.nul)
+		}
+		if v, err := b.Image.Get(); c.value != "" && (err != nil || v != c.value) {
+			t.Errorf("%s: value %q (%v), want %q", c.body, v, err, c.value)
 		}
 	}
 }

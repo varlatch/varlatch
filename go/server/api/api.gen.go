@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/oapi-codegen/nullable"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
@@ -3248,7 +3249,7 @@ type AdminApprovalKeys struct {
 	} `json:"identity"`
 
 	// LastConfirmedAt When one of their passkeys was last confirmed with a trusted one; null when none ever was.
-	LastConfirmedAt *time.Time `json:"lastConfirmedAt"`
+	LastConfirmedAt nullable.Nullable[time.Time] `json:"lastConfirmedAt"`
 
 	// Passkeys Trusted first, then unconfirmed; oldest first within each.
 	Passkeys    []ApprovalKey `json:"passkeys"`
@@ -3268,11 +3269,11 @@ type ApiError struct {
 
 // Approval A step-up approval (an Approval Intent, ADR-0054 Decision 3): one person's approval with a trusted passkey for one exact operation. It never contains a secret value.
 type Approval struct {
-	ApprovedAt  *time.Time           `json:"approvedAt"`
-	CloseReason *ApprovalCloseReason `json:"closeReason"`
-	ClosedAt    *time.Time           `json:"closedAt"`
-	ConsumedAt  *time.Time           `json:"consumedAt"`
-	CreatedAt   time.Time            `json:"createdAt"`
+	ApprovedAt  nullable.Nullable[time.Time]           `json:"approvedAt"`
+	CloseReason nullable.Nullable[ApprovalCloseReason] `json:"closeReason"`
+	ClosedAt    nullable.Nullable[time.Time]           `json:"closedAt"`
+	ConsumedAt  nullable.Nullable[time.Time]           `json:"consumedAt"`
+	CreatedAt   time.Time                              `json:"createdAt"`
 
 	// ExpiresAt 2 minutes after creation from the dashboard, 10 from the CLI; approval never extends it.
 	ExpiresAt time.Time `json:"expiresAt"`
@@ -3285,14 +3286,14 @@ type Approval struct {
 	Operation ApprovalOperation `json:"operation"`
 
 	// Organization The Organization it acts in; null for an account operation such as passkey.remove.
-	Organization *struct {
+	Organization nullable.Nullable[struct {
 		Id   string `json:"id"`
 		Name string `json:"name"`
 		Slug string `json:"slug"`
-	} `json:"organization"`
+	}] `json:"organization"`
 	RequestedBy struct {
 		// Client The asking client's summary, such as varlatch CLI 0.21.0 on Linux.
-		Client         *string                           `json:"client"`
+		Client         nullable.Nullable[string]         `json:"client"`
 		CredentialKind ApprovalRequestedByCredentialKind `json:"credentialKind"`
 	} `json:"requestedBy"`
 	State ApprovalState `json:"state"`
@@ -3304,7 +3305,7 @@ type Approval struct {
 	} `json:"summary"`
 
 	// Url The dashboard page that approves it; null when the server has no public URL.
-	Url *string `json:"url"`
+	Url nullable.Nullable[string] `json:"url"`
 }
 
 // ApprovalCloseReason defines model for Approval.CloseReason.
@@ -3322,21 +3323,21 @@ type ApprovalState string
 // ApprovalChange defines model for ApprovalChange.
 type ApprovalChange struct {
 	// Field What changes, such as mode or maxTtlSeconds.
-	Field   string  `json:"field"`
-	From    *string `json:"from"`
-	Loosens bool    `json:"loosens"`
-	To      *string `json:"to"`
+	Field   string                    `json:"field"`
+	From    nullable.Nullable[string] `json:"from"`
+	Loosens bool                      `json:"loosens"`
+	To      nullable.Nullable[string] `json:"to"`
 }
 
 // ApprovalKey One passkey of an admin, as metadata only.
 type ApprovalKey struct {
-	CreatedAt *time.Time       `json:"createdAt"`
-	Name      *string          `json:"name"`
-	Trust     ApprovalKeyTrust `json:"trust"`
-	TrustedAt *time.Time       `json:"trustedAt"`
+	CreatedAt nullable.Nullable[time.Time] `json:"createdAt"`
+	Name      nullable.Nullable[string]    `json:"name"`
+	Trust     ApprovalKeyTrust             `json:"trust"`
+	TrustedAt nullable.Nullable[time.Time] `json:"trustedAt"`
 
 	// TrustedVia How it became trusted; null while unconfirmed.
-	TrustedVia *ApprovalKeyTrustedVia `json:"trustedVia"`
+	TrustedVia nullable.Nullable[ApprovalKeyTrustedVia] `json:"trustedVia"`
 }
 
 // ApprovalKeyTrust defines model for ApprovalKey.Trust.
@@ -3369,36 +3370,36 @@ type ApprovalOptions struct {
 // AuditCredential What the audit listing's credentials sidecar says about a credential its events name. Metadata only; never token material.
 type AuditCredential struct {
 	// Client The client that requested the credential, for browser and cli credentials ("Firefox on Linux"); null otherwise or when unknown.
-	Client *string `json:"client"`
+	Client nullable.Nullable[string] `json:"client"`
 
 	// Kind service, cli, browser (a dashboard session), agent-run, or oidc.
-	Kind string  `json:"kind"`
-	Name *string `json:"name"`
+	Kind string                    `json:"kind"`
+	Name nullable.Nullable[string] `json:"name"`
 }
 
 // AuditEvent Versioned Security Audit Event (ADR-0016). Never contains plaintext Values, key/credential material, or value-derived hashes.
 type AuditEvent struct {
-	Action                 *string                 `json:"action,omitempty"`
-	ActorIdentityId        *string                 `json:"actorIdentityId,omitempty"`
-	AuthenticationMethodId *string                 `json:"authenticationMethodId,omitempty"`
-	Authorization          *map[string]interface{} `json:"authorization,omitempty"`
+	Action                 nullable.Nullable[string] `json:"action,omitempty"`
+	ActorIdentityId        nullable.Nullable[string] `json:"actorIdentityId,omitempty"`
+	AuthenticationMethodId nullable.Nullable[string] `json:"authenticationMethodId,omitempty"`
+	Authorization          *map[string]interface{}   `json:"authorization,omitempty"`
 
 	// Client A short, readable summary of the User-Agent of the request that recorded the event, such as "Firefox on Linux", "varlatch CLI 0.16.0 on Linux, assisted" (the CLI in assisted mode, a coding agent driving it), or "varlatch MCP 0.16.0 on Linux". What the client says about itself, never verified. Null when the client was not recognized, for events no authenticated request recorded, and for events before 0.16.0; absent from older servers (capability audit.attribution).
-	Client *string `json:"client,omitempty"`
+	Client nullable.Nullable[string] `json:"client,omitempty"`
 
 	// CredentialId The credential of the request that recorded the event, when the actor is the identity that made it; on credential.issued, credential.revoked, and authentication.device_collected, the credential the event is about. Null when no request credential applies (Varlatch's own events, failed authentications). Before 0.16.0 only authorization.denied and those three types named one.
-	CredentialId   *string                 `json:"credentialId,omitempty"`
-	Decision       AuditEventDecision      `json:"decision"`
-	EventId        string                  `json:"eventId"`
-	EventType      string                  `json:"eventType"`
-	Listener       *AuditEventListener     `json:"listener,omitempty"`
-	Metadata       *map[string]interface{} `json:"metadata,omitempty"`
-	OccurredAt     time.Time               `json:"occurredAt"`
-	OrganizationId *string                 `json:"organizationId,omitempty"`
-	RequestId      *string                 `json:"requestId,omitempty"`
-	Resource       *map[string]interface{} `json:"resource,omitempty"`
-	SchemaVersion  int                     `json:"schemaVersion"`
-	TailnetContext *map[string]interface{} `json:"tailnetContext,omitempty"`
+	CredentialId   nullable.Nullable[string]             `json:"credentialId,omitempty"`
+	Decision       AuditEventDecision                    `json:"decision"`
+	EventId        string                                `json:"eventId"`
+	EventType      string                                `json:"eventType"`
+	Listener       nullable.Nullable[AuditEventListener] `json:"listener,omitempty"`
+	Metadata       *map[string]interface{}               `json:"metadata,omitempty"`
+	OccurredAt     time.Time                             `json:"occurredAt"`
+	OrganizationId nullable.Nullable[string]             `json:"organizationId,omitempty"`
+	RequestId      nullable.Nullable[string]             `json:"requestId,omitempty"`
+	Resource       *map[string]interface{}               `json:"resource,omitempty"`
+	SchemaVersion  int                                   `json:"schemaVersion"`
+	TailnetContext *map[string]interface{}               `json:"tailnetContext,omitempty"`
 }
 
 // AuditEventDecision defines model for AuditEvent.Decision.
@@ -3409,50 +3410,50 @@ type AuditEventListener string
 
 // AuditExport An Organization's audit export and its status (ADR-0056 Decisions 1 and 11). Never the key.
 type AuditExport struct {
-	ConditionalCheckedAt *time.Time `json:"conditionalCheckedAt"`
-	CreatedAt            time.Time  `json:"createdAt"`
-	CreatedBy            string     `json:"createdBy"`
+	ConditionalCheckedAt nullable.Nullable[time.Time] `json:"conditionalCheckedAt"`
+	CreatedAt            time.Time                    `json:"createdAt"`
+	CreatedBy            string                       `json:"createdBy"`
 
 	// Cursor The audit position delivered up to (installation-wide positions, as a decimal string).
 	Cursor string `json:"cursor"`
 
 	// Destination Where an audit export writes (ADR-0056 Decision 1). The endpoint is a scheme, host and optional port.
-	Destination   AuditExportDestination `json:"destination"`
-	DrainDeadline *time.Time             `json:"drainDeadline"`
-	FailingSince  *time.Time             `json:"failingSince"`
-	Id            string                 `json:"id"`
-	KeyCanRead    *bool                  `json:"keyCanRead"`
+	Destination   AuditExportDestination       `json:"destination"`
+	DrainDeadline nullable.Nullable[time.Time] `json:"drainDeadline"`
+	FailingSince  nullable.Nullable[time.Time] `json:"failingSince"`
+	Id            string                       `json:"id"`
+	KeyCanRead    nullable.Nullable[bool]      `json:"keyCanRead"`
 
 	// Lag Events of the Organization not yet exported and the oldest's time; null once the export ended.
-	Lag *struct {
-		OldestPendingAt *time.Time `json:"oldestPendingAt"`
-		Pending         int        `json:"pending"`
-	} `json:"lag"`
-	LastAttemptAt *time.Time `json:"lastAttemptAt"`
+	Lag nullable.Nullable[struct {
+		OldestPendingAt nullable.Nullable[time.Time] `json:"oldestPendingAt"`
+		Pending         int                          `json:"pending"`
+	}] `json:"lag"`
+	LastAttemptAt nullable.Nullable[time.Time] `json:"lastAttemptAt"`
 
 	// LastError Fixed wording only (the storage error table or the outbound policy).
-	LastError *string `json:"lastError"`
+	LastError nullable.Nullable[string] `json:"lastError"`
 
 	// LastHeartbeatAt The hour of the last heartbeat object delivered. No newer heartbeat in the bucket for two hours means the copy stopped.
-	LastHeartbeatAt   *time.Time            `json:"lastHeartbeatAt"`
-	LastSuccessAt     *time.Time            `json:"lastSuccessAt"`
-	LockVerified      *bool                 `json:"lockVerified"`
-	ObjectLock        AuditExportObjectLock `json:"objectLock"`
-	OrganizationId    string                `json:"organizationId"`
-	RemovedAt         *time.Time            `json:"removedAt"`
-	Retention         *AuditExportRetention `json:"retention"`
-	RetentionReadable *bool                 `json:"retentionReadable"`
+	LastHeartbeatAt   nullable.Nullable[time.Time]            `json:"lastHeartbeatAt"`
+	LastSuccessAt     nullable.Nullable[time.Time]            `json:"lastSuccessAt"`
+	LockVerified      nullable.Nullable[bool]                 `json:"lockVerified"`
+	ObjectLock        AuditExportObjectLock                   `json:"objectLock"`
+	OrganizationId    string                                  `json:"organizationId"`
+	RemovedAt         nullable.Nullable[time.Time]            `json:"removedAt"`
+	Retention         nullable.Nullable[AuditExportRetention] `json:"retention"`
+	RetentionReadable nullable.Nullable[bool]                 `json:"retentionReadable"`
 
 	// State draining after the Organization's deletion, until the final events are delivered (completed) or the 30-day deadline passes (abandoned).
 	State AuditExportState `json:"state"`
 
 	// StoppedReason The export stopped until a person acts.
-	StoppedReason *AuditExportStoppedReason `json:"stoppedReason"`
-	StreamId      string                    `json:"streamId"`
+	StoppedReason nullable.Nullable[AuditExportStoppedReason] `json:"stoppedReason"`
+	StreamId      string                                      `json:"streamId"`
 
 	// UnsupportedPlanFormat A pending object's format this release cannot upload (varlatchd admin audit-export discard-plan).
-	UnsupportedPlanFormat *int `json:"unsupportedPlanFormat"`
-	Version               int  `json:"version"`
+	UnsupportedPlanFormat nullable.Nullable[int] `json:"unsupportedPlanFormat"`
+	Version               int                    `json:"version"`
 }
 
 // AuditExportObjectLock defines model for AuditExport.ObjectLock.
@@ -3489,24 +3490,24 @@ type AuditExportChangeInput struct {
 	ExpectedVersion int `json:"expectedVersion"`
 
 	// Retention Absent keeps the retention; null removes it.
-	Retention *AuditExportRetention `json:"retention,omitempty"`
+	Retention nullable.Nullable[AuditExportRetention] `json:"retention,omitempty"`
 }
 
 // AuditExportCheck What the destination probe found (ADR-0056 Decision 6). message is fixed wording, never the store's own text.
 type AuditExportCheck struct {
 	// ConditionalCreation A second write of the same name was refused (If-None-Match).
-	ConditionalCreation *bool `json:"conditionalCreation"`
+	ConditionalCreation nullable.Nullable[bool] `json:"conditionalCreation"`
 
 	// KeyCanRead The key read the test object (HEAD); null when undetermined.
-	KeyCanRead *bool   `json:"keyCanRead"`
-	Message    *string `json:"message"`
+	KeyCanRead nullable.Nullable[bool]   `json:"keyCanRead"`
+	Message    nullable.Nullable[string] `json:"message"`
 
 	// ObjectLock verified (a verified provider, or the retention read back at least as strong as asked); accepted (headers accepted, not verified for this provider); not-set (no retention asked).
-	ObjectLock *AuditExportCheckObjectLock `json:"objectLock"`
-	Ok         bool                        `json:"ok"`
+	ObjectLock nullable.Nullable[AuditExportCheckObjectLock] `json:"objectLock"`
+	Ok         bool                                          `json:"ok"`
 
 	// RetentionReadable The key read the test object's retention; null when undetermined or no retention was asked.
-	RetentionReadable *bool `json:"retentionReadable"`
+	RetentionReadable nullable.Nullable[bool] `json:"retentionReadable"`
 }
 
 // AuditExportCheckObjectLock verified (a verified provider, or the retention read back at least as strong as asked); accepted (headers accepted, not verified for this provider); not-set (no retention asked).
@@ -3515,18 +3516,18 @@ type AuditExportCheckObjectLock string
 // AuditExportCheckInput defines model for AuditExportCheckInput.
 type AuditExportCheckInput struct {
 	// Credential An S3 access key. Write-only; never returned, logged or audited.
-	Credential  *AuditExportCredentialInput `json:"credential,omitempty"`
-	Destination AuditExportDestinationInput `json:"destination"`
-	Retention   *AuditExportRetention       `json:"retention,omitempty"`
+	Credential  *AuditExportCredentialInput             `json:"credential,omitempty"`
+	Destination AuditExportDestinationInput             `json:"destination"`
+	Retention   nullable.Nullable[AuditExportRetention] `json:"retention,omitempty"`
 }
 
 // AuditExportCreateInput defines model for AuditExportCreateInput.
 type AuditExportCreateInput struct {
 	// Credential An S3 access key. Write-only; never returned, logged or audited.
-	Credential  AuditExportCredentialInput  `json:"credential"`
-	Destination AuditExportDestinationInput `json:"destination"`
-	From        *AuditExportCreateInputFrom `json:"from,omitempty"`
-	Retention   *AuditExportRetention       `json:"retention,omitempty"`
+	Credential  AuditExportCredentialInput              `json:"credential"`
+	Destination AuditExportDestinationInput             `json:"destination"`
+	From        *AuditExportCreateInputFrom             `json:"from,omitempty"`
+	Retention   nullable.Nullable[AuditExportRetention] `json:"retention,omitempty"`
 }
 
 // AuditExportCreateInputFrom defines model for AuditExportCreateInput.From.
@@ -3581,8 +3582,8 @@ type AuditExportRetentionMode string
 // AuditExportStatus defines model for AuditExportStatus.
 type AuditExportStatus struct {
 	// Enabled False when the host operator turned audit export off (VARLATCH_AUDIT_EXPORT=off).
-	Enabled bool         `json:"enabled"`
-	Export  *AuditExport `json:"export"`
+	Enabled bool                           `json:"enabled"`
+	Export  nullable.Nullable[AuditExport] `json:"export"`
 }
 
 // BackupArchiveStatus defines model for BackupArchiveStatus.
@@ -3632,16 +3633,16 @@ type CallerViewWithheldRequires string
 
 // Capability defines model for Capability.
 type Capability struct {
-	AgentIdentityId  string     `json:"agentIdentityId"`
-	BrokerIdentityId string     `json:"brokerIdentityId"`
-	CreatedAt        time.Time  `json:"createdAt"`
-	Destinations     []string   `json:"destinations"`
-	EnvironmentId    string     `json:"environmentId"`
-	ExpiresAt        time.Time  `json:"expiresAt"`
-	Id               string     `json:"id"`
-	Items            []string   `json:"items"`
-	RevokedAt        *time.Time `json:"revokedAt"`
-	RunId            *string    `json:"runId"`
+	AgentIdentityId  string                       `json:"agentIdentityId"`
+	BrokerIdentityId string                       `json:"brokerIdentityId"`
+	CreatedAt        time.Time                    `json:"createdAt"`
+	Destinations     []string                     `json:"destinations"`
+	EnvironmentId    string                       `json:"environmentId"`
+	ExpiresAt        time.Time                    `json:"expiresAt"`
+	Id               string                       `json:"id"`
+	Items            []string                     `json:"items"`
+	RevokedAt        nullable.Nullable[time.Time] `json:"revokedAt"`
+	RunId            nullable.Nullable[string]    `json:"runId"`
 }
 
 // CapabilityExercise defines model for CapabilityExercise.
@@ -3708,29 +3709,29 @@ type CreatedIdentity struct {
 	CreatedAt time.Time `json:"createdAt"`
 
 	// Credential Shown exactly once at creation; stored hashed; never retrievable.
-	Credential *string `json:"credential,omitempty"`
+	Credential nullable.Nullable[string] `json:"credential,omitempty"`
 
 	// CredentialExpiresAt Expiry of the issued credential: from credentialTtlSeconds, or from the Organization's default lifetime while it enforces credential-lifetime; null for no expiry.
-	CredentialExpiresAt *time.Time `json:"credentialExpiresAt,omitempty"`
-	Disabled            *bool      `json:"disabled,omitempty"`
+	CredentialExpiresAt nullable.Nullable[time.Time] `json:"credentialExpiresAt,omitempty"`
+	Disabled            *bool                        `json:"disabled,omitempty"`
 
 	// Email Better Auth account email for human identities; null for machines.
-	Email *string `json:"email,omitempty"`
-	Id    string  `json:"id"`
+	Email nullable.Nullable[string] `json:"email,omitempty"`
+	Id    string                    `json:"id"`
 
 	// Image Avatar image (data or https URL) for human identities; null for machines.
-	Image *string             `json:"image,omitempty"`
-	Kind  CreatedIdentityKind `json:"kind"`
+	Image nullable.Nullable[string] `json:"image,omitempty"`
+	Kind  CreatedIdentityKind       `json:"kind"`
 
 	// LastSeenAt Most recent successful authentication by any of the identity's credentials, throttled to ~60s granularity (ADR-0034 §5). An operational signal, not an audit record. Null when never seen.
-	LastSeenAt *time.Time `json:"lastSeenAt,omitempty"`
-	Name       string     `json:"name"`
+	LastSeenAt nullable.Nullable[time.Time] `json:"lastSeenAt,omitempty"`
+	Name       string                       `json:"name"`
 
 	// OrgRole In an Organization's identity listing, a live member's built-in role; null for machines and former members.
-	OrgRole *CreatedIdentityOrgRole `json:"orgRole,omitempty"`
+	OrgRole nullable.Nullable[CreatedIdentityOrgRole] `json:"orgRole,omitempty"`
 
 	// RemovedAt In an Organization's identity listing, when a former member was removed or left (capability members.lifecycle); null otherwise.
-	RemovedAt *time.Time `json:"removedAt,omitempty"`
+	RemovedAt nullable.Nullable[time.Time] `json:"removedAt,omitempty"`
 }
 
 // CreatedIdentityKind defines model for CreatedIdentity.Kind.
@@ -3741,17 +3742,17 @@ type CreatedIdentityOrgRole string
 
 // CreatedWebhook defines model for CreatedWebhook.
 type CreatedWebhook struct {
-	CreatedAt     time.Time  `json:"createdAt"`
-	EventTypes    *[]string  `json:"eventTypes"`
-	FailureCount  int        `json:"failureCount"`
-	Id            string     `json:"id"`
-	LastAttemptAt *time.Time `json:"lastAttemptAt,omitempty"`
-	LastStatus    *string    `json:"lastStatus,omitempty"`
+	CreatedAt     time.Time                    `json:"createdAt"`
+	EventTypes    nullable.Nullable[[]string]  `json:"eventTypes"`
+	FailureCount  int                          `json:"failureCount"`
+	Id            string                       `json:"id"`
+	LastAttemptAt nullable.Nullable[time.Time] `json:"lastAttemptAt,omitempty"`
+	LastStatus    nullable.Nullable[string]    `json:"lastStatus,omitempty"`
 
 	// Secret HMAC-SHA256 signing secret, returned exactly once; stored encrypted server-side and never retrievable.
-	Secret    string     `json:"secret"`
-	UpdatedAt *time.Time `json:"updatedAt"`
-	Url       string     `json:"url"`
+	Secret    string                       `json:"secret"`
+	UpdatedAt nullable.Nullable[time.Time] `json:"updatedAt"`
+	Url       string                       `json:"url"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -3776,16 +3777,16 @@ type CredentialLifetimeConfig struct {
 // CredentialMetadata Credential metadata (ADR-0034 §2). Never includes token material — tokens are stored hashed and unrecoverable (ADR-0007).
 type CredentialMetadata struct {
 	// Client A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers.
-	Client    *string                `json:"client,omitempty"`
-	CreatedAt time.Time              `json:"createdAt"`
-	ExpiresAt *time.Time             `json:"expiresAt"`
-	Id        string                 `json:"id"`
-	Kind      CredentialMetadataKind `json:"kind"`
+	Client    nullable.Nullable[string]    `json:"client,omitempty"`
+	CreatedAt time.Time                    `json:"createdAt"`
+	ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
+	Id        string                       `json:"id"`
+	Kind      CredentialMetadataKind       `json:"kind"`
 
 	// LastUsedAt Last successful authentication, throttled to ~60s granularity. An operational signal, never evidence of what was accessed.
-	LastUsedAt *time.Time `json:"lastUsedAt"`
-	Name       *string    `json:"name"`
-	RevokedAt  *time.Time `json:"revokedAt"`
+	LastUsedAt nullable.Nullable[time.Time] `json:"lastUsedAt"`
+	Name       nullable.Nullable[string]    `json:"name"`
+	RevokedAt  nullable.Nullable[time.Time] `json:"revokedAt"`
 }
 
 // CredentialMetadataKind defines model for CredentialMetadata.Kind.
@@ -3839,18 +3840,18 @@ type DestinationOption struct {
 // DeviceSignInLookup defines model for DeviceSignInLookup.
 type DeviceSignInLookup struct {
 	// Approval Null when the person has no passkey to approve with.
-	Approval *struct {
+	Approval nullable.Nullable[struct {
 		// PublicKey WebAuthn request options (PublicKeyCredentialRequestOptionsJSON).
 		PublicKey map[string]interface{} `json:"publicKey"`
-	} `json:"approval"`
+	}] `json:"approval"`
 	SignIn struct {
-		ExpiresAt   time.Time `json:"expiresAt"`
-		Name        *string   `json:"name"`
-		RequestedAt time.Time `json:"requestedAt"`
+		ExpiresAt   time.Time                 `json:"expiresAt"`
+		Name        nullable.Nullable[string] `json:"name"`
+		RequestedAt time.Time                 `json:"requestedAt"`
 
 		// RequesterIp The peer address the server saw
-		RequesterIp        *string `json:"requesterIp"`
-		RequesterUserAgent *string `json:"requesterUserAgent"`
+		RequesterIp        nullable.Nullable[string] `json:"requesterIp"`
+		RequesterUserAgent nullable.Nullable[string] `json:"requesterUserAgent"`
 
 		// TtlSeconds Lifetime of the credential approval issues
 		TtlSeconds int    `json:"ttlSeconds"`
@@ -3906,8 +3907,8 @@ type EffectiveConfigurationItem struct {
 	Source    EffectiveConfigurationItemSource `json:"source"`
 
 	// Value Present only when include=values and the caller is authorized; null for items the caller may know exist but not read.
-	Value     *string `json:"value,omitempty"`
-	VersionId *string `json:"versionId,omitempty"`
+	Value     nullable.Nullable[string] `json:"value,omitempty"`
+	VersionId *string                   `json:"versionId,omitempty"`
 }
 
 // EffectiveConfigurationItemSource defines model for EffectiveConfigurationItem.Source.
@@ -3918,16 +3919,16 @@ type EntityVersion = int
 
 // Environment defines model for Environment.
 type Environment struct {
-	CreatedAt time.Time       `json:"createdAt"`
-	ExpiresAt *time.Time      `json:"expiresAt,omitempty"`
-	Id        string          `json:"id"`
-	Kind      EnvironmentKind `json:"kind"`
+	CreatedAt time.Time                    `json:"createdAt"`
+	ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt,omitempty"`
+	Id        string                       `json:"id"`
+	Kind      EnvironmentKind              `json:"kind"`
 
 	// Name Free-form; derived environments use parent/suffix form (e.g. development/jeremy).
-	Name                EnvironmentName `json:"name"`
-	OwnerIdentityId     *string         `json:"ownerIdentityId,omitempty"`
-	ParentEnvironmentId *string         `json:"parentEnvironmentId,omitempty"`
-	ProjectId           string          `json:"projectId"`
+	Name                EnvironmentName           `json:"name"`
+	OwnerIdentityId     nullable.Nullable[string] `json:"ownerIdentityId,omitempty"`
+	ParentEnvironmentId nullable.Nullable[string] `json:"parentEnvironmentId,omitempty"`
+	ProjectId           string                    `json:"projectId"`
 
 	// TailnetRequired True when an active Tailnet Requirement covers this Environment (capability environments.tailnet-required): reading its values, non-sensitive ones included, needs verified Tailnet Context, which only the tailnet listener establishes. Names and other metadata stay readable as before. Derived per response from the active Requirements with the same targeting authorization uses (a tier, this Environment, or the root it derives from); never stored.
 	TailnetRequired *bool `json:"tailnetRequired,omitempty"`
@@ -3948,23 +3949,23 @@ type ErrorCode string
 
 // ExpiringCredential A credential as in ReviewedCredential, with state instead of reasons.
 type ExpiringCredential struct {
-	CreatedAt time.Time  `json:"createdAt"`
-	ExpiresAt *time.Time `json:"expiresAt"`
-	Id        string     `json:"id"`
+	CreatedAt time.Time                    `json:"createdAt"`
+	ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
+	Id        string                       `json:"id"`
 	Identity  struct {
-		DisabledReason *ExpiringCredentialIdentityDisabledReason `json:"disabledReason"`
-		Id             string                                    `json:"id"`
-		Kind           ExpiringCredentialIdentityKind            `json:"kind"`
-		Name           string                                    `json:"name"`
-		State          ExpiringCredentialIdentityState           `json:"state"`
+		DisabledReason nullable.Nullable[ExpiringCredentialIdentityDisabledReason] `json:"disabledReason"`
+		Id             string                                                      `json:"id"`
+		Kind           ExpiringCredentialIdentityKind                              `json:"kind"`
+		Name           string                                                      `json:"name"`
+		State          ExpiringCredentialIdentityState                             `json:"state"`
 	} `json:"identity"`
-	IssuedBy *struct {
+	IssuedBy nullable.Nullable[struct {
 		Id   string `json:"id"`
 		Name string `json:"name"`
-	} `json:"issuedBy"`
-	Kind       string     `json:"kind"`
-	LastUsedAt *time.Time `json:"lastUsedAt"`
-	Name       *string    `json:"name"`
+	}] `json:"issuedBy"`
+	Kind       string                       `json:"kind"`
+	LastUsedAt nullable.Nullable[time.Time] `json:"lastUsedAt"`
+	Name       nullable.Nullable[string]    `json:"name"`
 
 	// State soon expires within warningDays days; expired is past its expiry.
 	State ExpiringCredentialState `json:"state"`
@@ -3991,16 +3992,16 @@ type ExposureConfirmation struct {
 
 // ExposureReport defines model for ExposureReport.
 type ExposureReport struct {
-	AuthorityAtRemoval *struct {
+	AuthorityAtRemoval nullable.Nullable[struct {
 		Environments []struct {
 			Actions []struct {
 				Action  string `json:"action"`
 				Sources []struct {
-					GrantId    *string `json:"grantId"`
-					Role       *string `json:"role"`
-					RoleId     *string `json:"roleId"`
-					Source     string  `json:"source"`
-					ViaGroupId *string `json:"viaGroupId"`
+					GrantId    nullable.Nullable[string] `json:"grantId"`
+					Role       nullable.Nullable[string] `json:"role"`
+					RoleId     nullable.Nullable[string] `json:"roleId"`
+					Source     string                    `json:"source"`
+					ViaGroupId nullable.Nullable[string] `json:"viaGroupId"`
 				} `json:"sources"`
 			} `json:"actions"`
 
@@ -4012,54 +4013,54 @@ type ExposureReport struct {
 		RemovalId    string    `json:"removalId"`
 		RemovedAt    time.Time `json:"removedAt"`
 		Requirements []struct {
-			RequirementId      string      `json:"requirementId"`
-			RequirementVersion *int        `json:"requirementVersion"`
-			Selector           interface{} `json:"selector"`
-			Target             interface{} `json:"target"`
+			RequirementId      string                 `json:"requirementId"`
+			RequirementVersion nullable.Nullable[int] `json:"requirementVersion"`
+			Selector           interface{}            `json:"selector"`
+			Target             interface{}            `json:"target"`
 		} `json:"requirements"`
 		Role ExposureReportAuthorityAtRemovalRole `json:"role"`
-	} `json:"authorityAtRemoval"`
+	}] `json:"authorityAtRemoval"`
 
 	// Coverage complete is false while audit events recorded before this release are still being indexed; from and to bound that period.
 	Coverage struct {
-		Complete bool       `json:"complete"`
-		From     *time.Time `json:"from,omitempty"`
-		To       *time.Time `json:"to,omitempty"`
+		Complete bool                         `json:"complete"`
+		From     nullable.Nullable[time.Time] `json:"from,omitempty"`
+		To       nullable.Nullable[time.Time] `json:"to,omitempty"`
 	} `json:"coverage"`
 
 	// Indirect What a person created or changed in the Organization that may keep working without them (ADR-0052 Decision 4). Names, IDs and states only. Removal changes none of it. It ends this identity's authority, not a credential, token or platform account held outside Varlatch.
 	Indirect MemberReview `json:"indirect"`
 	Member   struct {
-		IdentityId string                    `json:"identityId"`
-		Name       string                    `json:"name"`
-		RemovedAt  *time.Time                `json:"removedAt"`
-		Role       *ExposureReportMemberRole `json:"role"`
+		IdentityId string                                      `json:"identityId"`
+		Name       string                                      `json:"name"`
+		RemovedAt  nullable.Nullable[time.Time]                `json:"removedAt"`
+		Role       nullable.Nullable[ExposureReportMemberRole] `json:"role"`
 	} `json:"member"`
 	Received []struct {
-		Confirmation *struct {
+		Confirmation nullable.Nullable[struct {
 			ActorIdentityId string    `json:"actorIdentityId"`
 			ConfirmedAt     time.Time `json:"confirmedAt"`
-		} `json:"confirmation"`
-		ItemName         string                                  `json:"itemName"`
-		NotServedBecause *ExposureReportReceivedNotServedBecause `json:"notServedBecause"`
+		}] `json:"confirmation"`
+		ItemName         string                                                    `json:"itemName"`
+		NotServedBecause nullable.Nullable[ExposureReportReceivedNotServedBecause] `json:"notServedBecause"`
 
 		// OwningEnvironmentId The environment whose value owns the version, which may be a parent of where it was received.
-		OwningEnvironmentId *string `json:"owningEnvironmentId"`
-		ProjectId           *string `json:"projectId"`
+		OwningEnvironmentId nullable.Nullable[string] `json:"owningEnvironmentId"`
+		ProjectId           nullable.Nullable[string] `json:"projectId"`
 		Receipts            []struct {
 			EnvironmentId string                            `json:"environmentId"`
 			FirstAt       time.Time                         `json:"firstAt"`
 			LastAt        time.Time                         `json:"lastAt"`
 			Way           ExposureReportReceivedReceiptsWay `json:"way"`
 		} `json:"receipts"`
-		RetiringUntil *time.Time `json:"retiringUntil"`
-		RotationHint  *string    `json:"rotationHint"`
+		RetiringUntil nullable.Nullable[time.Time] `json:"retiringUntil"`
+		RotationHint  nullable.Nullable[string]    `json:"rotationHint"`
 
 		// Served Whether Varlatch still serves it
-		Served    bool                            `json:"served"`
-		ServedAs  *ExposureReportReceivedServedAs `json:"servedAs"`
-		State     ExposureReportReceivedState     `json:"state"`
-		VersionId string                          `json:"versionId"`
+		Served    bool                                              `json:"served"`
+		ServedAs  nullable.Nullable[ExposureReportReceivedServedAs] `json:"servedAs"`
+		State     ExposureReportReceivedState                       `json:"state"`
+		VersionId string                                            `json:"versionId"`
 	} `json:"received"`
 }
 
@@ -4106,8 +4107,8 @@ type GitHubApp struct {
 		Login string             `json:"login"`
 		Type  GitHubAppOwnerType `json:"type"`
 	} `json:"owner"`
-	Slug      string     `json:"slug"`
-	UpdatedAt *time.Time `json:"updatedAt"`
+	Slug      string                       `json:"slug"`
+	UpdatedAt nullable.Nullable[time.Time] `json:"updatedAt"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -4194,7 +4195,7 @@ type GitHubAppRegistrationRefused struct {
 	} `json:"app"`
 
 	// DeleteUrl Where the App's owner deletes it on GitHub. Null for registration-ended: its App may be the one this Organization attached (an attachment repeated after a lost answer).
-	DeleteUrl *string                             `json:"deleteUrl"`
+	DeleteUrl nullable.Nullable[string]           `json:"deleteUrl"`
 	Message   string                              `json:"message"`
 	Outcome   GitHubAppRegistrationRefusedOutcome `json:"outcome"`
 
@@ -4237,14 +4238,14 @@ type GitHubAppRegistrationStart struct {
 
 // Grant defines model for Grant.
 type Grant struct {
-	Actions           *[]Action  `json:"actions,omitempty"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	Id                string     `json:"id"`
-	OrganizationId    string     `json:"organizationId"`
-	RoleId            *string    `json:"roleId,omitempty"`
-	Scope             GrantScope `json:"scope"`
-	SubjectGroupId    *string    `json:"subjectGroupId,omitempty"`
-	SubjectIdentityId *string    `json:"subjectIdentityId,omitempty"`
+	Actions           nullable.Nullable[[]Action] `json:"actions,omitempty"`
+	CreatedAt         time.Time                   `json:"createdAt"`
+	Id                string                      `json:"id"`
+	OrganizationId    string                      `json:"organizationId"`
+	RoleId            nullable.Nullable[string]   `json:"roleId,omitempty"`
+	Scope             GrantScope                  `json:"scope"`
+	SubjectGroupId    nullable.Nullable[string]   `json:"subjectGroupId,omitempty"`
+	SubjectIdentityId nullable.Nullable[string]   `json:"subjectIdentityId,omitempty"`
 }
 
 // GrantReplacement Result of an atomic Grant replacement (ADR-0029): the revoked original's ID and the successor Grant, linked in the audit trail.
@@ -4319,10 +4320,10 @@ type GrantScope3Kind string
 
 // Group An identity set (kind=group) or a project-owning Team (kind=team).
 type Group struct {
-	Id        string     `json:"id"`
-	Kind      GroupKind  `json:"kind"`
-	Name      string     `json:"name"`
-	UpdatedAt *time.Time `json:"updatedAt"`
+	Id        string                       `json:"id"`
+	Kind      GroupKind                    `json:"kind"`
+	Name      string                       `json:"name"`
+	UpdatedAt nullable.Nullable[time.Time] `json:"updatedAt"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -4337,22 +4338,22 @@ type Identity struct {
 	Disabled  *bool     `json:"disabled,omitempty"`
 
 	// Email Better Auth account email for human identities; null for machines.
-	Email *string `json:"email,omitempty"`
-	Id    string  `json:"id"`
+	Email nullable.Nullable[string] `json:"email,omitempty"`
+	Id    string                    `json:"id"`
 
 	// Image Avatar image (data or https URL) for human identities; null for machines.
-	Image *string      `json:"image,omitempty"`
-	Kind  IdentityKind `json:"kind"`
+	Image nullable.Nullable[string] `json:"image,omitempty"`
+	Kind  IdentityKind              `json:"kind"`
 
 	// LastSeenAt Most recent successful authentication by any of the identity's credentials, throttled to ~60s granularity (ADR-0034 §5). An operational signal, not an audit record. Null when never seen.
-	LastSeenAt *time.Time `json:"lastSeenAt,omitempty"`
-	Name       string     `json:"name"`
+	LastSeenAt nullable.Nullable[time.Time] `json:"lastSeenAt,omitempty"`
+	Name       string                       `json:"name"`
 
 	// OrgRole In an Organization's identity listing, a live member's built-in role; null for machines and former members.
-	OrgRole *IdentityOrgRole `json:"orgRole,omitempty"`
+	OrgRole nullable.Nullable[IdentityOrgRole] `json:"orgRole,omitempty"`
 
 	// RemovedAt In an Organization's identity listing, when a former member was removed or left (capability members.lifecycle); null otherwise.
-	RemovedAt *time.Time `json:"removedAt,omitempty"`
+	RemovedAt nullable.Nullable[time.Time] `json:"removedAt,omitempty"`
 }
 
 // IdentityKind defines model for Identity.Kind.
@@ -4365,16 +4366,16 @@ type IdentityOrgRole string
 type IncidentFreeze struct {
 	FrozenAt time.Time `json:"frozenAt"`
 	FrozenBy struct {
-		Id   string  `json:"id"`
-		Name *string `json:"name"`
+		Id   string                    `json:"id"`
+		Name nullable.Nullable[string] `json:"name"`
 	} `json:"frozenBy"`
-	Id         string                    `json:"id"`
-	LiftMethod *IncidentFreezeLiftMethod `json:"liftMethod"`
-	LiftedAt   *time.Time                `json:"liftedAt"`
-	LiftedBy   *struct {
-		Id   string  `json:"id"`
-		Name *string `json:"name"`
-	} `json:"liftedBy"`
+	Id         string                                      `json:"id"`
+	LiftMethod nullable.Nullable[IncidentFreezeLiftMethod] `json:"liftMethod"`
+	LiftedAt   nullable.Nullable[time.Time]                `json:"liftedAt"`
+	LiftedBy   nullable.Nullable[struct {
+		Id   string                    `json:"id"`
+		Name nullable.Nullable[string] `json:"name"`
+	}] `json:"liftedBy"`
 
 	// Reason Shown to members; never recorded in audit.
 	Reason string `json:"reason"`
@@ -4391,7 +4392,7 @@ type InstallationBackups struct {
 
 // InstallationListeners defines model for InstallationListeners.
 type InstallationListeners struct {
-	Tailnet *TailnetListenerReport `json:"tailnet"`
+	Tailnet nullable.Nullable[TailnetListenerReport] `json:"tailnet"`
 }
 
 // InstallationOutbound defines model for InstallationOutbound.
@@ -4409,7 +4410,7 @@ type InstallationOutbound struct {
 	Refused []InstallationRefusedDestination `json:"refused"`
 
 	// Suggested The VARLATCH_OUTBOUND_ALLOW value that would allow the refused names (the current entries plus new ones); null when none would help.
-	Suggested *string `json:"suggested"`
+	Suggested nullable.Nullable[string] `json:"suggested"`
 
 	// Unresolved Destinations whose names did not resolve; not refusals, checked again when they connect.
 	Unresolved int `json:"unresolved"`
@@ -4420,13 +4421,13 @@ type InstallationOutbound struct {
 
 // InstallationRefusedDestination defines model for InstallationRefusedDestination.
 type InstallationRefusedDestination struct {
-	Host string                  `json:"host"`
-	Id   string                  `json:"id"`
-	Kind OutboundDestinationKind `json:"kind"`
-	Name *string                 `json:"name"`
+	Host string                    `json:"host"`
+	Id   string                    `json:"id"`
+	Kind OutboundDestinationKind   `json:"kind"`
+	Name nullable.Nullable[string] `json:"name"`
 
 	// NotSuggested Why the suggested allow list value leaves it out (a literal address, or a name that resolves to a loopback, link-local, metadata or reserved address); null when the suggestion covers it.
-	NotSuggested *string `json:"notSuggested,omitempty"`
+	NotSuggested nullable.Nullable[string] `json:"notSuggested,omitempty"`
 	Organization struct {
 		Id   string `json:"id"`
 		Name string `json:"name"`
@@ -4445,16 +4446,16 @@ type InstallationRefusedDestinationScheme string
 // InstallationRelease defines model for InstallationRelease.
 type InstallationRelease struct {
 	// LastAttempt The last check, successful or not, or null.
-	LastAttempt *struct {
-		CheckedAt time.Time            `json:"checkedAt"`
-		Failed    *ReleaseCheckFailure `json:"failed"`
-		Repo      string               `json:"repo"`
-	} `json:"lastAttempt"`
+	LastAttempt nullable.Nullable[struct {
+		CheckedAt time.Time                              `json:"checkedAt"`
+		Failed    nullable.Nullable[ReleaseCheckFailure] `json:"failed"`
+		Repo      string                                 `json:"repo"`
+	}] `json:"lastAttempt"`
 
 	// Latest The last successful check, or null.
-	Latest *struct {
-		CheckedAt   time.Time  `json:"checkedAt"`
-		PublishedAt *time.Time `json:"publishedAt"`
+	Latest nullable.Nullable[struct {
+		CheckedAt   time.Time                    `json:"checkedAt"`
+		PublishedAt nullable.Nullable[time.Time] `json:"publishedAt"`
 
 		// ReleaseSet Whether the checked directory holds varlatch-release.json, so `varlatch upgrade` applies there.
 		ReleaseSet bool `json:"releaseSet"`
@@ -4465,10 +4466,10 @@ type InstallationRelease struct {
 		// Url The release's GitHub page, built by the server from repo and version.
 		Url     string `json:"url"`
 		Version string `json:"version"`
-	} `json:"latest"`
+	}] `json:"latest"`
 
 	// Newer Whether the last successful check found a release newer than `running`; null without one. A check's age does not expire true.
-	Newer *bool `json:"newer"`
+	Newer nullable.Nullable[bool] `json:"newer"`
 
 	// Running This server's version.
 	Running string `json:"running"`
@@ -4479,20 +4480,20 @@ type InstallationRelease struct {
 
 // Invitation An organization invitation (capability invitations.manage). Never contains the invitation's token or anything derived from it: the token is returned once, at creation, and stored only hashed.
 type Invitation struct {
-	ConsumedAt *time.Time `json:"consumedAt"`
-	CreatedAt  time.Time  `json:"createdAt"`
+	ConsumedAt nullable.Nullable[time.Time] `json:"consumedAt"`
+	CreatedAt  time.Time                    `json:"createdAt"`
 
 	// CreatedByIdentityId The identity that created it; null for invitations created before 0.14.0.
-	CreatedByIdentityId *string   `json:"createdByIdentityId"`
-	ExpiresAt           time.Time `json:"expiresAt"`
-	Id                  string    `json:"id"`
+	CreatedByIdentityId nullable.Nullable[string] `json:"createdByIdentityId"`
+	ExpiresAt           time.Time                 `json:"expiresAt"`
+	Id                  string                    `json:"id"`
 
 	// Name The invitee's display name, as given at creation.
 	Name string `json:"name"`
 
 	// OrgRole The Organization Role the invitee receives on enrolling.
-	OrgRole   InvitationOrgRole `json:"orgRole"`
-	RevokedAt *time.Time        `json:"revokedAt"`
+	OrgRole   InvitationOrgRole            `json:"orgRole"`
+	RevokedAt nullable.Nullable[time.Time] `json:"revokedAt"`
 
 	// Status pending: can still be accepted. consumed: accepted, the invitee enrolled. expired: not accepted before expiresAt. revoked: revoked while pending. Every state but pending is final.
 	Status InvitationStatus `json:"status"`
@@ -4532,7 +4533,7 @@ type IssuedCapability struct {
 		Present    bool                                  `json:"present"`
 		Reason     *IssuedCapabilityPreflightItemsReason `json:"reason,omitempty"`
 	} `json:"preflightItems,omitempty"`
-	RunId *string `json:"runId"`
+	RunId nullable.Nullable[string] `json:"runId"`
 
 	// Secret Returned exactly once; stored hashed; required to exercise.
 	Secret string `json:"secret"`
@@ -4559,13 +4560,13 @@ type IssuedCliCredential struct {
 // IssuedMachineCredential defines model for IssuedMachineCredential.
 type IssuedMachineCredential struct {
 	// ExpiresAt Null when no ttlSeconds was given and the Organization does not enforce credential-lifetime.
-	ExpiresAt *time.Time                  `json:"expiresAt"`
-	Id        string                      `json:"id"`
-	Kind      IssuedMachineCredentialKind `json:"kind"`
+	ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
+	Id        string                       `json:"id"`
+	Kind      IssuedMachineCredentialKind  `json:"kind"`
 
 	// MaxUses Null when no use budget was given.
-	MaxUses *int   `json:"maxUses"`
-	Name    string `json:"name"`
+	MaxUses nullable.Nullable[int] `json:"maxUses"`
+	Name    string                 `json:"name"`
 
 	// Token Returned exactly once; stored hashed; never retrievable again.
 	Token string `json:"token"`
@@ -4599,9 +4600,9 @@ type MachineCredentialRequest struct {
 // MachineReach defines model for MachineReach.
 type MachineReach struct {
 	Identity struct {
-		DisabledReason *MachineReachIdentityDisabledReason `json:"disabledReason"`
-		Id             string                              `json:"id"`
-		Kind           MachineReachIdentityKind            `json:"kind"`
+		DisabledReason nullable.Nullable[MachineReachIdentityDisabledReason] `json:"disabledReason"`
+		Id             string                                                `json:"id"`
+		Kind           MachineReachIdentityKind                              `json:"kind"`
 
 		// LiveCredentials Credentials that are unrevoked, unexpired and not used up.
 		LiveCredentials int    `json:"liveCredentials"`
@@ -4623,12 +4624,12 @@ type MachineReach struct {
 
 		// Environments Live Environments where something is allowed; others are left out.
 		Environments []struct {
-			Actions             []ReachAction   `json:"actions"`
-			Id                  string          `json:"id"`
-			Kind                EnvironmentKind `json:"kind"`
-			Name                string          `json:"name"`
-			ParentEnvironmentId *string         `json:"parentEnvironmentId"`
-			Tier                Tier            `json:"tier"`
+			Actions             []ReachAction             `json:"actions"`
+			Id                  string                    `json:"id"`
+			Kind                EnvironmentKind           `json:"kind"`
+			Name                string                    `json:"name"`
+			ParentEnvironmentId nullable.Nullable[string] `json:"parentEnvironmentId"`
+			Tier                Tier                      `json:"tier"`
 		} `json:"environments"`
 		Id   string `json:"id"`
 		Name string `json:"name"`
@@ -4642,9 +4643,9 @@ type MachineReach struct {
 		Id        string `json:"id"`
 
 		// Selector Varlatch-owned predicate over trusted Tailnet Context; must name at least one tag, user, or node.
-		Selector TailnetSelector   `json:"selector"`
-		Target   RequirementTarget `json:"target"`
-		Version  *int              `json:"version"`
+		Selector TailnetSelector        `json:"selector"`
+		Target   RequirementTarget      `json:"target"`
+		Version  nullable.Nullable[int] `json:"version"`
 	} `json:"requirements"`
 }
 
@@ -4697,7 +4698,7 @@ type MemberReview struct {
 		Id           string                       `json:"id"`
 		IdentityId   string                       `json:"identityId"`
 		IdentityName string                       `json:"identityName"`
-		Name         *string                      `json:"name"`
+		Name         nullable.Nullable[string]    `json:"name"`
 		State        MemberReviewCredentialsState `json:"state"`
 	} `json:"credentials"`
 	OidcBindings []struct {
@@ -4800,13 +4801,13 @@ type ObservedNode struct {
 
 // OidcBinding defines model for OidcBinding.
 type OidcBinding struct {
-	Audience   string             `json:"audience"`
-	Claims     *map[string]string `json:"claims"`
-	CreatedAt  time.Time          `json:"createdAt"`
-	Id         string             `json:"id"`
-	IdentityId string             `json:"identityId"`
-	Issuer     string             `json:"issuer"`
-	Subject    string             `json:"subject"`
+	Audience   string                               `json:"audience"`
+	Claims     nullable.Nullable[map[string]string] `json:"claims"`
+	CreatedAt  time.Time                            `json:"createdAt"`
+	Id         string                               `json:"id"`
+	IdentityId string                               `json:"identityId"`
+	Issuer     string                               `json:"issuer"`
+	Subject    string                               `json:"subject"`
 }
 
 // Organization defines model for Organization.
@@ -4819,13 +4820,13 @@ type Organization struct {
 
 // OrganizationDeletion defines model for OrganizationDeletion.
 type OrganizationDeletion struct {
-	ApprovalRequired bool       `json:"approvalRequired"`
-	ApprovedAt       *time.Time `json:"approvedAt"`
-	ApprovedBy       *string    `json:"approvedBy"`
-	CancelledAt      *time.Time `json:"cancelledAt"`
-	CompletedAt      *time.Time `json:"completedAt"`
-	Id               string     `json:"id"`
-	RequestedBy      string     `json:"requestedBy"`
+	ApprovalRequired bool                         `json:"approvalRequired"`
+	ApprovedAt       nullable.Nullable[time.Time] `json:"approvedAt"`
+	ApprovedBy       nullable.Nullable[string]    `json:"approvedBy"`
+	CancelledAt      nullable.Nullable[time.Time] `json:"cancelledAt"`
+	CompletedAt      nullable.Nullable[time.Time] `json:"completedAt"`
+	Id               string                       `json:"id"`
+	RequestedBy      string                       `json:"requestedBy"`
 
 	// RunAfter The earliest time the deletion may run
 	RunAfter    time.Time `json:"runAfter"`
@@ -4839,7 +4840,7 @@ type OrganizationPermissions struct {
 	OrganizationId string                           `json:"organizationId"`
 
 	// Role The caller's role; null for a machine identity.
-	Role *OrganizationPermissionsRole `json:"role"`
+	Role nullable.Nullable[OrganizationPermissionsRole] `json:"role"`
 }
 
 // OrganizationPermissionsActions defines model for OrganizationPermissions.Actions.
@@ -4857,18 +4858,18 @@ type OutboundRefusalReason string
 // OwnCredential One of the caller's own credentials; never contains the token itself.
 type OwnCredential struct {
 	// Client A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers.
-	Client    *string   `json:"client,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
+	Client    nullable.Nullable[string] `json:"client,omitempty"`
+	CreatedAt time.Time                 `json:"createdAt"`
 
 	// Current True for the credential authenticating this request.
-	Current   bool       `json:"current"`
-	ExpiresAt *time.Time `json:"expiresAt"`
-	Id        string     `json:"id"`
-	Kind      string     `json:"kind"`
-	MaxUses   *int       `json:"maxUses"`
-	Name      *string    `json:"name"`
-	RevokedAt *time.Time `json:"revokedAt"`
-	UseCount  int        `json:"useCount"`
+	Current   bool                         `json:"current"`
+	ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
+	Id        string                       `json:"id"`
+	Kind      string                       `json:"kind"`
+	MaxUses   nullable.Nullable[int]       `json:"maxUses"`
+	Name      nullable.Nullable[string]    `json:"name"`
+	RevokedAt nullable.Nullable[time.Time] `json:"revokedAt"`
+	UseCount  int                          `json:"useCount"`
 }
 
 // OwnPasskey One of the caller's passkeys and its provenance (ADR-0054 Decision 4). Only a trusted passkey will be able to approve operations once Security Controls exist; sign-in works with any passkey.
@@ -4877,21 +4878,21 @@ type OwnPasskey struct {
 	BackedUp bool `json:"backedUp"`
 
 	// ConfirmedByPasskeyId For confirmed, the trusted passkey that confirmed it (it may have been removed since).
-	ConfirmedByPasskeyId *string    `json:"confirmedByPasskeyId"`
-	CreatedAt            *time.Time `json:"createdAt"`
+	ConfirmedByPasskeyId nullable.Nullable[string]    `json:"confirmedByPasskeyId"`
+	CreatedAt            nullable.Nullable[time.Time] `json:"createdAt"`
 
 	// DeviceType WebAuthn device type, singleDevice or multiDevice.
-	DeviceType string  `json:"deviceType"`
-	Id         string  `json:"id"`
-	Name       *string `json:"name"`
+	DeviceType string                    `json:"deviceType"`
+	Id         string                    `json:"id"`
+	Name       nullable.Nullable[string] `json:"name"`
 
 	// SetupGrantKind For setup-grant, which grant enrolled it.
-	SetupGrantKind *OwnPasskeySetupGrantKind `json:"setupGrantKind"`
-	Trust          OwnPasskeyTrust           `json:"trust"`
-	TrustedAt      *time.Time                `json:"trustedAt"`
+	SetupGrantKind nullable.Nullable[OwnPasskeySetupGrantKind] `json:"setupGrantKind"`
+	Trust          OwnPasskeyTrust                             `json:"trust"`
+	TrustedAt      nullable.Nullable[time.Time]                `json:"trustedAt"`
 
 	// TrustedVia How it became trusted; null while unconfirmed.
-	TrustedVia *OwnPasskeyTrustedVia `json:"trustedVia"`
+	TrustedVia nullable.Nullable[OwnPasskeyTrustedVia] `json:"trustedVia"`
 }
 
 // OwnPasskeySetupGrantKind For setup-grant, which grant enrolled it.
@@ -4916,27 +4917,27 @@ type PlatformConnection struct {
 	CreatedAt    time.Time `json:"createdAt"`
 
 	// CredentialExpiresAt When the platform last said the stored credential expires (GitHub personal access tokens), recorded when Varlatch uses it to push, check, or list. Null is unknown, not "never": GitHub says nothing for tokens without an expiry, other platforms say nothing at all, and replacing the credential clears it.
-	CredentialExpiresAt *time.Time `json:"credentialExpiresAt"`
+	CredentialExpiresAt nullable.Nullable[time.Time] `json:"credentialExpiresAt"`
 
 	// CredentialExpirySeenAt When the platform said so; null with credentialExpiresAt.
-	CredentialExpirySeenAt *time.Time `json:"credentialExpirySeenAt"`
+	CredentialExpirySeenAt nullable.Nullable[time.Time] `json:"credentialExpirySeenAt"`
 
 	// CredentialKind token: a stored Platform Credential. github-app: none; tokens are minted from the Organization's GitHub App for each use, so the Connection has no expiry (always null) and no credential to replace (the App's key is rotated instead).
 	CredentialKind PlatformConnectionCredentialKind `json:"credentialKind"`
 
 	// GithubAppId The GitHub App (github-app Connections)
-	GithubAppId *string `json:"githubAppId"`
-	Id          string  `json:"id"`
+	GithubAppId nullable.Nullable[string] `json:"githubAppId"`
+	Id          string                    `json:"id"`
 
 	// InstallationId The App's installation (github-app Connections)
-	InstallationId *int   `json:"installationId"`
-	Name           string `json:"name"`
-	OrganizationId string `json:"organizationId"`
+	InstallationId nullable.Nullable[int] `json:"installationId"`
+	Name           string                 `json:"name"`
+	OrganizationId string                 `json:"organizationId"`
 
 	// Platform Platform Adapters are a closed allowlist bundled with releases (ADR-0031); there is deliberately no generic push-to-URL adapter.
-	Platform    SyncPlatform `json:"platform"`
-	TargetCount *int         `json:"targetCount,omitempty"`
-	UpdatedAt   *time.Time   `json:"updatedAt"`
+	Platform    SyncPlatform                 `json:"platform"`
+	TargetCount *int                         `json:"targetCount,omitempty"`
+	UpdatedAt   nullable.Nullable[time.Time] `json:"updatedAt"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -4947,21 +4948,21 @@ type PlatformConnectionCredentialKind string
 
 // Profile defines model for Profile.
 type Profile struct {
-	Email      *string `json:"email"`
-	IdentityId string  `json:"identityId"`
-	Image      *string `json:"image"`
-	Name       string  `json:"name"`
+	Email      nullable.Nullable[string] `json:"email"`
+	IdentityId string                    `json:"identityId"`
+	Image      nullable.Nullable[string] `json:"image"`
+	Name       string                    `json:"name"`
 }
 
 // Project defines model for Project.
 type Project struct {
-	ActiveContractRevisionId *string           `json:"activeContractRevisionId,omitempty"`
-	ContractAuthority        ContractAuthority `json:"contractAuthority"`
-	CreatedAt                time.Time         `json:"createdAt"`
-	Id                       string            `json:"id"`
-	Name                     string            `json:"name"`
-	OrganizationId           string            `json:"organizationId"`
-	Slug                     Slug              `json:"slug"`
+	ActiveContractRevisionId nullable.Nullable[string] `json:"activeContractRevisionId,omitempty"`
+	ContractAuthority        ContractAuthority         `json:"contractAuthority"`
+	CreatedAt                time.Time                 `json:"createdAt"`
+	Id                       string                    `json:"id"`
+	Name                     string                    `json:"name"`
+	OrganizationId           string                    `json:"organizationId"`
+	Slug                     Slug                      `json:"slug"`
 }
 
 // ReachAction defines model for ReachAction.
@@ -4973,9 +4974,9 @@ type ReachAction struct {
 
 	// Grants The Grants that allow it, and the Group or Role each came through.
 	Grants []struct {
-		GrantId    string  `json:"grantId"`
-		RoleId     *string `json:"roleId"`
-		ViaGroupId *string `json:"viaGroupId"`
+		GrantId    string                    `json:"grantId"`
+		RoleId     nullable.Nullable[string] `json:"roleId"`
+		ViaGroupId nullable.Nullable[string] `json:"viaGroupId"`
 	} `json:"grants"`
 }
 
@@ -4989,15 +4990,15 @@ type RefusedDestination struct {
 	Kind OutboundDestinationKind `json:"kind"`
 
 	// Name The Connection's name; null for a webhook or an OIDC issuer.
-	Name *string `json:"name"`
-	Port int     `json:"port"`
+	Name nullable.Nullable[string] `json:"name"`
+	Port int                       `json:"port"`
 
 	// Reason Why the outbound policy refuses a destination (ADR-0057): a private network address; a loopback, link-local or metadata address; an unspecified, multicast or reserved address; a name with several addresses of which one is refused; plain http without an allow list entry; or an allowed destination on another port.
 	Reason OutboundRefusalReason    `json:"reason"`
 	Scheme RefusedDestinationScheme `json:"scheme"`
 
 	// Since The earliest refusal of this destination recorded in the audit log (outbound.refused) within the last `sinceDays` days; not necessarily the start of one continuous refusal. Null when none is recorded there, for example a Connection no Target has used yet.
-	Since *time.Time `json:"since"`
+	Since nullable.Nullable[time.Time] `json:"since"`
 }
 
 // RefusedDestinationScheme defines model for RefusedDestination.Scheme.
@@ -5029,9 +5030,9 @@ type Requirement struct {
 	Kind      RequirementKind `json:"kind"`
 
 	// Selector Varlatch-owned predicate over trusted Tailnet Context; must name at least one tag, user, or node.
-	Selector  TailnetSelector   `json:"selector"`
-	Target    RequirementTarget `json:"target"`
-	UpdatedAt *time.Time        `json:"updatedAt"`
+	Selector  TailnetSelector              `json:"selector"`
+	Target    RequirementTarget            `json:"target"`
+	UpdatedAt nullable.Nullable[time.Time] `json:"updatedAt"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -5074,32 +5075,32 @@ type ResumingTarget struct {
 
 // ReviewedCredential defines model for ReviewedCredential.
 type ReviewedCredential struct {
-	CreatedAt time.Time  `json:"createdAt"`
-	ExpiresAt *time.Time `json:"expiresAt"`
-	Id        string     `json:"id"`
+	CreatedAt time.Time                    `json:"createdAt"`
+	ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
+	Id        string                       `json:"id"`
 	Identity  struct {
-		DisabledReason *ReviewedCredentialIdentityDisabledReason `json:"disabledReason"`
-		Id             string                                    `json:"id"`
-		Kind           ReviewedCredentialIdentityKind            `json:"kind"`
-		Name           string                                    `json:"name"`
+		DisabledReason nullable.Nullable[ReviewedCredentialIdentityDisabledReason] `json:"disabledReason"`
+		Id             string                                                      `json:"id"`
+		Kind           ReviewedCredentialIdentityKind                              `json:"kind"`
+		Name           string                                                      `json:"name"`
 
 		// State live: can authenticate. disabled: suspended while the Organization is being deleted (disabledReason); its credentials work again if the deletion is cancelled. retired: disabled by an operator; a credential still listed here was not revoked and would work again on reactivation.
 		State ReviewedCredentialIdentityState `json:"state"`
 	} `json:"identity"`
 
 	// IssuedBy Who was shown the token at issuance; null when unknown.
-	IssuedBy *struct {
+	IssuedBy nullable.Nullable[struct {
 		Id   string `json:"id"`
 		Name string `json:"name"`
-	} `json:"issuedBy"`
+	}] `json:"issuedBy"`
 
 	// Kind The credential kind; every long-lived machine credential is service today.
 	Kind string `json:"kind"`
 
 	// LastUsedAt Last successful authentication, about a minute granular; null when never used.
-	LastUsedAt *time.Time               `json:"lastUsedAt"`
-	Name       *string                  `json:"name"`
-	Reasons    []CredentialReviewReason `json:"reasons"`
+	LastUsedAt nullable.Nullable[time.Time] `json:"lastUsedAt"`
+	Name       nullable.Nullable[string]    `json:"name"`
+	Reasons    []CredentialReviewReason     `json:"reasons"`
 }
 
 // ReviewedCredentialIdentityDisabledReason defines model for ReviewedCredential.Identity.DisabledReason.
@@ -5113,10 +5114,10 @@ type ReviewedCredentialIdentityState string
 
 // Role defines model for Role.
 type Role struct {
-	Actions   []Action   `json:"actions"`
-	Id        string     `json:"id"`
-	Name      string     `json:"name"`
-	UpdatedAt *time.Time `json:"updatedAt"`
+	Actions   []Action                     `json:"actions"`
+	Id        string                       `json:"id"`
+	Name      string                       `json:"name"`
+	UpdatedAt nullable.Nullable[time.Time] `json:"updatedAt"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -5125,18 +5126,18 @@ type Role struct {
 // SecurityControl defines model for SecurityControl.
 type SecurityControl struct {
 	// AvailableModes In a list of the controls: the modes this server accepts for this control, enforce included only where this release can enforce it. Absent from older servers, which accept off and report for every control, and from a change's result.
-	AvailableModes *[]SecurityControlMode `json:"availableModes,omitempty"`
-	ChangedAt      *time.Time             `json:"changedAt"`
+	AvailableModes *[]SecurityControlMode       `json:"availableModes,omitempty"`
+	ChangedAt      nullable.Nullable[time.Time] `json:"changedAt"`
 
 	// ChangedBy Who changed it last; the host operator's reset has no person.
-	ChangedBy *struct {
-		Id   string  `json:"id"`
-		Name *string `json:"name"`
-	} `json:"changedBy"`
+	ChangedBy nullable.Nullable[struct {
+		Id   string                    `json:"id"`
+		Name nullable.Nullable[string] `json:"name"`
+	}] `json:"changedBy"`
 
 	// Config credential-lifetime's lifetimes; null for the other controls and when not set.
-	Config  *CredentialLifetimeConfig `json:"config"`
-	Control SecurityControlName       `json:"control"`
+	Config  nullable.Nullable[CredentialLifetimeConfig] `json:"config"`
+	Control SecurityControlName                         `json:"control"`
 
 	// Mode off has no effect (the default). report refuses and changes nothing. enforce applies the control; this server does not accept it yet.
 	Mode SecurityControlMode `json:"mode"`
@@ -5158,8 +5159,8 @@ type SecurityControlChange struct {
 // SecurityControlChangeInput defines model for SecurityControlChangeInput.
 type SecurityControlChangeInput struct {
 	// Config The new configuration, or null to clear it; absent keeps it.
-	Config          *CredentialLifetimeConfig `json:"config,omitempty"`
-	ExpectedVersion int                       `json:"expectedVersion"`
+	Config          nullable.Nullable[CredentialLifetimeConfig] `json:"config,omitempty"`
+	ExpectedVersion int                                         `json:"expectedVersion"`
 
 	// Mode off has no effect (the default). report refuses and changes nothing. enforce applies the control; this server does not accept it yet.
 	Mode *SecurityControlMode `json:"mode,omitempty"`
@@ -5217,9 +5218,9 @@ type SecurityControlReport struct {
 // SecurityReportEntry defines model for SecurityReportEntry.
 type SecurityReportEntry struct {
 	Actor struct {
-		Id   string  `json:"id"`
-		Kind *string `json:"kind"`
-		Name *string `json:"name"`
+		Id   string                    `json:"id"`
+		Kind nullable.Nullable[string] `json:"kind"`
+		Name nullable.Nullable[string] `json:"name"`
 	} `json:"actor"`
 
 	// ConfigVersion The control's version when the attempts were decided.
@@ -5261,15 +5262,15 @@ type StateDigests struct {
 
 // StateManifest What the retrieval's database snapshot captured, independent of the caller: identifiers and names only, never plaintext or anything derived from it. Versions are immutable, so the listed versions also determine every reference and what it resolves to.
 type StateManifest struct {
-	Contract *struct {
+	Contract nullable.Nullable[struct {
 		ContentHash      string `json:"contentHash"`
 		RevisionId       string `json:"revisionId"`
 		SemanticsVersion int    `json:"semanticsVersion"`
-	} `json:"contract"`
+	}] `json:"contract"`
 	Environment struct {
-		ExpiresAt *time.Time                   `json:"expiresAt"`
+		ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
 		Id        string                       `json:"id"`
-		ParentId  *string                      `json:"parentId"`
+		ParentId  nullable.Nullable[string]    `json:"parentId"`
 		RootId    string                       `json:"rootId"`
 		Tier      StateManifestEnvironmentTier `json:"tier"`
 	} `json:"environment"`
@@ -5303,8 +5304,8 @@ type StrictRetrieval struct {
 	CallerView CallerView `json:"callerView"`
 
 	// Contract The snapshot's active Contract (canonical form), when one is active and the caller holds contract.read.
-	Contract      *map[string]interface{} `json:"contract"`
-	EnvironmentId string                  `json:"environmentId"`
+	Contract      nullable.Nullable[map[string]interface{}] `json:"contract"`
+	EnvironmentId string                                    `json:"environmentId"`
 	Items         []struct {
 		Name string `json:"name"`
 
@@ -5321,8 +5322,8 @@ type StrictRetrieval struct {
 		Source    StrictRetrievalItemsSource `json:"source"`
 
 		// Value The delivered value, references expanded; null when withheld.
-		Value     *string `json:"value"`
-		VersionId string  `json:"versionId"`
+		Value     nullable.Nullable[string] `json:"value"`
+		VersionId string                    `json:"versionId"`
 	} `json:"items"`
 
 	// Manifest What the retrieval's database snapshot captured, independent of the caller: identifiers and names only, never plaintext or anything derived from it. Versions are immutable, so the listed versions also determine every reference and what it resolves to.
@@ -5347,7 +5348,7 @@ type StrictRetrievalMode string
 
 // SyncLedgerName defines model for SyncLedgerName.
 type SyncLedgerName struct {
-	Error *string `json:"error"`
+	Error nullable.Nullable[string] `json:"error"`
 
 	// Name Destination name (renames applied)
 	Name      string              `json:"name"`
@@ -5416,29 +5417,29 @@ type SyncPlatform string
 
 // SyncTarget defines model for SyncTarget.
 type SyncTarget struct {
-	ConnectionId   string            `json:"connectionId"`
-	CreatedAt      time.Time         `json:"createdAt"`
-	Destination    map[string]string `json:"destination"`
-	DisabledReason *string           `json:"disabledReason"`
+	ConnectionId   string                    `json:"connectionId"`
+	CreatedAt      time.Time                 `json:"createdAt"`
+	Destination    map[string]string         `json:"destination"`
+	DisabledReason nullable.Nullable[string] `json:"disabledReason"`
 
 	// Drained True when no run of this Target can start another request to the destination (ADR-0050): every run has ended or passed its deadline. A request a run had already sent may still reach the platform. Requires capability `sync.pause-wait`; absent from older servers.
-	Drained       *bool      `json:"drained,omitempty"`
-	EnvironmentId string     `json:"environmentId"`
-	FailureCount  int        `json:"failureCount"`
-	Id            string     `json:"id"`
-	LastAttemptAt *time.Time `json:"lastAttemptAt"`
+	Drained       *bool                        `json:"drained,omitempty"`
+	EnvironmentId string                       `json:"environmentId"`
+	FailureCount  int                          `json:"failureCount"`
+	Id            string                       `json:"id"`
+	LastAttemptAt nullable.Nullable[time.Time] `json:"lastAttemptAt"`
 
 	// LastDrift The last drift the Target observed (ADR-0050): destination names that differed from what Varlatch last wrote when a repair read the destination back, before it put them back. Names only; count is exact, names holds at most the first 50; eventId is the sync.drift_detected audit event (reading it needs audit.read). Cleared when the destination changes. Null when no drift was observed, and on servers before 0.20.0.
-	LastDrift *struct {
-		At      time.Time `json:"at"`
-		Count   int       `json:"count"`
-		EventId *string   `json:"eventId"`
-		Names   []string  `json:"names"`
-	} `json:"lastDrift,omitempty"`
+	LastDrift nullable.Nullable[struct {
+		At      time.Time                 `json:"at"`
+		Count   int                       `json:"count"`
+		EventId nullable.Nullable[string] `json:"eventId"`
+		Names   []string                  `json:"names"`
+	}] `json:"lastDrift,omitempty"`
 
 	// LastNotes The names the last run held, first, then hints on how the destination itself uses the managed names (ADR-0031, amendments 2026-10-21 and 2026-10-22). They never fail a run, and each run that reaches the value check replaces them. Null when no run has since 0.18.1.
-	LastNotes  *[]SyncTargetNote `json:"lastNotes"`
-	LastResult *string           `json:"lastResult"`
+	LastNotes  nullable.Nullable[[]SyncTargetNote] `json:"lastNotes"`
+	LastResult nullable.Nullable[string]           `json:"lastResult"`
 
 	// Mapping Stored mapping. secretAffirmed records whether disclosure of the item as a Secret is authorized; a mapped item that later becomes a Secret leaves the disclosure set until re-affirmed. A wildcard may carry a sorted exclusion list (exact names or trailing-* prefixes).
 	Mapping        SyncMapping `json:"mapping"`
@@ -5449,9 +5450,9 @@ type SyncTarget struct {
 	RemoveOrphans  bool        `json:"removeOrphans"`
 
 	// RunStartedAt When the oldest run that can still send started; null when drained.
-	RunStartedAt *time.Time      `json:"runStartedAt,omitempty"`
-	State        SyncTargetState `json:"state"`
-	UpdatedAt    *time.Time      `json:"updatedAt"`
+	RunStartedAt nullable.Nullable[time.Time] `json:"runStartedAt,omitempty"`
+	State        SyncTargetState              `json:"state"`
+	UpdatedAt    nullable.Nullable[time.Time] `json:"updatedAt"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -5508,20 +5509,20 @@ type TailnetDeviceReason string
 // TailnetEndpoint defines model for TailnetEndpoint.
 type TailnetEndpoint struct {
 	// BrowserEndpoint The HTTPS URL of the tailnet browser endpoint, such as https://varlatch.example.ts.net:8688; null when it is off.
-	BrowserEndpoint *string `json:"browserEndpoint"`
+	BrowserEndpoint nullable.Nullable[string] `json:"browserEndpoint"`
 }
 
 // TailnetListenerReport defines model for TailnetListenerReport.
 type TailnetListenerReport struct {
 	// Configured From configuration only.
 	Configured struct {
-		BrowserEndpoint *string `json:"browserEndpoint"`
-		ListenerPort    int     `json:"listenerPort"`
-		Tailnet         string  `json:"tailnet"`
+		BrowserEndpoint nullable.Nullable[string] `json:"browserEndpoint"`
+		ListenerPort    int                       `json:"listenerPort"`
+		Tailnet         string                    `json:"tailnet"`
 	} `json:"configured"`
 	Observed struct {
 		// CheckedAt Null before the first check.
-		CheckedAt *time.Time `json:"checkedAt"`
+		CheckedAt nullable.Nullable[time.Time] `json:"checkedAt"`
 		Checks    struct {
 			// BrowserTls Present only when the browser endpoint is configured.
 			BrowserTls *ObservedCheck `json:"browserTls,omitempty"`
@@ -5549,9 +5550,9 @@ type Tier string
 // ValidationReport defines model for ValidationReport.
 type ValidationReport struct {
 	// Complete False when any item is in notEvaluated, or is unresolved because of this caller's access (reason authority).
-	Complete           bool    `json:"complete"`
-	ContractRevisionId *string `json:"contractRevisionId,omitempty"`
-	EnvironmentId      string  `json:"environmentId"`
+	Complete           bool                      `json:"complete"`
+	ContractRevisionId nullable.Nullable[string] `json:"contractRevisionId,omitempty"`
+	EnvironmentId      string                    `json:"environmentId"`
 
 	// Invalid Evaluated items only; reasons never contain the value.
 	Invalid []struct {
@@ -5588,34 +5589,34 @@ type ValidationReportUnresolvedReason string
 
 // ValueRotation Rotation state after a begin/complete operation (no plaintext).
 type ValueRotation struct {
-	EnvironmentId     string     `json:"environmentId"`
-	ItemName          string     `json:"itemName"`
-	PrimaryVersionId  string     `json:"primaryVersionId"`
-	RetiringVersionId *string    `json:"retiringVersionId,omitempty"`
-	RotationDeadline  *time.Time `json:"rotationDeadline,omitempty"`
-	Sensitive         bool       `json:"sensitive"`
+	EnvironmentId     string                       `json:"environmentId"`
+	ItemName          string                       `json:"itemName"`
+	PrimaryVersionId  string                       `json:"primaryVersionId"`
+	RetiringVersionId nullable.Nullable[string]    `json:"retiringVersionId,omitempty"`
+	RotationDeadline  nullable.Nullable[time.Time] `json:"rotationDeadline,omitempty"`
+	Sensitive         bool                         `json:"sensitive"`
 }
 
 // ValueVersion Value metadata only — plaintext is never echoed by mutations.
 type ValueVersion struct {
-	CreatedAt         time.Time `json:"createdAt"`
-	EnvironmentId     string    `json:"environmentId"`
-	ItemName          string    `json:"itemName"`
-	PreviousVersionId *string   `json:"previousVersionId,omitempty"`
-	Sensitive         bool      `json:"sensitive"`
-	VersionId         string    `json:"versionId"`
+	CreatedAt         time.Time                 `json:"createdAt"`
+	EnvironmentId     string                    `json:"environmentId"`
+	ItemName          string                    `json:"itemName"`
+	PreviousVersionId nullable.Nullable[string] `json:"previousVersionId,omitempty"`
+	Sensitive         bool                      `json:"sensitive"`
+	VersionId         string                    `json:"versionId"`
 }
 
 // Webhook defines model for Webhook.
 type Webhook struct {
-	CreatedAt     time.Time  `json:"createdAt"`
-	EventTypes    *[]string  `json:"eventTypes"`
-	FailureCount  int        `json:"failureCount"`
-	Id            string     `json:"id"`
-	LastAttemptAt *time.Time `json:"lastAttemptAt,omitempty"`
-	LastStatus    *string    `json:"lastStatus,omitempty"`
-	UpdatedAt     *time.Time `json:"updatedAt"`
-	Url           string     `json:"url"`
+	CreatedAt     time.Time                    `json:"createdAt"`
+	EventTypes    nullable.Nullable[[]string]  `json:"eventTypes"`
+	FailureCount  int                          `json:"failureCount"`
+	Id            string                       `json:"id"`
+	LastAttemptAt nullable.Nullable[time.Time] `json:"lastAttemptAt,omitempty"`
+	LastStatus    nullable.Nullable[string]    `json:"lastStatus,omitempty"`
+	UpdatedAt     nullable.Nullable[time.Time] `json:"updatedAt"`
+	Url           string                       `json:"url"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -5625,26 +5626,26 @@ type Webhook struct {
 type WhoAmI struct {
 	// Credential The credential this request presented, and only that one; its token is never returned.
 	Credential struct {
-		ExpiresAt *time.Time `json:"expiresAt"`
-		Id        string     `json:"id"`
+		ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
+		Id        string                       `json:"id"`
 
 		// Kind service, cli, browser (a dashboard session), agent-run, or oidc.
-		Kind string  `json:"kind"`
-		Name *string `json:"name"`
+		Kind string                    `json:"kind"`
+		Name nullable.Nullable[string] `json:"name"`
 	} `json:"credential"`
 	Identity struct {
 		// Email The Better Auth account email of a human identity, as in its profile; null for machines and for humans without one. The profile's avatar image is left to GET /v1/me/profile.
-		Email *string            `json:"email"`
-		Id    string             `json:"id"`
-		Kind  WhoAmIIdentityKind `json:"kind"`
-		Name  string             `json:"name"`
+		Email nullable.Nullable[string] `json:"email"`
+		Id    string                    `json:"id"`
+		Kind  WhoAmIIdentityKind        `json:"kind"`
+		Name  string                    `json:"name"`
 	} `json:"identity"`
 
 	// Listener The listener this request came in on (ADR-0014 §7).
 	Listener WhoAmIListener `json:"listener"`
 
 	// Organization The organization a machine identity belongs to. Null for humans, who belong to the Installation and join organizations as members: GET /v1/organizations lists those.
-	Organization *Organization `json:"organization"`
+	Organization nullable.Nullable[Organization] `json:"organization"`
 
 	// Tailnet Only on the tailnet listeners: the device this request's own connection resolved to through Tailscale WhoIs, or why there is none, as GET /v1/tailnet/context reports it (nodeName included when Tailscale gives one). No Requirement is evaluated: a recognized device is no promise that a constrained read will be allowed.
 	Tailnet *TailnetDevice `json:"tailnet,omitempty"`
@@ -5783,8 +5784,8 @@ type ConfirmMyPasskeyJSONBody struct {
 
 // UpdateMyProfileJSONBody defines parameters for UpdateMyProfile.
 type UpdateMyProfileJSONBody struct {
-	Image *string `json:"image,omitempty"`
-	Name  *string `json:"name,omitempty"`
+	Image nullable.Nullable[string] `json:"image,omitempty"`
+	Name  *string                   `json:"name,omitempty"`
 }
 
 // ExchangeOidcTokenJSONBody defines parameters for ExchangeOidcToken.
@@ -6779,7 +6780,7 @@ type RevokeWebhookParams struct {
 
 // UpdateWebhookJSONBody defines parameters for UpdateWebhook.
 type UpdateWebhookJSONBody struct {
-	EventTypes *[]string `json:"eventTypes,omitempty"`
+	EventTypes nullable.Nullable[[]string] `json:"eventTypes,omitempty"`
 
 	// ExpectedVersion Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	ExpectedVersion EntityVersion `json:"expectedVersion"`
@@ -15684,8 +15685,8 @@ type ListDeletedOrganizationAuditEventsResponseObject interface {
 }
 
 type ListDeletedOrganizationAuditEvents200JSONResponse struct {
-	Items      []AuditEvent `json:"items"`
-	NextCursor *string      `json:"nextCursor"`
+	Items      []AuditEvent              `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 func (response ListDeletedOrganizationAuditEvents200JSONResponse) VisitListDeletedOrganizationAuditEventsResponse(w http.ResponseWriter) error {
@@ -15827,9 +15828,9 @@ type ListDeletedOrganizations200JSONResponse struct {
 		Id        string    `json:"id"`
 		Name      string    `json:"name"`
 		Readers   []struct {
-			IdentityId string     `json:"identityId"`
-			Name       string     `json:"name"`
-			RemovedAt  *time.Time `json:"removedAt"`
+			IdentityId string                       `json:"identityId"`
+			Name       string                       `json:"name"`
+			RemovedAt  nullable.Nullable[time.Time] `json:"removedAt"`
 		} `json:"readers"`
 		Slug string `json:"slug"`
 	} `json:"items"`
@@ -16191,7 +16192,7 @@ type ListMyCredentials200JSONResponse struct {
 	Items []OwnCredential `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListMyCredentials200JSONResponse) VisitListMyCredentialsResponse(w http.ResponseWriter) error {
@@ -16306,7 +16307,7 @@ type ListMyPasskeys200JSONResponse struct {
 	Items []OwnPasskey `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListMyPasskeys200JSONResponse) VisitListMyPasskeysResponse(w http.ResponseWriter) error {
@@ -16614,7 +16615,7 @@ type ListOrganizations200JSONResponse struct {
 	Items []Organization `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListOrganizations200JSONResponse) VisitListOrganizationsResponse(w http.ResponseWriter) error {
@@ -16694,11 +16695,11 @@ type GetOrganizationResponseObject interface {
 }
 
 type GetOrganization200JSONResponse struct {
-	CreatedAt      time.Time       `json:"createdAt"`
-	Id             string          `json:"id"`
-	IncidentFreeze *IncidentFreeze `json:"incidentFreeze"`
-	Name           string          `json:"name"`
-	Slug           Slug            `json:"slug"`
+	CreatedAt      time.Time                         `json:"createdAt"`
+	Id             string                            `json:"id"`
+	IncidentFreeze nullable.Nullable[IncidentFreeze] `json:"incidentFreeze"`
+	Name           string                            `json:"name"`
+	Slug           Slug                              `json:"slug"`
 }
 
 func (response GetOrganization200JSONResponse) VisitGetOrganizationResponse(w http.ResponseWriter) error {
@@ -16785,7 +16786,7 @@ type ListAuditEvents200JSONResponse struct {
 	Items       []AuditEvent                `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListAuditEvents200JSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
@@ -17182,7 +17183,7 @@ type SearchConfigItems200JSONResponse struct {
 	Items []ConfigItemSearchResult `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response SearchConfigItems200JSONResponse) VisitSearchConfigItemsResponse(w http.ResponseWriter) error {
@@ -17223,7 +17224,7 @@ type GetOrganizationDeletionResponseObject interface {
 }
 
 type GetOrganizationDeletion200JSONResponse struct {
-	Deletion *OrganizationDeletion `json:"deletion"`
+	Deletion nullable.Nullable[OrganizationDeletion] `json:"deletion"`
 }
 
 func (response GetOrganizationDeletion200JSONResponse) VisitGetOrganizationDeletionResponse(w http.ResponseWriter) error {
@@ -17758,13 +17759,13 @@ type DiscardGitHubAppRegistrationResponseObject interface {
 }
 
 type DiscardGitHubAppRegistration200JSONResponse struct {
-	App *struct {
+	App nullable.Nullable[struct {
 		GithubAppId int    `json:"githubAppId"`
 		Slug        string `json:"slug"`
-	} `json:"app"`
+	}] `json:"app"`
 
 	// DeleteUrl Null for an attached registration (its App is this Organization's) and for one not converted yet
-	DeleteUrl *string `json:"deleteUrl"`
+	DeleteUrl nullable.Nullable[string] `json:"deleteUrl"`
 
 	// Discarded Whether this request deleted the pending key
 	Discarded bool                                                 `json:"discarded"`
@@ -17882,7 +17883,7 @@ type ListGrants200JSONResponse struct {
 	Items []Grant `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListGrants200JSONResponse) VisitListGrantsResponse(w http.ResponseWriter) error {
@@ -18086,7 +18087,7 @@ type ListGroups200JSONResponse struct {
 	Items []Group `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListGroups200JSONResponse) VisitListGroupsResponse(w http.ResponseWriter) error {
@@ -18293,7 +18294,7 @@ type ListGroupMembers200JSONResponse struct {
 	} `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListGroupMembers200JSONResponse) VisitListGroupMembersResponse(w http.ResponseWriter) error {
@@ -18438,7 +18439,7 @@ type ListIdentities200JSONResponse struct {
 	Items []Identity `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListIdentities200JSONResponse) VisitListIdentitiesResponse(w http.ResponseWriter) error {
@@ -18582,7 +18583,7 @@ type ListIdentityCredentials200JSONResponse struct {
 	Items []CredentialMetadata `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListIdentityCredentials200JSONResponse) VisitListIdentityCredentialsResponse(w http.ResponseWriter) error {
@@ -18718,7 +18719,7 @@ type ListOidcBindings200JSONResponse struct {
 	Items []OidcBinding `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListOidcBindings200JSONResponse) VisitListOidcBindingsResponse(w http.ResponseWriter) error {
@@ -19006,13 +19007,13 @@ type GetIncidentFreezeResponseObject interface {
 }
 
 type GetIncidentFreeze200JSONResponse struct {
-	Freeze *IncidentFreeze `json:"freeze"`
+	Freeze nullable.Nullable[IncidentFreeze] `json:"freeze"`
 
 	// History The last 20 freezes, newest first, the open one included.
 	History []IncidentFreeze `json:"history"`
 
 	// ResumingTargets The Sync Targets that resume pushing when the freeze is lifted; empty when not frozen; null for a caller without config.sync.manage, which listing the Targets needs.
-	ResumingTargets *[]ResumingTarget `json:"resumingTargets"`
+	ResumingTargets nullable.Nullable[[]ResumingTarget] `json:"resumingTargets"`
 }
 
 func (response GetIncidentFreeze200JSONResponse) VisitGetIncidentFreezeResponse(w http.ResponseWriter) error {
@@ -19099,7 +19100,7 @@ type LiftIncidentFreeze200JSONResponse struct {
 	Freeze IncidentFreeze `json:"freeze"`
 
 	// ResumingTargets Null for a caller without config.sync.manage; the approval's summary then gives their number only.
-	ResumingTargets *[]ResumingTarget `json:"resumingTargets"`
+	ResumingTargets nullable.Nullable[[]ResumingTarget] `json:"resumingTargets"`
 }
 
 func (response LiftIncidentFreeze200JSONResponse) VisitLiftIncidentFreezeResponse(w http.ResponseWriter) error {
@@ -19158,7 +19159,7 @@ type ListInvitations200JSONResponse struct {
 	Items []Invitation `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListInvitations200JSONResponse) VisitListInvitationsResponse(w http.ResponseWriter) error {
@@ -19586,7 +19587,7 @@ type ListPlatformConnections200JSONResponse struct {
 	Items []PlatformConnection `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListPlatformConnections200JSONResponse) VisitListPlatformConnectionsResponse(w http.ResponseWriter) error {
@@ -19817,28 +19818,28 @@ type GetPlatformConnection200JSONResponse struct {
 	CreatedAt    time.Time `json:"createdAt"`
 
 	// CredentialExpiresAt When the platform last said the stored credential expires (GitHub personal access tokens), recorded when Varlatch uses it to push, check, or list. Null is unknown, not "never": GitHub says nothing for tokens without an expiry, other platforms say nothing at all, and replacing the credential clears it.
-	CredentialExpiresAt *time.Time `json:"credentialExpiresAt"`
+	CredentialExpiresAt nullable.Nullable[time.Time] `json:"credentialExpiresAt"`
 
 	// CredentialExpirySeenAt When the platform said so; null with credentialExpiresAt.
-	CredentialExpirySeenAt *time.Time `json:"credentialExpirySeenAt"`
+	CredentialExpirySeenAt nullable.Nullable[time.Time] `json:"credentialExpirySeenAt"`
 
 	// CredentialKind token: a stored Platform Credential. github-app: none; tokens are minted from the Organization's GitHub App for each use, so the Connection has no expiry (always null) and no credential to replace (the App's key is rotated instead).
 	CredentialKind GetPlatformConnection200JSONResponseBodyCredentialKind `json:"credentialKind"`
 
 	// GithubAppId The GitHub App (github-app Connections)
-	GithubAppId *string `json:"githubAppId"`
-	Id          string  `json:"id"`
+	GithubAppId nullable.Nullable[string] `json:"githubAppId"`
+	Id          string                    `json:"id"`
 
 	// InstallationId The App's installation (github-app Connections)
-	InstallationId *int   `json:"installationId"`
-	Name           string `json:"name"`
-	OrganizationId string `json:"organizationId"`
+	InstallationId nullable.Nullable[int] `json:"installationId"`
+	Name           string                 `json:"name"`
+	OrganizationId string                 `json:"organizationId"`
 
 	// Platform Platform Adapters are a closed allowlist bundled with releases (ADR-0031); there is deliberately no generic push-to-URL adapter.
-	Platform    SyncPlatform `json:"platform"`
-	TargetCount *int         `json:"targetCount,omitempty"`
-	Targets     []SyncTarget `json:"targets"`
-	UpdatedAt   *time.Time   `json:"updatedAt"`
+	Platform    SyncPlatform                 `json:"platform"`
+	TargetCount *int                         `json:"targetCount,omitempty"`
+	Targets     []SyncTarget                 `json:"targets"`
+	UpdatedAt   nullable.Nullable[time.Time] `json:"updatedAt"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -19942,7 +19943,7 @@ type ListProjects200JSONResponse struct {
 	Items []Project `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListProjects200JSONResponse) VisitListProjectsResponse(w http.ResponseWriter) error {
@@ -20338,7 +20339,7 @@ type ListEnvironments200JSONResponse struct {
 	Items []Environment `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListEnvironments200JSONResponse) VisitListEnvironmentsResponse(w http.ResponseWriter) error {
@@ -20498,8 +20499,8 @@ type ListCapabilitiesResponseObject interface {
 }
 
 type ListCapabilities200JSONResponse struct {
-	Items      []Capability `json:"items"`
-	NextCursor *string      `json:"nextCursor"`
+	Items      []Capability              `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 func (response ListCapabilities200JSONResponse) VisitListCapabilitiesResponse(w http.ResponseWriter) error {
@@ -20669,7 +20670,7 @@ type ApplyChangeSet200JSONResponse struct {
 	Results     []struct {
 		Item      string                                     `json:"item"`
 		Op        ApplyChangeSet200JSONResponseBodyResultsOp `json:"op"`
-		VersionId *string                                    `json:"versionId"`
+		VersionId nullable.Nullable[string]                  `json:"versionId"`
 	} `json:"results"`
 }
 
@@ -20878,7 +20879,7 @@ type ListSyncTargets200JSONResponse struct {
 	Items []SyncTarget `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListSyncTargets200JSONResponse) VisitListSyncTargetsResponse(w http.ResponseWriter) error {
@@ -21000,29 +21001,29 @@ type GetSyncTargetResponseObject interface {
 }
 
 type GetSyncTarget200JSONResponse struct {
-	ConnectionId   string            `json:"connectionId"`
-	CreatedAt      time.Time         `json:"createdAt"`
-	Destination    map[string]string `json:"destination"`
-	DisabledReason *string           `json:"disabledReason"`
+	ConnectionId   string                    `json:"connectionId"`
+	CreatedAt      time.Time                 `json:"createdAt"`
+	Destination    map[string]string         `json:"destination"`
+	DisabledReason nullable.Nullable[string] `json:"disabledReason"`
 
 	// Drained True when no run of this Target can start another request to the destination (ADR-0050): every run has ended or passed its deadline. A request a run had already sent may still reach the platform. Requires capability `sync.pause-wait`; absent from older servers.
-	Drained       *bool      `json:"drained,omitempty"`
-	EnvironmentId string     `json:"environmentId"`
-	FailureCount  int        `json:"failureCount"`
-	Id            string     `json:"id"`
-	LastAttemptAt *time.Time `json:"lastAttemptAt"`
+	Drained       *bool                        `json:"drained,omitempty"`
+	EnvironmentId string                       `json:"environmentId"`
+	FailureCount  int                          `json:"failureCount"`
+	Id            string                       `json:"id"`
+	LastAttemptAt nullable.Nullable[time.Time] `json:"lastAttemptAt"`
 
 	// LastDrift The last drift the Target observed (ADR-0050): destination names that differed from what Varlatch last wrote when a repair read the destination back, before it put them back. Names only; count is exact, names holds at most the first 50; eventId is the sync.drift_detected audit event (reading it needs audit.read). Cleared when the destination changes. Null when no drift was observed, and on servers before 0.20.0.
-	LastDrift *struct {
-		At      time.Time `json:"at"`
-		Count   int       `json:"count"`
-		EventId *string   `json:"eventId"`
-		Names   []string  `json:"names"`
-	} `json:"lastDrift,omitempty"`
+	LastDrift nullable.Nullable[struct {
+		At      time.Time                 `json:"at"`
+		Count   int                       `json:"count"`
+		EventId nullable.Nullable[string] `json:"eventId"`
+		Names   []string                  `json:"names"`
+	}] `json:"lastDrift,omitempty"`
 
 	// LastNotes The names the last run held, first, then hints on how the destination itself uses the managed names (ADR-0031, amendments 2026-10-21 and 2026-10-22). They never fail a run, and each run that reaches the value check replaces them. Null when no run has since 0.18.1.
-	LastNotes  *[]SyncTargetNote `json:"lastNotes"`
-	LastResult *string           `json:"lastResult"`
+	LastNotes  nullable.Nullable[[]SyncTargetNote] `json:"lastNotes"`
+	LastResult nullable.Nullable[string]           `json:"lastResult"`
 
 	// Mapping Stored mapping. secretAffirmed records whether disclosure of the item as a Secret is authorized; a mapped item that later becomes a Secret leaves the disclosure set until re-affirmed. A wildcard may carry a sorted exclusion list (exact names or trailing-* prefixes).
 	Mapping        SyncMapping      `json:"mapping"`
@@ -21034,9 +21035,9 @@ type GetSyncTarget200JSONResponse struct {
 	RemoveOrphans  bool             `json:"removeOrphans"`
 
 	// RunStartedAt When the oldest run that can still send started; null when drained.
-	RunStartedAt *time.Time                            `json:"runStartedAt,omitempty"`
+	RunStartedAt nullable.Nullable[time.Time]          `json:"runStartedAt,omitempty"`
 	State        GetSyncTarget200JSONResponseBodyState `json:"state"`
-	UpdatedAt    *time.Time                            `json:"updatedAt"`
+	UpdatedAt    nullable.Nullable[time.Time]          `json:"updatedAt"`
 
 	// Version Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 	Version EntityVersion `json:"version"`
@@ -21462,7 +21463,7 @@ type ListRequirements200JSONResponse struct {
 	Items []Requirement `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListRequirements200JSONResponse) VisitListRequirementsResponse(w http.ResponseWriter) error {
@@ -21651,7 +21652,7 @@ type ListRoles200JSONResponse struct {
 	Items []Role `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListRoles200JSONResponse) VisitListRolesResponse(w http.ResponseWriter) error {
@@ -22107,7 +22108,7 @@ type ListOrgSyncTargets200JSONResponse struct {
 	Items []SyncTarget `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListOrgSyncTargets200JSONResponse) VisitListOrgSyncTargetsResponse(w http.ResponseWriter) error {
@@ -22151,7 +22152,7 @@ type ListTeams200JSONResponse struct {
 	Items []Group `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListTeams200JSONResponse) VisitListTeamsResponse(w http.ResponseWriter) error {
@@ -22358,7 +22359,7 @@ type ListTeamMembers200JSONResponse struct {
 	} `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListTeamMembers200JSONResponse) VisitListTeamMembersResponse(w http.ResponseWriter) error {
@@ -22505,7 +22506,7 @@ type ListTeamProjects200JSONResponse struct {
 	} `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListTeamProjects200JSONResponse) VisitListTeamProjectsResponse(w http.ResponseWriter) error {
@@ -22649,7 +22650,7 @@ type ListWebhooks200JSONResponse struct {
 	Items []Webhook `json:"items"`
 
 	// NextCursor Opaque; null when no further pages exist.
-	NextCursor *NextCursor `json:"nextCursor"`
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 }
 
 func (response ListWebhooks200JSONResponse) VisitListWebhooksResponse(w http.ResponseWriter) error {

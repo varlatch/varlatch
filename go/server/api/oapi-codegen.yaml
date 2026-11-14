@@ -6,3 +6,4 @@ generate:
   strict-server: true
 output-options:
   resolve-type-name-collisions: true
+  nullable-type: true
