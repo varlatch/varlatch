@@ -293,3 +293,39 @@ func TestDumpable(t *testing.T) {
 		t.Errorf("PR_GET_DUMPABLE = %d, %v", d, err)
 	}
 }
+
+// A client that starts a request and stops sending its body is cut off once
+// the request's read time runs out; a complete request still succeeds.
+func TestStalledRequestBodyIsCutOff(t *testing.T) {
+	saved := readTimeout
+	readTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { readTimeout = saved })
+
+	in := newInstall(t, "")
+	r := start(t, in)
+	defer r.stop(t)
+
+	conn, err := net.Dial("tcp", r.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Headers announce 100 bytes; only 10 arrive.
+	fmt.Fprintf(conn, "POST /v1/auth/device HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"name\":\"", r.addr)
+	start := time.Now()
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	buf := make([]byte, 4096)
+	for {
+		if _, err := conn.Read(buf); err != nil {
+			break // closed by the server (or its timeout answer was read)
+		}
+	}
+	if waited := time.Since(start); waited > 5*time.Second {
+		t.Fatalf("a stalled body held the connection for %s", waited)
+	}
+
+	var ready struct{ Ready bool }
+	if code := getJSON(t, "http://"+r.addr+"/readyz", &ready); code != 200 || !ready.Ready {
+		t.Fatalf("readyz after the stalled request: %d %+v", code, ready)
+	}
+}
