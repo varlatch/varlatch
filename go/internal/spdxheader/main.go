@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Command spdxheader puts an SPDX-License-Identifier line at the top of a
-// generated Go file, as scripts/check-licenses.mjs requires of every source
+// Command spdxheader puts an SPDX-License-Identifier line at the top of
+// generated Go files, as scripts/check-licenses.mjs requires of every source
 // file (within its first three lines). Generators such as oapi-codegen write
 // their own header and have no option for this one, so a go:generate line
 // runs this command right after the generator:
@@ -21,13 +21,15 @@ import (
 var licenseID = regexp.MustCompile(`^[A-Za-z0-9.+-]+$`)
 
 func main() {
-	if len(os.Args) != 3 || !licenseID.MatchString(os.Args[1]) {
-		fmt.Fprintln(os.Stderr, "usage: spdxheader <SPDX license identifier> <file>")
+	if len(os.Args) < 3 || !licenseID.MatchString(os.Args[1]) {
+		fmt.Fprintln(os.Stderr, "usage: spdxheader <SPDX license identifier> <file>...")
 		os.Exit(2)
 	}
-	if err := apply(os.Args[2], os.Args[1]); err != nil {
-		fmt.Fprintln(os.Stderr, "spdxheader:", err)
-		os.Exit(1)
+	for _, path := range os.Args[2:] {
+		if err := apply(path, os.Args[1]); err != nil {
+			fmt.Fprintln(os.Stderr, "spdxheader:", err)
+			os.Exit(1)
+		}
 	}
 }
 

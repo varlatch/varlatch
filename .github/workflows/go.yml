@@ -78,13 +78,21 @@ jobs:
         working-directory: go
         run: go mod tidy -diff
 
-      # G12: the Go side of the /v1 contract (go/server/api/api.gen.go) is
-      # what packages/protocol/openapi.yaml generates, with the generator
-      # pinned in go.mod (its tool directive). A stale or hand-edited file
-      # fails here; `go generate ./...` in go/ repairs it. ci.yml checks the
-      # TypeScript types generated from the same document.
+      # G12: generated Go code is what its sources generate, with the
+      # generators pinned in go.mod (its tool directives):
+      #   - the Go side of the /v1 contract (go/server/api/api.gen.go), from
+      #     packages/protocol/openapi.yaml by oapi-codegen; ci.yml checks the
+      #     TypeScript types generated from the same document;
+      #   - the typed queries (go/server/db/query/), from
+      #     go/server/db/schema.sql and queries/ by sqlc.
+      # A stale or hand-edited file fails here; `go generate ./...` in go/
+      # repairs it. Without cgo, sqlc parses with its WebAssembly build of
+      # the PostgreSQL parser instead of compiling the C one (it uses neither
+      # for SQLite); the output is the same.
       - name: Generated code is current
         working-directory: go
+        env:
+          CGO_ENABLED: "0"
         run: |
           go generate ./...
           git add -N .
