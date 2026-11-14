@@ -41,16 +41,22 @@ type parityTable struct {
 	} `json:"requestWindow"`
 }
 
-func loadParity(t *testing.T) parityTable {
+// loadParityInto reads the table into v.
+func loadParityInto(t *testing.T, v any) {
 	t.Helper()
 	b, err := os.ReadFile("testdata/known-differences.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var p parityTable
-	if err := json.Unmarshal(b, &p); err != nil {
+	if err := json.Unmarshal(b, v); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func loadParity(t *testing.T) parityTable {
+	t.Helper()
+	var p parityTable
+	loadParityInto(t, &p)
 	if len(p.PathVectors) == 0 || len(p.NginxVectors) == 0 || len(p.Routes) == 0 || len(p.ForwardedFor) == 0 || p.RequestWindow.Allowed != WindowLimit {
 		t.Fatalf("the table is incomplete: %+v", p)
 	}
@@ -128,7 +134,9 @@ func TestParityRoutes(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimSpace(logBuf.String())), &rec); err != nil {
 			t.Fatalf("%s: access log %q: %v", name, logBuf.String(), err)
 		}
-		if want := expect != "dashboard" && rec.Path != "/healthz" && rec.Path != "/readyz"; rec.Window != want {
+		// The body limit refuses before the request window: a 413 is not
+		// charged, and the access log says so.
+		if want := expect != "dashboard" && rec.Path != "/healthz" && rec.Path != "/readyz" && status != http.StatusRequestEntityTooLarge; rec.Window != want {
 			t.Errorf("%s: counted in the request window %v, want %v (routed on %q)", name, rec.Window, want, rec.Path)
 		}
 		head := c.Method == http.MethodHead // a real server sends no body

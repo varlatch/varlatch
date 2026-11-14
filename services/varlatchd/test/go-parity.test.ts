@@ -14,6 +14,8 @@
  * does not model.
  */
 import { readFileSync } from "node:fs";
+import { connect, type AddressInfo } from "node:net";
+import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { getPath } from "hono/utils/url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,6 +47,7 @@ const table = JSON.parse(
   routes: RouteCase[];
   forwardedFor: { peer: string; trusted: string[]; lines: string[]; client: string }[];
   requestWindow: { path: string; allowed: number; status: number; code: string; message: string; retryAfterAtStart: string };
+  transportBodies: { method: string; target: string; framing: "chunked" | "length"; size: number; status: number }[];
 };
 
 let ctx: AppCtx & { close: () => Promise<void> };
@@ -224,5 +227,59 @@ it("the request window refuses the request after the allowed ones, with PERMISSI
 describe("the enrollment page", () => {
   it("is the one varlatchd embeds", () => {
     expect(readFileSync(new URL("../../../go/server/httpserver/enroll/enroll.html", import.meta.url), "utf8")).toBe(ENROLL_HTML);
+  });
+});
+
+/**
+ * A request with a body of `size` bytes over a real connection, framed
+ * chunked or with a Content-Length, and the status of the answer. The body
+ * is written while the answer is read: the server may answer first.
+ */
+function rawRequest(port: number, method: string, target: string, framing: "chunked" | "length", size: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1");
+    let answer = "";
+    socket.setEncoding("latin1");
+    socket.on("data", (d: string) => {
+      answer += d;
+      const m = /^HTTP\/1\.1 (\d{3}) /.exec(answer);
+      if (m) {
+        resolve(Number(m[1]));
+        socket.destroy();
+      }
+    });
+    socket.on("error", (err) => (answer ? resolve(Number(/^HTTP\/1\.1 (\d{3}) /.exec(answer)?.[1] ?? 0)) : reject(err)));
+    socket.on("connect", () => {
+      socket.write(
+        `${method} ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nConnection: close\r\n` +
+          (framing === "chunked" ? "Transfer-Encoding: chunked\r\n\r\n" : `Content-Length: ${size}\r\n\r\n`),
+      );
+      const piece = 64 * 1024;
+      for (let sent = 0; sent < size; sent += piece) {
+        const n = Math.min(piece, size - sent);
+        if (framing === "chunked") socket.write(`${n.toString(16)}\r\n`);
+        socket.write("a".repeat(n));
+        if (framing === "chunked") socket.write("\r\n");
+      }
+      if (framing === "chunked") socket.write("0\r\n\r\n");
+    });
+  });
+}
+
+// The body limit through the Node adapter, as this server runs: app.request
+// cannot give a GET a body, so these go over a real listener
+// (@hono/node-server on an ephemeral port). parity_test.go runs the same
+// table against the Go server's listener.
+describe("request bodies over a real connection", () => {
+  it.each(table.transportBodies.map((c) => [`${c.method} ${c.target} (${c.framing}, ${c.size} bytes)`, c] as const))("%s", async (_, c) => {
+    const app = buildApp(ctx, { publicUrl: "http://127.0.0.1:8686" });
+    const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" });
+    await new Promise<void>((r) => (server.listening ? r() : server.once("listening", () => r())));
+    try {
+      const { port } = server.address() as AddressInfo;
+      expect(await rawRequest(port, c.method, c.target, c.framing, c.size)).toBe(c.status);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   });
 });

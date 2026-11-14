@@ -272,6 +272,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	routed.Path, routed.RawPath = p, ""
 	r.URL = &routed
 	counted := isAPI && p != "/healthz" && p != "/readyz"
+	// windowed: the request window actually admitted or refused this
+	// request (a request refused earlier, by the body limit, is not charged).
+	windowed := false
 	// Every X-Forwarded-For line, joined as Node joins them: a proxy that
 	// adds a line of its own instead of appending to the caller's is read
 	// from the right like any other (the caller's forged line stays left).
@@ -287,7 +290,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				writeError(rec, r, http.StatusInternalServerError, "INTERNAL", "Internal error")
 			}
 		}
-		s.log(r, rec, arrived, client, counted, id)
+		s.log(r, rec, arrived, client, windowed, id)
 	}()
 	if isAPI {
 		rec.Header().Set("X-Request-Id", id)
@@ -295,11 +298,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// authentication and any handler: a declared length is judged by
 		// the header; a body without one (chunked) is read up to the limit
 		// first, and one byte more refuses it.
-		if r.ContentLength > MaxBody {
+		// @hono/node-server gives a GET, HEAD or TRACE request no body at
+		// all, so bodyLimit never looks at what one carries: it is neither
+		// read nor limited here, and handlers never see it.
+		if bodyless(r.Method) {
+			r.Body = http.NoBody
+		} else if r.ContentLength > MaxBody {
 			writeError(rec, r, http.StatusRequestEntityTooLarge, "VALIDATION_FAILED", "Request body exceeds 1 MiB")
 			return
-		}
-		if r.ContentLength < 0 && r.Body != nil && r.Body != http.NoBody {
+		} else if r.ContentLength < 0 && r.Body != nil && r.Body != http.NoBody {
 			body, err := io.ReadAll(io.LimitReader(r.Body, MaxBody+1))
 			_ = r.Body.Close()
 			if err != nil {
@@ -316,6 +323,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(rec, r.Body, MaxBody)
 	}
 	if counted {
+		windowed = true
 		if ok, retry := s.window.admit(client); !ok {
 			rec.Header().Set("Retry-After", retry)
 			writeError(rec, r, http.StatusTooManyRequests, "PERMISSION_DENIED", RateExceededMessage)
@@ -329,7 +337,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.serveAPI(rec, r)
 }
 
-func (s *Server) log(r *http.Request, rec *recorder, arrived time.Time, client string, counted bool, id string) {
+// bodyless reports whether the Node adapter passes a request of this
+// method on without its body (@hono/node-server newRequestFromIncoming:
+// GET and HEAD, and TRACE, which it turns into GET).
+func bodyless(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodTrace
+}
+
+func (s *Server) log(r *http.Request, rec *recorder, arrived time.Time, client string, windowed bool, id string) {
 	if s.opts.AccessLog == nil {
 		return
 	}
@@ -339,7 +354,7 @@ func (s *Server) log(r *http.Request, rec *recorder, arrived time.Time, client s
 	}
 	record := &AccessRecord{
 		Arrived: arrived.UTC(), Completed: s.opts.Now().UTC(), Client: client,
-		Method: r.Method, Path: r.URL.Path, Status: status, Bytes: rec.bytes, Window: counted, RequestID: id,
+		Method: r.Method, Path: r.URL.Path, Status: status, Bytes: rec.bytes, Window: windowed, RequestID: id,
 	}
 	if v, ok := r.Header["X-Forwarded-For"]; ok {
 		joined := strings.Join(v, ", ")
