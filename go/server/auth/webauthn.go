@@ -35,8 +35,12 @@ type RelyingParty struct {
 
 // RelyingPartyOf is relyingPartyOf(publicUrl).
 func RelyingPartyOf(u *url.URL) RelyingParty {
-	host := u.Hostname()
-	return RelyingParty{ID: host, Origin: u.Scheme + "://" + u.Host}
+	host := u.Host
+	// An origin names no default port, as a browser's Origin header does.
+	if p := u.Port(); u.Scheme == "https" && p == "443" || u.Scheme == "http" && p == "80" {
+		host = strings.TrimSuffix(host, ":"+p)
+	}
+	return RelyingParty{ID: u.Hostname(), Origin: strings.ToLower(u.Scheme) + "://" + strings.ToLower(host)}
 }
 
 // RPName is the relying party's display name.

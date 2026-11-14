@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -497,5 +498,21 @@ func TestDuplicateCredentialID(t *testing.T) {
 	}
 	if _, err := e.svc.PeekSetupGrant(e.ctx, g.Token); err != nil {
 		t.Fatalf("grant consumed by a refused duplicate: %v", err)
+	}
+}
+
+// The relying party's origin is the browser's form of the public URL: no
+// default port, lower case.
+func TestRelyingPartyOrigin(t *testing.T) {
+	for raw, want := range map[string]auth.RelyingParty{
+		"https://Varlatch.Example.com:443/": {ID: "varlatch.example.com", Origin: "https://varlatch.example.com"},
+		"https://varlatch.example.com:8443": {ID: "varlatch.example.com", Origin: "https://varlatch.example.com:8443"},
+		"http://localhost:80":               {ID: "localhost", Origin: "http://localhost"},
+		"http://localhost:8686":             {ID: "localhost", Origin: "http://localhost:8686"},
+	} {
+		u, _ := url.Parse(raw)
+		if got := auth.RelyingPartyOf(u); got.Origin != want.Origin || strings.ToLower(got.ID) != want.ID {
+			t.Errorf("%s: %+v, want %+v", raw, got, want)
+		}
 	}
 }

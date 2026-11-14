@@ -205,6 +205,10 @@ func (o *browserOps) GetBrowserSession(ctx context.Context, _ browser.GetBrowser
 	var identity, expires any
 	if session != nil {
 		identity, expires = session.IdentityID, iso(session.ExpiresAt)
+		// The cookie lives as long as the session, which use extends.
+		if remaining := time.Duration(session.ExpiresAt-time.Now().UnixMicro()) * time.Microsecond; remaining > time.Second {
+			http.SetCookie(writerOf(ctx), o.s.cookie(sessionCookie, cookieValue(r, o.s.cookieName(sessionCookie)), remaining, true))
+		}
 	}
 	return browserReply{ok(jsvalue.Object{{Key: "csrfToken", Value: token}, {Key: "identityId", Value: identity}, {Key: "expiresAt", Value: expires}})}, nil
 }
