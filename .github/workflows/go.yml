@@ -140,6 +140,7 @@ jobs:
           go vet ./...
           go vet -tags conformance ./...
           go vet -tags crashpoint ./...
+          go vet -tags g9a ./...
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
       # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
@@ -190,23 +191,40 @@ jobs:
           CGO_ENABLED: "0"
         run: go test -count=1 -v -tags crashpoint -run '^TestKillAtCrashPoints$' ./server/daemon
 
+      # The g9a build (ADR-0059 varlatchd-core decision 7): its storage
+      # engine's effective settings equal the production build's (a smoke
+      # plan's WAL bound aside, which it reports), and a short run seeds W1
+      # in the production tables, serves disclosures to the manifest's
+      # credentials and runs the converge simulation's writes.
+      - name: The g9a build's settings are the production build's
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags g9a -run '^TestBench' ./server/daemon
+
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
       - name: install.sh and the G9a runner pass shellcheck
         run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh
 
-      # The G9a harness end to end at 5 % of the profile's length: k6 (the
-      # pinned image), the stand-in server under G9's memory limits in a
-      # scope of its own, and the report. A smoke run checks the harness,
-      # not the gate: the bound is 512 KiB so the size trigger fires in two
-      # minutes, and backups are slowed so that they overlap it. The 50/s
-      # backup starts from the WAL's size (95 % of that bound) and must run
-      # and hold a size-triggered TRUNCATE off: slowed to 256 pages a step it
-      # lasts seconds, longer than the checkpointer's 2 s tick, while the
-      # WAL passes 512 KiB within one. A converge run alone writes more than
-      # twice that bound, so the WAL-peak criterion is the one failure
-      # allowed; the stand-in and the scaled plan are the only reasons
-      # allowed for an inconclusive verdict.
+      # G9a at smoke scale (ADR-0059 step 3.6): 5 % of the profile's
+      # length against varlatchd built with the g9a tag (the production
+      # serve path with the W1 seed, the converge simulation and paced
+      # backups), driven by the harness as a process: k6 (the pinned image)
+      # from 20 loopback addresses, varlatchd under G9's memory limits in a
+      # scope of its own, and the report. A smoke run is reported as smoke
+      # and never counts for the gate: the bound is 512 KiB so the size
+      # trigger fires in two minutes, and backups are slowed so that they
+      # overlap it. The 50/s backup starts from the WAL's size (95 % of that
+      # bound) and must run and hold a size-triggered TRUNCATE off: slowed to
+      # 256 pages a step it lasts seconds, longer than the checkpointer's
+      # 2 s tick, while the WAL passes 512 KiB within one. A converge run
+      # alone writes more than twice that bound, so the WAL-peak criterion
+      # is the one failure allowed; the scaled plan is the only reason
+      # allowed for an inconclusive verdict. The g9a build's settings must
+      # be the production build's (the smoke bound aside), every one of the
+      # 20 addresses must carry one identity, and none may come within 20 %
+      # of the request window.
       # The smoke checks the harness's mechanics, not latency: a hosted
       # runner's disk stalls on fsync now and then (warm-up p95 3.5 ms on one
       # run, 60 to 120 ms on another, before any backup or checkpoint), and
@@ -219,10 +237,10 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           out="$RUNNER_TEMP/g9a-smoke"
-          (cd go && go build -o "$RUNNER_TEMP/g9a" ./bench/g9a/cmd/g9a)
+          (cd go && go build -o "$RUNNER_TEMP/g9a" ./bench/g9a/cmd/g9a && go build -tags g9a -o "$RUNNER_TEMP/varlatchd-g9a" ./cmd/varlatchd)
           "$RUNNER_TEMP/g9a" plan -scale 0.05 -wal-bound 524288 -backup-step-pages 256 > "$RUNNER_TEMP/smoke-plan.json"
           status=0
-          G9A_BIN="$RUNNER_TEMP/g9a" \
+          G9A_BIN="$RUNNER_TEMP/g9a" G9A_VARLATCHD="$RUNNER_TEMP/varlatchd-g9a" \
             G9A_SCOPE="sudo systemd-run --scope --quiet --uid=$(id -u) --gid=$(id -g) -p MemoryMax=1G -p MemorySwapMax=0" \
             go/bench/g9a/run.sh "$out" "$RUNNER_TEMP/smoke-plan.json" || status=$?
           [ "$status" -le 2 ] || { cat "$out/server.log" "$out/k6.log" || true; exit 1; }
@@ -237,12 +255,15 @@ jobs:
             and ([.walTriggeredBackups[] | (.attempts | length) >= 1 and .heldOffByAttempt > 0] | all)
             and .memoryMaxMiB > 0 and .memoryMaxMiB < 300
             and .deferredTruncates > 0 and .converges == .convergesPlanned
+            and .system.target == "varlatchd" and .system.settingsAreProduction
+            and (.addresses | length) == 20
+            and ([.addresses[] | (.identities | length) == 1 and .maxPerWindow < 480] | all)
             and ([.fails[]
                   | select(startswith("the WAL peaked") | not)
                   | select(test("^phase [a-z0-9]+: p95 [0-9.]+ ms over [0-9]+ ms$") | not)
                   | select(test("^[a-z-]+ window at [-+0-9.]+s: p95 [0-9.]+ ms, 0 failed of [0-9]+$") | not)
                  ] == [])
-            and ([.inconclusive[] | select(startswith("the load ran against") or startswith("the plan differs from G9a") | not)] == [])
+            and ([.inconclusive[] | select(startswith("the plan differs from G9a") | not)] == [])
           ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
 
       # The varlatchd unit: systemd accepts it, its exposure score stays at

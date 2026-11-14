@@ -12,6 +12,12 @@ import (
 	"modernc.org/sqlite"
 )
 
+// A snapshot's default pacing: 1,024 pages every 400 ms.
+const (
+	defaultStepPages = 1024
+	defaultStepPause = 400 * time.Millisecond
+)
+
 // SnapshotOptions paces a snapshot. Zero values take the defaults (1,024
 // pages every 400 ms, as measured in the ADR-0059 benchmark).
 type SnapshotOptions struct {
@@ -53,10 +59,10 @@ var errSnapshotAborted = errors.New("storage: snapshot aborted: a failed write b
 // dest is removed.
 func (db *DB) Snapshot(ctx context.Context, dest string, o SnapshotOptions) (SnapshotStats, error) {
 	if o.StepPages <= 0 {
-		o.StepPages = 1024
+		o.StepPages = defaultStepPages
 	}
 	if o.Pause <= 0 {
-		o.Pause = 400 * time.Millisecond
+		o.Pause = defaultStepPause
 	}
 	db.mu.RLock()
 	if db.closed {

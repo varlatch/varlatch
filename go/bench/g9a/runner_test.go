@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,12 +20,44 @@ import (
 	"github.com/varlatch/varlatch/go/lib/storage"
 )
 
-// The server end to end, without k6: seed, a handful of retrievals (one
-// denied), converge runs, a timed backup and a WAL-triggered one, then the
-// event log and the files.
-func TestServe(t *testing.T) {
+// fakeTarget is a varlatchd stand-in for the runner's own tests: a real
+// storage engine (so checkpoints, snapshots and the WAL are real) whose
+// converge runs write blobs that grow the WAL.
+type fakeTarget struct {
+	db      *storage.DB
+	targets int
+	running atomic.Bool
+}
+
+func (f *fakeTarget) WALSize() int64 { return f.db.Metrics().WALBytes }
+
+func (f *fakeTarget) Snapshot(ctx context.Context, dest string, o storage.SnapshotOptions) (storage.SnapshotStats, error) {
+	return f.db.Snapshot(ctx, dest, o)
+}
+
+func (f *fakeTarget) Converge(ctx context.Context) ConvergeResult {
+	if !f.running.CompareAndSwap(false, true) {
+		return ConvergeResult{Err: ErrConvergeRunning}
+	}
+	defer f.running.Store(false)
+	for i := range f.targets {
+		err := f.db.Write(ctx, func(tx *storage.Tx) error {
+			_, err := tx.ExecContext(ctx, `INSERT INTO blob (target, body) VALUES (?, randomblob(16384))`, i)
+			return err
+		})
+		if err != nil {
+			return ConvergeResult{Targets: i, Err: err}
+		}
+	}
+	return ConvergeResult{Targets: f.targets, Values: f.targets}
+}
+
+// The runner end to end, without k6 or varlatchd: converge runs, a timed
+// backup and a WAL-triggered one, the samplers, then the event log. The
+// timed backup must complete before the WAL-triggered attempt starts.
+func TestRunner(t *testing.T) {
 	if testing.Short() {
-		t.Skip("seeds W1 and probes the disk for a few seconds")
+		t.Skip("probes the disk for a few seconds")
 	}
 	p := DefaultPlan()
 	// Nine seconds of load: room for converge runs after the timed backup's
@@ -34,37 +67,36 @@ func TestServe(t *testing.T) {
 	// The converge runs write past the small bound, so the WAL crosses
 	// half of it from below after the timed backup's TRUNCATE.
 	p.Backups = []Backup{{Phase: "p", AtSeconds: 1}, {Phase: "p", WALTriggered: WALTrigger{Fraction: 0.5, MaxAttempts: 2}}}
-	// A converge every 2.5 s, so the phase has room for two. Under load a
-	// run can outlast the period, and the next tick is then refused
-	// (ErrConvergeRunning): this test counts that as a skipped tick and
-	// requires at least one complete run (below); a G9a report still fails
-	// a run on it.
 	p.ConvergeEverySeconds = 2.5
 	p.Targets = 3
 	p.IdleProbeSeconds = 3
 	p.WALBound = 64 << 10
 	out, data := t.TempDir(), t.TempDir()
 
-	ready := make(chan string, 1)
-	done := make(chan error, 1)
-	go func() {
-		done <- Serve(context.Background(), ServeOptions{DataDir: data, OutDir: out, Plan: p, Listen: "127.0.0.1:0", Ready: func(a string) { ready <- a }, Tail: time.Minute})
-	}()
-	var base string
-	select {
-	case a := <-ready:
-		base = "http://" + a
-	case err := <-done:
-		t.Fatal(err)
-	case <-time.After(2 * time.Minute):
-		t.Fatal("not ready")
-	}
-
-	var manifest []Credential
-	b, err := os.ReadFile(filepath.Join(out, FileManifest))
+	target := &fakeTarget{targets: p.Targets}
+	r, err := NewRunner(RunnerOptions{DataDir: data, OutDir: out, Plan: p, Target: target, Tail: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
+	target.db, err = storage.Open(context.Background(), storage.Options{Path: filepath.Join(data, "g9a.db"), WALBound: p.WALBound, OnCheckpoint: r.OnCheckpoint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := target.db.Write(context.Background(), func(tx *storage.Tx) error {
+		_, err := tx.ExecContext(context.Background(), `CREATE TABLE blob (id INTEGER PRIMARY KEY, target INTEGER NOT NULL, body BLOB NOT NULL) STRICT`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.WriteManifest([]ManifestEntry{{Address: "127.0.0.2", Identity: "i1", Token: "t", Keys: []string{"K"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Prepare(context.Background(), System{Target: TargetVarlatchd, Production: true}, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+	base := srv.URL
 	// A k6 on another host fetches the same files.
 	for path, file := range map[string]string{"/run/plan": FilePlan, "/run/manifest": FileManifest} {
 		resp, err := http.Get(base + path)
@@ -78,10 +110,6 @@ func TestServe(t *testing.T) {
 			t.Fatalf("GET %s: %d, %d bytes, want the %d bytes of %s", path, resp.StatusCode, len(served), len(want), file)
 		}
 	}
-	if err := json.Unmarshal(b, &manifest); err != nil || len(manifest) != 3*w1SecretsPerEnv {
-		t.Fatalf("manifest: %v, %d entries", err, len(manifest))
-	}
-
 	post := func(path string, want int) {
 		t.Helper()
 		resp, err := http.Post(base+path, "", nil)
@@ -93,34 +121,23 @@ func TestServe(t *testing.T) {
 			t.Fatalf("POST %s: %d", path, resp.StatusCode)
 		}
 	}
-	get := func(c Credential) (int, string) {
-		t.Helper()
-		req, _ := http.NewRequest("GET", base+"/v1/retrieve/"+c.Env+"/"+c.Key, nil)
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, string(body)
-	}
-
 	post("/run/start", 200)
 	post("/run/start", 409)
-	for i := range 20 {
-		if code, body := get(manifest[i*17%len(manifest)]); code != 200 || !strings.Contains(body, `"value":"`) {
-			t.Fatalf("retrieval: %d %s", code, body)
-		}
-	}
-	bad := manifest[0]
-	bad.Token = "vl_g9a_wrong"
-	if code, _ := get(bad); code != 403 {
-		t.Fatalf("a wrong token: %d", code)
+	for i := range 21 {
+		r.Count(i == 20, false)
 	}
 	time.Sleep(time.Duration(p.PhaseSeconds("p")) * time.Second) // converge runs and the backups
 	post("/run/stop", 200)
-	if err := <-done; err != nil {
+	select {
+	case <-r.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run did not end on /run/stop")
+	}
+	r.Finish()
+	if err := target.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -131,18 +148,39 @@ func TestServe(t *testing.T) {
 	seen := map[string]int{}
 	var end Event
 	starts := map[int]Event{}
+	ends := map[int]Event{}
 	var attempts []Event
 	for _, e := range events {
-		if e.Ev == EvBackupStart {
-			// A timed backup may start just after an attempt's TRUNCATE
-			// reset the WAL, so only an attempt's size is checked (below).
+		switch e.Ev {
+		case EvBackupStart:
 			if _, dup := starts[e.Backup]; dup || e.Backup == 0 {
 				t.Errorf("backup_start: %+v", e)
 			}
 			starts[e.Backup] = e
-		}
-		if e.Ev == EvWALBackup {
+		case EvBackupEnd:
+			ends[e.Backup] = e
+			if e.Err != "" || e.Pages == 0 {
+				t.Errorf("backup: %+v", e)
+			}
+		case EvWALBackup:
 			attempts = append(attempts, e)
+		case EvBackupWait, EvBackupMissed:
+			t.Errorf("the timed backup did not run when due: %+v", e)
+		case EvConvergeEnd:
+			switch {
+			case e.Err == ErrConvergeRunning.Error():
+				seen["converge skipped"]++
+			case e.Err != "":
+				t.Errorf("converge: %s", e.Err)
+			case e.Targets == p.Targets:
+				seen["converge complete"]++
+			default:
+				t.Errorf("converge over %d of %d targets: %+v", e.Targets, p.Targets, e)
+			}
+		case EvError:
+			t.Errorf("server error: %s", e.Err)
+		case EvRunEnd:
+			end = e
 		}
 		seen[e.Ev]++
 		if e.Ev == EvCheckpoint {
@@ -154,27 +192,6 @@ func TestServe(t *testing.T) {
 		if e.Ev == EvMemory && e.Final {
 			seen["memory final"]++
 		}
-		if e.Ev == EvConvergeEnd {
-			switch {
-			case e.Err == ErrConvergeRunning.Error():
-				seen["converge skipped"]++
-			case e.Err != "":
-				t.Errorf("converge: %s", e.Err)
-			case e.Targets == p.Targets:
-				seen["converge complete"]++
-			default:
-				t.Errorf("converge over %d of %d targets: %+v", e.Targets, p.Targets, e)
-			}
-		}
-		if e.Ev == EvBackupEnd && (e.Err != "" || e.Pages == 0) {
-			t.Errorf("backup: %+v", e)
-		}
-		if e.Ev == EvError {
-			t.Errorf("server error: %s", e.Err)
-		}
-		if e.Ev == EvRunEnd {
-			end = e
-		}
 	}
 	for _, want := range []string{EvRunStart, EvRunEnd, EvWAL, EvMemory, EvBackupStart, EvBackupEnd, EvConvergeEnd, "converge complete",
 		"checkpoint interval", "checkpoint snapshot", "checkpoint close", "fsync idle", "memory final"} {
@@ -185,24 +202,41 @@ func TestServe(t *testing.T) {
 	if end.Requests != 21 || end.Errors != 1 || end.BusyErrs != 0 {
 		t.Errorf("run_end: %+v", end)
 	}
+	// The timed backup is backup 1: it started when due, completed, and its
+	// end (with its own TRUNCATE) came before the first WAL-triggered
+	// attempt started.
+	timed, ok := starts[1]
+	if !ok || timed.Attempt != 0 || timed.Phase != "p" {
+		t.Fatalf("the timed backup did not start first: %+v", starts)
+	}
+	timedEnd, ok := ends[1]
+	if !ok {
+		t.Fatal("the timed backup never completed")
+	}
+	if len(attempts) == 0 || len(attempts) > 2 {
+		t.Fatalf("%d WAL-triggered attempts, want 1 or 2 (events %v)", len(attempts), seen)
+	}
+	if first := starts[attempts[0].Backup]; first.T <= timedEnd.T {
+		t.Errorf("the WAL-triggered attempt started at %d, before the timed backup completed at %d", first.T, timedEnd.T)
+	}
 	// Every WAL-triggered attempt: numbered in order, started at or over
 	// half the bound, logged at its start with the same WAL size, and none
 	// after one held a TRUNCATE off.
-	if len(attempts) == 0 || len(attempts) > 2 {
-		t.Errorf("%d WAL-triggered attempts, want 1 or 2 (events %v)", len(attempts), seen)
-	}
 	for i, a := range attempts {
 		st := starts[a.Backup]
 		if a.Attempt != i+1 || a.Phase != "p" || a.Bytes < 32<<10 || st.Attempt != a.Attempt || st.Phase != "p" || st.WALBefore != a.Bytes || a.StartUs != st.T {
 			t.Errorf("attempt %d: %+v, its start %+v", i+1, a, st)
+		}
+		if _, ok := ends[a.Backup]; !ok {
+			t.Errorf("attempt %d never completed", a.Attempt)
 		}
 		if a.HeldOff && i != len(attempts)-1 {
 			t.Errorf("an attempt after attempt %d, which held a TRUNCATE off", a.Attempt)
 		}
 	}
 	var sys System
-	b, _ = os.ReadFile(filepath.Join(out, FileSystem))
-	if err := json.Unmarshal(b, &sys); err != nil || sys.Target != StandInTarget || sys.IdleSync == "" {
+	b, _ := os.ReadFile(filepath.Join(out, FileSystem))
+	if err := json.Unmarshal(b, &sys); err != nil || sys.Target != TargetVarlatchd || sys.IdleSync == "" || sys.Disk.Dir == "" {
 		t.Fatalf("system.json: %v %+v", err, sys)
 	}
 	if left, err := os.ReadDir(filepath.Join(data, "backups")); err != nil || len(left) != 0 {
@@ -213,19 +247,18 @@ func TestServe(t *testing.T) {
 		t.Errorf("plan.json: %s", b)
 	}
 
-	// A second run into the same directories is refused.
-	err = Serve(context.Background(), ServeOptions{DataDir: data, OutDir: t.TempDir(), Plan: p, Listen: "127.0.0.1:0"})
-	if err == nil || !strings.Contains(err.Error(), "fresh database") {
-		t.Fatalf("reused database: %v", err)
+	// A second run into the same output directory is refused.
+	if _, err := NewRunner(RunnerOptions{DataDir: data, OutDir: out, Plan: p, Target: target}); err == nil || !strings.Contains(err.Error(), "already holds a run") {
+		t.Fatalf("reused output directory: %v", err)
 	}
 }
 
-// slotRig is a server with the backup scheduling of a run but a fake
+// slotRig is a runner with the backup scheduling of a run but a fake
 // database: the WAL size is set by the test, and each snapshot (by backup
 // number) sleeps and may report a size trigger it deferred, while the rig
 // counts how many run at once.
 type slotRig struct {
-	s       *server
+	s       *Runner
 	wal     atomic.Int64
 	seen    atomic.Int64 // the last size a sample read
 	running atomic.Int32
@@ -251,7 +284,7 @@ func newSlotRig(t *testing.T, snap map[int]slotSnap) *slotRig {
 	p.WALBound = 1000
 	r := &slotRig{}
 	r.seen.Store(-1)
-	r.s = &server{opts: ServeOptions{DataDir: t.TempDir(), OutDir: out, Plan: p}, ev: ev, slot: newBackupSlot()}
+	r.s = &Runner{opts: RunnerOptions{DataDir: t.TempDir(), OutDir: out, Plan: p}, ev: ev, slot: newBackupSlot()}
 	r.s.walSize = func() int64 { v := r.wal.Load(); r.seen.Store(v); return v }
 	r.s.snapshot = func(ctx context.Context, dest string) (storage.SnapshotStats, error) {
 		n := r.running.Add(1)
@@ -262,7 +295,7 @@ func newSlotRig(t *testing.T, snap map[int]slotSnap) *slotRig {
 		_, _ = fmt.Sscanf(filepath.Base(dest), "snapshot-%d.db", &id)
 		b := snap[id]
 		if b.defers {
-			r.s.onCheckpoint(storage.CheckpointResult{Mode: "TRUNCATE", Trigger: storage.TriggerSize, Start: time.Now(), Deferred: true}, nil)
+			r.s.OnCheckpoint(storage.CheckpointResult{Mode: "TRUNCATE", Trigger: storage.TriggerSize, Start: time.Now(), Deferred: true}, nil)
 		}
 		if b.hold != nil {
 			<-b.hold

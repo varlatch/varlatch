@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +20,8 @@ import (
 
 // Verdicts. A run fails when it shows a threshold broken; it is
 // inconclusive when it did not show what G9a requires (the size trigger, a
-// backup overlapping it, the memory limits) or ran against the stand-in.
+// backup overlapping it, the memory limits) or ran against anything but
+// varlatchd.
 const (
 	Pass         = "pass"
 	Fail         = "fail"
@@ -35,6 +37,9 @@ type Request struct {
 	Service time.Duration
 	Status  int
 	Err     string // "", "busy", "transport" or "http_<status>"
+	// RequestID is the server's X-Request-Id, and Identity the manifest
+	// identity whose credential the request carried ("" in older logs).
+	RequestID, Identity string
 }
 
 // Stats are latency percentiles (nearest rank).
@@ -169,18 +174,210 @@ type Report struct {
 	MissedBackups int       `json:"missedBackups"`
 	CPU           CPUReport `json:"cpu"`
 
-	Converges      int          `json:"converges"`
-	ConvergesWant  int          `json:"convergesPlanned"`
-	MemoryEvents   MemoryEvents `json:"memoryEvents"`
-	CurrentMaxMiB  float64      `json:"memoryCurrentMaxMiB"`
-	ConvergeMs     Stats        `json:"convergeDurations"`
-	Backups        int          `json:"backups"`
-	MemoryMaxMiB   float64      `json:"memoryMaxMiB"`
-	RSSMaxMiB      float64      `json:"rssMaxMiB"`
-	FsyncIdle      []string     `json:"fsyncIdle"`
-	FsyncUnderLoad []string     `json:"fsyncUnderLoad"`
-	Dropped        float64      `json:"droppedIterations"`
-	ServerBusy     int64        `json:"serverBusy"`
+	Converges     int          `json:"converges"`
+	ConvergesWant int          `json:"convergesPlanned"`
+	MemoryEvents  MemoryEvents `json:"memoryEvents"`
+	CurrentMaxMiB float64      `json:"memoryCurrentMaxMiB"`
+	ConvergeMs    Stats        `json:"convergeDurations"`
+	Backups       int          `json:"backups"`
+	MemoryMaxMiB  float64      `json:"memoryMaxMiB"`
+	// Addresses are the load's client addresses as varlatchd's request
+	// window counted them (access.log).
+	Addresses      []AddressResult `json:"addresses"`
+	RSSMaxMiB      float64         `json:"rssMaxMiB"`
+	FsyncIdle      []string        `json:"fsyncIdle"`
+	FsyncUnderLoad []string        `json:"fsyncUnderLoad"`
+	Dropped        float64         `json:"droppedIterations"`
+	ServerBusy     int64           `json:"serverBusy"`
+}
+
+// varlatchd's request window (go/server/httpserver/window.go, as the
+// TypeScript server keeps it): WindowLimit requests per client address in
+// a fixed window of WindowLength from the address's first request. G9a runs
+// with it in force; the load must stay WindowMargin below it.
+const (
+	WindowLimit  = 600
+	WindowLength = 60 * time.Second
+	WindowMargin = 0.2
+)
+
+// AddressResult is one client address of the load: the requests the
+// request window counted, its largest window, and the identities whose
+// credentials its requests carried (from requests.log, by request id).
+type AddressResult struct {
+	Address      string   `json:"address"`
+	Requests     int      `json:"requests"`
+	Windows      []int    `json:"perWindow"`
+	MaxPerWindow int      `json:"maxPerWindow"`
+	Identities   []string `json:"identities"`
+}
+
+// accessRecord is the part of an access log line the report reads.
+type accessRecord struct {
+	Arrived time.Time `json:"arrived"`
+	Client  string    `json:"client"`
+	Path    string    `json:"path"`
+	Window  bool      `json:"window"`
+	// WindowOpened names the request window that admitted the request,
+	// recorded at admission (varlatchd's access log since step 3.6).
+	WindowOpened *time.Time `json:"windowOpened,omitempty"`
+	RequestID    string     `json:"requestId"`
+}
+
+// ReadAccessLog reads varlatchd's access log (JSON lines).
+func ReadAccessLog(path string) ([]accessRecord, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var out []accessRecord
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<16), 1<<20)
+	for n := 1; sc.Scan(); n++ {
+		var a accessRecord
+		if err := json.Unmarshal(sc.Bytes(), &a); err != nil {
+			return nil, fmt.Errorf("%s:%d: %w", path, n, err)
+		}
+		out = append(out, a)
+	}
+	return out, sc.Err()
+}
+
+// addresses counts each client address's requests in the request window's
+// own fixed windows, by the window that admitted each (windowOpened, which
+// varlatchd records at admission, so the order answers complete in does
+// not matter), and fails the run if any window came within the margin of
+// the limit (ADR-0059 varlatchd-core decision 6). Each address must carry
+// one identity's credential, and that must be shown: every answered request
+// of the load has a request id and an identity in requests.log, each id
+// once, matched by exactly one access log record; an address whose records
+// show no identity, or more than one, makes the run inconclusive.
+func (r *Report) addresses(access []accessRecord, reqs []Request) {
+	identity := map[string]string{}
+	missing, duplicate := 0, 0
+	for _, q := range reqs {
+		if q.Status == 0 {
+			continue // never answered: not in the access log
+		}
+		if q.RequestID == "" || q.Identity == "" {
+			missing++
+			continue
+		}
+		if _, dup := identity[q.RequestID]; dup {
+			duplicate++
+			continue
+		}
+		identity[q.RequestID] = q.Identity
+	}
+	if missing > 0 {
+		r.missing("%d answered requests have no request id or no identity in requests.log: which credential each address carried is not shown", missing)
+	}
+	if duplicate > 0 {
+		r.missing("%d request ids appear more than once in requests.log: the join to the access log is ambiguous", duplicate)
+	}
+
+	type window struct {
+		opened time.Time
+		n      int
+	}
+	by := map[string]*AddressResult{}
+	windows := map[string][]*window{}
+	opened := map[string]time.Time{} // fallback, without windowOpened: by arrival
+	matched := map[string]int{}
+	fallback := false
+	var order []string
+	limit := int(math.Ceil(WindowLimit * (1 - WindowMargin)))
+	for _, a := range access {
+		if !a.Window {
+			continue
+		}
+		res := by[a.Client]
+		if res == nil {
+			res = &AddressResult{Address: a.Client}
+			by[a.Client] = res
+			order = append(order, a.Client)
+		}
+		res.Requests++
+		var at time.Time
+		if a.WindowOpened != nil {
+			at = *a.WindowOpened
+		} else {
+			fallback = true
+			if start, ok := opened[a.Client]; !ok || !a.Arrived.Before(start.Add(WindowLength)) {
+				opened[a.Client] = a.Arrived
+			}
+			at = opened[a.Client]
+		}
+		var w *window
+		for _, x := range windows[a.Client] {
+			if x.opened.Equal(at) {
+				w = x
+			}
+		}
+		if w == nil {
+			w = &window{opened: at}
+			windows[a.Client] = append(windows[a.Client], w)
+		}
+		w.n++
+		if id, ok := identity[a.RequestID]; ok {
+			matched[a.RequestID]++
+			if !slices.Contains(res.Identities, id) {
+				res.Identities = append(res.Identities, id)
+			}
+		}
+	}
+	if fallback {
+		r.missing("the access log does not say which request window admitted each request (windowOpened): windows were counted by arrival, which completion order can blur")
+	}
+	unmatched, ambiguous := 0, 0
+	for id := range identity {
+		switch matched[id] {
+		case 0:
+			unmatched++
+		case 1:
+		default:
+			ambiguous++
+		}
+	}
+	if unmatched > 0 {
+		r.missing("%d answered requests of requests.log have no record in the access log: their addresses are not shown", unmatched)
+	}
+	if ambiguous > 0 {
+		r.missing("%d request ids match more than one access log record: the join is ambiguous", ambiguous)
+	}
+	sort.Strings(order)
+	for _, addr := range order {
+		res := by[addr]
+		ws := windows[addr]
+		slices.SortFunc(ws, func(a, b *window) int { return a.opened.Compare(b.opened) })
+		for _, w := range ws {
+			res.Windows = append(res.Windows, w.n)
+			res.MaxPerWindow = max(res.MaxPerWindow, w.n)
+		}
+		if res.MaxPerWindow >= limit {
+			r.fail("client %s: %d requests in one request window, within %s %% of its %d", addr, res.MaxPerWindow, pct(WindowMargin), WindowLimit)
+		}
+		switch len(res.Identities) {
+		case 0:
+			r.missing("client %s: no identity shown for its requests", addr)
+		case 1:
+		default:
+			r.missing("client %s carried %d identities' credentials, not one (%s)", addr, len(res.Identities), strings.Join(res.Identities, ", "))
+		}
+		r.Addresses = append(r.Addresses, *res)
+	}
+	if want := len(r.System.Addresses); want > 0 {
+		seen := 0
+		for _, addr := range r.System.Addresses {
+			if by[addr] != nil {
+				seen++
+			}
+		}
+		if seen != want {
+			r.missing("the load came from %d of its %d source addresses", seen, want)
+		}
+	}
 }
 
 func (r *Report) fail(format string, args ...any) {
@@ -212,7 +409,7 @@ func ReadRequests(path string) ([]Request, error) {
 		}
 		rec := strings.TrimRight(line[i+2:], `" `)
 		p := strings.Split(rec, ",")
-		if len(p) != 6 {
+		if len(p) != 6 && len(p) != 8 {
 			return nil, fmt.Errorf("%s:%d: %d fields in %q", path, n, len(p), rec)
 		}
 		var r Request
@@ -231,6 +428,9 @@ func ReadRequests(path string) ([]Request, error) {
 			return nil, fmt.Errorf("%s:%d: %w", path, n, err)
 		}
 		r.Lat, r.Service, r.Err = time.Duration(lat)*time.Microsecond, time.Duration(svc)*time.Microsecond, p[5]
+		if len(p) == 8 {
+			r.RequestID, r.Identity = p[6], p[7]
+		}
 		out = append(out, r)
 	}
 	return out, sc.Err()
@@ -272,15 +472,30 @@ func Analyze(dir string) (*Report, error) {
 	} else if err := json.Unmarshal(b, &sum); err != nil {
 		return nil, fmt.Errorf("%s: %w", FileK6Summary, err)
 	}
+	// varlatchd's access log: without it the request window's counts are
+	// not shown.
+	access, err := ReadAccessLog(filepath.Join(dir, FileAccessLog))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	r.analyze(events, reqs, sum)
+	if access == nil {
+		r.missing("no access log: the requests per client address and request window are not shown")
+	} else {
+		r.addresses(access, reqs)
+	}
+	r.finish()
 	return r, nil
 }
 
 func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	p := r.Plan
 	th := p.Thresholds
-	if r.System.Target != "varlatchd" {
-		r.missing("the load ran against %s: a run of the stand-in does not pass G9a (ADR-0059, Order)", r.System.Target)
+	if r.System.Target != TargetVarlatchd {
+		r.missing("the load ran against %s, not varlatchd: it does not pass G9a (ADR-0059, Order)", r.System.Target)
+	}
+	if r.System.Target == TargetVarlatchd && !r.System.Production {
+		r.fail("the g9a build's storage settings are not the production build's: %s", r.System.SettingsNote)
 	}
 	if d := p.NotGate(); len(d) > 0 {
 		r.missing("the plan differs from G9a's profile (%s): a diagnostic run, not the gate", strings.Join(d, ", "))
@@ -820,7 +1035,7 @@ func pct(f float64) string { return strconv.FormatFloat(math.Round(f*1e5)/1e3, '
 func (r *Report) Markdown() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# G9a run: %s\n\n", strings.ToUpper(r.Verdict))
-	fmt.Fprintf(&b, "Target: %s\n\n", r.System.Target)
+	fmt.Fprintf(&b, "Target: %s %s (build tags %q), sha256 %s\n\n", r.System.Target, r.System.Build.Version, r.System.Build.Tags, r.System.Build.SHA256)
 	list := func(title string, xs []string) {
 		if len(xs) == 0 {
 			return
@@ -886,6 +1101,17 @@ func (r *Report) Markdown() string {
 		fmt.Fprintf(&b, "Over the run (%d cpu.stat samples): %d of %d periods throttled, %.1f ms throttled; %.1f ms throttled before the first sample.\n\n", c.Samples, c.Throttled, c.Periods, c.ThrottledMs, c.ThrottledBeforeMs)
 	}
 
+	if len(r.Addresses) > 0 {
+		fmt.Fprintf(&b, "## Client addresses\n\nThe request window allows %d requests per client address in %s; the load fails if any window reached %d.\n\n| address | identities | requests | windows | largest window |\n|---|---|---:|---:|---:|\n",
+			WindowLimit, WindowLength, int(math.Ceil(WindowLimit*(1-WindowMargin))))
+		for _, a := range r.Addresses {
+			fmt.Fprintf(&b, "| %s | %s | %d | %d | %d |\n", a.Address, strings.Join(a.Identities, ", "), a.Requests, len(a.Windows), a.MaxPerWindow)
+		}
+		b.WriteString("\n")
+	}
+	st := r.System.Settings
+	fmt.Fprintf(&b, "## Storage settings\n\nThe production build's: %v%s. WAL bound %d bytes, journal_size_limit %d bytes, batches of up to %d jobs (queue %d), %d read connections, PASSIVE every %d ms, snapshots %d pages every %d ms. Pragmas: %v.\n\n",
+		r.System.Production, map[bool]string{true: "", false: " (" + r.System.SettingsNote + ")"}[r.System.SettingsNote == ""], st.WALBound, st.JournalSizeLimit, st.MaxBatch, st.QueueSize, st.ReadConns, st.PassiveEveryMs, st.SnapshotStepPages, st.SnapshotPauseMs, st.Pragmas)
 	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d of %d planned (duration p50 %.0f ms, max %.0f ms). Backups: %d (%d timed, inside their phase); missed: %d.\n\n", r.Converges, r.ConvergesWant, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups, r.TimedBackups, r.MissedBackups)
 	me := r.MemoryEvents
 	fmt.Fprintf(&b, "## Memory\n\nCgroup anon after %gs: max %.1f MiB (limit %.0f MiB). Reported only: RSS max %.1f MiB, memory.current max %.1f MiB. memory.events: high %d, max %d, oom %d, oom_kill %d. memory.max %q, memory.swap.max %q.\n\n",

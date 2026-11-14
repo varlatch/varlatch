@@ -22,16 +22,20 @@ import (
 // says what the caller claimed, which the proxy probe needs to tell its
 // forged requests apart.
 type AccessRecord struct {
-	Arrived      time.Time `json:"arrived"`
-	Completed    time.Time `json:"completed"`
-	Client       string    `json:"client"`
-	Method       string    `json:"method"`
-	Path         string    `json:"path"`
-	Status       int       `json:"status"`
-	Bytes        int64     `json:"bytes"`
-	Window       bool      `json:"window"` // counted in the request window
-	ForwardedFor *string   `json:"forwardedFor,omitempty"`
-	RequestID    string    `json:"requestId"`
+	Arrived   time.Time `json:"arrived"`
+	Completed time.Time `json:"completed"`
+	Client    string    `json:"client"`
+	Method    string    `json:"method"`
+	Path      string    `json:"path"`
+	Status    int       `json:"status"`
+	Bytes     int64     `json:"bytes"`
+	Window    bool      `json:"window"` // counted in the request window
+	// WindowOpened is when the request window that counted it opened, taken
+	// at admission: requests with the same value were counted in the same
+	// window, whatever order their answers completed in.
+	WindowOpened *time.Time `json:"windowOpened,omitempty"`
+	ForwardedFor *string    `json:"forwardedFor,omitempty"`
+	RequestID    string     `json:"requestId"`
 }
 
 // AccessLog writes records as JSON lines. It is safe for concurrent use.

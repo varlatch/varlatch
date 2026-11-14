@@ -25,6 +25,10 @@ type Plan struct {
 	// counted from the start of the run.
 	ConvergeEverySeconds float64 `json:"convergeEverySeconds"`
 	Targets              int     `json:"targets"`
+	// ChangesPerRun is k, the destinations each converge run writes for
+	// each Target: 2k + 7 commits per Target and run (ADR-0059
+	// varlatchd-core decision 7).
+	ChangesPerRun int `json:"changesPerRun"`
 	// WALBound is the checkpointer's bound in bytes: the shipped one
 	// (storage.DefaultWALBound) for a gate run.
 	WALBound int64 `json:"walBound"`
@@ -116,6 +120,7 @@ func DefaultPlan() Plan {
 		},
 		ConvergeEverySeconds: 60,
 		Targets:              20,
+		ChangesPerRun:        5,
 		WALBound:             64 << 20,
 		ProbeIntervalMs:      100,
 		IdleProbeSeconds:     30,
@@ -202,6 +207,8 @@ func (p Plan) Validate() error {
 		return errors.New("plan: convergeEverySeconds must be positive")
 	case p.Targets <= 0:
 		return errors.New("plan: targets must be positive")
+	case p.ChangesPerRun <= 0 || p.ChangesPerRun > 125:
+		return errors.New("plan: changesPerRun must be between 1 and 125 (the Secrets of a Target's environment)")
 	case p.WALBound <= 0:
 		return errors.New("plan: walBound must be positive")
 	case p.ProbeIntervalMs <= 0:
@@ -234,7 +241,7 @@ func (p Plan) NotGate() []string {
 	if !slices.Equal(anyFraction(p.Backups), anyFraction(g.Backups)) || p.BackupStepPages != g.BackupStepPages || p.BackupPauseMs != g.BackupPauseMs {
 		d = append(d, "backups")
 	}
-	if p.ConvergeEverySeconds != g.ConvergeEverySeconds || p.Targets != g.Targets {
+	if p.ConvergeEverySeconds != g.ConvergeEverySeconds || p.Targets != g.Targets || p.ChangesPerRun != g.ChangesPerRun {
 		d = append(d, "converge")
 	}
 	if p.WALBound != g.WALBound {

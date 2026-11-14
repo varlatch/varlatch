@@ -287,6 +287,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// windowed: the request window actually admitted or refused this
 	// request (a request refused earlier, by the body limit, is not charged).
 	windowed := false
+	var windowOpened time.Time
 	// Every X-Forwarded-For line, joined as Node joins them: a proxy that
 	// adds a line of its own instead of appending to the caller's is read
 	// from the right like any other (the caller's forged line stays left).
@@ -302,7 +303,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				writeError(rec, r, http.StatusInternalServerError, "INTERNAL", "Internal error")
 			}
 		}
-		s.log(r, rec, arrived, client, windowed, id)
+		s.log(r, rec, arrived, client, windowed, windowOpened, id)
 	}()
 	if isAPI {
 		rec.Header().Set("X-Request-Id", id)
@@ -336,7 +337,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if counted {
 		windowed = true
-		if ok, retry := s.window.admit(client); !ok {
+		ok, retry, opened := s.window.admit(client)
+		windowOpened = opened
+		if !ok {
 			rec.Header().Set("Retry-After", retry)
 			writeError(rec, r, http.StatusTooManyRequests, "PERMISSION_DENIED", RateExceededMessage)
 			return
@@ -356,7 +359,7 @@ func bodyless(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead || method == http.MethodTrace
 }
 
-func (s *Server) log(r *http.Request, rec *recorder, arrived time.Time, client string, windowed bool, id string) {
+func (s *Server) log(r *http.Request, rec *recorder, arrived time.Time, client string, windowed bool, windowOpened time.Time, id string) {
 	if s.opts.AccessLog == nil {
 		return
 	}
@@ -367,6 +370,10 @@ func (s *Server) log(r *http.Request, rec *recorder, arrived time.Time, client s
 	record := &AccessRecord{
 		Arrived: arrived.UTC(), Completed: s.opts.Now().UTC(), Client: client,
 		Method: r.Method, Path: r.URL.Path, Status: status, Bytes: rec.bytes, Window: windowed, RequestID: id,
+	}
+	if windowed && !windowOpened.IsZero() {
+		w := windowOpened.UTC()
+		record.WindowOpened = &w
 	}
 	if v, ok := r.Header["X-Forwarded-For"]; ok {
 		joined := strings.Join(v, ", ")

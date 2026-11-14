@@ -44,8 +44,11 @@ func newRequestWindow(now func() time.Time) *requestWindow {
 }
 
 // admit counts one request from peer. When the request is refused it
-// returns false and the Retry-After value in seconds.
-func (rw *requestWindow) admit(peer string) (ok bool, retryAfter string) {
+// returns false and the Retry-After value in seconds. opened is when the
+// window that counted it opened (zero when no window could): the access log
+// records it, so that a request's window is known whatever order the
+// answers complete in (G9a counts each address's windows from it).
+func (rw *requestWindow) admit(peer string) (ok bool, retryAfter string, opened time.Time) {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
 	now := rw.now()
@@ -57,16 +60,17 @@ func (rw *requestWindow) admit(peer string) (ok bool, retryAfter string) {
 			}
 		}
 		if _, has := rw.windows[peer]; len(rw.windows) >= MaxWindows && !has {
-			return false, "60"
+			return false, "60", time.Time{}
 		}
 		w = &window{until: now.Add(WindowLength)}
 		rw.windows[peer] = w
 	}
 	w.count++
+	opened = w.until.Add(-WindowLength)
 	if w.count > WindowLimit {
 		// Math.max(1, Math.ceil((until - now) / 1000)) over milliseconds.
 		ms := w.until.Sub(now).Milliseconds()
-		return false, strconv.FormatInt(max(1, (ms+999)/1000), 10)
+		return false, strconv.FormatInt(max(1, (ms+999)/1000), 10), opened
 	}
-	return true, ""
+	return true, "", opened
 }

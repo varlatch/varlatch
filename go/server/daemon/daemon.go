@@ -86,16 +86,58 @@ type Options struct {
 // Serve runs the server and returns its exit status.
 func Serve(opts Options) int { return serve(opts, nil) }
 
-// hooks are what tests add to serving; a production build has none.
+// hooks are what the benchmark build (the g9a build tag, bench_g9a.go) and
+// tests add to serving; a production build has none. Everything else, the
+// storage engine's settings included, is the production path's.
 type hooks struct {
-	// storage adds to the engine's options (a checkpoint log, a shorter
-	// checkpoint period in a test).
+	// storage adds observers to the engine's options (a checkpoint log),
+	// and may set the WAL bound a smoke plan names (or, in a test, a
+	// shorter checkpoint period).
 	storage func(*storage.Options)
+	// prepare runs once the installation is verified, before the listener
+	// opens (seeding).
+	prepare func(ctx context.Context, store *storage.DB, rootKEK []byte, log *slog.Logger) error
+	// wrap wraps the HTTP handler (the run's control routes).
+	wrap func(http.Handler) http.Handler
+	// stop ends serving, as a signal does.
+	stop <-chan struct{}
+	// stopped runs once the listener has shut down, before the database
+	// closes (the run's last events); closed once the database has closed.
+	stopped func()
+	closed  func()
 }
+
+// productionStorage is the storage engine's options for serving: the
+// defaults ADR-0059 Decision 2 fixes, and the realtime hub's commit hook.
+// The g9a build compares its effective settings with these.
+func productionStorage(path string, onCommit func()) storage.Options {
+	return storage.Options{Path: path, OnCommit: onCommit}
+}
+
+// benchCommand is `varlatchd g9a`, in a build with the g9a tag only
+// (bench_g9a.go); nil otherwise.
+var benchCommand func(args []string, stderr io.Writer) int
+
+// Bench runs `varlatchd g9a` (ADR-0059 G9a's benchmark build), or refuses in
+// a build without it.
+func Bench(args []string, stderr io.Writer) int {
+	if benchCommand == nil {
+		fmt.Fprintln(stderr, "varlatchd g9a: this varlatchd was built without the g9a build tag; the benchmark needs go build -tags g9a ./cmd/varlatchd")
+		return 64
+	}
+	return benchCommand(args, stderr)
+}
+
+// observeSettings, when set (tests), receives the storage engine's
+// effective settings each time serving opens the database.
+var observeSettings func(storage.Settings)
 
 func serve(opts Options, h *hooks) int {
 	if h == nil {
 		h = &hooks{}
+	}
+	if h.closed != nil {
+		defer h.closed() // after every other deferred call: the database is closed
 	}
 	log := slog.New(slog.NewTextHandler(opts.Stderr, nil))
 	fail := func(status int, msg string, args ...any) int {
@@ -135,11 +177,11 @@ func serve(opts Options, h *hooks) int {
 	// Decision 4). The hub is made once the database is open; commits
 	// before that have nobody to tell.
 	var live atomic.Pointer[realtime.Hub]
-	sopts := storage.Options{Path: cfg.DatabasePath(), OnCommit: func() {
+	sopts := productionStorage(cfg.DatabasePath(), func() {
 		if hub := live.Load(); hub != nil {
 			hub.Notify()
 		}
-	}}
+	})
 	if h.storage != nil {
 		h.storage(&sopts)
 	}
@@ -152,6 +194,16 @@ func serve(opts Options, h *hooks) int {
 			log.Error("closing the database", "error", err)
 		}
 	}()
+	// The engine's effective settings, as it read them back from each
+	// connection (ADR-0059 Decision 2): the durability pragmas, the WAL
+	// bound, the batch size and the checkpoint period.
+	settings := store.Settings()
+	if b, err := json.Marshal(settings); err == nil {
+		log.Info("storage settings", "settings", string(b))
+	}
+	if observeSettings != nil {
+		observeSettings(settings)
+	}
 	if _, err := db.Init(ctx, store, buildinfo.Version); err != nil {
 		return fail(ExitFailure, "the database cannot be used", "file", cfg.DatabasePath(), "error", err)
 	}
@@ -166,6 +218,11 @@ func serve(opts Options, h *hooks) int {
 		// The installation was read and the key is not its key: restarting
 		// cannot change that, only configuring the right Root KEK can.
 		return fail(ExitConfig, "the configured Root KEK does not open this installation's canary; refusing to start with a wrong key (ADR-0019): configure this installation's Root KEK and start varlatchd again")
+	}
+	if h.prepare != nil {
+		if err := h.prepare(ctx, store, rootKEK, log); err != nil {
+			return fail(ExitFailure, "preparing the run", "error", err)
+		}
 	}
 
 	var trusts func(string) bool
@@ -230,8 +287,12 @@ func serve(opts Options, h *hooks) int {
 	if err != nil {
 		return fail(ExitFailure, "cannot listen", "address", cfg.Listen, "error", err)
 	}
+	var root http.Handler = handler
+	if h.wrap != nil {
+		root = h.wrap(handler)
+	}
 	srv := &http.Server{
-		Handler:           handler,
+		Handler:           root,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		IdleTimeout:       idleTimeout,
@@ -260,12 +321,17 @@ func serve(opts Options, h *hooks) int {
 		return fail(ExitFailure, "the listener stopped", "error", err)
 	case sig := <-signals:
 		log.Info("stopping", "signal", sig.String())
+	case <-h.stop:
+		log.Info("stopping", "reason", "the run ended")
 	}
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), StopTimeout)
 	defer stopCancel()
 	if err := srv.Shutdown(stopCtx); err != nil {
 		log.Warn("requests still in flight at the stop deadline were cut off", "error", err)
 		_ = srv.Close()
+	}
+	if h.stopped != nil {
+		h.stopped()
 	}
 	cancel()
 	log.Info("stopped")

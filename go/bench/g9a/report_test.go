@@ -25,7 +25,36 @@ type fakeRun struct {
 	reqs                        []Request
 	dropped                     float64
 	prefix                      string // what k6 may put before each request line
+	// The access log: by default every answered request, from the address
+	// of its identity (addressOf); access replaces it, noAccess drops it.
+	access   []accessRecord
+	noAccess bool
 }
+
+// admitted gives each record the window varlatchd's request window admits it
+// in: fixed windows of WindowLength from each client's first request, in
+// arrival order.
+func admitted(records []accessRecord) []accessRecord {
+	opened := map[string]time.Time{}
+	out := slices.Clone(records)
+	idx := make([]int, len(out))
+	for i := range idx {
+		idx[i] = i
+	}
+	slices.SortStableFunc(idx, func(a, b int) int { return out[a].Arrived.Compare(out[b].Arrived) })
+	for _, i := range idx {
+		a := &out[i]
+		if start, ok := opened[a.Client]; !ok || !a.Arrived.Before(start.Add(WindowLength)) {
+			opened[a.Client] = a.Arrived
+		}
+		w := opened[a.Client]
+		a.WindowOpened = &w
+	}
+	return out
+}
+
+// The load's identities and their addresses in good().
+var addressOf = map[string]string{"idn_a": "127.0.0.2", "idn_b": "127.0.0.3"}
 
 const t0 = int64(1_700_000_000_000_000) // run start, µs
 
@@ -44,14 +73,18 @@ func good() *fakeRun {
 	p.Thresholds.MemoryAfterSeconds = 1
 	r := &fakeRun{plan: p}
 	r.sys = System{
-		Target: "varlatchd",
-		Disk:   Disk{Dir: "/var/lib/varlatch", FSType: "ext4", Source: "/dev/sda1"},
-		Cgroup: Cgroup{MemoryMax: "1073741824", SwapMax: "0"},
+		Target:     TargetVarlatchd,
+		Production: true,
+		Addresses:  []string{"127.0.0.2", "127.0.0.3"},
+		Disk:       Disk{Dir: "/var/lib/varlatch", FSType: "ext4", Source: "/dev/sda1"},
+		Cgroup:     Cgroup{MemoryMax: "1073741824", SwapMax: "0"},
 	}
 	off := 0.0
 	for _, ph := range p.Phases {
 		for i := range int(float64(ph.Rate) * ph.Seconds) {
-			r.reqs = append(r.reqs, Request{Phase: ph.Name, SchedUs: at(off + float64(i)/float64(ph.Rate)), Lat: 5 * time.Millisecond, Service: 4 * time.Millisecond, Status: 200})
+			id := []string{"idn_a", "idn_b"}[len(r.reqs)%2]
+			r.reqs = append(r.reqs, Request{Phase: ph.Name, SchedUs: at(off + float64(i)/float64(ph.Rate)), Lat: 5 * time.Millisecond, Service: 4 * time.Millisecond, Status: 200,
+				RequestID: fmt.Sprintf("req_%d", len(r.reqs)), Identity: id})
 		}
 		off += ph.Seconds
 	}
@@ -123,15 +156,38 @@ func (r *fakeRun) write(t *testing.T) string {
 	}
 	var rq strings.Builder
 	for _, q := range r.reqs {
-		fmt.Fprintf(&rq, "%sR,%s,%d,%d,%d,%d,%s\n", r.prefix, q.Phase, q.SchedUs, q.Lat.Microseconds(), q.Service.Microseconds(), q.Status, q.Err)
+		fmt.Fprintf(&rq, "%sR,%s,%d,%d,%d,%d,%s,%s,%s\n", r.prefix, q.Phase, q.SchedUs, q.Lat.Microseconds(), q.Service.Microseconds(), q.Status, q.Err, q.RequestID, q.Identity)
 		if r.prefix != "" {
 			rq.WriteString(`time="x" level=info msg="something else"` + "\n")
 		}
+	}
+	access := r.access
+	if access == nil {
+		for i, q := range r.reqs {
+			if q.Status != 0 {
+				// The address of the request's identity; without one, the
+				// address good() gave the request.
+				addr := addressOf[q.Identity]
+				if addr == "" {
+					addr = []string{"127.0.0.2", "127.0.0.3"}[i%2]
+				}
+				access = append(access, accessRecord{Arrived: time.UnixMicro(q.SchedUs), Client: addr, Path: "/v1/x", Window: true, RequestID: q.RequestID})
+			}
+		}
+		access = admitted(access)
+	}
+	var al strings.Builder
+	for _, a := range access {
+		b, _ := json.Marshal(a)
+		al.Write(append(b, '\n'))
 	}
 	files := map[string]string{
 		FileEvents:    ev.String(),
 		FileRequests:  rq.String(),
 		FileK6Summary: fmt.Sprintf(`{"dropped_iterations":{"count":%g},"iterations":{"count":%d}}`, r.dropped, iterations),
+	}
+	if !r.noAccess {
+		files[FileAccessLog] = al.String()
 	}
 	for name, body := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
@@ -193,7 +249,83 @@ func TestReportVerdicts(t *testing.T) {
 	}{
 		{"good", func(*fakeRun) {}, Pass, ""},
 		{"k6 log prefixes", func(r *fakeRun) { r.prefix = `time="2026-11-13T15:00:00Z" level=info msg="` }, Pass, ""},
-		{"stand-in target", func(r *fakeRun) { r.sys.Target = StandInTarget }, Inconclusive, "does not pass G9a"},
+		{"another target", func(r *fakeRun) { r.sys.Target = "a stand-in" }, Inconclusive, "does not pass G9a"},
+		{"settings not the production build's", func(r *fakeRun) {
+			r.sys.Production, r.sys.SettingsNote = false, "maxBatch 32, production 64"
+		}, Fail, "not the production build's: maxBatch 32"},
+		{"no access log", func(r *fakeRun) { r.noAccess = true }, Inconclusive, "no access log"},
+		{"an address near its request window", func(r *fakeRun) {
+			for i := range r.reqs {
+				r.reqs[i].Identity = "idn_a"
+			}
+		}, Fail, "client 127.0.0.2: 620 requests in one request window, within 20 % of its 600"},
+		{"an address under the margin", func(r *fakeRun) {
+			// 479 of the 620 from one address, in one window: under 480.
+			for i := range r.reqs {
+				r.reqs[i].Identity = []string{"idn_a", "idn_b"}[map[bool]int{true: 0, false: 1}[i < 479]]
+			}
+		}, Pass, ""},
+		{"two identities on one address", func(r *fakeRun) {
+			for i, q := range r.reqs {
+				addr := addressOf[q.Identity]
+				if i == 1 {
+					addr = "127.0.0.2" // idn_b's request from idn_a's address
+				}
+				r.access = append(r.access, accessRecord{Arrived: time.UnixMicro(q.SchedUs), Client: addr, Path: "/v1/x", Window: true, RequestID: q.RequestID})
+			}
+			r.access = admitted(r.access)
+		}, Inconclusive, "client 127.0.0.2 carried 2 identities' credentials"},
+		// Missing or ambiguous identity evidence is never a pass.
+		{"no request ids or identities", func(r *fakeRun) {
+			for i := range r.reqs {
+				r.reqs[i].RequestID, r.reqs[i].Identity = "", ""
+			}
+		}, Inconclusive, "620 answered requests have no request id or no identity"},
+		{"no identities", func(r *fakeRun) {
+			for i := range r.reqs {
+				r.reqs[i].Identity = ""
+			}
+		}, Inconclusive, "client 127.0.0.2: no identity shown for its requests"},
+		{"a request id twice", func(r *fakeRun) { r.reqs[1].RequestID = r.reqs[0].RequestID }, Inconclusive, "1 request ids appear more than once in requests.log"},
+		{"an answered request missing from the access log", func(r *fakeRun) {
+			for _, q := range r.reqs[1:] {
+				r.access = append(r.access, accessRecord{Arrived: time.UnixMicro(q.SchedUs), Client: addressOf[q.Identity], Path: "/v1/x", Window: true, RequestID: q.RequestID})
+			}
+			r.access = admitted(r.access)
+		}, Inconclusive, "1 answered requests of requests.log have no record in the access log"},
+		{"a request id twice in the access log", func(r *fakeRun) {
+			for _, q := range append(slices.Clone(r.reqs), r.reqs[0]) {
+				r.access = append(r.access, accessRecord{Arrived: time.UnixMicro(q.SchedUs), Client: addressOf[q.Identity], Path: "/v1/x", Window: true, RequestID: q.RequestID})
+			}
+			r.access = admitted(r.access)
+		}, Inconclusive, "1 request ids match more than one access log record"},
+		{"an access log without windowOpened", func(r *fakeRun) {
+			for _, q := range r.reqs {
+				r.access = append(r.access, accessRecord{Arrived: time.UnixMicro(q.SchedUs), Client: addressOf[q.Identity], Path: "/v1/x", Window: true, RequestID: q.RequestID})
+			}
+		}, Inconclusive, "windows were counted by arrival"},
+		// 480 requests admitted in one window, the last of them answered
+		// after the first of the next window's: counted by the window that
+		// admitted each, the window reached 480 (by completion order it
+		// would show 479).
+		{"answers completed out of order across a window boundary", func(r *fakeRun) {
+			w1, w2 := time.UnixMicro(at(0)), time.UnixMicro(at(60))
+			var first, second []accessRecord
+			for i, q := range r.reqs {
+				a := accessRecord{Client: addressOf[q.Identity], Path: "/v1/x", Window: true, RequestID: q.RequestID}
+				switch {
+				case i < 480:
+					a.Client, a.Arrived, a.WindowOpened = "127.0.0.2", w1.Add(time.Duration(i)*100*time.Millisecond), &w1
+					first = append(first, a)
+				default:
+					a.Client, a.Arrived, a.WindowOpened = "127.0.0.2", w2.Add(time.Duration(i-480)*100*time.Millisecond), &w2
+					second = append(second, a)
+				}
+			}
+			// The log is in completion order: the first window's last
+			// answer completes after the second window's first.
+			r.access = append(append(append(first[:479:479], second[0]), first[479]), second[1:]...)
+		}, Fail, "client 127.0.0.2: 480 requests in one request window, within 20 % of its 600"},
 		{"slow warm-up is not judged", func(r *fakeRun) {
 			for i := range r.reqs {
 				if r.reqs[i].Phase == "warmup" {
@@ -222,6 +354,7 @@ func TestReportVerdicts(t *testing.T) {
 		{"one more at the phase's end", func(r *fakeRun) {
 			last := r.reqs[119]
 			last.SchedUs += 100_000
+			last.RequestID += "-extra"
 			r.reqs = slices.Insert(r.reqs, 120, last)
 		}, Pass, ""},
 		{"a lost line k6 counted", func(r *fakeRun) { r.iterations = ptr(len(r.reqs) + 1) }, Fail, "k6 completed 621 requests but the log has 620"},
