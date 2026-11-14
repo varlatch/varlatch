@@ -1,0 +1,2335 @@
+{
+  "schema": 1,
+  "description": "Every check a conformance run must account for (scripts/conformance/README.md). Check IDs are stable: rename one only together with every record that names it.",
+  "suites": {
+    "reconcile": {
+      "title": "Application Plane reconciliation (ADR-0035 D3/D4; no admin key anywhere)",
+      "script": "scripts/conformance/suites/reconcile.mjs",
+      "needs": [
+        "ts-stack"
+      ]
+    },
+    "passkey": {
+      "title": "passkey bootstrap (ADR-0006/0008)",
+      "script": "services/varlatchd/scripts/e2e-passkey.mjs"
+    },
+    "dashboard": {
+      "title": "dashboard (production container)",
+      "script": "apps/web/scripts/e2e-web.mjs"
+    },
+    "enroll-steps": {
+      "title": "the enroll page's next steps against a stub server (ADR-0058 Decision 4)",
+      "script": "apps/web/scripts/e2e-enroll-steps.mjs"
+    },
+    "values": {
+      "title": "values and matrix",
+      "script": "apps/web/scripts/e2e-values.mjs"
+    },
+    "access": {
+      "title": "access",
+      "script": "apps/web/scripts/e2e-access.mjs"
+    },
+    "p4": {
+      "title": "audit, contract and palette (P4)",
+      "script": "apps/web/scripts/e2e-p4.mjs"
+    },
+    "onboarding": {
+      "title": "onboarding",
+      "script": "apps/web/scripts/e2e-onboarding.mjs"
+    },
+    "realtime": {
+      "title": "degraded realtime: Convex down (ADR-0035 D10)",
+      "script": "apps/web/scripts/e2e-realtime.mjs",
+      "needs": [
+        "ts-stack"
+      ]
+    },
+    "broker": {
+      "title": "credential broker (ADR-0022)",
+      "script": "services/varlatchd/scripts/e2e-broker.mjs"
+    },
+    "maintenance": {
+      "title": "isolating maintenance: dashboard and CLI ride it out (ADR-0036 D6)",
+      "script": "apps/web/scripts/e2e-maintenance.mjs",
+      "needs": [
+        "maintenance"
+      ]
+    },
+    "server-logs": {
+      "title": "no secret plaintext in the server's logs",
+      "script": "scripts/conformance/suites/server-logs.mjs"
+    },
+    "cli-login": {
+      "title": "CLI browser-handoff login (ADR-0017)",
+      "script": "services/varlatchd/scripts/e2e-cli-login.mjs"
+    },
+    "device": {
+      "title": "device sign-in (login --start/--wait, dashboard /device approval with a passkey)",
+      "script": "apps/web/scripts/e2e-device.mjs"
+    },
+    "proxy-probe": {
+      "title": "device sign-in behind a proxy: the caller's own address, forged headers ignored",
+      "script": "apps/web/scripts/e2e-proxy-probe.mjs",
+      "needs": [
+        "probe:expire-pending-device-sign-ins",
+        "probe:device-sign-in-addresses",
+        "probe:proxy-addresses"
+      ]
+    },
+    "client-runtime": {
+      "title": "client runtime (run --redact, run --export-context, types, scan)",
+      "script": "services/varlatchd/scripts/e2e-client-runtime.mjs"
+    },
+    "strict-run": {
+      "title": "strict startup (varlatch run --strict)",
+      "script": "services/varlatchd/scripts/e2e-strict-run.mjs"
+    },
+    "doctor": {
+      "title": "read-only doctor of the Compose installation (ADR-0035 D8)",
+      "script": "scripts/conformance/suites/doctor.mjs",
+      "needs": [
+        "ts-stack",
+        "probe:audit-event-count"
+      ]
+    },
+    "convex-down": {
+      "title": "dashboard keeps serving while Convex is down (ADR-0035 D5/D10)",
+      "script": "scripts/conformance/suites/convex-down.mjs",
+      "needs": [
+        "ts-stack"
+      ]
+    },
+    "cli-download-off": {
+      "title": "CLI and install scripts while serving is off (ADR-0058 Decision 3)",
+      "script": "scripts/conformance/suites/cli-download-off.mjs"
+    },
+    "cli-download-on": {
+      "title": "CLI and install scripts while serving is on (ADR-0058 Decision 3)",
+      "script": "scripts/conformance/suites/cli-download-on.mjs",
+      "needs": [
+        "serve-cli"
+      ]
+    },
+    "request-budget": {
+      "title": "request budget: the server refused nothing unexpectedly",
+      "runner": true
+    }
+  },
+  "checks": {
+    "reconcile.derives-deployment-authority": {
+      "suite": "reconcile",
+      "kind": "ts-stack",
+      "title": "the reconcile job derives its admin key inside the job",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): nothing to reconcile."
+      }
+    },
+    "reconcile.first-run-deploys": {
+      "suite": "reconcile",
+      "kind": "ts-stack",
+      "title": "the first reconcile deploys the functions",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): nothing to reconcile."
+      }
+    },
+    "reconcile.unchanged-installation-no-op": {
+      "suite": "reconcile",
+      "kind": "ts-stack",
+      "title": "a reconcile of an unchanged installation changes nothing",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): nothing to reconcile."
+      }
+    },
+    "passkey.abandoned-ceremony-start-accepted": {
+      "suite": "passkey",
+      "kind": "conformance",
+      "title": "abandoned ceremony start is accepted"
+    },
+    "passkey.passkey-enrollment-completes": {
+      "suite": "passkey",
+      "kind": "conformance",
+      "title": "passkey enrollment completes"
+    },
+    "passkey.exchange-yields-browser-bearer": {
+      "suite": "passkey",
+      "kind": "conformance",
+      "title": "exchange yields a browser bearer"
+    },
+    "passkey.browser-bearer-authenticates-v1": {
+      "suite": "passkey",
+      "kind": "conformance",
+      "title": "browser bearer authenticates /v1"
+    },
+    "passkey.setup-token-replay-rejected": {
+      "suite": "passkey",
+      "kind": "conformance",
+      "title": "setup token replay is rejected"
+    },
+    "passkey.passkey-sign-in-works-discoverable-credential": {
+      "suite": "passkey",
+      "kind": "conformance",
+      "title": "passkey sign-in works with a discoverable credential"
+    },
+    "passkey.sign-in-bearer-authenticates-v1": {
+      "suite": "passkey",
+      "kind": "conformance",
+      "title": "sign-in bearer authenticates /v1"
+    },
+    "passkey.sign-in-without-authenticator-fails": {
+      "suite": "passkey",
+      "kind": "conformance",
+      "title": "sign-in without an authenticator fails"
+    },
+    "dashboard.enrollment-dashboard-origin": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "enrollment on dashboard origin"
+    },
+    "dashboard.invitation-shows-next-steps-install-sign": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "invitation shows the next steps: install, sign in, run"
+    },
+    "dashboard.without-cli-download-verified-route-no-install-sh": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "without cli.download, the verified route and no install.sh"
+    },
+    "dashboard.short-lived-credential-folded-away": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "the short-lived credential is folded away"
+    },
+    "dashboard.csp-strict": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "the dashboard is served with a strict Content-Security-Policy, and the session, the /v1 views and the audit feed load under it"
+    },
+    "dashboard.csp-connect-src-convex": {
+      "suite": "dashboard",
+      "kind": "ts-stack",
+      "title": "its connect-src names the Convex origin the dashboard uses",
+      "replacement": "dashboard.csp-strict"
+    },
+    "dashboard.session-resume-whoami": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "session resume + whoami"
+    },
+    "dashboard.org-deep-link-route": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "org deep link route"
+    },
+    "dashboard.org-switcher-renders": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "org switcher renders"
+    },
+    "dashboard.environment-health-renders-verdict": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "environment health renders a verdict"
+    },
+    "dashboard.audit-feed-shows-events": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "reactive audit mirror shows events"
+    },
+    "dashboard.no-content-security-policy-violations": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "no Content-Security-Policy violations"
+    },
+    "dashboard.enroll-steps-match-meta": {
+      "suite": "dashboard",
+      "kind": "conformance",
+      "title": "the enroll page's next steps match the server's /v1/meta"
+    },
+    "enroll-steps.cli-download-install-sh-line": {
+      "suite": "enroll-steps",
+      "kind": "component",
+      "title": "with cli.download: the install.sh line"
+    },
+    "enroll-steps.windows-tab-shows-install-ps1-line": {
+      "suite": "enroll-steps",
+      "kind": "component",
+      "title": "the Windows tab shows the install.ps1 line"
+    },
+    "enroll-steps.sign-in-run-steps": {
+      "suite": "enroll-steps",
+      "kind": "component",
+      "title": "the sign-in and run steps"
+    },
+    "enroll-steps.meta-off-verified-route-only": {
+      "suite": "enroll-steps",
+      "kind": "component",
+      "title": "/v1/meta off: the verified route only"
+    },
+    "enroll-steps.meta-error-verified-route-only": {
+      "suite": "enroll-steps",
+      "kind": "component",
+      "title": "/v1/meta error: the verified route only"
+    },
+    "enroll-steps.stalled-meta-never-holds-steps": {
+      "suite": "enroll-steps",
+      "kind": "component",
+      "title": "a stalled /v1/meta never holds the steps"
+    },
+    "enroll-steps.credential-shown-while-meta-stalls": {
+      "suite": "enroll-steps",
+      "kind": "component",
+      "title": "the credential is on the page while /v1/meta stalls"
+    },
+    "enroll-steps.cli-hand-off-completes": {
+      "suite": "enroll-steps",
+      "kind": "component",
+      "title": "the CLI hand-off still completes"
+    },
+    "enroll-steps.cli-hand-off-never-asks-meta": {
+      "suite": "enroll-steps",
+      "kind": "component",
+      "title": "the CLI hand-off never asks /v1/meta"
+    },
+    "values.grid-set-cell": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "grid: set cell"
+    },
+    "values.grid-missing-required-production": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "grid: missing-required in production"
+    },
+    "values.grid-covered-by-default": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "grid: covered-by-default"
+    },
+    "values.grid-unset-optional": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "grid: unset-optional"
+    },
+    "values.grid-shows-non-secret-value": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "grid shows the non-secret value"
+    },
+    "values.grid-masks-secret": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "grid masks the secret"
+    },
+    "values.column-status-counts-what-missing": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "column status counts what is missing"
+    },
+    "values.column-reveal-requests-discloses-only-column": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "column reveal requests and discloses only that column's secrets"
+    },
+    "values.disclosure-notice-shown": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "disclosure notice shown"
+    },
+    "values.mask-all-hides-plaintext-again": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "mask all hides the plaintext again"
+    },
+    "values.save-bar-counts-drafts": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "save bar counts drafts"
+    },
+    "values.edited-cell-marked": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "edited cell is marked"
+    },
+    "values.review-shows-old-new-non-secret": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "review shows old -> new for a non-secret"
+    },
+    "values.review-hides-new-secret-value": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "review hides a new secret's value"
+    },
+    "values.change-set-committed-grid": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "change set committed from the grid"
+    },
+    "values.non-sensitive-value-visible": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "non-sensitive value visible"
+    },
+    "values.secret-masked-default": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "secret masked by default"
+    },
+    "values.row-says-value-last-changed-filtered": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "row says when the value last changed (filtered audit log)"
+    },
+    "values.reveal-one-secret-discloses-only-secret": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "reveal of one Secret discloses only that Secret"
+    },
+    "values.concurrent-writer-succeeded": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "concurrent writer succeeded"
+    },
+    "values.live-update-reached-open-review": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "the live update reached the open review"
+    },
+    "values.stale-change-set-rejected-nothing-written": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "stale change set rejected, nothing written"
+    },
+    "values.draft-preserved-after-conflict": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "draft preserved after conflict"
+    },
+    "values.reference-value-written": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "reference value written"
+    },
+    "values.reference-displays-expanded-ref-chip": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "reference displays expanded with ref chip"
+    },
+    "values.editing-shows-literal-stored-not-expansion": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "editing shows the literal stored ${NAME}, not the expansion"
+    },
+    "values.esc-leaves-no-draft": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "Esc leaves no draft"
+    },
+    "values.rotating-badge-shown-after-begin": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "rotating badge shown after begin"
+    },
+    "values.disclosure-returns-new-primary-retiring-value": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "disclosure returns the new primary and the retiring value"
+    },
+    "values.retiring-value-dropped-after-finishing-rotation": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "retiring value dropped after finishing rotation"
+    },
+    "values.grid-shows-stored-reference-text-ref": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "grid shows the stored reference text with a ref hint"
+    },
+    "values.drafted-secret-stays-masked-grid": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "drafted secret stays masked in the grid"
+    },
+    "values.production-commit-gated-checkbox": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "production commit gated on checkbox"
+    },
+    "values.production-save-explicit-confirmation": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "production save with explicit confirmation"
+    },
+    "values.blind-overwrite-required-no-disclosure": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "blind overwrite required no disclosure"
+    },
+    "values.reveal-all-requests-all-authorized-scope": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "reveal-all requests the all-authorized scope"
+    },
+    "values.reveal-1-reveals-once-audited": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "?reveal=1 reveals once, audited"
+    },
+    "values.reveal-1-leaves-url": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "?reveal=1 leaves the URL"
+    },
+    "values.item-opens-item-panel": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "?item= opens the item panel"
+    },
+    "values.item-history-lists-item-changes-filtered": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "item history lists this item's changes (filtered audit log)"
+    },
+    "values.export-holds-non-secret-values-leaves-secrets": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "export holds non-secret values and leaves secrets out"
+    },
+    "values.export-made-no-disclosure": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "export made no disclosure"
+    },
+    "values.tailnet-requirement-production-created": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "tailnet requirement on production created"
+    },
+    "values.without-tailnet-endpoint-notice-offers-no": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "without a tailnet endpoint the notice offers no Connect"
+    },
+    "values.plaintext-revealed-before-requirement-leaves-open": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "plaintext revealed before the requirement leaves the open page"
+    },
+    "values.export-dialog-already-open-stops-offering": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "an export dialog already open stops offering Download"
+    },
+    "values.environments-say-which-values-need-tailnet": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "environments say which values need the tailnet"
+    },
+    "values.grid-column-has-no-reveal": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "grid column has no Reveal"
+    },
+    "values.bulk-reveal-leaves-production-out": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "bulk Reveal leaves production out"
+    },
+    "values.cell-menu-has-no-reveal": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "cell menu has no Reveal"
+    },
+    "values.export-explains-instead-exporting": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "export explains instead of exporting"
+    },
+    "values.environment-header-says-tailnet-only": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "environment header says tailnet only"
+    },
+    "values.editor-has-no-reveal-all-no": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "editor has no Reveal all and no row Reveal"
+    },
+    "values.item-panel-has-no-reveal": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "item panel has no Reveal"
+    },
+    "values.tailnet-only-environment-gets-no-disclosure-no": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "a tailnet-only environment gets no disclosure and no values request"
+    },
+    "values.tailnet-requirement-removed": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "tailnet requirement removed"
+    },
+    "values.scratch-environment-created": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "scratch environment created"
+    },
+    "values.non-production-delete-needs-no-typed-name": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "non-production delete needs no typed name"
+    },
+    "values.environment-deleted": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "environment deleted"
+    },
+    "values.production-delete-waits-typed-name": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "production delete waits for the typed name"
+    },
+    "values.no-content-security-policy-violations": {
+      "suite": "values",
+      "kind": "conformance",
+      "title": "no Content-Security-Policy violations"
+    },
+    "access.one-time-machine-credential-displayed": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "one-time machine credential displayed"
+    },
+    "access.credential-dismissed-not-re-shown": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "credential dismissed, not re-shown"
+    },
+    "access.credential-expiry-use-budget-echoed-creation": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "credential expiry and use budget echoed at creation"
+    },
+    "access.issued-credential-shown-once-new-service": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "issued credential shown once, a new service token"
+    },
+    "access.issued-credential-expiry-echoed": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "issued credential's expiry echoed"
+    },
+    "access.issued-credential-dismissed-not-re-shown": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "issued credential dismissed, not re-shown"
+    },
+    "access.issued-credential-listed-under-name": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "issued credential listed under its name"
+    },
+    "access.issued-credential-authenticates-machine-denied-not": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "issued credential authenticates as the machine (denied, not unauthenticated)"
+    },
+    "access.revoking-issued-credential-leaves-first-one": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "revoking the issued credential leaves the first one working"
+    },
+    "access.machine-denied-before-any-grant": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "machine denied before any grant"
+    },
+    "access.grant-row-reads-sentence-keeps-actions": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "grant row reads as a sentence and keeps its actions"
+    },
+    "access.machine-can-read-configuration-after-grant": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "machine can read configuration after grant"
+    },
+    "access.read-config-grant-does-not-allow-secret": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "read-config grant does NOT allow secret disclosure"
+    },
+    "access.machine-denied-after-grant-revocation": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "machine denied after grant revocation"
+    },
+    "access.environment-scoped-grant-row-lists-selector": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "environment-scoped grant row lists its selector"
+    },
+    "access.granted-environment-readable": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "granted environment readable"
+    },
+    "access.sibling-environment-denied": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "sibling environment still denied"
+    },
+    "access.invite-link-minted-dashboard-origin": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "invite link minted on dashboard origin"
+    },
+    "access.oidc-binding-listed-issuer": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "oidc binding listed with issuer"
+    },
+    "access.oidc-binding-revoked-dashboard": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "oidc binding revoked from dashboard"
+    },
+    "access.machine-denied-before-role-group-grant": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "machine denied before role/group grant"
+    },
+    "access.custom-role-created": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "custom role created"
+    },
+    "access.identity-added-group": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "identity added to group"
+    },
+    "access.group-role-grant-lists-role": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "group+role grant lists the role"
+    },
+    "access.group-member-inherits-role-granted-access": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "group member inherits role-granted access"
+    },
+    "access.removing-action-role-narrows-member-immediately": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "removing an action from the role narrows the member immediately"
+    },
+    "access.adding-action-back-widens-without-touching": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "adding the action back widens without touching the grant"
+    },
+    "access.team-owns-project": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "team owns a project"
+    },
+    "access.revoking-group-grant-denies-member-again": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "revoking the group grant denies the member again"
+    },
+    "access.replaced-grant-row-now-cites-role": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "replaced grant row now cites the role"
+    },
+    "access.successor-grant-authorizes-via-role": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "successor grant authorizes via the role"
+    },
+    "access.group-renamed-place": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "group renamed in place"
+    },
+    "access.team-renamed-place-owning-project": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "team renamed in place, still owning its project"
+    },
+    "access.tailnet-requirement-listed": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "tailnet requirement listed"
+    },
+    "access.loosening-edit-reviewed-scope-before-after": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "a loosening edit is reviewed with its scope, before and after"
+    },
+    "access.requirement-selector-edited-place-after-confirmation": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "requirement selector edited in place after confirmation"
+    },
+    "access.device-pinned-requirement-created-through-api": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "device-pinned requirement created through the API"
+    },
+    "access.device-pinned-requirement-names-environment-device": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "device-pinned requirement names its environment and device"
+    },
+    "access.review-names-environment-change-applies": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "the review names the environment the change applies to"
+    },
+    "access.editing-keeps-environment-target-pinned-device": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "editing keeps the environment target and the pinned device"
+    },
+    "access.concurrent-change-through-api": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "concurrent change through the API"
+    },
+    "access.review-confirmation-gone": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "the review and its confirmation are gone"
+    },
+    "access.nothing-stale-edit-was-saved": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "nothing from the stale edit was saved"
+    },
+    "access.starting-over-loads-current-version": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "starting over loads the current version"
+    },
+    "access.device-pinned-requirement-removed": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "device-pinned requirement removed"
+    },
+    "access.broker-issued-capability-ui-test": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "broker issued a capability for the UI test"
+    },
+    "access.capability-row-shows-agent-broker-items": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "capability row shows agent, broker, items, destination, run"
+    },
+    "access.capability-revoked-dashboard": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "capability revoked from the dashboard"
+    },
+    "access.dashboard-revocation-denies-next-exercise": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "dashboard revocation denies the next exercise"
+    },
+    "access.own-credential-listed-session-marker": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "own credential listed with session marker"
+    },
+    "access.no-content-security-policy-violations": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "no Content-Security-Policy violations"
+    },
+    "p4.managed-project-seeded": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "managed project seeded"
+    },
+    "p4.server-supports-semantics-version-3": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "server supports semantics version 3"
+    },
+    "p4.legacy-git-project-seeded": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "legacy git project seeded"
+    },
+    "p4.authoritative-audit-history-renders": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "authoritative audit history renders"
+    },
+    "p4.text-filter-narrows-timeline": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "text filter narrows the timeline"
+    },
+    "p4.filter-keeps-only-matching-events": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "filter keeps only matching events"
+    },
+    "p4.provenance-drawer-shows-event-request-ids": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "provenance drawer shows event + request ids"
+    },
+    "p4.timeline-reads-sentences-names-not-raw": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "timeline reads as sentences with names, not raw IDs"
+    },
+    "p4.decision-filter-applies": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "decision filter applies"
+    },
+    "p4.webhook-signing-secret-shown-once": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "webhook signing secret shown once"
+    },
+    "p4.webhook-secret-dismissed-not-re-shown": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "webhook secret dismissed, not re-shown"
+    },
+    "p4.webhook-row-lists-event-type-filter": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "webhook row lists its event-type filter"
+    },
+    "p4.webhook-edited-place-new-url-filter": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "webhook edited in place: new URL, filter cleared to all events"
+    },
+    "p4.no-new-signing-secret-shown-edit": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "no new signing secret shown on edit"
+    },
+    "p4.webhook-revoked-dashboard": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "webhook revoked from dashboard"
+    },
+    "p4.git-contract-items-render": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "git contract items render"
+    },
+    "p4.git-authority-shown": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "git authority shown"
+    },
+    "p4.no-managed-editor-git-projects": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "no managed editor for git projects"
+    },
+    "p4.git-project-offers-moving-newest-rules": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "git project offers moving to the newest rules"
+    },
+    "p4.git-project-has-no-managed-editor": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "git project still has no managed editor"
+    },
+    "p4.review-diff-shows-only-semantics-version": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "review diff shows only the semantics version change"
+    },
+    "p4.review-explains-version-3-step-only": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "review explains the version 3 step only"
+    },
+    "p4.review-tells-git-projects-later-pushes": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "review tells git projects later pushes keep the version"
+    },
+    "p4.pushed-revision-not-active-before-confirmation": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "pushed revision is not active before confirmation"
+    },
+    "p4.cancel-leaves-active-revision-place": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "cancel leaves the active revision in place"
+    },
+    "p4.git-project-moved-newest-version": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "git project moved to the newest version"
+    },
+    "p4.move-changed-version-nothing-else-git": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "the move changed the version and nothing else (git)"
+    },
+    "p4.publishing-security-relevant-change-asks-acknowledgement": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "publishing a security-relevant change asks for the acknowledgement"
+    },
+    "p4.new-row-shows-draft-before-publishing": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "the new row shows in the draft before publishing"
+    },
+    "p4.managed-publish-activates-revision-new-item": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "managed publish activates a revision with the new item"
+    },
+    "p4.edit-keeps-semantics-version": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "an edit keeps the semantics version"
+    },
+    "p4.integer-not-offered-version-1": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "integer is not offered at version 1"
+    },
+    "p4.editor-says-integer-needs-version-3": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "the editor says integer needs version 3"
+    },
+    "p4.managed-review-diff-shows-only-semantics": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "managed review diff shows only the semantics version change"
+    },
+    "p4.managed-review-explains-step-consequences": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "managed review explains every step and the consequences"
+    },
+    "p4.managed-project-moved-newest-version": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "managed project moved to the newest version"
+    },
+    "p4.move-changed-version-nothing-else-managed": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "the move changed the version and nothing else (managed)"
+    },
+    "p4.integer-offered-version-3": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "integer is offered at version 3"
+    },
+    "p4.integer-item-publishes-version-3": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "an integer item publishes at version 3"
+    },
+    "p4.edited-row-marked-draft": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "an edited row is marked in the draft"
+    },
+    "p4.description-only-change-publishes-directly": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "a description-only change publishes directly"
+    },
+    "p4.contract-tab-has-no-environment-name-mapping": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "contract tab has no environment-name mapping card"
+    },
+    "p4.palette-navigates-project": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "palette navigates to a project"
+    },
+    "p4.palette-item-hit-deep-links-item-name": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "palette item hit deep-links with the item name"
+    },
+    "p4.deep-link-selects-item": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "deep link selects the item"
+    },
+    "p4.palette-action-switches-theme": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "palette action switches the theme"
+    },
+    "p4.palette-opens-keyboard-shortcuts": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "palette opens the keyboard shortcuts"
+    },
+    "p4.theme-restored": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "theme restored"
+    },
+    "p4.settings-shows-server-reported-version": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "settings shows the server's reported version"
+    },
+    "p4.disposable-credential-identified": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "disposable credential identified"
+    },
+    "p4.disposable-credential-listed-active": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "disposable credential listed as active"
+    },
+    "p4.credential-revoked-via-api": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "credential revoked via the API"
+    },
+    "p4.credentials-page-refreshed-reactively-identity-signal": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "credentials page refreshed reactively on the identity signal"
+    },
+    "p4.no-content-security-policy-violations": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "no Content-Security-Policy violations"
+    },
+    "p4.managed-app-seeded-semantics-version-1": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "managed-app seeded at semantics version 1"
+    },
+    "p4.legacy-git-seeded-semantics-version-2": {
+      "suite": "p4",
+      "kind": "conformance",
+      "title": "legacy-git seeded at semantics version 2"
+    },
+    "onboarding.fresh-org-seeded": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "fresh org seeded"
+    },
+    "onboarding.fresh-org-shows-all-required-steps": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "fresh org shows all required steps pending"
+    },
+    "onboarding.progress-derives-0-4": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "progress derives 0 of 4"
+    },
+    "onboarding.workload-invite-recommended-not-required": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "workload + invite are recommended, not required"
+    },
+    "onboarding.no-empty-project-list": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "no empty project list"
+    },
+    "onboarding.git-default-contract-location": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "git is the default contract location"
+    },
+    "onboarding.project-step-checks-off-authoritative-state": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "project step checks off from authoritative state"
+    },
+    "onboarding.environments-step-pending-all-environment-toggles": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "environments step still pending (all environment toggles were off)"
+    },
+    "onboarding.git-authority-branches-cli-contract-push": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "git authority branches to CLI contract push snippet"
+    },
+    "onboarding.environments-step-checks-off-authoritative-state": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "environments step checks off from authoritative state"
+    },
+    "onboarding.project-row-lists-new-environments": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "the project row lists the new environments"
+    },
+    "onboarding.new-environment-project-menu": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "new environment from the project menu"
+    },
+    "onboarding.rename-project-menu-shows-new-display": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "rename from the project menu shows the new display name"
+    },
+    "onboarding.contract-step-checks-off-after-push": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "contract step checks off after push+activate"
+    },
+    "onboarding.completed-solo-org-hides-checklist": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "completed solo org hides the checklist"
+    },
+    "onboarding.projects-page-renders-normally": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "projects page still renders normally"
+    },
+    "onboarding.no-content-security-policy-violations": {
+      "suite": "onboarding",
+      "kind": "conformance",
+      "title": "no Content-Security-Policy violations"
+    },
+    "realtime.no-indicator-live-updates-work": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "no indicator while live updates work",
+      "replacement": {
+        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
+      }
+    },
+    "realtime.dashboard-says-live-updates-reconnecting": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "the dashboard says live updates are reconnecting",
+      "replacement": {
+        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
+      }
+    },
+    "realtime.api-accepts-change-convex-down": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "the API accepts a change while Convex is down",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): writes through the API, the dashboard and the CLI are conformance checks in values, onboarding and client-runtime."
+      }
+    },
+    "realtime.change-made-elsewhere-shows-up-polling": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "a change made elsewhere shows up by polling /v1",
+      "replacement": {
+        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
+      }
+    },
+    "realtime.dashboard-writes-convex-down": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "the dashboard writes while Convex is down",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): writes through the API, the dashboard and the CLI are conformance checks in values, onboarding and client-runtime."
+      }
+    },
+    "realtime.cli-env-list-works-convex-down": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "CLI env list works while Convex is down",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): writes through the API, the dashboard and the CLI are conformance checks in values, onboarding and client-runtime."
+      }
+    },
+    "realtime.cli-run-injects-current-value-convex": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "CLI run injects the current value while Convex is down",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): writes through the API, the dashboard and the CLI are conformance checks in values, onboarding and client-runtime."
+      }
+    },
+    "realtime.indicator-clears-convex-returns": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "the indicator clears when Convex returns",
+      "replacement": {
+        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
+      }
+    },
+    "realtime.live-signals-drive-updates-again": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "live signals drive updates again",
+      "replacement": {
+        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
+      }
+    },
+    "realtime.no-page-reload-throughout": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "no page reload throughout",
+      "replacement": {
+        "open": "ADR-0059 step 3: the G11 realtime checks (no signal crosses organizations, revocation and removal close streams, the reconnect refresh covers a missed signal, a slow client is disconnected alone)"
+      }
+    },
+    "realtime.no-content-security-policy-violations": {
+      "suite": "realtime",
+      "kind": "ts-stack",
+      "title": "no Content-Security-Policy violations",
+      "replacement": "dashboard.csp-strict"
+    },
+    "broker.agent-identity-created-no-credential": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "agent identity created with no credential"
+    },
+    "broker.run-untargeted-secret-refuses-start-naming": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "a run with an untargeted Secret refuses to start, naming the item and the flags"
+    },
+    "broker.refused-run-issued-no-capability": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "the refused run issued no Capability"
+    },
+    "broker.agent-env-contains-no-stored-secret": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "agent env contains no stored Secret plaintext"
+    },
+    "broker.agent-holds-no-reusable-varlatch-credential": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "agent holds no reusable Varlatch credential"
+    },
+    "broker.secret-injected-opaque-placeholder": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "Secret injected as an opaque placeholder"
+    },
+    "broker.non-sensitive-value-injected-plaintext": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "non-sensitive value injected as plaintext"
+    },
+    "broker.omitted-secret-shell-stale-copies-never": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "an omitted Secret and the shell's stale copies never reach the Agent"
+    },
+    "broker.run-names-inherited-secrets-removed": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "the run names the inherited Secrets it removed"
+    },
+    "broker.node-fetch-pointed-broker-node-use": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "Node's fetch is pointed at the Broker (NODE_USE_ENV_PROXY=1)"
+    },
+    "broker.reflected-credential-comes-back-placeholder-body": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "a reflected credential comes back as the Placeholder (body and header)"
+    },
+    "broker.gzip-coded-reflection-decoded-scrubbed": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "a gzip-coded reflection is decoded and scrubbed"
+    },
+    "broker.no-response-agent-carries-secret": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "no response to the Agent carries the Secret"
+    },
+    "broker.destination-received-real-credential-asked-echo": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "the destination still received the real credential when asked to echo it"
+    },
+    "broker.run-reports-what-scrubbed-item-count": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "the run reports what it scrubbed, by item and count"
+    },
+    "broker.placeholder-outside-targets-blocks-diagnostic-naming": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "a Placeholder outside its targets blocks with a diagnostic naming item and location"
+    },
+    "broker.blocked-request-never-reached-destination": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "the blocked request never reached the destination"
+    },
+    "broker.stray-placeholder-untargeted-surface-forwarded": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "a stray Placeholder in an untargeted surface is forwarded unchanged"
+    },
+    "broker.allowed-inspectable-request-succeeded-through-broker": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "allowed inspectable request succeeded through the broker"
+    },
+    "broker.proxy-requires-per-run-token": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "proxy requires the per-run token"
+    },
+    "broker.redirect-relayed-agent-not-followed": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "redirect relayed to the agent, not followed"
+    },
+    "broker.connect-secret-using-destination-refused-diagnostic": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "CONNECT to secret-using destination refused with diagnostic"
+    },
+    "broker.upstream-received-real-credential-over-tls": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "upstream received the real credential over TLS"
+    },
+    "broker.redirect-request-itself-carried-real-credential": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "redirect request itself carried the real credential to the allowed host"
+    },
+    "broker.unauthorized-host-received-only-placeholders-never": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "unauthorized host received only placeholders, never the secret"
+    },
+    "broker.metadata-mode-injects-short-lived-agent-run-bearer": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "metadata mode injects a short-lived agent-run bearer"
+    },
+    "broker.agent-reads-configuration-metadata-directly": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "agent reads configuration metadata directly"
+    },
+    "broker.metadata-response-carries-no-secret-plaintext": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "metadata response carries no Secret plaintext"
+    },
+    "broker.agent-run-credential-read-only-http-layer": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "agent-run credential is read-only at the HTTP layer"
+    },
+    "broker.agent-run-credential-revoked-run-exits": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "agent-run credential is revoked when the run exits"
+    },
+    "broker.issuance-without-targets-refused-naming-minimum": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "issuance without targets is refused, naming the minimum CLI version"
+    },
+    "broker.issuance-records-returns-targets": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "issuance records and returns the targets"
+    },
+    "broker.exercise-naming-target-capability-does-not": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "an exercise naming a target the Capability does not hold is denied"
+    },
+    "broker.exercise-succeeds-grant-stands": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "exercise succeeds while the Grant stands"
+    },
+    "broker.revoking-secret-use-denies-very-next-exercise": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "revoking secret.use denies the very next exercise"
+    },
+    "broker.revoking-capability-denies-next-exercise": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "revoking the Capability denies the next exercise"
+    },
+    "broker.expired-capability-fails-closed": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "expired Capability fails closed"
+    },
+    "broker.rotation-picked-up-next-exercise-model": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "rotation is picked up at the next exercise (Model B)"
+    },
+    "broker.unbound-secret-reference-denies-exercise": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "unbound secret reference denies the exercise"
+    },
+    "broker.plain-reference-without-config-value-read-denies": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "plain reference without config.value.read denies the exercise"
+    },
+    "broker.bound-secret-authorized-plain-references-expand": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "bound-secret and authorized plain references expand at exercise"
+    },
+    "broker.only-placed-secret-returned-bound-dependency": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "only the placed Secret is returned; the bound dependency is not"
+    },
+    "broker.exercise-audit-identifies-agent-broker-destination": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "exercise audit identifies agent, broker, destination, item@version"
+    },
+    "broker.denial-audit-records-internal-reason": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "denial audit records the internal reason"
+    },
+    "broker.issuance-audit-records-targets-exercise-audit": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "issuance audit records the targets, exercise audit the placements"
+    },
+    "broker.bound-dependency-audited-reference-expansion-before": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "a bound dependency is audited as a reference expansion before it is decrypted"
+    },
+    "broker.audit-export-contains-no-secret-plaintext": {
+      "suite": "broker",
+      "kind": "conformance",
+      "title": "audit export contains no secret plaintext"
+    },
+    "broker.convex-down-throughout": {
+      "suite": "broker",
+      "kind": "ts-stack",
+      "title": "the broker suite ran with Convex stopped throughout, and Convex came back after it",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): the broker checks themselves are conformance."
+      },
+      "reportedBy": "runner"
+    },
+    "maintenance.signed-in-dashboard-shows-maintenance-banner": {
+      "suite": "maintenance",
+      "kind": "conformance",
+      "title": "a signed-in dashboard shows the maintenance banner"
+    },
+    "maintenance.not-sign-in-screen": {
+      "suite": "maintenance",
+      "kind": "conformance",
+      "title": "…and not the sign-in screen"
+    },
+    "maintenance.dashboard-opened-during-maintenance-shows": {
+      "suite": "maintenance",
+      "kind": "conformance",
+      "title": "a dashboard opened during maintenance shows the maintenance screen, not sign-in"
+    },
+    "maintenance.cli-waits-out-maintenance-succeeds": {
+      "suite": "maintenance",
+      "kind": "conformance",
+      "title": "the CLI waits out maintenance and succeeds"
+    },
+    "maintenance.saying-once-stderr-only": {
+      "suite": "maintenance",
+      "kind": "conformance",
+      "title": "…saying so once, on stderr only"
+    },
+    "maintenance.page-opened-during-maintenance-continues-app": {
+      "suite": "maintenance",
+      "kind": "conformance",
+      "title": "the page opened during maintenance continues into the app by itself"
+    },
+    "maintenance.banner-clears-once-installation-answers-again": {
+      "suite": "maintenance",
+      "kind": "conformance",
+      "title": "the banner clears once the installation answers again"
+    },
+    "maintenance.no-content-security-policy-violations": {
+      "suite": "maintenance",
+      "kind": "conformance",
+      "title": "no Content-Security-Policy violations"
+    },
+    "server-logs.no-secret-plaintext": {
+      "suite": "server-logs",
+      "kind": "conformance",
+      "title": "no secret plaintext in the server's logs"
+    },
+    "cli-login.recovery-passkey-enrolled": {
+      "suite": "cli-login",
+      "kind": "conformance",
+      "title": "recovery passkey enrolled"
+    },
+    "cli-login.cli-printed-handoff-url": {
+      "suite": "cli-login",
+      "kind": "conformance",
+      "title": "CLI printed handoff URL"
+    },
+    "cli-login.browser-delivered-credential-cli-callback": {
+      "suite": "cli-login",
+      "kind": "conformance",
+      "title": "browser delivered the credential to the CLI callback"
+    },
+    "cli-login.login-completed": {
+      "suite": "cli-login",
+      "kind": "conformance",
+      "title": "varlatch login completed"
+    },
+    "device.passkey-enrolled": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "passkey enrolled"
+    },
+    "device.login-start-exits-0-address-code": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "login --start exits 0 with the address and code"
+    },
+    "device.device-code-only-pending-file": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the device code is only in the pending file"
+    },
+    "device.pending-file-0600-0700-directory": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the pending file is 0600 in a 0700 directory"
+    },
+    "device.login-wait-before-approval-exits-75": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "login --wait before approval exits 75 and keeps the entry"
+    },
+    "device.get-device-served-cache-control-no-store": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "GET /device is served with Cache-Control: no-store"
+    },
+    "device.code-never-prefilled-url": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the code is never prefilled from the URL"
+    },
+    "device.wrong-code-refused": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "a wrong code is refused"
+    },
+    "device.confirmation-says-cli-signs-you-how": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the confirmation says the CLI signs in as you, for how long"
+    },
+    "device.confirmation-names-requester-address-user-agent": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the confirmation names the requester's address and user agent"
+    },
+    "device.approval-fresh-passkey-assertion": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "approval with a fresh passkey assertion"
+    },
+    "device.login-wait-exits-0-stores-credential": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "login --wait exits 0 and stores the credential"
+    },
+    "device.credential-never-appears-cli-output": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the credential never appears in the CLI's output"
+    },
+    "device.pending-entry-removed": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the pending entry is removed"
+    },
+    "device.stored-credential-works": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the stored credential works"
+    },
+    "device.second-wait-finds-nothing-collect-64": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "a second --wait finds nothing to collect (64)"
+    },
+    "device.assisted-login-no-method-starts-device": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "assisted login with no method starts a device sign-in"
+    },
+    "device.denial-recorded": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "denial recorded"
+    },
+    "device.login-wait-after-denial-exits-77": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "login --wait after a denial exits 77 and keeps the existing credential"
+    },
+    "device.no-passkey-no-approval": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "no passkey, no approval"
+    },
+    "device.sign-in-pending-75": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "the sign-in is still pending (75)"
+    },
+    "device.no-content-security-policy-violations": {
+      "suite": "device",
+      "kind": "conformance",
+      "title": "no Content-Security-Policy violations"
+    },
+    "proxy-probe.forged-addresses-meet-pending-cap": {
+      "suite": "proxy-probe",
+      "kind": "conformance",
+      "title": "requests with different forged addresses created sign-ins, then the per-client pending cap refused"
+    },
+    "proxy-probe.records-caller-address": {
+      "suite": "proxy-probe",
+      "kind": "conformance",
+      "title": "every probe sign-in records one requester, the caller, never a forged address or a proxy"
+    },
+    "client-runtime.redact-run-exits-child-status": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--redact: the run exits with the child's status"
+    },
+    "client-runtime.redact-secret-never-appears-stdout-stderr": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--redact: the Secret never appears on stdout or stderr"
+    },
+    "client-runtime.redact-stdout-keeps-lines-order-secret": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--redact: stdout keeps its lines and order, with each Secret replaced by its marker"
+    },
+    "client-runtime.redact-stderr-masked-too-including-value": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--redact: stderr is masked too, including a value split across writes"
+    },
+    "client-runtime.redact-non-sensitive-value-passes-through": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--redact: a non-sensitive value passes through"
+    },
+    "client-runtime.redact-secret-shorter-than-8-bytes": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--redact: a Secret shorter than 8 bytes is named, never shown, as passing through"
+    },
+    "client-runtime.without-redact-same-run-relays-output": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "without --redact the same run relays the output unchanged"
+    },
+    "client-runtime.export-context-default-run-starts-child": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: a default run starts the child"
+    },
+    "client-runtime.export-context-delivered-secret-replaces": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: a delivered Secret replaces the parent's copy"
+    },
+    "client-runtime.export-context-item-not-stored-inherited": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: an item that is not stored is inherited from the parent"
+    },
+    "client-runtime.export-context-no-default-applied-nothing": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: no default is applied and nothing is invented"
+    },
+    "client-runtime.export-context-context-names-active-revision": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: the context names the active revision, its hash, semantics, the environment, and each item's status"
+    },
+    "client-runtime.export-context-context-holds-no-value": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: the context holds no value"
+    },
+    "client-runtime.export-context-identity-without-secret-reveal": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: an identity without secret.reveal still starts the child"
+    },
+    "client-runtime.export-context-withheld-secret-left-parent": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: a withheld Secret is left to the parent's copy"
+    },
+    "client-runtime.export-context-withheld-secrets-recorded": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: withheld Secrets are recorded as withheld, inherited or absent"
+    },
+    "client-runtime.export-context-withheld-run-context-holds-no": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: the withheld run's context holds no value"
+    },
+    "client-runtime.export-context-without-contract-read-starts": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context without contract.read starts nothing and says why"
+    },
+    "client-runtime.export-context-run-cannot-export-context": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "--export-context: a run that cannot export its context discloses no Secret"
+    },
+    "client-runtime.same-identity-default-run-without-flag": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "the same identity's default run, without the flag, gets no context"
+    },
+    "client-runtime.types-module-generated-active-revision": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the module is generated from the active revision"
+    },
+    "client-runtime.types-header-records-active-revision-content": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the header records the active revision and its content hash"
+    },
+    "client-runtime.types-module-holds-no-value": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the module holds no value"
+    },
+    "client-runtime.types-regenerating-unchanged-revision-leaves": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: regenerating an unchanged revision leaves the file untouched"
+    },
+    "client-runtime.types-check-passes-module-matches-active": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types --check passes while the module matches the active revision"
+    },
+    "client-runtime.types-module-application-using-compile-under": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the module and an application using it compile under strict settings"
+    },
+    "client-runtime.types-application-starts-under-export-context": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the application starts under --export-context"
+    },
+    "client-runtime.types-accessor-returns-typed-values-number": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the accessor returns typed values (number, boolean, enum)"
+    },
+    "client-runtime.types-accessor-reads-exported-context-same": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the accessor reads the exported context of the same revision, without warnings"
+    },
+    "client-runtime.types-application-output-holds-no-secret": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the application's output holds no Secret"
+    },
+    "client-runtime.types-check-fails-once-changed-contract": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types --check fails once a changed Contract is active"
+    },
+    "client-runtime.types-old-module-warns-types-stale": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the old module warns that its types are stale for this run"
+    },
+    "client-runtime.types-regenerating-makes-check-pass-again": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: regenerating makes --check pass again"
+    },
+    "client-runtime.types-regenerated-module-compiles": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the regenerated module compiles"
+    },
+    "client-runtime.types-regenerated-module-reads-run-without": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the regenerated module reads the run without warnings"
+    },
+    "client-runtime.types-required-secret-withheld-server-one": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: a required Secret withheld by the server is one ConfigError issue"
+    },
+    "client-runtime.types-invalid-values-throw-one-configerror": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: invalid values throw one ConfigError listing every item"
+    },
+    "client-runtime.types-error-names-items-reasons-never": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "types: the error names items and reasons, never a value"
+    },
+    "client-runtime.scan-nothing-staged-scan-reads-nothing": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan: with nothing staged, the scan reads nothing and exits 0"
+    },
+    "client-runtime.scan-nothing-read-nothing-disclosed": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan: with nothing to read, nothing is disclosed"
+    },
+    "client-runtime.scan-staged-staged-secret-finding-scan": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan --staged: a staged Secret is a finding and the scan exits non-zero"
+    },
+    "client-runtime.scan-staged-finding-names-path-line": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan --staged: each finding names the path, line, column, item, and stored version"
+    },
+    "client-runtime.scan-staged-output-never-shows-value": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan --staged: the output never shows the value"
+    },
+    "client-runtime.scan-staged-secret-shorter-than-8": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan --staged: a Secret shorter than 8 bytes is named as not checked"
+    },
+    "client-runtime.scan-staged-json-report-matches-server": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan --staged --json: the report matches the server's stored version"
+    },
+    "client-runtime.scan-staged-json-report-never-shows": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan --staged --json: the report never shows the value"
+    },
+    "client-runtime.scan-path-clean-path-exits-0": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan <path>: a clean path exits 0 with no findings"
+    },
+    "client-runtime.scan-scan-read-files-one-audited": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "scan: each scan that read files is one audited disclosure with purpose \"scan\""
+    },
+    "client-runtime.run-disclosures-audited-without-purpose": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "run disclosures are audited without a purpose"
+    },
+    "client-runtime.audit-export-holds-no-value": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "the audit export holds no value"
+    },
+    "client-runtime.varlatchd-logs-hold-no-value": {
+      "suite": "client-runtime",
+      "kind": "conformance",
+      "title": "varlatchd logs hold no value"
+    },
+    "strict-run.valid-configuration-starts-child": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a valid configuration starts the child"
+    },
+    "strict-run.child-receives-delivered-secret": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "the child receives the delivered Secret"
+    },
+    "strict-run.contract-default-fills-item-not-stored": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a Contract default fills an item that is not stored"
+    },
+    "strict-run.run-context-replaces-inherited-one": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "the run context replaces an inherited one"
+    },
+    "strict-run.run-context-records-server-status-delivery": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "the run context records server status and delivery separately"
+    },
+    "strict-run.run-context-holds-names-only": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "the run context holds names only"
+    },
+    "strict-run.missing-required-item-stops-startup-exit": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a missing required item stops startup with exit 78"
+    },
+    "strict-run.violation-named": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "the violation is named"
+    },
+    "strict-run.no-value-printed": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "no value is printed"
+    },
+    "strict-run.parent-only-value-violation-without-allowance": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a parent-only value is a violation without an allowance"
+    },
+    "strict-run.allow-inherited-accepts-parent-value": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "--allow-inherited accepts the parent's value"
+    },
+    "strict-run.allow-inherited-name-outside-contract-usage-error": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "an --allow-inherited name outside the Contract is a usage error"
+    },
+    "strict-run.invalid-delivered-value-stops-startup": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "an invalid delivered value stops startup"
+    },
+    "strict-run.invalid-value-not-printed": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "the invalid value is not printed"
+    },
+    "strict-run.reference-left-literal-stops-startup": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a reference left literal stops startup"
+    },
+    "strict-run.withheld-required-secret-stops-startup-default": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a withheld required Secret stops startup; its default does not replace it"
+    },
+    "strict-run.parent-value-does-not-replace-withheld": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a parent value does not replace a withheld one without an allowance"
+    },
+    "strict-run.allowed-inherited-value-stands-withheld-one": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "an allowed inherited value stands in for a withheld one"
+    },
+    "strict-run.run-context-records-withheld-inherited": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "the run context records it as withheld and inherited"
+    },
+    "strict-run.allowed-inherited-value-validated": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "an allowed inherited value is validated"
+    },
+    "strict-run.without-contract-read-strict-startup-does-not": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "without contract.read, strict startup does not start the child"
+    },
+    "strict-run.agent-safe-strict-starts-agent-preflight-passes": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "agent-safe strict starts the Agent when the preflight passes"
+    },
+    "strict-run.agent-receives-placeholder-never-secret-parent": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "the Agent receives a Placeholder, never the Secret or the parent's copy"
+    },
+    "strict-run.non-sensitive-values-defaults-arrive": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "non-sensitive values and defaults still arrive"
+    },
+    "strict-run.run-context-records-secret-delivered-varlatch": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "the run context records the Secret as delivered by Varlatch"
+    },
+    "strict-run.no-secret-value-appears-agent-environment": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "no Secret value appears in the Agent's environment or the output"
+    },
+    "strict-run.agent-without-secret-use-issuance-does-not": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "an Agent without secret.use at issuance does not start"
+    },
+    "strict-run.operator-who-cannot-validate-secrets-does": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "an operator who cannot validate Secrets does not start the Agent"
+    },
+    "strict-run.agent-safe-strict-run-untargeted-secret-does": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "an agent-safe strict run with an untargeted Secret does not start"
+    },
+    "strict-run.omitting-required-secret-startup-violation": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "omitting a required Secret is a startup violation"
+    },
+    "strict-run.allow-inherited-may-not-name-secret-agent-safe": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "--allow-inherited may not name a Secret in an agent-safe run"
+    },
+    "strict-run.refused-run-leaves-no-live-capability": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a refused run leaves no live Capability behind"
+    },
+    "strict-run.default-run-starts-delivers": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a default run still starts and delivers"
+    },
+    "strict-run.default-run-removes-inherited-run-context": {
+      "suite": "strict-run",
+      "kind": "conformance",
+      "title": "a default run removes an inherited run context"
+    },
+    "doctor.exits-0": {
+      "suite": "doctor",
+      "kind": "ts-stack",
+      "title": "doctor exits 0 (no mandatory failure)",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go server's doctor"
+      }
+    },
+    "doctor.services-running": {
+      "suite": "doctor",
+      "kind": "ts-stack",
+      "title": "doctor: services.running passes",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go server's doctor"
+      }
+    },
+    "doctor.secret-plane-ready": {
+      "suite": "doctor",
+      "kind": "ts-stack",
+      "title": "doctor: secret-plane.ready passes",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go server's doctor"
+      }
+    },
+    "doctor.config-public-url": {
+      "suite": "doctor",
+      "kind": "ts-stack",
+      "title": "doctor: config.public-url passes",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go server's doctor"
+      }
+    },
+    "doctor.mirror-catch-up": {
+      "suite": "doctor",
+      "kind": "ts-stack",
+      "title": "doctor: mirror.catch-up passes",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): no audit mirror to catch up."
+      }
+    },
+    "doctor.application-plane-functions": {
+      "suite": "doctor",
+      "kind": "ts-stack",
+      "title": "doctor: application-plane.functions passes",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): no Application Plane functions."
+      }
+    },
+    "doctor.release-pending-upgrade": {
+      "suite": "doctor",
+      "kind": "ts-stack",
+      "title": "doctor: release.pending-upgrade passes",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go server's doctor"
+      }
+    },
+    "doctor.browser-reachability-unknown": {
+      "suite": "doctor",
+      "kind": "ts-stack",
+      "title": "doctor: browser reachability is reported unknown",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go server's doctor"
+      }
+    },
+    "doctor.no-audit-events": {
+      "suite": "doctor",
+      "kind": "ts-stack",
+      "title": "doctor wrote no audit events",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go server's doctor"
+      }
+    },
+    "convex-down.dashboard-serves": {
+      "suite": "convex-down",
+      "kind": "ts-stack",
+      "title": "the dashboard serves while Convex is down",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): the dashboard and /v1 have no Convex backend to lose."
+      }
+    },
+    "convex-down.api-serves": {
+      "suite": "convex-down",
+      "kind": "ts-stack",
+      "title": "/v1 serves while Convex is down",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): the dashboard and /v1 have no Convex backend to lose."
+      }
+    },
+    "convex-down.convex-gateway-error": {
+      "suite": "convex-down",
+      "kind": "ts-stack",
+      "title": "/convex answers a gateway error while the backend is down",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): the dashboard and /v1 have no Convex backend to lose."
+      }
+    },
+    "convex-down.convex-fails-fast": {
+      "suite": "convex-down",
+      "kind": "ts-stack",
+      "title": "/convex fails fast while the backend is down",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): the dashboard and /v1 have no Convex backend to lose."
+      }
+    },
+    "convex-down.web-restarts-without-convex": {
+      "suite": "convex-down",
+      "kind": "ts-stack",
+      "title": "the dashboard restarts while Convex is down",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): the dashboard and /v1 have no Convex backend to lose."
+      }
+    },
+    "convex-down.convex-recovers": {
+      "suite": "convex-down",
+      "kind": "ts-stack",
+      "title": "/convex recovers when the backend returns",
+      "replacement": {
+        "none": "Convex is not part of the Go server (ADR-0059): the dashboard and /v1 have no Convex backend to lose."
+      }
+    },
+    "cli-download-off.install-sh-404": {
+      "suite": "cli-download-off",
+      "kind": "conformance",
+      "title": "/install.sh answers 404 while serving is off (not the dashboard)"
+    },
+    "cli-download-off.install-ps1-404": {
+      "suite": "cli-download-off",
+      "kind": "conformance",
+      "title": "/install.ps1 answers 404 while serving is off (not the dashboard)"
+    },
+    "cli-download-off.cli-bundle-404": {
+      "suite": "cli-download-off",
+      "kind": "conformance",
+      "title": "/cli/varlatch.cjs answers 404 while serving is off (not the dashboard)"
+    },
+    "cli-download-off.meta-omits-cli-download": {
+      "suite": "cli-download-off",
+      "kind": "conformance",
+      "title": "/v1/meta does not list cli.download while serving is off"
+    },
+    "cli-download-on.meta-lists-cli-download": {
+      "suite": "cli-download-on",
+      "kind": "conformance",
+      "title": "/v1/meta lists cli.download with serving on"
+    },
+    "cli-download-on.install-sh-names-origin": {
+      "suite": "cli-download-on",
+      "kind": "conformance",
+      "title": "install.sh names the server's origin"
+    },
+    "cli-download-on.install-ps1-names-origin": {
+      "suite": "cli-download-on",
+      "kind": "conformance",
+      "title": "install.ps1 names the server's origin"
+    },
+    "cli-download-on.install-sh-installs": {
+      "suite": "cli-download-on",
+      "kind": "conformance",
+      "title": "install.sh through the server installs the CLI"
+    },
+    "cli-download-on.installed-version-matches-server": {
+      "suite": "cli-download-on",
+      "kind": "conformance",
+      "title": "the installed CLI reports the server's own version"
+    },
+    "cli-download-on.install-names-next-step": {
+      "suite": "cli-download-on",
+      "kind": "conformance",
+      "title": "install.sh names the next step"
+    },
+    "request-budget.no-unexpected-429": {
+      "suite": "request-budget",
+      "kind": "conformance",
+      "title": "the server answered no 429 other than the proxy probe's pending cap"
+    }
+  }
+}

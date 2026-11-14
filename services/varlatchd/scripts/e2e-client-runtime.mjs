@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
+import { cliPath as cliUnderTest, reporter, tryTargetOp } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live E2E for the client runtime against the clean-room stack, with the
  * bundled CLI: `varlatch run --redact`, `varlatch run --export-context`,
@@ -9,9 +10,9 @@ import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch to
  *
  * Every value here is a low-entropy test value; none resembles a credential.
  *
- * Usage: node scripts/e2e-client-runtime.mjs <server-url> <admin-token> [-- <docker compose command...>]
- * With the compose command, the suite also checks that no value reached the
- * varlatchd logs.
+ * Usage: node scripts/e2e-client-runtime.mjs <server-url> <admin-token>
+ * Run by scripts/conformance/run.mjs, which names the CLI under test
+ * (VARLATCH_CLI) and the target whose logs must hold no value.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -19,14 +20,13 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const sep = process.argv.indexOf("--");
-const [server, adminToken] = process.argv.slice(2, sep < 0 ? undefined : sep);
-const compose = sep < 0 ? [] : process.argv.slice(sep + 1);
+const [server, adminToken] = process.argv.slice(2);
 if (!server || !adminToken) {
-  console.error("Usage: e2e-client-runtime.mjs <server-url> <admin-token> [-- <docker compose command...>]");
+  console.error("Usage: e2e-client-runtime.mjs <server-url> <admin-token>");
   process.exit(1);
 }
-const cliPath = new URL("../../../apps/cli/dist/varlatch.cjs", import.meta.url).pathname;
+// The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
+const cliPath = cliUnderTest();
 const TSC = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 const ORG = "acme";
 const PROJECT = "clientrt";
@@ -42,11 +42,8 @@ const INHERITED = "inheritedddddddddddd";
 const BAD = { PORT: "eightyeightyeighty", DEBUG: "maybemaybemaybe", LEVEL: "loudloudloud" };
 const NAMES = ["RT_SECRET", "RT_PIN", "RT_PLAIN", "RT_UNSTORED", "RT_ABSENT", "PORT", "DEBUG", "LEVEL", "RT_ADDED"];
 
-let failures = 0;
-function check(name, ok, detail = "") {
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok || !detail ? "" : `: ${detail}`}`);
-  if (!ok) failures += 1;
-}
+const kit = reporter({ detailOnFailure: true, separator: ": " });
+const { check } = kit;
 
 async function api(method, path, body, token = adminToken) {
   const res = await fetch(`${server}${path}`, {
@@ -235,11 +232,11 @@ setTimeout(() => {
 {
   const b64 = Buffer.from(SECRET).toString("base64");
   const r = await admin.cli(["run", "-e", "development", "--redact", "--", process.execPath, "-e", LOUD]);
-  check("--redact: the run exits with the child's status", r.code === 7, `exit ${r.code}${r.timedOut ? " (timed out)" : ""}: ${r.out}`);
-  check("--redact: the Secret never appears on stdout or stderr", !r.out.includes(SECRET) && !r.out.includes(b64.slice(0, 16)), r.out);
+  check("client-runtime.redact-run-exits-child-status", "--redact: the run exits with the child's status", r.code === 7, `exit ${r.code}${r.timedOut ? " (timed out)" : ""}: ${r.out}`);
+  check("client-runtime.redact-secret-never-appears-stdout-stderr", "--redact: the Secret never appears on stdout or stderr", !r.out.includes(SECRET) && !r.out.includes(b64.slice(0, 16)), r.out);
   const lines = r.stdout.split("\n");
   check(
-    "--redact: stdout keeps its lines and order, with each Secret replaced by its marker",
+    "client-runtime.redact-stdout-keeps-lines-order-secret", "--redact: stdout keeps its lines and order, with each Secret replaced by its marker",
     lines[0] === "start" &&
       lines[1] === "direct:[REDACTED:RT_SECRET]" &&
       lines[2] === "split:[REDACTED:RT_SECRET]" &&
@@ -250,20 +247,20 @@ setTimeout(() => {
   );
   const errLines = r.stderr.split("\n");
   check(
-    "--redact: stderr is masked too, including a value split across writes",
+    "client-runtime.redact-stderr-masked-too-including-value", "--redact: stderr is masked too, including a value split across writes",
     errLines.includes("err-direct:[REDACTED:RT_SECRET]") && errLines.includes("err-split:[REDACTED:RT_SECRET]"),
     r.stderr,
   );
-  check("--redact: a non-sensitive value passes through", r.stdout.includes(`plain:${PLAIN}\n`));
+  check("client-runtime.redact-non-sensitive-value-passes-through", "--redact: a non-sensitive value passes through", r.stdout.includes(`plain:${PLAIN}\n`));
   check(
-    "--redact: a Secret shorter than 8 bytes is named, never shown, as passing through",
+    "client-runtime.redact-secret-shorter-than-8-bytes", "--redact: a Secret shorter than 8 bytes is named, never shown, as passing through",
     /--redact does not mask values shorter than 8 bytes; these pass through unchanged: RT_PIN/.test(r.stderr),
     r.stderr,
   );
 
   const plainRun = await admin.cli(["run", "-e", "development", "--", process.execPath, "-e", LOUD]);
   check(
-    "without --redact the same run relays the output unchanged",
+    "client-runtime.without-redact-same-run-relays-output", "without --redact the same run relays the output unchanged",
     plainRun.code === 7 && plainRun.stdout.includes(`direct:${SECRET}\n`) && !plainRun.out.includes("[REDACTED:"),
     `exit ${plainRun.code}`,
   );
@@ -305,10 +302,10 @@ const noValueIn = (text) => [SECRET, PARENT_COPY, INHERITED, PLAIN].every((v) =>
     RT_UNSTORED: INHERITED,
     VARLATCH_RUN_CONTEXT: '{"stale":true}',
   });
-  check("--export-context: a default run starts the child", r.code === 0 && r.received !== null, r.out);
-  check("--export-context: a delivered Secret replaces the parent's copy", r.received?.RT_SECRET === SECRET);
-  check("--export-context: an item that is not stored is inherited from the parent", r.received?.RT_UNSTORED === INHERITED);
-  check("--export-context: no default is applied and nothing is invented", r.received?.RT_ABSENT === null);
+  check("client-runtime.export-context-default-run-starts-child", "--export-context: a default run starts the child", r.code === 0 && r.received !== null, r.out);
+  check("client-runtime.export-context-delivered-secret-replaces", "--export-context: a delivered Secret replaces the parent's copy", r.received?.RT_SECRET === SECRET);
+  check("client-runtime.export-context-item-not-stored-inherited", "--export-context: an item that is not stored is inherited from the parent", r.received?.RT_UNSTORED === INHERITED);
+  check("client-runtime.export-context-no-default-applied-nothing", "--export-context: no default is applied and nothing is invented", r.received?.RT_ABSENT === null);
   const context = r.received?.context ? JSON.parse(r.received.context) : null;
   const expected = expectedContext({
     RT_SECRET: delivered,
@@ -321,16 +318,16 @@ const noValueIn = (text) => [SECRET, PARENT_COPY, INHERITED, PLAIN].every((v) =>
     RT_ABSENT: { server: "notStored", delivery: "absent" },
   });
   check(
-    "--export-context: the context names the active revision, its hash, semantics, the environment, and each item's status",
+    "client-runtime.export-context-context-names-active-revision", "--export-context: the context names the active revision, its hash, semantics, the environment, and each item's status",
     canonical(context) === canonical(expected),
     `${r.received?.context} expected ${canonical(expected)}`,
   );
-  check("--export-context: the context holds no value", r.received?.context !== null && noValueIn(r.received.context));
+  check("client-runtime.export-context-context-holds-no-value", "--export-context: the context holds no value", r.received?.context !== null && noValueIn(r.received.context));
 }
 {
   const r = await record(readerWs, ["--export-context"], { RT_SECRET: PARENT_COPY });
-  check("--export-context: an identity without secret.reveal still starts the child", r.code === 0 && r.received !== null, r.out);
-  check("--export-context: a withheld Secret is left to the parent's copy", r.received?.RT_SECRET === PARENT_COPY);
+  check("client-runtime.export-context-identity-without-secret-reveal", "--export-context: an identity without secret.reveal still starts the child", r.code === 0 && r.received !== null, r.out);
+  check("client-runtime.export-context-withheld-secret-left-parent", "--export-context: a withheld Secret is left to the parent's copy", r.received?.RT_SECRET === PARENT_COPY);
   const context = r.received?.context ? JSON.parse(r.received.context) : null;
   const expected = expectedContext({
     RT_SECRET: { server: "withheld", delivery: "inherited" },
@@ -343,24 +340,24 @@ const noValueIn = (text) => [SECRET, PARENT_COPY, INHERITED, PLAIN].every((v) =>
     RT_ABSENT: { server: "notStored", delivery: "absent" },
   });
   check(
-    "--export-context: withheld Secrets are recorded as withheld, inherited or absent",
+    "client-runtime.export-context-withheld-secrets-recorded", "--export-context: withheld Secrets are recorded as withheld, inherited or absent",
     canonical(context) === canonical(expected),
     `${r.received?.context} expected ${canonical(expected)}`,
   );
-  check("--export-context: the withheld run's context holds no value", r.received?.context !== null && noValueIn(r.received.context));
+  check("client-runtime.export-context-withheld-run-context-holds-no", "--export-context: the withheld run's context holds no value", r.received?.context !== null && noValueIn(r.received.context));
 }
 {
   const before = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
   const r = await record(noContractWs, ["--export-context"]);
   check(
-    "--export-context without contract.read starts nothing and says why",
+    "client-runtime.export-context-without-contract-read-starts", "--export-context without contract.read starts nothing and says why",
     r.code !== 0 && r.received === null && /contract\.read/.test(r.out),
     `exit ${r.code}: ${r.out}`,
   );
   const after = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
-  check("--export-context: a run that cannot export its context discloses no Secret", before.length === 0 && after.length === 0, `${after.length} disclosure(s)`);
+  check("client-runtime.export-context-run-cannot-export-context", "--export-context: a run that cannot export its context discloses no Secret", before.length === 0 && after.length === 0, `${after.length} disclosure(s)`);
   const plain = await record(noContractWs, []);
-  check("the same identity's default run, without the flag, gets no context", plain.code === 0 && plain.received?.context === null, plain.out);
+  check("client-runtime.same-identity-default-run-without-flag", "the same identity's default run, without the flag, gets no context", plain.code === 0 && plain.received?.context === null, plain.out);
 }
 
 // --- varlatch types, and the module it writes ----------------------------------------
@@ -448,53 +445,53 @@ async function startApp(ws) {
 
 {
   const wrote = await admin.cli(["types", "--out", OUT]);
-  check("types: the module is generated from the active revision", wrote.code === 0 && /^Wrote /.test(wrote.stdout), wrote.out);
+  check("client-runtime.types-module-generated-active-revision", "types: the module is generated from the active revision", wrote.code === 0 && /^Wrote /.test(wrote.stdout), wrote.out);
   const source = existsSync(outPath) ? readFileSync(outPath, "utf8") : "";
-  check("types: the header records the active revision and its content hash", source.includes(active.id) && source.includes(active.contentHash));
-  check("types: the module holds no value", source.length > 0 && noValueIn(source) && !source.includes("8080"));
+  check("client-runtime.types-header-records-active-revision-content", "types: the header records the active revision and its content hash", source.includes(active.id) && source.includes(active.contentHash));
+  check("client-runtime.types-module-holds-no-value", "types: the module holds no value", source.length > 0 && noValueIn(source) && !source.includes("8080"));
   const mtime = statSync(outPath).mtimeMs;
   const again = await admin.cli(["types", "--out", OUT]);
-  check("types: regenerating an unchanged revision leaves the file untouched", again.code === 0 && /left unchanged/.test(again.stdout) && statSync(outPath).mtimeMs === mtime, again.out);
+  check("client-runtime.types-regenerating-unchanged-revision-leaves", "types: regenerating an unchanged revision leaves the file untouched", again.code === 0 && /left unchanged/.test(again.stdout) && statSync(outPath).mtimeMs === mtime, again.out);
   const current = await admin.cli(["types", "--out", OUT, "--check"]);
-  check("types --check passes while the module matches the active revision", current.code === 0 && /is current with/.test(current.stdout), current.out);
+  check("client-runtime.types-check-passes-module-matches-active", "types --check passes while the module matches the active revision", current.code === 0 && /is current with/.test(current.stdout), current.out);
 
   const compiled = await compile();
-  check("types: the module and an application using it compile under strict settings", compiled.code === 0 && compiled.out === "", compiled.out);
+  check("client-runtime.types-module-application-using-compile-under", "types: the module and an application using it compile under strict settings", compiled.code === 0 && compiled.out === "", compiled.out);
   const r = await startApp(admin);
-  check("types: the application starts under --export-context", r.code === 0 && r.report?.ok === true, r.out);
+  check("client-runtime.types-application-starts-under-export-context", "types: the application starts under --export-context", r.code === 0 && r.report?.ok === true, r.out);
   check(
-    "types: the accessor returns typed values (number, boolean, enum)",
+    "client-runtime.types-accessor-returns-typed-values-number", "types: the accessor returns typed values (number, boolean, enum)",
     canonical(r.report?.values) === canonical({ PORT: 8080, DEBUG: true, LEVEL: "warn" }) &&
       canonical(r.report?.types) === canonical({ PORT: "number", DEBUG: "boolean", LEVEL: "string", RT_SECRET: "string" }),
     JSON.stringify(r.report),
   );
   check(
-    "types: the accessor reads the exported context of the same revision, without warnings",
+    "client-runtime.types-accessor-reads-exported-context-same", "types: the accessor reads the exported context of the same revision, without warnings",
     r.report?.context === "exported" && r.report?.warnings?.length === 0 && r.report?.generatedFrom?.revisionId === active.id,
     JSON.stringify(r.report),
   );
-  check("types: the application's output holds no Secret", !r.out.includes(SECRET));
+  check("client-runtime.types-application-output-holds-no-secret", "types: the application's output holds no Secret", !r.out.includes(SECRET));
 }
 
 // A changed Contract: --check fails, and the old module reports stale types at runtime.
 active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Added after the module was generated" })]);
 {
   const stale = await admin.cli(["types", "--out", OUT, "--check"]);
-  check("types --check fails once a changed Contract is active", stale.code === 1 && /is stale/.test(stale.stderr), `exit ${stale.code}: ${stale.out}`);
+  check("client-runtime.types-check-fails-once-changed-contract", "types --check fails once a changed Contract is active", stale.code === 1 && /is stale/.test(stale.stderr), `exit ${stale.code}: ${stale.out}`);
   const r = await startApp(admin);
   check(
-    "types: the old module warns that its types are stale for this run",
+    "client-runtime.types-old-module-warns-types-stale", "types: the old module warns that its types are stale for this run",
     r.code === 0 && r.report?.ok === true && r.report?.warnings?.length === 1 && /types are stale/.test(r.report.warnings[0]),
     r.out,
   );
   const wrote = await admin.cli(["types", "--out", OUT]);
   const current = await admin.cli(["types", "--out", OUT, "--check"]);
-  check("types: regenerating makes --check pass again", wrote.code === 0 && current.code === 0, wrote.out + current.out);
+  check("client-runtime.types-regenerating-makes-check-pass-again", "types: regenerating makes --check pass again", wrote.code === 0 && current.code === 0, wrote.out + current.out);
   const compiled = await compile();
-  check("types: the regenerated module compiles", compiled.code === 0 && compiled.out === "", compiled.out);
+  check("client-runtime.types-regenerated-module-compiles", "types: the regenerated module compiles", compiled.code === 0 && compiled.out === "", compiled.out);
   const fresh = await startApp(admin);
   check(
-    "types: the regenerated module reads the run without warnings",
+    "client-runtime.types-regenerated-module-reads-run-without", "types: the regenerated module reads the run without warnings",
     fresh.code === 0 &&
       fresh.report?.ok === true &&
       fresh.report?.context === "exported" &&
@@ -509,7 +506,7 @@ active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Adde
   const r = await startApp(readerWs);
   const issues = r.report?.issues ?? [];
   check(
-    "types: a required Secret withheld by the server is one ConfigError issue",
+    "client-runtime.types-required-secret-withheld-server-one", "types: a required Secret withheld by the server is one ConfigError issue",
     r.code === 3 && r.report?.ok === false && issues.length === 1 && issues[0]?.name === "RT_SECRET" && /withheld/.test(issues[0]?.reason ?? ""),
     r.out,
   );
@@ -523,12 +520,12 @@ await setValue("LEVEL", BAD.LEVEL);
   const r = await startApp(admin);
   const names = (r.report?.issues ?? []).map((i) => i.name).sort();
   check(
-    "types: invalid values throw one ConfigError listing every item",
+    "client-runtime.types-invalid-values-throw-one-configerror", "types: invalid values throw one ConfigError listing every item",
     r.code === 3 && r.report?.ok === false && r.report?.name === "ConfigError" && canonical(names) === canonical(["DEBUG", "LEVEL", "PORT"]),
     r.out,
   );
   check(
-    "types: the error names items and reasons, never a value",
+    "client-runtime.types-error-names-items-reasons-never", "types: the error names items and reasons, never a value",
     /configuration is invalid \(3 problems\)/.test(r.report?.message ?? "") &&
       Object.values(BAD).every((v) => !r.out.includes(v)) &&
       !r.out.includes(SECRET),
@@ -547,8 +544,8 @@ const scanEvents = async () =>
 {
   const repo = await workspace(adminToken, { gitRepo: true });
   const nothing = await repo.cli(["scan", "--staged", "-e", "development"]);
-  check("scan: with nothing staged, the scan reads nothing and exits 0", nothing.code === 0 && /nothing is staged/.test(nothing.stdout), nothing.out);
-  check("scan: with nothing to read, nothing is disclosed", (await scanEvents()).length === 0);
+  check("client-runtime.scan-nothing-staged-scan-reads-nothing", "scan: with nothing staged, the scan reads nothing and exits 0", nothing.code === 0 && /nothing is staged/.test(nothing.stdout), nothing.out);
+  check("client-runtime.scan-nothing-read-nothing-disclosed", "scan: with nothing to read, nothing is disclosed", (await scanEvents()).length === 0);
 
   // Staged content holds the Secret as written (line 2) and inside a base64
   // Basic credential (line 3); the working copy is then cleaned, which the
@@ -560,16 +557,16 @@ const scanEvents = async () =>
   writeFileSync(join(repo.dir, "config", "leak.txt"), "# settings\n");
 
   const staged = await repo.cli(["scan", "--staged", "-e", "development"]);
-  check("scan --staged: a staged Secret is a finding and the scan exits non-zero", staged.code === 1, `exit ${staged.code}: ${staged.out}`);
+  check("client-runtime.scan-staged-staged-secret-finding-scan", "scan --staged: a staged Secret is a finding and the scan exits non-zero", staged.code === 1, `exit ${staged.code}: ${staged.out}`);
   const lines = staged.stdout.split("\n");
   check(
-    "scan --staged: each finding names the path, line, column, item, and stored version",
+    "client-runtime.scan-staged-finding-names-path-line", "scan --staged: each finding names the path, line, column, item, and stored version",
     lines.includes(`config/leak.txt:2:14: RT_SECRET (version ${secretVersion}), as written`) &&
       lines.some((l) => new RegExp(`^config/leak\\.txt:3:\\d+: RT_SECRET \\(version ${secretVersion}\\), base64$`).test(l)),
     staged.stdout,
   );
-  check("scan --staged: the output never shows the value", !staged.out.includes(SECRET) && !staged.out.includes(basic), staged.out);
-  check("scan --staged: a Secret shorter than 8 bytes is named as not checked", /values shorter than 8 bytes are not checked: RT_PIN/.test(staged.stderr), staged.stderr);
+  check("client-runtime.scan-staged-output-never-shows-value", "scan --staged: the output never shows the value", !staged.out.includes(SECRET) && !staged.out.includes(basic), staged.out);
+  check("client-runtime.scan-staged-secret-shorter-than-8", "scan --staged: a Secret shorter than 8 bytes is named as not checked", /values shorter than 8 bytes are not checked: RT_PIN/.test(staged.stderr), staged.stderr);
 
   const json = await repo.cli(["scan", "--staged", "--json", "-e", "development"]);
   let report = null;
@@ -579,7 +576,7 @@ const scanEvents = async () =>
     // Reported below.
   }
   check(
-    "scan --staged --json: the report matches the server's stored version",
+    "client-runtime.scan-staged-json-report-matches-server", "scan --staged --json: the report matches the server's stored version",
     json.code === 1 &&
       report?.exitCode === 1 &&
       report?.mode === "staged" &&
@@ -590,16 +587,16 @@ const scanEvents = async () =>
         ]),
     json.out,
   );
-  check("scan --staged --json: the report never shows the value", !json.out.includes(SECRET) && !json.out.includes(basic));
+  check("client-runtime.scan-staged-json-report-never-shows", "scan --staged --json: the report never shows the value", !json.out.includes(SECRET) && !json.out.includes(basic));
 
   mkdirSync(join(repo.dir, "clean"));
   writeFileSync(join(repo.dir, "clean", "notes.txt"), `nothing to see here\n${PLAIN}\n`);
   const clean = await repo.cli(["scan", "clean", "-e", "development"]);
-  check("scan <path>: a clean path exits 0 with no findings", clean.code === 0 && /1 file\(s\) checked .*: no findings\./.test(clean.stdout), clean.out);
+  check("client-runtime.scan-path-clean-path-exits-0", "scan <path>: a clean path exits 0 with no findings", clean.code === 0 && /1 file\(s\) checked .*: no findings\./.test(clean.stdout), clean.out);
 
   const events = await scanEvents();
   check(
-    "scan: each scan that read files is one audited disclosure with purpose \"scan\"",
+    "client-runtime.scan-scan-read-files-one-audited", "scan: each scan that read files is one audited disclosure with purpose \"scan\"",
     events.length === 3 && events.every((e) => e.decision === "allow" && String(e.metadata?.items).includes(`RT_SECRET@${secretVersion}`)),
     JSON.stringify(events.map((e) => e.metadata)),
   );
@@ -609,17 +606,13 @@ const scanEvents = async () =>
 {
   const { ndjson, events } = await auditEvents();
   const runDisclosures = events.filter((e) => e.eventType === "secret.disclosed" && e.resource?.projectId === projectId && e.metadata?.purpose === undefined);
-  check("run disclosures are audited without a purpose", runDisclosures.length > 0);
-  check("the audit export holds no value", noValueIn(ndjson) && Object.values(BAD).every((v) => !ndjson.includes(v)));
-  if (compose.length >= 2) {
-    const logs = spawnSync(compose[0], [...compose.slice(1), "logs", "varlatchd"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
-    check("varlatchd logs hold no value", logs.status === 0 && noValueIn(logs.stdout + logs.stderr), `docker compose logs exited ${logs.status}`);
-  }
+  check("client-runtime.run-disclosures-audited-without-purpose", "run disclosures are audited without a purpose", runDisclosures.length > 0);
+  check("client-runtime.audit-export-holds-no-value", "the audit export holds no value", noValueIn(ndjson) && Object.values(BAD).every((v) => !ndjson.includes(v)));
+  // The target's `logs` operation: the server's own logs, whatever runs it.
+  const logs = tryTargetOp("logs");
+  check("client-runtime.varlatchd-logs-hold-no-value", "varlatchd logs hold no value", logs.status === 0 && noValueIn(logs.stdout + logs.stderr), `the logs operation exited ${logs.status}`);
 }
 
 for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
-if (failures > 0) {
-  console.error(`${failures} client runtime check(s) failed`);
-  process.exit(1);
-}
-console.log("client runtime E2E: all checks passed");
+if (kit.failures === 0) console.log("client runtime E2E: all checks passed");
+kit.finish("client runtime check(s)");

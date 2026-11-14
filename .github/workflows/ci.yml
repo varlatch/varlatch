@@ -112,6 +112,11 @@ jobs:
       - name: Every file and package matches the license map
         run: pnpm license:check
 
+      # The conformance runner's own logic, and that its inventory, plan and
+      # suites agree (scripts/conformance/README.md). No stack needed.
+      - name: Conformance runner unit tests
+        run: pnpm test:conformance
+
       # The release notes are the changelog section of the version being
       # released; a release without one fails at tag time, so fail here.
       - name: The changelog has a section for the current version
