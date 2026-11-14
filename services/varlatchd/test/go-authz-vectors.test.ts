@@ -19,6 +19,12 @@
  * - destination: authz/destination.ts, and Node's domainToASCII and isIP
  *   under it.
  *
+ * - nodeidna: go/server/whatwg's table of what Node's URL host parser
+ *   knows about each code point, and Node's answers for every code point
+ *   (go/server/whatwg/testdata/nodeidna.mjs), which destination.ts reaches
+ *   through domainToASCII. Regenerate those two files with
+ *   `node go/server/whatwg/testdata/nodeidna.mjs` after a Node.js update.
+ *
  * The file is checked here: it must equal what this code produces now.
  * After a change to the evaluator, loadGrants, decide, the freeze checks or
  * this fixture, regenerate it and commit the result:
@@ -72,6 +78,10 @@ const RESOURCES: Record<string, ResourceContext> = {
   prdChild: { organizationId: "org_1", projectId: "prj_1", environment: env("env_prv", "production", "env_prd") },
   otherPrd: { organizationId: "org_1", projectId: "prj_2", environment: env("env_x", "production") },
   noTier: { organizationId: "org_1", projectId: "prj_1", environment: { id: "env_odd", rootId: "env_odd", tier: "" as never } },
+  // A tier the code does not know (the database's CHECK refuses one; the
+  // evaluator does not): the member bundle gives nothing there, a tier
+  // selector or Requirement naming it matches.
+  unknownTier: { organizationId: "org_1", projectId: "prj_1", environment: { id: "env_qa", rootId: "env_qa", tier: "qa" as never } },
 };
 
 const g = (id: string, scope: GrantRecord["scope"], actions: (string | null)[], extra: Partial<GrantRecord> = {}): GrantRecord =>
@@ -86,12 +96,16 @@ const GRANTS: GrantRecord[] = [
   g("grt_null", { kind: "project", projectId: "prj_1" }, [null, "audit.read"], { roleId: "rol_2" }),
   g("grt_other", { kind: "environments", projectId: "prj_2", selector: { kind: "tier", tier: "production" } }, ["secret.reveal"], { viaGroupId: "grp_2" }),
   g("grt_weird", { kind: "weird" } as never, ["project.read"]),
+  // A second and third Role contributing to the same actions as grt_ids.
+  g("grt_role3", { kind: "project", projectId: "prj_1" }, ["secret.reveal", "config.value.read"], { viaGroupId: "grp_3", roleId: "rol_3", roleVersion: 1 }),
+  g("grt_role4", { kind: "environments", projectId: "prj_1", selector: { kind: "tier", tier: "qa" as never } }, ["secret.reveal", "environment.manage"], { roleId: "rol_4", roleVersion: 9 }),
 ];
 
 const REQUIREMENTS: TailnetRequirementRecord[] = [
   { id: "req_prd", version: 2, target: { kind: "tier", tier: "production" }, selector: { tailnet: "corp.ts.net", tags: ["tag:prod", "tag:ci"], users: ["alice@corp"], nodes: ["n1"] } },
   { id: "req_stg", target: { kind: "environments", environmentIds: ["env_stg"] }, selector: { tailnet: "corp.ts.net", tags: ["", "tag:stg"] } },
   { id: "req_root", version: 1, target: { kind: "environments", environmentIds: ["env_prd"] }, selector: { tailnet: "corp.ts.net", users: ["bob@corp", ""] } },
+  { id: "req_qa", version: 3, target: { kind: "tier", tier: "qa" as never }, selector: { tailnet: "corp.ts.net", nodes: ["n9"] } },
 ];
 
 const CONTEXTS: Record<string, TailnetContext | null> = {
@@ -195,6 +209,7 @@ function world(): [string, Row][] {
   // No NULL array elements here: PGlite reads one back as the string "NULL"
   // (node-postgres reads null). The evaluate vectors cover them.
   add("roles", { id: "rol_audit", organization_id: ORG["1"], name: "audit", actions: ["audit.read"], version: 7 });
+  add("roles", { id: "rol_ops", organization_id: ORG["1"], name: "ops", actions: ["secret.reveal", "environment.manage"], version: 2 });
   add("groups", { id: "grp_ops", organization_id: ORG["1"], name: "ops", kind: "group" });
   add("groups", { id: "grp_old", organization_id: ORG["1"], name: "old", kind: "group", revoked_at: ts("2026-10-04T00:00:00Z") });
   add("groups", { id: "tem_web", organization_id: ORG["1"], name: "web", kind: "team" });
@@ -245,6 +260,8 @@ function world(): [string, Row][] {
   grant("grt_x_weird", O, { identity: "idn_grants" }, { kind: "weird" }, { actions: ["project.read"] });
   grant("grt_y_audit_role", O, { identity: "idn_grants" }, { kind: "project", projectId: web }, { role: "rol_audit" });
   grant("grt_z_gone_team", O, { identity: "idn_team" }, { kind: "team", teamId: "tem_gone" }, { actions: ["contract.activate"] });
+  // A second Role contributing to secret.reveal in production, with grt_e_role.
+  grant("grt_zb_second_role", O, { identity: "idn_grants" }, { kind: "environments", projectId: web, selector: { kind: "tier", tier: "production" } }, { role: "rol_ops" });
   grant("grt_za_group_dup_role", O, { group: "tem_web" }, { kind: "environments", projectId: web, selector: { kind: "environments", environmentIds: ["env_prd", "env_stg"] } }, { role: "rol_reader" });
   const requirement = (id: string, org: string, target: Record<string, unknown>, config: Record<string, unknown>, version: number, revoked?: string) =>
     add("requirements", { id, organization_id: org, kind: "tailnet", target, config, version, ...(revoked ? { revoked_at: ts(revoked) } : {}) });
@@ -442,6 +459,23 @@ const HOSTS = [
   "-b\u00fccher.de", "a_\u00fc.de", "\u00fc.xn--zz", "\u0663.\u0661", "a\u0663b.de", "\u00fc\uff0ede", "\u00df.de", "\u03c2.gr", "\u200c\u00fc.de", "\u00fc\u00ad.de",
   "[::1]/x", "[::1]:80", "a:", ":x", "host\\path", "[0:0::1]", "[::ffff:1.2.3.4]", "[1:2:3:4:5:6:7:8:9]", "0", "0x", "1.2.3.4.5",
   "1.2.3.4.", "4294967295", "4294967296", "0377.0.0.1", "09.1.1.1", "a.1", "1.a", "exam%70le.com", "%C3%BC.de", "%FF.de",
+  // IDNA as Node handles it: bidi, joiners, marks, mapping, ACE labels.
+  "a\u0870.example", "\u0870.example", "\u0870a.example", "\u0627b.example", "\u05d0\u05d1.example",
+  "\u05d0\u05d11.example", "1\u05d0.example", "abc.\u05d0\u05d1", "\u05d0.abc", "\u05d0a.example",
+  "a\u05f3.example", "\u0627\u0661\u06f1.example", "\u0627\u0661.example", "\u06271.example",
+  "\u0661\u0627.example", "\u05d0\u0300.example", "\u05d01\u0300.example", "\u00a1.\u05d0", "a\u00b7.\u05d0",
+  "\u05d0\u0020\u05d1.example", "\u08b5a.example", "\u05d0\u08b5.example", "a\u200db.example",
+  "a\u200cb.example", "\u0915\u094d\u200c\u0937.example", "\u0915\u094d\u200d\u0937.example", "\u200c.example",
+  "\u0628\u200c\u0627.example", "\u0627\u200c\u0628.example", "\u0628\u200c.example",
+  "\u0915\u094d\u200c\u05d0.example", "\u0628\u200c\u200d\u0627.example", "\ua872\u200c\u0627.example",
+  "\u0301a.example", "\u0c3c.example", "\u1ac1.example", "\u1dfa.example", "a\u0c3c.example",
+  "\uff41\uff42.example", "\u1e9e.de", "\u2488.com", "a\u3002b\u00fc.de", "a\uff0e\u00fc.de", "\u00fc\u00ad.de",
+  "\u00fc\u034f.de", "e\u0301.example", "\u{1f600}.example", "\u2615.example", "\ue000.example",
+  "\u0378.example", "\ufdd0.example", "\u{e0001}.example", "x\u0130.tr", "\u03a3\u0391\u03a3.gr", "a\u03c2.gr",
+  "\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc.de",
+  "xn--tda.\u00fc", "xn--abc.\u00fc", "xn--a-ecp.\u00fc", "Xn--TDA.\u00fc", "xn--.\u00fc", "xn--tda\u00fc",
+  "xn--ls8h.\u00fc", "xn--zz.\u00fc", "xn--55.\u00fc", "\u00fc.xn--a-fld", "\u00fc.xn--4db", "\u00fc.xn--cxb",
+  "\u00fc.\u05d0\u0627", "\u00fc_x.de", "\u00fc!.de", "\u00fc%41.de", "%C3%BC.\u05d0", "\u00fc..de",
 ];
 const SELECTORS = [
   "example.com", "example.com:8443", "*.example.com", "*.example.com:444", "*.1.2.3.4", "1.2.3.4", "1.2.3.4:80",
@@ -449,10 +483,14 @@ const SELECTORS = [
   "*.*.example.com", "*.", "*", "example.com:0", "example.com:65535", "example.com:65536", "example.com:", "example.com:abc",
   "example.com:123456", "B\u00fccher.DE:443", " example.com ", "", "  ", "user@example.com", "example.com/x", "*.xn--bcher-kva.de",
   "example.com.:443", "a..b", "0x7f.1", "[fe80::1%eth0]", "[::ffff:1.2.3.4]:1",
+  "a\u0870.example", "*.a\u0870.example:8443", "\u05d0\u05d1.example", "\u0627b.example",
+  "*.\u0628\u200c\u0627.example", "xn--a-fld.example",
 ];
 const DESTINATIONS = [
   "example.com", "EXAMPLE.com.", "api.example.com", "a.b.example.com", "badexample.com", "1.2.3.4", "::1", "fe80::a",
   "b\u00fccher.de", "www.xn--bcher-kva.de", "www.b\u00fccher.de", "a..b", "", "user@x", "0x7f.1", "127.0.0.1", "::ffff:1.2.3.4",
+  "a\u0870.example", "xn--a-fld.example", "www.a\u0870.example", "www.xn--a-fld.example", "\u05d0\u05d1.example",
+  "x.\u05d0\u05d1.example", "\u0628\u200c\u0627.example",
 ];
 
 function destinationVectors() {
@@ -519,4 +557,16 @@ it("the Go authorization vectors are current", { timeout: 300_000 }, async () =>
   }
   const committed = readFileSync(OUT, "utf8");
   expect(committed === text, "go/server/authz/testdata/ts-vectors.json is stale: regenerate it (see the header of this file)").toBe(true);
+});
+
+it("go/server/whatwg's table of Node's host parser is current", { timeout: 300_000 }, async () => {
+  // @ts-expect-error: a plain ES module without types
+  const idna = (await import("../../../go/server/whatwg/testdata/nodeidna.mjs")) as {
+    build: () => { go: string; json: string };
+    TABLE: string;
+    VECTORS: string;
+  };
+  const { go, json } = idna.build();
+  const stale = [[idna.TABLE, go], [idna.VECTORS, json]].filter(([file, want]) => readFileSync(file!, "utf8") !== want);
+  expect(stale.map(([file]) => file), "regenerate them: node go/server/whatwg/testdata/nodeidna.mjs").toEqual([]);
 });

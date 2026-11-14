@@ -16,21 +16,6 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"golang.org/x/net/idna"
-)
-
-// uts46 is domain to ASCII as the URL Standard calls it with beStrict
-// false: UseSTD3ASCIIRules false, CheckHyphens false, CheckBidi and
-// CheckJoiners true, nontransitional, VerifyDnsLength false.
-var uts46 = idna.New(
-	idna.MapForLookup(),
-	idna.BidiRule(),
-	idna.Transitional(false),
-	idna.CheckHyphens(false),
-	idna.CheckJoiners(true),
-	idna.StrictDomainName(false),
-	idna.VerifyDNSLength(false),
 )
 
 // DomainToASCII is Node's url.domainToASCII, which sets the hostname of a
@@ -83,17 +68,6 @@ func isASCII(s string) bool {
 		}
 	}
 	return true
-}
-
-// domainToASCII is the URL Standard's domain to ASCII as Node.js (ada)
-// carries it out: an all-ASCII domain is only lowercased (its xn-- labels
-// are not decoded or validated); any other goes through UTS #46.
-func domainToASCII(domain string) (string, bool) {
-	if isASCII(domain) {
-		return strings.ToLower(domain), domain != ""
-	}
-	ascii, err := uts46.ToASCII(domain)
-	return ascii, err == nil && ascii != ""
 }
 
 func isForbiddenHost(r rune) bool {

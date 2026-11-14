@@ -229,6 +229,20 @@ func params(e Event, acting Attribution, hasActing bool) query.RecordAuditEventP
 
 func insert(ctx context.Context, q *query.Queries, e Event, acting Attribution, attributed bool) (Recorded, error) {
 	p := params(e, acting, attributed)
+	// The TypeScript server's columns are jsonb, which refuses what JSON
+	// text can hold and jsonb cannot: such an event fails to record there.
+	for _, col := range []sql.NullString{p.Resource, p.Authz, p.Tailnet, p.Metadata} {
+		if !col.Valid {
+			continue
+		}
+		v, err := jsvalue.Parse([]byte(col.String))
+		if err != nil {
+			return Recorded{}, fmt.Errorf("audit: recording %s: %w", e.Type, err)
+		}
+		if err := jsvalue.JsonbRefuses(v); err != nil {
+			return Recorded{}, fmt.Errorf("audit: recording %s: %w", e.Type, err)
+		}
+	}
 	if p.ID == "" {
 		p.ID = ids.New(ids.AuditEvent)
 	}

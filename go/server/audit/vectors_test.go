@@ -70,6 +70,14 @@ type vectorFile struct {
 		URL      string `json:"url"`
 		Redacted string `json:"redacted"`
 	} `json:"redact"`
+	RoundTrip []struct {
+		Text        string `json:"text"`
+		Stringified string `json:"stringified"`
+	} `json:"roundTrip"`
+	Refused []struct {
+		Event   map[string]json.RawMessage `json:"event"`
+		Refused bool                       `json:"refused"`
+	} `json:"refused"`
 }
 
 const org = "org_acme"
@@ -337,6 +345,19 @@ func TestRecordAndSerializeVectors(t *testing.T) {
 			checks = append(checks, check{fmt.Sprintf("%s #%d", rec.Name, i), rec.Rows[i]})
 		}
 	}
+	// Events jsonb refuses fail to record, as recordAuditEvents throws;
+	// the one it takes is recorded (the TypeScript test removes it after,
+	// keeping its position used).
+	if len(v.Refused) < 4 {
+		t.Fatalf("only %d refusal vectors", len(v.Refused))
+	}
+	for _, r := range v.Refused {
+		e := event(t, r.Event)
+		err := s.Write(bg, func(tx *storage.Tx) error { _, err := audit.Record(bg, tx, e); return err })
+		if (err != nil) != r.Refused {
+			t.Errorf("recording %s: %v, TypeScript refused: %v", e.ID, err, r.Refused)
+		}
+	}
 	for _, r := range v.RawRows {
 		cols := make([]string, 0, len(r.Input))
 		args := []any{}
@@ -440,6 +461,23 @@ func TestRedactVectors(t *testing.T) {
 	for _, r := range v.Redact {
 		if got := audit.RedactWebhookURL(r.URL); got != r.Redacted {
 			t.Errorf("redactWebhookUrl(%q) = %q, TypeScript %q", r.URL, got, r.Redacted)
+		}
+	}
+}
+
+// JSON.stringify(JSON.parse(text)): lone surrogates kept, as \uXXXX.
+func TestJSONRoundTripVectors(t *testing.T) {
+	v := load(t)
+	if len(v.RoundTrip) < 10 {
+		t.Fatalf("only %d round-trip vectors", len(v.RoundTrip))
+	}
+	for _, r := range v.RoundTrip {
+		p, err := jsvalue.Parse([]byte(r.Text))
+		if err != nil {
+			t.Fatalf("%s: %v", r.Text, err)
+		}
+		if got := string(jsvalue.Stringify(p)); got != r.Stringified {
+			t.Errorf("JSON.stringify(JSON.parse(%s)) = %s, TypeScript %s", r.Text, got, r.Stringified)
 		}
 	}
 }

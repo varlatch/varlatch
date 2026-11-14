@@ -176,6 +176,12 @@ function recordings(): Recording[] {
   return out;
 }
 
+// Lone UTF-16 surrogates, built from code units so this file stays ASCII.
+const u = (...units: number[]) => String.fromCharCode(...units);
+const HIGH = u(0xd800), LOW = u(0xdc00), PAIR = u(0xd83d, 0xde00);
+/** JSON text of a JSON string holding `v`'s JSON: jsonb keeps it a string, parseMaybe parses it again. */
+const twice = (v: unknown) => JSON.stringify(JSON.stringify(v));
+
 // Rows written as stored text, then read back through jsonb.
 const RAW_ROWS: Record<string, string | number | null>[] = [
   {
@@ -199,6 +205,31 @@ const RAW_ROWS: Record<string, string | number | null>[] = [
   { id: "evt_raw5b", schema_version: 1, event_type: "webhook.revoked", occurred_at: "1999-12-31T23:59:59.999Z", decision: "allow", metadata: '"{\\"url\\":\\"https://x.example.com/p\\",\\"b\\":1,\\"a\\":2,\\"1\\":0}"', resource: '"[1,\\"two\\"]"', authz: '"42"' },
   { id: "evt_raw6", schema_version: 1, event_type: "webhook.updated", occurred_at: "2026-06-30T12:00:00.0005Z", decision: "allow", metadata: '{"url":"https://hooks.example.com/","4294967294":"index","4294967295":"not an index","01":"not an index","1":"index"}' },
   { id: "evt_raw7", schema_version: 1, event_type: "audit_export.created", occurred_at: "2026-06-30T12:00:00.123+02:00", decision: "info", resource: "null", metadata: "[]" },
+  // Lone surrogates: jsonb refuses them as input, but a jsonb string whose
+  // text is JSON reaches JSON.parse a second time (parseMaybe), which keeps
+  // them, and JSON.stringify writes them as \uXXXX escapes.
+  {
+    id: "evt_raw8", schema_version: 1, event_type: "identity.renamed", occurred_at: "2026-06-30T12:00:01Z", decision: "info",
+    metadata: twice({ high: HIGH, low: LOW, [`k${LOW}`]: `x${HIGH}y`, pair: PAIR, swapped: LOW + HIGH, twoHigh: HIGH + HIGH, end: `a${u(0xdbff)}` }),
+    resource: twice(u(0xdfff)),
+    authz: twice([HIGH, { [HIGH]: [LOW, PAIR] }]),
+  },
+  {
+    id: "evt_raw9", schema_version: 1, event_type: "webhook.updated", occurred_at: "2026-06-30T12:00:02Z", decision: "allow",
+    metadata: twice({ url: `https://x${HIGH}.example/`, oldUrl: `https://example.com/${LOW}?q`, newUrl: `https://example.com/#${HIGH}`, note: LOW }),
+  },
+];
+
+// JSON.stringify(JSON.parse(text)) for texts with lone surrogates (\u escapes
+// in the text, which is ASCII).
+const BS = u(92);
+const esc = (hex: string) => `${BS}u${hex}`;
+const ROUND_TRIP = [
+  `"${esc("d800")}"`, `"${esc("dc00")}"`, `"${esc("DBFF")}"`, `"${esc("dbff")}${esc("dfff")}"`, `"${esc("dc00")}${esc("d800")}"`,
+  `"${esc("d800")}${esc("d800")}"`, `"a${esc("d800")}b"`, `"${esc("d83d")}${esc("de00")}"`, `"${esc("d83d")}x${esc("de00")}"`,
+  `"${esc("d800")}${esc("0041")}"`, `"${esc("d800")}${BS}n"`, `{"${esc("d800")}":1,"k":"${esc("dfff")}"}`,
+  `["${esc("d800")}",{"${esc("dc00")}":"${esc("d83d")}${esc("de00")}"}]`, `"${esc("d800")}${esc("dc00")}${esc("dc00")}"`,
+  `"${esc("ffff")}${esc("fffe")}${esc("e000")}"`, `"${esc("d7ff")}${esc("e000")}"`,
 ];
 
 const REDACT = [
@@ -277,6 +308,23 @@ async function build() {
         await db.query("UPDATE audit_events SET occurred_at = $2 WHERE id = $1", [eventId, iso]);
       }
     }
+    // Events jsonb refuses: recordAuditEvents throws, and nothing is stored.
+    const refused: { event: AuditEventInput; refused: boolean }[] = [];
+    for (const event of [
+      { id: "evt_bad1", eventType: "value.written", decision: "info", metadata: { s: HIGH } },
+      { id: "evt_bad2", eventType: "value.written", decision: "info", resource: { [LOW]: "x" } },
+      { id: "evt_bad3", eventType: "value.written", decision: "info", authz: { a: [u(0)] } },
+      { id: "evt_bad4", eventType: "value.written", decision: "info", metadata: { s: PAIR, t: `${u(0xd7ff)}${u(0xe000)}` } },
+    ] as AuditEventInput[]) {
+      let failed = false;
+      try {
+        await recordAuditEvents(db, [event]);
+      } catch {
+        failed = true;
+      }
+      refused.push({ event, refused: failed });
+      if (!failed) await db.query("DELETE FROM audit_events WHERE id = $1", [event.id]);
+    }
     for (const row of RAW_ROWS) {
       const cols = Object.keys(row);
       await db.query(`INSERT INTO audit_events (${cols.join(", ")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")})`, cols.map((c) => row[c]));
@@ -321,6 +369,8 @@ async function build() {
       parseItems: ITEMS.map((items) => ({ items, parsed: parseItems(items) })),
       exposureFromEvent: INDEXABLE.map((event) => ({ event, entry: exposureFromEvent(event as never) })),
       redact: REDACT.map((url) => ({ url, redacted: redactWebhookUrl(url) })),
+      roundTrip: ROUND_TRIP.map((text) => ({ text, stringified: JSON.stringify(JSON.parse(text)) })),
+      refused,
     };
   } finally {
     await db.close();

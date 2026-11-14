@@ -29,6 +29,11 @@
  * The only processes it signals are the ones it started, by the PID it
  * recorded, after checking that PID still runs this installation's
  * configuration.
+ *
+ * varlatchd runs under go-binary-supervisor.mjs, which holds a pipe from
+ * this process: if the runner ends without `down` (a test worker killed, a
+ * crash), the pipe closes and the supervisor stops varlatchd and removes
+ * the installation directory.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -36,14 +41,20 @@ import { createHash, randomBytes } from "node:crypto";
 import { accessSync, appendFileSync, chmodSync, closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
 
 export const name = "go-binary";
 export const capabilities = [];
 
 const READY_TIMEOUT_MS = 30_000;
+/** One /readyz request's deadline: a server that accepts and never answers must not hold up the loop. */
+const READY_PROBE_TIMEOUT_MS = 2_000;
 const STOP_TIMEOUT_MS = 25_000;
+const SUPERVISOR = join(dirname(fileURLToPath(import.meta.url)), "go-binary-supervisor.mjs");
+/** The supervisor of each running installation, by directory. */
+const supervisors = new Map();
 /** varlatchd's exit status for an admin command that is not built yet (EX_UNAVAILABLE). */
 const EXIT_NOT_BUILT = 69;
 /** varlatchd's exit status for a configuration error (EX_CONFIG). */
@@ -159,14 +170,20 @@ async function start(state) {
   const log = openSync(state.serverLog, "a");
   let child;
   try {
-    child = spawn(state.binary, ["serve", "--config", state.conf], { detached: true, stdio: ["ignore", log, log] });
+    child = spawn(process.execPath, [SUPERVISOR, state.dir, state.pidFile, state.serverLog, state.binary, "serve", "--config", state.conf], {
+      stdio: ["pipe", log, log],
+    });
   } finally {
     closeSync(log);
   }
   let exited = null;
   child.on("exit", (code, signal) => (exited = { code, signal }));
+  // Neither the supervisor nor its pipe keeps the runner alive; when the
+  // runner ends, the pipe closes and the supervisor cleans up.
   child.unref();
-  writeFileSync(state.pidFile, `${child.pid}\n`);
+  child.stdin.unref?.();
+  child.stdin.on("error", () => {});
+  supervisors.set(state.dir, child);
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (exited) {
@@ -174,15 +191,42 @@ async function start(state) {
       err.exitCode = exited.code;
       throw err;
     }
-    const ok = await fetch(`${state.origin}/readyz`).then((r) => r.status === 200, () => false);
+    const ok = await fetch(`${state.origin}/readyz`, { signal: AbortSignal.timeout(READY_PROBE_TIMEOUT_MS) }).then(
+      (r) => r.status === 200,
+      () => false,
+    );
     if (ok) return;
     await sleep(200);
   }
   throw new Error(`varlatchd was not ready within ${READY_TIMEOUT_MS / 1000} s:\n${tail(state)}`);
 }
 
+const ended = (child) => child.exitCode !== null || child.signalCode !== null;
+
 async function stop(state) {
+  const sup = state?.dir ? supervisors.get(state.dir) : undefined;
+  supervisors.delete(state?.dir);
   const pid = ownPid(state);
+  if (sup && !ended(sup)) {
+    // The supervisor stops varlatchd and keeps the directory.
+    let timer;
+    const done = new Promise((r) => {
+      sup.once("exit", r);
+      timer = setTimeout(r, STOP_TIMEOUT_MS + 5_000);
+    });
+    sup.stdin.write("stop\n");
+    await done;
+    clearTimeout(timer);
+    if (!ended(sup)) {
+      if (pid && alive(pid)) process.kill(pid, "SIGKILL");
+      sup.kill("SIGKILL");
+    }
+    sup.stdin.destroy();
+    while (pid && alive(pid)) await sleep(50);
+    return;
+  }
+  // No supervisor here (another process started it, or it ended): the
+  // recorded PID, if it still runs this installation.
   if (!pid) return;
   process.kill(pid, "SIGTERM");
   const deadline = Date.now() + STOP_TIMEOUT_MS;

@@ -21,7 +21,8 @@
 #       the build) and the secret scan, and skips every TypeScript test. A
 #       mixed change answers for its other paths. The exception is the Go
 #       test data that varlatchd's own tests produce or read (SHARED: the
-#       authorization and audit vectors, the HTTP known differences): it
+#       authorization and audit vectors, the Node.js IDNA table, the HTTP
+#       known differences): it
 #       counts as code in @varlatch/varlatchd, so a change to it runs the
 #       tests that check it against the TypeScript server. The paths behind
 #       each answer go to stderr.
@@ -47,8 +48,8 @@ CHECKED_DOCS='^(CHANGELOG|THIRD-PARTY-NOTICES)\.md$'
 # The Go rewrite, which go.yml checks.
 GO='^go/|^\.github/workflows/go\.yml$'
 # Go test data that services/varlatchd's tests produce from the TypeScript
-# server or read (go-authz-vectors, go-audit-vectors, go-parity).
-SHARED='^go/server/(authz|audit)/testdata/ts-vectors\.json$|^go/server/httpserver/testdata/known-differences\.json$'
+# server or Node.js, or read (go-authz-vectors, go-audit-vectors, go-parity).
+SHARED='^go/server/(authz|audit)/testdata/ts-vectors\.json$|^go/server/httpserver/testdata/known-differences\.json$|^go/server/whatwg/(nodeidna_table\.go|testdata/node-idna\.json|testdata/nodeidna\.mjs)$'
 
 # True when a path lies inside a workspace package (pnpm-workspace.yaml).
 in_package() {

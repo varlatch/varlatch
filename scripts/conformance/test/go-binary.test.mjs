@@ -3,10 +3,12 @@
 // real varlatchd run when VARLATCH_GO_BINARY names one (go.yml builds it);
 // with VARLATCH_REQUIRE_GO_BINARY set, a missing binary fails instead.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { probeLacks } from "../lacks-probe.mjs";
 import { lacksFor } from "../lib/expect.mjs";
 import { NOT_IMPLEMENTED_YET, openapiOperations } from "../lib/operations.mjs";
@@ -94,5 +96,139 @@ test("the stale-lacks probe against a real varlatchd", needBinary, async () => {
     assert.match((await probeLacks({ inventory, openapi, lacks: ["admin-bootstrap"], origin: state.origin, target: fake, state }))[0].why, /bootstrap operation succeeded/);
   } finally {
     if (state) await goBinary.down(state);
+  }
+});
+
+// A stand-in varlatchd for the adapter's process handling: `serve --config
+// <file>` listens where the file says and answers /readyz; with
+// FAKE_HANG_FIRST set it never answers the first /readyz.
+const FAKE = `#!/usr/bin/env node
+const fs = require("node:fs");
+const http = require("node:http");
+const conf = fs.readFileSync(process.argv[process.argv.indexOf("--config") + 1], "utf8");
+const [, host, port] = /^listen = (.+):(\\d+)$/m.exec(conf);
+let first = true;
+http.createServer((req, res) => {
+  if (req.url === "/readyz" && first && process.env.FAKE_HANG_FIRST) { first = false; return; }
+  res.statusCode = req.url === "/readyz" ? 200 : 404;
+  res.end("ok");
+}).listen(Number(port), host, () => console.log("varlatchd is serving"));
+process.on("SIGTERM", () => process.exit(0));
+`;
+
+function fakeBinary() {
+  const dir = mkdtempSync(join(tmpdir(), "go-binary-fake-"));
+  const path = join(dir, "varlatchd");
+  writeFileSync(path, FAKE);
+  chmodSync(path, 0o755);
+  return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const parentOf = (pid) => Number(readFileSync(`/proc/${pid}/stat`, "utf8").replace(/^.*\) /s, "").split(" ")[1]);
+const runsConf = (pid, conf) => {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").includes(conf);
+  } catch {
+    return false;
+  }
+};
+
+// The runner killed outright (SIGKILL: no finally, no down): the
+// supervisor stops varlatchd and removes the installation directory. Only
+// the PIDs and the directory this test's runner created are looked at.
+async function killedRunnerLeavesNothing(binaryPath, env = {}) {
+  const adapter = pathToFileURL(join(here, "..", "targets", "go-binary.mjs")).href;
+  const code = `
+    const goBinary = await import(${JSON.stringify(adapter)});
+    const state = await goBinary.up({ argument: ${JSON.stringify(binaryPath)} });
+    console.log(JSON.stringify(state));
+    setInterval(() => {}, 1 << 30);
+  `;
+  const runner = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, ...env } });
+  let state;
+  const pids = [];
+  try {
+    state = await new Promise((resolveState, reject) => {
+      let out = "";
+      runner.stdout.on("data", (d) => {
+        out += d;
+        const line = out.split("\n")[0];
+        if (out.includes("\n")) resolveState(JSON.parse(line));
+      });
+      runner.once("exit", (c) => reject(new Error(`the runner exited ${c} before varlatchd was up`)));
+    });
+    const server = Number(readFileSync(state.pidFile, "utf8"));
+    const supervisor = parentOf(server);
+    pids.push(server, supervisor);
+    assert.ok(alive(server) && runsConf(server, state.conf), "varlatchd runs");
+    assert.ok(runsConf(supervisor, state.conf) && supervisor !== runner.pid, "under its supervisor");
+    assert.equal((await fetch(`${state.origin}/readyz`)).status, 200);
+    runner.kill("SIGKILL");
+    const deadline = Date.now() + 30_000;
+    while ((alive(server) || alive(supervisor) || existsSync(state.dir)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+    assert.ok(!alive(server), "varlatchd stopped");
+    assert.ok(!alive(supervisor), "the supervisor ended");
+    assert.ok(!existsSync(state.dir), "the installation directory is removed");
+  } finally {
+    if (runner.exitCode === null && runner.signalCode === null) runner.kill("SIGKILL");
+    for (const pid of pids) if (state && alive(pid) && runsConf(pid, state.conf)) process.kill(pid, "SIGKILL");
+    if (state?.dir?.startsWith(join(tmpdir(), "conformance-go-"))) rmSync(state.dir, { recursive: true, force: true });
+  }
+}
+
+const linuxOnly = { skip: process.platform === "linux" ? false : "reads /proc" };
+
+test("a runner killed outright leaves no varlatchd and no directory behind", linuxOnly, async () => {
+  const fake = fakeBinary();
+  try {
+    await killedRunnerLeavesNothing(fake.path);
+  } finally {
+    fake.cleanup();
+  }
+});
+
+test("a runner killed outright leaves nothing behind, with a real varlatchd", { ...needBinary, ...(process.platform === "linux" ? {} : linuxOnly) }, async () => {
+  await killedRunnerLeavesNothing(binary);
+});
+
+test("up, restart and down keep the directory until down, then leave nothing", linuxOnly, async () => {
+  const fake = fakeBinary();
+  let state;
+  try {
+    state = await goBinary.up({ argument: fake.path, onState: (s) => (state = s) });
+    const first = Number(readFileSync(state.pidFile, "utf8"));
+    await goBinary.restart(state);
+    const second = Number(readFileSync(state.pidFile, "utf8"));
+    assert.ok(!alive(first) && alive(second) && existsSync(state.dir), "restarted on the same directory");
+    await goBinary.down(state);
+    assert.ok(!alive(second) && !existsSync(state.dir));
+  } finally {
+    if (state) await goBinary.down(state);
+    fake.cleanup();
+  }
+});
+
+test("a /readyz that never answers is abandoned and asked again", linuxOnly, async () => {
+  const fake = fakeBinary();
+  const saved = process.env.FAKE_HANG_FIRST;
+  process.env.FAKE_HANG_FIRST = "1";
+  let state;
+  try {
+    const t0 = Date.now();
+    state = await goBinary.up({ argument: fake.path, onState: (s) => (state = s) });
+    assert.ok(Date.now() - t0 < 15_000, "ready after the first probe timed out");
+  } finally {
+    if (saved === undefined) delete process.env.FAKE_HANG_FIRST;
+    else process.env.FAKE_HANG_FIRST = saved;
+    if (state) await goBinary.down(state);
+    fake.cleanup();
   }
 });

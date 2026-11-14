@@ -360,9 +360,15 @@ func setOrder(v any) any {
 	return v
 }
 
+// normalized renders v first, so a value with a JSValue method is sorted
+// as well.
 func normalized(t *testing.T, v any) string {
 	t.Helper()
-	return string(jsvalue.Stringify(setOrder(v)))
+	rendered, err := jsvalue.Parse(jsvalue.Stringify(v))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(jsvalue.Stringify(setOrder(rendered)))
 }
 
 func parsed(t *testing.T, raw json.RawMessage) any {
