@@ -32,6 +32,14 @@ const AGPL_DIRS = ["services/varlatchd/", "apps/web/", "convex/", "go/server/", 
 const GO_LICENSE_ROOTS = ["go/", "go/server/", "go/cmd/varlatchd/"];
 const licenseOf = path => (AGPL_DIRS.some(dir => path.startsWith(dir)) ? AGPL : APACHE);
 
+// Third-party code ported into a file (scripts/third-party-code.json) keeps
+// its own license as well: that file's SPDX expression is the directory's
+// license AND the third-party one, and no other file may name a second
+// license. The notices generator lists the same entries.
+const portedCode = JSON.parse(readFileSync(join(repoRoot, "scripts/third-party-code.json"), "utf8")).entries;
+const portedLicense = new Map(portedCode.flatMap(entry => entry.files.map(file => [file, entry.license])));
+const expectedOf = path => (portedLicense.has(path) ? `${licenseOf(path)} AND ${portedLicense.get(path)}` : licenseOf(path));
+
 // Not hand-written: byte-exact copies of published releases, and generator
 // output.
 const EXCLUDED = [/^scripts\/fixtures\//, /(^|\/)(dist|node_modules|generated|_generated)\//];
@@ -44,11 +52,12 @@ const problems = [];
 
 for (const path of tracked) {
   if (!SOURCE.test(path) || EXCLUDED.some(pattern => pattern.test(path))) continue;
-  const expected = licenseOf(path);
+  const expected = expectedOf(path);
   const text = readFileSync(join(repoRoot, path), "utf8");
   const lines = text.split("\n");
   const shebang = lines[0].startsWith("#!") ? 1 : 0;
-  const found = lines.slice(0, shebang + 3).join("\n").match(/SPDX-License-Identifier: (\S+)/);
+  // The whole expression, to the end of its line (a compound one included).
+  const found = lines.slice(0, shebang + 3).join("\n").match(/SPDX-License-Identifier: ([^\n]*?)\s*(?:\*\/)?\s*$/m);
   if (found?.[1] === expected) continue;
   if (found) {
     problems.push(`${path}: declares ${found[1]}, its directory is ${expected}`);
@@ -61,6 +70,13 @@ for (const path of tracked) {
   const comment = path.endsWith(".sh") || path.endsWith(".py") ? "#" : "//";
   lines.splice(shebang, 0, `${comment} SPDX-License-Identifier: ${expected}`);
   writeFileSync(join(repoRoot, path), lines.join("\n"));
+}
+
+for (const entry of portedCode) {
+  for (const file of entry.files) {
+    if (!tracked.includes(file)) problems.push(`scripts/third-party-code.json: ${entry.name} names ${file}, which is not tracked`);
+  }
+  if (!tracked.includes(entry.licenseFile)) problems.push(`scripts/third-party-code.json: ${entry.name}'s license file ${entry.licenseFile} is not tracked`);
 }
 
 const fullText = {

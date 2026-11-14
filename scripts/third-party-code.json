@@ -1,0 +1,15 @@
+{
+  "comment": "Third-party code ported or vendored into the repository, under its own license as well as the directory's. scripts/check-licenses.mjs requires each file's SPDX header to be the directory's license AND this license; scripts/generate-third-party-notices.mjs lists each entry with the text of licenseFile.",
+  "entries": [
+    {
+      "name": "ada",
+      "version": "4.0.0",
+      "commit": "b12a893a45809da8103bb4f1e2f6f5ee13f9100b",
+      "source": "https://github.com/ada-url/ada/blob/b12a893a45809da8103bb4f1e2f6f5ee13f9100b/src/ada_idna.cpp",
+      "license": "MIT",
+      "licenseFile": "go/server/whatwg/LICENSE-ada-MIT",
+      "files": ["go/server/whatwg/idna.go"],
+      "what": "Domain to ASCII and label validity (ada::idna::to_ascii and is_label_valid), ported to Go. ada is dual-licensed Apache-2.0 OR MIT; Varlatch takes it under MIT."
+    }
+  ]
+}

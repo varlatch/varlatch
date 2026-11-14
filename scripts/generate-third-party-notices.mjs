@@ -10,7 +10,10 @@
  *   - the npm packages each shipped artifact contains: the varlatchd image
  *     (read from an actual `pnpm deploy --prod`, exactly as its Dockerfile
  *     runs it), the operator CLI bundle, the dashboard bundle, and the
- *     convex-deploy image (`npm ci` from convex/package-lock.json).
+ *     convex-deploy image (`npm ci` from convex/package-lock.json);
+ *   - third-party code ported or vendored into Varlatch's own files
+ *     (scripts/third-party-code.json), with the license text kept next to
+ *     it (scripts/check-licenses.mjs checks those files' headers).
  *
  * License texts are copied from each pnpm-installed package's own license
  * file, because bundling (the CLI and dashboard) strips those files.
@@ -219,6 +222,21 @@ for (const pkg of sorted) {
   else npmOnly.push(pkg);
 }
 
+// ---- ported code -----------------------------------------------------------
+
+const ported = JSON.parse(readFileSync(join(repoRoot, "scripts/third-party-code.json"), "utf8")).entries.map(entry => {
+  for (const field of ["name", "version", "commit", "source", "license", "licenseFile", "files", "what"]) {
+    if (!entry[field]) fail(`scripts/third-party-code.json: ${entry.name ?? "an entry"} has no ${field}`);
+  }
+  const licensePath = join(repoRoot, entry.licenseFile);
+  if (!existsSync(licensePath)) fail(`scripts/third-party-code.json: ${entry.licenseFile} does not exist`);
+  for (const file of entry.files) {
+    if (!existsSync(join(repoRoot, file))) fail(`scripts/third-party-code.json: ${file} does not exist`);
+  }
+  const text = readFileSync(licensePath, "utf8").replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").trim();
+  return { ...entry, text };
+});
+
 // ---- output --------------------------------------------------------------
 
 const ORDER = ["varlatchd", "CLI", "dashboard", "convex-deploy"];
@@ -276,6 +294,19 @@ out("| Package | Version | License | Shipped in |");
 out("| --- | --- | --- | --- |");
 for (const pkg of sorted) out(`| ${cell(pkg.name)} | ${pkg.version} | ${cell(pkg.license)} | ${shipped(pkg)} |`);
 out("");
+out("## Code ported into Varlatch");
+out("");
+out("Third-party code adapted into Varlatch's own source files. Each file");
+out("keeps the code's copyright and license notice, and its SPDX header names");
+out("both licenses.");
+out("");
+out("| Project | Version | License | What | Files |");
+out("| --- | --- | --- | --- | --- |");
+for (const entry of ported) {
+  const project = `[${cell(entry.name)}](${entry.source})`;
+  out(`| ${project} | ${entry.version} (\`${entry.commit.slice(0, 12)}\`) | ${entry.license} | ${cell(entry.what)} | ${entry.files.map(f => `\`${f}\``).join(", ")} |`);
+}
+out("");
 out("## License texts");
 out("");
 out("Copied from each package's own license file. Identical texts are listed");
@@ -291,6 +322,14 @@ for (const [text, ids] of groups) {
   out("");
   out("````text");
   out(text);
+  out("````");
+  out("");
+}
+for (const entry of ported) {
+  out(`### ${entry.name} ${entry.version} (ported code)`);
+  out("");
+  out("````text");
+  out(entry.text);
   out("````");
   out("");
 }

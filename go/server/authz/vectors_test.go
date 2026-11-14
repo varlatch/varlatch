@@ -5,6 +5,8 @@ package authz
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -157,6 +159,12 @@ type vectorFile struct {
 		DomainToASCII string  `json:"domainToASCII"`
 		IsIP          int     `json:"isIP"`
 	} `json:"destinationHosts"`
+	DestinationLongHosts []struct {
+		Shape         string  `json:"shape"`
+		Bytes         int     `json:"bytes"`
+		Canonical     *digest `json:"canonical"`
+		DomainToASCII *digest `json:"domainToASCII"`
+	} `json:"destinationLongHosts"`
 	DestinationSelectors []struct {
 		Input    string `json:"input"`
 		Selector *struct {
@@ -172,6 +180,43 @@ type vectorFile struct {
 		Port     int    `json:"port"`
 		Matches  bool   `json:"matches"`
 	} `json:"destinationMatches"`
+}
+
+// digest is a long answer's length (UTF-16 code units, here ASCII bytes)
+// and SHA-256.
+type digest struct {
+	Length int    `json:"length"`
+	SHA256 string `json:"sha256"`
+}
+
+func digestOf(s string) digest {
+	h := sha256.Sum256([]byte(s))
+	return digest{len(s), hex.EncodeToString(h[:])}
+}
+
+// longHost builds the inputs of go-authz-vectors.test.ts's LONG_SHAPES.
+func longHost(shape string, n int) string {
+	labels := func(n int) string {
+		s := strings.Repeat(strings.Repeat("a", 63)+".", (n+63)/64)[:n]
+		if strings.HasSuffix(s, ".") {
+			s = s[:len(s)-1] + "a"
+		}
+		return s
+	}
+	const u = "\u00fc"
+	switch shape {
+	case "ascii":
+		return strings.Repeat("a", n)
+	case "asciiLabels":
+		return labels(n)
+	case "nonAsciiFirst":
+		return u + strings.Repeat("a", n-2)
+	case "nonAsciiLast":
+		return strings.Repeat("a", n-2) + u
+	case "nonAsciiLabels":
+		return u + labels(n - 2)[1:] + "a"
+	}
+	panic("unknown shape " + shape)
 }
 
 func loadVectors(t *testing.T) *vectorFile {
@@ -655,6 +700,22 @@ func TestDestinationVectors(t *testing.T) {
 		}
 		if got := whatwg.IsIP(h.Input); got != h.IsIP {
 			t.Errorf("isIP(%q) = %d, Node %d", h.Input, got, h.IsIP)
+		}
+	}
+	if len(v.DestinationLongHosts) != 15 {
+		t.Fatalf("%d long host vectors, want 15", len(v.DestinationLongHosts))
+	}
+	for _, h := range v.DestinationLongHosts {
+		input := longHost(h.Shape, h.Bytes)
+		if len(input) != h.Bytes {
+			t.Fatalf("%s %d: built %d bytes", h.Shape, h.Bytes, len(input))
+		}
+		canonical, ok := CanonicalizeHost(input)
+		if (h.Canonical == nil) == ok || (ok && digestOf(canonical) != *h.Canonical) {
+			t.Errorf("canonicalizeHost(%s of %d bytes): %d bytes, %v; TypeScript %+v", h.Shape, h.Bytes, len(canonical), ok, h.Canonical)
+		}
+		if got := digestOf(whatwg.DomainToASCII(input)); got != *h.DomainToASCII {
+			t.Errorf("domainToASCII(%s of %d bytes): %d bytes, Node %d", h.Shape, h.Bytes, got.Length, h.DomainToASCII.Length)
 		}
 	}
 	selectors := map[string]DestinationSelector{}

@@ -12,9 +12,11 @@
  *
  *   - the line `stop`: stop varlatchd (SIGTERM, SIGKILL after 25 s) and
  *     keep the directory, which the runner restarts or removes itself;
- *   - the pipe closing without `stop` (the runner ended), or SIGTERM,
- *     SIGINT or SIGHUP: stop varlatchd, then remove <dir>, which must be a
- *     conformance-go- directory under the temporary directory.
+ *   - the pipe closing before this process exits (the runner ended, even
+ *     while a `stop` it sent is still under way, as in a restart), or
+ *     SIGTERM, SIGINT or SIGHUP: stop varlatchd if it still runs, then
+ *     remove <dir>, which must be a conformance-go- directory under the
+ *     temporary directory.
  */
 import { spawn } from "node:child_process";
 import { appendFileSync, closeSync, openSync, rmSync, writeFileSync } from "node:fs";
@@ -63,14 +65,15 @@ process.stdin.on("data", (chunk) => {
   input += chunk;
   if (input.split("\n").includes("stop")) stopServer();
 });
+// The runner is gone whatever this process was doing: a stop it asked for
+// may still be under way, and nothing else will remove the directory.
 const orphaned = () => {
-  if (!stopping) parentGone = true;
-  stopServer();
-  // varlatchd may already have ended on its own.
+  parentGone = true;
   if (child.exitCode !== null || child.signalCode !== null) {
-    if (parentGone) removeDir();
+    removeDir();
     process.exit(0);
   }
+  stopServer(); // already stopping: the exit handler removes the directory
 };
 process.stdin.on("end", orphaned);
 process.stdin.on("error", orphaned);

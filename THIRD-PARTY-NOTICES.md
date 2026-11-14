@@ -263,6 +263,16 @@ what the bundler includes.
 | zod | 4.6.7 | MIT | varlatchd, CLI, dashboard |
 | zod-to-json-schema | 3.25.2 | ISC | CLI |
 
+## Code ported into Varlatch
+
+Third-party code adapted into Varlatch's own source files. Each file
+keeps the code's copyright and license notice, and its SPDX header names
+both licenses.
+
+| Project | Version | License | What | Files |
+| --- | --- | --- | --- | --- |
+| [ada](https://github.com/ada-url/ada/blob/b12a893a45809da8103bb4f1e2f6f5ee13f9100b/src/ada_idna.cpp) | 4.0.0 (`b12a893a4580`) | MIT | Domain to ASCII and label validity (ada::idna::to_ascii and is_label_valid), ported to Go. ada is dual-licensed Apache-2.0 OR MIT; Varlatch takes it under MIT. | `go/server/whatwg/idna.go` |
+
 ## License texts
 
 Copied from each package's own license file. Identical texts are listed
@@ -5088,6 +5098,29 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+````
+
+### ada 4.0.0 (ported code)
+
+````text
+Copyright 2023 Yagiz Nizipli and Daniel Lemire
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ````
 
 ### Packages that ship no license file

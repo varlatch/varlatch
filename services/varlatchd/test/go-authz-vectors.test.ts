@@ -31,6 +31,7 @@
  *
  *   VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/varlatchd exec vitest run test/go-authz-vectors.test.ts
  */
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
@@ -493,6 +494,35 @@ const DESTINATIONS = [
   "x.\u05d0\u05d1.example", "\u0628\u200c\u0627.example",
 ];
 
+// Around the 16,384-byte limit of ada's to_ascii, which an all-ASCII domain
+// never reaches: ASCII, and with a two-byte character first or last, at
+// 16,383, 16,384 and 16,385 bytes, as one long label or labels of 63 bytes.
+// Kept as shape and size, with each answer's length and SHA-256 (the inputs
+// and answers are 16 KB each); vectors_test.go builds the same inputs.
+const labels = (n: number) => {
+  const s = `${"a".repeat(63)}.`.repeat(Math.ceil(n / 64)).slice(0, n);
+  return s.endsWith(".") ? `${s.slice(0, -1)}a` : s;
+};
+const U = String.fromCharCode(0xfc);
+const LONG_SHAPES: Record<string, (bytes: number) => string> = {
+  ascii: (n) => "a".repeat(n),
+  asciiLabels: (n) => labels(n),
+  nonAsciiFirst: (n) => U + "a".repeat(n - 2),
+  nonAsciiLast: (n) => "a".repeat(n - 2) + U,
+  nonAsciiLabels: (n) => U + labels(n - 2).slice(1) + "a",
+};
+const digest = (s: string | null) => (s === null ? null : { length: s.length, sha256: createHash("sha256").update(s).digest("hex") });
+
+function longHostVectors() {
+  return Object.entries(LONG_SHAPES).flatMap(([shape, make]) =>
+    [16383, 16384, 16385].map((bytes) => {
+      const input = make(bytes);
+      if (Buffer.byteLength(input) !== bytes) throw new Error(`${shape} ${bytes}: ${Buffer.byteLength(input)} bytes`);
+      return { shape, bytes, canonical: digest(canonicalizeHost(input)), domainToASCII: digest(domainToASCII(input)) };
+    }),
+  );
+}
+
 function destinationVectors() {
   const hosts = HOSTS.map((h) => ({ input: h, canonical: canonicalizeHost(h), domainToASCII: domainToASCII(h), isIP: isIP(h) }));
   const selectors = SELECTORS.map((s) => {
@@ -509,7 +539,7 @@ function destinationVectors() {
       }
     }
   }
-  return { destinationHosts: hosts, destinationSelectors: selectors, destinationMatches: matches };
+  return { destinationHosts: hosts, destinationLongHosts: longHostVectors(), destinationSelectors: selectors, destinationMatches: matches };
 }
 
 // ---------------------------------------------------------------- the file

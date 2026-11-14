@@ -101,7 +101,8 @@ test("the stale-lacks probe against a real varlatchd", needBinary, async () => {
 
 // A stand-in varlatchd for the adapter's process handling: `serve --config
 // <file>` listens where the file says and answers /readyz; with
-// FAKE_HANG_FIRST set it never answers the first /readyz.
+// FAKE_HANG_FIRST set it never answers the first /readyz; with
+// FAKE_STOP_DELAY_MS set it takes that long to stop after SIGTERM.
 const FAKE = `#!/usr/bin/env node
 const fs = require("node:fs");
 const http = require("node:http");
@@ -113,7 +114,7 @@ http.createServer((req, res) => {
   res.statusCode = req.url === "/readyz" ? 200 : 404;
   res.end("ok");
 }).listen(Number(port), host, () => console.log("varlatchd is serving"));
-process.on("SIGTERM", () => process.exit(0));
+process.on("SIGTERM", () => setTimeout(() => process.exit(0), Number(process.env.FAKE_STOP_DELAY_MS ?? 0)));
 `;
 
 function fakeBinary() {
@@ -144,11 +145,18 @@ const runsConf = (pid, conf) => {
 // The runner killed outright (SIGKILL: no finally, no down): the
 // supervisor stops varlatchd and removes the installation directory. Only
 // the PIDs and the directory this test's runner created are looked at.
-async function killedRunnerLeavesNothing(binaryPath, env = {}) {
+// With duringStop, the runner first starts a restart, so the supervisor
+// has its `stop` and varlatchd is still shutting down (it takes
+// FAKE_STOP_DELAY_MS) when the runner is killed.
+async function killedRunnerLeavesNothing(binaryPath, env = {}, { duringStop = false } = {}) {
   const adapter = pathToFileURL(join(here, "..", "targets", "go-binary.mjs")).href;
   const code = `
     const goBinary = await import(${JSON.stringify(adapter)});
     const state = await goBinary.up({ argument: ${JSON.stringify(binaryPath)} });
+    if (${duringStop}) {
+      goBinary.restart(state).catch(() => {});
+      await new Promise((r) => setTimeout(r, 300));
+    }
     console.log(JSON.stringify(state));
     setInterval(() => {}, 1 << 30);
   `;
@@ -170,7 +178,11 @@ async function killedRunnerLeavesNothing(binaryPath, env = {}) {
     pids.push(server, supervisor);
     assert.ok(alive(server) && runsConf(server, state.conf), "varlatchd runs");
     assert.ok(runsConf(supervisor, state.conf) && supervisor !== runner.pid, "under its supervisor");
-    assert.equal((await fetch(`${state.origin}/readyz`)).status, 200);
+    if (duringStop) {
+      assert.ok(alive(server) && alive(supervisor), "varlatchd is still shutting down when the runner dies");
+    } else {
+      assert.equal((await fetch(`${state.origin}/readyz`)).status, 200);
+    }
     runner.kill("SIGKILL");
     const deadline = Date.now() + 30_000;
     while ((alive(server) || alive(supervisor) || existsSync(state.dir)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
@@ -197,6 +209,15 @@ test("a runner killed outright leaves no varlatchd and no directory behind", lin
 
 test("a runner killed outright leaves nothing behind, with a real varlatchd", { ...needBinary, ...(process.platform === "linux" ? {} : linuxOnly) }, async () => {
   await killedRunnerLeavesNothing(binary);
+});
+
+test("a runner killed while a restart's stop is under way leaves nothing behind", linuxOnly, async () => {
+  const fake = fakeBinary();
+  try {
+    await killedRunnerLeavesNothing(fake.path, { FAKE_STOP_DELAY_MS: "3000" }, { duringStop: true });
+  } finally {
+    fake.cleanup();
+  }
 });
 
 test("up, restart and down keep the directory until down, then leave nothing", linuxOnly, async () => {

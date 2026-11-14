@@ -1,4 +1,33 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later AND MIT
+//
+// domainToASCII, validACE and labelValid are ported from ada's IDNA code:
+// ada::idna::to_ascii and is_label_valid in src/ada_idna.cpp of ada 4.0.0
+// (https://github.com/ada-url/ada, commit
+// b12a893a45809da8103bb4f1e2f6f5ee13f9100b; ada takes this code from its
+// ada-url/idna project), the version Node.js 26.12.1 carries. ada is
+// dual-licensed Apache-2.0 OR MIT; this port uses it under the MIT License
+// (LICENSE-ada-MIT, scripts/third-party-code.json), whose notice follows.
+// The rest of this file is AGPL-3.0-or-later.
+//
+// Copyright 2023 Yagiz Nizipli and Daniel Lemire
+// Copyright 2023 Ada authors (ada-url/idna)
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of
+// this software and associated documentation files (the "Software"), to deal in
+// the Software without restriction, including without limitation the rights to
+// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+// the Software, and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 package whatwg
 
@@ -111,19 +140,17 @@ func mapAll(s string) (string, bool) {
 	return out, true
 }
 
-// maxDomainBytes is ada's limit on the input of domain to ASCII.
+// maxDomainBytes is ada's limit on the input of to_ascii, which an
+// all-ASCII domain never reaches: Node.js lowercases one of any length.
 const maxDomainBytes = 16384
 
 // domainToASCII is the URL Standard's domain to ASCII as Node.js carries it
 // out: the ASCII lowercase of an all-ASCII domain, or ada's to_ascii.
 func domainToASCII(domain string) (string, bool) {
-	if len(domain) > maxDomainBytes {
-		return "", false
-	}
 	if isASCII(domain) {
 		return strings.ToLower(domain), domain != ""
 	}
-	if !utf8.ValidString(domain) {
+	if len(domain) > maxDomainBytes || !utf8.ValidString(domain) {
 		return "", false
 	}
 	mapped, ok := mapAll(domain)

@@ -4648,6 +4648,23 @@
     {"input":"%C3%BC.א","canonical":"xn--tda.xn--4db","domainToASCII":"xn--tda.xn--4db","isIP":0},
     {"input":"ü..de","canonical":null,"domainToASCII":"xn--tda..de","isIP":0}
   ],
+  "destinationLongHosts": [
+    {"shape":"ascii","bytes":16383,"canonical":{"length":16383,"sha256":"2e1023f5ad46df0d01aa4b73ce3db452ed0a768387949efa5a858b532b763012"},"domainToASCII":{"length":16383,"sha256":"2e1023f5ad46df0d01aa4b73ce3db452ed0a768387949efa5a858b532b763012"}},
+    {"shape":"ascii","bytes":16384,"canonical":{"length":16384,"sha256":"f3336bea752b5a28743033dd2c844a4a63fba08871aaee2586a2bf2d69be83a2"},"domainToASCII":{"length":16384,"sha256":"f3336bea752b5a28743033dd2c844a4a63fba08871aaee2586a2bf2d69be83a2"}},
+    {"shape":"ascii","bytes":16385,"canonical":{"length":16385,"sha256":"608b801060d579a7b659a01755259a13dec8853b97d3d8062763c97ffac6ddae"},"domainToASCII":{"length":16385,"sha256":"608b801060d579a7b659a01755259a13dec8853b97d3d8062763c97ffac6ddae"}},
+    {"shape":"asciiLabels","bytes":16383,"canonical":{"length":16383,"sha256":"55b5764a5c2e313e29675335307973b84fd36ad717a10d3a24c192da184f8ffa"},"domainToASCII":{"length":16383,"sha256":"55b5764a5c2e313e29675335307973b84fd36ad717a10d3a24c192da184f8ffa"}},
+    {"shape":"asciiLabels","bytes":16384,"canonical":{"length":16384,"sha256":"7e7f29034e91e11e99fb1afb8b88025a8de3c2b1b1bd9cc71121bdab24e34c9a"},"domainToASCII":{"length":16384,"sha256":"7e7f29034e91e11e99fb1afb8b88025a8de3c2b1b1bd9cc71121bdab24e34c9a"}},
+    {"shape":"asciiLabels","bytes":16385,"canonical":{"length":16385,"sha256":"2f897ba515f77877897f916e971b0cfa95d9d419a9c9027096fe035f3be7f549"},"domainToASCII":{"length":16385,"sha256":"2f897ba515f77877897f916e971b0cfa95d9d419a9c9027096fe035f3be7f549"}},
+    {"shape":"nonAsciiFirst","bytes":16383,"canonical":{"length":16391,"sha256":"31e0c9f175633fe9eeb206f80eec276cda7cacacb62bd562828cfb84665fba59"},"domainToASCII":{"length":16391,"sha256":"31e0c9f175633fe9eeb206f80eec276cda7cacacb62bd562828cfb84665fba59"}},
+    {"shape":"nonAsciiFirst","bytes":16384,"canonical":{"length":16392,"sha256":"17214e4519e30982f94590da8f17c42ad3a2eb0d97905e72db250636995030db"},"domainToASCII":{"length":16392,"sha256":"17214e4519e30982f94590da8f17c42ad3a2eb0d97905e72db250636995030db"}},
+    {"shape":"nonAsciiFirst","bytes":16385,"canonical":null,"domainToASCII":{"length":0,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}},
+    {"shape":"nonAsciiLast","bytes":16383,"canonical":{"length":16391,"sha256":"726ab8465a6ab357284222ada05450dd1bb1e006161b7b689d3f17ebfba9d72f"},"domainToASCII":{"length":16391,"sha256":"726ab8465a6ab357284222ada05450dd1bb1e006161b7b689d3f17ebfba9d72f"}},
+    {"shape":"nonAsciiLast","bytes":16384,"canonical":{"length":16392,"sha256":"95cb25a31951cde47a4c698e7d954a58c3f71f8c0c443f7b67d5fc021ec01530"},"domainToASCII":{"length":16392,"sha256":"95cb25a31951cde47a4c698e7d954a58c3f71f8c0c443f7b67d5fc021ec01530"}},
+    {"shape":"nonAsciiLast","bytes":16385,"canonical":null,"domainToASCII":{"length":0,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}},
+    {"shape":"nonAsciiLabels","bytes":16383,"canonical":{"length":16389,"sha256":"7aa8b0766e30da1bc719891840b900b780a19497379de715046293275cde32f2"},"domainToASCII":{"length":16389,"sha256":"7aa8b0766e30da1bc719891840b900b780a19497379de715046293275cde32f2"}},
+    {"shape":"nonAsciiLabels","bytes":16384,"canonical":{"length":16390,"sha256":"c91cab6d2b4eb7cb2c680a0fcd993da3736413283825696cede93c140f79568c"},"domainToASCII":{"length":16390,"sha256":"c91cab6d2b4eb7cb2c680a0fcd993da3736413283825696cede93c140f79568c"}},
+    {"shape":"nonAsciiLabels","bytes":16385,"canonical":null,"domainToASCII":{"length":0,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
+  ],
   "destinationSelectors": [
     {"input":"example.com","selector":{"host":"example.com","wildcard":false,"port":443},"formatted":"example.com:443"},
     {"input":"example.com:8443","selector":{"host":"example.com","wildcard":false,"port":8443},"formatted":"example.com:8443"},
