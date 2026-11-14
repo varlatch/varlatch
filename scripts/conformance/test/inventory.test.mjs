@@ -61,6 +61,13 @@ test("a go-server check: its suite needs the go-server capability, it may replac
   inv.suites.sse = { title: "sse", script: "x.mjs", needs: ["go-server"] };
   inv.checks["sse.scope"] = { suite: "sse", kind: "go-server", title: "scope" };
   inv.checks["stack.convex"].replacement = "sse.scope";
+  // Listed, with why the TypeScript server cannot pass it.
+  assert.match(validateInventory(inv).join("\n"), /sse\.scope: a go-server check is listed in goServerChecks/);
+  inv.goServerChecks = { "sse.scope": " " };
+  assert.match(validateInventory(inv).join("\n"), /sse\.scope: a go-server check is listed in goServerChecks/);
+  inv.goServerChecks = { "sse.scope": "Convex cannot", "web.csp-strict": "not one" };
+  assert.match(validateInventory(inv).join("\n"), /goServerChecks web\.csp-strict: not a go-server check/);
+  inv.goServerChecks = { "sse.scope": "Convex cannot" };
   assert.deepEqual(validateInventory(inv), []);
   inv.suites.sse.needs = [];
   assert.match(validateInventory(inv).join("\n"), /sse\.scope: a go-server check's suite needs the go-server capability/);

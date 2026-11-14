@@ -70,6 +70,14 @@ func (o *browserOps) StreamBrowserEvents(ctx context.Context, _ browser.StreamBr
 		// Not served: /v1/meta does not list realtime.sse.
 		return eventsReply{func(w http.ResponseWriter) error { writeNotFound(w); return nil }}, nil
 	}
+	r := httpRequestOf(ctx)
+	if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
+		// A stream clears its read deadline, and net/http reads an unread
+		// request body before it writes the response: a body that never
+		// arrives would hold the stream's goroutine and connection for
+		// good. The request is refused without reading it.
+		return eventsReply{func(w http.ResponseWriter) error { refuseBody(w, r); return nil }}, nil
+	}
 	session, err := o.session(ctx)
 	if err != nil {
 		return nil, err
@@ -87,7 +95,6 @@ func (o *browserOps) StreamBrowserEvents(ctx context.Context, _ browser.StreamBr
 	if err != nil {
 		return nil, err
 	}
-	r := httpRequestOf(ctx)
 	return eventsReply{func(w http.ResponseWriter) error {
 		defer hub.Unsubscribe(stream)
 		o.s.serveStream(w, r, stream, session.IdentityID)
@@ -95,11 +102,33 @@ func (o *browserOps) StreamBrowserEvents(ctx context.Context, _ browser.StreamBr
 	}}, nil
 }
 
+// refuseBody answers 400 to a stream request that declares a body, and
+// closes the connection without reading the body: the read deadline is
+// moved to now, so net/http's own attempt to read it fails at once.
+func refuseBody(w http.ResponseWriter, r *http.Request) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now())
+	w.Header().Set("Connection", "close")
+	writeError(w, r, http.StatusBadRequest, "VALIDATION_FAILED", "GET /auth/events takes no request body")
+}
+
+// CloseTimeout bounds what a stream still writes once it must end: a
+// removal's identitySignal and the close event.
+const CloseTimeout = 2 * time.Second
+
 // serveStream writes a stream until it ends: the hub ends it, the client
 // goes, or a write fails.
+//
+// Once the hub ends the stream (a sign-out, an expired or revoked
+// session, a disabled identity, a removal, a slow client, a shutdown),
+// nothing it had queued is written: a write in progress is interrupted at
+// once (its deadline moved to now, which breaks the response), the queue
+// is dropped, and the end is checked again before each event. A removal's
+// identitySignal and the close event are then written, within
+// CloseTimeout, when the response is still whole.
 func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, stream *realtime.Stream, identity string) {
 	rc := http.NewResponseController(w)
-	// The server's ReadTimeout would end the stream; nothing more is read.
+	// The server's ReadTimeout would end the stream; nothing more is read
+	// (the request has no body: StreamBrowserEvents refused one).
 	_ = rc.SetReadDeadline(time.Time{})
 	if c, ok := r.Context().Value(connKey{}).(*net.TCPConn); ok {
 		_ = c.SetWriteBuffer(SendBuffer)
@@ -109,45 +138,59 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, stream *rea
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Accel-Buffering", "no") // a proxy in front must not buffer it
 	w.WriteHeader(http.StatusOK)
-	// A client the hub cut off for being slow may have a write blocked on
-	// it: the deadline is moved to now, which ends that write at once.
+
 	var mu sync.Mutex
-	cut := false
+	writing, broken := false, false
 	finished := make(chan struct{})
 	defer close(finished)
+	interrupted := make(chan struct{})
 	go func() {
+		defer close(interrupted)
 		select {
 		case <-stream.Done():
-			if reason, _ := stream.Ending(); reason == realtime.ReasonSlowClient {
-				mu.Lock()
-				cut = true
+			mu.Lock()
+			if writing {
 				_ = rc.SetWriteDeadline(time.Now())
-				mu.Unlock()
 			}
+			mu.Unlock()
 		case <-finished:
 		}
 	}()
-	write := func(chunk string) bool {
+	// write writes one chunk by deadline. Unless final, it writes nothing
+	// once the stream has ended.
+	write := func(chunk string, deadline time.Time, final bool) bool {
 		mu.Lock()
-		if cut {
+		if broken || !final && stream.Ended() {
 			mu.Unlock()
 			return false
 		}
-		err := rc.SetWriteDeadline(time.Now().Add(WriteTimeout))
+		if err := rc.SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			broken = true
+			mu.Unlock()
+			return false
+		}
+		writing = true
 		mu.Unlock()
-		if err != nil && !errors.Is(err, http.ErrNotSupported) {
-			return false
+		_, err := io.WriteString(w, chunk)
+		if err == nil {
+			err = rc.Flush()
 		}
-		if _, err := io.WriteString(w, chunk); err != nil {
-			return false
+		mu.Lock()
+		writing = false
+		if err != nil {
+			broken = true
 		}
-		return rc.Flush() == nil
+		mu.Unlock()
+		return err == nil
 	}
-	event := func(name string, data []byte) bool {
-		return write(fmt.Sprintf("event: %s\ndata: %s\n\n", name, data))
+	event := func(name string, data []byte, deadline time.Time, final bool) bool {
+		return write(fmt.Sprintf("event: %s\ndata: %s\n\n", name, data), deadline, final)
 	}
+	next := func() time.Time { return time.Now().Add(WriteTimeout) }
+
 	ready, _ := json.Marshal(map[string]string{"identityId": identity})
-	if !event("ready", ready) {
+	if !event("ready", ready, next(), false) {
+		s.endStream(stream, interrupted, event)
 		return
 	}
 	keepAlive := time.NewTicker(KeepAlive)
@@ -156,39 +199,43 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, stream *rea
 		select {
 		case batch := <-stream.Messages():
 			for _, m := range batch {
-				if !event(m.Event, m.Data) {
+				if !event(m.Event, m.Data, next(), false) {
+					s.endStream(stream, interrupted, event)
 					return
 				}
 			}
 		case <-keepAlive.C:
-			if !write(": keepalive\n\n") {
+			if !write(": keepalive\n\n", next(), false) {
+				s.endStream(stream, interrupted, event)
 				return
 			}
 		case <-r.Context().Done():
 			return
 		case <-stream.Done():
-			reason, drain := stream.Ending()
-			if reason == realtime.ReasonSlowClient {
-				// Nothing more is written to a client that does not read.
-				return
-			}
-			for drain {
-				select {
-				case batch := <-stream.Messages():
-					for _, m := range batch {
-						if !event(m.Event, m.Data) {
-							return
-						}
-					}
-				default:
-					drain = false
-				}
-			}
-			if reason != "" {
-				data, _ := json.Marshal(map[string]string{"reason": reason})
-				event("close", data)
-			}
+			s.endStream(stream, interrupted, event)
 			return
 		}
 	}
+}
+
+// endStream writes what an ended stream still sends, if it has ended and
+// its response is whole: a removal's identitySignal, then the close event,
+// all within CloseTimeout. A slow client gets nothing more.
+func (s *Server) endStream(stream *realtime.Stream, interrupted <-chan struct{}, event func(string, []byte, time.Time, bool) bool) {
+	if !stream.Ended() {
+		return // a write failed: the client is gone
+	}
+	<-interrupted // a write in progress at the end was cut first
+	reason, final := stream.Ending()
+	if reason == "" || reason == realtime.ReasonSlowClient {
+		return
+	}
+	deadline := time.Now().Add(CloseTimeout)
+	for _, m := range final {
+		if !event(m.Event, m.Data, deadline, true) {
+			return
+		}
+	}
+	data, _ := json.Marshal(map[string]string{"reason": reason})
+	event("close", data, deadline, true)
 }

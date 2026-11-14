@@ -6,8 +6,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -15,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/realtime"
 )
@@ -211,58 +208,6 @@ func TestEventsEndOnShutdown(t *testing.T) {
 		t.Fatalf("shutdown waited for the stream: %v", err)
 	}
 	if e := s.until(t, time.Second, func(e [2]string) bool { return e[0] == "close" }); e[1] != `{"reason":"shutdown"}` {
-		t.Fatalf("got %v", e)
-	}
-}
-
-// A client that stops reading is disconnected, and the server goes on.
-func TestEventsStuckClientDisconnected(t *testing.T) {
-	srv, b, ta, hub := eventsServer(t, realtime.Options{Buffer: 4})
-	addr := strings.TrimPrefix(srv.URL, "http://")
-	c, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	_ = c.(*net.TCPConn).SetReadBuffer(4096)
-	var cookies []string
-	for _, k := range b.cookies {
-		cookies = append(cookies, k.Name+"="+k.Value)
-	}
-	fmt.Fprintf(c, "GET /auth/events HTTP/1.1\r\nHost: %s\r\nCookie: %s\r\n\r\n", addr, strings.Join(cookies, "; "))
-	deadline := time.Now().Add(2 * time.Second)
-	for hub.Streams() == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if hub.Streams() != 1 {
-		t.Fatal("the stream did not open")
-	}
-	// Large identity signals (every domain), one pass after another, never
-	// read.
-	types := []string{}
-	for _, typ := range []string{"grant", "project", "environment", "value", "secret", "contract", "identity", "credential", "role", "group", "team", "webhook", "sync", "organization", "membership", "invitation", "capability", "requirement", "rotation", "passkey"} {
-		types = append(types, typ+".changed_for_test")
-	}
-	stop := time.Now().Add(20 * time.Second)
-	for hub.Streams() > 0 && time.Now().Before(stop) {
-		if err := ta.store.Write(context.Background(), func(tx *storage.Tx) error {
-			for _, typ := range types {
-				if _, err := tx.ExecContext(context.Background(), `INSERT INTO audit_events (id, event_type, decision, actor_identity_id) SELECT 'evt_' || hex(randomblob(8)), ?, 'info', identity_id FROM auth_user_links`, typ); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if n := hub.Streams(); n != 0 {
-		t.Fatalf("the stuck client still holds %d stream(s)", n)
-	}
-	// The server still serves, streams included.
-	s := open(t, srv, b)
-	if e := s.next(t, 2*time.Second); e[0] != "ready" {
 		t.Fatalf("got %v", e)
 	}
 }

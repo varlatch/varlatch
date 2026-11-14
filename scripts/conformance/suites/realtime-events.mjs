@@ -236,13 +236,28 @@ try {
   }
 
   // ---- A slow client is cut off alone.
+  //
+  // Round by round: one commit of events in many organizations, then a
+  // wait until the fast stream has each organization's signal for that
+  // commit (its last event id), so the rounds never run together and no
+  // sleep decides anything. The slow client never reads; once its socket
+  // is full the server can write nothing more to it, and its bounded
+  // buffer of publications (or a write's deadline) ends its stream. The
+  // server's request log says when: a stream's request is logged once it
+  // ended. The protocol guarantees that end and that the fast stream keeps
+  // receiving, not after how many rounds, so the rounds are bounded only
+  // generously.
   {
-    // Many organizations, so each round sends a lot: the client's socket
-    // fills after a few rounds, then its writes time out or its buffer of
-    // publications fills.
     const many = fixture("orgs", alice, "150").organizations;
     const slowSession = session(alice);
     const fast = await opened((await browser(names, session(alice).token)).cookie);
+    const endedStreams = () =>
+      targetOp("request-log")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .filter((r) => r.method === "GET" && r.path === "/auth/events").length;
+    const before = endedStreams();
     // The slow client: a socket that sends its request and never reads.
     const url = new URL(origin);
     const socket = connect({ host: url.hostname, port: Number(url.port) });
@@ -252,19 +267,26 @@ try {
     });
     socket.pause();
     socket.write(`GET /auth/events HTTP/1.1\r\nHost: ${url.host}\r\nCookie: ${names.session}=${slowSession.token}\r\nAccept: text/event-stream\r\n\r\n`);
-    await sleep(1500);
-    const passes = 16;
-    let sent = 0;
-    for (let i = 0; i < passes; i++) {
-      fixture("events", many.join(","), "-", "20");
-      sent += many.length;
-      await sleep(1200);
+    const MAX_ROUNDS = 60;
+    let rounds = 0;
+    let acknowledged = 0;
+    let cut = false;
+    while (!cut && rounds < MAX_ROUNDS) {
+      rounds++;
+      const { events } = fixture("events", many.join(","), "-", "20");
+      // Each organization's 20 events, in order: its last is the signal's.
+      const last = new Map(many.map((org, i) => [org, events[i * 20 + 19]]));
+      const got = await fast.until(
+        (ev) => [...last].every(([org, id]) => changesOf(ev, org).some((e) => e.data.lastEventId === id)),
+        30_000,
+      );
+      if (!got || fast.ended) break;
+      acknowledged++;
+      cut = endedStreams() > before;
     }
-    const allArrived = await fast.until((ev) => changesOf(ev).filter((e) => many.includes(e.data.organizationId)).length >= sent, 20_000);
-    const got = changesOf(fast.events).filter((e) => many.includes(e.data.organizationId)).length;
-    // Now read what the slow client was sent: the server ended the stream
-    // early (no close event: nothing more is written to a client that does
-    // not read), so its socket ends.
+    // What the slow client was sent before its cut, then the end of its
+    // socket (no close event: nothing more is written to a client that
+    // does not read).
     let text = "";
     const slowEnded = await new Promise((resolve) => {
       const timer = setTimeout(() => resolve(false), 15_000);
@@ -275,12 +297,18 @@ try {
       socket.resume();
     });
     const slowReceived = (text.match(/^event: change$/gm) ?? []).length;
+    // It was a stream (not a refusal) before it was cut.
+    const slowOpened = /^HTTP\/1\.1 200 /.test(text) && text.includes("event: ready");
+    // The fast stream still receives after the cut.
+    const { events: after } = fixture("events", many[0], "-", "1");
+    const stillLive = await fast.until((ev) => changesOf(ev, many[0]).some((e) => e.data.lastEventId === after[0]), 30_000);
     const fresh = await opened((await browser(names, session(alice).token)).cookie);
     check(
       "realtime-events.slow-client-cut-off-alone",
       "a slow client is cut off without affecting others: a stream that is not read is disconnected, another receives every signal",
-      slowEnded && slowReceived < sent && allArrived && !fast.ended && fresh.events.some((e) => e.name === "ready"),
-      `slow client ended ${slowEnded} after ${slowReceived} of ${sent} signals; the other received ${got} of ${sent}, still open ${!fast.ended}`,
+      cut && slowOpened && slowEnded && acknowledged === rounds && stillLive && !fast.ended && fresh.events.some((e) => e.name === "ready"),
+      `slow client opened ${slowOpened}, cut ${cut} after ${rounds} rounds (it had been sent ${slowReceived} signals), its socket ended ${slowEnded}; ` +
+        `the other stream had every signal of ${acknowledged} of ${rounds} rounds and one after the cut ${stillLive}, still open ${!fast.ended}`,
     );
     socket.destroy();
     for (const s of [fast, fresh]) s.abort();

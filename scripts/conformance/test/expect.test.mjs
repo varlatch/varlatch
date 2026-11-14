@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { addedEntries, applyExpectations, entryKeys, expectationsFor, importClosure, validateExpectations } from "../lib/expect.mjs";
+import { addedEntries, applyExpectations, entryKeys, expectationsFor, importClosure, newlyNotApplicable, validateExpectations } from "../lib/expect.mjs";
 import { evaluate } from "../lib/inventory.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -406,6 +406,91 @@ test("expect-check.mjs: a new gap or a new dependency on a lacking operation nee
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /INVALID .*noSuchOperation is neither an OpenAPI operationId nor a named operation/);
     assert.match(r.stdout, /INVALID .*seed is never listed/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// Coverage: a check of the merge base that becomes not applicable on a
+// target (reclassified, moved to a suite that needs more, a suite or a
+// target capability change) needs the label; a new go-server check does not.
+test("newlyNotApplicable: reclassified, moved and capability-dropped checks, each side with its own inventory and capabilities", () => {
+  const caps = JSON.parse(readFileSync(join(here, "..", "targets", "capabilities.json"), "utf8"));
+  const base = { inventory, capabilities: caps };
+  assert.deepEqual(newlyNotApplicable(base, base), []);
+  const id = "cli-core.whoami-names-signed-in-identity";
+  const reclassified = structuredClone(inventory);
+  reclassified.checks[id] = { ...reclassified.checks[id], kind: "go-server" };
+  assert.deepEqual(newlyNotApplicable(base, { inventory: reclassified, capabilities: caps }), [`ts-release|${id}`, `ts-source|${id}`]);
+  const moved = structuredClone(inventory);
+  moved.checks[id] = { ...moved.checks[id], suite: "realtime-events" };
+  assert.deepEqual(newlyNotApplicable(base, { inventory: moved, capabilities: caps }), [`ts-release|${id}`, `ts-source|${id}`]);
+  const needier = structuredClone(inventory);
+  needier.suites["cli-core"].needs = ["maintenance"];
+  assert.ok(newlyNotApplicable(base, { inventory: needier, capabilities: caps }).includes(`go-binary|${id}`));
+  const dropped = structuredClone(caps);
+  dropped["go-binary"] = dropped["go-binary"].filter((c) => c !== "go-server");
+  assert.deepEqual(
+    newlyNotApplicable(base, { inventory, capabilities: dropped }),
+    Object.keys(inventory.checks).filter((c) => c.startsWith("realtime-events.")).map((c) => `go-binary|${c}`).sort(),
+  );
+  const added = structuredClone(inventory);
+  added.checks["realtime-events.another"] = { suite: "realtime-events", kind: "go-server", title: "new" };
+  assert.deepEqual(newlyNotApplicable(base, { inventory: added, capabilities: caps }), []);
+});
+
+test("expect-check.mjs: a mandatory check reclassified as go-server needs the label", () => {
+  const repo = mkdtempSync(join(tmpdir(), "conformance-expect-test-"));
+  const script = join(here, "..", "expect-check.mjs");
+  const check = (...args) => spawnSync(process.execPath, [script, "--repo", repo, ...args], { encoding: "utf8" });
+  const inv = structuredClone(inventory);
+  const writeInventory = () => writeFileSync(join(repo, "scripts/conformance/inventory.json"), JSON.stringify(inv));
+  try {
+    git(repo, "init", "-q", "-b", "main");
+    mkdirSync(join(repo, "scripts/conformance/expect"), { recursive: true });
+    mkdirSync(join(repo, "scripts/conformance/targets"), { recursive: true });
+    mkdirSync(join(repo, "packages/protocol"), { recursive: true });
+    writeFileSync(join(repo, "scripts/conformance/clients.json"), readFileSync(join(here, "..", "clients.json")));
+    writeFileSync(join(repo, "scripts/conformance/targets/capabilities.json"), readFileSync(join(here, "..", "targets", "capabilities.json")));
+    writeFileSync(join(repo, "packages/protocol/openapi.yaml"), readFileSync(join(here, "..", "..", "..", "packages/protocol/openapi.yaml")));
+    writeFileSync(join(repo, "scripts/conformance/expect/go-binary.json"), JSON.stringify({ schema: 1, expected: {}, lacks: {} }));
+    writeInventory();
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "base");
+    const base = git(repo, "rev-parse", "HEAD");
+    assert.equal(check("--base", base, "--head", "HEAD").status, 0);
+
+    // The dashboard's strict CSP check moved into the go-server suite as a
+    // go-server check: it would stop running on the TypeScript server.
+    git(repo, "checkout", "-q", "-b", "reclassify", base);
+    inv.checks["dashboard.csp-strict"] = { ...inv.checks["dashboard.csp-strict"], suite: "realtime-events", kind: "go-server" };
+    inv.goServerChecks["dashboard.csp-strict"] = "a reason";
+    writeInventory();
+    git(repo, "commit", "-q", "-am", "reclassify");
+    let r = check("--base", base, "--head", "HEAD");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /NEWLY-N\/A {6}ts-source\|dashboard\.csp-strict/);
+    assert.match(r.stdout, /NEWLY-N\/A {6}ts-release\|dashboard\.csp-strict/);
+    assert.match(r.stdout, /makes 2 checks newly not applicable on a target/);
+    assert.equal(check("--base", base, "--head", "HEAD", "--labeled").status, 0);
+
+    // A target capability taken away counts the same way.
+    git(repo, "checkout", "-q", "-b", "drop-capability", base);
+    const caps = JSON.parse(readFileSync(join(here, "..", "targets", "capabilities.json"), "utf8"));
+    caps["go-binary"] = caps["go-binary"].filter((c) => c !== "go-server");
+    writeFileSync(join(repo, "scripts/conformance/targets/capabilities.json"), JSON.stringify(caps));
+    git(repo, "commit", "-q", "-am", "drop go-server");
+    r = check("--base", base, "--head", "HEAD");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /NEWLY-N\/A {6}go-binary\|realtime-events\.slow-client-cut-off-alone/);
+
+    // Deleting the capabilities file needs the label too.
+    git(repo, "checkout", "-q", "-b", "delete-capabilities", base);
+    git(repo, "rm", "-q", "scripts/conformance/targets/capabilities.json");
+    git(repo, "commit", "-q", "-m", "delete");
+    r = check("--base", base, "--head", "HEAD");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /DELETED +scripts\/conformance\/targets\/capabilities\.json/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

@@ -54,9 +54,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
+import { targetCapabilities } from "./capabilities.mjs";
 
 export const name = "go-binary";
-export const capabilities = ["probe:device-sign-in-addresses", "probe:expire-pending-device-sign-ins", "probe:proxy-addresses", "go-server"];
+export const capabilities = targetCapabilities("go-binary");
 
 const READY_TIMEOUT_MS = 30_000;
 /** One /readyz request's deadline: a server that accepts and never answers must not hold up the loop. */

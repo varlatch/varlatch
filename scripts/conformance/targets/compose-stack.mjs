@@ -24,17 +24,11 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
+import { targetCapabilities } from "./capabilities.mjs";
 import { requestsFromNginxLog } from "./nginx-log.mjs";
 
-export const CAPABILITIES = [
-  "probe:audit-event-count",
-  "probe:device-sign-in-addresses",
-  "probe:expire-pending-device-sign-ins",
-  "probe:proxy-addresses",
-  "maintenance",
-  "serve-cli",
-  "ts-stack",
-];
+/** The TypeScript stack's capabilities (both targets): capabilities.json. */
+export const CAPABILITIES = targetCapabilities("ts-source");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -316,11 +316,11 @@ func (h *Hub) dispatch(ctx context.Context, signals []Signal, closures Closures)
 			return err
 		}
 		if !ok {
-			st.close(ReasonSessionEnded, false)
+			st.close(ReasonSessionEnded)
 			continue
 		}
 		if revokedSessions[st.session] {
-			st.close(ReasonCredentialRevoked, false)
+			st.close(ReasonCredentialRevoked)
 			continue
 		}
 		orgs, seen := members[st.identity]
@@ -335,6 +335,21 @@ func (h *Hub) dispatch(ctx context.Context, signals []Signal, closures Closures)
 			}
 			members[st.identity] = orgs
 		}
+		if closures.RemovedMembers[st.identity] {
+			// Removed from an Organization: nothing more of this
+			// publication or of what is queued is sent, only the
+			// identitySignal that tells the dashboard, then the stream
+			// closes; it reconnects scoped to the Organizations it still
+			// has, and refreshes.
+			var final []Message
+			for i, s := range signals {
+				if s.Kind == Identity && s.Key == st.identity {
+					final = append(final, messages[i])
+				}
+			}
+			st.closeWith(ReasonMembershipRemoved, final)
+			continue
+		}
 		var publication []Message
 		for i, s := range signals {
 			if s.Kind == Change && orgs[s.Key] || s.Kind == Identity && s.Key == st.identity {
@@ -343,11 +358,6 @@ func (h *Hub) dispatch(ctx context.Context, signals []Signal, closures Closures)
 		}
 		if len(publication) > 0 {
 			st.send(publication)
-		}
-		if closures.RemovedMembers[st.identity] {
-			// After the identitySignal that tells the dashboard; it
-			// reconnects scoped to the Organizations it still has.
-			st.close(ReasonMembershipRemoved, true)
 		}
 	}
 	return nil
@@ -365,7 +375,7 @@ func (h *Hub) validateAll(ctx context.Context) {
 			return
 		}
 		if !ok {
-			st.close(ReasonSessionEnded, false)
+			st.close(ReasonSessionEnded)
 		}
 	}
 }
@@ -399,7 +409,7 @@ func (h *Hub) Subscribe(ctx context.Context, session, identity string) (*Stream,
 				oldest = s
 			}
 		}
-		oldest.close(ReasonReplaced, false)
+		oldest.close(ReasonReplaced)
 		delete(h.streams, oldest)
 		same = remove(same, oldest)
 	}
@@ -423,7 +433,7 @@ func remove(list []*Stream, s *Stream) []*Stream {
 
 // Unsubscribe forgets a stream whose response has ended.
 func (h *Hub) Unsubscribe(s *Stream) {
-	s.close("", false)
+	s.close("")
 	h.mu.Lock()
 	delete(h.streams, s)
 	h.mu.Unlock()
@@ -439,7 +449,7 @@ func (h *Hub) Close() {
 	}
 	h.mu.Unlock()
 	for _, s := range all {
-		s.close(ReasonShutdown, false)
+		s.close(ReasonShutdown)
 	}
 }
 
@@ -484,7 +494,7 @@ type Stream struct {
 	done   chan struct{}
 	ended  bool
 	reason string
-	drain  bool
+	final  []Message
 }
 
 // Messages are the stream's publications, in order: each the events of
@@ -494,12 +504,22 @@ func (s *Stream) Messages() <-chan []Message { return s.out }
 // Done is closed when the stream must end.
 func (s *Stream) Done() <-chan struct{} { return s.done }
 
-// Ending reports why the stream ends ("" when its response ended first),
-// and whether the messages already queued are still to be sent first.
-func (s *Stream) Ending() (reason string, drain bool) {
+// Ending reports why the stream ends ("" when its response ended first)
+// and the only events still to be sent before the close event (a removal's
+// identitySignal). Nothing queued before the end is sent after it: the
+// queue is dropped.
+func (s *Stream) Ending() (reason string, final []Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.reason, s.drain
+	return s.reason, s.final
+}
+
+// Ended reports whether the stream must end: checked before each event
+// is written, so nothing queued is written once it has.
+func (s *Stream) Ended() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ended
 }
 
 // send queues a publication without waiting: a full buffer disconnects
@@ -513,20 +533,30 @@ func (s *Stream) send(m []Message) {
 	select {
 	case s.out <- m:
 	default:
-		s.endLocked(ReasonSlowClient, false)
+		s.endLocked(ReasonSlowClient, nil)
 	}
 }
 
-func (s *Stream) close(reason string, drain bool) {
+func (s *Stream) close(reason string) { s.closeWith(reason, nil) }
+
+func (s *Stream) closeWith(reason string, final []Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.endLocked(reason, drain)
+	s.endLocked(reason, final)
 }
 
-func (s *Stream) endLocked(reason string, drain bool) {
+func (s *Stream) endLocked(reason string, final []Message) {
 	if s.ended {
 		return
 	}
-	s.ended, s.reason, s.drain = true, reason, drain
+	s.ended, s.reason, s.final = true, reason, final
 	close(s.done)
+	// The queue is dropped: what it holds was published before the end.
+	for {
+		select {
+		case <-s.out:
+		default:
+			return
+		}
+	}
 }

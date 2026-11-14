@@ -18,7 +18,9 @@
  *                server-sent events, gate G11): its suite needs the
  *                go-server capability, it is not applicable where the
  *                target lacks it, and it must pass where it has it. It may
- *                be a ts-stack check's replacement.
+ *                be a ts-stack check's replacement. Each is listed in
+ *                `goServerChecks` with why the TypeScript server cannot
+ *                pass it.
  *
  * External suites (`externalSuites`): the suites the runner does not run,
  * the TypeScript installation's lifecycle and installer suites
@@ -102,6 +104,9 @@ export function validateInventory(inventory) {
   const suites = inventory.suites ?? {};
   const checks = inventory.checks ?? {};
   const features = inventory.features ?? {};
+  // The go-server checks, each with why the TypeScript server cannot pass
+  // it: a check only becomes go-server (and stops applying there) visibly.
+  const goServerChecks = inventory.goServerChecks ?? {};
   const counts = new Map(Object.keys(suites).map((s) => [s, 0]));
   const featureChecks = new Map(Object.keys(features).map((f) => [f, 0]));
   for (const [name, feature] of Object.entries(features)) {
@@ -153,6 +158,9 @@ export function validateInventory(inventory) {
     if (check.kind === "go-server" && check.suite in suites && !(suites[check.suite].needs ?? []).includes("go-server")) {
       problems.push(`${where}: a go-server check's suite needs the go-server capability`);
     }
+    if (check.kind === "go-server" && !(typeof goServerChecks[id] === "string" && goServerChecks[id].trim() !== "")) {
+      problems.push(`${where}: a go-server check is listed in goServerChecks, with why the TypeScript server cannot pass it`);
+    }
     if ("reportedBy" in check && check.reportedBy !== "runner") problems.push(`${where}: reportedBy can only be "runner"`);
     for (const key of ["introducedIn", "core"]) {
       if (key in check) problems.push(`${where}: ${key} belongs on the check's feature, not the check`);
@@ -174,6 +182,9 @@ export function validateInventory(inventory) {
     if (typeof suite.script !== "string" || !/^scripts\/test-[a-z0-9-]+\.mjs$/.test(suite.script)) problems.push(`${where}: script must be scripts/test-<name>.mjs`);
     if (suite.kind !== "ts-stack") problems.push(`${where}: kind must be ts-stack (it tests the TypeScript installation)`);
     problems.push(...replacementProblems(where, suite.replacement, checks));
+  }
+  for (const id of Object.keys(goServerChecks)) {
+    if (checks[id]?.kind !== "go-server") problems.push(`goServerChecks ${id}: not a go-server check in the inventory`);
   }
   for (const [suite, count] of counts) if (count === 0) problems.push(`suite ${suite}: no checks`);
   for (const [feature, count] of featureChecks) if (count === 0) problems.push(`feature ${feature}: no checks`);

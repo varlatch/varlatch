@@ -359,24 +359,30 @@ func TestRevocationAndRemovalCloseStreams(t *testing.T) {
 		t.Fatalf("the kept session received %v", got)
 	}
 
-	// Carol removed from org_b: her stream gets the identitySignal first,
-	// then closes; bob's stays and sees the change.
+	// Carol removed from org_b, with a publication of hers still queued
+	// and another Organization's change in the same commit: her queue is
+	// dropped, and only the identitySignal that tells her is left to send
+	// before the stream closes. Bob's stays open and sees the change.
+	cursor = position(t, w.store)
+	w.event("project.created", "org_a", "idn_alice", nil, "")
+	cursor = w.publish(cursor) // queued, never taken by carol's client
 	exec(t, w.store, `UPDATE org_memberships SET removed_at = 1 WHERE organization_id = 'org_b' AND identity_id = 'idn_carol'`)
 	w.event("membership.removed", "org_b", "idn_bob", map[string]any{"identityId": "idn_carol"}, "")
+	w.event("grant.created", "org_a", "idn_alice", nil, "")
 	w.publish(cursor)
 	if r := ended(carol); r != ReasonMembershipRemoved {
 		t.Fatalf("removed member's stream: %q", r)
 	}
-	if _, drain := carol.Ending(); !drain {
-		t.Fatal("the removal does not send what was queued first")
+	if got := received(carol); len(got) != 0 {
+		t.Fatalf("the removed member's queue was kept: %v", got)
 	}
-	if got := received(carol); len(got) != 1 || !strings.HasPrefix(got[0], `identity `) || !strings.Contains(got[0], `"membership"`) {
-		t.Fatalf("removed member received %v", got)
+	if _, final := carol.Ending(); len(final) != 1 || final[0].Event != Identity || !strings.Contains(string(final[0].Data), `"membership"`) {
+		t.Fatalf("the removal's final events: %v", final)
 	}
 	if ended(bob) != "" {
 		t.Fatal("bob's stream closed")
 	}
-	if got := received(bob); len(got) != 1 || !strings.Contains(got[0], `"org_b"`) {
+	if got := received(bob); len(got) != 1 || !strings.Contains(got[0], `"org_b"`) || !strings.Contains(got[0], `"membership"`) {
 		t.Fatalf("bob received %v", got)
 	}
 
@@ -425,8 +431,9 @@ func TestSlowClientCutOffAlone(t *testing.T) {
 	if len(got) != 10 || ended(fast) != "" {
 		t.Fatalf("the other client got %d of 10 signals (ended %q)", len(got), ended(fast))
 	}
-	if n := len(received(slow)); n != 4 {
-		t.Fatalf("the slow client's buffer held %d publications", n)
+	// Its queue is dropped at the cut: nothing more is written to it.
+	if n := len(received(slow)); n != 0 {
+		t.Fatalf("the slow client's queue still holds %d publications", n)
 	}
 }
 

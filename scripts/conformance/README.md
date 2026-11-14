@@ -33,7 +33,7 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 | `plan.mjs` | The order of the suites and how each gets its arguments. |
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
-| `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`) and the registry. |
+| `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`), the registry, and each target's optional capabilities as data (`capabilities.json`). |
 | `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), the client suites (the CLI's compatibility core, `varlatch mcp`, and the sdk smoke), and G11's checks on the Go server's server-sent events (`realtime-events`). |
 | `lib/` | The runner's pure logic: result lines, inventory rules, operations and declared gaps, the request-log check, the client pins, release verification, expected failures, gate mode. |
 | `test/` | Unit tests: `pnpm test:conformance`. |
@@ -80,7 +80,9 @@ Every check has a **kind**:
   deployment has no counterpart of (its server-sent events, gate G11). Its
   suite needs the `go-server` capability; it is not applicable on a target
   without it, and must run and pass on one with it. A gate run on
-  `go-binary` refuses it not applicable.
+  `go-binary` refuses it not applicable. Each is listed in the inventory's
+  `goServerChecks` with why the TypeScript server cannot pass it, so making
+  a check go-server is visible in review.
 
 A run fails on any of these:
 
@@ -269,8 +271,8 @@ files at the pull request's head with its merge base, and fails when the
 head adds an entry (moving one to another client or target counts as
 adding one), unless the pull request carries the `conformance-regression`
 label. The same label is needed to delete or rename a target's file (or
-the whole directory), the checker, a module it imports, `inventory.json` or
-`clients.json`. Adding or removing the label runs the check again.
+the whole directory), the checker, a module it imports, `inventory.json`,
+`clients.json` or `targets/capabilities.json`. Adding or removing the label runs the check again.
 
 The workflow runs on `pull_request_target`: its definition and the checker
 come from the base branch, so a pull request can change neither the check
@@ -282,6 +284,12 @@ without the checker fails the job. A push to `main` validates the files it
 lands.
 
 The same check covers the declared gaps: see [Declared gaps](#declared-gaps).
+It also covers coverage itself: a check of the merge base that the head makes
+newly not applicable on a target (`NEWLY-N/A <target>|<check>`), because its
+kind changed, it moved to a suite that needs more, its suite needs more, or
+the target's capabilities in `targets/capabilities.json` lost one, needs the
+label. Each side is judged with its own inventory and capabilities file,
+which is data, so nothing from the head runs. A new check is not counted.
 This pull request's own run of the check, like any, uses the base's
 checker; a change to the checker takes effect for the pull requests after
 it merges.

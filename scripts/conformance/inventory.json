@@ -3190,6 +3190,11 @@
       "title": "the server answered no 429 other than the proxy probe's pending cap"
     }
   },
+  "goServerChecks": {
+    "realtime-events.no-signal-crosses-organizations": "It reads the Go server's own event stream (GET /auth/events). The TypeScript server's live updates are Convex subscriptions, scoped by the claims of a Convex token, which this suite cannot open as a stream.",
+    "realtime-events.revocation-and-removal-close-streams": "The TypeScript server cannot pass it: a Convex subscription stays open until its 10-minute Convex token expires or is minted again, whatever was signed out, revoked or removed.",
+    "realtime-events.slow-client-cut-off-alone": "It needs the Go server's bounded per-stream buffer. On the TypeScript server, Convex serves the subscriptions and its own buffering is not varlatchd's to bound."
+  },
   "externalSuites": {
     "setup": {
       "title": "varlatch setup end to end: one command from an empty directory, resumable",

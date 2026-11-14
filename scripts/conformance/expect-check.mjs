@@ -44,7 +44,7 @@
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { addedEntries, entryKeys, importClosure, lackingCheckKeys, lacksKeys, REGRESSION_LABEL, validateExpectations } from "./lib/expect.mjs";
+import { addedEntries, entryKeys, importClosure, lackingCheckKeys, lacksKeys, newlyNotApplicable, REGRESSION_LABEL, validateExpectations } from "./lib/expect.mjs";
 import { openapiOperations } from "./lib/operations.mjs";
 import { TARGET_NAMES } from "./targets/index.mjs";
 
@@ -70,13 +70,20 @@ if (!options.head) usage("--head is required");
 if (!options.validateOnly && !options.base) usage("--base is required (or --validate-only)");
 if (options.validateOnly && (options.base || options.labeled)) usage("--validate-only takes only --head");
 
+const CAPABILITIES_FILE = "scripts/conformance/targets/capabilities.json";
+
 /**
  * The files the checker cannot work without, relative to the repository:
  * this script, every module it imports, and the data it reads. Computed
  * from the checker that runs, which in CI is the base commit's.
  */
 const protectedPaths = () =>
-  [...importClosure(fileURLToPath(import.meta.url), CHECKOUT), "scripts/conformance/inventory.json", "scripts/conformance/clients.json"].sort();
+  [
+    ...importClosure(fileURLToPath(import.meta.url), CHECKOUT),
+    "scripts/conformance/inventory.json",
+    "scripts/conformance/clients.json",
+    CAPABILITIES_FILE,
+  ].sort();
 
 function git(args) {
   const r = spawnSync("git", args, { cwd: options.repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -177,7 +184,26 @@ try {
     console.log(`--- ${addedLacks.length} lacking operations added and ${newlyLacking.length} checks newly lacking, allowed by the ${REGRESSION_LABEL} label`);
   }
 
-  const refused = (added.length > 0 || removed.length > 0 || gaps > 0) && !options.labeled;
+  // Checks that stop applying: a check of the merge base that the head
+  // makes not applicable on a target where it applied (reclassified,
+  // moved, a suite or capability change).
+  const capabilitiesAt = (rev) => JSON.parse(showOrNull(rev, CAPABILITIES_FILE) ?? "null");
+  const headCapabilities = capabilitiesAt(head);
+  const newlyNA = newlyNotApplicable(
+    { inventory: baseInventory, capabilities: capabilitiesAt(mergeBase) ?? headCapabilities },
+    { inventory, capabilities: headCapabilities },
+  );
+  for (const k of newlyNA) console.log(`NEWLY-N/A      ${k}`);
+  if (newlyNA.length > 0 && !options.labeled) {
+    console.log(
+      `--- this pull request makes ${newlyNA.length} checks newly not applicable on a target. ` +
+        `Coverage only shrinks with the ${REGRESSION_LABEL} label: keep the checks applicable, or label the pull request and run this check again if that is intended.`,
+    );
+  } else if (newlyNA.length > 0) {
+    console.log(`--- ${newlyNA.length} checks newly not applicable, allowed by the ${REGRESSION_LABEL} label`);
+  }
+
+  const refused = (added.length > 0 || removed.length > 0 || gaps > 0 || newlyNA.length > 0) && !options.labeled;
   process.exit(problems.length > 0 || refused ? 1 : 0);
 } catch (err) {
   console.error(`--- expect-check failed: ${err.message}`);
