@@ -59,10 +59,10 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 }
 
 // writeNotFound is the answer to a route that does not exist under the
-// paths varlatchd serves (/v1 included): Hono's default, a plain-text
-// "404 Not Found", not the error envelope. This is one of the two known
-// differences from the error format that decision 4 keeps (the OpenAPI
-// document describes it).
+// paths varlatchd serves: Hono's default, a plain-text "404 Not Found", not
+// the error envelope. Under /v1 it comes after authentication (unknownV1).
+// This is one of the two known differences from the error format that
+// decision 4 keeps (the OpenAPI document describes it).
 func writeNotFound(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/plain; charset=UTF-8")
 	w.WriteHeader(http.StatusNotFound)

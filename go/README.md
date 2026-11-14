@@ -95,11 +95,11 @@ on every start, then serves HTTP until SIGTERM or SIGINT, when it lets
 requests in flight finish (20 seconds at most) and closes the database.
 
 Exit statuses: 0 after a clean stop; 1 for anything a restart may fix (the
-disk, the database, the network, a port in use, and a Root KEK that does
-not open this installation's canary, since the database answered that); 78
-for a configuration error no restart can fix: an unparsable file, an
-unknown or repeated setting, an invalid value, missing or unparsable Root
-KEK material. The unit has `RestartPreventExitStatus=78`, pinned in
+disk, the database, the network, a port in use); 78 for a configuration
+error no restart can fix: an unparsable file, an unknown or repeated
+setting, an invalid value, missing or unparsable Root KEK material, and a
+Root KEK that does not open this installation's canary (the installation
+was read; a failure to read it stays 1). The unit has `RestartPreventExitStatus=78`, pinned in
 `install/unit_test.go`. `varlatchd admin bootstrap|recover` answer
 `NOT_IMPLEMENTED_YET` (exit 69) until step 3.4.
 
@@ -117,12 +117,19 @@ The server's packages:
     5; the conformance harness's stale-`lacks` probe relies on it).
     `BuiltOperations` lists the ones served (`GET /v1/meta` so far);
   - the TypeScript server's error envelope, and its two known differences
-    (decision 4): an unknown route answers the plain-text `404 Not Found`,
-    and the request window (600 requests per 60 s per client address, before
-    authentication) answers `429` with `PERMISSION_DENIED` and Retry-After;
+    (decision 4): an unknown route answers the plain-text `404 Not Found`
+    (under `/v1` only after authentication, as the TypeScript server
+    orders it: without a bearer credential, `401 AUTHENTICATION_REQUIRED`;
+    until step 3.4 verifies credentials, any bearer reaches the 404), and
+    the request window (600 requests per 60 s per client address, before
+    authentication) answers `429` with `PERMISSION_DENIED` and Retry-After.
+    `server/httpserver/testdata/known-differences.json` holds these
+    answers, and both servers' tests run it
+    (`services/varlatchd/test/go-parity.test.ts`);
   - an access log (`access_log`): a JSON line per request with arrival and
     completion time, client address, method, path (never the query),
-    status, X-Forwarded-For and whether the request window counted it;
+    status, X-Forwarded-For and whether the request window counted it.
+    X-Forwarded-For is read from all its lines, joined as Node joins them;
   - `/healthz`, `/readyz` (schema, Root KEK, installation) and `/v1/meta`,
     whose capabilities are the TypeScript server's list (checked against
     `packages/protocol/src/errors.ts`), less what this installation does not

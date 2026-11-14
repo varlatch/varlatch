@@ -15,7 +15,8 @@
 //   - each client address gets WindowLimit requests per WindowLength;
 //     beyond that, 429 with PERMISSION_DENIED and Retry-After;
 //   - an unknown route under the API side answers Hono's plain-text
-//     "404 Not Found";
+//     "404 Not Found", after the authentication the TypeScript server runs
+//     first for /v1 (unknownV1);
 //   - every other path serves the dashboard (single-page routing), with
 //     its Content-Security-Policy. /v1, /auth and /enroll never do.
 package httpserver
@@ -138,7 +139,7 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 	// Anything else under /v1: no such route.
-	mux.ServeMux.HandleFunc("/v1/", func(w http.ResponseWriter, _ *http.Request) { writeNotFound(w) })
+	mux.ServeMux.HandleFunc("/v1/", s.unknownV1)
 	s.apiMux = mux.ServeMux
 	s.patterns = mux.patterns
 	s.stubbed = mux.stubbed
@@ -218,7 +219,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	isAPI := apiPrefix.MatchString(p) || cliPaths[p]
 	counted := isAPI && p != "/healthz" && p != "/readyz"
-	client := clientaddr.Of(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), s.opts.TrustedProxies)
+	// Every X-Forwarded-For line, joined as Node joins them: a proxy that
+	// adds a line of its own instead of appending to the caller's is read
+	// from the right like any other (the caller's forged line stays left).
+	client := clientaddr.Of(r.RemoteAddr, headerValue(r, "X-Forwarded-For"), s.opts.TrustedProxies)
 	defer func() {
 		if v := recover(); v != nil {
 			if v == http.ErrAbortHandler {
@@ -296,18 +300,65 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case (p == "/enroll" || p == "/enroll.js") && isGet(r):
 		// The enrollment page (step 3.4).
 		notBuilt("GET "+p).ServeHTTP(w, r)
-	case strings.HasPrefix(p, "/v1/"):
+	case p == "/v1" || strings.HasPrefix(p, "/v1/"):
 		// Hono matches the path as sent; Go's mux would redirect a path
 		// that is not clean (// or a dot segment, a trailing slash). Such a
 		// path names no route.
-		if p != path.Clean(p) {
-			writeNotFound(w)
+		if p == "/v1" || p != path.Clean(p) {
+			s.unknownV1(w, r)
 			return
 		}
 		s.apiMux.ServeHTTP(w, r)
 	default:
 		writeNotFound(w)
 	}
+}
+
+// headerValue is a request header as Node and the Fetch Headers give it to
+// the TypeScript server: every line of it, joined with ", " (Go's Get would
+// return the first line only).
+func headerValue(r *http.Request, name string) string {
+	return strings.Join(r.Header.Values(name), ", ")
+}
+
+// authenticates reports whether the TypeScript server's bearer middleware
+// (app.ts, app.use("/v1/*")) authenticates a request to path with method
+// before routing it: every /v1 path but /v1/meta (any method), and the
+// three operations that authenticate otherwise (the OIDC exchange and
+// device sign-in's two CLI calls, POST only).
+func authenticates(method, p string) bool {
+	if p == "/v1/meta" {
+		return false
+	}
+	if method == http.MethodPost && (p == "/v1/oidc/token" || p == "/v1/auth/device" || p == "/v1/auth/device/token") {
+		return false
+	}
+	return true
+}
+
+// unknownV1 answers a /v1 route the OpenAPI document does not describe (a
+// path it does not list, or a method that path does not have) in the
+// TypeScript server's order: its authentication runs for every /v1 path
+// (authenticates) before Hono's not-found answer. So without a bearer
+// credential the answer is 401 AUTHENTICATION_REQUIRED, the error
+// envelope; the plain-text 404 comes only for a request that passed
+// authentication, or one to /v1/meta's path, which needs none.
+//
+// Known operations not built yet never get here: the stub answers them
+// first, before any authentication (operationMux).
+func (s *Server) unknownV1(w http.ResponseWriter, r *http.Request) {
+	if authenticates(r.Method, r.URL.Path) && !strings.HasPrefix(headerValue(r, "Authorization"), "Bearer ") {
+		writeError(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Provide a Varlatch bearer credential")
+		return
+	}
+	// TODO(ADR-0059 step 3.4): verify the presented credential first, as
+	// the TypeScript server does, before this 404: an invalid, revoked or
+	// expired one answers 401 INVALID_CREDENTIAL (with its
+	// authentication.failed audit event), and an agent-run credential on a
+	// method other than GET or HEAD answers 403 PERMISSION_DENIED. Until
+	// credentials exist, any bearer is let through to the 404
+	// (testdata/known-differences.json, goUntilStep3_4).
+	writeNotFound(w)
 }
 
 type readiness struct {

@@ -12,8 +12,12 @@ info:
     Errors are the JSON error envelope (ApiError), domain errors included,
     with two exceptions, kept as served (ADR-0059 step 3; changing them is
     an API change for after 1.0). A request to a route this document does
-    not describe (a path it does not list, or a method that path does not
-    have) answers 404 with the plain-text body "404 Not Found", not the
+    not describe (a path under /v1 it does not list, or a method that path
+    does not have) is authenticated first, like any /v1 request: without a
+    bearer credential it answers 401 AUTHENTICATION_REQUIRED, and with an
+    invalid one 401 INVALID_CREDENTIAL, both the envelope. Only a request
+    that passed authentication, or one to the path /v1/meta (which needs
+    none), answers 404 with the plain-text body "404 Not Found", not the
     envelope. And the request window, which allows each client address 600
     requests per 60 seconds before any authentication, refuses with 429
     and Retry-After (seconds), the envelope with code PERMISSION_DENIED and

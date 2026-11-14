@@ -7,9 +7,9 @@
 //	varlatchd admin bootstrap|recover   not built yet (ADR-0059 step 3.4)
 //
 // Exit statuses of serve: 0 after a clean stop, 1 for a failure a restart
-// may fix, 78 for a configuration error no restart can fix (the unit's
-// RestartPreventExitStatus). 64 is a usage error; 69 an admin command that
-// is not built yet.
+// may fix, 78 for a configuration error no restart can fix, a wrong Root KEK
+// included (the unit's RestartPreventExitStatus). 64 is a usage error; 69
+// an admin command that is not built yet.
 package main
 
 import (

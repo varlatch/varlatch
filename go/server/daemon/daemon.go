@@ -42,9 +42,11 @@ const (
 	ExitFailure = 1
 	// ExitConfig: a configuration error no retry can fix (EX_CONFIG): an
 	// unparsable configuration file, an unknown or repeated setting, an
-	// invalid value, missing or unparsable Root KEK material. Nothing that
-	// touches DNS, the network, the disk or the database. The unit has
-	// RestartPreventExitStatus=78, so systemd does not restart it.
+	// invalid value, missing or unparsable Root KEK material, and a Root KEK
+	// that does not open this installation's canary (the installation was
+	// read; the key is not its key). Never a failure to read the disk or the
+	// database, or anything on DNS or the network: those may pass. The unit
+	// has RestartPreventExitStatus=78, so systemd does not restart it.
 	ExitConfig = 78
 )
 
@@ -119,9 +121,9 @@ func Serve(opts Options) int {
 		log.Info("installation initialized", "installationId", inst.ID)
 	}
 	if !verify(rootKEK, inst) {
-		// The database answered: the key is not this installation's. Kept
-		// at ExitFailure (the database is involved, see ExitConfig).
-		return fail(ExitFailure, "the configured Root KEK does not open this installation's canary; refusing to start with a wrong key (ADR-0019)")
+		// The installation was read and the key is not its key: restarting
+		// cannot change that, only configuring the right Root KEK can.
+		return fail(ExitConfig, "the configured Root KEK does not open this installation's canary; refusing to start with a wrong key (ADR-0019): configure this installation's Root KEK and start varlatchd again")
 	}
 
 	var trusts func(string) bool

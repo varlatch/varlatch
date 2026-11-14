@@ -1,0 +1,29 @@
+{
+  "description": "Answers the Go server must give exactly as the TypeScript server does (ADR-0059 step 3, varlatchd-core decision 4): routes the OpenAPI document does not describe, X-Forwarded-For sent as several header lines, and the request window. go/server/httpserver/parity_test.go and services/varlatchd/test/go-parity.test.ts both run every case, the TypeScript one against buildApp. A case's goUntilStep3_4, when present, is what the Go server answers until step 3.4 can verify a credential; the TypeScript answer is the target.",
+  "unknownRoutes": [
+    { "method": "GET", "path": "/v1/nothing-here", "credential": "none", "status": 401, "code": "AUTHENTICATION_REQUIRED" },
+    { "method": "GET", "path": "/v1/organizations/", "credential": "none", "status": 401, "code": "AUTHENTICATION_REQUIRED" },
+    { "method": "PUT", "path": "/v1/organizations", "credential": "none", "status": 401, "code": "AUTHENTICATION_REQUIRED" },
+    { "method": "GET", "path": "/v1//organizations", "credential": "none", "status": 401, "code": "AUTHENTICATION_REQUIRED" },
+    { "method": "GET", "path": "/v1/meta/", "credential": "none", "status": 401, "code": "AUTHENTICATION_REQUIRED" },
+    { "method": "GET", "path": "/v1/auth/device", "credential": "none", "status": 401, "code": "AUTHENTICATION_REQUIRED" },
+    { "method": "GET", "path": "/v1/nothing-here", "credential": "basic", "status": 401, "code": "AUTHENTICATION_REQUIRED" },
+    { "method": "DELETE", "path": "/v1/meta", "credential": "none", "status": 404, "text": "404 Not Found" },
+    { "method": "POST", "path": "/v1/meta", "credential": "none", "status": 404, "text": "404 Not Found" },
+    { "method": "GET", "path": "/v1/nothing-here", "credential": "valid", "status": 404, "text": "404 Not Found" },
+    { "method": "GET", "path": "/v1/organizations/", "credential": "valid", "status": 404, "text": "404 Not Found" },
+    { "method": "PUT", "path": "/v1/organizations", "credential": "valid", "status": 404, "text": "404 Not Found" },
+    { "method": "GET", "path": "/v1/nothing-here", "credential": "invalid", "status": 401, "code": "INVALID_CREDENTIAL",
+      "goUntilStep3_4": { "status": 404, "text": "404 Not Found" } },
+    { "method": "GET", "path": "/v1", "credential": "none", "status": 401, "code": "AUTHENTICATION_REQUIRED" },
+    { "method": "GET", "path": "/v1", "credential": "valid", "status": 404, "text": "404 Not Found" },
+    { "method": "GET", "path": "/v1x", "credential": "none", "status": 404, "text": "404 Not Found" }
+  ],
+  "forwardedFor": [
+    { "peer": "10.0.0.2", "trusted": ["10.0.0.2"], "lines": ["198.51.100.99", "203.0.113.7"], "client": "203.0.113.7" },
+    { "peer": "10.0.0.2", "trusted": ["10.0.0.2", "10.0.0.3"], "lines": ["198.51.100.99, 203.0.113.7", "10.0.0.3"], "client": "203.0.113.7" },
+    { "peer": "10.0.0.2", "trusted": ["10.0.0.2"], "lines": ["198.51.100.99", "garbage"], "client": "10.0.0.2" },
+    { "peer": "192.0.2.50", "trusted": ["10.0.0.2"], "lines": ["198.51.100.99", "203.0.113.7"], "client": "192.0.2.50" }
+  ],
+  "requestWindow": { "path": "/v1/meta", "allowed": 600, "status": 429, "code": "PERMISSION_DENIED", "message": "Request rate exceeded", "retryAfterAtStart": "60" }
+}

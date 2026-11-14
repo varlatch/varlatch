@@ -208,8 +208,8 @@ func TestExitStatuses(t *testing.T) {
 	}
 }
 
-// A Root KEK that is not this installation's: refused, and not as a
-// configuration error (the database told), so the unit retries.
+// A Root KEK that is not this installation's: refused as a configuration
+// error (exit 78), since a restart cannot fix it; the unit stays stopped.
 func TestWrongRootKEK(t *testing.T) {
 	in := newInstall(t, "")
 	start(t, in).stop(t)
@@ -217,7 +217,7 @@ func TestWrongRootKEK(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr syncBuffer
-	if got := Serve(Options{ConfigPath: in.conf, Stderr: &stderr, Signals: make(chan os.Signal)}); got != ExitFailure ||
+	if got := Serve(Options{ConfigPath: in.conf, Stderr: &stderr, Signals: make(chan os.Signal)}); got != ExitConfig ||
 		!strings.Contains(stderr.String(), "does not open this installation's canary") {
 		t.Errorf("exit %d: %s", got, stderr.String())
 	}

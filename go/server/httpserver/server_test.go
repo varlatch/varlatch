@@ -200,25 +200,21 @@ func TestBuiltOperationLeavesTheStub(t *testing.T) {
 	}
 }
 
-// Known difference 1 (decision 4): an unknown route under the API paths
-// answers Hono's plain-text 404, not the error envelope. The TypeScript
-// server: app.ts registers no notFound handler, so Hono's default answers
-// c.text("404 Not Found", 404).
+// Known difference 1 (decision 4): an unknown route answers Hono's
+// plain-text 404, not the error envelope. Under /v1 the TypeScript server
+// authenticates first; parity_test.go runs those cases from the table both
+// servers share. Outside /v1 (the other paths varlatchd answers) there is
+// no authentication: app.ts registers no notFound handler, so Hono's
+// default answers c.text("404 Not Found", 404).
 func TestUnknownRoutePlainText(t *testing.T) {
 	s, _, _, _ := newTestServer(t, nil)
 	for _, c := range []struct{ method, path string }{
-		{"GET", "/v1/nothing-here"},
-		{"GET", "/v1"},
-		{"GET", "/v1/"},
-		{"DELETE", "/v1/meta"},        // a path the document has, a method it does not
-		{"GET", "/v1/organizations/"}, // Hono's strict routing: no trailing slash
-		{"GET", "/v1//organizations"}, // Go's mux would redirect
-		{"GET", "/v1/organizations/../meta"},
 		{"GET", "/v1x"},
 		{"GET", "/authx"},
 		{"POST", "/healthz"},
 		{"GET", "/.well-known/jwks.json"}, // the Convex-only JWT signer is not in the Go server
 		{"POST", "/enroll"},
+		{"DELETE", "/v1/meta"}, // /v1/meta's path needs no authentication
 	} {
 		w := do(s, c.method, c.path, "", nil)
 		if w.Code != http.StatusNotFound || w.Body.String() != "404 Not Found" || w.Header().Get("Content-Type") != "text/plain; charset=UTF-8" {
@@ -267,7 +263,7 @@ func TestRequestWindow(t *testing.T) {
 	if w := from("192.0.2.1", "/v1/organizations"); w.Code != 429 {
 		t.Errorf("stubbed operation not limited: %d", w.Code)
 	}
-	if w := from("192.0.2.1", "/v1/unknown"); w.Code != 429 {
+	if w := from("192.0.2.1", "/v1/unknown"); w.Code != 429 { // before authentication
 		t.Errorf("unknown route not limited: %d", w.Code)
 	}
 	for _, p := range []string{"/healthz", "/readyz", "/", "/assets/app-1234.js"} {
