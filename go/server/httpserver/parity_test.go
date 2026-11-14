@@ -17,15 +17,15 @@ import (
 // exactly as the TypeScript server does; services/varlatchd/test/
 // go-parity.test.ts runs the same table against the TypeScript app.
 type parityTable struct {
-	UnknownRoutes []struct {
-		Method, Path, Credential, Code, Text string
-		Status                               int
-		GoUntilStep34                        *struct {
-			Status int
-			Code   string
-			Text   string
+	PathVectors []struct{ Target, Hono string } `json:"pathVectors"`
+	Routes      []struct {
+		Method, Target, Credential, Expect, Code, Text string
+		Status                                         int
+		GoUntilStep34                                  *struct {
+			Status       int
+			Expect, Text string
 		} `json:"goUntilStep3_4"`
-	} `json:"unknownRoutes"`
+	} `json:"routes"`
 	ForwardedFor []struct {
 		Peer    string
 		Trusted []string
@@ -50,56 +50,92 @@ func loadParity(t *testing.T) parityTable {
 	if err := json.Unmarshal(b, &p); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.UnknownRoutes) == 0 || len(p.ForwardedFor) == 0 || p.RequestWindow.Allowed != WindowLimit {
+	if len(p.PathVectors) == 0 || len(p.Routes) == 0 || len(p.ForwardedFor) == 0 || p.RequestWindow.Allowed != WindowLimit {
 		t.Fatalf("the table is incomplete: %+v", p)
 	}
 	return p
 }
 
-// Unknown /v1 routes: authentication first (401 AUTHENTICATION_REQUIRED
-// without a bearer), the plain-text 404 after it or on /v1/meta's path.
-func TestParityUnknownRoutes(t *testing.T) {
-	s, b, _, _ := newTestServer(t, nil)
-	for _, c := range loadParity(t).UnknownRoutes {
-		want := struct {
-			Status     int
-			Code, Text string
-		}{c.Status, c.Code, c.Text}
-		if c.GoUntilStep34 != nil {
-			want.Status, want.Code, want.Text = c.GoUntilStep34.Status, c.GoUntilStep34.Code, c.GoUntilStep34.Text
+// The path varlatchd routes on, as Hono's getPath gives it (the TypeScript
+// side checks the same vectors against getPath itself).
+func TestParityPaths(t *testing.T) {
+	for _, v := range loadParity(t).PathVectors {
+		r := httptest.NewRequest("GET", v.Target, nil)
+		if got := honoPath(normalizeTarget(requestTarget(r))); got != v.Hono {
+			t.Errorf("%s: %q, want %q", v.Target, got, v.Hono)
 		}
-		header := map[string]string{}
+	}
+}
+
+// Requests from raw targets, parsed as the server parses them
+// (httptest.NewRequest reads the request line): Path, RawPath and RawQuery
+// are what a client's request gives.
+func TestParityRoutes(t *testing.T) {
+	s, _, _, _ := newTestServer(t, nil)
+	index, _ := webFS.ReadFile("index.html")
+	for _, c := range loadParity(t).Routes {
+		status, expect, text := c.Status, c.Expect, c.Text
+		if c.GoUntilStep34 != nil {
+			status, expect, text = c.GoUntilStep34.Status, c.GoUntilStep34.Expect, c.GoUntilStep34.Text
+		}
+		r := httptest.NewRequest(c.Method, c.Target, nil)
+		r.RemoteAddr = "192.0.2.10:40000"
 		switch c.Credential {
 		case "valid", "invalid":
-			header["Authorization"] = "Bearer vlt_cli_" + c.Credential
+			r.Header.Set("Authorization", "Bearer vlt_cli_"+c.Credential)
 		case "basic":
-			header["Authorization"] = "Basic dXNlcjpwYXNz"
-		}
-		r := httptest.NewRequest(c.Method, "http://varlatch.test/", nil)
-		r.URL.Path = c.Path // as sent, not cleaned
-		r.RequestURI = c.Path
-		r.RemoteAddr = "192.0.2.10:40000"
-		for k, v := range header {
-			r.Header.Set(k, v)
+			r.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
 		}
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
-		name := fmt.Sprintf("%s %s (%s)", c.Method, c.Path, c.Credential)
-		if w.Code != want.Status {
-			t.Errorf("%s: %d, want %d: %s", name, w.Code, want.Status, w.Body.String())
+		name := fmt.Sprintf("%s %s (%s)", c.Method, c.Target, c.Credential)
+		if w.Code != status {
+			t.Errorf("%s: %d, want %d: %q", name, w.Code, status, w.Body.String())
 			continue
 		}
-		if want.Text != "" {
-			if w.Body.String() != want.Text || w.Header().Get("Content-Type") != "text/plain; charset=UTF-8" {
-				t.Errorf("%s: %q %q", name, w.Header().Get("Content-Type"), w.Body.String())
+		head := c.Method == http.MethodHead // a real server sends no body
+		ct := w.Header().Get("Content-Type")
+		switch expect {
+		case "text":
+			if ct != "text/plain; charset=UTF-8" || (!head && w.Body.String() != text) {
+				t.Errorf("%s: %q %q", name, ct, w.Body.String())
 			}
-		} else if e := decode(t, w); e.Error.Code != want.Code || w.Header().Get("Content-Type") != "application/json" ||
-			(want.Code == "AUTHENTICATION_REQUIRED" && e.Error.Message != "Provide a Varlatch bearer credential") {
-			t.Errorf("%s: %s", name, w.Body.String())
+		case "dashboard":
+			if w.Header().Get("Content-Security-Policy") != ContentSecurityPolicy || w.Body.String() != string(index) {
+				t.Errorf("%s: not the dashboard: %q", name, w.Body.String())
+			}
+		case "meta":
+			var m struct{ ApiMajor int }
+			if ct != "application/json" || (!head && (json.Unmarshal(w.Body.Bytes(), &m) != nil || m.ApiMajor != 1)) {
+				t.Errorf("%s: %q %q", name, ct, w.Body.String())
+			}
+		case "code":
+			if ct != "application/json" {
+				t.Errorf("%s: Content-Type %q", name, ct)
+			} else if e := decode(t, w); !head && (e.Error.Code != c.Code ||
+				(c.Code == "AUTHENTICATION_REQUIRED" && e.Error.Message != "Provide a Varlatch bearer credential")) {
+				t.Errorf("%s: %s", name, w.Body.String())
+			}
+		default:
+			t.Errorf("%s: unknown expectation %q", name, expect)
 		}
 	}
-	if b.installationCalls != 0 || b.readies != 0 {
-		t.Error("an unknown route reached the backend")
+}
+
+// Every 404 varlatchd gives outside a handler is Hono's: no Go mux text
+// ("404 page not found"), whatever the target.
+func TestNoGoNotFoundText(t *testing.T) {
+	s, _, _, _ := newTestServer(t, nil)
+	for _, target := range []string{"/v1%2fmeta", "/v1%2F", "/%2fv1/meta", "/v1/organizations%2f", "//v1", "/install.sh/", "//install.sh", "/.well-known/", "/healthz/", "/v1x/y"} {
+		for _, method := range []string{"GET", "POST", "OPTIONS", "PATCH"} {
+			r := httptest.NewRequest(method, target, nil)
+			r.Header.Set("Authorization", "Bearer x")
+			w := httptest.NewRecorder()
+			s.ServeHTTP(w, r)
+			if strings.Contains(w.Body.String(), "page not found") || w.Code == http.StatusMethodNotAllowed && strings.HasPrefix(target, "/v1") || w.Code == http.StatusMovedPermanently {
+				t.Errorf("%s %s: %d %q", method, target, w.Code, w.Body.String())
+			}
+		}
 	}
 }
 

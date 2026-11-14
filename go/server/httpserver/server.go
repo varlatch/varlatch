@@ -216,8 +216,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := newRequestID()
 	r = r.WithContext(context.WithValue(r.Context(), requestIDKey, id))
 	rec := &recorder{ResponseWriter: w}
-	p := r.URL.Path
-	isAPI := apiPrefix.MatchString(p) || cliPaths[p]
+	// The paths of the TypeScript deployment (target.go): nginx's decides
+	// whether the request reaches the API side at all; varlatchd's router
+	// (Hono's) routes, authenticates and counts it there. Handlers see the
+	// path they route on as URL.Path.
+	normalized := normalizeTarget(requestTarget(r))
+	front := nginxPath(normalized)
+	isAPI := apiPrefix.MatchString(front) || cliPaths[front]
+	p := front
+	if isAPI {
+		p = honoPath(normalized)
+	}
+	routed := *r.URL
+	routed.Path, routed.RawPath = p, ""
+	r.URL = &routed
 	counted := isAPI && p != "/healthz" && p != "/readyz"
 	// Every X-Forwarded-For line, joined as Node joins them: a proxy that
 	// adds a line of its own instead of appending to the caller's is read

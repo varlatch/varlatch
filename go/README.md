@@ -124,8 +124,14 @@ The server's packages:
     the request window (600 requests per 60 s per client address, before
     authentication) answers `429` with `PERMISSION_DENIED` and Retry-After.
     `server/httpserver/testdata/known-differences.json` holds these
-    answers, and both servers' tests run it
+    answers, and both servers' tests run it from raw request targets
     (`services/varlatchd/test/go-parity.test.ts`);
+  - routing on the paths the TypeScript deployment uses (`target.go`): the
+    dashboard's nginx chose dashboard or API on the fully decoded URI with
+    slashes merged; varlatchd's router (Hono) routes, authenticates and
+    counts on the WHATWG-normalized path after `decodeURI` (dot segments
+    and `%2e` resolved, `%2f` kept, slashes never merged), so for example
+    `/v1/organizations/../meta` is `/v1/meta` and `/v1%2fmeta` is no route;
   - an access log (`access_log`): a JSON line per request with arrival and
     completion time, client address, method, path (never the query),
     status, X-Forwarded-For and whether the request window counted it.
