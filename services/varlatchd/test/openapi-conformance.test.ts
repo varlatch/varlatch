@@ -110,10 +110,50 @@ describe("OpenAPI check", () => {
 
   it("allowlisted mismatches name an operation in the spec and carry a reason", () => {
     const ops = new Set(specOperations());
-    for (const [key, reason] of ALLOWED) {
-      const [, method, template] = key.split(" ");
-      expect(ops.has(`${method} ${template}`), key).toBe(true);
-      expect(reason.length, key).toBeGreaterThan(20);
+    for (const a of ALLOWED) {
+      const key = `${a.kind} ${a.operation} ${a.status} ${a.field ?? ""}`;
+      expect(ops.has(a.operation), key).toBe(true);
+      expect(a.reason.length, key).toBeGreaterThan(20);
+      if (a.field !== undefined) expect(a.field, key).toMatch(/^\//);
     }
+  });
+
+  describe("an accepted request", () => {
+    const rename = (requestText: string) =>
+      checkExchange({
+        method: "PATCH",
+        pathname: "/v1/organizations/acme",
+        requestContentType: "application/json",
+        requestText,
+        status: 200,
+        responseContentType: "application/json",
+        responseHasBody: true,
+        responseText: JSON.stringify({ id: "o", slug: "acme", name: "Acme", createdAt: "2026-11-14T00:00:00.000Z" }),
+      }).mismatches.map((m) => `${m.kind}: ${m.detail}`);
+
+    it("passes when its body matches", () => {
+      expect(rename(JSON.stringify({ name: "Acme" }))).toEqual([]);
+    });
+
+    it("is a mismatch when its JSON body does not parse", () => {
+      expect(rename("{")).toEqual(["request-not-json: application/json body that does not parse as JSON"]);
+    });
+
+    it("is excused only the allowlisted field: slug on a rename", () => {
+      expect(rename(JSON.stringify({ name: "Acme", slug: "other" }))).toEqual([]);
+    });
+
+    it("is a mismatch for any other undocumented field, alone or next to the allowlisted one", () => {
+      expect(rename(JSON.stringify({ name: "Acme", totallyUndocumented: 42 }))).toEqual([
+        "request-undocumented-field: / must NOT have unevaluated properties (totallyUndocumented)",
+      ]);
+      expect(rename(JSON.stringify({ name: "Acme", slug: "other", totallyUndocumented: 42 }))).toEqual([
+        "request-undocumented-field: / must NOT have unevaluated properties (totallyUndocumented)",
+      ]);
+    });
+
+    it("is a schema mismatch when it breaks the schema next to the allowlisted field", () => {
+      expect(rename(JSON.stringify({ name: 7, slug: "other" }))).toEqual(["request-schema: /name must be string"]);
+    });
   });
 });

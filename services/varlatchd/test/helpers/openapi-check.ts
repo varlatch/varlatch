@@ -21,10 +21,14 @@ import { parse } from "yaml";
  *   included (the ApiError envelope);
  * - a request body the server accepted (2xx) validates against the
  *   operation's requestBody schema, and an operation without one received
- *   no body.
+ *   no body (a bare {} excepted, which generic test helpers send and such
+ *   handlers ignore);
+ * - an accepted request body that does not parse as JSON is a mismatch.
  *
- * Paths outside /v1 (auth, enrollment, health, JWKS, install scripts) and
- * the deliberately unspecced Convex token exchange are not checked.
+ * Not checked: paths outside /v1 (auth, enrollment, health, JWKS, install
+ * scripts), CORS preflights, the deliberately unspecced Convex token
+ * exchange, request bodies of refused requests, query parameters and
+ * headers. ALLOWED lists the excused mismatches, each with its reason.
  */
 
 export type MismatchKind =
@@ -39,6 +43,7 @@ export type MismatchKind =
   | "undocumented-request-body"
   | "missing-request-body"
   | "request-content-type"
+  | "request-not-json"
   | "request-schema"
   | "request-undocumented-field";
 
@@ -68,18 +73,34 @@ export function openApiCheckMode(): OpenApiCheckMode {
 const UNSPECCED = new Set(["POST /v1/tokens/convex"]);
 
 /**
- * Mismatches that cannot be fixed in the spec, each with its reason, keyed
- * "kind METHOD /v1/template status". Keep it empty unless a reason holds.
+ * A mismatch that cannot be fixed in the spec, with its reason. With
+ * `field` (a JSON pointer into the body, such as "/slug") it excuses only
+ * that one undocumented field: any other field the spec does not name, or
+ * any other schema error, in the same body is still a mismatch. Without
+ * `field` it excuses every mismatch of its kind for the operation and
+ * status, so prefer a field. Keep the list empty unless a reason holds.
  */
-export const ALLOWED: ReadonlyMap<string, string> = new Map<string, string>([
-  [
-    "request-undocumented-field PATCH /v1/organizations/{org} 200",
+export interface Allowance {
+  kind: MismatchKind;
+  /** "METHOD /v1/template". */
+  operation: string;
+  status: number;
+  field?: string;
+  reason: string;
+}
+
+export const ALLOWED: readonly Allowance[] = [
+  {
     // organization-rename.test.ts sends a slug on purpose, to prove the
     // rename ignores it. The spec rightly names only `name`; the server's
     // parser drops unknown fields.
-    "a test sends slug on purpose to prove a rename never changes it; the server drops unknown fields",
-  ],
-]);
+    kind: "request-undocumented-field",
+    operation: "PATCH /v1/organizations/{org}",
+    status: 200,
+    field: "/slug",
+    reason: "a test sends slug on purpose to prove a rename never changes it; the server drops unknown fields",
+  },
+];
 
 type Json = Record<string, unknown>;
 
@@ -311,9 +332,20 @@ export function checkExchange(input: {
   const operation = `${matched.method} ${matched.template}`;
   if (UNSPECCED.has(operation)) return { mismatches: [] };
   const mismatches: Mismatch[] = [];
+  const allowances = (kind: MismatchKind) => ALLOWED.filter((a) => a.kind === kind && a.operation === operation && a.status === status);
   const add = (kind: MismatchKind, detail: string) => {
-    if (ALLOWED.has(`${kind} ${operation} ${status}`)) return;
+    if (allowances(kind).some((a) => a.field === undefined)) return;
     mismatches.push({ kind, operation, status, detail });
+  };
+  // Schema errors, less those an allowance excuses field by field.
+  const schemaErrors = (fn: ValidateFunction, fieldKind: MismatchKind, otherKind: MismatchKind) => {
+    const excused = new Set(allowances(fieldKind).flatMap((a) => (a.field === undefined ? [] : [a.field])));
+    const errors = (fn.errors ?? []).filter((e) => {
+      if (e.keyword !== "unevaluatedProperties") return true;
+      const property = (e.params as { unevaluatedProperty?: string }).unevaluatedProperty ?? "";
+      return !excused.has(`${e.instancePath}/${pointer([property])}`);
+    });
+    if (errors.length) add(onlyUndocumentedFields(errors) ? fieldKind : otherKind, describeErrors(errors));
   };
   const opPointer = ["", "paths", matched.template.slice("/v1".length), matched.method.toLowerCase()];
 
@@ -356,7 +388,7 @@ export function checkExchange(input: {
             ? (raw.$ref as string).slice(1)
             : `${pointer(opPointer)}/responses/${pointer([statusKey])}`;
           const fn = validator(`${base}/content/${pointer([key])}/schema`);
-          if (!fn(body)) add(onlyUndocumentedFields(fn.errors) ? "response-undocumented-field" : "response-schema", describeErrors(fn.errors));
+          if (!fn(body)) schemaErrors(fn, "response-undocumented-field", "response-schema");
         }
       }
     }
@@ -385,14 +417,17 @@ export function checkExchange(input: {
         try {
           body = JSON.parse(input.requestText!);
         } catch {
-          body = undefined;
+          // The server accepted a body that is not JSON: either it never
+          // read it, and the spec should say so, or the spec's content type
+          // is wrong.
+          add("request-not-json", `${type} body that does not parse as JSON`);
         }
         const schema = (content![key] as Json | undefined)?.schema;
         if (body !== undefined && schema) {
           const raw = matched.op.requestBody as Json;
           const base = typeof raw.$ref === "string" ? (raw.$ref as string).slice(1) : `${pointer(opPointer)}/requestBody`;
           const fn = validator(`${base}/content/${pointer([key])}/schema`);
-          if (!fn(body)) add(onlyUndocumentedFields(fn.errors) ? "request-undocumented-field" : "request-schema", describeErrors(fn.errors));
+          if (!fn(body)) schemaErrors(fn, "request-undocumented-field", "request-schema");
         }
       }
     }
