@@ -6,7 +6,7 @@
  * script writes is in the inventory.
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,10 @@ test("the plan runs every suite in the inventory once, and nothing else", () => 
   }
   // The passkey suite enrolls the identity the seed step uses.
   assert.ok(PLAN.findIndex((e) => e.suite === "passkey") < PLAN.findIndex((e) => e.setup === "seed"));
+  // A run limited with --suite still deploys Convex (the seed step's mirror
+  // sync needs it) and enrolls the identity: exactly these always run.
+  assert.deepEqual(PLAN.filter((e) => e.always).map((e) => e.suite), ["reconcile", "passkey"]);
+  assert.ok(PLAN.findIndex((e) => e.suite === "reconcile") < PLAN.findIndex((e) => e.setup === "seed"));
 });
 
 test("each suite script exists and writes exactly its inventory's check IDs", () => {
@@ -89,4 +93,53 @@ test("each version-gated feature is gated in every suite that has its checks, an
     );
     assert.deepEqual([...gated].sort(), [...needed].sort(), suite);
   }
+});
+
+test("every lifecycle and installer suite (scripts/test-*.mjs) is an external suite with its replacement, and only those", () => {
+  const scripts = readdirSync(join(repoRoot, "scripts")).filter((f) => /^test-.*\.mjs$/.test(f)).map((f) => `scripts/${f}`).sort();
+  const listed = Object.values(inventory.externalSuites ?? {}).map((s) => s.script).sort();
+  assert.deepEqual(listed, scripts);
+  for (const [name, suite] of Object.entries(inventory.externalSuites)) {
+    assert.equal(suite.script, `scripts/test-${name}.mjs`, name);
+  }
+});
+
+test("each expectations file is valid and named after a target", async () => {
+  const { validateExpectations } = await import("../lib/expect.mjs");
+  const { TARGET_NAMES } = await import("../targets/index.mjs");
+  const clients = JSON.parse(readFileSync(join(here, "..", "clients.json"), "utf8"));
+  for (const file of readdirSync(join(here, "..", "expect"))) {
+    const targetName = file.replace(/\.json$/, "");
+    assert.ok(file.endsWith(".json") && TARGET_NAMES.includes(targetName), `expect/${file} is not named after a target`);
+    const parsed = JSON.parse(readFileSync(join(here, "..", "expect", file), "utf8"));
+    assert.deepEqual(validateExpectations(parsed, { targetName, inventory, cliVersions: Object.keys(clients.cli) }), [], file);
+  }
+});
+
+test("conformance-expect.yml runs only base code on pull_request_target, read-only, and never the pull request's", async () => {
+  const { parse } = await import("yaml");
+  const text = readFileSync(join(repoRoot, ".github/workflows/conformance-expect.yml"), "utf8");
+  const wf = parse(text);
+  assert.deepEqual(Object.keys(wf.on).sort(), ["pull_request_target", "push"]);
+  assert.deepEqual(wf.on.push.branches, ["main"]);
+  assert.deepEqual(wf.permissions, { contents: "read" });
+  const job = wf.jobs.expectations;
+  assert.equal(job.permissions, undefined);
+  const checkouts = job.steps.filter((s) => String(s.uses ?? "").startsWith("actions/checkout@"));
+  assert.equal(checkouts.length, 1);
+  assert.equal(checkouts[0].with.ref, "${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}");
+  assert.equal(checkouts[0].with["persist-credentials"], false);
+  // No secret, no head ref anywhere it could be checked out or run.
+  assert.doesNotMatch(text, /secrets\./);
+  assert.doesNotMatch(text, /pull_request\.head\.(ref|repo)/);
+  for (const step of job.steps) {
+    if (!step.run) continue;
+    assert.doesNotMatch(step.run, /git (checkout|switch|worktree)|pnpm|npm |npx|\bpull\/head\b.*node/, step.name);
+    assert.doesNotMatch(step.run, /\$\{\{/, `${step.name}: expressions go through env, never inline`);
+  }
+  // The head reaches the checker only as a revision it reads with git show.
+  assert.match(text, /git fetch --no-tags origin "\+refs\/pull\/\$\{PR\}\/head:refs\/remotes\/pull\/head"/);
+  // A base without the checker fails; there is no success path without it.
+  assert.doesNotMatch(text, /::notice::/);
+  assert.match(text, /::error::the base commit has no scripts\/conformance\/expect-check\.mjs/);
 });

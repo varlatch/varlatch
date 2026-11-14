@@ -97,6 +97,90 @@ function cosignVerifyBlob({ cosignPath, sums, bundle, identity, issuer, cwd }) {
 }
 
 /**
+ * cosign verify on one image by digest, for one identity and issuer, with
+ * the signatures kept in `signatures` (COSIGN_REPOSITORY); returns
+ * `{ status, output }`.
+ */
+function cosignVerifyImage({ cosignPath, image, identity, issuer, signatures, cwd }) {
+  const r = spawnSync(cosignPath, ["verify", image, "--certificate-identity", identity, "--certificate-oidc-issuer", issuer], {
+    encoding: "utf8",
+    cwd,
+    timeout: 300_000,
+    maxBuffer: 64 * 1024 * 1024,
+    env: { PATH: process.env.PATH ?? "", HOME: cwd, COSIGN_REPOSITORY: signatures },
+  });
+  return { status: r.status, output: `${r.stderr ?? ""}${r.error ? String(r.error) : ""}` };
+}
+
+/**
+ * Downloads release files into a new, empty directory and verifies them as
+ * docs/operations/verify-release.md says, failing closed:
+ *
+ *   1. cosign (the pinned binary, checked by hash) verifies SHA256SUMS
+ *      against the release's own identity (release.yml@refs/tags/v<version>)
+ *      and GitHub's OIDC issuer;
+ *   2. SHA256SUMS lists each asset exactly once, with the hash the download
+ *      has, and, where `pins` names one, that hash is the pinned one.
+ *
+ * Returns `{ dir, files, hashes, verified, verifyImage }`: the path of each
+ * file, each asset's verified sha256, the record a report keeps, and
+ * `verifyImage(digestReference)`, which checks one image's signature for the
+ * same identity (or throws).
+ *
+ * `deps` replaces the network and cosign in unit tests: `clients`,
+ * `download(url)`, `verifyBlob(args)` and `verifyImage(args)`.
+ */
+export async function fetchVerifiedRelease(version, { assets, pins = {}, workDir, cacheDir = defaultCacheDir(), log = console.log, deps = {}, label = "Release" }) {
+  const clients = deps.clients ?? loadClients();
+  const fetchFile = deps.download ?? download;
+  const verifyBlob = deps.verifyBlob ?? cosignVerifyBlob;
+  const identity = releaseIdentity(clients.repository, version);
+  log(`--- ${label} ${version}: downloading ${assets.join(", ")}, SHA256SUMS and its signature from ${clients.repository}`);
+  // A new, empty directory for the release's files, and nothing else in it.
+  const dir = mkdtempSync(join(workDir, `${label.toLowerCase()}-${version}-`));
+  const files = {};
+  for (const name of ["SHA256SUMS", "SHA256SUMS.sigstore.json", ...assets]) {
+    files[name] = join(dir, name);
+    writeFileSync(files[name], await fetchFile(releaseAssetUrl(clients.repository, version, name)), { mode: 0o600 });
+  }
+  const unexpected = readdirSync(dir).filter((f) => !(f in files));
+  if (unexpected.length > 0) throw new Error(`unexpected files in ${dir}: ${unexpected.join(", ")}`);
+
+  const needsCosign = !deps.verifyBlob || !deps.verifyImage;
+  const cosignPath = needsCosign ? await cosign(clients, cacheDir, log, fetchFile) : null;
+  const verify = verifyBlob({ cosignPath, sums: files.SHA256SUMS, bundle: files["SHA256SUMS.sigstore.json"], identity, issuer: clients.issuer, cwd: dir });
+  if (verify.status !== 0) {
+    throw new Error(`cosign could not verify SHA256SUMS of v${version} for ${identity}: ${verify.output.trim().slice(-600)}`);
+  }
+  const entries = parseSha256Sums(readFileSync(files.SHA256SUMS, "utf8"));
+  const hashes = {};
+  const problems = [];
+  for (const asset of assets) {
+    hashes[asset] = sha256(readFileSync(files[asset]));
+    problems.push(...assetProblems({ entries, asset, actual: hashes[asset], pinned: pins[asset] }));
+  }
+  if (problems.length > 0) throw new Error(`${label} ${version} failed verification: ${problems.join("; ")}`);
+  const checkImage = deps.verifyImage ?? cosignVerifyImage;
+  const verifyImage = (image) => {
+    const r = checkImage({ cosignPath, image, identity, issuer: clients.issuer, signatures: clients.imageSignatures, cwd: dir });
+    if (r.status !== 0) throw new Error(`cosign could not verify ${image} for ${identity} (signatures in ${clients.imageSignatures}): ${r.output.trim().slice(-600)}`);
+  };
+  return {
+    dir,
+    files,
+    hashes,
+    verifyImage,
+    verified: {
+      repository: clients.repository,
+      identity,
+      issuer: clients.issuer,
+      sha256sums: sha256(readFileSync(files.SHA256SUMS)),
+      cosign: clients.cosign.version,
+    },
+  };
+}
+
+/**
  * The CLI under test. Returns `{ spec, path, version, sha256, commit,
  * verified }`; `version` and `commit` are null for `source`.
  *
@@ -110,8 +194,6 @@ export async function resolveCli(spec, { repoRoot, workDir, cacheDir = defaultCa
     return { spec, path, version: null, commit: null, sha256: sha256(readFileSync(path)), verified: null };
   }
   const clients = deps.clients ?? loadClients();
-  const fetchFile = deps.download ?? download;
-  const verifyBlob = deps.verifyBlob ?? cosignVerifyBlob;
   const pinned = Object.hasOwn(clients.cli, spec) ? clients.cli[spec] : undefined;
   if (!pinned) {
     const error = new Error(`--cli ${spec}: not a pinned CLI; clients.json pins ${Object.keys(clients.cli).join(", ")} (or use --cli source)`);
@@ -120,52 +202,35 @@ export async function resolveCli(spec, { repoRoot, workDir, cacheDir = defaultCa
   }
   const version = spec;
   const asset = cliAsset(version);
-  const identity = releaseIdentity(clients.repository, version);
-  log(`--- CLI ${version}: downloading ${asset}, SHA256SUMS and its signature from ${clients.repository}`);
-  // A new, empty directory for the release's files, and nothing else in it.
-  const dir = mkdtempSync(join(workDir, `cli-${version}-`));
-  const files = {};
-  for (const name of ["SHA256SUMS", "SHA256SUMS.sigstore.json", asset]) {
-    files[name] = join(dir, name);
-    writeFileSync(files[name], await fetchFile(releaseAssetUrl(clients.repository, version, name)), { mode: 0o600 });
-  }
-  const unexpected = readdirSync(dir).filter((f) => !(f in files));
-  if (unexpected.length > 0) throw new Error(`unexpected files in ${dir}: ${unexpected.join(", ")}`);
-
-  const cosignPath = deps.verifyBlob ? null : await cosign(clients, cacheDir, log, fetchFile);
-  const verify = verifyBlob({ cosignPath, sums: files.SHA256SUMS, bundle: files["SHA256SUMS.sigstore.json"], identity, issuer: clients.issuer, cwd: dir });
-  if (verify.status !== 0) {
-    throw new Error(`cosign could not verify SHA256SUMS of v${version} for ${identity}: ${verify.output.trim().slice(-600)}`);
-  }
-  const entries = parseSha256Sums(readFileSync(files.SHA256SUMS, "utf8"));
-  const actual = sha256(readFileSync(files[asset]));
-  const problems = assetProblems({ entries, asset, actual, pinned: pinned.sha256 });
-  if (problems.length > 0) throw new Error(`CLI ${version} failed verification: ${problems.join("; ")}`);
+  const release = await fetchVerifiedRelease(version, {
+    assets: [asset],
+    pins: { [asset]: pinned.sha256 },
+    workDir,
+    cacheDir,
+    log,
+    // Only SHA256SUMS is checked here: the CLI has no image.
+    deps: { ...deps, clients, verifyImage: deps.verifyImage ?? (() => ({ status: 1, output: "no image" })) },
+    label: "CLI",
+  });
+  const path = release.files[asset];
 
   // Only now, with every other check passed, run the downloaded CLI.
-  const printed = spawnSync(process.execPath, [files[asset], "--version"], {
+  const printed = spawnSync(process.execPath, [path, "--version"], {
     encoding: "utf8",
-    cwd: dir,
+    cwd: release.dir,
     timeout: 60_000,
-    env: { PATH: process.env.PATH ?? "", HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_ASSISTED: "0" },
+    env: { PATH: process.env.PATH ?? "", HOME: release.dir, VARLATCH_CONFIG_DIR: join(release.dir, "config"), VARLATCH_ASSISTED: "0" },
   });
   const wrong = printed.status === 0 ? versionProblem(printed.stdout, version) : `--version exited ${printed.status}: ${(printed.stderr || "").trim().slice(-300)}`;
   if (wrong) throw new Error(`CLI ${version}: ${wrong}`);
-  log(`--- CLI ${version}: verified (signed SHA256SUMS for ${identity}; sha256 ${actual}; ${printed.stdout.trim()})`);
+  log(`--- CLI ${version}: verified (signed SHA256SUMS for ${release.verified.identity}; sha256 ${release.hashes[asset]}; ${printed.stdout.trim()})`);
   return {
     spec,
-    path: files[asset],
+    path,
     version,
     commit: pinned.commit,
-    sha256: actual,
-    verified: {
-      repository: clients.repository,
-      identity,
-      issuer: clients.issuer,
-      sha256sums: sha256(readFileSync(files.SHA256SUMS)),
-      cosign: clients.cosign.version,
-      versionOutput: printed.stdout.trim(),
-    },
+    sha256: release.hashes[asset],
+    verified: { ...release.verified, versionOutput: printed.stdout.trim() },
   };
 }
 

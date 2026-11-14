@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-import "../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
+import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
 /**
  * The conformance runner (ADR-0059 step 2; scripts/conformance/README.md).
  * It starts a target, runs the suites of plan.mjs against it in order, each
  * as its own process, collects one result per check ID, and judges the run
  * against inventory.json.
  *
- *   node scripts/conformance/run.mjs --target ts-source --cli source|<version>
+ *   node scripts/conformance/run.mjs --target <target> --cli source|<version>
  *        [--report <file.json>] [--suite <name>]...
+ *        [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]
  *
- *   --target   the server under test (targets/index.mjs)
+ *   --target   the server under test (targets/index.mjs): ts-source,
+ *              ts-release:<version> (a signed release, verified and pulled
+ *              by digest), go-binary:<path> (a stub until ADR-0059 step 3)
  *   --cli      the CLI under test: `source` is apps/cli/dist/varlatch.cjs; a
  *              version is a released CLI pinned in clients.json, downloaded
  *              and verified before anything starts (clients.mjs). The sdk
@@ -19,16 +22,28 @@ import "../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
  *   --report   also write the report as JSON to this file
  *   --suite    run only these suites (and the setup they need); the report
  *              then covers only their checks
+ *   --gate     judge the run as ADR-0059's gates G1 and G2 are judged
+ *              (lib/gate.mjs): no expected failure, every replacement present
+ *              and passing, the browser-walkthrough evidence named with
+ *              --walkthrough, and, when a check predates the CLI, the passing
+ *              gate report of a run with a recent CLI (--recent-cli-report)
+ *
+ * The target's expected failures (expect/<target name>.json, lib/expect.mjs)
+ * are applied to the result: an expected failure is reported as one, and an
+ * expected failure that passes fails the run.
  *
  * Exit status 0 only when every check in scope accounted for itself as the
- * inventory requires; 1 otherwise; 64 on a usage error.
+ * inventory and the expectations require (and, with --gate, the gate
+ * passed); 1 otherwise; 64 on a usage error.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildSdk, resolveCli } from "./clients.mjs";
+import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
+import { applyExpectations, expectationsFor, validateExpectations } from "./lib/expect.mjs";
+import { judgeGate } from "./lib/gate.mjs";
 import { evaluate, validateInventory } from "./lib/inventory.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
 import { parseSuiteOutput, resultLine } from "./lib/results.mjs";
@@ -42,7 +57,10 @@ const SEEDED_SECRET = "postgres://dev-db";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function usage(message) {
-  console.error(`${message}\nUsage: run.mjs --target ts-source --cli source|<version> [--report <file.json>] [--suite <name>]...`);
+  console.error(
+    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version> [--report <file.json>] [--suite <name>]...` +
+      " [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]",
+  );
   process.exit(64);
 }
 
@@ -55,11 +73,35 @@ function parseArgs(argv) {
     else if (flag === "--cli") options.cli = value();
     else if (flag === "--report") options.report = value();
     else if (flag === "--suite") options.suites.push(value());
+    else if (flag === "--gate") options.gate = true;
+    else if (flag === "--walkthrough") options.walkthrough = value();
+    else if (flag === "--recent-cli-report") options.recentCliReport = value();
     else usage(`unknown argument ${flag}`);
   }
   if (!options.target) usage("--target is required");
   if (!options.cli) usage("--cli is required");
+  if (!options.gate && (options.walkthrough || options.recentCliReport)) usage("--walkthrough and --recent-cli-report belong to --gate");
+  if (options.gate && options.suites.length > 0) usage("--gate judges a whole run: --suite is not allowed");
+  if (options.gate && !options.walkthrough) usage("--gate needs the browser-walkthrough evidence file: --walkthrough docs/evidence/<file>");
   return options;
+}
+
+/** The browser-walkthrough evidence as the gate judges it: its path in the checkout, and whether it is there. */
+function walkthroughEvidence(file) {
+  const absolute = resolve(file);
+  const path = relative(REPO_ROOT, absolute).split(sep).join("/");
+  const exists = existsSync(absolute) && statSync(absolute).isFile();
+  return { path, exists, size: exists ? statSync(absolute).size : 0, sha256: exists ? sha256(readFileSync(absolute)) : null };
+}
+
+/** The target's expected failures file (expect/<name>.json), validated; an empty one when there is none. */
+function loadExpectations(targetName, inventory) {
+  const file = join(HERE, "expect", `${targetName}.json`);
+  if (!existsSync(file)) return { schema: 1, expected: {} };
+  const parsed = JSON.parse(readFileSync(file, "utf8"));
+  const problems = validateExpectations(parsed, { targetName, inventory, cliVersions: Object.keys(loadClients().cli) });
+  if (problems.length > 0) throw new Error(`expect/${targetName}.json is not valid:\n  ${problems.join("\n  ")}`);
+  return parsed;
 }
 
 /** Runs one suite as its own process group; streams its output and returns it. */
@@ -116,7 +158,26 @@ async function main() {
   for (const s of options.suites) if (!inventory.suites[s]) usage(`--suite ${s}: no such suite`);
   const inScope = (suite) => options.suites.length === 0 || options.suites.includes(suite);
 
-  const { name: targetName, target, capabilities } = await loadTarget(options.target);
+  let loaded;
+  try {
+    loaded = await loadTarget(options.target);
+  } catch (err) {
+    usage(err.message);
+  }
+  const { name: targetName, argument: targetArgument, target, capabilities, expectKey } = loaded;
+  const expectations = loadExpectations(targetName, inventory);
+  // Gate evidence is checked before anything starts: a gate run without it
+  // cannot pass, so it does not spend an hour finding that out.
+  const walkthrough = options.walkthrough ? walkthroughEvidence(options.walkthrough) : null;
+  if (walkthrough && !walkthrough.exists) usage(`--walkthrough ${options.walkthrough}: no such file`);
+  let recentCli = null;
+  if (options.recentCliReport) {
+    try {
+      recentCli = JSON.parse(readFileSync(options.recentCliReport, "utf8"));
+    } catch (err) {
+      usage(`--recent-cli-report ${options.recentCliReport}: ${err.message}`);
+    }
+  }
   const scratch = mkdtempSync(join(tmpdir(), "conformance-run-"));
   const stateFile = join(scratch, "target.json");
   // The clients, verified before the target starts: a CLI that fails
@@ -135,8 +196,10 @@ async function main() {
     console.log("CONFORMANCE RUN FAILED");
     process.exit(1);
   }
+  const expected = expectationsFor(expectations, expectKey, cli.spec);
   const report = {
     target: options.target,
+    expectKey,
     cli: { spec: cli.spec, version: cli.version, commit: cli.commit, sha256: cli.sha256, verified: cli.verified },
     sdk: sdk ? { from: cli.commit ? `release ${cli.version} (${cli.commit})` : "this checkout", commit: sdk.commit, sha256: sdk.sha256 } : null,
     partial: options.suites.length > 0 ? options.suites : false,
@@ -172,12 +235,15 @@ async function main() {
     try {
       // `onState` hands over the state before up creates anything, so a
       // signal during startup still removes what up has created so far.
-      state = await target.up({ repoRoot: REPO_ROOT, onState: (s) => (state = s) });
+      state = await target.up({ repoRoot: REPO_ROOT, argument: targetArgument, onState: (s) => (state = s) });
     } catch (err) {
       state = err.state ?? null;
       throw err;
     }
     writeFileSync(stateFile, JSON.stringify(state));
+    if (target.describe) report.targetDetails = target.describe(state);
+    // What ran, for gate mode to compare runs by (targets' `fingerprint`).
+    report.implementation = target.fingerprint ? await target.fingerprint(state) : null;
     // VARLATCH_CLI_VERSION is the verified version (empty for source): the
     // suites gate feature groups on it, and the runner checks every
     // predates-cli result against it again.
@@ -222,8 +288,8 @@ async function main() {
         continue;
       }
       const suite = inventory.suites[entry.suite];
-      // The passkey suite enrolls the identity everything after it uses.
-      if (!inScope(entry.suite) && entry.suite !== "passkey") continue;
+      // Suites whose work later steps need run even when not chosen (plan.mjs `always`).
+      if (!inScope(entry.suite) && !entry.always) continue;
       if (entry.runner) {
         if (entry.suite === "request-budget") await requestBudget();
         continue;
@@ -259,6 +325,7 @@ async function main() {
   } catch (err) {
     stopped = err.message;
     errors.push({ suite: "runner", message: `the run stopped: ${err.message}` });
+    if (state && target.describe && !report.targetDetails) report.targetDetails = target.describe(state);
     // What the server refused so far still helps explain the failure.
     if (state && !report.requestBudget && inScope("request-budget")) {
       await requestBudget().catch((e) => errors.push({ suite: "runner", message: `request-log: ${e.message}` }));
@@ -324,20 +391,47 @@ async function main() {
       checks: Object.fromEntries(Object.entries(inventory.checks).filter(([, c]) => inScope(c.suite))),
     };
     judged = evaluate({ inventory: scoped, reports: reports.filter((r) => inScope(r.suite)), errors: errors.filter((e) => e.suite === "runner" || inScope(e.suite)), cliVersion: cli.version });
+    // The expected failures of this target and client, for the checks in scope.
+    const inForce = new Map([...expected].filter(([id]) => id in scoped.checks));
+    judged = applyExpectations(judged, inForce);
     report.finishedAt = new Date().toISOString();
     report.checks = judged.checks;
     report.problems = judged.problems;
+    report.expectations = judged.expectations;
     report.ok = judged.ok;
+    if (options.gate) {
+      report.gate = judgeGate({
+        inventory,
+        run: { target: options.target, partial: report.partial, ok: judged.ok, checks: judged.checks, expectedInForce: [...inForce.keys()], implementation: report.implementation ?? null },
+        walkthrough,
+        recentCli,
+      });
+      report.gate.walkthrough = walkthrough;
+      report.gate.recentCliReport = options.recentCliReport ? { file: options.recentCliReport, sha256: sha256(readFileSync(options.recentCliReport)) } : null;
+    }
 
     console.log(`\n--- conformance report: target ${options.target}, CLI ${cli.spec}${report.partial ? ` (only ${report.partial.join(", ")})` : ""}`);
     for (const c of judged.checks) {
       console.log(`${c.outcome.toUpperCase().padEnd(15)}${c.kind.padEnd(13)}${c.id}${c.outcome === "fail" ? `  (${c.why.slice(0, 200)})` : ""}`);
     }
     const count = (o) => judged.checks.filter((c) => c.outcome === o).length;
-    console.log(`--- ${judged.checks.length} checks: ${count("pass")} passed, ${count("fail")} failed, ${count("not-applicable")} not applicable, ${count("predates-cli")} predate the CLI`);
+    console.log(
+      `--- ${judged.checks.length} checks: ${count("pass")} passed, ${count("fail")} failed, ${count("expected-fail")} failed as expected, ` +
+        `${count("not-applicable")} not applicable, ${count("predates-cli")} predate the CLI`,
+    );
     for (const c of judged.checks.filter((c) => c.outcome === "predates-cli")) console.log(`PREDATES-CLI   ${c.id}: ${c.why}`);
+    // Expected failures are listed with their reason, never hidden.
+    for (const c of judged.checks.filter((c) => c.outcome === "expected-fail")) {
+      console.log(`EXPECTED-FAIL  ${c.id}: ${c.expected.reason} (removed by ${c.expected.removedBy}; failed with: ${c.why.slice(0, 200)})`);
+    }
+    for (const id of judged.expectations.notExercised) console.log(`EXPECTED-FAIL  ${id}: expected to fail, but not exercised in this run`);
     for (const p of judged.problems) console.log(`PROBLEM  ${p}`);
-    if (options.report) writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`);
+    if (report.gate) {
+      console.log(`--- gate (ADR-0059 G1, G2): ${report.gate.passed ? "passed" : "FAILED"}`);
+      for (const p of report.gate.problems) console.log(`GATE  ${p}`);
+    }
+    // The report is published as a CI artifact: masked like the logs.
+    if (options.report) writeFileSync(options.report, redactTokens(`${JSON.stringify(report, null, 2)}\n`));
 
     if (!judged.ok && state && target.diagnostics) {
       console.log("--- the target's recent logs");
@@ -350,10 +444,12 @@ async function main() {
     await cleanup();
   }
   if (stopped) console.log(`--- the run stopped early: ${stopped}`);
+  const gateFailed = options.gate && report.gate?.passed !== true;
   if (!judged.ok) console.log("CONFORMANCE RUN FAILED");
+  else if (gateFailed) console.log(`CONFORMANCE GATE FAILED (the run passed; target ${targetName}, CLI ${cli.spec})`);
   else if (report.partial) console.log(`PARTIAL RUN PASSED (only ${report.partial.join(", ")}; target ${targetName}, CLI ${cli.spec})`);
-  else console.log(`ALL E2E SUITES PASSED (target ${targetName}, CLI ${cli.spec})`);
-  process.exit(judged.ok ? 0 : 1);
+  else console.log(`ALL E2E SUITES PASSED (target ${targetName}, CLI ${cli.spec})${options.gate ? "; GATE PASSED" : ""}`);
+  process.exit(judged.ok && !gateFailed ? 0 : 1);
 }
 
 /** The data the suites expect: organization acme, project api with two environments and a Contract, and two values. */

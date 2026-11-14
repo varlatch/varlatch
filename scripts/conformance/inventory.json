@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Every check a conformance run must account for (scripts/conformance/README.md). Check IDs are stable: rename one only together with every record that names it.",
+  "description": "Every check a conformance run must account for (scripts/conformance/README.md). Check IDs are stable: rename one only together with every record that names it. externalSuites lists the suites the runner does not run (the lifecycle and installer suites, scripts/test-*.mjs), each with its replacement for gate mode.",
   "features": {
     "login-token": {
       "title": "varlatch login --token: sign in with an existing credential",
@@ -2741,6 +2741,136 @@
       "suite": "request-budget",
       "kind": "conformance",
       "title": "the server answered no 429 other than the proxy probe's pending cap"
+    }
+  },
+  "externalSuites": {
+    "setup": {
+      "title": "varlatch setup end to end: one command from an empty directory, resumable",
+      "script": "scripts/test-setup.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go setup, with the same end-to-end suite against the Go installation"
+      }
+    },
+    "adopt": {
+      "title": "varlatch adopt: a hand-configured Compose installation taken over by setup",
+      "script": "scripts/test-adopt.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 7: varlatch migrate takes over existing TypeScript installations, hand-configured ones included"
+      }
+    },
+    "backup-compose": {
+      "title": "both Compose deployment variants enforce the same recovery gate",
+      "script": "scripts/test-backup-compose.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go container image and upgrade's recovery gate"
+      }
+    },
+    "backup-e2e": {
+      "title": "backup and interrupted-restore recovery on a real stack",
+      "script": "scripts/test-backup-e2e.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 4: backups, with their recovery suite against the Go server"
+      }
+    },
+    "backup-s3": {
+      "title": "backup transfers to an S3 server, single and multipart",
+      "script": "scripts/test-backup-s3.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 4: backups, with their S3 transfer suite against the Go server"
+      }
+    },
+    "backup-upgrade": {
+      "title": "a published release upgraded (the upgrade gate, a stale supervisor), and its pre-upgrade archive recovered",
+      "script": "scripts/test-backup-upgrade.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 steps 6 and 7: upgrade and rollback safety, and recovery from the pre-migration archive"
+      }
+    },
+    "backup-v0100-restore": {
+      "title": "a published 0.10.0 archive restored across the mapping removal (migration 21)",
+      "script": "scripts/test-backup-v0100-restore.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 7: the backup converter restores archives of earlier releases"
+      }
+    },
+    "prod-shape": {
+      "title": "a production-shaped installation upgraded, adopted and recovered",
+      "script": "scripts/test-prod-shape.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 7: migrating a production-shaped TypeScript installation, rehearsed"
+      }
+    },
+    "sidecar-restart": {
+      "title": "the Tailscale sidecar restarts without stranding varlatchd",
+      "script": "scripts/test-sidecar-restart.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 6: the tailnet topology of the Go installation"
+      }
+    },
+    "ingress-public": {
+      "title": "public ingress through setup, with Caddy and a real ACME exchange",
+      "script": "scripts/test-ingress-public.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 6: setup's public ingress"
+      }
+    },
+    "ingress-tailnet": {
+      "title": "tailnet ingress through setup on a real tailnet (manual)",
+      "script": "scripts/test-ingress-tailnet.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 6: setup's tailnet ingress"
+      }
+    },
+    "tailnet-endpoint": {
+      "title": "the tailnet browser endpoint through setup on a real tailnet (manual)",
+      "script": "scripts/test-tailnet-endpoint.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 steps 4 and 6: tailnet and Requirements, and setup's tailnet endpoint"
+      }
+    },
+    "move": {
+      "title": "moving an installation to another public URL, end to end",
+      "script": "scripts/test-move.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 6: moving a Go installation to another public URL"
+      }
+    },
+    "installers": {
+      "title": "the install scripts an installation serves, checked where they run",
+      "script": "scripts/test-installers.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 6: the Go installers"
+      }
+    },
+    "coolify-live": {
+      "title": "the Coolify adapter's service support against a real Coolify (manual)",
+      "script": "scripts/test-coolify-live.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 4: Sync Targets, with the Coolify live check against the Go server"
+      }
+    },
+    "coolify-live-expands": {
+      "title": "names Coolify resolves, checked against a real Coolify (manual)",
+      "script": "scripts/test-coolify-live-expands.mjs",
+      "kind": "ts-stack",
+      "replacement": {
+        "open": "ADR-0059 step 4: Sync Targets, with the Coolify live check against the Go server"
+      }
     }
   }
 }

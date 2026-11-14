@@ -115,6 +115,20 @@ fails when a served route and the document disagree; the TypeScript
 server's responses are validated against the document in a pull request of
 its own. Step 2 (the conformance harness) starts after that.
 
+## The conformance harness (step 2)
+
+Step 2's harness is `scripts/conformance/` (its README has the details):
+the end-to-end suites, the released CLIs 0.21.0 and 0.22.0 and the app
+libraries, run against a chosen target: `ts-source` (this checkout),
+`ts-release:<version>` (a signed release, verified and pulled by digest)
+and `go-binary:<path>`, a stub step 3 replaces with the Go server. Each
+target keeps its known failures in `scripts/conformance/expect/`, with a
+reason and the step that removes them, and `--gate` is how G1 and G2 are
+judged. Step 2 is complete once its last pull request (the release
+target, expected failures, gate mode and the weekly matrix,
+`.github/workflows/conformance.yml`) is merged and the weekly matrix
+passes, every failure in it listed with a reason.
+
 ## Before the first Go release
 
 - When varlatchd itself is written: configuration errors that a retry

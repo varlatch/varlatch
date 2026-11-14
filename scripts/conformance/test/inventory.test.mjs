@@ -144,7 +144,7 @@ test("a run where every check passed is ok", () => {
 test("a check in the inventory that did not report fails the run", () => {
   const run = evaluate({ inventory: base(), reports: all().filter((r) => r.id !== "stub.page") });
   assert.equal(run.ok, false);
-  assert.deepEqual(outcome(run, "stub.page"), { id: "stub.page", suite: "stub", kind: "component", feature: null, outcome: "fail", why: "did not report", reports: 0 });
+  assert.deepEqual(outcome(run, "stub.page"), { id: "stub.page", suite: "stub", kind: "component", feature: null, outcome: "fail", why: "did not report", reports: 0, failure: "reporting" });
 });
 
 test("a reported check that is not in the inventory, or comes from another suite, fails the run", () => {
@@ -171,7 +171,20 @@ test("not applicable: allowed for ts-stack checks only", () => {
 test("a check reported more than once passes only if every report passed and they agree", () => {
   let run = evaluate({ inventory: base(), reports: [...all(), { ...pass("web", "web.csp-strict"), status: "FAIL", text: "second case" }] });
   assert.equal(outcome(run, "web.csp-strict").outcome, "fail");
-  assert.equal(outcome(run, "web.csp-strict").why, "second case");
+  // A FAIL mixed with a PASS is a reporting failure, which keeps the FAIL's words.
+  assert.equal(outcome(run, "web.csp-strict").failure, "reporting");
+  assert.equal(outcome(run, "web.csp-strict").why, "reported inconsistently: PASS, FAIL (2 results); a FAIL said: second case");
+  // Every result failing is one assertion failure.
+  run = evaluate({
+    inventory: base(),
+    reports: [...all().filter((r) => r.id !== "web.csp-strict"), { ...pass("web", "web.csp-strict"), status: "FAIL", text: "first" }, { ...pass("web", "web.csp-strict"), status: "FAIL", text: "second" }],
+  });
+  assert.equal(outcome(run, "web.csp-strict").failure, "assertion");
+  assert.equal(outcome(run, "web.csp-strict").why, "first");
+  // A status the format does not have.
+  run = evaluate({ inventory: base(), reports: [...all().filter((r) => r.id !== "web.csp-strict"), { ...pass("web", "web.csp-strict"), status: "SKIP" }] });
+  assert.match(outcome(run, "web.csp-strict").why, /invalid status: SKIP/);
+  assert.equal(outcome(run, "web.csp-strict").failure, "reporting");
   run = evaluate({ inventory: base(), reports: [...all(), { suite: "stack", id: "stack.convex", status: "N/A", text: "" }] });
   assert.match(outcome(run, "stack.convex").why, /inconsistently/);
   run = evaluate({ inventory: base(), reports: [...all(), pass("web", "web.csp-strict")] });
@@ -222,4 +235,21 @@ test("compareVersions orders x.y.z numerically, and refuses anything else", () =
   for (const bad of ["latest", "0.22", "v0.22.0", "0.22.0-rc.1", ""]) {
     assert.throws(() => compareVersions(bad, "0.22.0"), /not an x\.y\.z version/, bad);
   }
+});
+
+test("an external suite is a scripts/test-*.mjs suite the runner does not run, with a replacement", () => {
+  const withExternal = (suite) => ({ ...base(), externalSuites: { setup: { title: "setup", script: "scripts/test-setup.mjs", kind: "ts-stack", replacement: { open: "step 6" }, ...suite } } });
+  assert.deepEqual(validateInventory(withExternal({})), []);
+  assert.deepEqual(validateInventory(withExternal({ replacement: "web.csp-strict" })), []);
+  assert.deepEqual(validateInventory(withExternal({ replacement: { none: "nothing to replace" } })), []);
+  const problems = (suite) => validateInventory(withExternal(suite)).join("\n");
+  assert.match(problems({ script: "apps/web/scripts/e2e-web.mjs" }), /script must be scripts\/test-<name>\.mjs/);
+  assert.match(problems({ kind: "conformance" }), /kind must be ts-stack/);
+  assert.match(problems({ replacement: undefined }), /names its replacement/);
+  assert.match(problems({ replacement: "stack.convex" }), /is not a conformance check/);
+  assert.match(problems({ replacement: { open: "" } }), /replacement must be/);
+  assert.match(problems({ title: "" }), /no title/);
+  const clash = base();
+  clash.externalSuites = { web: { title: "web", script: "scripts/test-web.mjs", kind: "ts-stack", replacement: { open: "step 6" } } };
+  assert.match(validateInventory(clash).join(), /is also a suite the runner runs/);
 });

@@ -1,8 +1,9 @@
 {
   "schema": 1,
-  "description": "The released TypeScript CLIs a conformance run can select with --cli <version> (scripts/conformance/README.md), pinned by version, release commit and the hash of varlatch-cli-<version>.cjs. Never 'latest': a later release is added here by hand. Each download is verified as docs/operations/verify-release.md says, with the cosign binary pinned below.",
+  "description": "The released TypeScript CLIs a conformance run can select with --cli <version> (scripts/conformance/README.md), pinned by version, release commit and the hash of varlatch-cli-<version>.cjs. Never 'latest': a later release is added here by hand. Each download is verified as docs/operations/verify-release.md says, with the cosign binary pinned below; the ts-release target verifies a release's images against the signatures in imageSignatures the same way.",
   "repository": "varlatch/varlatch",
   "issuer": "https://token.actions.githubusercontent.com",
+  "imageSignatures": "ghcr.io/varlatch/varlatch-signatures",
   "cosign": {
     "version": "2.6.5",
     "binaries": {

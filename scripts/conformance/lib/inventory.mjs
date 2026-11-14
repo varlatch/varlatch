@@ -14,6 +14,12 @@
  *   component    tests this checkout's code, not the target; kept in the
  *                run, never counted as conformance.
  *
+ * External suites (`externalSuites`): the suites the runner does not run,
+ * the TypeScript installation's lifecycle and installer suites
+ * (scripts/test-*.mjs). Each names its replacement the way a ts-stack check
+ * does; gate mode (lib/gate.mjs) needs every replacement present and passing,
+ * so an `open` one keeps the gate shut until the step that writes it.
+ *
  * Features: a check that exercises a CLI feature names it (`feature`). A
  * feature cites the CHANGELOG entry that introduced it and is either part of
  * the compatibility core (`core: true`, never version-gated: every pinned
@@ -27,6 +33,8 @@
  * `predates-cli` result the runner cannot confirm; and any error a suite
  * or the runner reports outside a check. An error is never a skip.
  */
+
+import { STATUSES } from "./results.mjs";
 
 export const KINDS = ["conformance", "ts-stack", "component"];
 
@@ -128,18 +136,7 @@ export function validateInventory(inventory) {
       continue;
     }
     if (check.kind === "ts-stack") {
-      const r = check.replacement;
-      if (typeof r === "string") {
-        if (!(r in checks)) problems.push(`${where}: replacement ${r} is not in the inventory`);
-        else if (checks[r].kind !== "conformance") problems.push(`${where}: replacement ${r} is not a conformance check`);
-      } else if (r && typeof r === "object") {
-        const keys = Object.keys(r);
-        if (keys.length !== 1 || !["none", "open"].includes(keys[0]) || typeof r[keys[0]] !== "string" || r[keys[0]].trim() === "") {
-          problems.push(`${where}: replacement must be a check ID, { "none": "<why>" } or { "open": "<the step that writes it>" }`);
-        }
-      } else {
-        problems.push(`${where}: a ts-stack check names its replacement`);
-      }
+      problems.push(...replacementProblems(where, check.replacement, checks));
     } else if ("replacement" in check) {
       problems.push(`${where}: only a ts-stack check has a replacement`);
     }
@@ -156,6 +153,15 @@ export function validateInventory(inventory) {
       }
     }
   }
+  for (const [name, suite] of Object.entries(inventory.externalSuites ?? {})) {
+    const where = `external suite ${name}`;
+    if (!SUITE.test(name)) problems.push(`${where}: not a suite name`);
+    if (name in suites) problems.push(`${where}: is also a suite the runner runs`);
+    if (typeof suite.title !== "string" || suite.title === "") problems.push(`${where}: no title`);
+    if (typeof suite.script !== "string" || !/^scripts\/test-[a-z0-9-]+\.mjs$/.test(suite.script)) problems.push(`${where}: script must be scripts/test-<name>.mjs`);
+    if (suite.kind !== "ts-stack") problems.push(`${where}: kind must be ts-stack (it tests the TypeScript installation)`);
+    problems.push(...replacementProblems(where, suite.replacement, checks));
+  }
   for (const [suite, count] of counts) if (count === 0) problems.push(`suite ${suite}: no checks`);
   for (const [feature, count] of featureChecks) if (count === 0) problems.push(`feature ${feature}: no checks`);
   for (const name of CORE_FEATURES) {
@@ -164,6 +170,26 @@ export function validateInventory(inventory) {
     }
   }
   return problems;
+}
+
+/**
+ * Problems with a replacement: a conformance check ID in the inventory,
+ * { "none": "<why>" } or { "open": "<the step that writes it>" }.
+ */
+function replacementProblems(where, r, checks) {
+  if (typeof r === "string") {
+    if (!(r in checks)) return [`${where}: replacement ${r} is not in the inventory`];
+    if (checks[r].kind !== "conformance") return [`${where}: replacement ${r} is not a conformance check`];
+    return [];
+  }
+  if (r && typeof r === "object") {
+    const keys = Object.keys(r);
+    if (keys.length !== 1 || !["none", "open"].includes(keys[0]) || typeof r[keys[0]] !== "string" || r[keys[0]].trim() === "") {
+      return [`${where}: replacement must be a check ID, { "none": "<why>" } or { "open": "<the step that writes it>" }`];
+    }
+    return [];
+  }
+  return [`${where}: a ts-stack check or external suite names its replacement`];
 }
 
 /**
@@ -218,22 +244,37 @@ export function evaluate({ inventory, reports, errors = [], cliVersion = null })
   for (const [id, entry] of Object.entries(inventory.checks)) {
     const got = byId.get(id) ?? [];
     const statuses = new Set(got.map((r) => r.status));
-    const judged = (outcome, why = "") => checks.push({ id, suite: entry.suite, kind: entry.kind, feature: entry.feature ?? null, outcome, why, reports: got.length });
-    if (got.length === 0) judged("fail", "did not report");
-    else if (statuses.has("FAIL")) judged("fail", got.find((r) => r.status === "FAIL").text);
-    else if (statuses.size > 1) judged("fail", `reported inconsistently: ${[...statuses].join(", ")}`);
+    // `failure` says why a check failed: "assertion" only when the check
+    // itself reported a FAIL line; every other failure (no report, a
+    // forbidden N/A, an unconfirmed PREDATES-CLI, inconsistent reports) is
+    // "reporting", which no expected failure can cover (lib/expect.mjs).
+    const judged = (outcome, why = "", failure = null) =>
+      checks.push({ id, suite: entry.suite, kind: entry.kind, feature: entry.feature ?? null, outcome, why, reports: got.length, ...(failure ? { failure } : {}) });
+    const reporting = (why) => judged("fail", why, "reporting");
+    // Inconsistency first: only a single, valid status is judged by its
+    // kind, so a FAIL mixed with any other result (PASS, a forbidden N/A, an
+    // unconfirmed PREDATES-CLI) is a reporting failure, never an assertion
+    // an expectation could excuse.
+    const invalid = [...statuses].filter((st) => !STATUSES.includes(st));
+    if (got.length === 0) reporting("did not report");
+    else if (invalid.length > 0) reporting(`reported an invalid status: ${invalid.join(", ")}`);
+    else if (statuses.size > 1) {
+      const failed = got.find((r) => r.status === "FAIL");
+      reporting(`reported inconsistently: ${[...statuses].join(", ")} (${got.length} results)${failed ? `; a FAIL said: ${failed.text}` : ""}`);
+    }
+    else if (statuses.has("FAIL")) judged("fail", got.find((r) => r.status === "FAIL").text, "assertion");
     else if (statuses.has("PASS")) judged("pass");
     else if (statuses.has("N/A")) {
       if (entry.kind === "ts-stack") judged("not-applicable", got[0].text);
-      else judged("fail", `a ${entry.kind} check reported not applicable: ${got[0].text}`);
+      else reporting(`a ${entry.kind} check reported not applicable: ${got[0].text}`);
     } else {
       // PREDATES-CLI: accepted only when the runner itself confirms it,
       // from the inventory and the CLI's verified version.
       const gate = gating(inventory, id);
-      if (gate.core) judged("fail", `a compatibility-core check (${gate.feature}) cannot predate the CLI`);
-      else if (!gate.introducedIn) judged("fail", "reported predates-cli, but the inventory names no version that introduced its feature");
-      else if (cliVersion === null) judged("fail", "reported predates-cli, but the CLI under test is built from source");
-      else if (compareVersions(cliVersion, gate.introducedIn) >= 0) judged("fail", `reported predates-cli, but CLI ${cliVersion} is not older than ${gate.introducedIn} (${gate.feature})`);
+      if (gate.core) reporting(`a compatibility-core check (${gate.feature}) cannot predate the CLI`);
+      else if (!gate.introducedIn) reporting("reported predates-cli, but the inventory names no version that introduced its feature");
+      else if (cliVersion === null) reporting("reported predates-cli, but the CLI under test is built from source");
+      else if (compareVersions(cliVersion, gate.introducedIn) >= 0) reporting(`reported predates-cli, but CLI ${cliVersion} is not older than ${gate.introducedIn} (${gate.feature})`);
       else judged("predates-cli", `CLI ${cliVersion} predates ${gate.feature}, introduced in ${gate.introducedIn}`);
     }
   }
