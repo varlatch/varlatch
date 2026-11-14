@@ -634,12 +634,26 @@ func (e ContractAuthority) Valid() bool {
 	}
 }
 
+// Defines values for CreatedIdentityDisabled.
+const (
+	CreatedIdentityDisabledFalse CreatedIdentityDisabled = false
+)
+
+// Valid indicates whether the value is a known member of the CreatedIdentityDisabled enum.
+func (e CreatedIdentityDisabled) Valid() bool {
+	switch e {
+	case CreatedIdentityDisabledFalse:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreatedIdentityKind.
 const (
 	CreatedIdentityKindAgent    CreatedIdentityKind = "agent"
 	CreatedIdentityKindBroker   CreatedIdentityKind = "broker"
 	CreatedIdentityKindCi       CreatedIdentityKind = "ci"
-	CreatedIdentityKindHuman    CreatedIdentityKind = "human"
 	CreatedIdentityKindService  CreatedIdentityKind = "service"
 	CreatedIdentityKindWorkload CreatedIdentityKind = "workload"
 )
@@ -653,32 +667,9 @@ func (e CreatedIdentityKind) Valid() bool {
 		return true
 	case CreatedIdentityKindCi:
 		return true
-	case CreatedIdentityKindHuman:
-		return true
 	case CreatedIdentityKindService:
 		return true
 	case CreatedIdentityKindWorkload:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for CreatedIdentityOrgRole.
-const (
-	CreatedIdentityOrgRoleAdmin       CreatedIdentityOrgRole = "admin"
-	CreatedIdentityOrgRoleLessThannil CreatedIdentityOrgRole = "<nil>"
-	CreatedIdentityOrgRoleMember      CreatedIdentityOrgRole = "member"
-)
-
-// Valid indicates whether the value is a known member of the CreatedIdentityOrgRole enum.
-func (e CreatedIdentityOrgRole) Valid() bool {
-	switch e {
-	case CreatedIdentityOrgRoleAdmin:
-		return true
-	case CreatedIdentityOrgRoleLessThannil:
-		return true
-	case CreatedIdentityOrgRoleMember:
 		return true
 	default:
 		return false
@@ -3183,16 +3174,16 @@ func (e GetSyncTarget200JSONResponseBodyState) Valid() bool {
 
 // Defines values for PauseSyncTargetParamsWait.
 const (
-	False PauseSyncTargetParamsWait = "false"
-	True  PauseSyncTargetParamsWait = "true"
+	PauseSyncTargetParamsWaitFalse PauseSyncTargetParamsWait = "false"
+	PauseSyncTargetParamsWaitTrue  PauseSyncTargetParamsWait = "true"
 )
 
 // Valid indicates whether the value is a known member of the PauseSyncTargetParamsWait enum.
 func (e PauseSyncTargetParamsWait) Valid() bool {
 	switch e {
-	case False:
+	case PauseSyncTargetParamsWaitFalse:
 		return true
-	case True:
+	case PauseSyncTargetParamsWaitTrue:
 		return true
 	default:
 		return false
@@ -3379,27 +3370,27 @@ type AuditCredential struct {
 
 // AuditEvent Versioned Security Audit Event (ADR-0016). Never contains plaintext Values, key/credential material, or value-derived hashes.
 type AuditEvent struct {
-	Action                 nullable.Nullable[string] `json:"action,omitempty"`
-	ActorIdentityId        nullable.Nullable[string] `json:"actorIdentityId,omitempty"`
-	AuthenticationMethodId nullable.Nullable[string] `json:"authenticationMethodId,omitempty"`
-	Authorization          *map[string]interface{}   `json:"authorization,omitempty"`
+	Action                 nullable.Nullable[string]                 `json:"action,omitempty"`
+	ActorIdentityId        nullable.Nullable[string]                 `json:"actorIdentityId,omitempty"`
+	AuthenticationMethodId nullable.Nullable[string]                 `json:"authenticationMethodId,omitempty"`
+	Authorization          nullable.Nullable[map[string]interface{}] `json:"authorization,omitempty"`
 
 	// Client A short, readable summary of the User-Agent of the request that recorded the event, such as "Firefox on Linux", "varlatch CLI 0.16.0 on Linux, assisted" (the CLI in assisted mode, a coding agent driving it), or "varlatch MCP 0.16.0 on Linux". What the client says about itself, never verified. Null when the client was not recognized, for events no authenticated request recorded, and for events before 0.16.0; absent from older servers (capability audit.attribution).
 	Client nullable.Nullable[string] `json:"client,omitempty"`
 
 	// CredentialId The credential of the request that recorded the event, when the actor is the identity that made it; on credential.issued, credential.revoked, and authentication.device_collected, the credential the event is about. Null when no request credential applies (Varlatch's own events, failed authentications). Before 0.16.0 only authorization.denied and those three types named one.
-	CredentialId   nullable.Nullable[string]             `json:"credentialId,omitempty"`
-	Decision       AuditEventDecision                    `json:"decision"`
-	EventId        string                                `json:"eventId"`
-	EventType      string                                `json:"eventType"`
-	Listener       nullable.Nullable[AuditEventListener] `json:"listener,omitempty"`
-	Metadata       *map[string]interface{}               `json:"metadata,omitempty"`
-	OccurredAt     time.Time                             `json:"occurredAt"`
-	OrganizationId nullable.Nullable[string]             `json:"organizationId,omitempty"`
-	RequestId      nullable.Nullable[string]             `json:"requestId,omitempty"`
-	Resource       *map[string]interface{}               `json:"resource,omitempty"`
-	SchemaVersion  int                                   `json:"schemaVersion"`
-	TailnetContext *map[string]interface{}               `json:"tailnetContext,omitempty"`
+	CredentialId   nullable.Nullable[string]                 `json:"credentialId,omitempty"`
+	Decision       AuditEventDecision                        `json:"decision"`
+	EventId        string                                    `json:"eventId"`
+	EventType      string                                    `json:"eventType"`
+	Listener       nullable.Nullable[AuditEventListener]     `json:"listener,omitempty"`
+	Metadata       nullable.Nullable[map[string]interface{}] `json:"metadata,omitempty"`
+	OccurredAt     time.Time                                 `json:"occurredAt"`
+	OrganizationId nullable.Nullable[string]                 `json:"organizationId,omitempty"`
+	RequestId      nullable.Nullable[string]                 `json:"requestId,omitempty"`
+	Resource       nullable.Nullable[map[string]interface{}] `json:"resource,omitempty"`
+	SchemaVersion  int                                       `json:"schemaVersion"`
+	TailnetContext nullable.Nullable[map[string]interface{}] `json:"tailnetContext,omitempty"`
 }
 
 // AuditEventDecision defines model for AuditEvent.Decision.
@@ -3704,41 +3695,24 @@ type ContractRevision struct {
 	SemanticsVersion int `json:"semanticsVersion"`
 }
 
-// CreatedIdentity defines model for CreatedIdentity.
+// CreatedIdentity The new machine identity and its first credential. Not an Identity: it carries no createdAt, lastSeenAt or member fields.
 type CreatedIdentity struct {
-	CreatedAt time.Time `json:"createdAt"`
-
 	// Credential Shown exactly once at creation; stored hashed; never retrievable.
-	Credential nullable.Nullable[string] `json:"credential,omitempty"`
+	Credential nullable.Nullable[string] `json:"credential"`
 
 	// CredentialExpiresAt Expiry of the issued credential: from credentialTtlSeconds, or from the Organization's default lifetime while it enforces credential-lifetime; null for no expiry.
-	CredentialExpiresAt nullable.Nullable[time.Time] `json:"credentialExpiresAt,omitempty"`
-	Disabled            *bool                        `json:"disabled,omitempty"`
-
-	// Email Better Auth account email for human identities; null for machines.
-	Email nullable.Nullable[string] `json:"email,omitempty"`
-	Id    string                    `json:"id"`
-
-	// Image Avatar image (data or https URL) for human identities; null for machines.
-	Image nullable.Nullable[string] `json:"image,omitempty"`
-	Kind  CreatedIdentityKind       `json:"kind"`
-
-	// LastSeenAt Most recent successful authentication by any of the identity's credentials, throttled to ~60s granularity (ADR-0034 §5). An operational signal, not an audit record. Null when never seen.
-	LastSeenAt nullable.Nullable[time.Time] `json:"lastSeenAt,omitempty"`
-	Name       string                       `json:"name"`
-
-	// OrgRole In an Organization's identity listing, a live member's built-in role; null for machines and former members.
-	OrgRole nullable.Nullable[CreatedIdentityOrgRole] `json:"orgRole,omitempty"`
-
-	// RemovedAt In an Organization's identity listing, when a former member was removed or left (capability members.lifecycle); null otherwise.
-	RemovedAt nullable.Nullable[time.Time] `json:"removedAt,omitempty"`
+	CredentialExpiresAt nullable.Nullable[time.Time] `json:"credentialExpiresAt"`
+	Disabled            CreatedIdentityDisabled      `json:"disabled"`
+	Id                  string                       `json:"id"`
+	Kind                CreatedIdentityKind          `json:"kind"`
+	Name                string                       `json:"name"`
 }
+
+// CreatedIdentityDisabled defines model for CreatedIdentity.Disabled.
+type CreatedIdentityDisabled bool
 
 // CreatedIdentityKind defines model for CreatedIdentity.Kind.
 type CreatedIdentityKind string
-
-// CreatedIdentityOrgRole In an Organization's identity listing, a live member's built-in role; null for machines and former members.
-type CreatedIdentityOrgRole string
 
 // CreatedWebhook defines model for CreatedWebhook.
 type CreatedWebhook struct {
@@ -4332,28 +4306,27 @@ type Group struct {
 // GroupKind defines model for Group.Kind.
 type GroupKind string
 
-// Identity defines model for Identity.
+// Identity An identity in an Organization's identity listing.
 type Identity struct {
-	CreatedAt time.Time `json:"createdAt"`
-	Disabled  *bool     `json:"disabled,omitempty"`
+	Disabled bool `json:"disabled"`
 
 	// Email Better Auth account email for human identities; null for machines.
-	Email nullable.Nullable[string] `json:"email,omitempty"`
+	Email nullable.Nullable[string] `json:"email"`
 	Id    string                    `json:"id"`
 
 	// Image Avatar image (data or https URL) for human identities; null for machines.
-	Image nullable.Nullable[string] `json:"image,omitempty"`
+	Image nullable.Nullable[string] `json:"image"`
 	Kind  IdentityKind              `json:"kind"`
 
 	// LastSeenAt Most recent successful authentication by any of the identity's credentials, throttled to ~60s granularity (ADR-0034 §5). An operational signal, not an audit record. Null when never seen.
-	LastSeenAt nullable.Nullable[time.Time] `json:"lastSeenAt,omitempty"`
+	LastSeenAt nullable.Nullable[time.Time] `json:"lastSeenAt"`
 	Name       string                       `json:"name"`
 
 	// OrgRole In an Organization's identity listing, a live member's built-in role; null for machines and former members.
-	OrgRole nullable.Nullable[IdentityOrgRole] `json:"orgRole,omitempty"`
+	OrgRole nullable.Nullable[IdentityOrgRole] `json:"orgRole"`
 
 	// RemovedAt In an Organization's identity listing, when a former member was removed or left (capability members.lifecycle); null otherwise.
-	RemovedAt nullable.Nullable[time.Time] `json:"removedAt,omitempty"`
+	RemovedAt nullable.Nullable[time.Time] `json:"removedAt"`
 }
 
 // IdentityKind defines model for Identity.Kind.
@@ -5812,7 +5785,7 @@ type CreateOrganizationJSONBody struct {
 
 // RenameOrganizationJSONBody defines parameters for RenameOrganization.
 type RenameOrganizationJSONBody struct {
-	// Name 1 to 200 characters once surrounding whitespace is trimmed.
+	// Name 1 to 200 characters once surrounding whitespace is trimmed; the limits apply to the trimmed name, so they are not schema bounds.
 	Name string `json:"name"`
 }
 
@@ -15807,12 +15780,35 @@ func (response GetInstallationBackups200JSONResponse) VisitGetInstallationBackup
 	return err
 }
 
-type GetInstallationBackups403Response struct {
+type GetInstallationBackups403JSONResponse ApiError
+
+func (response GetInstallationBackups403JSONResponse) VisitGetInstallationBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
-func (response GetInstallationBackups403Response) VisitGetInstallationBackupsResponse(w http.ResponseWriter) error {
-	w.WriteHeader(403)
-	return nil
+type GetInstallationBackupsdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetInstallationBackupsdefaultJSONResponse) VisitGetInstallationBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type ListDeletedOrganizationsRequestObject struct {
@@ -15920,12 +15916,35 @@ func (response GetInstallationListeners200JSONResponse) VisitGetInstallationList
 	return err
 }
 
-type GetInstallationListeners403Response struct {
+type GetInstallationListeners403JSONResponse ApiError
+
+func (response GetInstallationListeners403JSONResponse) VisitGetInstallationListenersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
-func (response GetInstallationListeners403Response) VisitGetInstallationListenersResponse(w http.ResponseWriter) error {
-	w.WriteHeader(403)
-	return nil
+type GetInstallationListenersdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetInstallationListenersdefaultJSONResponse) VisitGetInstallationListenersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetInstallationOutboundRequestObject struct {
@@ -15949,12 +15968,35 @@ func (response GetInstallationOutbound200JSONResponse) VisitGetInstallationOutbo
 	return err
 }
 
-type GetInstallationOutbound403Response struct {
+type GetInstallationOutbound403JSONResponse ApiError
+
+func (response GetInstallationOutbound403JSONResponse) VisitGetInstallationOutboundResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
-func (response GetInstallationOutbound403Response) VisitGetInstallationOutboundResponse(w http.ResponseWriter) error {
-	w.WriteHeader(403)
-	return nil
+type GetInstallationOutbounddefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetInstallationOutbounddefaultJSONResponse) VisitGetInstallationOutboundResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetInstallationReleaseRequestObject struct {
@@ -15978,12 +16020,35 @@ func (response GetInstallationRelease200JSONResponse) VisitGetInstallationReleas
 	return err
 }
 
-type GetInstallationRelease403Response struct {
+type GetInstallationRelease403JSONResponse ApiError
+
+func (response GetInstallationRelease403JSONResponse) VisitGetInstallationReleaseResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
-func (response GetInstallationRelease403Response) VisitGetInstallationReleaseResponse(w http.ResponseWriter) error {
-	w.WriteHeader(403)
-	return nil
+type GetInstallationReleasedefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetInstallationReleasedefaultJSONResponse) VisitGetInstallationReleaseResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type WhoamiRequestObject struct {
@@ -16560,6 +16625,23 @@ func (response GetMeta200JSONResponse) VisitGetMetaResponse(w http.ResponseWrite
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMetadefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetMetadefaultJSONResponse) VisitGetMetaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -22863,20 +22945,46 @@ func (response GetTailnetContext200JSONResponse) VisitGetTailnetContextResponse(
 	return err
 }
 
-type GetTailnetContext401Response struct {
-}
+type GetTailnetContext401JSONResponse ApiError
 
-func (response GetTailnetContext401Response) VisitGetTailnetContextResponse(w http.ResponseWriter) error {
+func (response GetTailnetContext401JSONResponse) VisitGetTailnetContextResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
-	return nil
+	_, err := buf.WriteTo(w)
+	return err
 }
 
-type GetTailnetContext404Response struct {
-}
+type GetTailnetContext404TextResponse string
 
-func (response GetTailnetContext404Response) VisitGetTailnetContextResponse(w http.ResponseWriter) error {
+func (response GetTailnetContext404TextResponse) VisitGetTailnetContextResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(404)
-	return nil
+
+	_, err := w.Write([]byte(fmt.Sprint(response)))
+	return err
+}
+
+type GetTailnetContextdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetTailnetContextdefaultJSONResponse) VisitGetTailnetContextResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetTailnetEndpointRequestObject struct {
@@ -22900,12 +23008,35 @@ func (response GetTailnetEndpoint200JSONResponse) VisitGetTailnetEndpointRespons
 	return err
 }
 
-type GetTailnetEndpoint401Response struct {
+type GetTailnetEndpoint401JSONResponse ApiError
+
+func (response GetTailnetEndpoint401JSONResponse) VisitGetTailnetEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
-func (response GetTailnetEndpoint401Response) VisitGetTailnetEndpointResponse(w http.ResponseWriter) error {
-	w.WriteHeader(401)
-	return nil
+type GetTailnetEndpointdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetTailnetEndpointdefaultJSONResponse) VisitGetTailnetEndpointResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 // StrictServerInterface represents all server handlers.
