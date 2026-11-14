@@ -57,6 +57,18 @@ const (
 // unit's TimeoutStopSec (30 s), leaving time for the writer to commit.
 const StopTimeout = 20 * time.Second
 
+// How long a client may take, so a slow or stalled one cannot hold a
+// connection open: the request line and headers (10 s), the whole request
+// including its body (300 s, Node.js's requestTimeout, which bounded the
+// TypeScript server), and an idle keep-alive connection between requests.
+// A handler that streams a long response (server-sent events) clears its own
+// read deadline. Variables so tests can shorten them.
+var (
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 300 * time.Second
+	idleTimeout       = 120 * time.Second
+)
+
 // Options are what Serve needs besides the configuration file.
 type Options struct {
 	ConfigPath string
@@ -176,8 +188,9 @@ func Serve(opts Options) int {
 	}
 	srv := &http.Server{
 		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		IdleTimeout:       idleTimeout,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
 	served := make(chan error, 1)
