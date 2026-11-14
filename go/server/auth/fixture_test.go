@@ -56,7 +56,7 @@ type fixture struct {
 
 type mapping struct {
 	Tables map[string]struct {
-		SQLite  string            `json:"sqlite"`
+		SQLite string `json:"sqlite"`
 		// A column maps to its SQLite name, or to an object for one that
 		// changes more (none of the tables loaded here has one).
 		Columns map[string]json.RawMessage `json:"columns"`
