@@ -5,6 +5,7 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -488,6 +489,84 @@ func TestRunPublishesAfterCommits(t *testing.T) {
 	case batch := <-st.Messages():
 		t.Fatalf("an event committed before Run was sent: %v", batch)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// A stream that subscribes before Run has read its starting point (Run
+// starts in a goroutine, the listener may already serve) still receives
+// what commits after it opened: the starting point is fixed at the first
+// of the two. Here the event commits, and only then does Run start.
+func TestSubscribeBeforeRunMissesNothing(t *testing.T) {
+	w := newWorld(t, Options{Poll: 20 * time.Millisecond})
+	w.event("project.created", "org_a", "idn_alice", nil, "") // before the stream: never sent
+	st := w.subscribe("alice", w.session("alice"))
+	w.event("grant.created", "org_a", "idn_alice", nil, "")
+	ctx, cancel := context.WithCancel(bg)
+	done := make(chan error, 1)
+	go func() { done <- w.hub.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case batch := <-st.Messages():
+		if len(batch) != 1 || !strings.Contains(string(batch[0].Data), `"domains":["grant"]`) {
+			t.Fatalf("got %v", batch)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an event committed after the stream opened, before Run started, was never sent")
+	}
+}
+
+// The publisher's skip of an empty hub and a first stream's registration,
+// interleaved: the publisher finds no streams; before it reads the last
+// position, a stream registers and its member's removal commits. The
+// publisher must not advance past that removal unsent: the stream closes,
+// told why.
+func TestEmptySkipDoesNotSkipANewStream(t *testing.T) {
+	w := newWorld(t, Options{})
+	cursor := w.publish(0)
+	var carol *Stream
+	w.hub.beforeSkipRead = func() {
+		w.hub.beforeSkipRead = nil
+		carol = w.subscribe("carol", w.session("carol"))
+		w.event("membership.removed", "org_b", "idn_bob", map[string]any{"identityId": "idn_carol"}, "")
+	}
+	next := w.publish(cursor)
+	if carol == nil {
+		t.Fatal("the publisher did not take the empty-hub path")
+	}
+	if r := ended(carol); r != ReasonMembershipRemoved {
+		t.Fatalf("the stream ended %q; the publisher went from %d to %d", r, cursor, next)
+	}
+}
+
+// A hub runs once: a second Run, after the first ended, is refused rather
+// than starting over from the first starting point and delivering what
+// was already published again.
+func TestRunTwiceRefused(t *testing.T) {
+	w := newWorld(t, Options{Poll: 20 * time.Millisecond})
+	st := w.subscribe("alice", w.session("alice"))
+	ctx, cancel := context.WithCancel(bg)
+	done := make(chan error, 1)
+	go func() { done <- w.hub.Run(ctx) }()
+	w.event("grant.created", "org_a", "idn_alice", nil, "")
+	w.hub.Notify()
+	select {
+	case <-st.Messages():
+	case <-time.After(5 * time.Second):
+		t.Fatal("no signal")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	again, stop := context.WithTimeout(bg, 500*time.Millisecond)
+	defer stop()
+	if err := w.hub.Run(again); !errors.Is(err, ErrRunTwice) {
+		t.Errorf("a second Run: %v", err)
+	}
+	select {
+	case batch := <-st.Messages():
+		t.Fatalf("delivered again: %v", batch)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

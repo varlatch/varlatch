@@ -55,6 +55,9 @@ var ErrNotLive = errors.New("realtime: the session is not live")
 // ErrClosed refuses a stream once the hub has closed.
 var ErrClosed = errors.New("realtime: closed")
 
+// ErrRunTwice refuses a second Run of one hub.
+var ErrRunTwice = errors.New("realtime: a hub runs once; make a new one")
+
 // Options configures a Hub. Store is required.
 type Options struct {
 	Store      *storage.DB
@@ -78,6 +81,22 @@ type Hub struct {
 	streams map[*Stream]struct{}
 	closed  bool
 	seq     uint64
+	// registered counts the streams ever registered: the publisher's
+	// skip of an empty hub compares it before and after its read.
+	registered uint64
+	// running is set by the first Run: a hub runs once.
+	running bool
+
+	// beforeSkipRead runs, in tests, between the publisher finding no
+	// streams and its read of the last position.
+	beforeSkipRead func()
+
+	// start is the position Run publishes after: the last event committed
+	// when Run started or the first stream subscribed, whichever came
+	// first (startCursor).
+	startMu  sync.Mutex
+	start    int64
+	startSet bool
 }
 
 // New makes a hub; Run starts it.
@@ -113,11 +132,26 @@ func (h *Hub) Notify() {
 }
 
 // Run publishes until ctx ends. It starts after the last event committed
-// before it: a stream receives the signals published after it opened, and
-// nothing earlier is replayed.
+// before it or before the first stream subscribed, whichever came first: a
+// stream receives the signals of everything committed after it opened, and
+// nothing earlier is replayed. (Run starts in a goroutine, so a stream may
+// subscribe before Run reads its starting point: reading it then would
+// skip what was committed in between, a membership removal that must
+// close the stream included.)
+//
+// A hub runs once: a second Run returns ErrRunTwice, since its progress
+// (what it already published) would otherwise start over from the first
+// starting point and deliver events again. varlatchd makes a new hub when
+// it starts.
 func (h *Hub) Run(ctx context.Context) error {
-	q := query.New(h.opts.Store.Reader())
-	cursor, err := q.LastAuditPosition(ctx)
+	h.mu.Lock()
+	again := h.running
+	h.running = true
+	h.mu.Unlock()
+	if again {
+		return ErrRunTwice
+	}
+	cursor, err := h.startCursor(ctx)
 	if err != nil {
 		return err
 	}
@@ -148,13 +182,21 @@ func (h *Hub) Run(ctx context.Context) error {
 // the new cursor.
 func (h *Hub) publish(ctx context.Context, cursor int64) (int64, error) {
 	q := query.New(h.opts.Store.Reader())
-	if !h.anyStreams() {
-		// Nobody to tell: skip what was committed.
+	if epoch, empty := h.registrations(); empty {
+		// Nobody to tell: skip what was committed. Unless a stream
+		// registered while the last position was read: what it is owed
+		// (committed after it registered) may be at or before that
+		// position, so then the events are published as usual.
+		if h.beforeSkipRead != nil {
+			h.beforeSkipRead()
+		}
 		last, err := q.LastAuditPosition(ctx)
 		if err != nil {
 			return cursor, err
 		}
-		return max(cursor, last), nil
+		if again, _ := h.registrations(); again == epoch {
+			return max(cursor, last), nil
+		}
 	}
 	var merged []Signal
 	closures := Closures{RemovedMembers: map[string]bool{}}
@@ -257,10 +299,12 @@ func (h *Hub) pass(ctx context.Context, cursor int64) (passResult, error) {
 	}, nil
 }
 
-func (h *Hub) anyStreams() bool {
+// registrations is how many streams were ever registered, and whether
+// none is open now, read together.
+func (h *Hub) registrations() (uint64, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return len(h.streams) > 0
+	return h.registered, len(h.streams) == 0
 }
 
 func (h *Hub) snapshot() []*Stream {
@@ -380,9 +424,25 @@ func (h *Hub) validateAll(ctx context.Context) {
 	}
 }
 
+// startCursor is the position Run publishes after, read once: at Run's
+// start or the first Subscribe, whichever comes first.
+func (h *Hub) startCursor(ctx context.Context) (int64, error) {
+	h.startMu.Lock()
+	defer h.startMu.Unlock()
+	if !h.startSet {
+		last, err := query.New(h.opts.Store.Reader()).LastAuditPosition(ctx)
+		if err != nil {
+			return 0, err
+		}
+		h.start, h.startSet = last, true
+	}
+	return h.start, nil
+}
+
 // Subscribe opens a stream for a browser session of identity, after
 // checking the session is live. The caller must Unsubscribe it when the
-// response ends.
+// response ends. The hub's starting point is fixed before the stream
+// exists, so whatever commits after Subscribe returns reaches it.
 func (h *Hub) Subscribe(ctx context.Context, session, identity string) (*Stream, error) {
 	ok, err := h.live(ctx, query.New(h.opts.Store.Reader()), session, identity)
 	if err != nil {
@@ -390,6 +450,9 @@ func (h *Hub) Subscribe(ctx context.Context, session, identity string) (*Stream,
 	}
 	if !ok {
 		return nil, ErrNotLive
+	}
+	if _, err := h.startCursor(ctx); err != nil {
+		return nil, err
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -419,6 +482,7 @@ func (h *Hub) Subscribe(ctx context.Context, session, identity string) (*Stream,
 		out: make(chan []Message, h.opts.Buffer), done: make(chan struct{}),
 	}
 	h.streams[s] = struct{}{}
+	h.registered++
 	return s, nil
 }
 
