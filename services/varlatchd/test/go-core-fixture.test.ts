@@ -239,7 +239,7 @@ describe.skipIf(process.env.VARLATCH_WRITE_GO_VECTORS !== "1")("writing the fixt
 });
 
 describe("the fixture is this server's answers", () => {
-  it("the rows check keeps relationships: a moved membership or swapped IDs fail it, a consistent renaming does not", () => {
+  it("the rows check keeps relationships: a moved membership, a moved auth link or swapped IDs fail it, a consistent renaming does not", () => {
     const f = JSON.parse(readFileSync(FILE, "utf8")) as Fixture;
     const idOf = (slug: string) => f.rows.organizations!.find((o) => o.slug === slug)!.id as string;
     const fails = (mutate: (rows: Record<string, Row[]>) => void) => {
@@ -257,6 +257,26 @@ describe("the fixture is this server's answers", () => {
       const [a, b] = [rows.organizations!.find((o) => o.slug === "acme")!, rows.organizations!.find((o) => o.slug === "frozen")!];
       [a.id, b.id] = [b.id, a.id];
     });
+    // Random columns keep their relationships too: two users and their
+    // auth links (the committed file's user tables are empty, so they are
+    // added here). A link moved to the other user fails the check; the two
+    // users swapping ids everywhere does not.
+    const person = (name: string) => f.rows.identities!.find((i) => i.name === name)!.id as string;
+    const withUsers = structuredClone(f.rows);
+    withUsers.user = [
+      { id: "UserAlpha0001", name: "Alice", email: "alice@example.test" },
+      { id: "UserBeta00002", name: "Bob", email: "bob@example.test" },
+    ];
+    withUsers.auth_user_links = [
+      { better_auth_user_id: "UserAlpha0001", identity_id: person("Alice") },
+      { better_auth_user_id: "UserBeta00002", identity_id: person("bob") },
+    ];
+    expectSameRows(TABLES, withUsers, structuredClone(withUsers));
+    const moved = structuredClone(withUsers);
+    moved.auth_user_links![1]!.better_auth_user_id = "UserAlpha0001";
+    expect(() => expectSameRows(TABLES, withUsers, moved)).toThrow();
+    const swapped = JSON.parse(JSON.stringify(withUsers).replaceAll("UserAlpha0001", "SWAP-MARK").replaceAll("UserBeta00002", "UserAlpha0001").replaceAll("SWAP-MARK", "UserBeta00002")) as Record<string, Row[]>;
+    expectSameRows(TABLES, withUsers, swapped);
     // Every ID renamed consistently is the same database.
     const renamed = JSON.parse(JSON.stringify(f.rows).replace(/\b([a-z]{3,4})_([a-z2-7]{26})\b/g, (_m, p: string, rest: string) => `${p}_${[...rest].reverse().join("")}`)) as Record<string, Row[]>;
     expectSameRows(TABLES, f.rows, renamed);

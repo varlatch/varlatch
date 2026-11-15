@@ -359,8 +359,9 @@ The server's packages:
   Root KEK). Every column a write fills with a new time or envelope must
   be listed as volatile. Each run of the TypeScript test also checks the
   file's requests are the table's, in order, and rebuilds the database to
-  check the file's rows are still what the setup makes (new IDs relabelled
-  one to one in a fixed walk, so a moved foreign key or swapped IDs count
+  check the file's rows are still what the setup makes (new IDs, and the
+  values of each table's declared random columns, relabelled one to one in
+  a fixed walk, never masked, so a moved foreign key or swapped IDs count
   as a difference).
   `testdata/core-v0.22.0.json` is step 4.1's file (`go-core-fixture.test.ts`,
   regenerated with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors);

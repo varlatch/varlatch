@@ -52,7 +52,11 @@ export type Row = Record<string, unknown>;
 export interface Table {
   name: string;
   orderBy: string;
-  /** Columns whose values each build makes anew (random keys, hashes), for expectSameRows. */
+  /**
+   * Columns whose values each build makes anew (random keys, hashes,
+   * envelopes), for expectSameRows: relabelled one to one, like domain IDs,
+   * so a foreign key into them (auth_user_links to user) keeps its meaning.
+   */
   random?: string[];
 }
 
@@ -169,6 +173,8 @@ export async function loadRows(rows: Record<string, Row[]>, tables: readonly Tab
 }
 
 const ID = /\b([a-z]{3,4})_[a-z2-7]{26}\b/g;
+/** A domain ID, or a random column's token in relabel (`r_rand` and 21 letters: prefix `r`). */
+const TOKEN_OR_ID = /\b([a-z]{1,4})_(?:rand[a-j]{21}|[a-z2-7]{26})\b/g;
 const ISO = /\b\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\b/g;
 
 /** The normalization both sides apply (see the header). */
@@ -355,14 +361,18 @@ export function expectSameAnswers(f: Fixture, got: { requests: Recorded[]; count
 /**
  * The file's rows are still what this code builds: a fresh build's rows
  * against the file's, per table, as multisets. What each build makes anew
- * is relabelled, never dropped: times become {time}, each table's `random`
- * columns {random}, and every domain ID a placeholder of its own, one to
- * one, numbered by first appearance as the tables are walked in their
- * order, each table's rows ordered by their text with the IDs not numbered
- * yet masked. So a relationship survives: a membership moved to another
- * Organization, or two rows that swap IDs, compare different. Two rows
- * that the walk cannot order (the same text with new IDs masked) fail the
- * check until a table's earlier rows anchor them.
+ * is relabelled, never dropped: times become {time}; every domain ID, and
+ * every value of a table's `random` columns (whatever its form: a Better
+ * Auth user id, a hash, an envelope), a placeholder of its own, one to one
+ * ({org#1}, {r#1}), numbered by first appearance as the tables are walked
+ * in their order, each table's rows ordered by their text with what is not
+ * numbered yet masked. The same random value in two places (a user's id,
+ * and an auth link's reference to it) gets the same label. So a
+ * relationship survives: a membership moved to another Organization, an
+ * auth link moved to another user, or two rows that swap IDs, compare
+ * different; nothing is masked away. Two rows that the walk cannot order
+ * (the same text with new labels masked) fail the check until a table's
+ * earlier rows anchor them.
  */
 export function expectSameRows(tables: readonly Table[], file: Record<string, Row[]>, built: Record<string, Row[]>) {
   const a = relabel(tables, file);
@@ -376,8 +386,20 @@ export function expectSameRows(tables: readonly Table[], file: Record<string, Ro
 export function relabel(tables: readonly Table[], rows: Record<string, Row[]>): Map<string, string[]> {
   const ids = new Map<string, string>();
   const counts = new Map<string, number>();
+  // A random column's value is a token here, labelled like an ID: the same
+  // value, wherever it appears, the same token.
+  const tokens = new Map<string, string>();
+  const token = (v: unknown) => {
+    const key = canonical(v);
+    let t = tokens.get(key);
+    if (!t) {
+      t = `r_rand${String(tokens.size).padStart(21, "a").replace(/[0-9]/g, (d) => "abcdefghij"[Number(d)]!)}`;
+      tokens.set(key, t);
+    }
+    return t;
+  };
   const label = (text: string, number: boolean) =>
-    text.replace(ID, (m, p: string) => {
+    text.replace(TOKEN_OR_ID, (m, p: string) => {
       let l = ids.get(m);
       if (!l && number) {
         const n = (counts.get(p) ?? 0) + 1;
@@ -390,7 +412,7 @@ export function relabel(tables: readonly Table[], rows: Record<string, Row[]>): 
   const out = new Map<string, string[]>();
   for (const t of tables) {
     const texts = (rows[t.name] ?? []).map((r) =>
-      canonical(Object.fromEntries(Object.entries(r).map(([c, v]) => [c, t.random?.includes(c) && v !== null ? "{random}" : v]))).replace(ISO, "{time}"),
+      canonical(Object.fromEntries(Object.entries(r).map(([c, v]) => [c, t.random?.includes(c) && v !== null ? token(v) : v]))).replace(ISO, "{time}"),
     );
     const keyed = texts.map((text) => ({ text, k: label(text, false) })).sort((x, y) => (x.k < y.k ? -1 : x.k > y.k ? 1 : 0));
     for (let i = 1; i < keyed.length; i++) {
