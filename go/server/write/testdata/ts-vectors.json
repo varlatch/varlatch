@@ -1,0 +1,110 @@
+{
+  "comment": "Written by services/varlatchd/test/go-write-vectors.test.ts; never edit.",
+  "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "bodyHashes": [
+    {
+      "name": "a value",
+      "body": "{\"value\":\"postgres://app@db/app\"}",
+      "undefined": false,
+      "hash": "hmac-v1:4159390c53b4dc6353e0615c9b964d0d4f4df8c52f710fc467a0229131941cf1"
+    },
+    {
+      "name": "a value with an expected version",
+      "body": "{\"value\":\"x\",\"expectedVersionId\":\"ver_abc\"}",
+      "undefined": false,
+      "hash": "hmac-v1:5f4f9664d61528ea1b580f27f6c7d1e39a1aeae859ba2f77b28205bf6910af9d"
+    },
+    {
+      "name": "an empty value",
+      "body": "{\"value\":\"\"}",
+      "undefined": false,
+      "hash": "hmac-v1:4d1e6f86531e20c5bdbfdf7549379164ce7d29c5933be3f22f2736662362ca69"
+    },
+    {
+      "name": "text beyond ASCII",
+      "body": "{\"value\":\"héllo wörld ✓ 𝄞\"}",
+      "undefined": false,
+      "hash": "hmac-v1:bddfe586b99e88ff1250fcd8cb542b3cae7fbd96010b67076b5d2079a209bab1"
+    },
+    {
+      "name": "a lone surrogate",
+      "body": "{\"value\":\"a\\ud800b\"}",
+      "undefined": false,
+      "hash": "hmac-v1:0202c849dd0653b8b22ca87cdcc885422a6c155dd5dfaa35ab1754ed363d3b29"
+    },
+    {
+      "name": "escapes",
+      "body": "{\"value\":\"line\\nbreak\\t\\\"quoted\\\"\\\\\\u0001 \"}",
+      "undefined": false,
+      "hash": "hmac-v1:a4234965c3e7cf16d15517421bcbe77388b155a0e5e0c356d0d761d44e776bc8"
+    },
+    {
+      "name": "numbers",
+      "body": "{\"a\":1,\"b\":0,\"c\":1e+21,\"d\":0.1,\"e\":1.5e-7,\"f\":123456789012345680000}",
+      "undefined": false,
+      "hash": "hmac-v1:4cb5e6ff1a9522c1026923fc5e621f611475537891a799099859dd1d257f19a4"
+    },
+    {
+      "name": "integer-like keys",
+      "body": "{\"2\":\"two\",\"10\":\"ten\",\"b\":\"bee\",\"a\":\"ay\"}",
+      "undefined": false,
+      "hash": "hmac-v1:afca2b8009c60ead5dab066254aa8568cdd5a3638cb3454cf55c54a510597f87"
+    },
+    {
+      "name": "a change set",
+      "body": "{\"changes\":[{\"op\":\"set\",\"item\":\"A\",\"value\":\"1\"},{\"op\":\"delete\",\"item\":\"B\"}]}",
+      "undefined": false,
+      "hash": "hmac-v1:5dd30beb564a64795c970ccf601937265764b3361d2fc090dbcfa59f972f5aef"
+    },
+    {
+      "name": "nested",
+      "body": "{\"a\":{\"b\":[1,{\"c\":null},true,false]}}",
+      "undefined": false,
+      "hash": "hmac-v1:777256247633723eea205ba09e24a3fd0393b71255612090b3213b7bfa24c8a5"
+    },
+    {
+      "name": "null",
+      "body": "null",
+      "undefined": false,
+      "hash": "hmac-v1:ceba30347f70839fbcd416227916bdfdca6349dffb6ee49001c1b03088e43d86"
+    },
+    {
+      "name": "undefined",
+      "body": null,
+      "undefined": true,
+      "hash": "hmac-v1:ceba30347f70839fbcd416227916bdfdca6349dffb6ee49001c1b03088e43d86"
+    },
+    {
+      "name": "an empty object",
+      "body": "{}",
+      "undefined": false,
+      "hash": "hmac-v1:f2eff0a4b200c96e9a2e1cce1b856aaf7d85ca554ca827d6c7cabff7e35d790a"
+    }
+  ],
+  "replays": [
+    {
+      "name": "setValue's answer",
+      "status": 200,
+      "first": "{\"versionId\":\"ver_1\",\"itemName\":\"A\",\"environmentId\":\"env_1\",\"sensitive\":true,\"previousVersionId\":null,\"createdAt\":\"2026-01-01T00:00:00.000Z\"}",
+      "stored": "{\"status\":200,\"payload\":{\"itemName\":\"A\",\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"sensitive\":true,\"versionId\":\"ver_1\",\"environmentId\":\"env_1\",\"previousVersionId\":null}}",
+      "replay": "{\"itemName\":\"A\",\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"sensitive\":true,\"versionId\":\"ver_1\",\"environmentId\":\"env_1\",\"previousVersionId\":null}",
+      "replayStatus": 200
+    },
+    {
+      "name": "integer-like and long keys",
+      "status": 201,
+      "first": "{\"1\":\"x\",\"10\":2,\"zeta\":1,\"a\":[{\"longer\":1,\"b\":2}]}",
+      "stored": "{\"status\":201,\"payload\":{\"1\":\"x\",\"10\":2,\"a\":[{\"b\":2,\"longer\":1}],\"zeta\":1}}",
+      "replay": "{\"1\":\"x\",\"10\":2,\"a\":[{\"b\":2,\"longer\":1}],\"zeta\":1}",
+      "replayStatus": 201
+    },
+    {
+      "name": "a list",
+      "status": 200,
+      "first": "{\"items\":[{\"id\":\"x\",\"name\":\"y\"}],\"nextCursor\":null}",
+      "stored": "{\"status\":200,\"payload\":{\"items\":[{\"id\":\"x\",\"name\":\"y\"}],\"nextCursor\":null}}",
+      "replay": "{\"items\":[{\"id\":\"x\",\"name\":\"y\"}],\"nextCursor\":null}",
+      "replayStatus": 200
+    }
+  ]
+}

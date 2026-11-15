@@ -15,7 +15,6 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
-	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/values"
 )
@@ -37,14 +36,10 @@ import (
 var seedContractFile []byte
 
 func init() {
-	conformanceSeed = func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-		path := config.DefaultPath
+	conformanceSeed = func(ctx context.Context, env *hostEnv, args []string, secret []byte, stdout, stderr io.Writer) int {
 		identity := ""
 		for i := 0; i < len(args); i++ {
 			switch {
-			case args[i] == "--config" && i+1 < len(args):
-				path = args[i+1]
-				i++
 			case args[i] == "--identity" && i+1 < len(args):
 				identity = args[i+1]
 				i++
@@ -60,26 +55,7 @@ func init() {
 		if !fixtureID.MatchString(identity) {
 			return fail(errors.New("--identity must name an identity"))
 		}
-		secret, err := io.ReadAll(io.LimitReader(stdin, 1<<16))
-		if err != nil {
-			return fail(err)
-		}
-		cfg, err := config.Load(path)
-		if err != nil {
-			return fail(err)
-		}
-		rootKEK, err := rootKEKOf(cfg)
-		if err != nil {
-			return fail(err)
-		}
-		ctx := context.Background()
-		store, err := storage.Open(ctx, storage.Options{Path: cfg.DatabasePath()})
-		if err != nil {
-			return fail(err)
-		}
-		defer store.Close()
-		out, err := seed(ctx, store, rootKEK, identity, strings.TrimRight(string(secret), "\n"))
-		clear(secret)
+		out, err := seed(ctx, env.store, env.rootKEK, identity, strings.TrimRight(string(secret), "\n"))
 		if err != nil {
 			return fail(err)
 		}

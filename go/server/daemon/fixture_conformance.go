@@ -35,8 +35,8 @@ import (
 // audit events that make signals, written straight to the database
 // because the /v1 writes that would make them are not built yet (ADR-0059
 // step 4). Run as `varlatchd admin conformance-fixture <fixture> [args]
-// --config <file>`, next to a running varlatchd, which publishes what they
-// commit within its poll interval. Built only with the conformance build
+// --config <file>`, through the running varlatchd (control.go), which
+// publishes what they commit. Built only with the conformance build
 // tag: a release has none of this. Each prints one line of JSON.
 //
 //	world <name>                    two Organizations and three people:
@@ -69,17 +69,7 @@ var fixtureTypes = func() []string {
 }()
 
 func init() {
-	conformanceFixture = func(args []string, stdout, stderr io.Writer) int {
-		path := config.DefaultPath
-		var rest []string
-		for i := 0; i < len(args); i++ {
-			if args[i] == "--config" && i+1 < len(args) {
-				path = args[i+1]
-				i++
-				continue
-			}
-			rest = append(rest, args[i])
-		}
+	conformanceFixture = func(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io.Writer) int {
 		fail := func(err error) int {
 			fmt.Fprintf(stderr, "varlatchd admin conformance-fixture: %v\n", err)
 			return ExitFailure
@@ -91,16 +81,8 @@ func init() {
 		if len(rest) == 0 {
 			return usage()
 		}
-		cfg, err := config.Load(path)
-		if err != nil {
-			return fail(err)
-		}
-		ctx := context.Background()
-		store, err := storage.Open(ctx, storage.Options{Path: cfg.DatabasePath()})
-		if err != nil {
-			return fail(err)
-		}
-		defer store.Close()
+		cfg, store := env.cfg, env.store
+		var err error
 		var out any
 		switch {
 		case rest[0] == "world" && len(rest) == 2 && fixtureName.MatchString(rest[1]):
