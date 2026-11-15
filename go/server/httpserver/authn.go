@@ -5,6 +5,7 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -132,7 +133,10 @@ func writeJS(w http.ResponseWriter, status int, body any) {
 
 // answerError answers an operation's error: a domain error with its code's
 // status and envelope, an approval polled too soon as SLOW_DOWN with
-// Retry-After, anything else as an internal error, logged.
+// Retry-After, anything else as an internal error, logged. A request whose
+// client went away is cancelled, and the work under it fails with
+// context.Canceled: that is logged at debug level only. The TypeScript
+// server never cancels a request's work and logs nothing for one.
 func (s *Server) answerError(w http.ResponseWriter, r *http.Request, err error) {
 	var he *headerError
 	if errors.As(err, &he) {
@@ -153,7 +157,11 @@ func (s *Server) answerError(w http.ResponseWriter, r *http.Request, err error) 
 		w.Header().Set("Retry-After", strconv.FormatInt(slow.Interval, 10))
 		writeErrorDetails(w, r, http.StatusTooManyRequests, "SLOW_DOWN", slow.Error(), jsvalue.Object{{Key: "interval", Value: slow.Interval}})
 	default:
-		s.opts.Log.Error("answering a request failed", "method", r.Method, "path", r.URL.Path, "requestId", requestIDOf(r), "error", err)
+		level := slog.LevelError
+		if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
+			level = slog.LevelDebug
+		}
+		s.opts.Log.Log(context.Background(), level, "answering a request failed", "method", r.Method, "path", r.URL.Path, "requestId", requestIDOf(r), "error", err)
 		writeError(w, r, http.StatusInternalServerError, "INTERNAL", "Internal error")
 	}
 }
