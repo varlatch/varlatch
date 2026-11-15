@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
-	"github.com/varlatch/varlatch/go/server/whatwg"
 )
 
 // testdata/ts-vectors.json comes from the TypeScript server's own code

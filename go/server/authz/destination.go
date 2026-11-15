@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/varlatch/varlatch/go/server/whatwg"
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 )
 
 // Destination Selectors (ADR-0022 §9), authz/destination.ts: canonical host

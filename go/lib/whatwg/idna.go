@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later AND MIT
+// SPDX-License-Identifier: Apache-2.0 AND MIT
 //
 // domainToASCII, validACE and labelValid are ported from ada's IDNA code:
 // ada::idna::to_ascii and is_label_valid in src/ada_idna.cpp of ada 4.0.0
@@ -7,7 +7,7 @@
 // ada-url/idna project), the version Node.js 26.12.1 carries. ada is
 // dual-licensed Apache-2.0 OR MIT; this port uses it under the MIT License
 // (LICENSE-ada-MIT, scripts/third-party-code.json), whose notice follows.
-// The rest of this file is AGPL-3.0-or-later.
+// The rest of this file is Apache-2.0.
 //
 // Copyright 2023 Yagiz Nizipli and Daniel Lemire
 // Copyright 2023 Ada authors (ada-url/idna)

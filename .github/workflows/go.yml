@@ -28,6 +28,9 @@ on:
       - "services/varlatchd/src/auth/jwt.ts"
       - "services/varlatchd/src/config.ts"
       - "packages/contract/src/canonical.ts"
+      # go/lib/contract runs the package's shared vectors (step 4.1b).
+      - "packages/contract/src/**"
+      - "packages/contract/test/vectors/**"
       # The license map, which checks go/ too.
       - "scripts/check-licenses.mjs"
       # The /v1 contract: go/server/api is generated from it, and the
@@ -55,6 +58,9 @@ on:
       - "services/varlatchd/src/auth/jwt.ts"
       - "services/varlatchd/src/config.ts"
       - "packages/contract/src/canonical.ts"
+      # go/lib/contract runs the package's shared vectors (step 4.1b).
+      - "packages/contract/src/**"
+      - "packages/contract/test/vectors/**"
       - "scripts/check-licenses.mjs"
       - "packages/protocol/openapi.yaml"
       - "scripts/conformance/run.mjs"

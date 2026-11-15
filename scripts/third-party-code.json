@@ -7,8 +7,8 @@
       "commit": "b12a893a45809da8103bb4f1e2f6f5ee13f9100b",
       "source": "https://github.com/ada-url/ada/blob/b12a893a45809da8103bb4f1e2f6f5ee13f9100b/src/ada_idna.cpp",
       "license": "MIT",
-      "licenseFile": "go/server/whatwg/LICENSE-ada-MIT",
-      "files": ["go/server/whatwg/idna.go"],
+      "licenseFile": "go/lib/whatwg/LICENSE-ada-MIT",
+      "files": ["go/lib/whatwg/idna.go"],
       "what": "Domain to ASCII and label validity (ada::idna::to_ascii and is_label_valid), ported to Go. ada is dual-licensed Apache-2.0 OR MIT; Varlatch takes it under MIT."
     }
   ]

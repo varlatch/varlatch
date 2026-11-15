@@ -1000,6 +1000,352 @@
         "number": "0"
       },
       "note": "4301 zeros after a minus sign: negative zero is 0"
+    },
+    {
+      "type": "url",
+      "value": "https://1.א/",
+      "valid": true,
+      "converted": {
+        "string": "https://1.א/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://א.1/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://a.א/",
+      "valid": true,
+      "converted": {
+        "string": "https://a.א/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://1.xn--4db/",
+      "valid": true,
+      "converted": {
+        "string": "https://1.xn--4db/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://xn--4db.1/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://א1.com/",
+      "valid": true,
+      "converted": {
+        "string": "https://א1.com/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://1א.com/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://אb.com/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://א.א/",
+      "valid": true,
+      "converted": {
+        "string": "https://א.א/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://1.2.א/",
+      "valid": true,
+      "converted": {
+        "string": "https://1.2.א/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://א.0x10/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://xn--abc.1/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://xn--a.com/",
+      "valid": true,
+      "converted": {
+        "string": "https://xn--a.com/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://xn--/",
+      "valid": true,
+      "converted": {
+        "string": "https://xn--/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://XN--4DB.com/",
+      "valid": true,
+      "converted": {
+        "string": "https://XN--4DB.com/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://xn--1-zhc.com/",
+      "valid": true,
+      "converted": {
+        "string": "https://xn--1-zhc.com/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://ab٠۰.com/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://a٠.com/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://ا١.com/",
+      "valid": true,
+      "converted": {
+        "string": "https://ا١.com/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://ا۱.com/",
+      "valid": true,
+      "converted": {
+        "string": "https://ا۱.com/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://a.0x10/",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "https://a.09/",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "https://a.b.c.1e/",
+      "valid": true,
+      "converted": {
+        "string": "https://a.b.c.1e/"
+      }
+    },
+    {
+      "type": "url",
+      "value": "https://1.2.3.4./",
+      "valid": true,
+      "converted": {
+        "string": "https://1.2.3.4./"
+      }
+    },
+    {
+      "type": "url",
+      "value": "https://1.2.3.4../",
+      "valid": true,
+      "converted": {
+        "string": "https://1.2.3.4../"
+      }
+    },
+    {
+      "type": "url",
+      "value": "https://0377.0377.0377.0377/",
+      "valid": true,
+      "converted": {
+        "string": "https://0377.0377.0377.0377/"
+      }
+    },
+    {
+      "type": "url",
+      "value": "https://08.1/",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "https://%D7%90.com/",
+      "valid": true,
+      "converted": {
+        "string": "https://%D7%90.com/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://%E2%80%8D.com/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://%F0%9F.com/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://１.２/",
+      "valid": true,
+      "converted": {
+        "string": "https://１.２/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://a。b/",
+      "valid": true,
+      "converted": {
+        "string": "https://a。b/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://a‌b.com/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://क्‍.com/",
+      "valid": true,
+      "converted": {
+        "string": "https://क्‍.com/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://́a.com/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://ﬀ.com/",
+      "valid": true,
+      "converted": {
+        "string": "https://ﬀ.com/"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://א.com:65536/",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "file://C:/x",
+      "valid": true,
+      "converted": {
+        "string": "file://C:/x"
+      }
+    },
+    {
+      "type": "url",
+      "value": "file://c|",
+      "valid": true,
+      "converted": {
+        "string": "file://c|"
+      }
+    },
+    {
+      "type": "url",
+      "value": "file://C:x",
+      "valid": false,
+      "reason": "must be a valid URL"
     }
   ]
 }
