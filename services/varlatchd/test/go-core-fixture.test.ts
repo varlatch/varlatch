@@ -915,6 +915,7 @@ function valueRequests(): Omit<RequestCase, "id">[] {
     keyed(put("a stored claim's key, another identity", "development", "STORED", { value: "stored by TypeScript" }, "bob"), "ts-stored"),
     keyed(changes("replay a change set the TypeScript server stored", "development", { changes: [set("STORED_CS", "cs")] }), "ts-stored-cs"),
     keyed(changes("replay a stored change set, another body", "development", { changes: [set("STORED_CS", "other")] }), "ts-stored-cs"),
+    keyed(changes("a stored change set's key, another identity", "development", { changes: [set("STORED_CS", "cs")] }, "bob"), "ts-stored-cs"),
     { ...changes("apply a guarded change set twice at once", "staging", { changes: [set("API_URL", "https://race.example.com", "{ver:api/staging/API_URL}")] }), concurrent: 2 },
     // What the writes left, through the read path.
     read("values after the writes", "development"),
