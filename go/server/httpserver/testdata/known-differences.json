@@ -800,6 +800,26 @@
       "credential": "none",
       "status": 422,
       "expect": "code",
+      "body": "{\"ttlSeconds\":-1e400}",
+      "code": "VALIDATION_FAILED",
+      "message": "ttlSeconds: Invalid input: expected number, received -Infinity"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"ttlSeconds\":1e-400}",
+      "code": "VALIDATION_FAILED",
+      "message": "ttlSeconds: Too small: expected number to be >=60"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/auth/device",
+      "credential": "none",
+      "status": 422,
+      "expect": "code",
       "body": "{\"ttlSeconds\":86400.5}",
       "code": "VALIDATION_FAILED",
       "message": "ttlSeconds: Invalid input: expected int, received number"
@@ -1217,6 +1237,26 @@
       "status": 403,
       "expect": "code",
       "code": "PERMISSION_DENIED"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"ttlSeconds\":-1e400}",
+      "code": "VALIDATION_FAILED",
+      "message": "ttlSeconds: Invalid input: expected number, received -Infinity"
+    },
+    {
+      "method": "POST",
+      "target": "/v1/me/credentials/cli",
+      "credential": "browser",
+      "status": 422,
+      "expect": "code",
+      "body": "{\"ttlSeconds\":1e-400}",
+      "code": "VALIDATION_FAILED",
+      "message": "ttlSeconds: Too small: expected number to be >=60"
     },
     {
       "method": "POST",

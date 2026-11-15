@@ -27,6 +27,7 @@
     "dev:reset": "scripts/dev.sh reset"
   },
   "devDependencies": {
+    "typescript": "5.9.2",
     "yaml": "^2.9.1"
   }
 }

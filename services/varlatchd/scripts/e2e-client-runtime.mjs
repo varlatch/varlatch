@@ -194,12 +194,14 @@ async function identity(name, envActions, projectActions) {
 // Operation group service-identities: two service identities with partial
 // grants, and the checks that run as them.
 const identities = kit.group("service-identities");
-// May read everything but Secrets: its Secrets are withheld.
-const reader = identities ? await identity("clientrt reader", ["environment.read", "config.metadata.read", "config.value.read"], ["contract.read"]) : null;
-// May read Secrets but not the Contract.
-const noContract = identities
-  ? await identity("clientrt no contract", ["environment.read", "config.metadata.read", "config.value.read", "secret.reveal"], [])
-  : null;
+let reader = null;
+let noContract = null;
+if (identities) {
+  // May read everything but Secrets: its Secrets are withheld.
+  reader = await identity("clientrt reader", ["environment.read", "config.metadata.read", "config.value.read"], ["contract.read"]);
+  // May read Secrets but not the Contract.
+  noContract = await identity("clientrt no contract", ["environment.read", "config.metadata.read", "config.value.read", "secret.reveal"], []);
+}
 
 let active = await activate(BASE_CONTRACT);
 const secretVersion = (await setValue("RT_SECRET", SECRET)).versionId;
@@ -210,8 +212,12 @@ await setValue("DEBUG", "true");
 await setValue("LEVEL", "warn");
 
 const admin = await workspace(adminToken);
-const readerWs = identities ? await workspace(reader.credential) : null;
-const noContractWs = identities ? await workspace(noContract.credential) : null;
+let readerWs = null;
+let noContractWs = null;
+if (identities) {
+  readerWs = await workspace(reader.credential);
+  noContractWs = await workspace(noContract.credential);
+}
 
 // --- varlatch run --redact ----------------------------------------------------
 // The child prints the Secret on both streams, directly, split across two
@@ -355,7 +361,10 @@ if (identities) {
 if (identities) {
   // The disclosure check also reads the audit export.
   const audited = kit.runs("client-runtime.export-context-run-cannot-export-context");
-  const before = audited ? (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed") : [];
+  let before = [];
+  if (audited) {
+    before = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
+  }
   const r = await record(noContractWs, ["--export-context"]);
   check(
     "client-runtime.export-context-without-contract-read-starts", "--export-context without contract.read starts nothing and says why",
@@ -617,7 +626,9 @@ if (kit.supports("scan")) {
   const repo = await workspace(adminToken, { gitRepo: true });
   const nothing = await repo.cli(["scan", "--staged", "-e", "development"]);
   check("client-runtime.scan-nothing-staged-scan-reads-nothing", "scan: with nothing staged, the scan reads nothing and exits 0", nothing.code === 0 && /nothing is staged/.test(nothing.stdout), nothing.out);
-  if (kit.group("audit-export")) check("client-runtime.scan-nothing-read-nothing-disclosed", "scan: with nothing to read, nothing is disclosed", (await scanEvents()).length === 0);
+  if (kit.group("audit-export")) {
+    check("client-runtime.scan-nothing-read-nothing-disclosed", "scan: with nothing to read, nothing is disclosed", (await scanEvents()).length === 0);
+  }
 
   // Staged content holds the Secret as written (line 2) and inside a base64
   // Basic credential (line 3); the working copy is then cleaned, which the

@@ -156,11 +156,16 @@ func validateBody(schema []bodyField, raw []byte) ([]byte, []string) {
 				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected number, received %s", f.name, got))
 				continue
 			}
-			// JSON.parse's number: a literal beyond a double is Infinity,
-			// which z.number() refuses.
-			x, err := strconv.ParseFloat(string(bytes.TrimSpace(v)), 64)
-			if err != nil || math.IsInf(x, 0) {
-				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected number, received Infinity", f.name))
+			// JSON.parse's number: a literal beyond a double is Infinity or
+			// -Infinity, which z.number() refuses by that name (ParseFloat's
+			// only error here; an underflow is 0, as in JavaScript).
+			x, _ := strconv.ParseFloat(string(bytes.TrimSpace(v)), 64)
+			if math.IsInf(x, 0) {
+				name := "Infinity"
+				if x < 0 {
+					name = "-Infinity"
+				}
+				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected number, received %s", f.name, name))
 				continue
 			}
 			// .int(): a fraction ends the checks; an integer beyond the safe

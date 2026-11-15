@@ -10,6 +10,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { validateInventory } from "../lib/inventory.mjs";
 import { PLAN } from "../plan.mjs";
 
@@ -107,25 +108,75 @@ test("each operation group is skipped in its suite's script, and only its suite'
 });
 
 /**
- * The kit.group() and kit.runs() calls in a script whose result gates
- * nothing: a call is gating when it is inside an `if (...)` condition, or
- * assigned (`const name = kit.group(...)`) to a name the script then tests
- * (`if (name)`, `if (!name)`, `name ? ...`, `&& name`). An ignored result
- * would run a skipped group's setup against a target that lacks it.
+ * The kit.group() and kit.runs() calls in a script that do not gate the
+ * work they name, read from the script's syntax tree (TypeScript's parser,
+ * on JavaScript). A skipped group's setup must not run against a target
+ * that lacks its operations, so only these forms gate:
+ *   1. `if (kit.group("g")) { ... }`: the work in the block. The call may
+ *      be one conjunct of the condition (`if (kit.supports("f") &&
+ *      kit.group("g")) { ... }`): the block still runs only when it is
+ *      true. An else branch is the skipped case.
+ *   2. `if (!kit.group("g")) return;` (or continue, break, throw; alone or
+ *      as a block's only statement): an early exit before the work.
+ *   3. Either through a const: `const g = kit.group("g");`, with every use
+ *      of `g` the condition of form 1 or 2 (`if (g) { ... }`, `if (!g)
+ *      return;`).
+ * Anything else is a violation: the call as a statement or an argument, a
+ * then-branch that is not a block, `||`, a ternary, a let, a const used any
+ * other way, `kit["group"]`, or `group` taken from kit by destructuring.
  */
 function ungatedCalls(source) {
+  const sf = ts.createSourceFile("suite.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const out = [];
-  for (const m of source.matchAll(/\bkit\.(group|runs)\(\s*["']([a-z0-9.-]+)["']\s*\)/g)) {
-    const prefix = source.slice(source.lastIndexOf("\n", m.index) + 1, m.index);
-    const at = prefix.lastIndexOf("if (");
-    let depth = 0;
-    if (at >= 0) for (const ch of prefix.slice(at + 3)) depth += ch === "(" ? 1 : ch === ")" ? -1 : 0;
-    if (at >= 0 && depth > 0) continue;
-    const assigned = prefix.match(/\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*$/);
-    const rest = source.slice(m.index + m[0].length);
-    if (assigned && new RegExp(`(?:\\bif\\s*\\(\\s*!?\\s*|&&\\s*|\\|\\|\\s*)${assigned[1]}\\b|\\b${assigned[1]}\\s*\\?`).test(rest)) continue;
-    out.push(`kit.${m[1]}("${m[2]}")`);
-  }
+  const isKit = (e) => ts.isIdentifier(e) && e.text === "kit";
+  const isGate = (name) => name === "group" || name === "runs";
+  const label = (call) => `kit.${call.expression.name.text}(${call.arguments.map((a) => a.getText(sf)).join(", ")})`;
+  // The node as its enclosing expression sees it, past parentheses.
+  const outer = (n) => {
+    while (ts.isParenthesizedExpression(n.parent)) n = n.parent;
+    return n;
+  };
+  const exits = (s) =>
+    ts.isReturnStatement(s) || ts.isContinueStatement(s) || ts.isBreakStatement(s) || ts.isThrowStatement(s) ||
+    (ts.isBlock(s) && s.statements.length === 1 && exits(s.statements[0]));
+  // Whether an expression (a call, or a const's name) is a gate: form 1 or 2.
+  const gates = (n) => {
+    let e = outer(n);
+    if (ts.isPrefixUnaryExpression(e.parent) && e.parent.operator === ts.SyntaxKind.ExclamationToken) {
+      const not = outer(e.parent);
+      return ts.isIfStatement(not.parent) && not.parent.expression === not && exits(not.parent.thenStatement);
+    }
+    while (ts.isBinaryExpression(e.parent) && e.parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) e = outer(e.parent);
+    return ts.isIfStatement(e.parent) && e.parent.expression === e && ts.isBlock(e.parent.thenStatement);
+  };
+  const references = (name, declaration) => {
+    const refs = [];
+    const walk = (n) => {
+      if (ts.isIdentifier(n) && n.text === name && n !== declaration) refs.push(n);
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
+    return refs;
+  };
+  const visit = (n) => {
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && isKit(n.expression.expression) && isGate(n.expression.name.text)) {
+      const d = outer(n).parent;
+      const viaConst =
+        ts.isVariableDeclaration(d) && d.initializer === outer(n) && ts.isIdentifier(d.name) &&
+        (d.parent.flags & ts.NodeFlags.Const) !== 0 &&
+        ((refs) => refs.length > 0 && refs.every(gates))(references(d.name.text, d.name));
+      if (!gates(n) && !viaConst) out.push(label(n));
+    } else if (ts.isElementAccessExpression(n) && isKit(n.expression) && ts.isStringLiteral(n.argumentExpression) && isGate(n.argumentExpression.text)) {
+      out.push(`kit[${n.argumentExpression.getText(sf)}]`);
+    } else if (ts.isVariableDeclaration(n) && n.initializer && isKit(n.initializer) && ts.isObjectBindingPattern(n.name)) {
+      for (const el of n.name.elements) {
+        const key = (el.propertyName ?? el.name).getText(sf);
+        if (isGate(key)) out.push(`${key} taken from kit`);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
   return out;
 }
 
@@ -134,13 +185,43 @@ test("each kit.group() and kit.runs() result gates the work it names", () => {
     if (entry.runner) continue;
     assert.deepEqual(ungatedCalls(readFileSync(join(repoRoot, entry.script), "utf8")), [], suite);
   }
-  // The detector itself: ignored or unused results are found; conditions,
-  // and names used as conditions, are not.
-  assert.deepEqual(ungatedCalls('kit.group("a");\nsetup();'), ['kit.group("a")']);
-  assert.deepEqual(ungatedCalls('const a = kit.group("a");\nsetup();'), ['kit.group("a")']);
-  assert.deepEqual(ungatedCalls('await f(kit.runs("s.x"));'), ['kit.runs("s.x")']);
-  assert.deepEqual(ungatedCalls('if (kit.group("a")) {}\nif (x && kit.group("b")) {}\nif (kit.supports("f") && kit.group("c")) {}'), []);
-  assert.deepEqual(ungatedCalls('const a = kit.group("a");\nconst r = a ? 1 : 0;\nconst b = kit.runs("s.b");\nif (!b) return;'), []);
+});
+
+test("the gate detector: the three forms, whatever their formatting, and nothing else", () => {
+  const ok = (code) => assert.deepEqual(ungatedCalls(code), [], code);
+  const bad = (code, ...found) => assert.deepEqual(ungatedCalls(code), found.length ? found : [ungatedCalls(code)[0] ?? "(none found)"], code);
+  // 1. The work in the block; a conjunct; an else for the skipped case.
+  ok('if (kit.group("a")) { setup(); }');
+  ok('if(kit.group("a")){setup()}');
+  ok('if (\n  kit.group(\n    "a",\n  )\n) {\n  setup();\n}');
+  ok('if (kit . group ("a")) { setup(); }');
+  ok('if ((kit.group("a"))) { setup(); }');
+  ok('if (kit.supports("f") && kit.group("a")) { setup(); }');
+  ok('if (kit.runs("s.x")) { check(); } else { skip(); }');
+  // 2. An early exit before the work.
+  ok('function f() { if (!kit.group("a")) return; setup(); }');
+  ok('for (;;) { if (!kit.group("a")) { continue; } setup(); }');
+  ok('for (;;) { if (!kit.group("a")) break; setup(); }');
+  ok('if (!kit.runs("s.x")) throw new Error("skip");');
+  // 3. Through a const used only as those conditions.
+  ok('const a = kit.group("a");\nif (a) { setup(); }\nif (a) { more(); }');
+  ok('function f() { const a = kit.runs("s.x"); if (!a) return; check(); }');
+  // Violations: Sol's counterexamples and the other shapes.
+  bad('kit.group("a");\nsetup();', 'kit.group("a")');
+  bad('kit.group ("a");\nsetup();', 'kit.group("a")');
+  bad('const a = kit.group("a");\nconsole.log(a ? "run" : "skip");\nsetup();', 'kit.group("a")');
+  bad('const a = kit.group("a");\nconst r = a ? 1 : 0;', 'kit.group("a")');
+  bad('const a = kit.group("a");\nif (a) { setup(); }\nlog(a);', 'kit.group("a")');
+  bad('const a = kit.group("a");\nsetup();', 'kit.group("a")');
+  bad('let a = kit.group("a");\nif (a) { setup(); }', 'kit.group("a")');
+  bad('if (kit.group("a")) setup();', 'kit.group("a")');
+  bad('if (kit.group("a") || x) { setup(); }', 'kit.group("a")');
+  bad('if (!kit.group("a")) { log(); }\nsetup();', 'kit.group("a")');
+  bad('if (!kit.group("a") && x) return;', 'kit.group("a")');
+  bad('await f(kit.runs("s.x"));', 'kit.runs("s.x")');
+  bad('const ok = !kit.group("a");\nif (ok) { setup(); }', 'kit.group("a")');
+  bad('if (kit["group"]("a")) { setup(); }', 'kit["group"]');
+  bad('const { group } = kit;\nif (group("a")) { setup(); }', "group taken from kit");
 });
 
 test("every lifecycle and installer suite (scripts/test-*.mjs) is an external suite with its replacement, and only those", () => {
