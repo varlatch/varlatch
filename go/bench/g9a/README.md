@@ -158,6 +158,23 @@ load test.
   device, device mapper and the devices under it, model, rotational), the
   cgroup's limits (`memory.max`, `memory.swap.max`, and `cpu.max` read
   once), the idle fsync summary.
+- `stages.json` (step 4 decision 7, to diagnose G9a's slower baseline):
+  where each disclosure's time goes inside varlatchd, one sample per
+  disclosure and stage (a stage met several times in one request, such as
+  its authorization decisions, summed), as count, mean, p50, p95, p99 and
+  maximum (log buckets, within 2 %): admission (the body limit, the request
+  window, routing), authentication, the read snapshot (authorization's
+  reads included), authorization, the audit job's wait for the writer, the
+  commit of its batch, decryption and encoding (`go/server/stages`).
+  varlatchd writes it when the run ends; `GET /run/stages` shows it during
+  the run. The report shows it as a table; no criterion reads it.
+- `cpu.pprof`, with `G9A_PROFILE=<seconds>` (`varlatchd g9a -profile`): a
+  CPU profile of varlatchd from the load's start (`POST /run/start`, which
+  k6 sends once it is initialized) for that long or until the run ends,
+  for `go tool pprof`, with `cpu-window.json` saying when it ran; the
+  report sets that window against the load's requests and says whether
+  they overlap (`profile` in `verdict.json`). `GET /run/profile?seconds=N`
+  takes one on demand.
 
 ## What the report judges
 

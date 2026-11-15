@@ -189,6 +189,50 @@ type Report struct {
 	FsyncUnderLoad []string        `json:"fsyncUnderLoad"`
 	Dropped        float64         `json:"droppedIterations"`
 	ServerBusy     int64           `json:"serverBusy"`
+	// Stages are the disclosures' per-stage timings (stages.json, which
+	// varlatchd's g9a build writes; step 4 decision 7), for diagnosis
+	// only: no criterion reads them.
+	Stages []StageTiming `json:"stages,omitempty"`
+	// Profile is when the server's CPU profile ran (cpu-window.json),
+	// against the load's requests, for diagnosis only.
+	Profile *ProfileWindow `json:"profile,omitempty"`
+}
+
+// ProfileWindow is when the CPU profile ran and when the load's requests
+// did, in microseconds since the epoch, and whether the two overlap.
+type ProfileWindow struct {
+	StartUs      int64 `json:"startUs"`
+	EndUs        int64 `json:"endUs"`
+	LoadStartUs  int64 `json:"loadStartUs"`
+	LoadEndUs    int64 `json:"loadEndUs"`
+	OverlapsLoad bool  `json:"overlapsLoad"`
+}
+
+// StageTiming is one stage of the disclosures (go/server/stages Summary).
+type StageTiming struct {
+	Stage  string  `json:"stage"`
+	Count  uint64  `json:"count"`
+	MeanMs float64 `json:"meanMs"`
+	P50Ms  float64 `json:"p50Ms"`
+	P95Ms  float64 `json:"p95Ms"`
+	P99Ms  float64 `json:"p99Ms"`
+	MaxMs  float64 `json:"maxMs"`
+}
+
+// FileStages is the server's per-stage timings, when it wrote them;
+// FileCPUProfile its CPU profile from the load's start (varlatchd g9a
+// -profile), and FileCPUWindow when that profile ran.
+const (
+	FileStages     = "stages.json"
+	FileCPUProfile = "cpu.pprof"
+	FileCPUWindow  = "cpu-window.json"
+)
+
+// ProfileSpan is FileCPUWindow: the profile's start and end, in
+// microseconds since the epoch.
+type ProfileSpan struct {
+	StartUs int64 `json:"startUs"`
+	EndUs   int64 `json:"endUs"`
 }
 
 // varlatchd's request window (go/server/httpserver/window.go, as the
@@ -478,6 +522,22 @@ func Analyze(dir string) (*Report, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	if b, err := os.ReadFile(filepath.Join(dir, FileStages)); err == nil {
+		if err := json.Unmarshal(b, &r.Stages); err != nil {
+			return nil, fmt.Errorf("%s: %w", FileStages, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, FileCPUWindow)); err == nil {
+		var w ProfileSpan
+		if err := json.Unmarshal(b, &w); err != nil {
+			return nil, fmt.Errorf("%s: %w", FileCPUWindow, err)
+		}
+		r.Profile = profileWindow(w, reqs)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	r.analyze(events, reqs, sum)
 	if access == nil {
 		r.missing("no access log: the requests per client address and request window are not shown")
@@ -486,6 +546,23 @@ func Analyze(dir string) (*Report, error) {
 	}
 	r.finish()
 	return r, nil
+}
+
+// profileWindow sets the profile's window against the requests' (from the
+// first one's scheduled start to the last one's end).
+func profileWindow(w ProfileSpan, reqs []Request) *ProfileWindow {
+	p := &ProfileWindow{StartUs: w.StartUs, EndUs: w.EndUs}
+	for i, q := range reqs {
+		end := q.SchedUs + q.Lat.Microseconds()
+		if i == 0 || q.SchedUs < p.LoadStartUs {
+			p.LoadStartUs = q.SchedUs
+		}
+		if end > p.LoadEndUs {
+			p.LoadEndUs = end
+		}
+	}
+	p.OverlapsLoad = len(reqs) > 0 && w.StartUs < p.LoadEndUs && w.EndUs > p.LoadStartUs
+	return p
 }
 
 func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
@@ -1117,6 +1194,17 @@ func (r *Report) Markdown() string {
 	fmt.Fprintf(&b, "## Memory\n\nCgroup anon after %gs: max %.1f MiB (limit %.0f MiB). Reported only: RSS max %.1f MiB, memory.current max %.1f MiB. memory.events: high %d, max %d, oom %d, oom_kill %d. memory.max %q, memory.swap.max %q.\n\n",
 		r.Plan.Thresholds.MemoryAfterSeconds, r.MemoryMaxMiB, r.Plan.Thresholds.MemoryMiB, r.RSSMaxMiB, r.CurrentMaxMiB, me.High, me.Max, me.OOM, me.OOMKill, r.System.Cgroup.MemoryMax, r.System.Cgroup.SwapMax)
 
+	if p := r.Profile; p != nil {
+		fmt.Fprintf(&b, "\nCPU profile (cpu.pprof): from %+.1f s to %+.1f s of the load's first request (load until %+.1f s); overlaps the load: %t.\n",
+			float64(p.StartUs-p.LoadStartUs)/1e6, float64(p.EndUs-p.LoadStartUs)/1e6, float64(p.LoadEndUs-p.LoadStartUs)/1e6, p.OverlapsLoad)
+	}
+	if len(r.Stages) > 0 {
+		b.WriteString("\n## Disclosure stages\n\nWhere a disclosure's time goes inside varlatchd (stages.json; for diagnosis, no criterion reads it). Percentiles are within 2 %.\n\n| stage | count | mean ms | p50 ms | p95 ms | p99 ms | max ms |\n|---|---:|---:|---:|---:|---:|---:|\n")
+		for _, st := range r.Stages {
+			fmt.Fprintf(&b, "| %s | %d | %.3f | %.3f | %.3f | %.3f | %.3f |\n", st.Stage, st.Count, st.MeanMs, st.P50Ms, st.P95Ms, st.P99Ms, st.MaxMs)
+		}
+		b.WriteString("\n")
+	}
 	d := r.System.Disk
 	fmt.Fprintf(&b, "## Disk\n\nThe verdict holds for this class of disk only.\n\n- directory %s on %s (%s, %s), mounted at %s\n- device %s %s %s, model %q, rotational %q, under %v\n- %d CPUs, %s\n",
 		d.Dir, d.Source, d.FSType, d.Options, d.MountPoint, d.Device, d.DevName, d.DMName, d.Model, d.Rotational, d.Slaves, r.System.CPUs, r.System.GoOS)

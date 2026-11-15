@@ -21,6 +21,7 @@ import (
 	"github.com/varlatch/varlatch/go/bench/g9a"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/stages"
 )
 
 // settingsLog collects what serving reports as its effective settings.
@@ -62,7 +63,7 @@ func benchRun(t *testing.T, p g9a.Plan, fn func(base string, manifest []g9a.Mani
 	done := make(chan int, 1)
 	var stderr syncBuffer
 	go func() {
-		done <- benchServe(Options{ConfigPath: conf, Stderr: &stderr, Signals: make(chan os.Signal), Ready: func(a net.Addr) { ready <- a.String() }}, p, data, out)
+		done <- benchServe(Options{ConfigPath: conf, Stderr: &stderr, Signals: make(chan os.Signal), Ready: func(a net.Addr) { ready <- a.String() }}, p, data, out, 30*time.Second)
 	}()
 	var base string
 	select {
@@ -201,6 +202,25 @@ func TestBenchRun(t *testing.T) {
 				t.Fatalf("disclosure for %s: %d %s", m.Address, resp.StatusCode, body)
 			}
 		}
+		// Each disclosure's stages (step 4 decision 7), and a CPU profile.
+		var sums []stages.Summary
+		if code := getJSON(t, base+"/run/stages", &sums); code != 200 || len(sums) != len(stages.Names) {
+			t.Fatalf("/run/stages: %d %+v", code, sums)
+		}
+		for i, sm := range sums {
+			if sm.Stage != stages.Names[i] || sm.Count < 20 || sm.P50Ms <= 0 || sm.P99Ms < sm.P50Ms {
+				t.Errorf("stage %+v", sm)
+			}
+		}
+		prof, err := http.Get(base + "/run/profile?seconds=1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pb, _ := io.ReadAll(prof.Body)
+		prof.Body.Close()
+		if prof.StatusCode != 200 || len(pb) < 2 || pb[0] != 0x1f || pb[1] != 0x8b {
+			t.Errorf("/run/profile: %d, %d bytes", prof.StatusCode, len(pb))
+		}
 		resp, err := http.Post(base+"/run/start", "", nil)
 		if err != nil || resp.StatusCode != 200 {
 			t.Fatalf("/run/start: %v %v", err, resp)
@@ -208,6 +228,19 @@ func TestBenchRun(t *testing.T) {
 		resp.Body.Close()
 		time.Sleep(5 * time.Second) // stopping waits for the converge run
 	})
+	// The load's CPU profile, from POST /run/start to the run's end, and
+	// when it ran.
+	if b, err := os.ReadFile(filepath.Join(out, g9a.FileCPUProfile)); err != nil || len(b) < 2 || b[0] != 0x1f || b[1] != 0x8b {
+		t.Errorf("%s: %v, %d bytes", g9a.FileCPUProfile, err, len(b))
+	}
+	var window g9a.ProfileSpan
+	if b, err := os.ReadFile(filepath.Join(out, g9a.FileCPUWindow)); err != nil || json.Unmarshal(b, &window) != nil || window.StartUs <= 0 || window.EndUs <= window.StartUs {
+		t.Errorf("%s: %v %+v", g9a.FileCPUWindow, err, window)
+	}
+	var final []stages.Summary
+	if b, err := os.ReadFile(filepath.Join(out, g9a.FileStages)); err != nil || json.Unmarshal(b, &final) != nil || len(final) != len(stages.Names) {
+		t.Errorf("%s: %v %s", g9a.FileStages, err, b)
+	}
 	events, err := g9a.ReadEvents(filepath.Join(out, g9a.FileEvents))
 	if err != nil {
 		t.Fatal(err)

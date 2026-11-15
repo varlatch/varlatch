@@ -378,6 +378,23 @@ The server's packages:
   body too. The parity replays (`server/orgs`, `server/values`) check
   every response with it; their requests are outside the document on
   purpose in places, as the TypeScript fixtures run the unchecked app.
+- `server/stages` (step 4.1a, step 4 decision 7): per-stage timings of a
+  request (admission, authentication, the read snapshot, authorization,
+  the write job's wait for the writer and its batch's commit, decryption,
+  encoding), summed per request and handed over once. They exist in the
+  `g9a` build only: elsewhere the marks are empty functions on an empty
+  type, and `server/stages/check-release.sh` (go.yml) checks in the
+  assembly that a release build's marked functions read no clock for them.
+  The `g9a` build attaches a recorder to every disclosure, writes
+  `stages.json` with the run, serves `GET /run/stages`, takes a CPU
+  profile from the load's start with `-profile` and on demand at `GET
+  /run/profile?seconds=N` (`bench/g9a/README.md`). The storage engine
+  reports a job's queue wait and commit through `storage.WithTiming`, also
+  in the `g9a` build only: elsewhere a job carries no timing state (its
+  size is checked) and the writer does nothing for it. The script also
+  checks the storage engine's functions, follows a function the release
+  build inlines to its callers, fails on a listed function that is gone,
+  and requires the release binary to hold no symbol of the timing code.
 - `server/ids`, `server/domainerr`: domain IDs (`db/ids.ts`) and
   `DomainError`.
 

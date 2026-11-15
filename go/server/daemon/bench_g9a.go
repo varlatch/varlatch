@@ -20,7 +20,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime/pprof"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +37,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/stages"
 	"github.com/varlatch/varlatch/go/server/values"
 )
 
@@ -94,6 +98,7 @@ func runBench(args []string, stderr io.Writer) int {
 	data := fs.String("data", "", "the data directory: its disk is the one measured; it must hold no database")
 	out := fs.String("out", "", "the output directory for the run's files")
 	listen := fs.String("listen", "127.0.0.1:8080", "the address the load connects to")
+	profile := fs.Int("profile", 0, "seconds of CPU profile to take from the load's start (POST /run/start), into cpu.pprof in the output directory (0: none)")
 	if err := fs.Parse(args); err != nil || *planPath == "" || *data == "" || *out == "" {
 		fmt.Fprintln(stderr, "usage: varlatchd g9a -plan <plan.json> -data <dir> -out <dir> [-listen <addr>]")
 		return 64
@@ -108,7 +113,11 @@ func runBench(args []string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "varlatchd g9a: %v\n", err)
 		return ExitFailure
 	}
-	return benchServe(Options{ConfigPath: conf, Stderr: stderr}, p, *data, *out)
+	if *profile < 0 || *profile > 3600 {
+		fmt.Fprintln(stderr, "varlatchd g9a: -profile: 0 to 3600 seconds")
+		return 64
+	}
+	return benchServe(Options{ConfigPath: conf, Stderr: stderr}, p, *data, *out, time.Duration(*profile)*time.Second)
 }
 
 // benchInstallation makes a fresh installation for the run: a Root KEK in
@@ -134,7 +143,7 @@ func benchInstallation(data, out, listen string) (string, error) {
 }
 
 // benchServe serves the run: serve with the run's hooks.
-func benchServe(opts Options, p g9a.Plan, data, out string) int {
+func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duration) int {
 	log := slog.New(slog.NewTextHandler(opts.Stderr, nil))
 	t := &benchTarget{plan: p, log: log}
 	runner, err := g9a.NewRunner(g9a.RunnerOptions{DataDir: data, OutDir: out, Plan: p, Target: t,
@@ -142,6 +151,51 @@ func benchServe(opts Options, p g9a.Plan, data, out string) int {
 	if err != nil {
 		fmt.Fprintf(opts.Stderr, "varlatchd g9a: %v\n", err)
 		return ExitFailure
+	}
+	hist := stages.NewHistogram()
+	// The load's CPU profile: started when the load starts (POST /run/start,
+	// which k6 sends once it is initialized), stopped after its length or
+	// when the run ends, whichever is first.
+	var prof struct {
+		sync.Mutex
+		f       *os.File
+		started bool
+		start   time.Time
+	}
+	stopProfile := func() {
+		prof.Lock()
+		defer prof.Unlock()
+		if prof.f != nil {
+			pprof.StopCPUProfile()
+			_ = prof.f.Close()
+			prof.f = nil
+			// When it ran, for the report to set against the load's requests.
+			b, _ := json.Marshal(g9a.ProfileSpan{StartUs: prof.start.UnixMicro(), EndUs: time.Now().UnixMicro()})
+			if err := os.WriteFile(filepath.Join(out, g9a.FileCPUWindow), append(b, '\n'), 0o644); err != nil {
+				log.Error("the CPU profile's window", "error", err)
+			}
+		}
+	}
+	startProfile := func() {
+		prof.Lock()
+		defer prof.Unlock()
+		if profile <= 0 || prof.started {
+			return
+		}
+		prof.started = true
+		f, err := os.Create(filepath.Join(out, g9a.FileCPUProfile))
+		if err == nil {
+			if err = pprof.StartCPUProfile(f); err != nil {
+				_ = f.Close()
+			}
+		}
+		if err != nil {
+			log.Error("the load's CPU profile", "error", err)
+			return
+		}
+		prof.f, prof.start = f, time.Now()
+		time.AfterFunc(profile, stopProfile)
+		log.Info("CPU profile started", "seconds", profile.Seconds())
 	}
 	h := &hooks{
 		storage: func(o *storage.Options) {
@@ -170,8 +224,9 @@ func benchServe(opts Options, p g9a.Plan, data, out string) int {
 			return runner.Prepare(ctx, sys, seeded)
 		},
 		wrap: func(next http.Handler) http.Handler {
-			control := runner.Handler()
+			control := benchControl(runner.Handler(), hist, startProfile)
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				arrived := time.Now()
 				if strings.HasPrefix(r.URL.Path, "/run/") {
 					control.ServeHTTP(w, r)
 					return
@@ -181,12 +236,21 @@ func benchServe(opts Options, p g9a.Plan, data, out string) int {
 					return
 				}
 				rec := &statusRecorder{ResponseWriter: w}
-				next.ServeHTTP(rec, r)
+				// The disclosure's stages (step 4 decision 7).
+				ctx := stages.With(r.Context(), hist, arrived)
+				next.ServeHTTP(rec, r.WithContext(ctx))
+				stages.Flush(ctx)
 				runner.Count(rec.status != http.StatusOK, false)
 			})
 		},
-		stop:    runner.Done(),
-		stopped: runner.Finish,
+		stop: runner.Done(),
+		stopped: func() {
+			stopProfile()
+			runner.Finish()
+			if err := writeStages(out, hist); err != nil {
+				log.Error("the run's stage timings", "error", err)
+			}
+		},
 		closed: func() {
 			if err := runner.Close(); err != nil {
 				log.Error("the run's event log", "error", err)
@@ -738,4 +802,60 @@ func (t *benchTarget) reconcile(ctx context.Context, targetID string, run int) (
 		return 0, fmt.Errorf("run row: %w", err)
 	}
 	return k, nil
+}
+
+// writeStages writes the run's per-stage timings of its disclosures
+// (stages.Summary, one per stage) when the run ends.
+func writeStages(out string, h *stages.Histogram) error {
+	b, err := json.MarshalIndent(h.Summaries(), "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(out, g9a.FileStages), append(b, '\n'), 0o644)
+}
+
+// benchControl adds to the run's control routes (outside /v1, the request
+// window and the access log):
+//
+//	GET /run/stages              the disclosures' stage timings so far
+//	GET /run/profile?seconds=N   a CPU profile of the next N seconds (1 to
+//	                             600, default 30), in pprof's format, as
+//	                             net/http/pprof serves it
+func benchControl(runner http.Handler, h *stages.Histogram, loadStarted func()) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/run/", runner)
+	mux.HandleFunc("POST /run/start", func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w}
+		runner.ServeHTTP(rec, r)
+		if rec.status == 0 || rec.status == http.StatusOK {
+			loadStarted()
+		}
+	})
+	mux.HandleFunc("GET /run/stages", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(h.Summaries())
+	})
+	mux.HandleFunc("GET /run/profile", func(w http.ResponseWriter, r *http.Request) {
+		seconds := 30
+		if v := r.URL.Query().Get("seconds"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > 600 {
+				http.Error(w, "seconds: 1 to 600", http.StatusBadRequest)
+				return
+			}
+			seconds = n
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		if err := pprof.StartCPUProfile(w); err != nil {
+			// Another profile is running.
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		select {
+		case <-time.After(time.Duration(seconds) * time.Second):
+		case <-r.Context().Done():
+		}
+		pprof.StopCPUProfile()
+	})
+	return mux
 }
