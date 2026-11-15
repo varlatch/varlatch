@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { lacksFor, validateExpectations } from "../lib/expect.mjs";
 import { judgeGate } from "../lib/gate.mjs";
 import { evaluate } from "../lib/inventory.mjs";
-import { lackingChecks, lacksProblems, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, operationsOf, placeholderPath, probeFor, setupLacks, skippedGroups, staleBecause } from "../lib/operations.mjs";
+import { lackingChecks, lacksProblems, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, operationsOf, placeholderPath, probeFor, setupLacks, skippedGroupProblems, skippedGroups, staleBecause } from "../lib/operations.mjs";
 import { parseSuiteOutput, resultLine } from "../lib/results.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -73,6 +73,33 @@ test("a group is skipped only when every one of its checks lacks an operation", 
   // From the target's lacks, as the runner reads them.
   assert.ok(skippedGroups(inventory, "client-runtime", lackingChecks(inventory, ["exportAuditEvents"]).keys()).has("audit-export"));
   assert.ok(!skippedGroups(inventory, "client-runtime", lackingChecks(inventory, ["exportAuditEvents"]).keys()).has("service-identities"));
+});
+
+// The runner's guard (run.mjs calls skippedGroupProblems with the CLI's
+// verified version): a result for a check of a skipped group fails the
+// run; PREDATES-CLI passes only when the CLI really predates the feature.
+test("a skipped group's check may report only a PREDATES-CLI the CLI's version confirms", () => {
+  const lacked = lackingChecks(inventory, ["exportAuditEvents"]).keys();
+  const scan = "client-runtime.scan-nothing-read-nothing-disclosed"; // feature scan, introduced in 0.11.0
+  const plain = "client-runtime.audit-export-holds-no-value"; // no feature
+  const run = (results, cliVersion) => skippedGroupProblems(inventory, "client-runtime", [...lackingChecks(inventory, ["exportAuditEvents"]).keys()], results, cliVersion);
+  assert.equal(inventory.features.scan.introducedIn, "0.11.0");
+  assert.ok([...lacked].includes(scan));
+  // A legitimate old-CLI skip.
+  assert.deepEqual(run([{ id: scan, status: "PREDATES-CLI" }], "0.10.0"), []);
+  // A bogus one: a CLI built from source, or one not older, or a check
+  // with no feature.
+  for (const [results, version] of [
+    [[{ id: scan, status: "PREDATES-CLI" }], null],
+    [[{ id: scan, status: "PREDATES-CLI" }], "0.11.0"],
+    [[{ id: scan, status: "PREDATES-CLI" }], "0.22.0"],
+    [[{ id: plain, status: "PREDATES-CLI" }], "0.10.0"],
+  ]) {
+    assert.match(run(results, version).join(), /operation group audit-export is skipped on this target/, `${results[0].id} at ${version}`);
+  }
+  for (const status of ["PASS", "FAIL", "N/A"]) assert.equal(run([{ id: scan, status }], "0.10.0").length, 1, status);
+  // A check of a group that runs is none of the guard's business.
+  assert.deepEqual(run([{ id: "client-runtime.redact-run-exits-child-status", status: "PASS" }], null), []);
 });
 
 test("a check in an operation group needs its suite's, its group's and its own operations", () => {

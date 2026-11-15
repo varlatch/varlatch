@@ -53,7 +53,7 @@ import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
 import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
 import { judgeGate } from "./lib/gate.mjs";
 import { evaluate, TARGET_SPECIFIC, validateInventory } from "./lib/inventory.mjs";
-import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroups } from "./lib/operations.mjs";
+import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
 import { parseSuiteOutput, resultLine } from "./lib/results.mjs";
@@ -369,12 +369,8 @@ async function main() {
       // A result for a check of a group the target skips: the suite ran
       // that group's work on a target that lacks it. The run fails; the
       // gate convention's static check is only a lint aid for this.
-      const skipped = skippedGroups(inventory, entry.suite, lacked);
-      for (const r of parsed.results) {
-        const group = inventory.checks[r.id]?.group;
-        if (group && skipped.has(group) && r.status !== "PREDATES-CLI") {
-          errors.push({ suite: entry.suite, message: `${r.id} reported ${r.status}, but its operation group ${group} is skipped on this target: the suite ran work the target lacks` });
-        }
+      for (const message of skippedGroupProblems(inventory, entry.suite, lacked, parsed.results, cli.version)) {
+        errors.push({ suite: entry.suite, message });
       }
       for (const r of parsed.results) {
         if (lacked.has(r.id)) continue;

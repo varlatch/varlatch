@@ -339,7 +339,9 @@ runner reports the skipped checks `target-lacks`. A split never changes
 what a check asserts. The guarantee that a skipped group's work does not
 run is at run time: a result reported for a check of a skipped group fails
 the run, in the kit (which knows the group was asked) and in the runner
-(which knows it was skipped, whether the suite asked or not), and work run
+(which knows it was skipped, whether the suite asked or not; the one result
+it allows there is `PREDATES-CLI`, and only when the CLI's verified version
+predates the check's feature, as the evaluation decides), and work run
 anyway meets the target's `501 NOT_IMPLEMENTED_YET` answers. `pnpm
 test:conformance` also checks each suite script's calls against a narrow
 gate convention (`repository.test.mjs`): a lint aid that catches the usual

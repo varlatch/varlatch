@@ -30,6 +30,8 @@
  * below), and requires exactly the stub's answer.
  */
 
+import { predates } from "./inventory.mjs";
+
 /** The code of the Go server's shared stub (go/server/httpserver NotImplementedYet). */
 export const NOT_IMPLEMENTED_YET = "NOT_IMPLEMENTED_YET";
 
@@ -193,6 +195,27 @@ export function skippedGroups(inventory, suite, lacked) {
     if (ids.length > 0 && ids.every((id) => set.has(id))) out.add(group);
   }
   return out;
+}
+
+/**
+ * The results a suite reported for checks of groups the target skips,
+ * each a problem that fails the run: the suite ran work the target lacks.
+ * The one result allowed there is PREDATES-CLI, and only when the CLI
+ * under test really predates the check's feature (lib/inventory.mjs
+ * predates, as the run's evaluation decides it: a CLI built from source,
+ * cliVersion null, predates nothing). Returns the problems' messages.
+ */
+export function skippedGroupProblems(inventory, suite, lacked, results, cliVersion) {
+  const skipped = skippedGroups(inventory, suite, lacked);
+  const problems = [];
+  for (const r of results) {
+    const group = inventory.checks?.[r.id]?.group;
+    if (!group || !skipped.has(group)) continue;
+    const feature = inventory.checks[r.id].feature;
+    if (r.status === "PREDATES-CLI" && feature && inventory.features?.[feature] && predates(inventory, feature, cliVersion)) continue;
+    problems.push(`${r.id} reported ${r.status}, but its operation group ${group} is skipped on this target: the suite ran work the target lacks`);
+  }
+  return problems;
 }
 
 /** Whether a named setup operation (the seed, bootstrap) cannot run on a target lacking `lacks`. */
