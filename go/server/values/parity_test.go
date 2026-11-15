@@ -21,6 +21,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/api/openapicheck"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/daemon"
 	"github.com/varlatch/varlatch/go/server/httpserver"
@@ -196,6 +197,9 @@ func replay(t *testing.T, f fixture) {
 		rec := httptest.NewRecorder()
 		s.handler.ServeHTTP(rec, req)
 		s.values.Settled()
+		// Every answer against the OpenAPI document (responses only: some
+		// requests are outside it on purpose).
+		openapicheck.Recorder{T: t}.Exchange(req, nil, rec)
 		id := rec.Header().Get("X-Request-Id")
 		got := strings.ReplaceAll(rec.Body.String(), id, "{requestId}")
 		name := c.Method + " " + c.Name

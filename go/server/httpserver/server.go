@@ -41,6 +41,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/values"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 // MaxBody is the largest request body accepted (Hono's bodyLimit in
@@ -80,6 +81,10 @@ type Options struct {
 	// device sign-in (ADR-0059 step 3.4). Without it no bearer
 	// authenticates and the browser session is not served.
 	Auth *auth.Service
+	// Writer is the write path (go/server/write): the single writer and
+	// the process's gates. RootKEK wraps a new Organization's KEK.
+	Writer  *write.Writer
+	RootKEK []byte
 	// Values is the read path of values (ADR-0059 step 3.6): the effective
 	// configuration and disclosures. Without it they answer 500.
 	Values *values.Service
@@ -126,6 +131,10 @@ var BuiltOperations = []string{
 	// Step 3.6: the read path of values (values.go).
 	effectivePattern,
 	disclosurePattern,
+	// Step 4.1a: Organizations (organizations.go).
+	createOrganizationPattern,
+	getOrganizationPattern,
+	renameOrganizationPattern,
 }
 
 // Server is the handler.

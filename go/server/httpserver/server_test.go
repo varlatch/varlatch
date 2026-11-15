@@ -160,10 +160,10 @@ func TestEveryOperationRoutedToStubOrBuilt(t *testing.T) {
 func TestStubAnswersBeforeEverything(t *testing.T) {
 	s, b, _, _ := newTestServer(t, nil)
 	cases := []struct{ method, path, body string }{
-		{"POST", "/v1/organizations", "{not json"},
-		{"POST", "/v1/organizations", strings.Repeat("x", 4096)},
+		{"POST", "/v1/organizations/acme/projects", "{not json"},
+		{"POST", "/v1/organizations/acme/projects", strings.Repeat("x", 4096)},
 		{"GET", "/v1/organizations/acme/projects", ""},
-		{"GET", "/v1/organizations/acme?limit=not-a-number", ""},
+		{"GET", "/v1/organizations/acme/projects/api?limit=not-a-number", ""},
 		{"DELETE", "/v1/organizations/acme/projects/api/environments/development/values/DATABASE_URL", ""},
 		{"PATCH", "/v1/me/profile", "{}"},
 	}
@@ -185,8 +185,8 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 		t.Errorf("the stub reached the backend: %+v", b)
 	}
 	// The stub names the operation's route.
-	w := do(s, "GET", "/v1/organizations/acme", "", nil)
-	if e := decode(t, w); !strings.HasPrefix(e.Error.Message, "GET /v1/organizations/{org} is not built yet") {
+	w := do(s, "GET", "/v1/organizations/acme/projects/api", "", nil)
+	if e := decode(t, w); !strings.HasPrefix(e.Error.Message, "GET /v1/organizations/{org}/projects/{project} is not built yet") {
 		t.Errorf("message %q", e.Error.Message)
 	}
 }

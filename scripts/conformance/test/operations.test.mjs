@@ -141,6 +141,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "streamBrowserEvents",
     // Step 3.6: the read path of values.
     "getEffectiveConfiguration", "discloseSecrets",
+    // Step 4.1a: Organizations.
+    "createOrganization", "getOrganization", "renameOrganization",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is

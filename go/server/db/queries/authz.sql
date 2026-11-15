@@ -4,7 +4,7 @@
 
 -- name: GetLiveOrganization :one
 -- domain/orgs.ts getOrganization: by ID or slug, not deleted.
-SELECT id, slug, name FROM organizations WHERE (id = sqlc.arg(slug_or_id) OR slug = sqlc.arg(slug_or_id)) AND deleted_at IS NULL;
+SELECT id, slug, name, created_at FROM organizations WHERE (id = sqlc.arg(slug_or_id) OR slug = sqlc.arg(slug_or_id)) AND deleted_at IS NULL;
 
 -- name: GetOrgRole :one
 -- The built-in role of a live membership (ADR-0052 Decision 1).

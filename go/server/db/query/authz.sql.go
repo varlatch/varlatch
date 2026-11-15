@@ -14,13 +14,14 @@ import (
 
 const getLiveOrganization = `-- name: GetLiveOrganization :one
 
-SELECT id, slug, name FROM organizations WHERE (id = ?1 OR slug = ?1) AND deleted_at IS NULL
+SELECT id, slug, name, created_at FROM organizations WHERE (id = ?1 OR slug = ?1) AND deleted_at IS NULL
 `
 
 type GetLiveOrganizationRow struct {
-	ID   string
-	Slug string
-	Name string
+	ID        string
+	Slug      string
+	Name      string
+	CreatedAt int64
 }
 
 // What the authorization evaluator reads (ADR-0015, ADR-0028, ADR-0055):
@@ -30,7 +31,12 @@ type GetLiveOrganizationRow struct {
 func (q *Queries) GetLiveOrganization(ctx context.Context, slugOrID string) (GetLiveOrganizationRow, error) {
 	row := q.db.QueryRowContext(ctx, getLiveOrganization, slugOrID)
 	var i GetLiveOrganizationRow
-	err := row.Scan(&i.ID, &i.Slug, &i.Name)
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Name,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 
