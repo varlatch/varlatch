@@ -19,6 +19,20 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
 - `lib/storage/`: the SQLite storage engine (Decision 2): the single
   writer with group commit, the checkpointer that bounds the WAL, paced
   snapshots, metrics.
+- `lib/contract/` (step 4.1b): the Configuration Contract model, a port of
+  `packages/contract` that the server and (in step 5) the CLI share:
+  validating and normalizing a pushed Contract with zod's messages and
+  order (zod 4 measures strings in code points), canonical bytes and the
+  content hash (`sha256:` over the canonical JSON, keys in UTF-16 order,
+  JSON.stringify's escaping), the semantic diff, and Contract Semantics 1
+  to 3. URL validity is the WHATWG URL parser's failure conditions, ported
+  from `packages/accessor-python`'s `whatwg_url.py`, with UTS #46 (through
+  `golang.org/x/net/idna`) for internationalized hosts. Its tests run
+  `packages/contract/test/vectors` (every semantics version's golden and
+  portability vectors) and `testdata/ts-vectors.json`, what the
+  TypeScript package makes of 100-odd Contracts, valid and invalid
+  (`services/varlatchd/test/go-contract-vectors.test.ts`, regenerated
+  with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors).
 - `lib/diskprobe/`: the fsync probe (Decision 2's disk requirement, p99
   under 10 ms) that setup, `varlatch doctor` and the G9a harness run.
 - `lib/envelope/`: the encryption envelope (ADR-0011, unchanged by

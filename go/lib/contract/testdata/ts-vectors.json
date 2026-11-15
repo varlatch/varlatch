@@ -1,0 +1,1043 @@
+{
+  "comment": "Written by services/varlatchd/test/go-contract-vectors.test.ts from @varlatch/contract; never edit.",
+  "normalize": [
+    {
+      "name": "empty",
+      "input": "{\"schemaVersion\":1,\"items\":[]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[],\"schemaVersion\":1}",
+      "hash": "sha256:8aec8887eb1a0f7eb74d40e98c4283c5801214cac1e8a2031473e6084d289db0"
+    },
+    {
+      "name": "one item",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"DATABASE_URL\",\"required\":{\"kind\":\"always\"},\"sensitive\":true,\"type\":\"url\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"DATABASE_URL\",\"required\":{\"kind\":\"always\"},\"sensitive\":true,\"type\":\"url\"}],\"schemaVersion\":1}",
+      "hash": "sha256:b448b06b20fcc0c9ea6a793e0cd976a542428601453a3451ece82fd24720d4a2"
+    },
+    {
+      "name": "every field",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"MODE\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\",\"enumValues\":[\"prod\",\"dev\",\"dev\",\"test\"],\"defaultValue\":\"dev\",\"description\":\"The mode\",\"example\":\"prod\",\"rotationGraceSeconds\":3600,\"rotationHint\":\"Rotate in the console ✓\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"defaultValue\":\"dev\",\"description\":\"The mode\",\"enumValues\":[\"dev\",\"prod\",\"test\"],\"example\":\"prod\",\"name\":\"MODE\",\"required\":{\"kind\":\"always\"},\"rotationGraceSeconds\":3600,\"rotationHint\":\"Rotate in the console ✓\",\"sensitive\":false,\"type\":\"enum\"}],\"schemaVersion\":1}",
+      "hash": "sha256:7249cac68107acbc2502b83d5bee99edb73989cd1b5e669cf81739d02095cb79"
+    },
+    {
+      "name": "items sorted by name",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"B\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"A_2\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"A_10\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"A_10\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"A_2\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"B\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:ef8babdafb6d2634f76ecb4491c9b41ba8b368370c5e36140a37b78eb5b1e184"
+    },
+    {
+      "name": "selectors",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"ENV_IDS\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"environments\",\"environmentIds\":[\"env_b\",\"env_a\",\"env_b\"]}},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"TIER\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"tier\",\"tier\":\"production\"}},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"NEVER\",\"required\":{\"kind\":\"never\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"ENV_IDS\",\"required\":{\"kind\":\"selector\",\"selector\":{\"environmentIds\":[\"env_a\",\"env_b\"],\"kind\":\"environments\"}},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"NEVER\",\"required\":{\"kind\":\"never\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"TIER\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"tier\",\"tier\":\"production\"}},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:fed77232ce53e2fc775f5bbcaf9d67ee102197f3affbef1882a940bc47fb4539"
+    },
+    {
+      "name": "sorting by UTF-16 units",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"E\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\",\"enumValues\":[\"￿\",\"😀\",\"é\",\"Z\",\"a\",\"é́\"]}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"enumValues\":[\"Z\",\"a\",\"é\",\"é́\",\"😀\",\"￿\"],\"name\":\"E\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\"}],\"schemaVersion\":1}",
+      "hash": "sha256:1fd5c9014f4655f0a2ef143e54b8247991bfb9e2d14f64895c7aba2818ab70be"
+    },
+    {
+      "name": "strings JSON.stringify escapes",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"S\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"description\":\"quote \\\" backslash \\\\ newline \\n tab \\t \\u0001 \\u001f      </script>\",\"example\":\"😀 é\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"description\":\"quote \\\" backslash \\\\ newline \\n tab \\t \\u0001 \\u001f      </script>\",\"example\":\"😀 é\",\"name\":\"S\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:ebd0534001238bb7d2a119599add76902b27486917ead8fea88a31068dae26d8"
+    },
+    {
+      "name": "semantics version 1 is omitted",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"semanticsVersion\":1}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:ed8f9578b18488bf7ffe0db58deae5d20a037c9ee20e9eaf7868b9d488a8c2c1"
+    },
+    {
+      "name": "semantics version 2",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"semanticsVersion\":2}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1,\"semanticsVersion\":2}",
+      "hash": "sha256:cfb22476e96d379eb8a5b04314d3a75c0ad421bdd72d78110b354082b1c35d69"
+    },
+    {
+      "name": "semantics version 3 with an integer",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"N\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"integer\"}],\"semanticsVersion\":3}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"N\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"integer\"}],\"schemaVersion\":1,\"semanticsVersion\":3}",
+      "hash": "sha256:c1e7d4a094c35bef0430791cfbcac531eef14c69c07c149876dc9bcefa514994"
+    },
+    {
+      "name": "an integer, the version undecided",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"N\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"integer\"}]}",
+      "versionUndecided": true,
+      "canonical": "{\"items\":[{\"name\":\"N\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"integer\"}],\"schemaVersion\":1}",
+      "hash": "sha256:024655a942977eac3e545137119117365cc4604f8cebf075636c51034357dd9a"
+    },
+    {
+      "name": "the version undecided, named",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"N\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"integer\"}],\"semanticsVersion\":2}",
+      "versionUndecided": true,
+      "message": "Invalid Configuration Contract: N: type integer needs Contract Semantics version 3 or later, and this Contract uses version 2; move it to the newest rules (varlatch contract push --semantics latest, or the dashboard's Contract page)",
+      "issues": [
+        "N: type integer needs Contract Semantics version 3 or later, and this Contract uses version 2; move it to the newest rules (varlatch contract push --semantics latest, or the dashboard's Contract page)"
+      ]
+    },
+    {
+      "name": "member order does not matter",
+      "input": "{\"items\":[{\"type\":\"string\",\"sensitive\":true,\"required\":{\"kind\":\"always\"},\"name\":\"A\"}],\"schemaVersion\":1}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:8b5ec0bcfbf88d1446110c7d89faf7f3fa898d2570303760a7cc07f2a9ba2ebc"
+    },
+    {
+      "name": "a number written 1.0",
+      "input": "{\"schemaVersion\":1.0,\"semanticsVersion\":2.0,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":6e1}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"rotationGraceSeconds\":60,\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1,\"semanticsVersion\":2}",
+      "hash": "sha256:4821f1dae26ca48869098f26db3c3942887570d537edd9dbe2e3c0e97eb6c775"
+    },
+    {
+      "name": "a description of 4096 UTF-16 units",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"description\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"description\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:639c3375f0980bb9b0361b3cb529a52ad0c11d6a68aa8413dd21c2b49d9e2fbe"
+    },
+    {
+      "name": "a rotation hint of 1024 code points",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationHint\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"rotationHint\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:cbe05ee0660f29c1aecfedaa89f802ab239e4bbb962b47e27fafdb0f8f6f19d1"
+    },
+    {
+      "name": "a name of 256 characters",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"name\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:812ae5c0d7c8eedf1ecfbcd0550c435d451364a1a8030a52c8600160708d549b"
+    },
+    {
+      "name": "a default for every type",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"U\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"url\",\"defaultValue\":\"not a url\"},{\"name\":\"B\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"boolean\",\"defaultValue\":\"maybe\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"defaultValue\":\"maybe\",\"name\":\"B\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"boolean\"},{\"defaultValue\":\"not a url\",\"name\":\"U\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"url\"}],\"schemaVersion\":1}",
+      "hash": "sha256:191959aaa82fb0253fd2ed1fea12924ed78757b1b902a65a0f66d6955c006e33"
+    },
+    {
+      "name": "null",
+      "input": "null",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: (root): Invalid input: expected object, received null",
+      "issues": [
+        "(root): Invalid input: expected object, received null"
+      ]
+    },
+    {
+      "name": "an array",
+      "input": "[]",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: (root): Invalid input: expected object, received array",
+      "issues": [
+        "(root): Invalid input: expected object, received array"
+      ]
+    },
+    {
+      "name": "a string",
+      "input": "\"contract\"",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: (root): Invalid input: expected object, received string",
+      "issues": [
+        "(root): Invalid input: expected object, received string"
+      ]
+    },
+    {
+      "name": "a number",
+      "input": "1",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: (root): Invalid input: expected object, received number",
+      "issues": [
+        "(root): Invalid input: expected object, received number"
+      ]
+    },
+    {
+      "name": "true",
+      "input": "true",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: (root): Invalid input: expected object, received boolean",
+      "issues": [
+        "(root): Invalid input: expected object, received boolean"
+      ]
+    },
+    {
+      "name": "an empty object",
+      "input": "{}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: schemaVersion: Invalid input: expected 1; items: Invalid input: expected array, received undefined",
+      "issues": [
+        "schemaVersion: Invalid input: expected 1",
+        "items: Invalid input: expected array, received undefined"
+      ]
+    },
+    {
+      "name": "another schema version",
+      "input": "{\"schemaVersion\":2,\"items\":[]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: schemaVersion: Invalid input: expected 1",
+      "issues": [
+        "schemaVersion: Invalid input: expected 1"
+      ]
+    },
+    {
+      "name": "the schema version as text",
+      "input": "{\"schemaVersion\":\"1\",\"items\":[]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: schemaVersion: Invalid input: expected 1",
+      "issues": [
+        "schemaVersion: Invalid input: expected 1"
+      ]
+    },
+    {
+      "name": "the schema version null",
+      "input": "{\"schemaVersion\":null,\"items\":[]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: schemaVersion: Invalid input: expected 1",
+      "issues": [
+        "schemaVersion: Invalid input: expected 1"
+      ]
+    },
+    {
+      "name": "no items",
+      "input": "{\"schemaVersion\":1}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items: Invalid input: expected array, received undefined",
+      "issues": [
+        "items: Invalid input: expected array, received undefined"
+      ]
+    },
+    {
+      "name": "items not an array",
+      "input": "{\"schemaVersion\":1,\"items\":{}}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items: Invalid input: expected array, received object",
+      "issues": [
+        "items: Invalid input: expected array, received object"
+      ]
+    },
+    {
+      "name": "items null",
+      "input": "{\"schemaVersion\":1,\"items\":null}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items: Invalid input: expected array, received null",
+      "issues": [
+        "items: Invalid input: expected array, received null"
+      ]
+    },
+    {
+      "name": "an unknown member",
+      "input": "{\"schemaVersion\":1,\"items\":[],\"extra\":1}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: (root): Unrecognized key: \"extra\"",
+      "issues": [
+        "(root): Unrecognized key: \"extra\""
+      ]
+    },
+    {
+      "name": "two unknown members",
+      "input": "{\"schemaVersion\":1,\"items\":[],\"zeta\":1,\"alpha\":2}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: (root): Unrecognized keys: \"zeta\", \"alpha\"",
+      "issues": [
+        "(root): Unrecognized keys: \"zeta\", \"alpha\""
+      ]
+    },
+    {
+      "name": "unknown members and a bad field",
+      "input": "{\"zeta\":1,\"schemaVersion\":2,\"alpha\":true,\"items\":[]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: schemaVersion: Invalid input: expected 1; (root): Unrecognized keys: \"zeta\", \"alpha\"",
+      "issues": [
+        "schemaVersion: Invalid input: expected 1",
+        "(root): Unrecognized keys: \"zeta\", \"alpha\""
+      ]
+    },
+    {
+      "name": "semantics version 1.5",
+      "input": "{\"schemaVersion\":1,\"items\":[],\"semanticsVersion\":1.5}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: Invalid input: expected int, received number",
+      "issues": [
+        "semanticsVersion: Invalid input: expected int, received number"
+      ]
+    },
+    {
+      "name": "semantics version as text",
+      "input": "{\"schemaVersion\":1,\"items\":[],\"semanticsVersion\":\"2\"}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: Invalid input: expected number, received string",
+      "issues": [
+        "semanticsVersion: Invalid input: expected number, received string"
+      ]
+    },
+    {
+      "name": "semantics version null",
+      "input": "{\"schemaVersion\":1,\"items\":[],\"semanticsVersion\":null}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: Invalid input: expected number, received null",
+      "issues": [
+        "semanticsVersion: Invalid input: expected number, received null"
+      ]
+    },
+    {
+      "name": "semantics version 0",
+      "input": "{\"schemaVersion\":1,\"items\":[],\"semanticsVersion\":0}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: version 0 is not supported (supported: 1, 2, 3)",
+      "issues": [
+        "semanticsVersion: version 0 is not supported (supported: 1, 2, 3)"
+      ]
+    },
+    {
+      "name": "semantics version 4",
+      "input": "{\"schemaVersion\":1,\"items\":[],\"semanticsVersion\":4}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: version 4 is not supported (supported: 1, 2, 3)",
+      "issues": [
+        "semanticsVersion: version 4 is not supported (supported: 1, 2, 3)"
+      ]
+    },
+    {
+      "name": "semantics version -1",
+      "input": "{\"schemaVersion\":1,\"items\":[],\"semanticsVersion\":-1}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: version -1 is not supported (supported: 1, 2, 3)",
+      "issues": [
+        "semanticsVersion: version -1 is not supported (supported: 1, 2, 3)"
+      ]
+    },
+    {
+      "name": "semantics version 2^53",
+      "input": "{\"schemaVersion\":1,\"semanticsVersion\":9007199254740992,\"items\":[]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: Too big: expected int to be <=9007199254740991",
+      "issues": [
+        "semanticsVersion: Too big: expected int to be <=9007199254740991"
+      ]
+    },
+    {
+      "name": "semantics version 1e20",
+      "input": "{\"schemaVersion\":1,\"semanticsVersion\":1e20,\"items\":[]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: Too big: expected int to be <=9007199254740991",
+      "issues": [
+        "semanticsVersion: Too big: expected int to be <=9007199254740991"
+      ]
+    },
+    {
+      "name": "semantics version beyond a double",
+      "input": "{\"schemaVersion\":1,\"semanticsVersion\":1e999,\"items\":[]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: Invalid input: expected number, received Infinity",
+      "issues": [
+        "semanticsVersion: Invalid input: expected number, received Infinity"
+      ]
+    },
+    {
+      "name": "semantics version 9 with an integer",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"N\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"integer\"}],\"semanticsVersion\":9}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: semanticsVersion: version 9 is not supported (supported: 1, 2, 3)",
+      "issues": [
+        "semanticsVersion: version 9 is not supported (supported: 1, 2, 3)"
+      ]
+    },
+    {
+      "name": "an item that is not an object",
+      "input": "{\"schemaVersion\":1,\"items\":[\"A\",null,3]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0: Invalid input: expected object, received string; items.1: Invalid input: expected object, received null; items.2: Invalid input: expected object, received number",
+      "issues": [
+        "items.0: Invalid input: expected object, received string",
+        "items.1: Invalid input: expected object, received null",
+        "items.2: Invalid input: expected object, received number"
+      ]
+    },
+    {
+      "name": "an empty item",
+      "input": "{\"schemaVersion\":1,\"items\":[{}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Invalid input: expected string, received undefined; items.0.required: Invalid input: expected object, received undefined; items.0.sensitive: Invalid input: expected boolean, received undefined; items.0.type: Invalid option: expected one of \"string\"|\"number\"|\"integer\"|\"boolean\"|\"url\"|\"email\"|\"enum\"",
+      "issues": [
+        "items.0.name: Invalid input: expected string, received undefined",
+        "items.0.required: Invalid input: expected object, received undefined",
+        "items.0.sensitive: Invalid input: expected boolean, received undefined",
+        "items.0.type: Invalid option: expected one of \"string\"|\"number\"|\"integer\"|\"boolean\"|\"url\"|\"email\"|\"enum\""
+      ]
+    },
+    {
+      "name": "every field of the wrong type",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":1,\"required\":\"always\",\"sensitive\":\"yes\",\"type\":7,\"enumValues\":\"a\",\"defaultValue\":1,\"description\":2,\"example\":false,\"rotationGraceSeconds\":\"10\",\"rotationHint\":3}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Invalid input: expected string, received number; items.0.required: Invalid input: expected object, received string; items.0.sensitive: Invalid input: expected boolean, received string; items.0.type: Invalid option: expected one of \"string\"|\"number\"|\"integer\"|\"boolean\"|\"url\"|\"email\"|\"enum\"; items.0.enumValues: Invalid input: expected array, received string; items.0.defaultValue: Invalid input: expected string, received number; items.0.description: Invalid input: expected string, received number; items.0.example: Invalid input: expected string, received boolean; items.0.rotationGraceSeconds: Invalid input: expected number, received string; items.0.rotationHint: Invalid input: expected string, received number",
+      "issues": [
+        "items.0.name: Invalid input: expected string, received number",
+        "items.0.required: Invalid input: expected object, received string",
+        "items.0.sensitive: Invalid input: expected boolean, received string",
+        "items.0.type: Invalid option: expected one of \"string\"|\"number\"|\"integer\"|\"boolean\"|\"url\"|\"email\"|\"enum\"",
+        "items.0.enumValues: Invalid input: expected array, received string",
+        "items.0.defaultValue: Invalid input: expected string, received number",
+        "items.0.description: Invalid input: expected string, received number",
+        "items.0.example: Invalid input: expected string, received boolean",
+        "items.0.rotationGraceSeconds: Invalid input: expected number, received string",
+        "items.0.rotationHint: Invalid input: expected string, received number"
+      ]
+    },
+    {
+      "name": "every field null",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":null,\"required\":null,\"sensitive\":null,\"type\":null,\"enumValues\":null,\"defaultValue\":null,\"description\":null,\"example\":null,\"rotationGraceSeconds\":null,\"rotationHint\":null}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Invalid input: expected string, received null; items.0.required: Invalid input: expected object, received null; items.0.sensitive: Invalid input: expected boolean, received null; items.0.type: Invalid option: expected one of \"string\"|\"number\"|\"integer\"|\"boolean\"|\"url\"|\"email\"|\"enum\"; items.0.enumValues: Invalid input: expected array, received null; items.0.defaultValue: Invalid input: expected string, received null; items.0.description: Invalid input: expected string, received null; items.0.example: Invalid input: expected string, received null; items.0.rotationGraceSeconds: Invalid input: expected number, received null; items.0.rotationHint: Invalid input: expected string, received null",
+      "issues": [
+        "items.0.name: Invalid input: expected string, received null",
+        "items.0.required: Invalid input: expected object, received null",
+        "items.0.sensitive: Invalid input: expected boolean, received null",
+        "items.0.type: Invalid option: expected one of \"string\"|\"number\"|\"integer\"|\"boolean\"|\"url\"|\"email\"|\"enum\"",
+        "items.0.enumValues: Invalid input: expected array, received null",
+        "items.0.defaultValue: Invalid input: expected string, received null",
+        "items.0.description: Invalid input: expected string, received null",
+        "items.0.example: Invalid input: expected string, received null",
+        "items.0.rotationGraceSeconds: Invalid input: expected number, received null",
+        "items.0.rotationHint: Invalid input: expected string, received null"
+      ]
+    },
+    {
+      "name": "an unknown item member",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"secret\":true}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0: Unrecognized key: \"secret\"",
+      "issues": [
+        "items.0: Unrecognized key: \"secret\""
+      ]
+    },
+    {
+      "name": "unknown members in an item and its required",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\",\"x\":1,\"y\":2},\"sensitive\":false,\"type\":\"string\",\"z\":3}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required: Unrecognized keys: \"x\", \"y\"; items.0: Unrecognized key: \"z\"",
+      "issues": [
+        "items.0.required: Unrecognized keys: \"x\", \"y\"",
+        "items.0: Unrecognized key: \"z\""
+      ]
+    },
+    {
+      "name": "a lowercase name",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"database_url\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$",
+      "issues": [
+        "items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$"
+      ]
+    },
+    {
+      "name": "an empty name",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Too small: expected string to have >=1 characters; items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$",
+      "issues": [
+        "items.0.name: Too small: expected string to have >=1 characters",
+        "items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$"
+      ]
+    },
+    {
+      "name": "a name of 257 characters",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Too big: expected string to have <=256 characters",
+      "issues": [
+        "items.0.name: Too big: expected string to have <=256 characters"
+      ]
+    },
+    {
+      "name": "a name of 257 lowercase characters",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Too big: expected string to have <=256 characters; items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$",
+      "issues": [
+        "items.0.name: Too big: expected string to have <=256 characters",
+        "items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$"
+      ]
+    },
+    {
+      "name": "a name with a dash",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A-B\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$",
+      "issues": [
+        "items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$"
+      ]
+    },
+    {
+      "name": "a name with a newline at the end",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\\n\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$",
+      "issues": [
+        "items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$"
+      ]
+    },
+    {
+      "name": "the reserved name",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"VARLATCH_RUN_CONTEXT\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: VARLATCH_RUN_CONTEXT is reserved for launcher metadata and cannot be a Config Item",
+      "issues": [
+        "VARLATCH_RUN_CONTEXT is reserved for launcher metadata and cannot be a Config Item"
+      ]
+    },
+    {
+      "name": "duplicate names",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"B\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: duplicate Config Item name A; duplicate Config Item name A",
+      "issues": [
+        "duplicate Config Item name A",
+        "duplicate Config Item name A"
+      ]
+    },
+    {
+      "name": "an unknown type",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"strin\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.type: Invalid option: expected one of \"string\"|\"number\"|\"integer\"|\"boolean\"|\"url\"|\"email\"|\"enum\"",
+      "issues": [
+        "items.0.type: Invalid option: expected one of \"string\"|\"number\"|\"integer\"|\"boolean\"|\"url\"|\"email\"|\"enum\""
+      ]
+    },
+    {
+      "name": "an unknown requiredness kind",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"sometimes\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required.kind: Invalid discriminator value. Expected 'always' | 'never' | 'selector'",
+      "issues": [
+        "items.0.required.kind: Invalid discriminator value. Expected 'always' | 'never' | 'selector'"
+      ]
+    },
+    {
+      "name": "a requiredness without kind",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required.kind: Invalid discriminator value. Expected 'always' | 'never' | 'selector'",
+      "issues": [
+        "items.0.required.kind: Invalid discriminator value. Expected 'always' | 'never' | 'selector'"
+      ]
+    },
+    {
+      "name": "a requiredness kind that is a number",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":1},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required.kind: Invalid discriminator value. Expected 'always' | 'never' | 'selector'",
+      "issues": [
+        "items.0.required.kind: Invalid discriminator value. Expected 'always' | 'never' | 'selector'"
+      ]
+    },
+    {
+      "name": "a requiredness that is an array",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":[],\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required: Invalid input: expected object, received array",
+      "issues": [
+        "items.0.required: Invalid input: expected object, received array"
+      ]
+    },
+    {
+      "name": "a selector without selector",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"selector\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required.selector: Invalid input: expected object, received undefined",
+      "issues": [
+        "items.0.required.selector: Invalid input: expected object, received undefined"
+      ]
+    },
+    {
+      "name": "an unknown selector kind",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"all\"}},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required.selector.kind: Invalid discriminator value. Expected 'environments' | 'tier'",
+      "issues": [
+        "items.0.required.selector.kind: Invalid discriminator value. Expected 'environments' | 'tier'"
+      ]
+    },
+    {
+      "name": "an unknown tier",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"tier\",\"tier\":\"prod\"}},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required.selector.tier: Invalid option: expected one of \"development\"|\"staging\"|\"production\"",
+      "issues": [
+        "items.0.required.selector.tier: Invalid option: expected one of \"development\"|\"staging\"|\"production\""
+      ]
+    },
+    {
+      "name": "no environment ids",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"environments\",\"environmentIds\":[]}},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required.selector.environmentIds: Too small: expected array to have >=1 items",
+      "issues": [
+        "items.0.required.selector.environmentIds: Too small: expected array to have >=1 items"
+      ]
+    },
+    {
+      "name": "an empty environment id",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"environments\",\"environmentIds\":[\"env_a\",\"\",3]}},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required.selector.environmentIds.1: Too small: expected string to have >=1 characters; items.0.required.selector.environmentIds.2: Invalid input: expected string, received number",
+      "issues": [
+        "items.0.required.selector.environmentIds.1: Too small: expected string to have >=1 characters",
+        "items.0.required.selector.environmentIds.2: Invalid input: expected string, received number"
+      ]
+    },
+    {
+      "name": "an unknown selector member",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"tier\",\"tier\":\"production\",\"also\":1}},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.required.selector: Unrecognized key: \"also\"",
+      "issues": [
+        "items.0.required.selector: Unrecognized key: \"also\""
+      ]
+    },
+    {
+      "name": "enum without values",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: A: enum type requires enumValues",
+      "issues": [
+        "A: enum type requires enumValues"
+      ]
+    },
+    {
+      "name": "enum values on a string",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"enumValues\":[\"a\"]}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: A: enumValues is only valid for enum type",
+      "issues": [
+        "A: enumValues is only valid for enum type"
+      ]
+    },
+    {
+      "name": "no enum values",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\",\"enumValues\":[]}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.enumValues: Too small: expected array to have >=1 items",
+      "issues": [
+        "items.0.enumValues: Too small: expected array to have >=1 items"
+      ]
+    },
+    {
+      "name": "an empty enum value",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\",\"enumValues\":[\"a\",\"\"]}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.enumValues.1: Too small: expected string to have >=1 characters",
+      "issues": [
+        "items.0.enumValues.1: Too small: expected string to have >=1 characters"
+      ]
+    },
+    {
+      "name": "a default not among the enum values",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\",\"enumValues\":[\"a\",\"b\"],\"defaultValue\":\"c\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: A: defaultValue is not one of enumValues",
+      "issues": [
+        "A: defaultValue is not one of enumValues"
+      ]
+    },
+    {
+      "name": "a description of 4097 UTF-16 units",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"description\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀x\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"description\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀x\",\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:ad194b5181f465b46fa956f758bda6958887a5694122dd5993dd150169c25599"
+    },
+    {
+      "name": "an example of 4097 characters",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"example\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.example: Too big: expected string to have <=4096 characters",
+      "issues": [
+        "items.0.example: Too big: expected string to have <=4096 characters"
+      ]
+    },
+    {
+      "name": "a rotation grace of 0",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":0}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationGraceSeconds: Too small: expected number to be >=1",
+      "issues": [
+        "items.0.rotationGraceSeconds: Too small: expected number to be >=1"
+      ]
+    },
+    {
+      "name": "a rotation grace of 30 days and a second",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":2592001}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationGraceSeconds: Too big: expected number to be <=2592000",
+      "issues": [
+        "items.0.rotationGraceSeconds: Too big: expected number to be <=2592000"
+      ]
+    },
+    {
+      "name": "a rotation grace of 1.5",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":1.5}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationGraceSeconds: Invalid input: expected int, received number",
+      "issues": [
+        "items.0.rotationGraceSeconds: Invalid input: expected int, received number"
+      ]
+    },
+    {
+      "name": "a rotation grace of 0.5",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":0.5}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationGraceSeconds: Invalid input: expected int, received number",
+      "issues": [
+        "items.0.rotationGraceSeconds: Invalid input: expected int, received number"
+      ]
+    },
+    {
+      "name": "a rotation grace of 1e20",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":1e20}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationGraceSeconds: Too big: expected int to be <=9007199254740991; items.0.rotationGraceSeconds: Too big: expected number to be <=2592000",
+      "issues": [
+        "items.0.rotationGraceSeconds: Too big: expected int to be <=9007199254740991",
+        "items.0.rotationGraceSeconds: Too big: expected number to be <=2592000"
+      ]
+    },
+    {
+      "name": "a rotation grace of -1e20",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":-1e20}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationGraceSeconds: Too small: expected int to be >=-9007199254740991; items.0.rotationGraceSeconds: Too small: expected number to be >=1",
+      "issues": [
+        "items.0.rotationGraceSeconds: Too small: expected int to be >=-9007199254740991",
+        "items.0.rotationGraceSeconds: Too small: expected number to be >=1"
+      ]
+    },
+    {
+      "name": "a rotation grace below a double",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":-1e999}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationGraceSeconds: Invalid input: expected number, received -Infinity",
+      "issues": [
+        "items.0.rotationGraceSeconds: Invalid input: expected number, received -Infinity"
+      ]
+    },
+    {
+      "name": "a rotation grace of true",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":true}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationGraceSeconds: Invalid input: expected number, received boolean",
+      "issues": [
+        "items.0.rotationGraceSeconds: Invalid input: expected number, received boolean"
+      ]
+    },
+    {
+      "name": "a name of 256 emoji",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$",
+      "issues": [
+        "items.0.name: Config Item names must match ^[A-Z][A-Z0-9_]*$"
+      ]
+    },
+    {
+      "name": "a description of 4096 emoji",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"description\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"description\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:3b6c5b77daac4c6750a07f4f0529d9de22fa261b6d27e67f7a0a408de1b68fc4"
+    },
+    {
+      "name": "a description of 4097 emoji",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"description\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.description: Too big: expected string to have <=4096 characters",
+      "issues": [
+        "items.0.description: Too big: expected string to have <=4096 characters"
+      ]
+    },
+    {
+      "name": "an enum value of one emoji",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\",\"enumValues\":[\"😀\"]}]}",
+      "versionUndecided": false,
+      "canonical": "{\"items\":[{\"enumValues\":[\"😀\"],\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\"}],\"schemaVersion\":1}",
+      "hash": "sha256:1b8dccd56fc8798bcc5818b5a3f8d4c69083b64de11278947f41fe354329305d"
+    },
+    {
+      "name": "unknown keys JavaScript orders",
+      "input": "{\"schemaVersion\":1,\"items\":[],\"b\":1,\"10\":2,\"a\":3,\"2\":4}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: (root): Unrecognized keys: \"2\", \"10\", \"b\", \"a\"",
+      "issues": [
+        "(root): Unrecognized keys: \"2\", \"10\", \"b\", \"a\""
+      ]
+    },
+    {
+      "name": "a repeated member",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":2}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: schemaVersion: Invalid input: expected 1",
+      "issues": [
+        "schemaVersion: Invalid input: expected 1"
+      ]
+    },
+    {
+      "name": "an object as the schema version",
+      "input": "{\"schemaVersion\":{},\"items\":[]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: schemaVersion: Invalid input: expected 1",
+      "issues": [
+        "schemaVersion: Invalid input: expected 1"
+      ]
+    },
+    {
+      "name": "an empty rotation hint",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationHint\":\"\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationHint: a rotation hint cannot be empty; leave it out instead",
+      "issues": [
+        "items.0.rotationHint: a rotation hint cannot be empty; leave it out instead"
+      ]
+    },
+    {
+      "name": "a rotation hint of 1025 code points",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationHint\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationHint: a rotation hint holds at most 1024 characters",
+      "issues": [
+        "items.0.rotationHint: a rotation hint holds at most 1024 characters"
+      ]
+    },
+    {
+      "name": "a rotation hint with a tab",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationHint\":\"a\\tb\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "issues": [
+        "items.0.rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters"
+      ]
+    },
+    {
+      "name": "a rotation hint with bidi formatting",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationHint\":\"a‮b\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "issues": [
+        "items.0.rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters"
+      ]
+    },
+    {
+      "name": "a rotation hint with a line separator",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationHint\":\"a b\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "issues": [
+        "items.0.rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters"
+      ]
+    },
+    {
+      "name": "a rotation hint with C1 control",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"rotationHint\":\"ab\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.0.rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "issues": [
+        "items.0.rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters"
+      ]
+    },
+    {
+      "name": "an integer at version 1",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"N\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"integer\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: N: type integer needs Contract Semantics version 3 or later, and this Contract uses version 1; move it to the newest rules (varlatch contract push --semantics latest, or the dashboard's Contract page)",
+      "issues": [
+        "N: type integer needs Contract Semantics version 3 or later, and this Contract uses version 1; move it to the newest rules (varlatch contract push --semantics latest, or the dashboard's Contract page)"
+      ]
+    },
+    {
+      "name": "an integer at version 2",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"N\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"integer\"}],\"semanticsVersion\":2}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: N: type integer needs Contract Semantics version 3 or later, and this Contract uses version 2; move it to the newest rules (varlatch contract push --semantics latest, or the dashboard's Contract page)",
+      "issues": [
+        "N: type integer needs Contract Semantics version 3 or later, and this Contract uses version 2; move it to the newest rules (varlatch contract push --semantics latest, or the dashboard's Contract page)"
+      ]
+    },
+    {
+      "name": "several items, several problems",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\"},{\"name\":\"a\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"B\",\"required\":{\"kind\":\"never\",\"x\":1},\"sensitive\":false,\"type\":\"string\",\"rotationGraceSeconds\":0},{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"VARLATCH_RUN_CONTEXT\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\",\"enumValues\":[\"x\"]}],\"semanticsVersion\":4}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.1.name: Config Item names must match ^[A-Z][A-Z0-9_]*$; items.2.required: Unrecognized key: \"x\"; items.2.rotationGraceSeconds: Too small: expected number to be >=1",
+      "issues": [
+        "items.1.name: Config Item names must match ^[A-Z][A-Z0-9_]*$",
+        "items.2.required: Unrecognized key: \"x\"",
+        "items.2.rotationGraceSeconds: Too small: expected number to be >=1"
+      ]
+    },
+    {
+      "name": "zod and rule problems together",
+      "input": "{\"schemaVersion\":1,\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":1,\"type\":\"string\"}]}",
+      "versionUndecided": false,
+      "message": "Invalid Configuration Contract: items.1.sensitive: Invalid input: expected boolean, received number",
+      "issues": [
+        "items.1.sensitive: Invalid input: expected boolean, received number"
+      ]
+    }
+  ],
+  "diff": [
+    {
+      "name": "identical",
+      "from": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "to": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "diff": {
+        "itemsAdded": [],
+        "itemsRemoved": [],
+        "otherChanged": [],
+        "requirednessChanged": [],
+        "securityRelevant": false,
+        "semanticsVersionChanged": null,
+        "sensitivityChanged": [],
+        "typeChanged": []
+      }
+    },
+    {
+      "name": "an item added and one removed",
+      "from": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"B\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "to": "{\"items\":[{\"name\":\"B\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"C\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "diff": {
+        "itemsAdded": [
+          "C"
+        ],
+        "itemsRemoved": [
+          "A"
+        ],
+        "otherChanged": [],
+        "requirednessChanged": [],
+        "securityRelevant": true,
+        "semanticsVersionChanged": null,
+        "sensitivityChanged": [],
+        "typeChanged": []
+      }
+    },
+    {
+      "name": "sensitivity, requiredness and type",
+      "from": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"B\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"C\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "to": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":true,\"type\":\"string\"},{\"name\":\"B\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"tier\",\"tier\":\"staging\"}},\"sensitive\":false,\"type\":\"string\"},{\"name\":\"C\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"url\"}],\"schemaVersion\":1}",
+      "diff": {
+        "itemsAdded": [],
+        "itemsRemoved": [],
+        "otherChanged": [],
+        "requirednessChanged": [
+          {
+            "from": {
+              "kind": "always"
+            },
+            "name": "B",
+            "to": {
+              "kind": "selector",
+              "selector": {
+                "kind": "tier",
+                "tier": "staging"
+              }
+            }
+          }
+        ],
+        "securityRelevant": true,
+        "semanticsVersionChanged": null,
+        "sensitivityChanged": [
+          {
+            "from": false,
+            "name": "A",
+            "to": true
+          }
+        ],
+        "typeChanged": [
+          {
+            "from": "string",
+            "name": "C",
+            "to": "url"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cosmetic only",
+      "from": "{\"items\":[{\"description\":\"x\",\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "to": "{\"items\":[{\"description\":\"y\",\"example\":\"z\",\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"rotationHint\":\"Rotate it\",\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "diff": {
+        "itemsAdded": [],
+        "itemsRemoved": [],
+        "otherChanged": [
+          "A"
+        ],
+        "requirednessChanged": [],
+        "securityRelevant": false,
+        "semanticsVersionChanged": null,
+        "sensitivityChanged": [],
+        "typeChanged": []
+      }
+    },
+    {
+      "name": "enum values cosmetic",
+      "from": "{\"items\":[{\"enumValues\":[\"a\"],\"name\":\"E\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\"}],\"schemaVersion\":1}",
+      "to": "{\"items\":[{\"enumValues\":[\"a\",\"b\"],\"name\":\"E\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"enum\"}],\"schemaVersion\":1}",
+      "diff": {
+        "itemsAdded": [],
+        "itemsRemoved": [],
+        "otherChanged": [
+          "E"
+        ],
+        "requirednessChanged": [],
+        "securityRelevant": false,
+        "semanticsVersionChanged": null,
+        "sensitivityChanged": [],
+        "typeChanged": []
+      }
+    },
+    {
+      "name": "semantics version",
+      "from": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "to": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1,\"semanticsVersion\":3}",
+      "diff": {
+        "itemsAdded": [],
+        "itemsRemoved": [],
+        "otherChanged": [],
+        "requirednessChanged": [],
+        "securityRelevant": false,
+        "semanticsVersionChanged": {
+          "from": 1,
+          "to": 3
+        },
+        "sensitivityChanged": [],
+        "typeChanged": []
+      }
+    },
+    {
+      "name": "environments reordered",
+      "from": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"selector\",\"selector\":{\"environmentIds\":[\"a\",\"b\"],\"kind\":\"environments\"}},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "to": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"selector\",\"selector\":{\"environmentIds\":[\"a\",\"b\"],\"kind\":\"environments\"}},\"sensitive\":false,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "diff": {
+        "itemsAdded": [],
+        "itemsRemoved": [],
+        "otherChanged": [],
+        "requirednessChanged": [],
+        "securityRelevant": false,
+        "semanticsVersionChanged": null,
+        "sensitivityChanged": [],
+        "typeChanged": []
+      }
+    }
+  ]
+}
