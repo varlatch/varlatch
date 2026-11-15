@@ -109,14 +109,47 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 	return &server{handler: h, store: store, values: vs, writer: w}
 }
 
+// fillPath is go-security-fixture.test.ts's: {secId}, {bobId}, enf's
+// {enfProjectId} and {enfEnvId}, polar's {polarFreezeId} (open) and
+// {polarLiftedFreezeId}.
 func fillPath(f paritytest.Fixture) func(string) string {
-	sec := ""
-	for _, o := range f.Rows["organizations"] {
-		if o["slug"] == "sec" {
-			sec = o["id"].(string)
+	orgID := func(slug string) string {
+		for _, o := range f.Rows["organizations"] {
+			if o["slug"] == slug {
+				return o["id"].(string)
+			}
+		}
+		return ""
+	}
+	pairs := []string{"{secId}", orgID("sec")}
+	for _, i := range f.Rows["identities"] {
+		if i["name"] == "bob" {
+			pairs = append(pairs, "{bobId}", i["id"].(string))
 		}
 	}
-	return func(p string) string { return strings.ReplaceAll(p, "{secId}", sec) }
+	enfProject := ""
+	for _, p := range f.Rows["projects"] {
+		if p["organization_id"] == orgID("enf") {
+			enfProject = p["id"].(string)
+			pairs = append(pairs, "{enfProjectId}", enfProject)
+		}
+	}
+	for _, e := range f.Rows["environments"] {
+		if e["project_id"] == enfProject {
+			pairs = append(pairs, "{enfEnvId}", e["id"].(string))
+		}
+	}
+	for _, fr := range f.Rows["organization_freezes"] {
+		if fr["organization_id"] != orgID("polar") {
+			continue
+		}
+		if fr["lifted_at"] == nil {
+			pairs = append(pairs, "{polarFreezeId}", fr["id"].(string))
+		} else {
+			pairs = append(pairs, "{polarLiftedFreezeId}", fr["id"].(string))
+		}
+	}
+	return strings.NewReplacer(pairs...).Replace
 }
 
 // The security fixture's operations give the TypeScript server's answers

@@ -90,7 +90,8 @@ const SIDE: SideTable[] = [
     sortBy: ["organization_id", "control", "config_version", "operation", "actor_identity_id", "reason"],
     volatile: ["bucket_hour", "first_seen", "last_seen", "emitted_at"],
   },
-  { name: "approval_intents", key: ["id"], sortBy: ["organization_id", "operation", "target", "body_hash"], volatile: ["created_at", "expires_at", "consumed_at"] },
+  { name: "approval_intents", key: ["id"], sortBy: ["organization_id", "operation", "target", "body_hash"], volatile: ["created_at", "expires_at", "consumed_at", "closed_at"] },
+  { name: "organization_freezes", key: ["id"], sortBy: ["organization_id", "frozen_at"], volatile: ["frozen_at", "lifted_at"] },
 ];
 
 const ORG = "/v1/organizations";
@@ -254,13 +255,153 @@ function requestTable(): RequestCase[] {
     list("list after the changes", "sec"),
     report("report after the changes", "rep"),
     report("enf's report after the exports", "enf"),
+    ...freezeRequests(),
+    ...auditRequests(),
   ]);
 }
 
-/** Fills a request's placeholders: {secId}. */
+const B64 = (parts: unknown[]) => Buffer.from(JSON.stringify(parts), "utf8").toString("base64url");
+
+/**
+ * Step 4.3c's incident freeze: ice is frozen during the table; polar was
+ * frozen at build time, with an earlier freeze lifted (its lift is asked
+ * for without and with a broken approval).
+ */
+function freezeRequests(): Omit<RequestCase, "id">[] {
+  const status = (name: string, org: string, credential = "alice"): Omit<RequestCase, "id"> =>
+    ({ name, method: "GET", path: `${ORG}/${org}/incident-freeze`, credential });
+  const freeze = (name: string, org: string, body: unknown, credential = "alice"): Omit<RequestCase, "id"> =>
+    ({ name, method: "POST", path: `${ORG}/${org}/incident-freeze`, credential, body });
+  const lift = (name: string, org: string, freezeId: string, credential = "alice", approval?: string): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${ORG}/${org}/incident-freeze/${freezeId}/lift`, credential,
+    ...(approval !== undefined ? { headers: { "Varlatch-Approval": approval } } : {}),
+  });
+  return [
+    status("freeze status, none", "sec"),
+    status("freeze status, open", "frozen"),
+    status("freeze status as a member", "sec", "bob"),
+    status("freeze status as an outsider", "sec", "carol"),
+    status("freeze status of an unknown Organization", "nope"),
+    status("freeze status under passkey-verification enforce", "guard"),
+    status("freeze status of an Organization being deleted", "deleting"),
+    freeze("freeze as a member", "ice", { reason: "drill" }, "bob"),
+    freeze("freeze as another Organization's machine", "ice", { reason: "drill" }, "ci"),
+    freeze("freeze, no reason", "ice", {}),
+    freeze("freeze, a reason that is not a string", "ice", { reason: 5 }),
+    freeze("freeze, a reason of 1001 characters", "ice", { reason: "x".repeat(1001) }),
+    freeze("freeze, an extra member", "ice", { reason: "x", by: "me" }),
+    { name: "freeze, not JSON", method: "POST", path: `${ORG}/ice/incident-freeze`, credential: "alice", rawBody: "reason=x" },
+    freeze("freeze, a reason of spaces", "ice", { reason: "   " }),
+    freeze("freeze, a reason of 201 characters", "ice", { reason: "y".repeat(201) }),
+    freeze("freeze, a reason of 101 emoji", "ice", { reason: "😀".repeat(101) }),
+    { name: "freeze, U+0000 in the reason", method: "POST", path: `${ORG}/ice/incident-freeze`, credential: "alice", rawBody: '{"reason":"a\\u0000b"}' },
+    freeze("freeze", "ice", { reason: "  incident drill  " }),
+    freeze("freeze again", "ice", { reason: "again" }),
+    freeze("freeze an Organization being deleted", "deleting", { reason: "while deleting" }),
+    freeze("freeze under passkey-verification enforce", "guard", { reason: "drill" }),
+    status("freeze status after the freeze", "ice"),
+    status("freeze status as a member of a frozen Organization", "ice", "bob"),
+    { name: "controls of a frozen Organization", method: "GET", path: `${ORG}/ice/security/controls`, credential: "alice" },
+    { name: "a control change in a frozen Organization", method: "PATCH", path: `${ORG}/ice/security/controls/admin-step-up`, credential: "alice", body: { mode: "report", expectedVersion: 0 } },
+    // alice2: alice's first credential has five approvals open by now.
+    lift("lift, no approval", "polar", "{polarFreezeId}", "alice2"),
+    lift("lift, a malformed approval header", "polar", "{polarFreezeId}", "alice2", "not-an-approval"),
+    lift("lift an unknown freeze", "polar", "ofz_unknownaaaaaaaaaaaaaaaaaaa"),
+    lift("lift as a member", "ice", "{polarFreezeId}", "bob"),
+    lift("lift another Organization's freeze", "ice", "{polarFreezeId}"),
+    // A lift with an approval records how long the freeze lasted, which a
+    // freeze of a fixed time cannot keep stable between runs: Go's
+    // TestFreezeAndLift covers it. Here, a freeze lifted already.
+    lift("lift a lifted freeze", "polar", "{polarLiftedFreezeId}", "alice2", APPROVALS.export),
+  ];
+}
+
+/** Step 4.3c's audit log reads: every filter, the limit, the cursor, the export. */
+function auditRequests(): Omit<RequestCase, "id">[] {
+  // The events name earlier requests by their random request ids: masked.
+  const list = (name: string, org: string, query = "", credential = "alice", masked: string[] = []): Omit<RequestCase, "id"> =>
+    ({ name, method: "GET", path: `${ORG}/${org}/audit-events${query}`, credential, masked: ["requestId", ...masked] });
+  const exp = (name: string, org: string, query = "", credential = "alice"): Omit<RequestCase, "id"> =>
+    ({ name, method: "GET", path: `${ORG}/${org}/audit-events/export${query}`, credential, masked: ["requestId"] });
+  return [
+    list("audit", "sec"),
+    list("audit, limit 1", "sec", "?limit=1", "alice", ["nextCursor"]),
+    list("audit, limit 0", "sec", "?limit=0"),
+    list("audit, limit not a number", "sec", "?limit=abc"),
+    list("audit, a negative limit", "sec", "?limit=-5", "alice", ["nextCursor"]),
+    list("audit, a limit above 500", "sec", "?limit=600"),
+    list("audit, limit 2.9", "sec", "?limit=2.9", "alice", ["nextCursor"]),
+    list("audit, denials", "sec", "?decision=deny"),
+    list("audit, an unknown decision", "sec", "?decision=maybe"),
+    list("audit, a decision twice", "sec", "?decision=deny&decision=info"),
+    list("audit, an empty decision", "sec", "?decision="),
+    list("audit, an event type", "sec", "?eventType=security_control.changed"),
+    list("audit, an event type prefix", "sec", "?eventType=security_control.*"),
+    list("audit, an invalid event type", "sec", "?eventType=Security.Changed"),
+    list("audit, an actor", "sec", "?actorIdentityId={bobId}"),
+    list("audit, an invalid actor id", "sec", "?actorIdentityId=bob%20smith"),
+    list("audit, Varlatch's own events", "frozen", "?actor=varlatch"),
+    list("audit, actor and actor id", "sec", "?actor=varlatch&actorIdentityId={bobId}"),
+    list("audit, an unknown actor", "sec", "?actor=someone"),
+    list("audit, a project", "enf", "?projectId={enfProjectId}"),
+    list("audit, an environment", "enf", "?environmentId={enfEnvId}"),
+    list("audit, an item", "enf", "?item=S"),
+    list("audit, an item no event names", "enf", "?item=NOPE"),
+    list("audit, an invalid item", "enf", "?item=lower"),
+    list("audit, since the future", "sec", "?since=2099-01-01T00:00:00Z"),
+    list("audit, until the past", "sec", "?until=2000-01-01T00:00:00.123456789%2B02:00"),
+    list("audit, since in lower case", "sec", "?since=2020-01-01t00:00:00z&decision=deny"),
+    list("audit, until before since", "sec", "?since=2026-02-01T00:00:00Z&until=2026-01-01T00:00:00Z"),
+    list("audit, an impossible date", "sec", "?since=2026-02-30T00:00:00Z"),
+    list("audit, since without a zone", "sec", "?since=2026-01-01T00:00:00"),
+    list("audit, a cursor in the future", "sec", `?decision=deny&cursor=${B64(["2099-01-01 00:00:00+00", "evt_zzzzzzzzzzzzzzzzzzzzzzzzzz"])}`),
+    list("audit, a cursor in the past", "sec", `?cursor=${B64(["2000-01-01 00:00:00.5+00", "evt_a"])}`),
+    list("audit, a cursor with a time only", "sec", `?decision=deny&cursor=${B64(["2099-01-01T00:00:00Z"])}`),
+    list("audit, an empty cursor list", "sec", `?cursor=${B64([])}`),
+    list("audit, a cursor that is not strings", "sec", `?cursor=${B64(["2099-01-01 00:00:00+00", 1])}`),
+    list("audit, a cursor that is not base64 JSON", "sec", "?cursor=nope"),
+    list("audit, a cursor whose time is not a time", "sec", `?cursor=${B64(["not a time", "evt_a"])}`),
+    list("audit, a bad cursor and a bad filter", "sec", `?cursor=${B64(["not a time", "evt_a"])}&decision=maybe`),
+    // The cursor's time is whatever PostgreSQL's timestamptz input reads
+    // (go/server/pgtime; its vectors cover the rest).
+    list("audit, a cursor with a date only", "sec", `?decision=deny&cursor=${B64(["2099-01-01", "evt_a"])}`),
+    list("audit, a cursor at the epoch", "sec", `?cursor=${B64(["epoch", "evt_a"])}`),
+    list("audit, a cursor at infinity", "sec", `?decision=deny&cursor=${B64(["infinity", "evt_a"])}`),
+    list("audit, a cursor at -infinity", "sec", `?cursor=${B64(["-infinity", "evt_a"])}`),
+    list("audit, a cursor with a month name and an abbreviation", "sec", `?decision=deny&cursor=${B64(["Jan 8 2099 04:05:06 PST", "evt_a"])}`),
+    list("audit, a cursor as a Julian day", "sec", `?decision=deny&cursor=${B64(["J2488070", "evt_a"])}`),
+    list("audit, a cursor with a POSIX zone", "sec", `?decision=deny&cursor=${B64(["2099-01-01 04:05 xyz5", "evt_a"])}`),
+    list("audit, a cursor run together", "sec", `?decision=deny&cursor=${B64(["20990101T040506.5-07"])}`),
+    list("audit, a cursor on a day that does not exist", "sec", `?cursor=${B64(["2099-02-30", "evt_a"])}`),
+    list("audit, a cursor with a zone out of range", "sec", `?cursor=${B64(["2099-01-01 00:00+16", "evt_a"])}`),
+    list("audit as a member", "sec", "", "bob"),
+    list("audit as an outsider", "sec", "", "carol"),
+    list("audit of a frozen Organization", "polar"),
+    list("audit under passkey-verification enforce", "guard"),
+    list("audit of an unknown Organization", "nope"),
+    exp("export", "sec"),
+    exp("export, denials", "sec", "?decision=deny"),
+    exp("export, an item", "enf", "?item=S"),
+    exp("export, an invalid filter", "sec", "?since=yesterday"),
+    exp("export as an outsider", "sec", "", "carol"),
+    exp("export under passkey-verification enforce", "guard"),
+    exp("export of a frozen Organization", "ice"),
+  ];
+}
+
+/** Fills a request's placeholders: {secId}, {bobId}, enf's {enfProjectId} and {enfEnvId}, polar's {polarFreezeId} and {polarLiftedFreezeId}. */
 function fillPath(rows: Record<string, Row[]>): (p: string) => string {
-  const sec = rows.organizations!.find((o) => o.slug === "sec")!.id as string;
-  return (p) => p.replaceAll("{secId}", sec);
+  const orgId = (slug: string) => rows.organizations!.find((o) => o.slug === slug)!.id as string;
+  const enfProject = rows.projects!.find((p) => p.organization_id === orgId("enf"))!.id as string;
+  const pairs: [string, string][] = [
+    ["{secId}", orgId("sec")],
+    ["{bobId}", rows.identities!.find((i) => i.name === "bob")!.id as string],
+    ["{enfProjectId}", enfProject],
+    ["{enfEnvId}", rows.environments!.find((e) => e.project_id === enfProject)!.id as string],
+    ["{polarLiftedFreezeId}", rows.organization_freezes!.find((f) => f.organization_id === orgId("polar") && f.lifted_at !== null)!.id as string],
+    ["{polarFreezeId}", rows.organization_freezes!.find((f) => f.organization_id === orgId("polar") && f.lifted_at === null)!.id as string],
+  ];
+  return (p) => pairs.reduce((out, [k, v]) => out.replaceAll(k, v), p);
 }
 
 type Call = (method: string, path: string, body?: unknown) => Promise<any>;
@@ -287,7 +428,7 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
     return text ? JSON.parse(text) : null;
   };
   const orgs: Record<string, string> = {};
-  for (const slug of ["sec", "rep", "enf", "frozen", "deleting", "guard", "gone"]) {
+  for (const slug of ["sec", "rep", "enf", "frozen", "deleting", "guard", "gone", "ice", "polar"]) {
     orgs[slug] = (await call("POST", ORG, { name: slug[0]!.toUpperCase() + slug.slice(1), slug })).id;
   }
   // A Project with two Secrets in enf and rep, for the exports, before any
@@ -325,7 +466,8 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
     if (!opts.disabled) tokens[name] = (await issueCredential(ctx.db, { identityId: id, kind: "cli" })).token;
     return id;
   };
-  await person("bob", { role: "member" });
+  const bob = await person("bob", { role: "member" });
+  await db.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ($1, $2, 'member')", [orgs.ice, bob]);
   await person("carol");
   const dave = await person("dave", { role: "admin" });
   await person("erin", { role: "admin" });
@@ -411,6 +553,13 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   await db.query(
     "INSERT INTO organization_freezes (id, organization_id, frozen_by, frozen_at, reason) VALUES ($1, $2, $3, '2026-03-01T00:00:00.000Z', 'incident drill')",
     [newId("organizationFreeze"), orgs.frozen, alice],
+  );
+  // polar: frozen, with a freeze lifted before it.
+  await db.query(
+    `INSERT INTO organization_freezes (id, organization_id, frozen_by, frozen_at, reason, lifted_at, lift_method) VALUES
+       ($1, $3, $4, '2026-02-01T00:00:00.000Z', 'first drill', '2026-02-01T01:00:00.000Z', 'operator'),
+       ($2, $3, $4, '2026-03-05T00:00:00.000Z', 'second drill', NULL, NULL)`,
+    [newId("organizationFreeze"), newId("organizationFreeze"), orgs.polar, alice],
   );
   // Enforcing passkey-verification from alice's sign-in (no passkey
   // evidence) would refuse her own requests: written directly.

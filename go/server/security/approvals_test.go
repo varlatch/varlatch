@@ -33,8 +33,9 @@ func (wd *world) binding(operation string, target map[string]string) auth.Bindin
 }
 
 // The account writers the TypeScript code runs under the person's row FOR
-// UPDATE take the person's gate exclusive (decision 4): starting,
-// approving and cancelling an approval, confirming and removing a passkey.
+// UPDATE take the person's gate exclusive (decision 4), all six: starting,
+// approving and cancelling an approval, starting and completing a passkey
+// confirmation, and removing a passkey.
 // Each waits while an external effect holds the person across its call,
 // and runs once the effect ended.
 func TestAccountWritersWaitForAnEffectHoldingThePerson(t *testing.T) {
@@ -50,11 +51,22 @@ func TestAccountWritersWaitForAnEffectHoldingThePerson(t *testing.T) {
 			}
 			return err
 		},
+		// The others refuse here (no such session, passkey or ceremony), after
+		// the gate: only the wait is under test.
 		"start a confirmation": func(wd *world, _ string) error {
-			_, err := wd.approvals.StartConfirmation(context.Background(), "idn_a", "ses_1", "pk_missing")
-			if err != nil {
-				return nil // refused, after the gate: no relying party, or no such passkey
-			}
+			_, _ = wd.approvals.StartConfirmation(context.Background(), "idn_a", "ses_1", "pk_missing")
+			return nil
+		},
+		"complete a confirmation": func(wd *world, _ string) error {
+			_, _ = wd.approvals.Confirm(context.Background(), "idn_a", "ses_1", "pk_missing", []byte(`{}`), "req_1")
+			return nil
+		},
+		"start an approval": func(wd *world, id string) error {
+			_, _ = wd.approvals.StartApproval(context.Background(), "idn_a", "ses_1", id)
+			return nil
+		},
+		"approve an approval": func(wd *world, id string) error {
+			_, _ = wd.approvals.ApproveApproval(context.Background(), "idn_a", "ses_1", id, []byte(`{}`), "req_1")
 			return nil
 		},
 	} {

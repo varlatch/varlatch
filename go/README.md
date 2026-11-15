@@ -492,6 +492,63 @@ The server's packages:
   defect: the TypeScript order follows the PostgreSQL database's
   collation (the test databases' C collation is byte order, which the
   security fixture records; a production cluster's may be a locale's).
+- `server/freeze` (step 4.3c): the incident freeze (ADR-0055,
+  `domain/freeze.ts`). Freezing (a person's credential with
+  `organization.manage`, no approval; every open Approval Intent closed),
+  lifting (always a step-up approval bound to the freeze id) and the host
+  operator's lift (`varlatchd admin unfreeze`, no person, no approval) each
+  take the Organization's gate exclusive, so each waits for the
+  Organization's external effects; each runs while a deletion is pending
+  and leaves it in place. Served by `server/httpserver/freeze.go`
+  (`getIncidentFreeze`, `freezeOrganization`, `liftIncidentFreeze`).
+- The audit log's reads (step 4.3c): `listAuditEvents` and
+  `exportAuditEvents` (`server/httpserver/auditevents.go`), with the
+  filters of `server/audit/filters.go` (`audit/filters.ts`; since and until
+  read as PostgreSQL reads them, the fraction rounded to microseconds). The
+  listing's cursor carries `occurred_at` in PostgreSQL's text form, so a
+  cursor either server made reads the same on the other. Its time is read
+  as PostgreSQL 17's timestamptz input reads it (`server/pgtime`, a port of
+  that input; the TypeScript server hands it to PostgreSQL as
+  `$3::timestamptz`): every form it takes, now and today at the time of the
+  query, infinity after every event, and the text it refuses answering 500
+  `INTERNAL` as it does there. Zone names come from the host's tz database
+  (`/usr/share/zoneinfo`), as PostgreSQL's packages read theirs, so for a
+  zone name both servers answer as their hosts' databases do. The
+  export streams NDJSON a batch of 250 at a time up to the high-water mark.
+  `audit.Record` gives the events of one call the clock's time in
+  microseconds, as PostgreSQL's `now()` gives one transaction's, so events
+  of separate writes list in the order they happened.
+- The host operator's commands that write through the Organization's gate
+  (feature-parity decision 11): `varlatchd admin security reset` (ADR-0054
+  Decision 10, `security.ResetControls`) and `varlatchd admin unfreeze`
+  (`freeze.OperatorUnfreeze`), through the daemon's socket or offline under
+  its lock. In the daemon they wait for an external effect of the
+  Organization and commit after it (`daemon` `TestOperatorCommandsWaitForAnEffect`,
+  the commands run as processes of their own). They print the TypeScript
+  admin CLI's lines, or the outcome as JSON with `--json`; a refusal prints
+  `varlatchd admin <command>: <code>: <message>` and exits 1 (the TypeScript
+  CLI prints one generic line), a usage error exits 64. The TypeScript
+  code's exclusive takers of the Organization and person gates are
+  inventoried by line pattern and each mapped to the Go function meant to
+  take the gate (`write` `TestExclusiveTakersAgainstTypeScript`): a new
+  taker on either side fails the test, but the mapping is reviewed, not
+  proved; the gates the Go functions take are their own tests'.
+- `server/pgtime` (step 4.3c): PostgreSQL 17's timestamptz input, ported
+  (ParseDateTime, DecodeDateTime and tm2timestamp of `datetime.c` and
+  `timestamp.c`; `pg_tzset`, `tzload`, `tzparse` and the DST boundary
+  search of `src/timezone`; the Default abbreviations), in a UTC session
+  with DateStyle ISO, MDY: what the audit cursor's time reads as. Its
+  vectors (`testdata/timestamptz-vectors.json`, 4,854 inputs from
+  `testdata/gen-vectors.py`) are PostgreSQL 17.6's answers, instant and
+  SQLSTATE, read with that server's tz files (`testdata/zoneinfo`);
+  `go-timestamptz-vectors.test.ts` checks the same file against PGlite.
+  Zones read from the host's files are cached (at most 2,048); POSIX zone
+  strings, which any cursor may name, are parsed each time. Leap-second
+  corrections (`leapcorr`) apply only to zones from a `right/` directory,
+  which the postgres:17.6 image and the vectors do not have; that path is
+  ported but not covered by the corpus.
+  Ported code is under the PostgreSQL License as well
+  (`LICENSE-PostgreSQL`, `scripts/third-party-code.json`).
 - `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
   decision 3). `services/varlatchd/test/go-fixture-kit.ts` has the
   TypeScript server build a database through its own `/v1`, run a table of
@@ -718,6 +775,7 @@ Kept, because they are on the wire:
 | `domain/environments.ts` `deleteEnvironment`, an environment with live derived ones | the refusal lists them (its message and `details.children`) from a query without `ORDER BY`: PostgreSQL's heap order, which tuple pruning and space reuse change, so not reproducible | by name, the order the core fixture's case records | the core fixture's "delete a root with derived environments" |
 | `http/app.ts` `createEnvironment`, `expiresAt` | zod's `z.string().datetime()` accepts what PostgreSQL's timestamptz refuses (year 0, or a fraction of more than 128 digits, which overflows `timestamptz_in`'s work buffer): the insert fails and the route answers 500 `INTERNAL`, a validation-shaped input with nothing written or counted | the same: `environments.PostgresTimestamp` refuses exactly those, in the job, where the insert would fail | `server/environments` `TestPostgresTimestampVectors` (`testdata/pg-timestamps.json`); the core fixture's "create a preview" requests |
 | `http/app.ts` `searchConfigItems`, a hit's environments | listed in the order of a query without `ORDER BY`, so the order is whatever PostgreSQL's plan gives and is not guaranteed: an index scan through `environments_live_name_key` (`project_id`, `name`) gives Project, then name, while a sequential scan of the same rows gives another order | by Project, then name (byte order), chosen on purpose: the index-scan order, which the fixture's TypeScript server used | the core fixture's search requests |
+| `http/app.ts` `listAuditEvents`, the `credentials` sidecar | the page's credentials from a query without `ORDER BY` (`id = ANY($1)`), so the object's member order is PostgreSQL's row order | the table's order (`rowid`), which is PostgreSQL's for a table nothing was deleted from, as the security fixture records | the security fixture's audit listings |
 | PostgreSQL's text and jsonb, under every route | U+0000 in a string written to a text or jsonb column fails the statement: the transaction rolls back and the route answers 500 `INTERNAL`; a lone surrogate reaches a text column as U+FFFD (Node's UTF-8) and fails in jsonb | the same: `write.Text` for text columns (U+0000 refused, lone surrogates as U+FFFD), `jsvalue.JsonbRefuses` for jsonb (`audit.Record`, `write.Idempotent`). **Every later slice applies them to each text or jsonb value it writes**, at the point the TypeScript statement would fail, and records the case in its parity fixture | `server/write` `TestText`; the core fixture's U+0000 and lone-surrogate requests |
 
 Not reproduced:

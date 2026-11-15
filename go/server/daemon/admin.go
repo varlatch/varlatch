@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
@@ -17,6 +18,9 @@ import (
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/freeze"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/security"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -43,7 +47,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	sub := args[0]
 	conformance := sub == "conformance-probe" && conformanceProbe != nil ||
 		sub == "conformance-fixture" && conformanceFixture != nil
-	if sub != "bootstrap" && sub != "recover" && !conformance {
+	operator := sub == "security" || sub == "unfreeze"
+	if sub != "bootstrap" && sub != "recover" && !conformance && !operator {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -62,7 +67,14 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		}
 		rest = append(rest, args[i])
 	}
-	if !conformance {
+	switch {
+	case operator:
+		// Checked here, so a usage error never reaches the daemon.
+		if msg := operatorUsage(sub, rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case !conformance:
 		if _, msg := parseAdmin(sub, rest); msg != "" {
 			return adminUsage(stderr, msg)
 		}
@@ -82,8 +94,69 @@ func admin(args []string, stdout, stderr io.Writer) int {
 
 func adminUsage(stderr io.Writer, msg string) int {
 	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] | "+
-		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>]  (each with [--config <file>])\n", msg)
+		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] | "+
+		"varlatchd admin security reset ... | varlatchd admin unfreeze ...  (each with [--config <file>])\n", msg)
 	return 64
+}
+
+// operatorUsage checks `admin security reset` and `admin unfreeze`'s
+// arguments (--config already taken out): "" when they are well formed,
+// else what the TypeScript admin CLI prints for them.
+func operatorUsage(sub string, rest []string) string {
+	if sub == "unfreeze" {
+		_, msg := freeze.ParseUnfreezeArgs(rest)
+		return msg
+	}
+	if len(rest) == 0 || rest[0] != "reset" {
+		return security.ResetUsage
+	}
+	_, msg := security.ParseResetArgs(rest[1:])
+	return msg
+}
+
+// runOperator runs the host operator's two commands that write through the
+// Organization's gate (feature-parity decision 11): `security reset`
+// (ADR-0054 Decision 10) and `unfreeze` (ADR-0055 Decision 2). In the
+// daemon they take its gates, so each waits for an external effect of the
+// Organization held open meanwhile and commits after it; offline, under
+// the lock, nothing else runs. Each prints the TypeScript admin CLI's
+// lines, or its outcome as JSON with --json.
+func runOperator(ctx context.Context, env *hostEnv, sub string, rest []string, stdout, stderr io.Writer) int {
+	if msg := operatorUsage(sub, rest); msg != "" {
+		fmt.Fprintln(stderr, msg)
+		return 64
+	}
+	w := &write.Writer{Store: env.store, Gates: env.gates}
+	approvals := auth.New(env.store, auth.Options{PublicURL: env.cfg.PublicURL, RootKEK: env.rootKEK, PersonGate: env.gates.PersonGate})
+	var lines []string
+	var js jsvalue.Object
+	var asJSON bool
+	var err error
+	if sub == "security" {
+		a, _ := security.ParseResetArgs(rest[1:])
+		asJSON = a.JSON
+		var out security.ResetOutcome
+		if out, err = security.ResetControls(ctx, w, approvals, a.Organization, a.Controls, time.Now); err == nil {
+			lines, js = out.Lines(), out.JS()
+		}
+	} else {
+		a, _ := freeze.ParseUnfreezeArgs(rest)
+		asJSON = a.JSON
+		var out freeze.OperatorOutcome
+		if out, err = freeze.OperatorUnfreeze(ctx, w, approvals, a.Organization, a.Confirm, time.Now); err == nil {
+			lines, js = out.Lines(), out.JS()
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, err.Error())
+		return ExitFailure
+	}
+	if asJSON {
+		fmt.Fprintln(stdout, string(jsvalue.Stringify(js)))
+	} else {
+		fmt.Fprintln(stdout, strings.Join(lines, "\n"))
+	}
+	return ExitOK
 }
 
 type adminArgs struct {
@@ -167,6 +240,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return conformanceProbe(ctx, env, rest, stdout, stderr)
 	case sub == "conformance-fixture" && conformanceFixture != nil:
 		return conformanceFixture(ctx, env, rest, stdout, stderr)
+	case sub == "security" || sub == "unfreeze":
+		return runOperator(ctx, env, sub, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":
 		return adminUsage(stderr, "unknown command "+sub)
 	}

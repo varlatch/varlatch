@@ -683,7 +683,12 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			id := rec.Header().Get("X-Request-Id")
 			ids[id] = true
 			CheckDigests(t, rec.Body.Bytes(), name)
-			pres[i] = pre{rec, id, strings.ReplaceAll(rec.Body.String(), id, "{requestId}")}
+			text := rec.Body.String()
+			if id != "" {
+				// An answer without the header (a streamed one) names no request id.
+				text = strings.ReplaceAll(text, id, "{requestId}")
+			}
+			pres[i] = pre{rec, id, text}
 		}
 		sort.SliceStable(pres, func(i, j int) bool {
 			if pres[i].rec.Code != pres[j].rec.Code {

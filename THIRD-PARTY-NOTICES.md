@@ -272,6 +272,7 @@ both licenses.
 | Project | Version | License | What | Files |
 | --- | --- | --- | --- | --- |
 | [ada](https://github.com/ada-url/ada/blob/b12a893a45809da8103bb4f1e2f6f5ee13f9100b/src/ada_idna.cpp) | 4.0.0 (`b12a893a4580`) | MIT | Domain to ASCII and label validity (ada::idna::to_ascii and is_label_valid), ported to Go. ada is dual-licensed Apache-2.0 OR MIT; Varlatch takes it under MIT. | `go/lib/whatwg/idna.go` |
+| [PostgreSQL](https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2) | 17.6 (`REL_17_6`) | PostgreSQL | timestamptz input (ParseDateTime, DecodeDateTime and their helpers in src/backend/utils/adt/datetime.c, tm2timestamp in timestamp.c), zone lookup (pg_tzset and pg_open_tzfile in src/timezone/pgtz.c) and the Default timezone abbreviations (src/timezone/tznames/Default), ported to Go; tzload, tzparse, pg_next_dst_boundary and pg_interpret_timezone_abbrev come from PostgreSQL's src/timezone/localtime.c, the IANA tz code, which is in the public domain. | `go/server/pgtime/abbrevs.go`, `go/server/pgtime/pgtime.go`, `go/server/pgtime/zone.go` |
 
 ## License texts
 
@@ -5121,6 +5122,34 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+````
+
+### PostgreSQL 17.6 (ported code)
+
+````text
+PostgreSQL Database Management System
+(also known as Postgres, formerly known as Postgres95)
+
+Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+
+Portions Copyright (c) 1994, The Regents of the University of California
+
+Permission to use, copy, modify, and distribute this software and its
+documentation for any purpose, without fee, and without a written agreement
+is hereby granted, provided that the above copyright notice and this
+paragraph and the following two paragraphs appear in all copies.
+
+IN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO ANY PARTY FOR
+DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING
+LOST PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS
+DOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA HAS BEEN ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+THE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
+ON AN "AS IS" BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATIONS TO
+PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 ````
 
 ### Packages that ship no license file

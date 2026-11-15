@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/ids"
@@ -167,9 +168,14 @@ func Record(ctx context.Context, db query.DBTX, events ...Event) ([]Recorded, er
 		return nil, err
 	}
 	acting, attributed := AttributionFrom(ctx)
+	// The events' time, as PostgreSQL's now() gives every event of one
+	// transaction the same: the clock in microseconds, once per call
+	// (MAPPING.md: varlatchd passes its own times), so events of separate
+	// writes list in the order they happened.
+	at := time.Now().UnixMicro()
 	out := make([]Recorded, 0, len(events))
 	for _, e := range events {
-		r, err := insert(ctx, q, e, acting, attributed)
+		r, err := insert(ctx, q, e, acting, attributed, at)
 		if err != nil {
 			return nil, err
 		}
@@ -227,8 +233,9 @@ func params(e Event, acting Attribution, hasActing bool) query.RecordAuditEventP
 	}
 }
 
-func insert(ctx context.Context, q *query.Queries, e Event, acting Attribution, attributed bool) (Recorded, error) {
+func insert(ctx context.Context, q *query.Queries, e Event, acting Attribution, attributed bool, at int64) (Recorded, error) {
 	p := params(e, acting, attributed)
+	p.OccurredAt = at
 	// The TypeScript server's columns are jsonb, which refuses what JSON
 	// text can hold and jsonb cannot: such an event fails to record there.
 	for _, col := range []sql.NullString{p.Resource, p.Authz, p.Tailnet, p.Metadata} {

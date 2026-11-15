@@ -107,6 +107,9 @@ type hooks struct {
 	// closes (the run's last events); closed once the database has closed.
 	stopped func()
 	closed  func()
+	// writer sees the daemon's write path once it exists (tests: an
+	// external effect held open inside the daemon).
+	writer func(*write.Writer)
 }
 
 // productionStorage is the storage engine's options for serving: the
@@ -300,6 +303,9 @@ func serve(opts Options, h *hooks) int {
 	readPath := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: gates})
 	defer readPath.Settled()
 	writer := &write.Writer{Store: store, Gates: gates}
+	if h.writer != nil {
+		h.writer(writer)
+	}
 	// The Security Control report summary (feature-parity decision 10):
 	// every minute, each hour's report counts become audit events once the
 	// hour has been over for 10 minutes. A stop ends it before the

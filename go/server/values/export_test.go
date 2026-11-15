@@ -146,3 +146,43 @@ func TestExportStaleCapture(t *testing.T) {
 		t.Fatalf("repeated: %v %v", out, err)
 	}
 }
+
+// One approval, two simultaneous exports that use it: exactly one
+// discloses and is audited, the other answers APPROVAL_INVALID (consumed),
+// whichever reaches the writer second.
+func TestSimultaneousExportsShareOneApproval(t *testing.T) {
+	wd := exportWorld(t)
+	body := `{"items":["S"],"purpose":"export"}`
+	_, err := wd.export(context.Background(), body, nil)
+	id := wd.approve(t, err)
+	const n = 2
+	errs := make(chan error, n)
+	start := make(chan struct{})
+	for range n {
+		go func() {
+			<-start
+			_, err := wd.export(context.Background(), body, &id)
+			errs <- err
+		}()
+	}
+	close(start)
+	ok, consumed := 0, 0
+	for range n {
+		err := <-errs
+		if err == nil {
+			ok++
+			continue
+		}
+		if c, r := errCode(err, "reason"); c == "APPROVAL_INVALID" && r == "consumed" {
+			consumed++
+			continue
+		}
+		t.Errorf("unexpected: %v", err)
+	}
+	if ok != 1 || consumed != 1 {
+		t.Fatalf("%d succeeded and %d were refused as consumed, want 1 and 1", ok, consumed)
+	}
+	if n := wd.disclosures(t); n != 1 {
+		t.Fatalf("%d disclosures audited, want 1", n)
+	}
+}

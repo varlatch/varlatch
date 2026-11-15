@@ -39,6 +39,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
+	"github.com/varlatch/varlatch/go/server/pgtime"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/write"
@@ -96,6 +97,9 @@ type Options struct {
 	Log *slog.Logger
 	// Now is the clock (tests); nil is time.Now.
 	Now func() time.Time
+	// Zones is the tz database a cursor's time names zones from, as
+	// PostgreSQL reads its host's (pgtime); nil is pgtime.System.
+	Zones *pgtime.Zones
 	// Built adds operations, by route pattern ("GET /v1/organizations"), to
 	// the ones this build has, for tests of the stub's wiring. Each is
 	// served by the generated strict handler: a pattern whose operation
@@ -169,6 +173,13 @@ var BuiltOperations = []string{
 	// Step 4.2: rotation (valuewrites.go).
 	beginRotationPattern,
 	completeRotationPattern,
+	// Step 4.3c: the incident freeze (freeze.go) and the audit log's reads
+	// (auditevents.go).
+	getIncidentFreezePattern,
+	freezeOrganizationPattern,
+	liftIncidentFreezePattern,
+	listAuditEventsPattern,
+	exportAuditEventsPattern,
 }
 
 // Server is the handler.
@@ -190,6 +201,9 @@ func New(opts Options) (*Server, error) {
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
+	}
+	if opts.Zones == nil {
+		opts.Zones = pgtime.System
 	}
 	if opts.Backend == nil {
 		return nil, errors.New("httpserver: no backend")

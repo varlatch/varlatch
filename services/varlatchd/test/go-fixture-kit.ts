@@ -405,7 +405,8 @@ export async function record(
     const raw = await Promise.all(responses.map(async (res) => ({ res, id: res.headers.get("X-Request-Id") ?? "", text: await res.text() })));
     // Sorted before normalizing (a request id differs per answer), so the
     // fresh IDs are numbered in the sorted order.
-    const pre = raw.map(({ res, id, text }) => ({ res, id, status: res.status, text: text.replaceAll(id, REQUEST_ID) }));
+    // An answer without the header (a streamed one) names no request id.
+    const pre = raw.map(({ res, id, text }) => ({ res, id, status: res.status, text: id ? text.replaceAll(id, REQUEST_ID) : text }));
     pre.sort((a, b) => (a.status - b.status) || (a.text < b.text ? -1 : a.text > b.text ? 1 : 0));
     const answers: Answer[] = pre.map(({ res, id, status, text }) => {
       const kept: Record<string, string> = {};

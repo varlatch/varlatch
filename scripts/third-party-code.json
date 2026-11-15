@@ -10,6 +10,16 @@
       "licenseFile": "go/lib/whatwg/LICENSE-ada-MIT",
       "files": ["go/lib/whatwg/idna.go"],
       "what": "Domain to ASCII and label validity (ada::idna::to_ascii and is_label_valid), ported to Go. ada is dual-licensed Apache-2.0 OR MIT; Varlatch takes it under MIT."
+    },
+    {
+      "name": "PostgreSQL",
+      "version": "17.6",
+      "commit": "REL_17_6",
+      "source": "https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2",
+      "license": "PostgreSQL",
+      "licenseFile": "go/server/pgtime/LICENSE-PostgreSQL",
+      "files": ["go/server/pgtime/abbrevs.go", "go/server/pgtime/pgtime.go", "go/server/pgtime/zone.go"],
+      "what": "timestamptz input (ParseDateTime, DecodeDateTime and their helpers in src/backend/utils/adt/datetime.c, tm2timestamp in timestamp.c), zone lookup (pg_tzset and pg_open_tzfile in src/timezone/pgtz.c) and the Default timezone abbreviations (src/timezone/tznames/Default), ported to Go; tzload, tzparse, pg_next_dst_boundary and pg_interpret_timezone_abbrev come from PostgreSQL's src/timezone/localtime.c, the IANA tz code, which is in the public domain."
     }
   ]
 }

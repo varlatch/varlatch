@@ -261,8 +261,8 @@ const recordAuditEvent = `-- name: RecordAuditEvent :one
 INSERT INTO audit_events
   (id, schema_version, event_type, actor_identity_id, authentication_method_id,
    credential_id, organization_id, action, resource, decision, authz, tailnet,
-   listener, request_id, metadata, client)
-VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+   listener, request_id, metadata, client, occurred_at)
+VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING event_order, occurred_at
 `
 
@@ -282,6 +282,7 @@ type RecordAuditEventParams struct {
 	RequestID              sql.NullString
 	Metadata               sql.NullString
 	Client                 sql.NullString
+	OccurredAt             int64
 }
 
 type RecordAuditEventRow struct {
@@ -308,6 +309,7 @@ func (q *Queries) RecordAuditEvent(ctx context.Context, arg RecordAuditEventPara
 		arg.RequestID,
 		arg.Metadata,
 		arg.Client,
+		arg.OccurredAt,
 	)
 	var i RecordAuditEventRow
 	err := row.Scan(&i.EventOrder, &i.OccurredAt)
