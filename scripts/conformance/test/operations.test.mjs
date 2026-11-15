@@ -9,18 +9,7 @@ import { fileURLToPath } from "node:url";
 import { lacksFor, validateExpectations } from "../lib/expect.mjs";
 import { judgeGate } from "../lib/gate.mjs";
 import { evaluate } from "../lib/inventory.mjs";
-import {
-  lackingChecks,
-  lacksProblems,
-  NOT_IMPLEMENTED_YET,
-  openapiOperations,
-  operationProblems,
-  operationsOf,
-  placeholderPath,
-  probeFor,
-  setupLacks,
-  staleBecause,
-} from "../lib/operations.mjs";
+import { lackingChecks, lacksProblems, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, operationsOf, placeholderPath, probeFor, setupLacks, skippedGroups, staleBecause } from "../lib/operations.mjs";
 import { parseSuiteOutput, resultLine } from "../lib/results.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -74,6 +63,16 @@ test("operations: every name known; named operations well formed", () => {
     /suite mcp: getMeta is listed twice/,
     /suite mcp: noSuchOperation is neither/,
   ]) assert.match(problems, want);
+});
+
+test("a group is skipped only when every one of its checks lacks an operation", () => {
+  const audit = Object.entries(inventory.checks).filter(([, c]) => c.suite === "client-runtime" && c.group === "audit-export").map(([id]) => id);
+  assert.deepEqual([...skippedGroups(inventory, "client-runtime", audit)], ["audit-export"]);
+  assert.deepEqual([...skippedGroups(inventory, "client-runtime", audit.slice(1))], []);
+  assert.deepEqual([...skippedGroups(inventory, "client-runtime", [])], []);
+  // From the target's lacks, as the runner reads them.
+  assert.ok(skippedGroups(inventory, "client-runtime", lackingChecks(inventory, ["exportAuditEvents"]).keys()).has("audit-export"));
+  assert.ok(!skippedGroups(inventory, "client-runtime", lackingChecks(inventory, ["exportAuditEvents"]).keys()).has("service-identities"));
 });
 
 test("a check in an operation group needs its suite's, its group's and its own operations", () => {

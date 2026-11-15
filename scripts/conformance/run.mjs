@@ -53,7 +53,7 @@ import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
 import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
 import { judgeGate } from "./lib/gate.mjs";
 import { evaluate, TARGET_SPECIFIC, validateInventory } from "./lib/inventory.mjs";
-import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks } from "./lib/operations.mjs";
+import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroups } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
 import { parseSuiteOutput, resultLine } from "./lib/results.mjs";
@@ -366,6 +366,16 @@ async function main() {
       // go-server) check on a target without that capability, by not
       // applicable: a suite that runs everywhere can hold one
       // (dashboard.csp-connect-src-convex).
+      // A result for a check of a group the target skips: the suite ran
+      // that group's work on a target that lacks it. The run fails; the
+      // gate convention's static check is only a lint aid for this.
+      const skipped = skippedGroups(inventory, entry.suite, lacked);
+      for (const r of parsed.results) {
+        const group = inventory.checks[r.id]?.group;
+        if (group && skipped.has(group) && r.status !== "PREDATES-CLI") {
+          errors.push({ suite: entry.suite, message: `${r.id} reported ${r.status}, but its operation group ${group} is skipped on this target: the suite ran work the target lacks` });
+        }
+      }
       for (const r of parsed.results) {
         if (lacked.has(r.id)) continue;
         const capability = TARGET_SPECIFIC[inventory.checks[r.id]?.kind];
