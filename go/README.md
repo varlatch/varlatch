@@ -123,6 +123,16 @@ memory (`server/write`):
   credentials, `SO_PEERCRED`). A command sent there runs inside the
   daemon, with its gates and its writer, and its output and exit status
   come back as if it ran in the caller.
+- The data directory holds both, so `serve` refuses to start (78) when it
+  is not owned by the user varlatchd runs as or its group or others may
+  write it, and `varlatchd admin` refuses to connect through such a
+  directory, or through a socket file that is not a socket owned by the
+  directory's owner (a non-root caller must also own the directory). The
+  shipped unit's directory (`StateDirectoryMode=0700`) passes.
+- A command takes the gates of the people and Organizations it writes, from
+  the daemon's gate set, before its jobs are queued (`recover --identity`
+  its subject, exclusively with `--enable`, as `issueRecoveryGrant` locks
+  it; the conformance fixtures as the writers of the same rows would).
 - `varlatchd admin ...` tries the socket first. If nothing answers, it
   takes the lock without waiting and runs the same code offline (creating
   the schema and the installation on a fresh data directory, as `serve`
@@ -445,6 +455,7 @@ Kept, because they are on the wire:
 | `http/app.ts`, an unknown `/v1` route | Hono's plain-text `404 Not Found` | the same (step 3 decision 4) | `server/httpserver/testdata/known-differences.json` |
 | `http/app.ts`, the request window | `429` with `PERMISSION_DENIED` | the same | the same file |
 | `http/app.ts` `withIdempotency` | a replay answers the stored response read back from jsonb, so its members come in jsonb's order (shorter keys first), not the first answer's | the same | `server/write` `TestReplayVectors` |
+| PostgreSQL's text and jsonb, under every route | U+0000 in a string written to a text or jsonb column fails the statement: the transaction rolls back and the route answers 500 `INTERNAL`; a lone surrogate reaches a text column as U+FFFD (Node's UTF-8) and fails in jsonb | the same: `write.Text` for text columns (U+0000 refused, lone surrogates as U+FFFD), `jsvalue.JsonbRefuses` for jsonb (`audit.Record`, `write.Idempotent`). **Every later slice applies them to each text or jsonb value it writes**, at the point the TypeScript statement would fail, and records the case in its parity fixture | `server/write` `TestText`; the core fixture's U+0000 and lone-surrogate requests |
 
 Not reproduced:
 

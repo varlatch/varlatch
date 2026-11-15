@@ -171,6 +171,11 @@ func serve(opts Options, h *hooks) int {
 	if st, err := os.Stat(cfg.DataDir); err != nil || !st.IsDir() {
 		return fail(ExitFailure, "the data directory is not there", "dir", cfg.DataDir, "error", err)
 	}
+	// It holds the control socket and the lock: only this user may change
+	// its entries (datadir_unix.go).
+	if err := checkServeDir(cfg.DataDir, os.Getuid()); err != nil {
+		return fail(ExitConfig, "the data directory is not safe for the control socket and the lock file; fix its owner or mode and start varlatchd again", "error", err)
+	}
 	// One running owner of the data directory (feature-parity decision
 	// 11): held until serve returns, after the database closed.
 	unlock, err := lockDataDir(cfg.DataDir)

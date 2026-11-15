@@ -6,12 +6,23 @@ package daemon
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 func runAdmin(t *testing.T, args ...string) (int, string, string) {
@@ -182,5 +193,187 @@ func TestServeRefusesASocketPathTooLong(t *testing.T) {
 	var stderr syncBuffer
 	if code := Serve(Options{ConfigPath: in.conf, Stderr: &stderr}); code != ExitFailure || !strings.Contains(stderr.String(), "shorter path") {
 		t.Errorf("%d %s", code, stderr.String())
+	}
+}
+
+// Shutdown never lets a handler start after close returned (the database
+// closes then): connections accepted while the listener closes are either
+// handled before close returns or never handled.
+func TestControlShutdownWithConcurrentAccepts(t *testing.T) {
+	in := newInstall(t, "")
+	cfg, err := config.Load(in.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for i := range 40 {
+		var closed atomic.Bool
+		var late atomic.Int32
+		c, err := listenControl(&hostEnv{cfg: cfg}, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.handled = func() {
+			if closed.Load() {
+				late.Add(1)
+			}
+		}
+		go c.serve(context.Background())
+		stop := make(chan struct{})
+		var dialers sync.WaitGroup
+		for range 8 {
+			dialers.Add(1)
+			go func() {
+				defer dialers.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					if conn, err := net.Dial("unix", filepath.Join(in.data, ControlSocket)); err == nil {
+						_ = conn.Close()
+					}
+				}
+			}()
+		}
+		time.Sleep(time.Duration(i%5) * time.Millisecond)
+		c.close()
+		closed.Store(true)
+		time.Sleep(5 * time.Millisecond)
+		close(stop)
+		dialers.Wait()
+		if late.Load() != 0 {
+			t.Fatalf("iteration %d: %d handlers started after close returned", i, late.Load())
+		}
+	}
+}
+
+// serve refuses (78) a data directory its group or others may write, or
+// that another user owns; varlatchd admin refuses to connect through one,
+// or through a socket file that is not the owner's socket.
+func TestDataDirectoryOwnership(t *testing.T) {
+	in := newInstall(t, "")
+	if err := os.Chmod(in.data, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	var stderr syncBuffer
+	if code := Serve(Options{ConfigPath: in.conf, Stderr: &stderr}); code != ExitConfig || !strings.Contains(stderr.String(), "may be written by its group or by others") {
+		t.Errorf("group-writable: %d %s", code, stderr.String())
+	}
+	if code, _, errOut := runAdmin(t, "bootstrap", "--config", in.conf); code != ExitConfig || !strings.Contains(errOut, "may be written by its group or by others") {
+		t.Errorf("admin, group-writable: %d %s", code, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(in.data, "varlatch.db")); !os.IsNotExist(err) {
+		t.Errorf("the database was touched: %v", err)
+	}
+	if err := os.Chmod(in.data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Owned by someone else (as seen by a check for another uid).
+	if err := checkServeDir(in.data, os.Getuid()+1); err == nil || !strings.Contains(err.Error(), "not by the user varlatchd runs as") {
+		t.Errorf("another owner: %v", err)
+	}
+	if os.Getuid() != 0 {
+		if err := checkClientDir(in.data, os.Getuid()+1); err == nil || !strings.Contains(err.Error(), "not by you") {
+			t.Errorf("admin, another owner: %v", err)
+		}
+	}
+	// A link where the socket should be.
+	if err := os.Symlink(filepath.Join(in.dir, "elsewhere.sock"), filepath.Join(in.data, ControlSocket)); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runAdmin(t, "bootstrap", "--config", in.conf); code != ExitConfig || !strings.Contains(errOut, "is not a socket owned by the data directory's owner") {
+		t.Errorf("admin, a link: %d %s", code, errOut)
+	}
+}
+
+// recover takes its subject's gate from the gate set it runs with: with
+// --enable exclusively, so it waits while an effect holds the person
+// (shared) across its call, and commits once the effect ends; without
+// --enable shared, alongside the effect.
+func TestRecoverTakesItsSubjectsGate(t *testing.T) {
+	in := newInstall(t, "")
+	cfg, err := config.Load(in.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, status := openOffline(cfg, "test", io.Discard)
+	if env == nil {
+		t.Fatalf("open: %d", status)
+	}
+	defer env.store.Close()
+	ctx := context.Background()
+	host := func(args ...string) (int, string) {
+		var out, errOut bytes.Buffer
+		code := runHost(ctx, env, args, nil, &out, &errOut)
+		return code, out.String() + errOut.String()
+	}
+	code, out := host("bootstrap", "--cli-credential")
+	m := bootstrapCLI.FindStringSubmatch(out)
+	if code != ExitOK || m == nil {
+		t.Fatalf("bootstrap: %d %s", code, out)
+	}
+	admin := m[1]
+	if err := env.store.Write(ctx, func(tx *storage.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_r', 'r', 'R', '{}')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waiting := make(chan write.Gate, 4)
+	env.gates.Observe(func(event string, g write.Gate) {
+		if event == "waiting" {
+			waiting <- g
+		}
+	})
+	started, release := make(chan struct{}), make(chan struct{})
+	effectDone := make(chan error, 1)
+	w := &write.Writer{Store: env.store, Gates: env.gates}
+	go func() {
+		_, _, err := write.RunEffect(ctx, w, write.Effect[string, string]{
+			OrganizationID: "org_r", People: []write.Gate{write.Person(admin, write.Shared)},
+			Call:  func(context.Context) (string, error) { close(started); <-release; return "ok", nil },
+			Final: func(context.Context, *storage.Tx, string) (string, error) { return "ok", nil },
+		})
+		effectDone <- err
+	}()
+	<-started
+	// Without --enable: alongside the effect.
+	if code, out := host("recover", "--identity", admin); code != ExitOK || !recoveryURL.MatchString(out) {
+		t.Fatalf("recover: %d %s", code, out)
+	}
+	// With --enable: waits for the effect.
+	recovered := make(chan string, 1)
+	go func() {
+		code, out := host("recover", "--identity", admin, "--enable")
+		recovered <- fmt.Sprint(code, " ", out)
+	}()
+	select {
+	case g := <-waiting:
+		if g != write.Person(admin, write.Exclusive) {
+			t.Fatalf("waiting for %s", g)
+		}
+	case r := <-recovered:
+		t.Fatalf("recover --enable did not wait: %s", r)
+	case <-time.After(10 * time.Second):
+		t.Fatal("recover --enable never reached its gate")
+	}
+	select {
+	case r := <-recovered:
+		t.Fatalf("recover --enable ran during the effect: %s", r)
+	default:
+	}
+	close(release)
+	if err := <-effectDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-recovered:
+		if !strings.HasPrefix(r, "0 ") || !recoveryURL.MatchString(strings.TrimPrefix(r, "0 ")) {
+			t.Fatalf("recover --enable after the effect: %s", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("recover --enable did not finish after the effect")
 	}
 }

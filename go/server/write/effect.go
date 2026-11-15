@@ -182,7 +182,7 @@ func RunEffect[C, R any](ctx context.Context, w *Writer, e Effect[C, R]) (R, []a
 		defer cancel()
 	}
 	called, err := e.Call(callCtx)
-	expired := active && !time.Now().Before(st.deadline)
+	expired := st.expired()
 	if err == nil && expired {
 		err = ErrEffectDeadline()
 	}
@@ -198,8 +198,16 @@ func RunEffect[C, R any](ctx context.Context, w *Writer, e Effect[C, R]) (R, []a
 		return zero, nil, err
 	}
 
+	// The final job checks the deadline again before it writes anything and
+	// once the outcome is written, as the TypeScript effect checks its
+	// signal after the whole callback, inside its transaction: a final job
+	// that waited for the writer, or ran, past the deadline keeps nothing
+	// (its savepoint rolls back), and the refusals are written alone.
 	var out R
 	err = w.Store.Write(ctx, func(tx *storage.Tx) error {
+		if st.expired() {
+			return ErrEffectDeadline()
+		}
 		for _, ev := range st.refusals {
 			if _, err := audit.Record(ctx, tx, ev); err != nil {
 				return err
@@ -209,8 +217,13 @@ func RunEffect[C, R any](ctx context.Context, w *Writer, e Effect[C, R]) (R, []a
 			return err
 		}
 		var err error
-		out, err = e.Final(ctx, tx, called)
-		return err
+		if out, err = e.Final(ctx, tx, called); err != nil {
+			return err
+		}
+		if st.expired() {
+			return ErrEffectDeadline()
+		}
+		return nil
 	})
 	if err != nil {
 		if werr := writeRefusals(ctx, w, st); werr != nil {
@@ -219,6 +232,11 @@ func RunEffect[C, R any](ctx context.Context, w *Writer, e Effect[C, R]) (R, []a
 		return zero, nil, err
 	}
 	return out, reports, nil
+}
+
+// expired reports whether the effect has a deadline and it passed.
+func (st *effectState) expired() bool {
+	return !st.deadline.IsZero() && !time.Now().Before(st.deadline)
 }
 
 func writeRefusals(ctx context.Context, w *Writer, st *effectState) error {

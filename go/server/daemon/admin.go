@@ -222,6 +222,23 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdin []byte, std
 			"Expires: "+auth.ISO(grant.ExpiresAt)+". If it lapses, run bootstrap again.")
 	}
 
+	// The subject's gate, as issueRecoveryGrant locks it (domain/
+	// bootstrap.ts): exclusive when --enable may change the person,
+	// shared otherwise; held across the grant and, with --cli-credential,
+	// its consumption (which takes the subject shared). Taken before any
+	// job is queued, from the daemon's gates (offline, the command's own).
+	if id := a.values["--identity"]; id != "" {
+		mode := write.Shared
+		if a.flags["--enable"] {
+			mode = write.Exclusive
+		}
+		var release func()
+		var err error
+		if ctx, release, err = env.gates.Acquire(ctx, write.Person(id, mode)); err != nil {
+			return fail(err)
+		}
+		defer release()
+	}
 	grant, err := svc.IssueRecoveryGrant(ctx, auth.Recovery{IdentityID: a.values["--identity"], Enable: a.flags["--enable"], NewAdmin: a.flags["--new-admin"]})
 	if err != nil {
 		return fail(err)

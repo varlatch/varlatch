@@ -318,3 +318,30 @@ func TestIdempotentConcurrent(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// PostgreSQL's text: U+0000 refused, a lone surrogate stored as U+FFFD.
+func TestText(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain":                    "plain",
+		"héllo ✓ 𝄞":                "héllo ✓ 𝄞",
+		"a\xed\xa0\x80b":           "a�b",
+		"\xed\xa0\x80\xed\xb0\x80": "��", // two surrogate sequences, each one U+FFFD
+		"x\xffy":                   "x�y",
+	} {
+		if got, err := Text(in); err != nil || got != want {
+			t.Errorf("%q: %q %v, want %q", in, got, err, want)
+		}
+	}
+	if _, err := Text("a\x00b"); !errors.Is(err, ErrPostgresText) {
+		t.Errorf("U+0000: %v", err)
+	}
+	// An idempotent response jsonb would refuse fails the write with it.
+	w := newWriter(t)
+	_, _, err := Idempotent(context.Background(), w.Store, Claim{IdentityID: "idn_a", Endpoint: "e", Key: "k", Digest: "d"}, nil, func(tx *storage.Tx) (Response, error) {
+		_, err := tx.ExecContext(context.Background(), `UPDATE organizations SET name = 'changed' WHERE id = 'org_a'`)
+		return Response{Status: 200, Payload: jsvalue.Object{{Key: "v", Value: "a\x00b"}}}, err
+	})
+	if err == nil || count(t, w.Store, `SELECT count(*) FROM organizations WHERE name = 'changed'`) != 0 || count(t, w.Store, `SELECT count(*) FROM idempotency_keys`) != 0 {
+		t.Errorf("a response with U+0000: %v", err)
+	}
+}

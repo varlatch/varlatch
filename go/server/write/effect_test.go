@@ -233,3 +233,50 @@ func TestEffectFinalChecksAgain(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+// The deadline also binds the final job: one that waited for the writer
+// past it, or whose own work ran past it, keeps nothing, and answers the
+// deadline; the outbound refusals are still written, alone.
+func TestEffectDeadlineBindsTheFinalJob(t *testing.T) {
+	defer func(d time.Duration) { EffectDeadline = d }(EffectDeadline)
+	EffectDeadline = 20 * time.Millisecond
+	for _, c := range []string{"final runs past the deadline", "final waits for the writer past it"} {
+		t.Run(c, func(t *testing.T) {
+			w := newWriter(t)
+			exec(t, w.Store, `INSERT INTO security_controls (organization_id, control, mode, version, changed_by) VALUES ('org_a', 'passkey-verification', 'enforce', 1, 'idn_a')`)
+			release := make(chan struct{})
+			busy := make(chan struct{})
+			_, _, err := RunEffect(context.Background(), w, Effect[string, string]{
+				OrganizationID: "org_a",
+				Call: func(ctx context.Context) (string, error) {
+					NoteRefusal(ctx, audit.Event{Type: "outbound.refused", Decision: audit.Deny, OrganizationID: ptr("org_a")})
+					if c == "final waits for the writer past it" {
+						// Another job holds the writer until after the deadline.
+						go func() {
+							_ = w.Store.Write(context.Background(), func(*storage.Tx) error {
+								close(busy)
+								<-release
+								return nil
+							})
+						}()
+						<-busy
+						go func() { time.Sleep(60 * time.Millisecond); close(release) }()
+					}
+					return "ok", nil
+				},
+				Final: func(ctx context.Context, tx *storage.Tx, called string) (string, error) {
+					if c == "final runs past the deadline" {
+						time.Sleep(60 * time.Millisecond)
+					}
+					return recordOutcome(ctx, tx, called)
+				},
+			})
+			if code(err) != "STATE_CHANGED" {
+				t.Fatalf("%v", err)
+			}
+			if outcomes(t, w) != 0 || count(t, w.Store, `SELECT count(*) FROM audit_events WHERE event_type = 'outbound.refused'`) != 1 {
+				t.Error("the outcome was kept, or the refusal lost")
+			}
+		})
+	}
+}

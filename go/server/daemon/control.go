@@ -79,6 +79,11 @@ type controlServer struct {
 	env      *hostEnv
 	log      *slog.Logger
 	inFlight sync.WaitGroup
+	// accepting is closed when the accept loop has returned: no handler is
+	// registered after it.
+	accepting chan struct{}
+	// handled, when set (tests), runs as each handler starts.
+	handled func()
 }
 
 // listenControl opens the socket. The caller holds the data directory's
@@ -101,11 +106,14 @@ func listenControl(env *hostEnv, log *slog.Logger) (*controlServer, error) {
 		_ = ln.Close()
 		return nil, err
 	}
-	return &controlServer{ln: ln, env: env, log: log}, nil
+	return &controlServer{ln: ln, env: env, log: log, accepting: make(chan struct{})}, nil
 }
 
-// serve accepts commands until the listener closes.
+// serve accepts commands until the listener closes. Handlers are
+// registered only here, on this goroutine, so once it returns no handler
+// starts.
 func (c *controlServer) serve(ctx context.Context) {
+	defer close(c.accepting)
 	for {
 		conn, err := c.ln.AcceptUnix()
 		if err != nil {
@@ -115,15 +123,20 @@ func (c *controlServer) serve(ctx context.Context) {
 		go func() {
 			defer c.inFlight.Done()
 			defer conn.Close()
+			if c.handled != nil {
+				c.handled()
+			}
 			c.handle(ctx, conn)
 		}()
 	}
 }
 
-// close stops accepting and waits for the commands in flight, before the
-// database closes.
+// close stops accepting, waits for the accept loop to return (a connection
+// it accepted just before is registered by then), then for every command
+// in flight: only then may the database close.
 func (c *controlServer) close() {
 	_ = c.ln.Close()
+	<-c.accepting
 	c.inFlight.Wait()
 }
 
@@ -149,6 +162,10 @@ func (c *controlServer) handle(ctx context.Context, conn *net.UnixConn) {
 // under the lock, else not at all. args[0] is the command.
 func route(cfg *config.Config, args []string, stdin []byte, stdout, stderr io.Writer) int {
 	what := "varlatchd admin " + args[0]
+	if err := checkClientDir(cfg.DataDir, os.Getuid()); err != nil {
+		fmt.Fprintf(stderr, "%s: %v; nothing was sent or written\n", what, err)
+		return ExitConfig
+	}
 	path := filepath.Join(cfg.DataDir, ControlSocket)
 	if conn, err := net.DialTimeout("unix", path, 5*time.Second); err == nil {
 		return viaSocket(conn.(*net.UnixConn), what, args, stdin, stdout, stderr)

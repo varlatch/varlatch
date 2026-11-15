@@ -153,7 +153,8 @@ type Gates struct {
 func NewGates() *Gates { return &Gates{held: map[slot]*rw{}} }
 
 // Observe sets a function that sees every acquisition ("acquired") and
-// release ("released") of a gate, for tests.
+// release ("released") of a gate, and a taker that has to wait for one
+// ("waiting", once per acquisition), for tests.
 func (gs *Gates) Observe(fn func(event string, g Gate)) {
 	gs.mu.Lock()
 	defer gs.mu.Unlock()
@@ -219,6 +220,7 @@ func (gs *Gates) acquire(ctx context.Context, g Gate) error {
 	if g.Mode == Exclusive {
 		r.writersWaiting++
 	}
+	waited := false
 	for {
 		free := !r.writer && (g.Mode == Shared && r.writersWaiting == 0 || g.Mode == Exclusive && r.readers == 0)
 		if free {
@@ -236,7 +238,12 @@ func (gs *Gates) acquire(ctx context.Context, g Gate) error {
 			return nil
 		}
 		wait := r.changed
+		obs := gs.observe
 		gs.mu.Unlock()
+		if !waited && obs != nil {
+			waited = true
+			obs("waiting", g)
+		}
 		select {
 		case <-wait:
 			gs.mu.Lock()

@@ -110,6 +110,11 @@ func Idempotent(ctx context.Context, store *storage.DB, c Claim, replay func(tx 
 		if resp, err = write(tx); err != nil {
 			return err
 		}
+		// The response goes into a jsonb column: what jsonb refuses fails
+		// the request, the write with it, as there.
+		if err := jsvalue.JsonbRefuses(resp.Payload); err != nil {
+			return err
+		}
 		return q.InsertIdempotencyClaim(ctx, query.InsertIdempotencyClaimParams{
 			IdentityID: c.IdentityID, Endpoint: c.Endpoint, IdempotencyKey: c.Key, BodyHash: c.Digest,
 			Response: string(jsvalue.Stringify(jsvalue.Jsonb(jsvalue.Object{{Key: "status", Value: resp.Status}, {Key: "payload", Value: resp.Payload}}))),

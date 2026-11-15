@@ -17,6 +17,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/values"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 // The conformance harness's seed on the Go server (varlatchd-core decision
@@ -55,6 +56,12 @@ func init() {
 		if !fixtureID.MatchString(identity) {
 			return fail(errors.New("--identity must name an identity"))
 		}
+		// The seed's admin, as createOrganization takes its creator.
+		ctx, release, err := env.gates.Acquire(ctx, write.Person(identity, write.Shared))
+		if err != nil {
+			return fail(err)
+		}
+		defer release()
 		out, err := seed(ctx, env.store, env.rootKEK, identity, strings.TrimRight(string(secret), "\n"))
 		if err != nil {
 			return fail(err)
