@@ -41,7 +41,8 @@ await cdp.send("WebAuthn.addVirtualAuthenticator", {
     automaticPresenceSimulation: true,
   },
 });
-const { check, finish } = reporter();
+const kit = reporter();
+const { check, finish } = kit;
 page.on("console", (m) => {
   if (m.type() === "error") console.log(`  [browser] ${m.text().slice(0, 140)}`);
 });
@@ -113,87 +114,94 @@ await page.waitForFunction(
 );
 
 // 1. Audit timeline from the authoritative store.
-await page.goto(`${base}/o/acme/audit`);
-await page.waitForSelector('[data-audit-row]', { timeout: 20000 });
-const totalRows = await page.locator("[data-audit-row]").count();
-check("p4.authoritative-audit-history-renders", "authoritative audit history renders", totalRows > 5, `${totalRows} rows`);
-await page.fill('[data-testid="audit-filter"]', "identity.created");
-const narrowed = await page.locator("[data-audit-row]").count();
-check("p4.text-filter-narrows-timeline", "text filter narrows the timeline", narrowed > 0 && narrowed < totalRows, `${narrowed} rows`);
-const allTypes = await page.locator("[data-audit-row]").evaluateAll((rows) =>
-  rows.map((r) => r.getAttribute("data-audit-row")),
-);
-check("p4.filter-keeps-only-matching-events", "filter keeps only matching events", allTypes.every((t) => t === "identity.created"));
-await page.click('[data-audit-row="identity.created"]');
-await page.waitForSelector('[data-testid="audit-drawer"]', { timeout: 10000 });
-const drawer = await page.textContent('[data-testid="audit-drawer"]');
-check("p4.provenance-drawer-shows-event-request-ids", "provenance drawer shows event + request ids", drawer.includes("evt_") || drawer.includes("Request"));
-check(
-  "p4.timeline-reads-sentences-names-not-raw", "timeline reads as sentences with names, not raw IDs",
-  !(await page.textContent('[data-testid="audit-feed"]')).match(/idn_[a-z0-9]{6,}/),
-);
-await page.fill('[data-testid="audit-filter"]', "");
-// The decision facet queries the server when it supports audit filters (and
-// filters the loaded pages otherwise): wait for the rows to settle.
-await page.selectOption('[data-testid="audit-decision"]', "info");
-const onlyInfo = await page
-  .waitForFunction(
-    () => {
-      const rows = [...document.querySelectorAll("[data-audit-row]")];
-      return rows.length > 0 && rows.every((r) => r.querySelector("[data-decision]")?.getAttribute("data-decision") === "info");
-    },
-    null,
-    { timeout: 10000 },
-  )
-  .then(() => true, () => false);
-const infoRows = await page.locator("[data-audit-row]").count();
-check("p4.decision-filter-applies", "decision filter applies", onlyInfo && infoRows > 0, `${infoRows} rows`);
-await page.selectOption('[data-testid="audit-decision"]', "");
+// Operation group audit: the audit log and the names its sentences use.
+if (kit.group("audit")) {
+  await page.goto(`${base}/o/acme/audit`);
+  await page.waitForSelector('[data-audit-row]', { timeout: 20000 });
+  const totalRows = await page.locator("[data-audit-row]").count();
+  check("p4.authoritative-audit-history-renders", "authoritative audit history renders", totalRows > 5, `${totalRows} rows`);
+  await page.fill('[data-testid="audit-filter"]', "identity.created");
+  const narrowed = await page.locator("[data-audit-row]").count();
+  check("p4.text-filter-narrows-timeline", "text filter narrows the timeline", narrowed > 0 && narrowed < totalRows, `${narrowed} rows`);
+  const allTypes = await page.locator("[data-audit-row]").evaluateAll((rows) =>
+    rows.map((r) => r.getAttribute("data-audit-row")),
+  );
+  check("p4.filter-keeps-only-matching-events", "filter keeps only matching events", allTypes.every((t) => t === "identity.created"));
+  await page.click('[data-audit-row="identity.created"]');
+  await page.waitForSelector('[data-testid="audit-drawer"]', { timeout: 10000 });
+  const drawer = await page.textContent('[data-testid="audit-drawer"]');
+  check("p4.provenance-drawer-shows-event-request-ids", "provenance drawer shows event + request ids", drawer.includes("evt_") || drawer.includes("Request"));
+  check(
+    "p4.timeline-reads-sentences-names-not-raw", "timeline reads as sentences with names, not raw IDs",
+    !(await page.textContent('[data-testid="audit-feed"]')).match(/idn_[a-z0-9]{6,}/),
+  );
+  await page.fill('[data-testid="audit-filter"]', "");
+  // The decision facet queries the server when it supports audit filters (and
+  // filters the loaded pages otherwise): wait for the rows to settle.
+  await page.selectOption('[data-testid="audit-decision"]', "info");
+  const onlyInfo = await page
+    .waitForFunction(
+      () => {
+        const rows = [...document.querySelectorAll("[data-audit-row]")];
+        return rows.length > 0 && rows.every((r) => r.querySelector("[data-decision]")?.getAttribute("data-decision") === "info");
+      },
+      null,
+      { timeout: 10000 },
+    )
+    .then(() => true, () => false);
+  const infoRows = await page.locator("[data-audit-row]").count();
+  check("p4.decision-filter-applies", "decision filter applies", onlyInfo && infoRows > 0, `${infoRows} rows`);
+  await page.selectOption('[data-testid="audit-decision"]', "");
+}
 
 // 1b. Audit webhooks: register (secret shown once), list, revoke.
-const whUrl = "https://ops.example.invalid/varlatch-audit";
-await page.fill('[data-testid="webhook-url"]', whUrl);
-await page.fill('[data-testid="webhook-event-types"]', "value.disclosed, authentication.failed");
-await page.click('[data-testid="create-webhook"]');
-await page.waitForSelector('[data-testid="webhook-secret"]', { timeout: 10000 });
-const whSecret = (await page.textContent('[data-testid="webhook-secret-value"]')).trim();
-check("p4.webhook-signing-secret-shown-once", "webhook signing secret shown once", whSecret.length >= 32, `${whSecret.length} chars`);
-await page.click('[data-testid="dismiss-webhook-secret"]');
-check(
-  "p4.webhook-secret-dismissed-not-re-shown", "webhook secret dismissed, not re-shown",
-  (await page.locator('[data-testid="webhook-secret"]').count()) === 0,
-);
-await page.waitForSelector(`[data-webhook="${whUrl}"]`, { timeout: 10000 });
-const whRow = await page.textContent(`[data-webhook="${whUrl}"]`);
-check("p4.webhook-row-lists-event-type-filter", "webhook row lists its event-type filter", whRow.includes("value.disclosed"));
+// Operation group webhooks; the section lives on the audit page.
+if (kit.group("webhooks")) {
+  if (!page.url().endsWith("/o/acme/audit")) await page.goto(`${base}/o/acme/audit`);
+  const whUrl = "https://ops.example.invalid/varlatch-audit";
+  await page.fill('[data-testid="webhook-url"]', whUrl);
+  await page.fill('[data-testid="webhook-event-types"]', "value.disclosed, authentication.failed");
+  await page.click('[data-testid="create-webhook"]');
+  await page.waitForSelector('[data-testid="webhook-secret"]', { timeout: 10000 });
+  const whSecret = (await page.textContent('[data-testid="webhook-secret-value"]')).trim();
+  check("p4.webhook-signing-secret-shown-once", "webhook signing secret shown once", whSecret.length >= 32, `${whSecret.length} chars`);
+  await page.click('[data-testid="dismiss-webhook-secret"]');
+  check(
+    "p4.webhook-secret-dismissed-not-re-shown", "webhook secret dismissed, not re-shown",
+    (await page.locator('[data-testid="webhook-secret"]').count()) === 0,
+  );
+  await page.waitForSelector(`[data-webhook="${whUrl}"]`, { timeout: 10000 });
+  const whRow = await page.textContent(`[data-webhook="${whUrl}"]`);
+  check("p4.webhook-row-lists-event-type-filter", "webhook row lists its event-type filter", whRow.includes("value.disclosed"));
 
-// 1c. Webhook edit (ADR-0029 §8): URL and filter change in place; the
-// signing secret and delivery cursor are preserved (no new secret shown).
-const whUrl2 = "https://ops.example.invalid/varlatch-audit-v2";
-await page.locator(`[data-webhook="${whUrl}"] [data-testid^="edit-webhook-"]`).click();
-await page.waitForSelector('[data-testid^="webhook-editor-"]', { timeout: 10000 });
-await page.locator('[data-testid^="webhook-editor-"] input').nth(0).fill(whUrl2);
-await page.locator('[data-testid^="webhook-editor-"] input').nth(1).fill(""); // clear -> all events
-await page.locator('[data-testid^="save-webhook-"]').click();
-await page.waitForSelector(`[data-webhook="${whUrl2}"]`, { timeout: 10000 });
-check(
-  "p4.webhook-edited-place-new-url-filter", "webhook edited in place: new URL, filter cleared to all events",
-  (await page.textContent(`[data-webhook="${whUrl2}"]`)).includes("all events"),
-);
-check(
-  "p4.no-new-signing-secret-shown-edit", "no new signing secret shown on edit",
-  (await page.locator('[data-testid="webhook-secret"]').count()) === 0,
-);
-await page.locator(`[data-webhook="${whUrl2}"] [data-testid^="revoke-webhook-"]`).click();
-// Revoking goes through the confirmation dialog.
-await page.waitForSelector('[data-testid="confirm-dialog"]', { timeout: 10000 });
-await page.click('[data-testid="confirm-ok"]');
-await page.waitForFunction(
-  (url) => !document.querySelector(`[data-webhook="${url}"]`),
-  whUrl2,
-  { timeout: 10000 },
-);
-check("p4.webhook-revoked-dashboard", "webhook revoked from dashboard", true);
+  // 1c. Webhook edit (ADR-0029 §8): URL and filter change in place; the
+  // signing secret and delivery cursor are preserved (no new secret shown).
+  const whUrl2 = "https://ops.example.invalid/varlatch-audit-v2";
+  await page.locator(`[data-webhook="${whUrl}"] [data-testid^="edit-webhook-"]`).click();
+  await page.waitForSelector('[data-testid^="webhook-editor-"]', { timeout: 10000 });
+  await page.locator('[data-testid^="webhook-editor-"] input').nth(0).fill(whUrl2);
+  await page.locator('[data-testid^="webhook-editor-"] input').nth(1).fill(""); // clear -> all events
+  await page.locator('[data-testid^="save-webhook-"]').click();
+  await page.waitForSelector(`[data-webhook="${whUrl2}"]`, { timeout: 10000 });
+  check(
+    "p4.webhook-edited-place-new-url-filter", "webhook edited in place: new URL, filter cleared to all events",
+    (await page.textContent(`[data-webhook="${whUrl2}"]`)).includes("all events"),
+  );
+  check(
+    "p4.no-new-signing-secret-shown-edit", "no new signing secret shown on edit",
+    (await page.locator('[data-testid="webhook-secret"]').count()) === 0,
+  );
+  await page.locator(`[data-webhook="${whUrl2}"] [data-testid^="revoke-webhook-"]`).click();
+  // Revoking goes through the confirmation dialog.
+  await page.waitForSelector('[data-testid="confirm-dialog"]', { timeout: 10000 });
+  await page.click('[data-testid="confirm-ok"]');
+  await page.waitForFunction(
+    (url) => !document.querySelector(`[data-webhook="${url}"]`),
+    whUrl2,
+    { timeout: 10000 },
+  );
+  check("p4.webhook-revoked-dashboard", "webhook revoked from dashboard", true);
+}
 
 // 2. Git-authority contract tab: read-only.
 await page.goto(`${base}/o/acme/p/api/contract`);

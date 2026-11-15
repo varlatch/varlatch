@@ -35,6 +35,14 @@
  * (`introducedIn`). A suite runs each version-gated feature's checks as one
  * group, and reports them `predates-cli` when the CLI under test is older.
  *
+ * Operation groups (ADR-0059 step 4, feature-parity decision 2): a suite
+ * may split its checks into groups (`suites.<name>.groups.<group>`, each
+ * with a title and the operations its checks and their setup need beyond
+ * the suite's), and a check names its group (`group`). On a target that
+ * lacks a group's operations the suite skips the group, its setup
+ * included (suite-kit's `group()`), and the runner reports its checks
+ * target-lacks; the rest of the suite runs.
+ *
  * A run fails on: a check in the inventory that did not report; a reported
  * check that is not in the inventory (or reported by another suite); a
  * failure; a conformance or component check reported not applicable; a
@@ -108,6 +116,7 @@ export function validateInventory(inventory) {
   // it: a check only becomes go-server (and stops applying there) visibly.
   const goServerChecks = inventory.goServerChecks ?? {};
   const counts = new Map(Object.keys(suites).map((s) => [s, 0]));
+  const groupChecks = new Map();
   const featureChecks = new Map(Object.keys(features).map((f) => [f, 0]));
   for (const [name, feature] of Object.entries(features)) {
     const where = `feature ${name}`;
@@ -136,6 +145,18 @@ export function validateInventory(inventory) {
     for (const need of suite.needs ?? []) {
       if (!CAPABILITIES.includes(need)) problems.push(`suite ${name}: unknown capability ${need}`);
     }
+    if ("groups" in suite) {
+      if (!suite.groups || typeof suite.groups !== "object" || Array.isArray(suite.groups)) problems.push(`suite ${name}: groups must map group names to { "title", "operations" }`);
+      else {
+        for (const [group, g] of Object.entries(suite.groups)) {
+          const where = `suite ${name} group ${group}`;
+          if (!FEATURE.test(group)) problems.push(`${where}: not a group name`);
+          if (typeof g?.title !== "string" || g.title === "") problems.push(`${where}: no title`);
+          if (!Array.isArray(g?.operations) || g.operations.length === 0) problems.push(`${where}: a group lists the operations it needs beyond its suite's`);
+          groupChecks.set(`${name}/${group}`, 0);
+        }
+      }
+    }
   }
   for (const [id, check] of Object.entries(checks)) {
     const where = `check ${id}`;
@@ -162,6 +183,12 @@ export function validateInventory(inventory) {
       problems.push(`${where}: a go-server check is listed in goServerChecks, with why the TypeScript server cannot pass it`);
     }
     if ("reportedBy" in check && check.reportedBy !== "runner") problems.push(`${where}: reportedBy can only be "runner"`);
+    if ("group" in check) {
+      const key = `${check.suite}/${check.group}`;
+      if (!groupChecks.has(key)) problems.push(`${where}: unknown group ${check.group} of suite ${check.suite}`);
+      else groupChecks.set(key, groupChecks.get(key) + 1);
+      if (check.reportedBy === "runner") problems.push(`${where}: a check the runner reports is in no group`);
+    }
     for (const key of ["introducedIn", "core"]) {
       if (key in check) problems.push(`${where}: ${key} belongs on the check's feature, not the check`);
     }
@@ -188,6 +215,7 @@ export function validateInventory(inventory) {
   }
   for (const [suite, count] of counts) if (count === 0) problems.push(`suite ${suite}: no checks`);
   for (const [feature, count] of featureChecks) if (count === 0) problems.push(`feature ${feature}: no checks`);
+  for (const [key, count] of groupChecks) if (count === 0) problems.push(`suite ${key.replace("/", " group ")}: no checks`);
   for (const name of CORE_FEATURES) {
     if (name in features && !Object.values(checks).some((c) => c.feature === name && c.kind === "conformance")) {
       problems.push(`feature ${name}: the compatibility core needs at least one conformance check`);

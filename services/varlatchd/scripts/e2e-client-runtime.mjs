@@ -191,14 +191,15 @@ async function identity(name, envActions, projectActions) {
   }
   return svc;
 }
+// Operation group service-identities: two service identities with partial
+// grants, and the checks that run as them.
+const identities = kit.group("service-identities");
 // May read everything but Secrets: its Secrets are withheld.
-const reader = await identity("clientrt reader", ["environment.read", "config.metadata.read", "config.value.read"], ["contract.read"]);
+const reader = identities ? await identity("clientrt reader", ["environment.read", "config.metadata.read", "config.value.read"], ["contract.read"]) : null;
 // May read Secrets but not the Contract.
-const noContract = await identity(
-  "clientrt no contract",
-  ["environment.read", "config.metadata.read", "config.value.read", "secret.reveal"],
-  [],
-);
+const noContract = identities
+  ? await identity("clientrt no contract", ["environment.read", "config.metadata.read", "config.value.read", "secret.reveal"], [])
+  : null;
 
 let active = await activate(BASE_CONTRACT);
 const secretVersion = (await setValue("RT_SECRET", SECRET)).versionId;
@@ -209,8 +210,8 @@ await setValue("DEBUG", "true");
 await setValue("LEVEL", "warn");
 
 const admin = await workspace(adminToken);
-const readerWs = await workspace(reader.credential);
-const noContractWs = await workspace(noContract.credential);
+const readerWs = identities ? await workspace(reader.credential) : null;
+const noContractWs = identities ? await workspace(noContract.credential) : null;
 
 // --- varlatch run --redact ----------------------------------------------------
 // The child prints the Secret on both streams, directly, split across two
@@ -329,7 +330,7 @@ const noValueIn = (text) => [SECRET, PARENT_COPY, INHERITED, PLAIN].every((v) =>
   );
   check("client-runtime.export-context-context-holds-no-value", "--export-context: the context holds no value", r.received?.context !== null && noValueIn(r.received.context));
 }
-{
+if (identities) {
   const r = await record(readerWs, ["--export-context"], { RT_SECRET: PARENT_COPY });
   check("client-runtime.export-context-identity-without-secret-reveal", "--export-context: an identity without secret.reveal still starts the child", r.code === 0 && r.received !== null, r.out);
   check("client-runtime.export-context-withheld-secret-left-parent", "--export-context: a withheld Secret is left to the parent's copy", r.received?.RT_SECRET === PARENT_COPY);
@@ -351,16 +352,20 @@ const noValueIn = (text) => [SECRET, PARENT_COPY, INHERITED, PLAIN].every((v) =>
   );
   check("client-runtime.export-context-withheld-run-context-holds-no", "--export-context: the withheld run's context holds no value", r.received?.context !== null && noValueIn(r.received.context));
 }
-{
-  const before = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
+if (identities) {
+  // The disclosure check also reads the audit export.
+  const audited = kit.runs("client-runtime.export-context-run-cannot-export-context");
+  const before = audited ? (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed") : [];
   const r = await record(noContractWs, ["--export-context"]);
   check(
     "client-runtime.export-context-without-contract-read-starts", "--export-context without contract.read starts nothing and says why",
     r.code !== 0 && r.received === null && /contract\.read/.test(r.out),
     `exit ${r.code}: ${r.out}`,
   );
-  const after = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
-  check("client-runtime.export-context-run-cannot-export-context", "--export-context: a run that cannot export its context discloses no Secret", before.length === 0 && after.length === 0, `${after.length} disclosure(s)`);
+  if (audited) {
+    const after = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
+    check("client-runtime.export-context-run-cannot-export-context", "--export-context: a run that cannot export its context discloses no Secret", before.length === 0 && after.length === 0, `${after.length} disclosure(s)`);
+  }
   const plain = await record(noContractWs, []);
   check("client-runtime.same-identity-default-run-without-flag", "the same identity's default run, without the flag, gets no context", plain.code === 0 && plain.received?.context === null, plain.out);
 }
@@ -569,7 +574,7 @@ active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Adde
 }
 
 // A withheld required Secret, read through the real server's run context.
-{
+if (identities) {
   const r = await startApp(readerWs);
   const issues = r.report?.issues ?? [];
   check(
@@ -612,7 +617,7 @@ if (kit.supports("scan")) {
   const repo = await workspace(adminToken, { gitRepo: true });
   const nothing = await repo.cli(["scan", "--staged", "-e", "development"]);
   check("client-runtime.scan-nothing-staged-scan-reads-nothing", "scan: with nothing staged, the scan reads nothing and exits 0", nothing.code === 0 && /nothing is staged/.test(nothing.stdout), nothing.out);
-  check("client-runtime.scan-nothing-read-nothing-disclosed", "scan: with nothing to read, nothing is disclosed", (await scanEvents()).length === 0);
+  if (kit.group("audit-export")) check("client-runtime.scan-nothing-read-nothing-disclosed", "scan: with nothing to read, nothing is disclosed", (await scanEvents()).length === 0);
 
   // Staged content holds the Secret as written (line 2) and inside a base64
   // Basic credential (line 3); the working copy is then cleaned, which the
@@ -661,20 +666,25 @@ if (kit.supports("scan")) {
   const clean = await repo.cli(["scan", "clean", "-e", "development"]);
   check("client-runtime.scan-path-clean-path-exits-0", "scan <path>: a clean path exits 0 with no findings", clean.code === 0 && /1 file\(s\) checked .*: no findings\./.test(clean.stdout), clean.out);
 
-  const events = await scanEvents();
-  check(
-    "client-runtime.scan-scan-read-files-one-audited", "scan: each scan that read files is one audited disclosure with purpose \"scan\"",
-    events.length === 3 && events.every((e) => e.decision === "allow" && String(e.metadata?.items).includes(`RT_SECRET@${secretVersion}`)),
-    JSON.stringify(events.map((e) => e.metadata)),
-  );
+  if (kit.group("audit-export")) {
+    const events = await scanEvents();
+    check(
+      "client-runtime.scan-scan-read-files-one-audited", "scan: each scan that read files is one audited disclosure with purpose \"scan\"",
+      events.length === 3 && events.every((e) => e.decision === "allow" && String(e.metadata?.items).includes(`RT_SECRET@${secretVersion}`)),
+      JSON.stringify(events.map((e) => e.metadata)),
+    );
+  }
 }
 
 // --- the audit log and the server's logs hold no value --------------------------------
 {
-  const { ndjson, events } = await auditEvents();
-  const runDisclosures = events.filter((e) => e.eventType === "secret.disclosed" && e.resource?.projectId === projectId && e.metadata?.purpose === undefined);
-  check("client-runtime.run-disclosures-audited-without-purpose", "run disclosures are audited without a purpose", runDisclosures.length > 0);
-  check("client-runtime.audit-export-holds-no-value", "the audit export holds no value", noValueIn(ndjson) && Object.values(BAD).every((v) => !ndjson.includes(v)));
+  // Operation group audit-export: the audit log's own checks.
+  if (kit.group("audit-export")) {
+    const { ndjson, events } = await auditEvents();
+    const runDisclosures = events.filter((e) => e.eventType === "secret.disclosed" && e.resource?.projectId === projectId && e.metadata?.purpose === undefined);
+    check("client-runtime.run-disclosures-audited-without-purpose", "run disclosures are audited without a purpose", runDisclosures.length > 0);
+    check("client-runtime.audit-export-holds-no-value", "the audit export holds no value", noValueIn(ndjson) && Object.values(BAD).every((v) => !ndjson.includes(v)));
+  }
   // The target's `logs` operation: the server's own logs, whatever runs it.
   const logs = tryTargetOp("logs");
   check("client-runtime.varlatchd-logs-hold-no-value", "varlatchd logs hold no value", logs.status === 0 && noValueIn(logs.stdout + logs.stderr), `the logs operation exited ${logs.status}`);

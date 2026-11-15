@@ -69,16 +69,15 @@ async function identity(name, envActions, projectActions) {
   }
   return svc.credential;
 }
-const readerToken = await identity(
-  "strict reader",
-  ["environment.read", "config.metadata.read", "config.value.read"],
-  ["contract.read"],
-);
-const noContractToken = await identity(
-  "no contract reader",
-  ["environment.read", "config.metadata.read", "config.value.read", "secret.reveal"],
-  [],
-);
+// Operation group service-identities: two service identities with partial
+// grants, and the checks that run as them.
+const identities = kit.group("service-identities");
+const readerToken = identities
+  ? await identity("strict reader", ["environment.read", "config.metadata.read", "config.value.read"], ["contract.read"])
+  : null;
+const noContractToken = identities
+  ? await identity("no contract reader", ["environment.read", "config.metadata.read", "config.value.read", "secret.reveal"], [])
+  : null;
 
 /** A CLI checkout logged in as one identity. */
 async function workspace(token) {
@@ -119,8 +118,8 @@ async function run(cli, flags, parentEnv = {}) {
 }
 
 const admin = await workspace(adminToken);
-const reader = await workspace(readerToken);
-const noContract = await workspace(noContractToken);
+const reader = identities ? await workspace(readerToken) : null;
+const noContract = identities ? await workspace(noContractToken) : null;
 const base = [
   item("DATABASE_URL", { sensitive: true, type: "url", defaultValue: "postgres://default.invalid/app" }),
   item("PORT", { type: "number", defaultValue: "3000" }),
@@ -187,7 +186,7 @@ if (kit.supports("run-strict")) {
   await contract(base);
 
   // --- withheld Secrets and inherited allowances -------------------------------------
-  {
+  if (identities) {
     const r = await run(reader, ["--strict"]);
     check("strict-run.withheld-required-secret-stops-startup-default", "a withheld required Secret stops startup; its default does not replace it", r.code === 78 && r.received === null && /DATABASE_URL: withheld/.test(r.out), r.out);
     const parent = await run(reader, ["--strict"], { DATABASE_URL: "postgres://parent.internal/app" });
@@ -201,14 +200,15 @@ if (kit.supports("run-strict")) {
   }
 
   // --- Contract access -------------------------------------------------------------------
-  {
+  if (identities) {
     const r = await run(noContract, ["--strict"]);
     check("strict-run.without-contract-read-strict-startup-does-not", "without contract.read, strict startup does not start the child", r.code === 78 && r.received === null && /contract\.read/.test(r.out), r.out);
   }
 }
 
 // --- agent-safe strict: the operator's preflight, then the Broker's issuance ------------
-if (kit.supports("run-strict-agent-safe")) {
+// Operation group agent-safe: a Broker, Agents, grants and Capabilities.
+if (kit.supports("run-strict-agent-safe") && kit.group("agent-safe")) {
   const broker = await api("POST", "/v1/organizations/acme/identities", { name: "strict broker", kind: "broker" });
   const agent = await api("POST", "/v1/organizations/acme/identities", { name: "strict agent", kind: "agent" });
   await api("POST", "/v1/organizations/acme/identities", { name: "strict agent without use", kind: "agent" });

@@ -323,7 +323,23 @@ operation outside `/v1`, listed in `inventory.json` `operations`:
 
 Each suite lists the operations it needs (`suites.<name>.operations`), and a
 check may add its own (`checks.<id>.operations`), for a feature group that
-needs more than the rest of its suite. Suites whose checks are all ts-stack
+needs more than the rest of its suite.
+
+**Operation groups** (ADR-0059 step 4, feature-parity decision 2). A suite
+that mixes operations from several slices is split into groups, so the part
+a target can pass runs while the rest is still lacking:
+`suites.<name>.groups.<group>` has a title and the operations its checks and
+their setup need beyond the suite's, and each of its checks names it
+(`"group"`). A check's operations are its suite's, its group's and its own.
+The runner tells a suite which of its checks lack an operation
+(`CONFORMANCE_LACKING`), and the suite runs each group's setup and checks
+behind `kit.group("<group>")`, false when every check of the group lacks
+one, and work only one check needs behind `kit.runs("<check id>")`. The
+runner reports the skipped checks `target-lacks`. A split never changes
+what a check asserts. A suite's own operations are what every check of it
+needs; an operation a page requests in the background, whose failure no
+check sees (a panel that stays empty), is not one. `pnpm test:conformance`
+checks that every group is named in its suite's script. Suites whose checks are all ts-stack
 list none: they never run on a target without the stack. `pnpm
 test:conformance` fails on a name that is neither.
 

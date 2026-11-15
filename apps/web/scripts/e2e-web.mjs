@@ -36,7 +36,8 @@ await cdp.send("WebAuthn.addVirtualAuthenticator", {
     automaticPresenceSimulation: true,
   },
 });
-const { check, finish } = reporter();
+const kit = reporter();
+const { check, finish } = kit;
 page.on("console", (m) => {
   if (m.type() === "error") console.log(`  [browser] ${m.text().slice(0, 160)}`);
 });
@@ -125,16 +126,20 @@ try {
 }
 
 // 4. The reactive audit feed populates from the Convex mirror (Audit route).
-await page.click('a[href$="/audit"]');
-await page.waitForSelector('[data-testid="audit-feed"] [data-audit-row]', { timeout: 30000 });
-const rows = await page.locator('[data-testid="audit-feed"] [data-audit-row]').count();
-check("dashboard.audit-feed-shows-events", "reactive audit mirror shows events", rows > 0, `${rows} rows`);
-check(
-  "dashboard.csp-strict",
-  "the dashboard is served with a strict Content-Security-Policy, and the session, the /v1 views and the audit feed load under it",
-  strictDirectives && resumed && v1Answered && rows > 0 && cspViolations.length === 0,
-  `${csp}${cspViolations.length > 0 ? ` | violations: ${cspViolations.slice(0, 3).join(" | ")}` : ""}`,
-);
+// Operation group audit-feed: the feed, and the strict policy check, which
+// needs it loaded.
+if (kit.group("audit-feed")) {
+  await page.click('a[href$="/audit"]');
+  await page.waitForSelector('[data-testid="audit-feed"] [data-audit-row]', { timeout: 30000 });
+  const rows = await page.locator('[data-testid="audit-feed"] [data-audit-row]').count();
+  check("dashboard.audit-feed-shows-events", "reactive audit mirror shows events", rows > 0, `${rows} rows`);
+  check(
+    "dashboard.csp-strict",
+    "the dashboard is served with a strict Content-Security-Policy, and the session, the /v1 views and the audit feed load under it",
+    strictDirectives && resumed && v1Answered && rows > 0 && cspViolations.length === 0,
+    `${csp}${cspViolations.length > 0 ? ` | violations: ${cspViolations.slice(0, 3).join(" | ")}` : ""}`,
+  );
+}
 
 check("dashboard.no-content-security-policy-violations", "no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
 await browser.close();

@@ -115,6 +115,33 @@ test("IDs, suites, kinds, capabilities and versions are checked", () => {
   assert.deepEqual(validateInventory({ schema: 2 }), ["schema: expected 1"]);
 });
 
+test("operation groups: each named by its suite, with a title, operations and checks; a check names one of its suite's", () => {
+  const inv = base();
+  inv.suites.web.groups = {
+    audit: { title: "the audit log", operations: ["listAuditEvents"] },
+    "Bad Name": { title: "x", operations: ["x"] },
+    untitled: { operations: ["x"] },
+    empty: { title: "no operations", operations: [] },
+    unused: { title: "no checks", operations: ["x"] },
+  };
+  inv.checks["web.grouped"] = { suite: "web", kind: "conformance", group: "audit", title: "x" };
+  inv.checks["web.elsewhere"] = { suite: "web", kind: "conformance", group: "nope", title: "x" };
+  inv.checks["stub.other-suite"] = { suite: "stub", kind: "component", group: "audit", title: "x" };
+  const problems = validateInventory(inv).join("\n");
+  for (const expected of [
+    /suite web group Bad Name: not a group name/,
+    /suite web group untitled: no title/,
+    /suite web group empty: a group lists the operations it needs/,
+    /suite web group unused: no checks/,
+    /web\.elsewhere: unknown group nope of suite web/,
+    /stub\.other-suite: unknown group audit of suite stub/,
+  ]) {
+    assert.match(problems, expected);
+  }
+  assert.doesNotMatch(problems, /suite web group audit/);
+  assert.doesNotMatch(problems, /web\.grouped/);
+});
+
 test("features: a valid changelog citation, introducedIn or core, and the whole compatibility core", () => {
   const problems = (change) => {
     const inv = base();
