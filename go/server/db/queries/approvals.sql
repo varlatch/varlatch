@@ -82,3 +82,26 @@ SELECT count(*) FROM credentials c JOIN identities i ON i.id = c.identity_id
 WHERE c.id = sqlc.arg(id) AND c.identity_id = sqlc.arg(identity_id) AND c.revoked_at IS NULL
   AND (c.expires_at IS NULL OR c.expires_at > sqlc.arg(now)) AND NOT i.disabled
   AND (sqlc.narg(auth_session_id) IS NULL OR (c.kind = 'browser' AND c.auth_session_id = sqlc.narg(auth_session_id)));
+
+-- name: PrecheckApprovalIntent :one
+-- precheckApproval: whether an approved, unexpired intent for exactly this
+-- request exists, consuming nothing.
+SELECT count(*) FROM approval_intents
+WHERE id = sqlc.arg(id) AND approved_at IS NOT NULL AND consumed_at IS NULL AND closed_at IS NULL
+  AND expires_at > sqlc.arg(now)
+  AND identity_id = sqlc.arg(identity_id) AND operation = sqlc.arg(operation)
+  AND ((origin = 'cli' AND credential_id = sqlc.arg(credential_id))
+       OR (origin = 'dashboard' AND sqlc.arg(credential_kind) = 'browser' AND auth_session_id = sqlc.narg(auth_session_id)))
+  AND organization_id IS sqlc.narg(organization_id) AND json(target) = json(sqlc.arg(target))
+  AND body_hash = sqlc.arg(body_hash) AND query_hash = sqlc.arg(query_hash)
+  AND expected_version IS sqlc.narg(expected_version);
+
+-- name: OpenIntentsOfOrganization :many
+-- closeOpenApprovals's candidates, in id order; the filter is the caller's.
+SELECT id, operation, json_extract(target, '$.control') AS control FROM approval_intents
+WHERE organization_id = sqlc.arg(organization_id) AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > sqlc.arg(now)
+ORDER BY id;
+
+-- name: CloseApprovalIntent :execrows
+UPDATE approval_intents SET closed_at = sqlc.arg(now), close_reason = sqlc.arg(reason)
+WHERE id = sqlc.arg(id) AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > sqlc.arg(now);

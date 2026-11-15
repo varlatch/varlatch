@@ -296,7 +296,8 @@ func serve(opts Options, h *hooks) int {
 	// The read path of values (ADR-0059 step 3.6). Its report counts run
 	// after their responses: a stop waits for them before the database
 	// closes.
-	readPath := values.New(store, rootKEK, values.Options{Log: log})
+	approvals := auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK, PersonGate: gates.PersonGate})
+	readPath := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: gates})
 	defer readPath.Settled()
 	writer := &write.Writer{Store: store, Gates: gates}
 	// The Security Control report summary (feature-parity decision 10):
@@ -318,7 +319,7 @@ func serve(opts Options, h *hooks) int {
 		AccessLog:      httpserver.NewAccessLog(accessOut),
 		Web:            web.FS(),
 		Backend:        &backend{store: store, rootKEK: rootKEK},
-		Auth:           auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK}),
+		Auth:           approvals,
 		Realtime:       hub,
 		Values:         readPath,
 		Writer:         writer,

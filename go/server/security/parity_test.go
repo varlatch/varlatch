@@ -33,7 +33,7 @@ import (
 // securityTables are the tables of security-v0.22.0.json
 // (go-security-fixture.test.ts).
 var securityTables = []string{"installation", "identities", "user", "auth_user_links", "passkey", "passkey_provenance", "credentials",
-	"organizations", "org_memberships", "security_controls", "security_control_counters", "approval_intents", "organization_freezes",
+	"organizations", "org_memberships", "projects", "contract_revisions", "environments", "env_values", "value_versions", "security_controls", "security_control_counters", "approval_intents", "organization_freezes",
 	"organization_deletions"}
 
 // publicURL is the public URL both servers answer with (approvals need one).
@@ -92,12 +92,12 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 	}
 	public, _ := url.Parse(publicURL)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	vs := values.New(store, rootKEK, values.Options{Log: log})
 	w := &write.Writer{Store: store, Gates: write.NewGates()}
+	approvals := auth.New(store, auth.Options{Log: log, RootKEK: rootKEK, PublicURL: public, PersonGate: w.Gates.PersonGate})
+	vs := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: w.Gates})
 	h, err := httpserver.New(httpserver.Options{
 		Version: f.Version(), Backend: daemon.NewBackend(store, rootKEK), Log: log, PublicURL: public,
-		Auth: auth.New(store, auth.Options{Log: log, RootKEK: rootKEK, PublicURL: public}), Values: vs,
-		Writer: w, RootKEK: rootKEK,
+		Auth: approvals, Values: vs, Writer: w, RootKEK: rootKEK,
 	})
 	if err != nil {
 		t.Fatal(err)

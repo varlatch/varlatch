@@ -78,8 +78,15 @@ type Request struct {
 	Principal *auth.Principal
 	// ApprovalID is the Varlatch-Approval header's approval id, "" for none.
 	ApprovalID string
-	Approvals  *auth.Service
+	// ApprovalMalformed is a Varlatch-Approval header that cannot be an
+	// approval id: checked only when an approval is consumed, where it is
+	// not found (withApproval's require).
+	ApprovalMalformed bool
+	Approvals         *auth.Service
 }
+
+// carries reports whether the request sent a Varlatch-Approval header.
+func (r Request) carries() bool { return r.ApprovalID != "" || r.ApprovalMalformed }
 
 func (r Request) requester() auth.Requester { return auth.RequesterOf(r.Principal) }
 
@@ -88,7 +95,7 @@ func (r Request) requester() auth.Requester { return auth.RequesterOf(r.Principa
 // consumption never upgrades a weaker hold.
 func (r Request) RequesterGate() write.Gate {
 	mode := write.Shared
-	if r.ApprovalID != "" {
+	if r.carries() {
 		mode = write.Exclusive
 	}
 	return write.Person(r.Principal.Identity.ID, mode)
@@ -218,7 +225,7 @@ func Prepare(ctx context.Context, tx query.DBTX, r Request, op Protected, now fu
 	// a target being deleted answers its not-found; one that consumes checks
 	// them after its consumption, unless the checkpoint refuses it, when its
 	// not-found still answers first.
-	consumes := needsApproval && r.ApprovalID != ""
+	consumes := needsApproval && r.carries()
 	scopeFirst := op.ScopeBeforeCheckpoint && op.Scope.ProjectID != ""
 	if scopeFirst && !consumes {
 		if err := write.CheckLive(ctx, tx, op.Scope); err != nil {
@@ -243,8 +250,11 @@ func Prepare(ctx context.Context, tx query.DBTX, r Request, op Protected, now fu
 		}
 	}
 	if p.Binding != nil {
-		if r.ApprovalID == "" {
+		if !r.carries() {
 			return nil, &auth.ApprovalNeeded{Binding: *p.Binding}
+		}
+		if r.ApprovalMalformed {
+			return nil, auth.ApprovalInvalid("not-found", nil)
 		}
 		used, err := r.Approvals.ConsumeApproval(ctx, tx, r.requester(), r.ApprovalID, *p.Binding)
 		if err != nil {

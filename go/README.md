@@ -290,9 +290,13 @@ The server's packages:
   disclosure's audit events are one write job of the single writer, and
   nothing is decrypted before it committed (Root KEK, Organization KEK,
   DEK, value). References expand only within what the caller receives, one
-  audited level at a time. The one case not served is an export while
-  admin-step-up is at enforce (501 `NOT_IMPLEMENTED_YET`; its approval
-  comes with step 4's protected writes). `testdata/values-v0.22.0.json`
+  audited level at a time. An export while admin-step-up is at enforce
+  (step 4.3b, `export.go`, `domain/exportstepup.ts`) consumes its step-up
+  approval, bound to the exact set of Secrets disclosed, in the
+  disclosure's audit job behind the Organization's and the requester's
+  gates, after a freshness check of the capture against the live rows (a
+  stale one answers `STATE_CHANGED` and leaves the approval usable).
+  `testdata/values-v0.22.0.json`
   and `values-v0.21.0.json` hold a database the TypeScript server built
   through its own `/v1` API (the v0.21.0 file's envelopes sealed by that
   release's code), a table of requests and that server's answers, audit
@@ -460,7 +464,15 @@ The server's packages:
   minutes, a batch per job, then deletes rows 35 days after their summary.
   Served by `server/httpserver/security.go` (`listSecurityControls`,
   `changeSecurityControl`, `securityControlReport`,
-  `securityApprovalKeys`). Counters, their summaries and open intents are
+  `securityApprovalKeys`). Approval summaries name things with the labels
+  of `labels.go` (`approvallabels.ts`: every name JSON-quoted with the
+  characters a reader cannot see escaped, every existing item with its
+  id), checked with the canonical JSON and keyed digests an approval binds
+  against the TypeScript code's vectors (`testdata/approval-vectors.json`).
+  The account writers the TypeScript code runs under the person's row FOR
+  UPDATE (starting, approving and cancelling an approval, confirming and
+  removing a passkey) take the person's gate exclusive through
+  `auth.Options.PersonGate`. Counters, their summaries and open intents are
   data the migration copies (step 7). The approval keys list admins by
   name in byte order. This is an intentional wire difference, not a
   defect: the TypeScript order follows the PostgreSQL database's

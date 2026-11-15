@@ -31,6 +31,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -56,7 +57,17 @@ type Service struct {
 	now        func() time.Time
 	ceremonies *ceremonyStore
 	log        *slog.Logger
+	gate       PersonGate
 }
+
+// PersonGate takes a person's gate of the write path (go/server/write,
+// feature-parity decision 4) before a job, exclusive or shared, and gives
+// the release. The TypeScript writers that take the person's row FOR
+// UPDATE (passkey confirmation and removal; starting, approving and
+// cancelling an approval) take it exclusive, so they wait for an external
+// effect that holds the person across its call; createApproval takes it
+// shared, as its row lock is FOR KEY SHARE.
+type PersonGate func(ctx context.Context, identityID string, exclusive bool) (context.Context, func(), error)
 
 // Options configures a Service.
 type Options struct {
@@ -69,11 +80,13 @@ type Options struct {
 	Log *slog.Logger
 	// RootKEK keys step-up approvals' request hashes (approvals.go).
 	RootKEK []byte
+	// PersonGate is the write path's person gates; nil takes none (tests).
+	PersonGate PersonGate
 }
 
 // New returns the Service for store.
 func New(store *storage.DB, opts Options) *Service {
-	s := &Service{store: store, now: opts.Now, log: opts.Log, ceremonies: newCeremonyStore(), publicURL: opts.PublicURL, rootKEK: opts.RootKEK}
+	s := &Service{store: store, now: opts.Now, log: opts.Log, ceremonies: newCeremonyStore(), publicURL: opts.PublicURL, rootKEK: opts.RootKEK, gate: opts.PersonGate}
 	if s.now == nil {
 		s.now = time.Now
 	}
@@ -145,3 +158,13 @@ func str(s string) *string { return &s }
 
 // NewCSRFToken is a browser's CSRF token: 32 random bytes in base64url.
 func NewCSRFToken() string { return randomBase64URL(32) }
+
+// personGate takes identityID's person gate before a job (PersonGate),
+// for the job's span; release it once the job has its answer.
+func (s *Service) personGate(ctx context.Context, identityID string, exclusive bool) (func(), error) {
+	if s.gate == nil {
+		return func() {}, nil
+	}
+	_, release, err := s.gate(ctx, identityID, exclusive)
+	return release, err
+}

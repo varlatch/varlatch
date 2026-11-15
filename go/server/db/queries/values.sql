@@ -50,3 +50,11 @@ DO UPDATE SET count = security_control_counters.count + excluded.count,
   last_seen = max(security_control_counters.last_seen, excluded.last_seen)
 WHERE security_control_counters.emitted_at IS NULL
 RETURNING bucket_hour;
+
+-- name: ProjectFreshness :one
+-- exportstepup.ts freshnessOf: the Project as it is now.
+SELECT active_contract_revision_id, deleted_at FROM projects WHERE id = ?;
+
+-- name: EnvironmentsFreshness :many
+-- exportstepup.ts freshnessOf: the environment and its parent as they are now.
+SELECT id, deleted_at, expires_at FROM environments WHERE id IN (sqlc.slice(ids));

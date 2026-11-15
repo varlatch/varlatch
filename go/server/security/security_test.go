@@ -58,7 +58,7 @@ func newWorld(t *testing.T) *world {
 	wd.exec(`INSERT INTO identities (id, kind, name, organization_id) VALUES ('idn_m', 'service', 'deploy', ?)`, org.ID)
 	wd.exec(`INSERT INTO credentials (id, identity_id, kind, token_hash) VALUES ('crd_m', 'idn_m', 'service', 'h_m')`)
 	public, _ := url.Parse("http://127.0.0.1:8686")
-	wd.approvals = auth.New(store, auth.Options{PublicURL: public, RootKEK: rootKEK})
+	wd.approvals = auth.New(store, auth.Options{PublicURL: public, RootKEK: rootKEK, PersonGate: wd.w.Gates.PersonGate})
 	return wd
 }
 

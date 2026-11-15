@@ -10,22 +10,14 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/write"
 )
-
-// ErrExportUnderEnforce is the one part of the disclosure route this build
-// does not serve: an export (purpose "export") while the Organization's
-// admin-step-up control is at enforce needs a step-up approval consumed in
-// the disclosure's audit transaction (domain/exportstepup.ts), which comes
-// with the other protected writes in ADR-0059 step 4. Until then such a
-// request discloses nothing, audits nothing and answers 501
-// NOT_IMPLEMENTED_YET. No Go installation can be at enforce before step 4:
-// the control is changed only through changeSecurityControl, which is not
-// built.
-var ErrExportUnderEnforce = errors.New("an export while admin-step-up is at enforce is not built yet in this varlatchd (ADR-0059 step 4)")
 
 // purposeIssue is zod's message for a purpose outside DISCLOSURE_PURPOSES.
 const purposeIssue = `Invalid option: expected one of "scan"|"export"`
@@ -276,9 +268,6 @@ func (s *Service) Disclose(ctx context.Context, req Request, body []byte) (jsval
 			return nil, err
 		}
 	}
-	if enforce {
-		return nil, ErrExportUnderEnforce
-	}
 	if err := st.expired(); err != nil {
 		return nil, err
 	}
@@ -324,17 +313,37 @@ func (s *Service) Disclose(ctx context.Context, req Request, body []byte) (jsval
 		md = append(md, jsvalue.Member{Key: "purpose", Value: dr.purpose})
 	}
 	var before beforeAudit
+	var gates []write.Gate
 	if len(attempts) > 0 {
 		at := st.Now
-		before = func(ctx context.Context, tx *storage.Tx) error {
-			return countWouldBlockInLiveOrganization(ctx, tx, st.Org.ID, attempts, at, s.now)
+		before = func(ctx context.Context, tx *storage.Tx) (jsvalue.Object, error) {
+			return nil, countWouldBlockInLiveOrganization(ctx, tx, st.Org.ID, attempts, at, s.now)
 		}
 	}
-	plaintext, err := s.auditThenDecrypt(ctx, &st, []audit.Event{{
+	if enforce {
+		// Phase 2 of an export under enforce (export.go): the approval
+		// consumed in the audit job, before anything is decrypted.
+		if s.approvals == nil || s.gates == nil {
+			return nil, errors.New("values: an export under admin-step-up's enforce needs the approvals and the gates")
+		}
+		before, gates = s.exportPhase2(req, &st, dr, selected)
+	}
+	disclosed := []audit.Event{{
 		Type: "secret.disclosed", Decision: audit.Allow, ActorIdentityID: ptr(req.Principal.Identity.ID),
 		OrganizationID: ptr(st.Org.ID), Action: ptr("secret.reveal"), Resource: resourceOf(&st),
 		Authz: allowedAuthz(reveal), RequestID: ptr(req.RequestID), Metadata: md,
-	}}, versions, before)
+	}}
+	var plaintext map[string]string
+	if enforce {
+		plaintext, err = security.WithApproval(ctx, s.approvals, auth.RequesterOf(req.Principal), func() (map[string]string, error) {
+			return s.auditThenDecrypt(ctx, &st, disclosed, versions, before, gates...)
+		})
+		if err != nil {
+			return nil, s.phase2Refused(ctx, req, t, err)
+		}
+	} else {
+		plaintext, err = s.auditThenDecrypt(ctx, &st, disclosed, versions, before)
+	}
 	if err != nil {
 		return nil, err
 	}

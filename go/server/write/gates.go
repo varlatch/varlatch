@@ -286,3 +286,14 @@ func (gs *Gates) leave(s slot, r *rw) {
 		delete(gs.held, s)
 	}
 }
+
+// PersonGate takes a person's gate, exclusive or shared: the write path's
+// side of auth.PersonGate, for the account writers in go/server/auth, which
+// cannot import this package.
+func (gs *Gates) PersonGate(ctx context.Context, identityID string, exclusive bool) (context.Context, func(), error) {
+	mode := Shared
+	if exclusive {
+		mode = Exclusive
+	}
+	return gs.Acquire(ctx, Person(identityID, mode))
+}
