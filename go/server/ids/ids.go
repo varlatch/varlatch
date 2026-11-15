@@ -5,7 +5,10 @@
 // base32 without padding.
 package ids
 
-import "crypto/rand"
+import (
+	"crypto/rand"
+	"fmt"
+)
 
 // The prefixes in use, by db/ids.ts's kind names.
 const (
@@ -54,4 +57,15 @@ func New(prefix string) string {
 		out = append(out, alphabet[(acc<<(5-bits))&31])
 	}
 	return string(out)
+}
+
+// UUID returns a random (version 4) UUID in lowercase, as Node's
+// crypto.randomUUID: the archive and maintenance gate IDs.
+func UUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	b[6], b[8] = b[6]&0x0f|0x40, b[8]&0x3f|0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[:4], b[4:6], b[6:8], b[8:10], b[10:])
 }

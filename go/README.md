@@ -211,6 +211,75 @@ memory (`server/write`):
   would); if a daemon holds the lock but its socket does not answer, it
   refuses and writes nothing.
 
+### Backups and maintenance (step 4.14)
+
+`server/backups` takes the installation's backups inside varlatchd
+(Decision 7). The TypeScript server's backup socket is not ported: its
+commands are host commands on the control socket, so they take the
+daemon's maintenance admission and its one backup at a time.
+
+    varlatchd admin backup run [--json]
+    varlatchd admin backup status
+    varlatchd admin maintenance begin --ttl <duration>
+    varlatchd admin maintenance end <lease id>
+    varlatchd admin maintenance status
+
+- **Settings** (`install/varlatchd.conf.example`): `backup_key_file` (the
+  Backup Encryption Key, 32 bytes in hex or base64; without it no
+  scheduled backup runs), `backup_interval` (24h by default, `off`, or 1h
+  to 744h), `backup_keep` (7 archives on this host), and
+  `backup_destinations_file` and `backup_destination` (the bucket, in
+  `packages/backup`'s destinations format; without a file, archives stay
+  on this host).
+- **A run** refuses while a maintenance gate is open, without a BEK, with
+  a BEK that is the Root KEK, and when the data directory has less free
+  space than `RequiredSpace`: three times the database and its WAL (the
+  snapshot, then the archive and its unpacked copy while it is checked)
+  plus 64 MiB. It then takes the paced snapshot on the writer's
+  connection (`lib/storage` `Snapshot`, with the `TRUNCATE` after it),
+  reads the archive's metadata from the snapshot itself (the
+  installation, its Root KEK version and canary, the schema version),
+  refusing an incomplete Root KEK rotation as `archiveMetadata` does and
+  a canary the loaded Root KEK does not open, seals the snapshot and
+  `configuration.json` at 32 MiB/s, opens the archive again to record its
+  check, uploads it, records the delivery, and removes the archives
+  beyond `backup_keep` from this host. A stop ends a run at its next
+  snapshot step or sealed MiB, and leaves no archive.
+- **The schedule** first looks a minute after start, then takes a backup
+  whenever the newest archive is `backup_interval` old (at that first look
+  when there is none), retries an hour after a run that made no archive,
+  and a minute after maintenance held one back.
+- **The state** is the TypeScript server's, in the data directory, so
+  step 7's migration and the Go CLI's `admin backup` (steps 5 and 6) read
+  it as they are:
+  - `backups/<archive id>.vltbak`, the archives (mode 0600);
+  - `backups/<archive id>.json`, each archive's status record
+    (`statusSchema`: identity, `verification`, `delivery`, `capture`),
+    kept after local retention removes its archive, since the copy in the
+    bucket and its Root KEK version remain. `getInstallationBackups`
+    answers them, newest first, with `backupStatus`'s warnings;
+  - `backups/.work-<archive id>/`, a run's temporary files, and
+    `backups/<archive id>.vltbak.<hex>.partial`, a sealing in progress;
+    both are removed by the next run if a run was killed;
+  - `maintenance.json`, the maintenance gate (`maintenance.ts`'s `Gate`:
+    `id`, `kind` capture or restore, `phase`, `expiresAt` in Unix
+    milliseconds for a lease, `archiveId`). A lease is a `capture` gate
+    with an expiry; a restore's gate (4.14c) has none. A gate holds across
+    a restart, and one that cannot be read keeps the installation
+    isolated.
+- **Maintenance** answers every API route `503 MAINTENANCE` with
+  `Retry-After: 5`, as `app.ts` does, before the body limit; `/healthz`
+  answers, `/readyz` is not ready, and the dashboard's files are served so
+  it shows its maintenance screen. The TypeScript exemption of
+  `/.well-known/jwks.json` (the Convex mirror's key fetch) has no Go
+  counterpart.
+- **An archive** is format 3 (`lib/backup`): `varlatch.db`, the snapshot,
+  and `configuration.json`, `{"formatVersion":1,"settings":{...}}` with
+  the non-key settings by their `varlatchd.conf` names (paths on this
+  host, the data directory and the key files, are left out). Its status
+  record's `capture` holds the snapshot's duration (`snapshotHeldMs`),
+  the sealing's (`dumpMs`) and the snapshot's size (`dumpBytes`).
+
 The server's packages:
 
 - `server/config`: `varlatchd.conf`.
@@ -482,9 +551,9 @@ The server's packages:
   `environmentsOut`'s tailnet fields (`tailnetRequired`, and the covering
   Requirements' IDs for a caller holding `policy.read`, decided without a
   record). `server/httpserver/installation.go` answers the two
-  installation reads as the TypeScript server does without a maintenance
-  directory: no release check recorded yet (`varlatch upgrade --check`
-  arrives in step 6) and no backup supervisor (step 4.14).
+  installation reads: no release check recorded yet (`varlatch upgrade
+  --check` arrives in step 6), and the backup status (`server/backups`,
+  step 4.14).
 - `server/httpserver/search.go` (step 4.1d): `searchConfigItems`
   (ADR-0030), names only: the candidate environments are those the caller
   may read metadata of (the evaluator with its grants and Organization

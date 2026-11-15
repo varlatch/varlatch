@@ -57,6 +57,19 @@ func TestStreamingGCMIsGCM(t *testing.T) {
 			if !o.verify(want[n:]) || !bytes.Equal(back, plain) {
 				t.Fatalf("aad %d, length %d: does not open", aadLen, n)
 			}
+			if n >= 2*gcmBlockSize {
+				// Two ciphertext blocks swapped: the tag catches the order.
+				swapped := bytes.Clone(want)
+				copy(swapped[:gcmBlockSize], want[gcmBlockSize:2*gcmBlockSize])
+				copy(swapped[gcmBlockSize:2*gcmBlockSize], want[:gcmBlockSize])
+				if !bytes.Equal(swapped[:2*gcmBlockSize], want[:2*gcmBlockSize]) {
+					o, _ := newGCMStream(key, nonce, aad, true)
+					_ = o.xor(make([]byte, n), swapped[:n])
+					if o.verify(swapped[n:]) {
+						t.Fatalf("aad %d, length %d: swapped blocks still verify", aadLen, n)
+					}
+				}
+			}
 			if n > 0 {
 				bad := bytes.Clone(want)
 				bad[n/2] ^= 1
@@ -77,5 +90,38 @@ func BenchmarkStreamingGCM(b *testing.B) {
 	s, _ := newGCMStream(key, nonce, nil, false)
 	for b.Loop() {
 		_ = s.xor(buf, buf)
+	}
+}
+
+// One message holds at most maxMessageBlocks blocks (the 32-bit counter
+// starts at 2 and must not wrap): the last block is accepted, a byte more
+// is refused, sealing and opening alike.
+func TestGCMBlockLimit(t *testing.T) {
+	key, nonce := make([]byte, 32), make([]byte, 12)
+	for _, open := range []bool{false, true} {
+		s, err := newGCMStream(key, nonce, nil, open)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// As if all but the last block had been processed.
+		s.ctLen = (maxMessageBlocks - 1) * gcmBlockSize
+		if err := s.xor(make([]byte, gcmBlockSize), make([]byte, gcmBlockSize)); err != nil {
+			t.Fatalf("open %v: the last block: %v", open, err)
+		}
+		if err := s.xor(make([]byte, 1), make([]byte, 1)); err != errGCMTooLong {
+			t.Fatalf("open %v: a byte beyond the limit: %v", open, err)
+		}
+		// A partial block counts as a block.
+		s2, _ := newGCMStream(key, nonce, nil, open)
+		s2.ctLen = maxMessageBlocks*gcmBlockSize - 1
+		if err := s2.xor(make([]byte, 1), make([]byte, 1)); err != nil {
+			t.Fatalf("open %v: the last byte: %v", open, err)
+		}
+		if err := s2.xor(make([]byte, 1), make([]byte, 1)); err != errGCMTooLong {
+			t.Fatalf("open %v: the byte after the last: %v", open, err)
+		}
+	}
+	if maxMessageBlocks*gcmBlockSize < MaxBytes+1<<20 {
+		t.Fatal("the archive limit is not below one message's")
 	}
 }

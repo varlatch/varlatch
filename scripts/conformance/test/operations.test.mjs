@@ -205,7 +205,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // the Security Controls; (4.3c) on the audit log's reads, the
   // dashboard's audit-feed group, client-runtime's audit-export group and
   // values' two filtered audit checks. (Step 4.2) values's rotation group.
-  // Every other one lacks something.
+  // (Step 4.14) the maintenance suite, on the maintenance capability and
+  // the operations its checks see. Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
@@ -219,12 +220,12 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   };
   const ownLacking = ["onboarding.workload-invite-recommended-not-required"];
   const expected = Object.entries(inventory.checks).filter(([id, c]) =>
-    /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs|sdk|security)\./.test(id) ||
+    /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs|sdk|security|maintenance)\./.test(id) ||
     ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format",
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
     (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
-  assert.equal(runs.length, 258);
+  assert.equal(runs.length, 266);
   // The groups still lacking lack exactly their own operations.
   for (const [suite, groups] of Object.entries(notYet)) {
     for (const g of groups) {

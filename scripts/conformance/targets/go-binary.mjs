@@ -329,6 +329,15 @@ export async function goServer(state, operation, ...args) {
   return JSON.parse(admin(state, ["conformance-fixture", ...args]));
 }
 
+/**
+ * Opens a maintenance window for `ttlMs`: `varlatchd admin maintenance
+ * begin`, through the daemon's control socket, the same `503 MAINTENANCE`
+ * admission a restore uses (ADR-0059 step 4.14).
+ */
+export async function maintenance(state, ttlMs) {
+  admin(state, ["maintenance", "begin", "--ttl", `${Number(ttlMs)}ms`]);
+}
+
 /** A fixed, named probe of server state (the target contract): `varlatchd admin conformance-probe`. */
 export async function probe(state, probeName, ...args) {
   if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);

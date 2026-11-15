@@ -190,6 +190,11 @@ function makeCustodyVectors(): CustodyVectors {
     ["a weakened N", escrow[0]!.passphrase, { ...blob, kdf: { ...blob.kdf, N: 1 << 10 } }],
     ["a weakened r", escrow[0]!.passphrase, { ...blob, kdf: { ...blob.kdf, r: 4 } }],
     ["a changed salt", escrow[0]!.passphrase, { ...blob, kdf: { ...blob.kdf, salt: randomBytes(16).toString("base64") } }],
+    // Node's own range checks, before OpenSSL's.
+    ["an N of 2^32", escrow[0]!.passphrase, { ...blob, kdf: { ...blob.kdf, N: 2 ** 32 } }],
+    ["an N of 2^40", escrow[0]!.passphrase, { ...blob, kdf: { ...blob.kdf, N: 2 ** 40 } }],
+    ["a fractional N", escrow[0]!.passphrase, { ...blob, kdf: { ...blob.kdf, N: 16384.5 } }],
+    ["an r of 2^32", escrow[0]!.passphrase, { ...blob, kdf: { ...blob.kdf, r: 2 ** 32 } }],
     ["an N not a power of two", escrow[0]!.passphrase, { ...blob, kdf: { ...blob.kdf, N: 3 << 15 } }],
     // Last: OpenSSL keeps this error queued, and a later scrypt failure in
     // the same process would report it.

@@ -2,9 +2,8 @@
 
 // Package custody holds the Root KEK's recovery copies (crypto/escrow.ts;
 // ADR-0059 step 4.14): a passphrase escrow blob, safe to store anywhere,
-// and Shamir shares over GF(2^8), any k of n reconstructing the key; and
-// the custody attestations an operator records (custody.ts). Never logs,
-// and never puts key material in an error.
+// and Shamir shares over GF(2^8), any k of n reconstructing the key. Never
+// logs, and never puts key material in an error.
 package custody
 
 import (
@@ -12,9 +11,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
+	"strings"
 	"unicode/utf16"
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"golang.org/x/crypto/scrypt"
 )
 
@@ -38,12 +41,13 @@ const (
 	keyBytes     = 32
 )
 
-// KDF is a blob's key derivation parameters.
+// KDF is a blob's key derivation parameters. N, r and p are JavaScript
+// numbers, as the TypeScript server reads them (131072.0 is 131072).
 type KDF struct {
-	Algorithm string `json:"algorithm"`
-	N         int    `json:"N"`
-	R         int    `json:"r"`
-	P         int    `json:"p"`
+	Algorithm string  `json:"algorithm"`
+	N         float64 `json:"N"`
+	R         float64 `json:"r"`
+	P         float64 `json:"p"`
 	// Salt is base64.
 	Salt string `json:"salt"`
 }
@@ -59,21 +63,64 @@ type Blob struct {
 // context binds the KDF's parameters into the envelope's additional data,
 // so they cannot be weakened after the fact.
 func (k KDF) context() envelope.Context {
-	return envelope.Context{"purpose": "kek-escrow", "kdfAlgorithm": k.Algorithm, "N": k.N, "r": k.R, "p": k.P, "salt": k.Salt}
+	return envelope.Context{"purpose": "kek-escrow", "kdfAlgorithm": k.Algorithm, "N": int64(k.N), "r": int64(k.R), "p": int64(k.P), "salt": k.Salt}
 }
 
-// derive is Node's scryptSync with maxmem 256 MiB, which refuses as
-// OpenSSL's scrypt does: parameters that are not N a power of two over 1
-// and r, p positive, then any needing more memory than maxmem (its blocks,
-// 128 * r * p, and its table, 128 * r * (N + 2)).
+// nodeUint32 is Node's validateUint32 on a scrypt option: an integer from
+// 0 to 2^32 - 1, refused with Node's message (its ERR_OUT_OF_RANGE writes
+// an integer beyond 2^32 with _ between groups of three digits).
+func nodeUint32(name string, v float64) error {
+	received := string(jsvalue.Stringify(v))
+	if v != math.Trunc(v) || math.IsInf(v, 0) {
+		return &Error{fmt.Sprintf("The value of %q is out of range. It must be an integer. Received %s", name, received)}
+	}
+	if v < 0 || v > math.MaxUint32 {
+		if math.Abs(v) > 1<<32 {
+			received = separated(received)
+		}
+		return &Error{fmt.Sprintf("The value of %q is out of range. It must be >= 0 && <= 4294967295. Received %s", name, received)}
+	}
+	return nil
+}
+
+// separated is Node's addNumericalSeparator: _ between groups of three
+// digits of an integer's text.
+func separated(s string) string {
+	sign := ""
+	if strings.HasPrefix(s, "-") {
+		sign, s = "-", s[1:]
+	}
+	var b strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte('_')
+		}
+		b.WriteRune(c)
+	}
+	return sign + b.String()
+}
+
+// derive is Node's scryptSync with maxmem 256 MiB: N, r and p each an
+// unsigned 32-bit integer (Node's own check), then OpenSSL's scrypt
+// checks: N a power of two over 1 and r, p positive, then no more memory
+// than maxmem (its blocks, 128 * r * p, and its table, 128 * r * (N + 2)).
 func (k KDF) derive(passphrase string) ([]byte, error) {
-	if k.R <= 0 || k.P <= 0 || k.N < 2 || k.N&(k.N-1) != 0 {
+	for _, o := range []struct {
+		name string
+		v    float64
+	}{{"N", k.N}, {"r", k.R}, {"p", k.P}} {
+		if err := nodeUint32(o.name, o.v); err != nil {
+			return nil, err
+		}
+	}
+	n, r, p := int64(k.N), int64(k.R), int64(k.P)
+	if r <= 0 || p <= 0 || n < 2 || n&(n-1) != 0 {
 		return nil, &Error{"Invalid scrypt params"}
 	}
-	if int64(128)*int64(k.R)*int64(k.P)+int64(128)*int64(k.R)*int64(k.N+2) > scryptMaxMem {
+	if 128*r*p+128*r*(n+2) > scryptMaxMem {
 		return nil, &Error{"Invalid scrypt params: error:030000AC:digital envelope routines::memory limit exceeded"}
 	}
-	return scrypt.Key([]byte(passphrase), envelope.NodeBase64(k.Salt), k.N, k.R, k.P, keyBytes)
+	return scrypt.Key([]byte(passphrase), envelope.NodeBase64(k.Salt), int(n), int(r), int(p), keyBytes)
 }
 
 func jsLength(s string) int { return len(utf16.Encode([]rune(s))) }

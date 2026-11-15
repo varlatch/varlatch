@@ -77,7 +77,7 @@ func TestSealOpen(t *testing.T) {
 			manifest := goManifest(t, rootKEK, files)
 			out := filepath.Join(dir, "archive.vlt")
 			paced := int64(0)
-			if err := Seal(out, manifest, paths, tc.bek, SealOptions{Pace: func(n int64) { paced = n }}); err != nil {
+			if err := Seal(out, manifest, paths, tc.bek, SealOptions{Pace: func(n int64) error { paced = n; return nil }}); err != nil {
 				t.Fatal(err)
 			}
 			if st, _ := os.Stat(out); st.Mode().Perm() != 0o600 {
@@ -241,5 +241,67 @@ func TestGoManifest(t *testing.T) {
 		if _, err := ParseManifest(raw); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// Seal checks its manifest and the component files against it before it
+// writes anything; an empty BEK derives nothing.
+func TestSealRefuses(t *testing.T) {
+	dir := t.TempDir()
+	files, paths := components(t, dir, 100, 3)
+	manifest := goManifest(t, envelope.GenerateKey(), files)
+	bek, _ := PassphraseBEK([]byte("correct horse battery"))
+	other := filepath.Join(dir, "other.json")
+	_ = os.WriteFile(other, make([]byte, 3), 0o600)
+	short := filepath.Join(t.TempDir(), ComponentDatabase)
+	_ = os.WriteFile(short, make([]byte, 99), 0o600)
+	for name, tc := range map[string]struct {
+		manifest []byte
+		paths    []string
+		bek      BEK
+	}{
+		"an invalid manifest":     {[]byte(`{"formatVersion":3}`), paths, bek},
+		"a component missing":     {manifest, paths[:1], bek},
+		"another file's name":     {manifest, []string{paths[0], other}, bek},
+		"another size":            {manifest, []string{short, paths[1]}, bek},
+		"the components reversed": {manifest, []string{paths[1], paths[0]}, bek},
+		"the zero BEK":            {manifest, paths, BEK{}},
+	} {
+		out := filepath.Join(t.TempDir(), "a.vlt")
+		if err := Seal(out, tc.manifest, tc.paths, tc.bek, SealOptions{}); err == nil {
+			t.Errorf("%s: sealed", name)
+		}
+		if _, err := os.Stat(out); err == nil {
+			t.Errorf("%s: an archive was written", name)
+		}
+	}
+}
+
+// A Pace error ends the sealing: Seal returns it, and leaves neither an
+// archive nor a partial file.
+func TestSealPaceStops(t *testing.T) {
+	dir := t.TempDir()
+	files, paths := components(t, dir, 3<<20, 10)
+	manifest := goManifest(t, envelope.GenerateKey(), files)
+	key := make([]byte, 32)
+	rand.Read(key)
+	bek, _ := KeyBEK(key)
+	out := filepath.Join(dir, "archive.vlt")
+	stop := errors.New("stopped")
+	calls := 0
+	err := Seal(out, manifest, paths, bek, SealOptions{Pace: func(n int64) error {
+		if calls++; n > 1<<20 {
+			return stop
+		}
+		return nil
+	}})
+	if !errors.Is(err, stop) || calls != 2 {
+		t.Fatalf("err %v after %d calls", err, calls)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("an archive was written: %v", err)
+	}
+	if leftovers, _ := filepath.Glob(out + ".*.partial"); len(leftovers) != 0 {
+		t.Errorf("partial files left: %v", leftovers)
 	}
 }

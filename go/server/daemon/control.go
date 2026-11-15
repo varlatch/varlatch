@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -60,6 +62,11 @@ type hostEnv struct {
 	store   *storage.DB
 	rootKEK []byte
 	gates   *write.Gates
+	// admission is the maintenance gate, backups the backup service
+	// (backup.go).
+	admission *maintenance.Admission
+	backups   *backups.Service
+	log       *slog.Logger
 }
 
 type controlRequest struct {
@@ -152,6 +159,7 @@ func (c *controlServer) handle(ctx context.Context, conn *net.UnixConn) {
 	if err := json.NewDecoder(io.LimitReader(conn, 2<<20)).Decode(&req); err != nil || len(req.Args) == 0 {
 		return
 	}
+	_ = conn.SetDeadline(time.Now().Add(commandTimeout(req.Args)))
 	var stdout, stderr bytes.Buffer
 	status := runHost(ctx, c.env, req.Args, &stdout, &stderr)
 	_ = json.NewEncoder(conn).Encode(controlResponse{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), Status: status})
@@ -205,7 +213,7 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 
 func viaSocket(conn *net.UnixConn, what string, args []string, stdout, stderr io.Writer) int {
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(controlTimeout))
+	_ = conn.SetDeadline(time.Now().Add(commandTimeout(args)))
 	if err := json.NewEncoder(conn).Encode(controlRequest{Args: args}); err != nil {
 		fmt.Fprintf(stderr, "%s: the control socket: %v\n", what, err)
 		return ExitFailure

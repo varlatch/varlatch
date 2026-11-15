@@ -51,3 +51,26 @@ sync = on
 # The sync adapters to allow, comma-separated, out of github-actions,
 # coolify and convex. Default: all.
 sync_adapters =
+
+# Backups (ADR-0059 Decision 7): an encrypted archive of the database and
+# this configuration's non-key settings, made while varlatchd serves. The
+# Backup Encryption Key's file (32 bytes, hex or base64), kept apart from
+# the Root KEK and held off this host too: an archive cannot be restored
+# without it. Without it, varlatchd makes no scheduled backup. Default: none.
+backup_key_file =
+
+# How often a scheduled backup runs, from 1h to 744h, or off. Default: 24h.
+backup_interval = 24h
+
+# How many archives stay in the data directory's backups directory; older
+# ones are removed there (never at a destination). Default: 7.
+backup_keep = 7
+
+# The destinations file: the S3 or B2 buckets archives can be uploaded to,
+# each with its region, bucket, prefix and the file of its write key.
+# Default: none, archives stay on this host.
+backup_destinations_file =
+
+# The destination, by its name in that file, each archive is uploaded to.
+# Default: offsite.
+backup_destination = offsite

@@ -88,6 +88,9 @@ func PassphraseBEK(passphrase []byte) (BEK, error) {
 func (b BEK) Clear() { clear(b.material) }
 
 func (b BEK) derive(salt []byte) ([]byte, error) {
+	if len(b.material) == 0 {
+		return nil, &Error{"No Backup Encryption Key"}
+	}
 	return scrypt.Key(b.material, salt, 32768, 8, 1, 32)
 }
 
@@ -122,18 +125,41 @@ func DistinctKeys(bek BEK, keys ...[]byte) error {
 type SealOptions struct {
 	// Pace, when set, is called after each sealed chunk (about 1 MiB) with
 	// the plaintext bytes sealed so far; sealing waits for it (ADR-0059
-	// Decision 7's paced sealing).
-	Pace func(sealed int64)
+	// Decision 7's paced sealing). An error from it ends the sealing: Seal
+	// returns it, and no archive is written.
+	Pace func(sealed int64) error
 }
 
-// Seal writes an archive to output: the manifest and the component files,
-// in the manifest's order, each checked against its size. The archive is
-// written to a temporary file beside output (mode 0600) and linked into
-// place, so output never holds a partial archive and an existing one is
-// never replaced.
+// LinkedError is a sealed archive in place whose directory could not be
+// synced afterwards: the archive exists, but may not survive a crash yet.
+type LinkedError struct {
+	Path string
+	Err  error
+}
+
+func (e *LinkedError) Error() string {
+	return fmt.Sprintf("the archive %s was written, but its directory could not be synced (it may not survive a crash yet): %v", e.Path, e.Err)
+}
+
+func (e *LinkedError) Unwrap() error { return e.Err }
+
+// Seal writes an archive to output: the manifest, which must be valid
+// (ParseManifest), and the component files, one per component in the
+// manifest's order, each named and sized as the manifest says. The
+// archive is written to a temporary file beside output (mode 0600) and
+// linked into place, so output never holds a partial archive and an
+// existing one is never replaced. A *LinkedError says the archive is in
+// place but its directory was not synced.
 func Seal(output string, manifest []byte, components []string, bek BEK, o SealOptions) (err error) {
 	if len(manifest) > MaxManifestBytes {
 		return &Error{"Archive exceeds the v1 60 GiB size limit"}
+	}
+	m, err := ParseManifest(manifest)
+	if err != nil {
+		return err
+	}
+	if len(components) != len(m.Components) {
+		return &Error{"The component files are not the manifest's components"}
 	}
 	total := int64(len(manifest) + 4)
 	files := make([]*os.File, 0, len(components))
@@ -151,6 +177,9 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 		st, err := f.Stat()
 		if err != nil {
 			return err
+		}
+		if c := m.Components[len(files)-1]; filepath.Base(path) != c.Name || st.Size() != c.Bytes {
+			return &Error{fmt.Sprintf("The component file %s is not the manifest's %s of %d bytes", filepath.Base(path), c.Name, c.Bytes)}
 		}
 		total += st.Size()
 	}
@@ -198,7 +227,7 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 		}
 		sealed += int64(len(p))
 		if o.Pace != nil {
-			o.Pace(sealed)
+			return o.Pace(sealed)
 		}
 		return nil
 	}
@@ -240,7 +269,10 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 	if err := os.Link(partial, output); err != nil {
 		return err
 	}
-	return syncDir(filepath.Dir(output))
+	if err := syncDir(filepath.Dir(output)); err != nil {
+		return &LinkedError{Path: output, Err: err}
+	}
+	return nil
 }
 
 func syncDir(dir string) error {

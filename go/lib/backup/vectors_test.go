@@ -129,7 +129,9 @@ func TestGoVectors(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind string
 		size       int
-	}{{"a key file BEK", "key", 70_001}, {"a passphrase BEK", "passphrase", 5}, {"an empty component", "passphrase", 0}} {
+	}{{"a key file BEK", "key", 70_001}, {"a passphrase BEK", "passphrase", 5}, {"an empty component", "passphrase", 0},
+		// Beyond one sealing chunk (1 MiB): several writes of one message.
+		{"a component of 2.5 MiB", "key", 5 << 19}} {
 		dir := t.TempDir()
 		data := make([]byte, tc.size)
 		rand.Read(data)

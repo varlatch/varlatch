@@ -43,11 +43,24 @@ func (o *operations) GetInstallationRelease(ctx context.Context, _ api.GetInstal
 	}), nil
 }
 
-// GetInstallationBackups is GET /v1/installation/backups without a backup
-// supervisor: no archives, and the warning that says so.
+// GetInstallationBackups is GET /v1/installation/backups (backupStatus):
+// the archives' status records, newest first, and the warnings. Without a
+// backup service (a server built without one), no archives and the warning
+// that says so.
 func (o *operations) GetInstallationBackups(ctx context.Context, _ api.GetInstallationBackupsRequestObject) (api.GetInstallationBackupsResponseObject, error) {
 	if err := installationAdmin(ctx); err != nil {
 		return nil, err
 	}
-	return ok(jsvalue.Object{{Key: "archives", Value: []any{}}, {Key: "warnings", Value: []any{"Backup supervisor is not configured"}}}), nil
+	if o.s.opts.Backups == nil {
+		return ok(jsvalue.Object{{Key: "archives", Value: []any{}}, {Key: "warnings", Value: []any{"Backup supervisor is not configured"}}}), nil
+	}
+	raw, err := o.s.opts.Backups.StatusJSON()
+	if err != nil {
+		return nil, err
+	}
+	status, err := jsvalue.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	return ok(status), nil
 }

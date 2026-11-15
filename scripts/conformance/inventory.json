@@ -496,14 +496,7 @@
         "listEnvironments",
         "getActiveContract",
         "getEffectiveConfiguration",
-        "listIdentities",
-        "listAuditEvents",
-        "listPlatformConnections",
-        "listOrgSyncTargets",
-        "listRoles",
-        "listGroups",
-        "listTeams",
-        "listWebhooks"
+        "listAuditEvents"
       ]
     },
     "server-logs": {
