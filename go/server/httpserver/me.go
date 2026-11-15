@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/auth"
@@ -164,29 +165,22 @@ func userAgentOf(ctx context.Context) *string {
 	return &ua
 }
 
-// checkName is zod's string().min(1).max(200), in UTF-16 units.
+// checkName is zod's string().min(1).max(200): zod 4 counts code points.
 func checkName(name *string) error {
 	if name == nil {
 		return nil
 	}
-	n := len(utf16(*name))
+	n := codePoints(*name)
 	if n < 1 || n > 200 {
 		return validation("name: must be 1 to 200 characters")
 	}
 	return nil
 }
 
-func utf16(s string) []uint16 {
-	out := make([]uint16, 0, len(s))
-	for _, r := range s {
-		if r > 0xFFFF {
-			out = append(out, 0, 0)
-		} else {
-			out = append(out, 0)
-		}
-	}
-	return out
-}
+// codePoints is a string's length as zod 4 measures it (checks.js
+// $ZodCheckMaxLength: code points, not UTF-16 units). Strings here come
+// from Go's JSON decoder, so they are valid UTF-8.
+func codePoints(s string) int { return utf8.RuneCountInString(s) }
 
 func checkTTL(ttl *int, def int64) (int64, error) {
 	if ttl == nil {

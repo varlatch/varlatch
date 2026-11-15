@@ -356,7 +356,23 @@ The server's packages:
   `createOrganization`, `getOrganization` and `renameOrganization` by
   `server/httpserver/organizations.go`, which reads their bodies as the
   TypeScript routes do (`c.req.json()` without a fallback: a body that is
-  not JSON answers 500 `INTERNAL` there, and here).
+  not JSON answers 500 `INTERNAL` there, and here). Body strings are
+  measured as zod 4 measures them, in code points (`codePoints`), so a
+  name of 200 emoji is accepted.
+- `server/contracts` (step 4.1b): a Project's Contract revisions
+  (`domain/contracts.ts`, ADR-0013) on `lib/contract`: pushing one
+  (normalized before the job; inside it, the writer's checks, the
+  passkey-verification checkpoint, an unpinned Contract normalized again
+  at the active revision's semantics version, a revision with the same
+  content hash answered instead of a new one, `contract.revision_pushed`)
+  and activating one (the revision found before the checkpoint, the
+  active revision read in the job so concurrent activations each diff
+  against what they replace, `contract.activated` with the diff summary),
+  each one job behind the Organization's and the requester's shared gates;
+  served by `server/httpserver/contracts.go`. A revision is stored as
+  jsonb's text and answered in jsonb's member order, as PostgreSQL hands it
+  back to the TypeScript server; a Contract jsonb refuses (U+0000, a lone
+  surrogate) fails the push with 500, as the insert fails there.
 - `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
   decision 3). `services/varlatchd/test/go-fixture-kit.ts` has the
   TypeScript server build a database through its own `/v1`, run a table of
@@ -385,8 +401,10 @@ The server's packages:
   as a difference).
   `testdata/core-v0.22.0.json` is step 4.1's file (`go-core-fixture.test.ts`,
   regenerated with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors);
-  4.1a records the Organization operations in it, and the later 4.1 pull
-  requests add theirs. Name later files `<area>-v<release>.json` in
+  4.1a records the Organization operations in it, 4.1b the Contract
+  operations (request paths name rows by placeholders: `{project:SLUG}`,
+  and `{rev:KEY}` for the revision holding an item named KEY), and the
+  later 4.1 pull requests add theirs. Name later files `<area>-v<release>.json` in
   `testdata/` (the secret scan's allow list and `scripts/ci-changes.sh`
   match that). `server/values/valuestest` loads its fixtures with the same
   `Prepare`.

@@ -93,7 +93,7 @@ func (o *operations) CollectDeviceSignIn(ctx context.Context, req api.CollectDev
 	if req.Body != nil {
 		code = req.Body.DeviceCode
 	}
-	if n := len(utf16(code)); n < 1 || n > 200 {
+	if n := codePoints(code); n < 1 || n > 200 {
 		return nil, validation("deviceCode: must be 1 to 200 characters")
 	}
 	out, err := o.s.opts.Auth.PollDeviceSignIn(ctx, code, userAgentOf(ctx), requestIDOf(httpRequestOf(ctx)))
@@ -126,7 +126,7 @@ func jsNumber(n int64) string { return string(jsvalue.Stringify(n)) }
 const deviceApproverRefusal = "Only a person signed in to the dashboard may decide a device sign-in"
 
 func (o *operations) pendingForCode(ctx context.Context, identityID, userCode string) (auth.PendingSignIn, error) {
-	if n := len(utf16(userCode)); n < 1 || n > 64 {
+	if n := codePoints(userCode); n < 1 || n > 64 {
 		return auth.PendingSignIn{}, validation("userCode: must be 1 to 64 characters")
 	}
 	return o.s.opts.Auth.FindSignInByCode(ctx, identityID, devicePeer(ctx), userCode, requestIDOf(httpRequestOf(ctx)))
@@ -194,7 +194,7 @@ func (o *operations) DecideDeviceSignIn(ctx context.Context, req api.DecideDevic
 	if req.Body != nil {
 		body = api.DecideDeviceSignInJSONBody(*req.Body)
 	}
-	if n := len(utf16(body.UserCode)); n < 1 || n > 64 {
+	if n := codePoints(body.UserCode); n < 1 || n > 64 {
 		return nil, validation("userCode: must be 1 to 64 characters")
 	}
 	if body.Decision != "approve" && body.Decision != "deny" {

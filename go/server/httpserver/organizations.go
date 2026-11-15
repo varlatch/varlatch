@@ -50,14 +50,19 @@ func (r reply) VisitRenameOrganizationResponse(w http.ResponseWriter) error { re
 // authorized for, whether its passkey-verification checkpoint ran, and the
 // report counts to record once it succeeds.
 type orgRequest struct {
-	o       *operations
-	r       *http.Request
-	p       *auth.Principal
-	org     authz.Organization
-	action  string
-	checked bool
-	reports []auth.PendingReport
-	at      int64
+	o *operations
+	r *http.Request
+	p *auth.Principal
+	// route is the route as Hono names it, for an incident freeze's refusal.
+	route string
+	org   authz.Organization
+	// action and resource are the first action the request was authorized
+	// for (AUTHORIZED_ACTION, AUTHORIZED_RESOURCE).
+	action   string
+	resource authz.Resource
+	checked  bool
+	reports  []auth.PendingReport
+	at       int64
 }
 
 func authzPrincipal(p *auth.Principal) authz.Principal {
@@ -72,8 +77,13 @@ func authzPrincipal(p *auth.Principal) authz.Principal {
 // decoded as Hono decodes it) must be live, then the incident freeze at
 // entry unless the route names its exception.
 func (o *operations) enter(ctx context.Context, exception string) (*orgRequest, error) {
+	return o.enterRoute(ctx, organizationRoute, exception)
+}
+
+// enterRoute is enter for a route under an Organization's path.
+func (o *operations) enterRoute(ctx context.Context, route, exception string) (*orgRequest, error) {
 	r := httpRequestOf(ctx)
-	q := &orgRequest{o: o, r: r, p: principalOf(ctx)}
+	q := &orgRequest{o: o, r: r, p: principalOf(ctx), route: route}
 	segs := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	ap := authzPrincipal(q.p)
 	org, err := authz.EnterOrganization(ctx, o.s.opts.Auth.Store().Reader(), tryDecodeURIComponent(segs[2]), &ap, exception)
@@ -87,7 +97,12 @@ func (o *operations) enter(ctx context.Context, exception string) (*orgRequest, 
 // authorize is authorize (http/support.ts): a denial is recorded, in a
 // write job of its own, and answered.
 func (q *orgRequest) authorize(ctx context.Context, action string) error {
-	d, err := authz.Decide(ctx, q.o.s.opts.Auth.Store().Reader(), authzPrincipal(q.p), action, authz.Resource{OrganizationID: q.org.ID},
+	return q.authorizeOn(ctx, action, authz.Resource{OrganizationID: q.org.ID})
+}
+
+// authorizeOn is authorize on a resource inside the Organization.
+func (q *orgRequest) authorizeOn(ctx context.Context, action string, resource authz.Resource) error {
+	d, err := authz.Decide(ctx, q.o.s.opts.Auth.Store().Reader(), authzPrincipal(q.p), action, resource,
 		authz.Options{HideExistence: true, RequestID: requestIDOf(q.r)})
 	if err != nil {
 		return err
@@ -101,7 +116,7 @@ func (q *orgRequest) authorize(ctx context.Context, action string) error {
 		return d.Err
 	}
 	if q.action == "" {
-		q.action = action
+		q.action, q.resource = action, resource
 	}
 	return nil
 }
@@ -117,18 +132,25 @@ func (q *orgRequest) refused(ctx context.Context, err error) error {
 	switch {
 	case errors.As(err, &frozen):
 		ap := authzPrincipal(q.p)
-		e := authz.FrozenRefusalEvent(&ap, frozen, q.r.Method, organizationRoute, requestIDOf(q.r))
+		e := authz.FrozenRefusalEvent(&ap, frozen, q.r.Method, q.route, requestIDOf(q.r))
 		event = &e
 		err = &headerError{err: err, headers: retryAfter(300)}
 	case errors.As(err, &verification) && !verification.SelfLockout:
 		var action *string
-		if q.action != "" && q.org.ID == verification.OrganizationID {
+		resource := jsvalue.Object{{Key: "projectId", Value: nil}, {Key: "environmentId", Value: nil}}
+		if q.action != "" && q.resource.OrganizationID == verification.OrganizationID {
 			action = &q.action
+			if q.resource.ProjectID != "" {
+				resource[0].Value = q.resource.ProjectID
+			}
+			if q.resource.Environment != nil {
+				resource[1].Value = q.resource.Environment.ID
+			}
 		}
 		org, actor, reqID := verification.OrganizationID, q.p.Identity.ID, requestIDOf(q.r)
 		event = &audit.Event{
 			Type: "authorization.denied", Decision: audit.Deny, ActorIdentityID: &actor, CredentialID: audit.Value(q.p.Credential.ID),
-			OrganizationID: &org, Action: action, Resource: jsvalue.Object{{Key: "projectId", Value: nil}, {Key: "environmentId", Value: nil}},
+			OrganizationID: &org, Action: action, Resource: resource,
 			Metadata:  jsvalue.Object{{Key: "reason", Value: "passkey_verification_required"}, {Key: "evidence", Value: verification.Reason}},
 			RequestID: &reqID,
 		}

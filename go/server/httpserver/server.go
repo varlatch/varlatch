@@ -135,6 +135,11 @@ var BuiltOperations = []string{
 	createOrganizationPattern,
 	getOrganizationPattern,
 	renameOrganizationPattern,
+	// Step 4.1b: Contracts (contracts.go).
+	activeContractPattern,
+	pushRevisionPattern,
+	getRevisionPattern,
+	activateRevisionPattern,
 }
 
 // Server is the handler.

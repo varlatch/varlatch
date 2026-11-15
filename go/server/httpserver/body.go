@@ -44,7 +44,7 @@ type bodyField struct {
 	name     string
 	kind     fieldKind
 	required bool
-	// min and max bound a string's length (UTF-16 units) or an integer.
+	// min and max bound a string's length (code points, as zod 4 counts) or an integer.
 	min, max float64
 	options  []string
 }
@@ -134,7 +134,7 @@ func validateBody(schema []bodyField, raw []byte) ([]byte, []string) {
 				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected string, received %s", f.name, got))
 				continue
 			}
-			if n := float64(len(utf16(s))); n < f.min {
+			if n := float64(codePoints(s)); n < f.min {
 				issues = append(issues, fmt.Sprintf("%s: Too small: expected string to have >=%s characters", f.name, jsNumber(int64(f.min))))
 			} else if n > f.max {
 				issues = append(issues, fmt.Sprintf("%s: Too big: expected string to have <=%s characters", f.name, jsNumber(int64(f.max))))
