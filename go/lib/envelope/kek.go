@@ -69,6 +69,10 @@ func jsTrim(units []uint16) []uint16 {
 	return units[start:end]
 }
 
+// NodeBase64 decodes s as Node's Buffer.from(s, "base64") and
+// Buffer.from(s, "base64url") do (the same lenient decoder).
+func NodeBase64(s string) []byte { return nodeBase64(s) }
+
 // nodeBase64 decodes s as Node's Buffer.from(s, "base64") does.
 func nodeBase64(s string) []byte {
 	return nodeBase64Units(utf16.Encode([]rune(s)))

@@ -5,10 +5,12 @@
 useDefault = true
 
 [allowlist]
-description = "Synthetic cross-language fixtures: keys and tokens are random values generated for a throwaway installation (lib/envelope's tsfixtures.mjs; the values fixtures from services/varlatchd/test/go-values-fixture.test.ts and the parity kit's fixtures from services/varlatchd/test/go-fixture-kit.ts, whose Root KEK is generateKey() and whose tokens come from a disposable PGlite database), and the envelope PEM is a truncated header, not a key"
+description = "Synthetic cross-language fixtures: keys and tokens are random values generated for a throwaway installation (lib/envelope's tsfixtures.mjs; the values fixtures from services/varlatchd/test/go-values-fixture.test.ts and the parity kit's fixtures from services/varlatchd/test/go-fixture-kit.ts, whose Root KEK is generateKey() and whose tokens come from a disposable PGlite database), the backup and custody vectors from services/varlatchd/test/go-backup-vectors.test.ts, whose BEKs, Root KEKs and passphrases are random or made up for the vectors, and the envelope PEM is a truncated header, not a key"
 paths = [
   '''^go/lib/envelope/testdata/(ts-v[0-9.]+|go-sealed)\.json$''',
   '''^go/lib/envelope/testdata/tsfixtures\.mjs$''',
   '''^go/server/values/testdata/values-v[0-9.]+\.json$''',
   '''^go/server/paritytest/testdata/[a-z0-9]+-v[0-9.]+\.json$''',
+  '''^go/lib/backup/testdata/ts-vectors\.json$''',
+  '''^go/server/custody/testdata/ts-vectors\.json$''',
 ]

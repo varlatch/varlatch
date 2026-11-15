@@ -8,11 +8,8 @@ import (
 	"encoding/base64"
 	"math"
 	"net/http"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -67,7 +64,7 @@ func (o *operations) SearchConfigItems(ctx context.Context, _ api.SearchConfigIt
 	}
 	limit := 20
 	if raw, ok := query1("limit"); ok {
-		n := jsToNumber(raw)
+		n := jsvalue.ToNumber(raw)
 		if n != math.Trunc(n) || math.IsInf(n, 0) || n < 1 || n > 100 {
 			return nil, invalidSearch("limit must be an integer in 1..100")
 		}
@@ -298,51 +295,6 @@ func firstUnit(r rune) rune {
 
 // jsLower is String.prototype.toLowerCase.
 func jsLower(s string) string { return whatwg.ToLower(s) }
-
-// jsWhitespace is StrWhiteSpaceChar: ECMAScript's WhiteSpace and
-// LineTerminator code points, which Number(string) trims.
-func jsWhitespace(r rune) bool {
-	switch r {
-	case '\t', '\v', '\f', ' ', 0xA0, 0xFEFF, '\n', '\r', 0x2028, 0x2029:
-		return true
-	}
-	return unicode.Is(unicode.Zs, r)
-}
-
-var (
-	jsDecimal = regexp.MustCompile(`^[+-]?(?:Infinity|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)$`)
-	jsRadix   = regexp.MustCompile(`^0(?:[xX][0-9a-fA-F]+|[oO][0-7]+|[bB][01]+)$`)
-)
-
-// jsToNumber is Number(string) (StringToNumber): whitespace trimmed, empty
-// is 0, a decimal literal with an optional sign or Infinity, or an
-// unsigned 0x, 0o or 0b integer; anything else is NaN.
-func jsToNumber(s string) float64 {
-	t := strings.TrimFunc(s, jsWhitespace)
-	switch {
-	case t == "":
-		return 0
-	case jsRadix.MatchString(t):
-		base := map[byte]int{'x': 16, 'X': 16, 'o': 8, 'O': 8, 'b': 2, 'B': 2}[t[1]]
-		n := 0.0
-		for _, c := range t[2:] {
-			d, _ := strconv.ParseInt(string(c), base, 64)
-			n = n*float64(base) + float64(d)
-		}
-		return n
-	case jsDecimal.MatchString(t):
-		if strings.HasSuffix(t, "Infinity") {
-			if t[0] == '-' {
-				return math.Inf(-1)
-			}
-			return math.Inf(1)
-		}
-		// Beyond a double's range: ±Inf, or 0 below its smallest.
-		f, _ := strconv.ParseFloat(t, 64)
-		return f
-	}
-	return math.NaN()
-}
 
 // decodeCursor is decodeCursor (http/support.ts): Buffer.from(cursor,
 // "base64url") (lenient: either alphabet, other characters skipped, the
