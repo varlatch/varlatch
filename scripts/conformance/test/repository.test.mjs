@@ -106,6 +106,43 @@ test("each operation group is skipped in its suite's script, and only its suite'
   }
 });
 
+/**
+ * The kit.group() and kit.runs() calls in a script whose result gates
+ * nothing: a call is gating when it is inside an `if (...)` condition, or
+ * assigned (`const name = kit.group(...)`) to a name the script then tests
+ * (`if (name)`, `if (!name)`, `name ? ...`, `&& name`). An ignored result
+ * would run a skipped group's setup against a target that lacks it.
+ */
+function ungatedCalls(source) {
+  const out = [];
+  for (const m of source.matchAll(/\bkit\.(group|runs)\(\s*["']([a-z0-9.-]+)["']\s*\)/g)) {
+    const prefix = source.slice(source.lastIndexOf("\n", m.index) + 1, m.index);
+    const at = prefix.lastIndexOf("if (");
+    let depth = 0;
+    if (at >= 0) for (const ch of prefix.slice(at + 3)) depth += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+    if (at >= 0 && depth > 0) continue;
+    const assigned = prefix.match(/\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*$/);
+    const rest = source.slice(m.index + m[0].length);
+    if (assigned && new RegExp(`(?:\\bif\\s*\\(\\s*!?\\s*|&&\\s*|\\|\\|\\s*)${assigned[1]}\\b|\\b${assigned[1]}\\s*\\?`).test(rest)) continue;
+    out.push(`kit.${m[1]}("${m[2]}")`);
+  }
+  return out;
+}
+
+test("each kit.group() and kit.runs() result gates the work it names", () => {
+  for (const [suite, entry] of Object.entries(inventory.suites)) {
+    if (entry.runner) continue;
+    assert.deepEqual(ungatedCalls(readFileSync(join(repoRoot, entry.script), "utf8")), [], suite);
+  }
+  // The detector itself: ignored or unused results are found; conditions,
+  // and names used as conditions, are not.
+  assert.deepEqual(ungatedCalls('kit.group("a");\nsetup();'), ['kit.group("a")']);
+  assert.deepEqual(ungatedCalls('const a = kit.group("a");\nsetup();'), ['kit.group("a")']);
+  assert.deepEqual(ungatedCalls('await f(kit.runs("s.x"));'), ['kit.runs("s.x")']);
+  assert.deepEqual(ungatedCalls('if (kit.group("a")) {}\nif (x && kit.group("b")) {}\nif (kit.supports("f") && kit.group("c")) {}'), []);
+  assert.deepEqual(ungatedCalls('const a = kit.group("a");\nconst r = a ? 1 : 0;\nconst b = kit.runs("s.b");\nif (!b) return;'), []);
+});
+
 test("every lifecycle and installer suite (scripts/test-*.mjs) is an external suite with its replacement, and only those", () => {
   const scripts = readdirSync(join(repoRoot, "scripts")).filter((f) => /^test-.*\.mjs$/.test(f)).map((f) => `scripts/${f}`).sort();
   const listed = Object.values(inventory.externalSuites ?? {}).map((s) => s.script).sort();
