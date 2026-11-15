@@ -143,6 +143,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "getEffectiveConfiguration", "discloseSecrets",
     // Step 4.1a: Organizations.
     "createOrganization", "getOrganization", "renameOrganization",
+    // Step 4.1b: Contracts.
+    "getActiveContract", "pushContractRevision", "getContractRevision", "activateContractRevision",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is

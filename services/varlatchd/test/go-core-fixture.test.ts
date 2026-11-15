@@ -5,16 +5,20 @@
  * Environments, Contracts and values, built through this server's own /v1
  * API, and a table of requests with this server's answers. 4.1a records
  * the Organization operations (createOrganization, getOrganization,
- * renameOrganization); the later pull requests of 4.1 add theirs to the
- * same file. go/server/orgs's parity test replays it against varlatchd.
+ * renameOrganization), 4.1b the Contract operations (getActiveContract,
+ * getContractRevision, pushContractRevision, activateContractRevision);
+ * the later pull requests of 4.1 add theirs to the same file.
+ * go/server/orgs's parity test replays it against varlatchd.
  *
  * The database: alice (the bootstrap Installation Admin) and Organizations
  * made through /v1: acme, frozen (an incident freeze), guarded
  * (passkey-verification at enforce), reported (at report) and deleting (a
  * deletion scheduled); bob, a member of acme; carol, a member of none; a
- * service identity of acme and an agent of acme with an Agent Run
- * credential. Rows the routes that set them need passkey approvals for
- * (the freeze, the controls, the deletion) are written directly.
+ * service identity of acme, which may read acme/api's Contract; an agent
+ * of acme with an Agent Run credential; Projects in the Organizations,
+ * their Contract revisions pushed and activated through /v1 (REVISIONS,
+ * PUSHED). Rows the routes that set them need passkey approvals for (the
+ * freeze, the controls, the deletion) are written directly.
  *
  * Every run checks the committed file: its requests must be the table's,
  * and this server, on the file's rows, must give the recorded answers.
@@ -51,11 +55,15 @@ const TABLES: Table[] = [
   { name: "security_controls", orderBy: "organization_id, control" },
   { name: "organization_freezes", orderBy: "id" },
   { name: "organization_deletions", orderBy: "id" },
+  { name: "projects", orderBy: "id" },
+  { name: "contract_revisions", orderBy: "id" },
 ];
 
 const SIDE: SideTable[] = [
   { name: "organizations", key: ["id"], sortBy: ["slug"], volatile: ["created_at", "wrapped_org_kek"] },
   { name: "org_memberships", key: ["organization_id", "identity_id"], sortBy: ["organization_id", "identity_id"], volatile: ["created_at"] },
+  { name: "projects", key: ["id"], sortBy: ["organization_id", "slug"], volatile: ["created_at"] },
+  { name: "contract_revisions", key: ["id"], sortBy: ["project_id", "content_hash"], volatile: ["created_at"] },
 ];
 
 /** The CLI in assisted mode (ADR-0043 Decision 3): its requests are attributed so. */
@@ -82,6 +90,9 @@ function requestTable(): RequestCase[] {
     create("create, an empty name", "alice", { name: "", slug: "x2" }),
     create("create, a name of 201 characters", "alice", { name: "n".repeat(201), slug: "x3" }),
     create("create, a name of 200 characters beyond ASCII", "alice", { name: "é".repeat(198) + "𝄞", slug: "unicode" }),
+    // zod counts code points: 200 astral characters are 400 UTF-16 units.
+    create("create, a name of 200 emoji", "alice", { name: "😀".repeat(200), slug: "emoji" }),
+    create("create, a name of 201 emoji", "alice", { name: "😀".repeat(201), slug: "emoji2" }),
     create("create, a name that is not a string", "alice", { name: 42, slug: "x4" }),
     create("create, a slug that is not a string", "alice", { name: "X", slug: null }),
     create("create, an empty object", "alice", {}),
@@ -148,7 +159,222 @@ function requestTable(): RequestCase[] {
     rename("rename by id", "{orgId}", "alice", { name: "Acme by id" }),
     get("get after the renames", "acme"),
     create("create after the renames", "alice", { name: "Acme Robotics", slug: "acme-robotics" }),
+    ...contractRequests(),
   ]);
+}
+
+// ---- Contracts (step 4.1b)
+
+const item = (name: string, extra: Record<string, unknown> = {}) => ({ name, required: { kind: "always" }, sensitive: false, type: "string", ...extra });
+const doc = (items: unknown[], more: Record<string, unknown> = {}) => ({ schemaVersion: 1, items, ...more });
+
+/**
+ * The revisions build() pushes, each holding a marker item of its own
+ * (its key here) that a request path names as {rev:KEY}.
+ */
+const REVISIONS = {
+  // acme/api: API_V1 active, API_V2 pushed after it.
+  API_V1: doc([
+    item("API_URL", { type: "url", description: "Where the API listens" }),
+    item("API_V1", { required: { kind: "never" } }),
+    item("LOG_LEVEL", { type: "enum", enumValues: ["info", "debug"], defaultValue: "info" }),
+  ]),
+  API_V2: doc([
+    item("API_URL", { type: "url", sensitive: true, required: { kind: "selector", selector: { kind: "tier", tier: "production" } } }),
+    item("API_V2", { rotationHint: "Rotate in the console", rotationGraceSeconds: 3600 }),
+    item("LOG_LEVEL", { type: "enum", enumValues: ["info", "debug", "trace"], defaultValue: "info" }),
+    item("PORT", { type: "integer", example: "8080" }),
+  ]),
+  // acme/pinned: pinned to semantics version 2 and active; a version 3 one pushed.
+  PINNED_V2: doc([item("PINNED_V2"), item("FLAG", { type: "boolean" })], { semanticsVersion: 2 }),
+  PINNED_V3: doc([item("PINNED_V3"), item("FLAG", { type: "boolean", sensitive: true }), item("COUNT", { type: "integer" })], { semanticsVersion: 3 }),
+  // acme/fresh: one revision, never activated.
+  FRESH_V1: doc([item("FRESH_V1")]),
+  // The guarded Organizations' Projects: one active, one pushed.
+  FROZEN_V1: doc([item("FROZEN_V1")]),
+  FROZEN_V2: doc([item("FROZEN_V2")]),
+  GUARDED_V1: doc([item("GUARDED_V1")]),
+  GUARDED_V2: doc([item("GUARDED_V2")]),
+  REPORTED_V1: doc([item("REPORTED_V1")]),
+  REPORTED_V2: doc([item("REPORTED_V2")]),
+  DELETING_V1: doc([item("DELETING_V1")]),
+  DELETING_V2: doc([item("DELETING_V2")]),
+} as const;
+
+/** Where build() pushes each revision, and whether it activates it. */
+const PUSHED: [keyof typeof REVISIONS, string, string, boolean][] = [
+  ["API_V1", "acme", "api", true],
+  ["API_V2", "acme", "api", false],
+  ["PINNED_V2", "acme", "pinned", true],
+  ["PINNED_V3", "acme", "pinned", false],
+  ["FRESH_V1", "acme", "fresh", false],
+  ["FROZEN_V1", "frozen", "app", true],
+  ["FROZEN_V2", "frozen", "app", false],
+  ["GUARDED_V1", "guarded", "app", true],
+  ["GUARDED_V2", "guarded", "app", false],
+  ["REPORTED_V1", "reported", "app", true],
+  ["REPORTED_V2", "reported", "app", false],
+  ["DELETING_V1", "deleting", "app", true],
+  ["DELETING_V2", "deleting", "app", false],
+];
+
+/** The Projects build() creates: Organization, slug, contract authority. */
+const PROJECTS: [string, string, "git" | "managed"][] = [
+  ["acme", "api", "managed"],
+  ["acme", "empty", "git"],
+  ["acme", "pinned", "git"],
+  ["acme", "fresh", "managed"],
+  ["frozen", "app", "git"],
+  ["guarded", "app", "git"],
+  ["reported", "app", "git"],
+  ["deleting", "app", "git"],
+  ["gone", "app", "git"],
+];
+
+/** A request path's placeholders: {rev:KEY} and {project:SLUG} (acme's). */
+function fillPath(rows: Record<string, Row[]>): (p: string) => string {
+  const orgOf = (slug: string) => rows.organizations!.find((o) => o.slug === slug)!.id as string;
+  return (p) =>
+    p
+      .replace("{orgId}", orgOf("acme"))
+      .replace("{goneId}", orgOf("gone"))
+      .replace(/\{project:([a-z]+)\}/g, (_m, slug: string) => rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug)!.id as string)
+      .replace(/\{rev:([A-Z0-9_]+)\}/g, (_m, key: string) => {
+        const rev = rows.contract_revisions!.find((r) => (r.contract as { items: { name: string }[] }).items.some((i) => i.name === key));
+        if (!rev) throw new Error(`no revision holds ${key}`);
+        return rev.id as string;
+      });
+}
+
+function contractRequests(): Omit<RequestCase, "id">[] {
+  const P = (project: string, org = "acme") => `${ORG}/${org}/projects/${project}`;
+  const active = (name: string, project: string, credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({ name, method: "GET", path: `${P(project, org)}/contract`, credential });
+  const revision = (name: string, project: string, rev: string, credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "GET", path: `${P(project, org)}/contract/revisions/${rev}`, credential,
+  });
+  const push = (name: string, project: string, body: unknown, credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${P(project, org)}/contract/revisions`, credential, body,
+  });
+  const pushRaw = (name: string, project: string, rawBody: string): Omit<RequestCase, "id"> => ({ name, method: "POST", path: `${P(project)}/contract/revisions`, credential: "alice", rawBody });
+  const activate = (name: string, project: string, rev: string, credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${P(project, org)}/contract/revisions/${rev}/activate`, credential,
+  });
+  const NEW = doc([item("NEW_ITEM", { description: "Pushed by a request" })]);
+  // API_V1 again: its items and members in another order, a duplicate enum
+  // value. The same canonical form, so the same revision.
+  const API_V1_SHUFFLED = {
+    items: [
+      { type: "enum", enumValues: ["debug", "info", "debug"], defaultValue: "info", sensitive: false, required: { kind: "always" }, name: "LOG_LEVEL" },
+      item("API_V1", { required: { kind: "never" } }),
+      item("API_URL", { type: "url", description: "Where the API listens" }),
+    ],
+    schemaVersion: 1,
+  };
+  return [
+    // getActiveContract.
+    active("contract", "api"),
+    active("contract, none active", "empty"),
+    active("contract, a pinned semantics version", "pinned"),
+    active("contract, the Project by id", "{project:api}"),
+    active("contract, the Organization by id", "api", "alice", "{orgId}"),
+    active("contract, as a member", "api", "bob"),
+    active("contract, as an outsider", "api", "carol"),
+    active("contract, as its service identity with contract.read", "api", "ci"),
+    active("contract, as its service identity elsewhere", "pinned", "ci"),
+    active("contract, as its agent", "api", "agent"),
+    active("contract, without a credential", "api", "none"),
+    active("contract, an unknown Project", "nope"),
+    active("contract, an unknown Project as an outsider", "nope", "carol"),
+    active("contract, an unknown Organization", "api", "alice", "nope"),
+    active("contract, a frozen Organization", "app", "alice", "frozen"),
+    active("contract, under passkey-verification enforce", "app", "alice", "guarded"),
+    active("contract, under passkey-verification report", "app", "alice", "reported"),
+    active("contract, an Organization being deleted", "app", "alice", "deleting"),
+    active("contract, an Organization whose deletion completed", "app", "alice", "gone"),
+    // getContractRevision.
+    revision("revision, the active one", "api", "{rev:API_V1}"),
+    revision("revision, not active", "api", "{rev:API_V2}"),
+    revision("revision, semantics version 3 pinned", "pinned", "{rev:PINNED_V3}"),
+    revision("revision, unknown", "api", "crev_nope"),
+    revision("revision, another Project's", "empty", "{rev:API_V1}"),
+    revision("revision, an encoded id", "api", "%7Brev%7D"),
+    revision("revision, as a member", "api", "{rev:API_V2}", "bob"),
+    revision("revision, as an outsider", "api", "{rev:API_V2}", "carol"),
+    revision("revision, as its agent", "api", "{rev:API_V2}", "agent"),
+    revision("revision, under passkey-verification enforce", "app", "{rev:GUARDED_V2}", "alice", "guarded"),
+    // pushContractRevision.
+    push("push", "api", { contract: NEW }),
+    push("push, the same Contract again", "api", { contract: NEW }),
+    push("push, the active Contract in another order", "api", { contract: API_V1_SHUFFLED }),
+    push("push, with provenance", "api", { contract: doc([item("PROVENANCE")]), provenance: { commit: "4f2a9c1", source: "ci", "😀": "é" } }),
+    push("push, provenance not an object", "api", { contract: NEW, provenance: "main" }),
+    push("push, provenance an array", "api", { contract: NEW, provenance: ["main"] }),
+    push("push, provenance values not strings", "api", { contract: NEW, provenance: { a: 1, b: "x", c: null, d: { e: "f" } } }),
+    push("push, provenance null", "api", { contract: NEW, provenance: null }),
+    // JSON.parse makes __proto__ an own member; zod's record skips it
+    // (neither checked nor stored), its object strips it. Sent as text.
+    pushRaw("push, provenance with only __proto__", "api", '{"contract":{"schemaVersion":1,"items":[{"name":"PROTO_A","required":{"kind":"always"},"sensitive":false,"type":"string"}]},"provenance":{"__proto__":1}}'),
+    pushRaw("push, provenance with __proto__ and a member", "api", '{"contract":{"schemaVersion":1,"items":[{"name":"PROTO_B","required":{"kind":"always"},"sensitive":false,"type":"string"}]},"provenance":{"__proto__":"x","source":"ci"}}'),
+    pushRaw("push, provenance with __proto__ and a member that is not a string", "api", '{"contract":{"schemaVersion":1,"items":[]},"provenance":{"__proto__":"x","a":1}}'),
+    pushRaw("push, __proto__ in the body", "api", '{"contract":{"schemaVersion":1,"items":[{"name":"PROTO_C","required":{"kind":"always"},"sensitive":false,"type":"string"}]},"__proto__":{"provenance":1}}'),
+    pushRaw("push, the contract only under __proto__", "api", '{"__proto__":{"contract":{"schemaVersion":1,"items":[]}}}'),
+    pushRaw("push, __proto__ in the Contract", "api", '{"contract":{"schemaVersion":1,"items":[],"__proto__":1}}'),
+    push("push, extra members", "api", { contract: doc([item("EXTRA")]), extra: true }),
+    push("push, an invalid Contract", "api", { contract: { schemaVersion: 2, items: [{ name: "lower case", type: "text" }], other: 1 } }),
+    push("push, a reserved name", "api", { contract: doc([item("PATH")]) }),
+    push("push, no contract member", "api", {}),
+    push("push, contract null", "api", { contract: null }),
+    push("push, a body that is an array", "api", [{ contract: NEW }]),
+    push("push, a body that is a string", "api", "contract"),
+    pushRaw("push, not JSON", "api", "{"),
+    push("push, an integer at the active version 2", "pinned", { contract: doc([item("PINNED_V2"), item("COUNT", { type: "integer" })]) }),
+    push("push, unpinned at the active version 2", "pinned", { contract: doc([item("UNPINNED")]) }),
+    push("push, pinned to version 1", "pinned", { contract: doc([item("ONE")], { semanticsVersion: 1 }) }),
+    push("push, an unsupported semantics version", "pinned", { contract: doc([item("FOUR")], { semanticsVersion: 4 }) }),
+    push("push, an integer where nothing is active", "empty", { contract: doc([item("COUNT", { type: "integer" })]) }),
+    push("push, a Contract with no items", "empty", { contract: doc([]) }),
+    pushRaw("push, U+0000 in a description", "api", '{"contract":{"schemaVersion":1,"items":[{"name":"NUL","required":{"kind":"always"},"sensitive":false,"type":"string","description":"a\\u0000b"}]}}'),
+    pushRaw("push, a lone surrogate in a description", "api", '{"contract":{"schemaVersion":1,"items":[{"name":"LONE","required":{"kind":"always"},"sensitive":false,"type":"string","description":"a\\ud800b"}]}}'),
+    pushRaw("push, U+0000 in provenance", "api", '{"contract":{"schemaVersion":1,"items":[]},"provenance":{"commit":"a\\u0000b"}}'),
+    pushRaw("push, a lone surrogate in an enum value", "api", '{"contract":{"schemaVersion":1,"items":[{"name":"E","required":{"kind":"always"},"sensitive":false,"type":"enum","enumValues":["\\udc00","a"]}]}}'),
+    push("push as a member", "api", { contract: doc([item("BY_BOB")]) }, "bob"),
+    push("push as an outsider", "api", { contract: doc([item("BY_CAROL")]) }, "carol"),
+    push("push as its service identity with contract.read", "api", { contract: doc([item("BY_CI")]) }, "ci"),
+    push("push as its agent", "api", { contract: doc([item("BY_AGENT")]) }, "agent"),
+    push("push without a credential", "api", { contract: doc([item("BY_NONE")]) }, "none"),
+    push("push as an outsider, an invalid Contract", "api", { contract: null }, "carol"),
+    push("push to an unknown Project", "nope", { contract: NEW }),
+    push("push to a frozen Organization", "app", { contract: doc([item("FROZEN_NEW")]) }, "alice", "frozen"),
+    push("push under passkey-verification enforce", "app", { contract: doc([item("GUARDED_NEW")]) }, "alice", "guarded"),
+    push("push under passkey-verification enforce, an invalid Contract", "app", { contract: null }, "alice", "guarded"),
+    push("push under passkey-verification report", "app", { contract: doc([item("REPORTED_NEW")]) }, "alice", "reported"),
+    push("push to an Organization being deleted", "app", { contract: doc([item("DELETING_NEW")]) }, "alice", "deleting"),
+    { ...push("push in assisted mode", "api", { contract: doc([item("ASSISTED")]) }), userAgent: ASSISTED_AGENT },
+    { ...push("push, the same new Contract twice at once", "api", { contract: doc([item("TWICE")]) }), concurrent: 2 },
+    // activateContractRevision.
+    activate("activate, the first revision of a Project", "fresh", "{rev:FRESH_V1}"),
+    activate("activate", "api", "{rev:API_V2}"),
+    activate("activate, the active revision again", "api", "{rev:API_V2}"),
+    activate("activate, back to the earlier one", "api", "{rev:API_V1}"),
+    activate("activate, a later semantics version", "pinned", "{rev:PINNED_V3}"),
+    activate("activate, unknown", "api", "crev_nope"),
+    activate("activate, another Project's", "empty", "{rev:API_V1}"),
+    activate("activate as a member", "api", "{rev:API_V2}", "bob"),
+    activate("activate as an outsider", "api", "{rev:API_V2}", "carol"),
+    activate("activate as its service identity with contract.read", "api", "{rev:API_V2}", "ci"),
+    activate("activate as its agent", "api", "{rev:API_V2}", "agent"),
+    activate("activate in a frozen Organization", "app", "{rev:FROZEN_V2}", "alice", "frozen"),
+    activate("activate under passkey-verification enforce", "app", "{rev:GUARDED_V2}", "alice", "guarded"),
+    activate("activate under passkey-verification enforce, unknown", "app", "crev_nope", "alice", "guarded"),
+    activate("activate under passkey-verification report", "app", "{rev:REPORTED_V2}", "alice", "reported"),
+    activate("activate in an Organization being deleted", "app", "{rev:DELETING_V2}", "alice", "deleting"),
+    activate("activate in an unknown Project", "nope", "{rev:API_V2}"),
+    { ...activate("activate in assisted mode", "api", "{rev:API_V2}"), userAgent: ASSISTED_AGENT },
+    // Each diffs against what it replaces: one API_V2 to API_V1, the other API_V1 to itself.
+    { ...activate("activate, twice at once", "api", "{rev:API_V1}"), concurrent: 2 },
+    active("contract, after the activations", "api"),
+    active("contract, the first activation", "fresh"),
+  ];
 }
 
 async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; tokens: Record<string, string> }> {
@@ -173,6 +399,13 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   for (const slug of ["acme", "frozen", "guarded", "reported", "deleting", "gone"]) {
     orgs[slug] = (await call("POST", ORG, { name: slug[0]!.toUpperCase() + slug.slice(1), slug })).id;
   }
+  for (const [org, slug, contractAuthority] of PROJECTS) {
+    await call("POST", `${ORG}/${org}/projects`, { name: slug[0]!.toUpperCase() + slug.slice(1), slug, contractAuthority });
+  }
+  for (const [key, org, project, activate] of PUSHED) {
+    const rev = await call("POST", `${ORG}/${org}/projects/${project}/contract/revisions`, { contract: REVISIONS[key], provenance: { source: "build" } });
+    if (activate) await call("POST", `${ORG}/${org}/projects/${project}/contract/revisions/${rev.id}/activate`);
+  }
   const person = async (name: string, member: boolean) => {
     const id = newId("identity");
     await db.query("INSERT INTO identities (id, kind, name, created_at) VALUES ($1, 'human', $2, '2026-01-01T00:00:00.000Z')", [id, name]);
@@ -181,7 +414,10 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   };
   await person("bob", true);
   await person("carol", false);
-  tokens.ci = (await call("POST", `${ORG}/acme/identities`, { name: "deploy", kind: "service" })).credential;
+  const ci = await call("POST", `${ORG}/acme/identities`, { name: "deploy", kind: "service" });
+  tokens.ci = ci.credential;
+  const api = await call("GET", `${ORG}/acme/projects/api`);
+  await call("POST", `${ORG}/acme/grants`, { subjectIdentityId: ci.id, scope: { kind: "project", projectId: api.id }, actions: ["contract.read"] });
   const agent = await call("POST", `${ORG}/acme/identities`, { name: "helper", kind: "agent" });
   tokens.agent = (await issueCredential(ctx.db, { identityId: agent.id, kind: "agent-run" })).token;
   tokens.invalid = "vlt_cli_" + "x".repeat(40);
@@ -210,8 +446,7 @@ async function replay(f: Fixture) {
   const db = await loadRows(f.rows, TABLES);
   try {
     const ctx: AppCtx = { db, rootKek: Buffer.from(f.rootKek, "hex") };
-    const idOf = (slug: string) => f.rows.organizations!.find((o) => o.slug === slug)!.id as string;
-    return await record(ctx, buildApp(ctx), f, f.requests, (p) => p.replace("{orgId}", idOf("acme")).replace("{goneId}", idOf("gone")));
+    return await record(ctx, buildApp(ctx), f, f.requests, fillPath(f.rows));
   } finally {
     await db.close();
   }

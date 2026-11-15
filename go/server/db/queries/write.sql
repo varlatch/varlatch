@@ -44,3 +44,22 @@ FROM organization_freezes f
 JOIN identities a ON a.id = f.frozen_by
 LEFT JOIN identities b ON b.id = f.lifted_by
 WHERE f.organization_id = ? AND f.lifted_at IS NULL;
+
+-- Contract revisions (domain/contracts.ts, step 4.1b).
+
+-- name: ContractRevision :one
+SELECT id, project_id, content_hash, contract, provenance, created_by, created_at FROM contract_revisions
+WHERE id = ? AND project_id = ?;
+
+-- name: ContractRevisionByHash :one
+SELECT id, project_id, content_hash, contract, provenance, created_by, created_at FROM contract_revisions
+WHERE project_id = ? AND content_hash = ?;
+
+-- name: ActiveContractRevisionID :one
+SELECT active_contract_revision_id FROM projects WHERE id = ?;
+
+-- name: InsertContractRevision :exec
+INSERT INTO contract_revisions (id, project_id, content_hash, contract, provenance, created_by) VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: ActivateContractRevision :exec
+UPDATE projects SET active_contract_revision_id = ? WHERE id = ?;

@@ -29,7 +29,7 @@ import (
 
 // coreTables are the tables of core-v0.22.0.json (go-core-fixture.test.ts).
 var coreTables = []string{"installation", "identities", "user", "auth_user_links", "credentials", "organizations", "org_memberships",
-	"grants", "requirements", "security_controls", "organization_freezes", "organization_deletions"}
+	"grants", "requirements", "security_controls", "organization_freezes", "organization_deletions", "projects", "contract_revisions"}
 
 type server struct {
 	handler *httpserver.Server
@@ -69,9 +69,10 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 	return &server{handler: h, store: store, values: vs, rootKEK: rootKEK}
 }
 
-// The Organization operations give the TypeScript server's answers
-// (step 4.1a's part of the core fixture): every request, its audit events,
-// the Organizations and memberships it wrote, the report counts; every
+// The core fixture's operations give the TypeScript server's answers: the
+// Organization operations (step 4.1a) and the Contract operations (4.1b).
+// Every request, its audit events, the side rows it wrote (Organizations,
+// memberships, Projects, Contract revisions), the report counts; every
 // response valid against the OpenAPI document. Every Organization the
 // requests created has a KEK that opens with the installation's Root KEK.
 func TestTypeScriptFixture(t *testing.T) {
@@ -83,7 +84,7 @@ func TestTypeScriptFixture(t *testing.T) {
 		t.Fatalf("%d requests: the fixture is incomplete", len(f.Requests))
 	}
 	s := newServer(t, f)
-	paritytest.Replay(t, s.target(f), f)
+	paritytest.Replay(t, s.target(t, f), f)
 	known := map[string]bool{}
 	for _, o := range f.Rows["organizations"] {
 		known[o["id"].(string)] = true
@@ -112,7 +113,9 @@ func TestTypeScriptFixture(t *testing.T) {
 	}
 }
 
-func (s *server) target(f paritytest.Fixture) paritytest.Target {
+// fillPath is go-core-fixture.test.ts's: {orgId} and {goneId}, acme's
+// {project:SLUG}, and {rev:KEY}, the revision holding an item named KEY.
+func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 	idOf := func(slug string) string {
 		for _, o := range f.Rows["organizations"] {
 			if o["slug"] == slug {
@@ -121,10 +124,33 @@ func (s *server) target(f paritytest.Fixture) paritytest.Target {
 		}
 		return ""
 	}
-	paths := strings.NewReplacer("{orgId}", idOf("acme"), "{goneId}", idOf("gone"))
+	acme := idOf("acme")
+	pairs := []string{"{orgId}", acme, "{goneId}", idOf("gone")}
+	for _, p := range f.Rows["projects"] {
+		if p["organization_id"] == acme {
+			pairs = append(pairs, "{project:"+p["slug"].(string)+"}", p["id"].(string))
+		}
+	}
+	for _, r := range f.Rows["contract_revisions"] {
+		items, _ := r["contract"].(map[string]any)["items"].([]any)
+		for _, it := range items {
+			pairs = append(pairs, "{rev:"+it.(map[string]any)["name"].(string)+"}", r["id"].(string))
+		}
+	}
+	paths := strings.NewReplacer(pairs...)
+	return func(p string) string {
+		out := paths.Replace(p)
+		if strings.Contains(out, "{rev:") || strings.Contains(out, "{project:") {
+			t.Fatalf("%s: a placeholder the rows do not fill", p)
+		}
+		return out
+	}
+}
+
+func (s *server) target(t testing.TB, f paritytest.Fixture) paritytest.Target {
 	return paritytest.Target{
 		Handler: s.handler, Store: s.store, Settled: s.values.Settled,
-		Path: paths.Replace,
+		Path: fillPath(t, f),
 		// Responses only: some requests are outside the document on
 		// purpose, as the TypeScript fixture runs the unchecked app.
 		Check: func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder) {
@@ -159,7 +185,7 @@ func TestReplayNoticesUnintendedChanges(t *testing.T) {
 		`UPDATE organizations SET name = 'Tampered' WHERE slug = 'frozen'`,
 	} {
 		s := newServer(t, f)
-		target := s.target(f)
+		target := s.target(t, f)
 		real := target.Handler
 		target.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			real.ServeHTTP(w, r)

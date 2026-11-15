@@ -13,6 +13,83 @@ import (
 	"strings"
 )
 
+const activateContractRevision = `-- name: ActivateContractRevision :exec
+UPDATE projects SET active_contract_revision_id = ? WHERE id = ?
+`
+
+type ActivateContractRevisionParams struct {
+	ActiveContractRevisionID sql.NullString
+	ID                       string
+}
+
+func (q *Queries) ActivateContractRevision(ctx context.Context, arg ActivateContractRevisionParams) error {
+	_, err := q.db.ExecContext(ctx, activateContractRevision, arg.ActiveContractRevisionID, arg.ID)
+	return err
+}
+
+const activeContractRevisionID = `-- name: ActiveContractRevisionID :one
+SELECT active_contract_revision_id FROM projects WHERE id = ?
+`
+
+func (q *Queries) ActiveContractRevisionID(ctx context.Context, id string) (sql.NullString, error) {
+	row := q.db.QueryRowContext(ctx, activeContractRevisionID, id)
+	var active_contract_revision_id sql.NullString
+	err := row.Scan(&active_contract_revision_id)
+	return active_contract_revision_id, err
+}
+
+const contractRevision = `-- name: ContractRevision :one
+
+SELECT id, project_id, content_hash, contract, provenance, created_by, created_at FROM contract_revisions
+WHERE id = ? AND project_id = ?
+`
+
+type ContractRevisionParams struct {
+	ID        string
+	ProjectID string
+}
+
+// Contract revisions (domain/contracts.ts, step 4.1b).
+func (q *Queries) ContractRevision(ctx context.Context, arg ContractRevisionParams) (ContractRevision, error) {
+	row := q.db.QueryRowContext(ctx, contractRevision, arg.ID, arg.ProjectID)
+	var i ContractRevision
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentHash,
+		&i.Contract,
+		&i.Provenance,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const contractRevisionByHash = `-- name: ContractRevisionByHash :one
+SELECT id, project_id, content_hash, contract, provenance, created_by, created_at FROM contract_revisions
+WHERE project_id = ? AND content_hash = ?
+`
+
+type ContractRevisionByHashParams struct {
+	ProjectID   string
+	ContentHash string
+}
+
+func (q *Queries) ContractRevisionByHash(ctx context.Context, arg ContractRevisionByHashParams) (ContractRevision, error) {
+	row := q.db.QueryRowContext(ctx, contractRevisionByHash, arg.ProjectID, arg.ContentHash)
+	var i ContractRevision
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentHash,
+		&i.Contract,
+		&i.Provenance,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const currentFreeze = `-- name: CurrentFreeze :one
 SELECT f.id, f.frozen_at, f.frozen_by, a.name AS frozen_by_name, f.reason, f.lifted_at, f.lifted_by,
        b.name AS lifted_by_name, f.lift_method
@@ -72,6 +149,31 @@ func (q *Queries) IdempotencyClaim(ctx context.Context, arg IdempotencyClaimPara
 	var i IdempotencyClaimRow
 	err := row.Scan(&i.BodyHash, &i.Response)
 	return i, err
+}
+
+const insertContractRevision = `-- name: InsertContractRevision :exec
+INSERT INTO contract_revisions (id, project_id, content_hash, contract, provenance, created_by) VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type InsertContractRevisionParams struct {
+	ID          string
+	ProjectID   string
+	ContentHash string
+	Contract    string
+	Provenance  sql.NullString
+	CreatedBy   sql.NullString
+}
+
+func (q *Queries) InsertContractRevision(ctx context.Context, arg InsertContractRevisionParams) error {
+	_, err := q.db.ExecContext(ctx, insertContractRevision,
+		arg.ID,
+		arg.ProjectID,
+		arg.ContentHash,
+		arg.Contract,
+		arg.Provenance,
+		arg.CreatedBy,
+	)
+	return err
 }
 
 const insertIdempotencyClaim = `-- name: InsertIdempotencyClaim :exec

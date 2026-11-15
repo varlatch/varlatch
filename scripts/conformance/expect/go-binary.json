@@ -8,10 +8,6 @@
         "reason": "the Go server cannot serve the CLI and install scripts yet (ADR-0058 Decision 3)",
         "step": "ADR-0059 step 4"
       },
-      "activateContractRevision": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "addGroupMember": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -192,15 +188,7 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "getActiveContract": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "getAuditExport": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "getContractRevision": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -385,10 +373,6 @@
         "step": "ADR-0059 step 4"
       },
       "pauseSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "pushContractRevision": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
