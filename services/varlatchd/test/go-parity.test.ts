@@ -37,6 +37,8 @@ interface RouteCase {
   expect: "text" | "code" | "json" | "meta" | "dashboard";
   body?: string;
   code?: string;
+  /** The error's exact message, when the case names one (zod's issues). */
+  message?: string;
   text?: string;
 }
 const table = JSON.parse(
@@ -186,7 +188,10 @@ describe("routes, as raw request targets", () => {
     if (c.method === "HEAD") return;
     if (c.expect === "meta") expect(JSON.parse(body).apiMajor).toBe(1);
     else if (c.expect === "json") expect(JSON.parse(body).error).toBeUndefined();
-    else expect(JSON.parse(body).error.code).toBe(c.code);
+    else {
+      expect(JSON.parse(body).error.code).toBe(c.code);
+      if (c.message !== undefined) expect(JSON.parse(body).error.message).toBe(c.message);
+    }
   });
 });
 
