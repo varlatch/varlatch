@@ -86,13 +86,21 @@ func cstr(b []byte) string {
 	return string(b)
 }
 
-// Zones is a tz database directory and the zones read from it, cached by
-// name as a server session caches them.
+// Zones is a tz database directory and the zones read from its files,
+// cached by name as a server session caches them. Only zones read from a
+// file are cached, a finite set the host holds, and at most
+// maxCachedZones of them; a POSIX zone string, which any request may
+// name, is parsed each time (it is cheap, and its answer is the same).
 type Zones struct {
 	dir   string
 	mu    sync.Mutex
 	cache map[string]*state
 }
+
+// maxCachedZones bounds the cache: a tz database holds about 600 zones,
+// and a name may also be spelled with a leading ':'. Past it, a zone is
+// read from its file each time.
+var maxCachedZones = 2048
 
 // NewZones reads zones from dir.
 func NewZones(dir string) *Zones {
@@ -126,19 +134,23 @@ func (z *Zones) tzset(name string) *state {
 		return sp
 	}
 	sp = new(state)
-	if up == "GMT" {
+	switch {
+	case up == "GMT":
 		if !tzparse(up, sp, true) {
 			return nil
 		}
-	} else if !z.tzload(up, sp) {
+	case z.tzload(up, sp):
+		z.mu.Lock()
+		if len(z.cache) < maxCachedZones {
+			z.cache[up] = sp
+		}
+		z.mu.Unlock()
+	default:
 		*sp = state{}
 		if up[0] == ':' || !tzparse(up, sp, false) {
 			return nil
 		}
 	}
-	z.mu.Lock()
-	z.cache[up] = sp
-	z.mu.Unlock()
 	return sp
 }
 

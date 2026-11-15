@@ -5,6 +5,7 @@ package pgtime
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"strconv"
@@ -134,5 +135,42 @@ func TestZonesWithoutADatabase(t *testing.T) {
 	v, err := Parse("2026-01-02 xyz5", time.Now(), zones)
 	if err != nil || v.UnixMicro() != time.Date(2026, 1, 2, 5, 0, 0, 0, time.UTC).UnixMicro() {
 		t.Errorf("xyz5: %v %v", v.UnixMicro(), err)
+	}
+}
+
+func TestZoneCacheStaysBounded(t *testing.T) {
+	zones := NewZones("testdata/zoneinfo")
+	// POSIX zone strings, any number of them, are never cached.
+	n := 0
+	for h := 0; h < 168; h++ {
+		for m := 0; m < 60; m++ {
+			if zones.tzset(fmt.Sprintf("ABCD%d:%02d", h, m)) == nil {
+				t.Fatalf("ABCD%d:%02d not read", h, m)
+			}
+			n++
+		}
+	}
+	if len(zones.cache) != 0 {
+		t.Errorf("%d POSIX names left %d cached zones", n, len(zones.cache))
+	}
+	// Zones read from files are, up to the cap; past it they still read.
+	defer func(old int) { maxCachedZones = old }(maxCachedZones)
+	maxCachedZones = 2
+	for _, name := range []string{"europe/brussels", "EUROPE/BRUSSELS", "america/new_york", "asia/kolkata", "pacific/apia"} {
+		if zones.tzset(name) == nil {
+			t.Fatalf("%s not read", name)
+		}
+	}
+	if len(zones.cache) != 2 {
+		t.Errorf("%d cached zones, want the cap of 2", len(zones.cache))
+	}
+	// The cursor's own path: a distinct POSIX zone per request caches nothing.
+	for i := 0; i < 500; i++ {
+		if _, err := Parse(fmt.Sprintf("2026-01-02 xyz%d:%02d", i%168, i%60), time.Now(), zones); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(zones.cache) != 2 {
+		t.Errorf("parsing POSIX zones grew the cache to %d", len(zones.cache))
 	}
 }

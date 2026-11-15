@@ -542,6 +542,11 @@ The server's packages:
   `testdata/gen-vectors.py`) are PostgreSQL 17.6's answers, instant and
   SQLSTATE, read with that server's tz files (`testdata/zoneinfo`);
   `go-timestamptz-vectors.test.ts` checks the same file against PGlite.
+  Zones read from the host's files are cached (at most 2,048); POSIX zone
+  strings, which any cursor may name, are parsed each time. Leap-second
+  corrections (`leapcorr`) apply only to zones from a `right/` directory,
+  which the postgres:17.6 image and the vectors do not have; that path is
+  ported but not covered by the corpus.
   Ported code is under the PostgreSQL License as well
   (`LICENSE-PostgreSQL`, `scripts/third-party-code.json`).
 - `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
