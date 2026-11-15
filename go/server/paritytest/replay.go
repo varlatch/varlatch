@@ -388,6 +388,22 @@ type Target struct {
 	// rows before any normalization, with when it was sent and answered:
 	// for checks the normalized comparison cannot make (a new time's value).
 	Inspect func(t testing.TB, c Recorded, raw Raw)
+	// Now is the clock the server runs on, which Raw's Sent and Done read
+	// too (HourClock); nil is time.Now.
+	Now func() time.Time
+}
+
+// HourClock is the clock a replay runs its server on: the real clock moved
+// back to the start of the hour the replay begins in. Report counts are
+// kept per hour (security_control_counters.bucket_hour), and the
+// recording's requests counted within one hour; on this clock a replay,
+// shorter than an hour, counts within one too, whenever it runs.
+func HourClock() func() time.Time { return hourClock(time.Now) }
+
+func hourClock(real func() time.Time) func() time.Time {
+	start := real()
+	offset := start.Sub(start.Truncate(time.Hour))
+	return func() time.Time { return real().Add(-offset) }
 }
 
 // Raw is what one request of a replay produced, before normalization.
@@ -604,6 +620,10 @@ var keptHeaders = []string{"Cache-Control", "Retry-After", "Content-Type", "Varl
 // TypeScript server's answers.
 func Replay(t testing.TB, target Target, f Fixture) {
 	t.Helper()
+	now := target.Now
+	if now == nil {
+		now = time.Now
+	}
 	norm := NewNormalizer(f.Rows)
 	for index, c := range f.Requests {
 		name := c.ID
@@ -638,7 +658,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		}
 		n := max(c.Concurrent, 1)
 		recs := make([]*httptest.ResponseRecorder, n)
-		sent := time.Now()
+		sent := now()
 		var wg sync.WaitGroup
 		for i := range n {
 			req := httptest.NewRequest(c.Method, path, bytes.NewReader(body))
@@ -665,7 +685,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			}()
 		}
 		wg.Wait()
-		done := time.Now()
+		done := now()
 		if target.Settled != nil {
 			target.Settled()
 		}
