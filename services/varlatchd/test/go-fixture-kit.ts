@@ -356,14 +356,18 @@ const answerOrder = (a: Answer, b: Answer) => (a.status - b.status) || (a.body <
  */
 export const WINDOW_BATCH = 500;
 
+type App = { request: (path: string, init: RequestInit) => Response | Promise<Response> };
+
 /**
  * Runs the table against a database, recording each answer and what it
- * wrote. `newApp` makes the app (again every WINDOW_BATCH requests);
- * `path` fills a request's path (ids of the file's own rows).
+ * wrote. `app` is the app, or a function that makes one: a function is
+ * called again every WINDOW_BATCH requests (a fresh request window), and a
+ * table longer than that needs one. `path` fills a request's path (ids of
+ * the file's own rows).
  */
 export async function record(
   ctx: AppCtx,
-  newApp: () => { request: (path: string, init: RequestInit) => Response | Promise<Response> },
+  app: App | (() => App),
   f: Pick<Fixture, "rows" | "tokens" | "sideTables">,
   cases: RequestCase[],
   /** Fills a request's placeholders, in its path and its body. */
@@ -378,9 +382,13 @@ export async function record(
   const norm = new Normalizer(f.rows);
   const out: Recorded[] = [];
   const dump = async (t: SideTable) => (await exportRows(ctx.db, [{ name: t.name, orderBy: t.key.map((k) => `"${k}"`).join(", ") }]))[t.name]!;
-  let app = newApp();
+  const newApp = typeof app === "function" ? app : null;
+  if (!newApp && cases.length > WINDOW_BATCH) {
+    throw new Error(`record: ${cases.length} requests pass the request window: pass a function that makes the app, so it is made afresh every ${WINDOW_BATCH}`);
+  }
+  let current = newApp ? newApp() : (app as App);
   for (const [index, c] of cases.entries()) {
-    if (index > 0 && index % WINDOW_BATCH === 0) app = newApp();
+    if (newApp && index > 0 && index % WINDOW_BATCH === 0) current = newApp();
     const before = Number(((await ctx.db.query("SELECT max(event_order) AS n FROM audit_events")).rows[0] as { n: unknown }).n ?? 0);
     const sideBefore = new Map<string, Row[]>();
     for (const t of f.sideTables) sideBefore.set(t.name, await dump(t));
@@ -392,7 +400,7 @@ export async function record(
     if (c.rawBody !== undefined) init.body = path(c.rawBody);
     else if ("body" in c) init.body = path(JSON.stringify(c.body));
     const sent = Date.now();
-    const responses = await Promise.all(Array.from({ length: c.concurrent ?? 1 }, () => app.request(path(c.path), init)));
+    const responses = await Promise.all(Array.from({ length: c.concurrent ?? 1 }, () => current.request(path(c.path), init)));
     const done = Date.now();
     const raw = await Promise.all(responses.map(async (res) => ({ res, id: res.headers.get("X-Request-Id") ?? "", text: await res.text() })));
     // Sorted before normalizing (a request id differs per answer), so the
