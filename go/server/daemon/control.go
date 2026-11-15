@@ -46,6 +46,10 @@ const (
 
 var errLocked = errors.New("the data directory's lock is held")
 
+// maxSocketPath is the longest path a Unix socket address holds on Linux
+// (sun_path is 108 bytes, with its terminating NUL).
+const maxSocketPath = 107
+
 // controlTimeout bounds one command sent to the socket.
 var controlTimeout = 5 * time.Minute
 
@@ -81,6 +85,9 @@ type controlServer struct {
 // lock, so a socket file already there is a dead daemon's, and goes.
 func listenControl(env *hostEnv, log *slog.Logger) (*controlServer, error) {
 	path := filepath.Join(env.cfg.DataDir, ControlSocket)
+	if len(path) > maxSocketPath {
+		return nil, fmt.Errorf("the socket's path %s is longer than a Unix socket's %d bytes: give varlatchd a data directory with a shorter path", path, maxSocketPath)
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}

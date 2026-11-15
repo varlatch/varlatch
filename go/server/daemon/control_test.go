@@ -168,3 +168,19 @@ func TestControlPeers(t *testing.T) {
 		t.Errorf("peerUID %d %v", uid, ok)
 	}
 }
+
+// A data directory whose socket path a Unix socket cannot hold: serve
+// refuses to start with a message that says so.
+func TestServeRefusesASocketPathTooLong(t *testing.T) {
+	in := newInstall(t, "")
+	long := filepath.Join(in.dir, strings.Repeat("d", 120))
+	if err := os.Mkdir(long, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	in.data = long
+	in.write(t, "")
+	var stderr syncBuffer
+	if code := Serve(Options{ConfigPath: in.conf, Stderr: &stderr}); code != ExitFailure || !strings.Contains(stderr.String(), "shorter path") {
+		t.Errorf("%d %s", code, stderr.String())
+	}
+}
