@@ -92,7 +92,7 @@ const SIDE: SideTable[] = [
   { name: "projects", key: ["id"], sortBy: ["organization_id", "slug"], volatile: ["created_at"] },
   { name: "contract_revisions", key: ["id"], sortBy: ["project_id", "content_hash"], volatile: ["created_at"] },
   { name: "environments", key: ["id"], sortBy: ["project_id", "name", "deleted_at"], volatile: ["created_at", "deleted_at"] },
-  { name: "env_values", key: ["id"], sortBy: ["environment_id", "item_name"], volatile: ["created_at", "deleted_at"] },
+  { name: "env_values", key: ["id"], sortBy: ["environment_id", "item_name"], volatile: ["created_at", "deleted_at", "rotation_deadline", "rotation_started_at"] },
   { name: "capabilities", key: ["id"], sortBy: ["environment_id", "run_id"], volatile: ["revoked_at"] },
   { name: "value_versions", key: ["id"], sortBy: ["value_id", "previous_version_id"], volatile: ["payload", "wrapped_dek", "created_at"] },
   { name: "idempotency_keys", key: ["identity_id", "endpoint", "idempotency_key"], sortBy: ["identity_id", "endpoint", "idempotency_key"], volatile: ["created_at"] },
@@ -195,6 +195,7 @@ function requestTable(): RequestCase[] {
     ...projectRequests(),
     ...valueRequests(),
     ...checkRequests(),
+    ...rotationRequests(),
   ]);
 }
 
@@ -1139,6 +1140,7 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   // below would refuse them.
   await buildEnvironments(db, call, alice);
   await buildValues(call);
+  await buildRotations(db, call);
   const person = async (name: string, member: boolean) => {
     const id = newId("identity");
     await db.query("INSERT INTO identities (id, kind, name, created_at) VALUES ($1, 'human', $2, '2026-01-01T00:00:00.000Z')", [id, name]);
@@ -1175,12 +1177,147 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   return { ctx, tokens };
 }
 
+// ---- Rotation (step 4.2)
+
+/**
+ * acme/rotate, for dual-phase rotation (ADR-0027): development and
+ * production, a Contract naming HINTED (a Secret with a 3600-second grace
+ * hint, ADR-0053) and PLAINV (not sensitive), and values in development.
+ * Rotations as build() leaves them: LIVE in flight (its deadline fixed in
+ * 2099), PAST and PASTC past their window (still pinned), DONE completed,
+ * SUPERSEDED begun and then written over; GONE deleted.
+ */
+async function buildRotations(db: AppCtx["db"], call: Call) {
+  const P = `${ORG}/acme/projects/rotate`;
+  await call("POST", `${ORG}/acme/projects`, { name: "Rotate", slug: "rotate", contractAuthority: "git" });
+  for (const [name, tier] of [["development", "development"], ["production", "production"]] as const) {
+    await call("POST", `${P}/environments`, { name, tier });
+  }
+  const rev = await call("POST", `${P}/contract/revisions`, {
+    contract: doc([
+      item("HINTED", { sensitive: true, required: { kind: "never" }, rotationGraceSeconds: 3600 }),
+      item("PLAINV", { required: { kind: "never" } }),
+    ]),
+  });
+  await call("POST", `${P}/contract/revisions/${rev.id}/activate`);
+  const V = (env: string, name: string) => `${P}/environments/${env}/values/${name}`;
+  for (const name of ["LIVE", "PAST", "PASTC", "DONE", "SUPERSEDED", "HINTED", "GRACED", "DEFAULTED", "PLAINV", "MAXED", "EXTRA", "GONE", "BOBS", "RACE"]) {
+    await call("PUT", V("development", name), { value: `${name.toLowerCase()}-1` });
+  }
+  await call("PUT", V("production", "PRODV"), { value: "prodv-1" });
+  // In the Organization at passkey-verification report, an item no other
+  // request writes.
+  await call("PUT", `${ORG}/reported/projects/app/environments/development/values/ROTME`, { value: "rotme-1" });
+  await call("DELETE", V("development", "GONE"));
+  for (const name of ["LIVE", "PAST", "PASTC", "DONE", "SUPERSEDED"]) {
+    await call("POST", `${V("development", name)}/rotations`, { value: `${name.toLowerCase()}-2` });
+  }
+  await call("POST", `${V("development", "DONE")}/rotations/complete`);
+  await call("PUT", V("development", "SUPERSEDED"), { value: "superseded-3" });
+  // Fixed deadlines, so the file holds whatever day it is replayed: one in
+  // flight, two past their window.
+  const rows = `SELECT v.id FROM env_values v JOIN environments e ON e.id = v.environment_id JOIN projects p ON p.id = e.project_id
+    WHERE p.slug = 'rotate' AND e.name = 'development' AND v.item_name = $1`;
+  await db.query(`UPDATE env_values SET rotation_deadline = '2099-06-01T00:00:00.000Z' WHERE id = (${rows})`, ["LIVE"]);
+  for (const name of ["PAST", "PASTC"]) {
+    await db.query(`UPDATE env_values SET rotation_started_at = '2019-12-31T00:00:00.000Z', rotation_deadline = '2020-01-01T00:00:00.000Z' WHERE id = (${rows})`, [name]);
+  }
+}
+
+function rotationRequests(): Omit<RequestCase, "id">[] {
+  const E = (env: string, project = "rotate", org = "acme") => `${ORG}/${org}/projects/${project}/environments/${env}`;
+  const begin = (name: string, env: string, itemName: string, body: unknown, credential = "alice", project = "rotate", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${E(env, project, org)}/values/${itemName}/rotations`, credential, body,
+  });
+  const complete = (name: string, env: string, itemName: string, credential = "alice", project = "rotate", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${E(env, project, org)}/values/${itemName}/rotations/complete`, credential,
+  });
+  const read = (name: string, masked?: string[]): Omit<RequestCase, "id"> => ({
+    name, method: "GET", path: `${E("development")}/effective-configuration?include=values`, credential: "alice", ...(masked ? { masked } : {}),
+  });
+  const disclose = (name: string, items: string[], masked?: string[]): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${E("development")}/disclosures`, credential: "alice", body: { items }, ...(masked ? { masked } : {}),
+  });
+  const all = ["LIVE", "PAST", "PASTC", "DONE", "SUPERSEDED", "HINTED", "GRACED", "DEFAULTED", "PLAINV", "MAXED"];
+  return [
+    // As built: one in flight, two past their window, one completed, one superseded.
+    read("rotations as built"),
+    disclose("disclose rotations as built", all),
+    // beginRotation.
+    begin("begin a rotation while one is in flight", "development", "LIVE", { value: "live-3" }),
+    begin("begin a rotation past its window", "development", "PAST", { value: "past-3" }),
+    begin("begin a rotation, its expected version", "development", "DONE", { value: "done-3", expectedVersionId: "{ver:rotate/development/DONE}" }),
+    begin("begin a rotation, a stale expected version", "development", "SUPERSEDED", { value: "x", expectedVersionId: "ver_aaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+    begin("begin a rotation, the Contract's grace", "development", "HINTED", { value: "hinted-2" }),
+    begin("begin a rotation, its own grace", "development", "GRACED", { value: "graced-2", graceSeconds: 120 }),
+    begin("begin a rotation, the default grace", "development", "DEFAULTED", { value: "defaulted-2" }),
+    begin("begin a rotation of a non-sensitive item", "development", "PLAINV", { value: "plainv-2" }),
+    begin("begin a rotation, the longest grace", "development", "MAXED", { value: "maxed-2", graceSeconds: 2_592_000 }),
+    begin("begin a rotation, extra members", "development", "EXTRA", { value: "extra-2", note: "x", retiringVersionId: "ver_mine" }),
+    begin("begin a rotation, a grace of 0", "development", "RACE", { value: "x", graceSeconds: 0 }),
+    begin("begin a rotation, a grace beyond 30 days", "development", "RACE", { value: "x", graceSeconds: 2_592_001 }),
+    begin("begin a rotation, a fractional grace", "development", "RACE", { value: "x", graceSeconds: 1.5 }),
+    begin("begin a rotation, a grace as a string", "development", "RACE", { value: "x", graceSeconds: "60" }),
+    begin("begin a rotation, a null grace", "development", "RACE", { value: "x", graceSeconds: null }),
+    begin("begin a rotation, no value", "development", "RACE", {}),
+    begin("begin a rotation, a number", "development", "RACE", { value: 7 }),
+    begin("begin a rotation, a null expected version", "development", "RACE", { value: "x", expectedVersionId: null }),
+    begin("begin a rotation, an array", "development", "RACE", ["x"]),
+    { name: "begin a rotation, not JSON", method: "POST", path: `${E("development")}/values/RACE/rotations`, credential: "alice", rawBody: "{" },
+    begin("begin a rotation of an item never set", "development", "NEVER", { value: "x" }),
+    begin("begin a rotation of a deleted value", "development", "GONE", { value: "x" }),
+    begin("begin a rotation, an invalid name", "development", "lower", { value: "x" }),
+    begin("begin a rotation, a reserved name", "development", "VARLATCH_RUN_CONTEXT", { value: "x" }),
+    begin("begin a rotation in a derived environment", "development%2Falice", "LOG_LEVEL", { value: "debug" }, "alice", "api"),
+    begin("begin a rotation in an expired environment", "production%2Fexpired", "ANYTHING", { value: "x" }, "alice", "api"),
+    begin("begin a rotation in a removed environment", "development%2Fpr-1", "ANYTHING", { value: "x" }, "alice", "api"),
+    begin("begin a rotation in an unknown environment", "nope", "LIVE", { value: "x" }),
+    begin("begin a rotation as a member", "development", "BOBS", { value: "bobs-2" }, "bob"),
+    begin("begin a rotation in production as a member", "production", "PRODV", { value: "x" }, "bob"),
+    begin("begin a rotation as an outsider", "development", "LIVE", { value: "x" }, "carol"),
+    begin("begin a rotation as an outsider, an invalid body", "development", "LIVE", {}, "carol"),
+    begin("begin a rotation as its service identity", "development", "API_URL", { value: "x" }, "ci", "api"),
+    begin("begin a rotation as its agent", "development", "LIVE", { value: "x" }, "agent"),
+    begin("begin a rotation without a credential", "development", "LIVE", { value: "x" }, "none"),
+    begin("begin a rotation in a frozen Organization", "development", "ITEM", { value: "x" }, "alice", "app", "frozen"),
+    begin("begin a rotation under passkey-verification enforce", "development", "ITEM", { value: "x" }, "alice", "app", "guarded"),
+    begin("begin a rotation under passkey-verification report", "development", "ROTME", { value: "rotme-2" }, "alice", "app", "reported"),
+    begin("begin a rotation in an Organization being deleted", "development", "ITEM", { value: "x" }, "alice", "app", "deleting"),
+    { ...begin("begin a rotation twice at once", "development", "RACE", { value: "race-2" }), concurrent: 2 },
+    // completeRotation.
+    complete("complete a rotation in flight", "development", "LIVE"),
+    complete("complete a rotation again", "development", "LIVE"),
+    complete("complete a rotation past its window", "development", "PASTC"),
+    { ...complete("complete a rotation, a body is ignored", "development", "DONE"), body: { ignored: true } },
+    complete("complete a rotation of an item never set", "development", "NEVER"),
+    complete("complete a rotation of a deleted value", "development", "GONE"),
+    complete("complete a rotation, an invalid name", "development", "lower"),
+    complete("complete a rotation in an expired environment", "production%2Fexpired", "ANYTHING", "alice", "api"),
+    complete("complete a rotation in an unknown environment", "nope", "LIVE"),
+    complete("complete a rotation as a member", "development", "BOBS", "bob"),
+    complete("complete a rotation as an outsider", "development", "PAST", "carol"),
+    complete("complete a rotation as its agent", "development", "PAST", "agent"),
+    complete("complete a rotation without a credential", "development", "PAST", "none"),
+    complete("complete a rotation in a frozen Organization", "development", "ITEM", "alice", "app", "frozen"),
+    complete("complete a rotation under passkey-verification enforce", "development", "ITEM", "alice", "app", "guarded"),
+    complete("complete a rotation under passkey-verification report", "development", "ROTME", "alice", "app", "reported"),
+    complete("complete a rotation in an Organization being deleted", "development", "ITEM", "alice", "app", "deleting"),
+    // A plain write or a deletion supersedes a rotation in flight.
+    { name: "a plain write over a rotation in flight", method: "PUT", path: `${E("development")}/values/PAST`, credential: "alice", body: { value: "past-4" } },
+    { name: "a deletion of a value in rotation", method: "DELETE", path: `${E("development")}/values/PLAINV`, credential: "alice" },
+    begin("begin a rotation of the value just deleted", "development", "PLAINV", { value: "x" }),
+    // What the requests left, through the read path.
+    read("rotations after the requests", ["stateDigest"]),
+    disclose("disclose rotations after the requests", all, ["stateDigest", "stateDigests"]),
+  ];
+}
+
 /** The file's answers, recorded on its own rows. */
 async function replay(f: Fixture) {
   const db = await loadRows(f.rows, TABLES);
   try {
     const ctx: AppCtx = { db, rootKek: Buffer.from(f.rootKek, "hex") };
-    return await record(ctx, buildApp(ctx), f, f.requests, fillPath(f.rows));
+    return await record(ctx, () => buildApp(ctx), f, f.requests, fillPath(f.rows));
   } finally {
     await db.close();
   }

@@ -35,10 +35,31 @@ var coreTables = []string{"installation", "identities", "user", "auth_user_links
 	"environments", "env_values", "capabilities", "value_versions", "idempotency_keys"}
 
 type server struct {
+	opts    httpserver.Options
+	mu      sync.Mutex
 	handler *httpserver.Server
 	store   *storage.DB
 	values  *values.Service
 	rootKEK []byte
+}
+
+// current is the server answering now.
+func (s *server) current() *httpserver.Server {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.handler
+}
+
+// restart starts a fresh server on the same database and services: a new
+// request window (paritytest.WindowBatch).
+func (s *server) restart(t testing.TB) {
+	h, err := httpserver.New(s.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handler = h
 }
 
 func newServer(t *testing.T, f paritytest.Fixture) *server {
@@ -57,13 +78,14 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	vs := values.New(store, rootKEK, values.Options{Log: log})
-	h, err := httpserver.New(httpserver.Options{
+	opts := httpserver.Options{
 		// The TypeScript server's SERVER_VERSION, which the installation
 		// release read reports.
 		Version: f.Version(), Backend: daemon.NewBackend(store, rootKEK), Log: log,
 		Auth: auth.New(store, auth.Options{Log: log, RootKEK: rootKEK}), Values: vs,
 		Writer: &write.Writer{Store: store, Gates: write.NewGates()}, RootKEK: rootKEK,
-	})
+	}
+	h, err := httpserver.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +93,7 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 		vs.Settled()
 		_ = store.Close()
 	})
-	return &server{handler: h, store: store, values: vs, rootKEK: rootKEK}
+	return &server{opts: opts, handler: h, store: store, values: vs, rootKEK: rootKEK}
 }
 
 // The core fixture's operations give the TypeScript server's answers: the
@@ -135,6 +157,36 @@ func replayCoreFile(t *testing.T, name string) {
 		t.Errorf("%d Organizations created, the fixture %d", created, want)
 	}
 	checkWrittenValues(t, s, f)
+	checkRotationWindows(t, s)
+}
+
+// checkRotationWindows checks the grace each rotation the requests began in
+// acme/rotate was given, which the fixture holds only as {time}: the
+// Contract's hint (HINTED, 3600 s), the request's own (GRACED, 120 s), the
+// default (DEFAULTED, a day) and the longest (MAXED, 30 days). The deadline
+// is the start's millisecond plus the grace (new Date(Date.now() + grace *
+// 1000)).
+func checkRotationWindows(t *testing.T, s *server) {
+	t.Helper()
+	want := map[string]int64{"HINTED": 3600, "GRACED": 120, "DEFAULTED": 86_400, "MAXED": 2_592_000}
+	rows := paritytest.Rows(t, s.store, `SELECT v.item_name, v.rotation_deadline, v.rotation_started_at FROM env_values v
+		JOIN environments e ON e.id = v.environment_id JOIN projects p ON p.id = e.project_id
+		WHERE p.slug = 'rotate' AND e.name = 'development' AND v.rotation_deadline IS NOT NULL`)
+	seen := 0
+	for _, r := range rows {
+		grace, ok := want[r["item_name"].(string)]
+		if !ok {
+			continue
+		}
+		seen++
+		deadline, started := r["rotation_deadline"].(int64), r["rotation_started_at"].(int64)
+		if deadline != (started/1000+grace*1000)*1000 {
+			t.Errorf("%s: deadline %d, started %d: not a grace of %d s", r["item_name"], deadline, started, grace)
+		}
+	}
+	if seen != len(want) {
+		t.Errorf("%d of %d rotations in flight in acme/rotate", seen, len(want))
+	}
 }
 
 // checkWrittenValues opens every value version the requests wrote with
@@ -285,7 +337,8 @@ func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 
 func (s *server) target(t testing.TB, f paritytest.Fixture) paritytest.Target {
 	return paritytest.Target{
-		Handler: s.handler, Store: s.store, Settled: s.values.Settled,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.current().ServeHTTP(w, r) }),
+		Store:   s.store, Settled: s.values.Settled, Restart: func() { s.restart(t) },
 		Path: fillPath(t, f),
 		// Responses only: some requests are outside the document on
 		// purpose, as the TypeScript fixture runs the unchecked app.

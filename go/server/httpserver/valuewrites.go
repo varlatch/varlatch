@@ -25,23 +25,27 @@ import (
 // withIdempotency.
 
 const (
-	setValuePattern       = "PUT /v1/organizations/{org}/projects/{project}/environments/{environment}/values/{item}"
-	deleteValuePattern    = "DELETE /v1/organizations/{org}/projects/{project}/environments/{environment}/values/{item}"
-	applyChangeSetPattern = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/changes"
+	setValuePattern         = "PUT /v1/organizations/{org}/projects/{project}/environments/{environment}/values/{item}"
+	deleteValuePattern      = "DELETE /v1/organizations/{org}/projects/{project}/environments/{environment}/values/{item}"
+	applyChangeSetPattern   = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/changes"
+	beginRotationPattern    = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/values/{item}/rotations"
+	completeRotationPattern = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/values/{item}/rotations/complete"
 
 	valueRoute   = "/v1/organizations/:org/projects/:project/environments/:environment/values/:item"
 	changesRoute = "/v1/organizations/:org/projects/:project/environments/:environment/changes"
 )
 
 func init() {
-	for _, p := range []string{setValuePattern, applyChangeSetPattern} {
+	for _, p := range []string{setValuePattern, applyChangeSetPattern, beginRotationPattern} {
 		readsItself[p] = true
 	}
 }
 
-func (r reply) VisitSetValueResponse(w http.ResponseWriter) error       { return r.visit(w) }
-func (r reply) VisitDeleteValueResponse(w http.ResponseWriter) error    { return r.visit(w) }
-func (r reply) VisitApplyChangeSetResponse(w http.ResponseWriter) error { return r.visit(w) }
+func (r reply) VisitSetValueResponse(w http.ResponseWriter) error         { return r.visit(w) }
+func (r reply) VisitDeleteValueResponse(w http.ResponseWriter) error      { return r.visit(w) }
+func (r reply) VisitApplyChangeSetResponse(w http.ResponseWriter) error   { return r.visit(w) }
+func (r reply) VisitBeginRotationResponse(w http.ResponseWriter) error    { return r.visit(w) }
+func (r reply) VisitCompleteRotationResponse(w http.ResponseWriter) error { return r.visit(w) }
 
 // writeTarget enters the environment and authorizes config.value.write on
 // it.
@@ -218,4 +222,56 @@ func parseChanges(body any) ([]values.Change, any, error) {
 		return nil, nil, fail(issues)
 	}
 	return out, jsvalue.Object{{Key: "changes", Value: parsed}}, nil
+}
+
+// BeginRotation is POST …/values/{item}/rotations (ADR-0027): the body
+// z.object({ value: z.string(), expectedVersionId: z.string().optional(),
+// graceSeconds: z.number().int().min(1).max(2_592_000).optional() }),
+// read after the authorization; 201. No Idempotency-Key.
+func (o *operations) BeginRotation(ctx context.Context, _ api.BeginRotationRequestObject) (api.BeginRotationResponseObject, error) {
+	p, t, err := o.writeTarget(ctx, valueRoute+"/rotations")
+	if err != nil {
+		return nil, err
+	}
+	body, err := jsonBody(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := zodIssues([]bodyField{
+		{name: "value", kind: kindString, required: true, min: 0, max: noLimit},
+		{name: "expectedVersionId", kind: kindString, min: 0, max: noLimit},
+		{name: "graceSeconds", kind: kindInt, min: 1, max: 2_592_000},
+	}, body); err != nil {
+		return nil, err
+	}
+	obj := body.(jsvalue.Object)
+	value, _ := obj.Get("value")
+	in := values.RotationInput{Value: value.(string)}
+	if v, ok := obj.Get("expectedVersionId"); ok {
+		s := v.(string)
+		in.ExpectedVersionID = &s
+	}
+	if v, ok := obj.Get("graceSeconds"); ok {
+		n := int64(v.(float64))
+		in.GraceSeconds = &n
+	}
+	answer, reports, err := values.BeginRotation(ctx, o.s.opts.Writer, o.s.opts.RootKEK, p.p, t, tryDecodeURIComponent(p.segs[8]), in, o.s.opts.Now)
+	if err != nil {
+		return nil, p.refused(ctx, err)
+	}
+	return p.written(ctx, write.Response{Status: http.StatusCreated, Payload: answer}, reports)
+}
+
+// CompleteRotation is POST …/values/{item}/rotations/complete: no body
+// read; 200.
+func (o *operations) CompleteRotation(ctx context.Context, _ api.CompleteRotationRequestObject) (api.CompleteRotationResponseObject, error) {
+	p, t, err := o.writeTarget(ctx, valueRoute+"/rotations/complete")
+	if err != nil {
+		return nil, err
+	}
+	answer, reports, err := values.CompleteRotation(ctx, o.s.opts.Writer, p.p, t, tryDecodeURIComponent(p.segs[8]), o.s.opts.Now)
+	if err != nil {
+		return nil, p.refused(ctx, err)
+	}
+	return p.written(ctx, write.Response{Status: http.StatusOK, Payload: answer}, reports)
 }

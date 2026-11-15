@@ -381,7 +381,16 @@ type Target struct {
 	Path func(string) string
 	// Check, when set, sees every exchange (the OpenAPI check).
 	Check func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder)
+	// Restart, when set, starts the server afresh on the same database
+	// before every WindowBatch-th request, as the kit does.
+	Restart func()
 }
+
+// WindowBatch is how many requests each server of a replay answers (the
+// kit's WINDOW_BATCH): both sides start a fresh one before every 500th
+// request, so no request meets the request window (600 per minute per
+// client), however long the fixture grows.
+const WindowBatch = 500
 
 // AuditColumns are the audit event columns a fixture records.
 var AuditColumns = []string{"event_type", "actor_identity_id", "credential_id", "organization_id", "action", "resource", "decision",
@@ -578,8 +587,11 @@ var keptHeaders = []string{"Cache-Control", "Retry-After", "Content-Type", "Varl
 func Replay(t testing.TB, target Target, f Fixture) {
 	t.Helper()
 	norm := NewNormalizer(f.Rows)
-	for _, c := range f.Requests {
+	for index, c := range f.Requests {
 		name := c.ID
+		if index > 0 && index%WindowBatch == 0 && target.Restart != nil {
+			target.Restart()
+		}
 		var before sql.NullInt64
 		if err := target.Store.Reader().QueryRow("SELECT max(event_order) FROM audit_events").Scan(&before); err != nil {
 			t.Fatal(err)

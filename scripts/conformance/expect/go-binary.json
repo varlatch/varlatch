@@ -28,10 +28,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "beginRotation": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "cancelOrganizationDeletion": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -53,10 +49,6 @@
         "step": "ADR-0059 step 4"
       },
       "completeGitHubAppRegistration": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "completeRotation": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

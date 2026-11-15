@@ -337,12 +337,21 @@ export function mask(text: string, members: string[] | undefined): string {
 const answerOrder = (a: Answer, b: Answer) => (a.status - b.status) || (a.body < b.body ? -1 : a.body > b.body ? 1 : 0);
 
 /**
+ * How many requests each app of a recording answers: a fresh app (a fresh
+ * request window) before every 500th, so no request meets the window (600
+ * per minute per client), however long a fixture grows. The Go replay
+ * restarts its server at the same requests (paritytest.WindowBatch).
+ */
+export const WINDOW_BATCH = 500;
+
+/**
  * Runs the table against a database, recording each answer and what it
- * wrote. `path` fills a request's path (ids of the file's own rows).
+ * wrote. `newApp` makes the app (again every WINDOW_BATCH requests);
+ * `path` fills a request's path (ids of the file's own rows).
  */
 export async function record(
   ctx: AppCtx,
-  app: { request: (path: string, init: RequestInit) => Response | Promise<Response> },
+  newApp: () => { request: (path: string, init: RequestInit) => Response | Promise<Response> },
   f: Pick<Fixture, "rows" | "tokens" | "sideTables">,
   cases: RequestCase[],
   /** Fills a request's placeholders, in its path and its body. */
@@ -351,7 +360,9 @@ export async function record(
   const norm = new Normalizer(f.rows);
   const out: Recorded[] = [];
   const dump = async (t: SideTable) => (await exportRows(ctx.db, [{ name: t.name, orderBy: t.key.map((k) => `"${k}"`).join(", ") }]))[t.name]!;
-  for (const c of cases) {
+  let app = newApp();
+  for (const [index, c] of cases.entries()) {
+    if (index > 0 && index % WINDOW_BATCH === 0) app = newApp();
     const before = Number(((await ctx.db.query("SELECT max(event_order) AS n FROM audit_events")).rows[0] as { n: unknown }).n ?? 0);
     const sideBefore = new Map<string, Row[]>();
     for (const t of f.sideTables) sideBefore.set(t.name, await dump(t));
