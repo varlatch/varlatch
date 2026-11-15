@@ -41,6 +41,8 @@
  *     fills with a new time or envelope must be listed;
  *   - the request id becomes `{requestId}`.
  */
+import { createHash } from "node:crypto";
+import { canonicalJson } from "@varlatch/contract";
 import { expect } from "vitest";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { accessCountsSettled } from "../src/domain/securityreport.js";
@@ -85,8 +87,8 @@ export interface RequestCase {
   /** Sent as they are (an Idempotency-Key). */
   headers?: Record<string, string>;
   /**
-   * Members of the answer's body masked as "{masked}", wherever they
-   * occur: a digest over rows a request made, which cannot repeat (the
+   * Members of the answer's body (a string, or a flat object) masked as
+   * "{masked}", wherever they occur: a digest over rows a request made, which cannot repeat (the
    * read path's stateDigest after writes; the values fixture pins it).
    */
   masked?: string[];
@@ -282,12 +284,43 @@ function diff(t: SideTable, before: Row[], after: Row[]): { inserted: Row[]; upd
   };
 }
 
+const sha256Of = (v: unknown) => `sha256:${createHash("sha256").update(canonicalJson(v), "utf8").digest("hex")}`;
+
+/**
+ * An answer's state digests, recomputed from the manifest in the same
+ * answer (manifest.ts stateDigest and categoryDigests), so a digest the
+ * file masks is still checked: each is the manifest's, which the file
+ * compares, normalized, byte for byte. Throws on a mismatch.
+ */
+export function checkDigests(text: string, where: string): void {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (body === null || typeof body !== "object" || !("manifest" in body)) return;
+  const b = body as { manifest: Record<string, unknown> & { items: Record<string, unknown>[] }; stateDigest?: string; stateDigests?: Record<string, string> };
+  const m = b.manifest;
+  if (b.stateDigest !== undefined && b.stateDigest !== sha256Of(m)) throw new Error(`${where}: stateDigest is not its manifest's`);
+  if (b.stateDigests !== undefined) {
+    const want = {
+      environment: sha256Of({ projectId: m.projectId, environment: m.environment }),
+      contract: sha256Of(m.contract),
+      items: sha256Of(m.items.map((i) => ({ name: i.name, source: i.source, valueRowId: i.valueRowId, versionId: i.versionId }))),
+      rotation: sha256Of(m.items.flatMap((i) => (i.retiringVersionId ? [{ name: i.name, retiringVersionId: i.retiringVersionId }] : []))),
+    };
+    if (JSON.stringify(b.stateDigests) !== JSON.stringify(want)) throw new Error(`${where}: stateDigests are not its manifest's`);
+  }
+}
+
 /** The answer's text with the members named masked (RequestCase.masked). */
 export function mask(text: string, members: string[] | undefined): string {
   let out = text;
   for (const m of members ?? []) {
     const key = JSON.stringify(m).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    out = out.replace(new RegExp("(" + key + ':)"(?:[^"\\\\]|\\\\.)*"', "g"), '$1"{masked}"');
+    // A string, or a flat object (stateDigests: digests only).
+    out = out.replace(new RegExp("(" + key + ':)(?:"(?:[^"\\\\]|\\\\.)*"|\\{[^{}]*\\})', "g"), '$1"{masked}"');
   }
   return out;
 }
@@ -332,6 +365,7 @@ export async function record(
         const v = res.headers.get(h);
         if (v !== null) kept[h] = norm.text(v, id);
       }
+      checkDigests(text, c.id);
       return { status, headers: kept, body: norm.text(mask(text, c.masked)) };
     });
     answers.sort(answerOrder);

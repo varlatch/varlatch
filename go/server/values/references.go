@@ -43,11 +43,28 @@ func expansionError(message string) error {
 	return domainerr.New("VALIDATION_FAILED", message)
 }
 
+// unresolvedError is ReferenceExpansionError with unresolved set: strict
+// mode met a reference it cannot expand (outside the set, cyclic or too
+// deep). A size or work limit is an expansionError.
+type unresolvedError struct{ message string }
+
+func (e *unresolvedError) Error() string { return e.message }
+
 // ExpandReferences is expandReferences in lenient mode: references the
 // lookup cannot resolve, cyclic or too deep stay literal, and onUnexpanded
 // (if set) is called with each such name. Plaintext is valid UTF-8 here
 // (decode), so a byte length is Buffer.byteLength's.
 func ExpandReferences(raw string, lookup func(string) (string, bool), onUnexpanded func(string)) (string, error) {
+	return expand(raw, lookup, false, onUnexpanded)
+}
+
+// expandStrict is expandReferences(raw, lookup, true): a reference that
+// would stay literal fails with *unresolvedError.
+func expandStrict(raw string, lookup func(string) (string, bool)) (string, error) {
+	return expand(raw, lookup, true, nil)
+}
+
+func expand(raw string, lookup func(string) (string, bool), strict bool, onUnexpanded func(string)) (string, error) {
 	remaining := MaxExpandedBytes
 	out := make([]byte, 0, len(raw))
 	work := 0
@@ -80,6 +97,12 @@ func ExpandReferences(raw string, lookup func(string) (string, bool), onUnexpand
 			name := text[m[4]:m[5]]
 			value, ok := lookup(name)
 			if !ok || contains(path, name) || len(path) >= MaxReferenceDepth {
+				if strict {
+					if !ok {
+						return &unresolvedError{"references outside the disclosure set (" + name + ")"}
+					}
+					return &unresolvedError{"cyclic or too-deep reference (" + name + ")"}
+				}
 				if onUnexpanded != nil {
 					onUnexpanded(name)
 				}

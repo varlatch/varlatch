@@ -79,6 +79,10 @@ func invalid(err error) error {
 	return &domainerr.Error{Code: "CONTRACT_INVALID", Message: ve.Error(), Details: jsvalue.Object{{Key: "issues", Value: issues}}}
 }
 
+// Stored is a stored Contract as PostgreSQL hands it back: jsonb's member
+// order, as JSON.parse then enumerates it.
+func Stored(text string) (any, error) { return stored(text) }
+
 // stored reads a stored JSON column as the TypeScript server reads its
 // jsonb: members in jsonb's order, as JSON.parse enumerates them.
 func stored(text string) (any, error) {

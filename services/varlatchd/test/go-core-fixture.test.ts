@@ -34,7 +34,9 @@ import { newId } from "../src/db/ids.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, withIds, type Fixture, type RequestCase, type Row, type SideTable, type Table } from "./go-fixture-kit.js";
+import { createHash } from "node:crypto";
+import { canonicalJson } from "@varlatch/contract";
+import { checkDigests, expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, withIds, type Fixture, type RequestCase, type Row, type SideTable, type Table } from "./go-fixture-kit.js";
 
 // The unwrapped app: some requests are outside the OpenAPI document on
 // purpose (bodies that are not JSON, extra members).
@@ -174,6 +176,7 @@ function requestTable(): RequestCase[] {
     ...contractRequests(),
     ...projectRequests(),
     ...valueRequests(),
+    ...checkRequests(),
   ]);
 }
 
@@ -247,8 +250,9 @@ const PROJECTS: [string, string, "git" | "managed"][] = [
 
 /**
  * A request's placeholders, in its path and its body: {rev:KEY},
- * {project:SLUG}, {env:PROJECT/NAME} and {ver:PROJECT/ENVIRONMENT/ITEM}
- * (the value's current version), acme's, as the file's rows hold them.
+ * {project:SLUG}, {env:PROJECT/NAME}, {ver:PROJECT/ENVIRONMENT/ITEM} (the
+ * value's current version) and {cursor:PROJECT/ITEM} (a search cursor after
+ * that hit), acme's, as the file's rows hold them.
  */
 function fillPath(rows: Record<string, Row[]>): (p: string) => string {
   const orgOf = (slug: string) => rows.organizations!.find((o) => o.slug === slug)!.id as string;
@@ -257,6 +261,10 @@ function fillPath(rows: Record<string, Row[]>): (p: string) => string {
       .replace("{orgId}", orgOf("acme"))
       .replace("{goneId}", orgOf("gone"))
       .replace(/\{project:([a-z]+)\}/g, (_m, slug: string) => rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug && r.deleted_at === null)!.id as string)
+      .replace(/\{cursor:([a-z0-9-]+)\/([A-Z][A-Z0-9_]*)\}/g, (_m, slug: string, name: string) => {
+        const project = rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug && r.deleted_at === null)!;
+        return Buffer.from(JSON.stringify([slug, name, project.id]), "utf8").toString("base64url");
+      })
       .replace(/\{ver:([a-z0-9-]+)\/([^}]+)\/([A-Z][A-Z0-9_]*)\}/g, (_m, slug: string, name: string, item: string) => {
         const project = rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug && r.deleted_at === null)!;
         const env = rows.environments!.find((e) => e.project_id === project.id && e.name === name && e.deleted_at === null)!;
@@ -883,6 +891,188 @@ function valueRequests(): Omit<RequestCase, "id">[] {
   ];
 }
 
+// ---- Validation, strict retrieval and search (step 4.1d)
+
+/**
+ * acme/checks: a Contract that exercises every verdict (an integer, a URL,
+ * an enum, a required Secret, a Secret that references a non-sensitive
+ * value, a reference cycle, a production-only requirement), its values in
+ * development, development/child and production, and two service
+ * identities with partial grants on it: "reader" may read non-sensitive
+ * values, "revealer" only Secrets (so a Secret referencing a non-sensitive
+ * value is unresolved for want of authority). And acme/plain, a Project
+ * without a Contract.
+ */
+async function buildChecks(call: Call, tokens: Record<string, string>) {
+  const P = `${ORG}/acme/projects/checks`;
+  const project = await call("POST", `${ORG}/acme/projects`, { name: "Checks", slug: "checks", contractAuthority: "git" });
+  for (const [name, tier] of [["development", "development"], ["production", "production"]] as const) {
+    await call("POST", `${P}/environments`, { name, tier });
+  }
+  await call("POST", `${P}/environments`, { name: "development/child", parentEnvironmentId: "development" });
+  const rev = await call("POST", `${P}/contract/revisions`, {
+    contract: {
+      schemaVersion: 1,
+      semanticsVersion: 3,
+      items: [
+        item("PORT", { type: "integer" }),
+        item("SITE_URL", { type: "url" }),
+        item("MODE", { type: "enum", enumValues: ["fast", "safe"] }),
+        item("API_TOKEN", { sensitive: true }),
+        item("DB_PASSWORD", { sensitive: true, required: { kind: "never" } }),
+        item("CALLBACK", { sensitive: true, required: { kind: "never" } }),
+        item("LOOP_A", { required: { kind: "never" } }),
+        item("LOOP_B", { required: { kind: "never" } }),
+        item("PROD_ONLY", { required: { kind: "selector", selector: { kind: "tier", tier: "production" } } }),
+        item("OPTIONAL", { required: { kind: "never" } }),
+        item("FLAG", { type: "boolean", required: { kind: "never" } }),
+      ],
+    },
+  });
+  await call("POST", `${P}/contract/revisions/${rev.id}/activate`);
+  const V = (env: string, name: string) => `${P}/environments/${encodeURIComponent(env)}/values/${name}`;
+  for (const [env, name, value] of [
+    ["development", "PORT", "8080"],
+    ["development", "SITE_URL", "https://checks.example.com"],
+    ["development", "MODE", "fast"],
+    ["development", "API_TOKEN", "tok-${MODE}"],
+    ["development", "CALLBACK", "${SITE_URL}/callback"],
+    ["development", "LOOP_A", "${LOOP_B}"],
+    ["development", "LOOP_B", "${LOOP_A}"],
+    ["development", "FLAG", "maybe"],
+    ["development/child", "PORT", "not a port"],
+    ["development/child", "MODE", "slow"],
+    ["production", "PORT", "443"],
+    ["production", "SITE_URL", "https://checks.example.com"],
+    ["production", "API_TOKEN", "prod-token"],
+  ] as const) {
+    await call("PUT", V(env, name), { value });
+  }
+  // acme/plain: an environment with a value, and no Contract.
+  await call("POST", `${ORG}/acme/projects`, { name: "Plain", slug: "plain", contractAuthority: "git" });
+  await call("POST", `${ORG}/acme/projects/plain/environments`, { name: "development", tier: "development" });
+  await call("PUT", `${ORG}/acme/projects/plain/environments/development/values/ANYTHING`, { value: "x" });
+  for (const [name, actions] of [
+    ["reader", ["config.metadata.read", "config.value.read", "environment.read"]],
+    ["revealer", ["config.metadata.read", "secret.reveal", "environment.read"]],
+  ] as const) {
+    const identity = await call("POST", `${ORG}/acme/identities`, { name, kind: "service" });
+    tokens[name] = identity.credential;
+    await call("POST", `${ORG}/acme/grants`, { subjectIdentityId: identity.id, scope: { kind: "project", projectId: project.id }, actions });
+  }
+}
+
+function checkRequests(): Omit<RequestCase, "id">[] {
+  const E = (env: string, project = "checks", org = "acme") => `${ORG}/${org}/projects/${project}/environments/${env}`;
+  const validate = (name: string, env: string, credential = "alice", project = "checks", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${E(env, project, org)}/validate`, credential,
+  });
+  const strict = (name: string, env: string, body: unknown, credential = "alice", project = "checks", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${E(env, project, org)}/retrievals`, credential, body,
+  });
+  const search = (name: string, query: string, credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "GET", path: `${ORG}/${org}/config-items${query}`, credential,
+  });
+  return [
+    // validateEnvironment.
+    validate("validate", "development"),
+    validate("validate a derived environment", "development%2Fchild"),
+    validate("validate production, a Requirement on its values", "production"),
+    validate("validate as a member", "development", "bob"),
+    validate("validate production as a member", "production", "bob"),
+    validate("validate as a reader of values", "development", "reader"),
+    validate("validate as a revealer of Secrets", "development", "revealer"),
+    validate("validate as an outsider", "development", "carol"),
+    validate("validate as its service identity without grants here", "development", "ci"),
+    validate("validate as its agent", "development", "agent"),
+    validate("validate without a credential", "development", "none"),
+    validate("validate an environment without a Contract", "development", "alice", "plain"),
+    validate("validate an unknown environment", "nope"),
+    validate("validate an expired environment", "production%2Fexpired", "alice", "api"),
+    validate("validate in a frozen Organization", "development", "alice", "app", "frozen"),
+    validate("validate under passkey-verification enforce", "development", "alice", "app", "guarded"),
+    validate("validate under passkey-verification report", "development", "alice", "app", "reported"),
+    validate("validate in an Organization being deleted", "development", "alice", "app", "deleting"),
+    { ...validate("validate with a body", "development"), body: { ignored: true } },
+    // strictRetrieval.
+    strict("strict retrieval", "development", { mode: "strict" }),
+    strict("preflight", "development", { mode: "preflight" }),
+    strict("strict retrieval of a derived environment", "development%2Fchild", { mode: "strict" }),
+    strict("strict retrieval of production, a Requirement on its values", "production", { mode: "strict" }),
+    strict("strict retrieval as a member", "development", { mode: "strict" }, "bob"),
+    strict("strict retrieval of production as a member", "production", { mode: "strict" }, "bob"),
+    strict("strict retrieval as a reader of values", "development", { mode: "strict" }, "reader"),
+    strict("strict retrieval as a revealer of Secrets", "development", { mode: "strict" }, "revealer"),
+    strict("preflight as a revealer of Secrets", "development", { mode: "preflight" }, "revealer"),
+    strict("strict retrieval as an outsider", "development", { mode: "strict" }, "carol"),
+    strict("strict retrieval as an outsider, an invalid body", "development", {}, "carol"),
+    strict("strict retrieval as its service identity, the contract only", "development", { mode: "strict" }, "ci", "api"),
+    strict("strict retrieval as its agent", "development", { mode: "strict" }, "agent"),
+    strict("strict retrieval, an unknown mode", "development", { mode: "lenient" }),
+    strict("strict retrieval, no mode", "development", {}),
+    strict("strict retrieval, an array", "development", [{ mode: "strict" }]),
+    { name: "strict retrieval, not JSON", method: "POST", path: `${E("development")}/retrievals`, credential: "alice", rawBody: "{" },
+    { name: "strict retrieval, not JSON, as an outsider", method: "POST", path: `${E("development")}/retrievals`, credential: "carol", rawBody: "{" },
+    strict("strict retrieval, extra members", "development", { mode: "strict", items: ["PORT"] }),
+    strict("strict retrieval without a Contract", "development", { mode: "strict" }, "alice", "plain"),
+    { ...strict("strict retrieval after the writes", "development", { mode: "strict" }, "alice", "api"), masked: ["stateDigest", "stateDigests"] },
+    strict("strict retrieval of an expired environment", "production%2Fexpired", { mode: "strict" }, "alice", "api"),
+    strict("strict retrieval of an unknown environment", "nope", { mode: "strict" }),
+    strict("strict retrieval in a frozen Organization", "development", { mode: "strict" }, "alice", "app", "frozen"),
+    strict("strict retrieval under passkey-verification enforce", "development", { mode: "strict" }, "alice", "app", "guarded"),
+    // The value requests wrote here too: digests over fresh versions.
+    { ...strict("strict retrieval under passkey-verification report", "development", { mode: "strict" }, "alice", "app", "reported"), masked: ["stateDigest", "stateDigests"] },
+    strict("strict retrieval in an Organization being deleted", "development", { mode: "strict" }, "alice", "app", "deleting"),
+    // searchConfigItems.
+    search("search", "?q=url"),
+    search("search, upper case", "?q=SITE"),
+    search("search, a name exactly", "?q=API_TOKEN"),
+    search("search, an underscore is literal", "?q=_"),
+    search("search, a percent sign is literal", "?q=%25"),
+    search("search, no match", "?q=nothing-here"),
+    search("search, a character that lowers to two", "?q=%C4%B0"),
+    search("search, no q", ""),
+    search("search, an empty q", "?q="),
+    search("search, q of 256 characters", `?q=${"a".repeat(256)}`),
+    search("search, q of 257 characters", `?q=${"a".repeat(257)}`),
+    search("search, q of 128 emoji", `?q=${encodeURIComponent("😀".repeat(128))}`),
+    search("search, q of 129 emoji", `?q=${encodeURIComponent("😀".repeat(129))}`),
+    search("search, q given twice", "?q=PORT&q=url"),
+    search("search, q with a plus", "?q=SITE+URL"),
+    search("search, limit 1", "?q=_&limit=1"),
+    search("search, limit 100", "?q=_&limit=100"),
+    search("search, limit 0", "?q=_&limit=0"),
+    search("search, limit 101", "?q=_&limit=101"),
+    search("search, limit 1.5", "?q=_&limit=1.5"),
+    search("search, limit 2.0", "?q=_&limit=2.0"),
+    search("search, limit with spaces", "?q=_&limit=%202%20"),
+    search("search, limit in hex", "?q=_&limit=0x2"),
+    search("search, limit as an exponent", "?q=_&limit=2e0"),
+    search("search, limit empty", "?q=_&limit="),
+    search("search, limit not a number", "?q=_&limit=two"),
+    search("search, limit Infinity", "?q=_&limit=Infinity"),
+    search("search, limit with a sign", "?q=_&limit=%2B3"),
+    search("search, a cursor", "?q=_&limit=2&cursor={cursor:api/API_URL}"),
+    search("search, the last page", "?q=_&limit=100&cursor={cursor:checks/SITE_URL}"),
+    search("search, an invalid cursor", "?q=_&cursor=abc"),
+    search("search, a cursor of two parts", `?q=_&cursor=${Buffer.from(JSON.stringify(["a", "b"])).toString("base64url")}`),
+    search("search, a cursor of numbers", `?q=_&cursor=${Buffer.from(JSON.stringify([1, 2, 3])).toString("base64url")}`),
+    search("search, a cursor in standard base64", `?q=_&cursor=${encodeURIComponent(Buffer.from(JSON.stringify(["api", "A", "b"])).toString("base64"))}`),
+    search("search as a member", "?q=_", "bob"),
+    search("search as a reader of one Project", "?q=_", "reader"),
+    search("search as its service identity, no metadata", "?q=_", "ci"),
+    search("search as its agent", "?q=_", "agent"),
+    search("search as an outsider", "?q=_", "carol"),
+    search("search as an outsider, an invalid q", "", "carol"),
+    search("search without a credential", "?q=_", "none"),
+    search("search an unknown Organization", "?q=_", "alice", "nope"),
+    search("search a frozen Organization", "?q=_", "alice", "frozen"),
+    search("search under passkey-verification enforce", "?q=_", "alice", "guarded"),
+    search("search under passkey-verification report", "?q=_", "alice", "reported"),
+    search("search an Organization being deleted", "?q=_", "alice", "deleting"),
+  ];
+}
+
 async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; tokens: Record<string, string> }> {
   const db = await migratedTestDb();
   const ctx = { db, rootKek: generateKey(), close: db.close };
@@ -930,6 +1120,7 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   await call("POST", `${ORG}/acme/grants`, { subjectIdentityId: ci.id, scope: { kind: "project", projectId: api.id }, actions: ["contract.read"] });
   const agent = await call("POST", `${ORG}/acme/identities`, { name: "helper", kind: "agent" });
   tokens.agent = (await issueCredential(ctx.db, { identityId: agent.id, kind: "agent-run" })).token;
+  await buildChecks(call, tokens);
   tokens.invalid = "vlt_cli_" + "x".repeat(40);
   await db.query(
     "INSERT INTO organization_freezes (id, organization_id, frozen_by, frozen_at, reason) VALUES ($1, $2, $3, '2026-03-01T00:00:00.000Z', 'incident drill')",
@@ -1025,6 +1216,27 @@ describe("the fixture is this server's answers", () => {
     // Every ID renamed consistently is the same database.
     const renamed = JSON.parse(JSON.stringify(f.rows).replace(/\b([a-z]{3,4})_([a-z2-7]{26})\b/g, (_m, p: string, rest: string) => `${p}_${[...rest].reverse().join("")}`)) as Record<string, Row[]>;
     expectSameRows(TABLES, f.rows, renamed);
+  });
+
+  it("checkDigests accepts digests that are their manifest's and refuses one that is not", () => {
+    const manifest = {
+      manifestVersion: 1, projectId: "prj_a", environment: { id: "env_a" }, contract: null,
+      items: [{ name: "A", source: "self", valueRowId: "val_a", versionId: "ver_a", retiringVersionId: "ver_b" }],
+    };
+    const sha = (v: unknown) => `sha256:${createHash("sha256").update(canonicalJson(v), "utf8").digest("hex")}`;
+    const good = {
+      manifest,
+      stateDigest: sha(manifest),
+      stateDigests: {
+        environment: sha({ projectId: "prj_a", environment: { id: "env_a" } }),
+        contract: sha(null),
+        items: sha([{ name: "A", source: "self", valueRowId: "val_a", versionId: "ver_a" }]),
+        rotation: sha([{ name: "A", retiringVersionId: "ver_b" }]),
+      },
+    };
+    checkDigests(JSON.stringify(good), "good");
+    expect(() => checkDigests(JSON.stringify({ ...good, stateDigest: sha({}) }), "bad")).toThrow(/stateDigest/);
+    expect(() => checkDigests(JSON.stringify({ ...good, stateDigests: { ...good.stateDigests, items: sha([]) } }), "bad")).toThrow(/stateDigests/);
   });
 
   it("core-v0.22.0.json", async () => {

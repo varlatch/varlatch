@@ -29,15 +29,20 @@ import (
 const (
 	effectivePattern  = "GET /v1/organizations/{org}/projects/{project}/environments/{environment}/effective-configuration"
 	disclosurePattern = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/disclosures"
+	// Step 4.1d.
+	validatePattern = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/validate"
+	strictPattern   = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/retrievals"
 )
 
 // readsItself are the operations that read their own query and body (keepRaw).
-var readsItself = map[string]bool{effectivePattern: true, disclosurePattern: true}
+var readsItself = map[string]bool{effectivePattern: true, disclosurePattern: true, validatePattern: true, strictPattern: true}
 
 // The routes as Hono names them, for an incident freeze's refusal.
 const (
 	effectiveRoute  = "/v1/organizations/:org/projects/:project/environments/:environment/effective-configuration"
 	disclosureRoute = "/v1/organizations/:org/projects/:project/environments/:environment/disclosures"
+	validateRoute   = "/v1/organizations/:org/projects/:project/environments/:environment/validate"
+	strictRoute     = "/v1/organizations/:org/projects/:project/environments/:environment/retrievals"
 )
 
 type rawKey struct{}
@@ -155,6 +160,44 @@ func (o *operations) DiscloseSecrets(ctx context.Context, _ api.DiscloseSecretsR
 	if errors.Is(err, values.ErrExportUnderEnforce) {
 		return nil, &notBuiltError{operation: disclosurePattern, detail: err.Error()}
 	}
+	if err != nil {
+		return nil, valuesError(err)
+	}
+	writerOf(ctx).Header().Set("Cache-Control", "no-store")
+	m := stages.Start()
+	b := jsvalue.Stringify(body)
+	stages.Since(ctx, "encoding", m)
+	return ok(encoded(b)), nil
+}
+
+func (r reply) VisitValidateEnvironmentResponse(w http.ResponseWriter) error { return r.visit(w) }
+func (r reply) VisitStrictRetrievalResponse(w http.ResponseWriter) error     { return r.visit(w) }
+
+// ValidateEnvironment is POST …/validate (ADR-0038 Decisions 5 and 6): no
+// body. Never cacheable.
+func (o *operations) ValidateEnvironment(ctx context.Context, _ api.ValidateEnvironmentRequestObject) (api.ValidateEnvironmentResponseObject, error) {
+	req, err := o.valuesRequest(ctx, validateRoute)
+	if err != nil {
+		return nil, err
+	}
+	body, err := o.s.opts.Values.Validate(ctx, req)
+	if err != nil {
+		return nil, valuesError(err)
+	}
+	writerOf(ctx).Header().Set("Cache-Control", "no-store")
+	return ok(body), nil
+}
+
+// StrictRetrieval is POST …/retrievals (ADR-0038 Decision 6): the body is
+// read with c.req.json() before the snapshot and parsed once metadata
+// access decided (readJson: a body that is not JSON throws then, 500).
+// Never cacheable.
+func (o *operations) StrictRetrieval(ctx context.Context, _ api.StrictRetrievalRequestObject) (api.StrictRetrievalResponseObject, error) {
+	req, err := o.valuesRequest(ctx, strictRoute)
+	if err != nil {
+		return nil, err
+	}
+	body, err := o.s.opts.Values.StrictRetrieval(ctx, req, func() (any, error) { return jsonBody(ctx) })
 	if err != nil {
 		return nil, valuesError(err)
 	}

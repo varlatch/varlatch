@@ -321,10 +321,19 @@ The server's packages:
   when the request has one (`write.Idempotent`: the claim, the write and
   the stored response in the same job, so a refused write stores no
   claim), the digest over zod's output in its schema's member order.
-  `WithReadHook` lets a test commit a write between a retrieval's reads:
-  `consistency_test.go` holds retrieval-consistency's cases (a parent's
-  write, a Contract activation, a grant revocation, and change sets all
-  the while: each retrieval sees one state, whole).
+  Validation and strict retrieval (step 4.1d, `validate.go`, `strict.go`;
+  ADR-0038 Decisions 5 and 6): `validateEnvironment`'s verdicts and
+  `strictRetrieval`'s values, manifest, per-category digests, caller view,
+  Contract and verdicts, from one snapshot, each class judged only with
+  the right to read what it describes, every decryption audited first (a
+  validation one event per class and reference level, a preflight's
+  Secrets as `secret.validated`); `expandStrict` is
+  `expandReferences`' strict mode. `WithReadHook` lets a test commit a
+  write between a retrieval's reads: `consistency_test.go` holds
+  retrieval-consistency's cases (a parent's write, a Contract activation,
+  a grant revocation, change sets committed mid-retrieval in every round,
+  and a strict retrieval's values, manifest, digest and verdicts), each
+  asserting its hook ran.
   `services/varlatchd/test/go-values-fixture.test.ts` writes them (and
   `server/daemon/seed_contract.json`, the conformance seed's Contract) and
   checks the committed files are still that server's answers:
@@ -415,6 +424,14 @@ The server's packages:
   installation reads as the TypeScript server does without a maintenance
   directory: no release check recorded yet (`varlatch upgrade --check`
   arrives in step 6) and no backup supervisor (step 4.14).
+- `server/httpserver/search.go` (step 4.1d): `searchConfigItems`
+  (ADR-0030), names only: the candidate environments are those the caller
+  may read metadata of (the evaluator with its grants and Organization
+  role, no Requirements), a hit is a literal case-insensitive substring of
+  an effective name (`toLowerCase` on both sides, `lib/whatwg.ToLower`),
+  ordered by project slug, name and project id as JavaScript compares
+  strings, with `Number(limit)` and the base64url JSON cursor read as Node
+  reads them.
 - `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
   decision 3). `services/varlatchd/test/go-fixture-kit.ts` has the
   TypeScript server build a database through its own `/v1`, run a table of
@@ -443,8 +460,12 @@ The server's packages:
   as a difference). A request may send headers (an Idempotency-Key);
   its placeholders are filled in its body as in its path; and members of
   its answer named in `masked` read `"{masked}"` on both sides (a digest
-  over rows earlier requests made, which cannot repeat). A domain ID's
-  prefix has two to four letters (a change set's `cs_`).
+  over rows earlier requests made, which cannot repeat; a string or a
+  flat object). Every answer that carries a `manifest` has its
+  `stateDigest` and `stateDigests` recomputed from that manifest, on both
+  sides and before any masking (`checkDigests`, `CheckDigests`), so a
+  masked digest cannot diverge unseen. A domain ID's prefix has two to
+  four letters (a change set's `cs_`).
   `testdata/core-v0.22.0.json` is step 4.1's file (`go-core-fixture.test.ts`,
   regenerated with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors);
   4.1a records the Organization operations in it, 4.1b the Contract
@@ -454,7 +475,8 @@ The server's packages:
   and 4.1d the value writes, under Idempotency-Keys too
   (`{ver:PROJECT/ENVIRONMENT/ITEM}`, a value's current version), the
   Go test opening every value version a request wrote and finding a
-  value a request sent. Name later files `<area>-v<release>.json` in
+  value a request sent, then validation, strict retrieval and search
+  (`{cursor:PROJECT/ITEM}`, a search cursor after that hit). Name later files `<area>-v<release>.json` in
   `testdata/` (the secret scan's allow list and `scripts/ci-changes.sh`
   match that). `server/values/valuestest` loads its fixtures with the same
   `Prepare`.
@@ -624,6 +646,7 @@ Kept, because they are on the wire:
 | `http/app.ts` `withIdempotency` | a replay answers the stored response read back from jsonb, so its members come in jsonb's order (shorter keys first), not the first answer's | the same | `server/write` `TestReplayVectors` |
 | `domain/environments.ts` `deleteEnvironment`, an environment with live derived ones | the refusal lists them (its message and `details.children`) from a query without `ORDER BY`: PostgreSQL's heap order, which tuple pruning and space reuse change, so not reproducible | by name, the order the core fixture's case records | the core fixture's "delete a root with derived environments" |
 | `http/app.ts` `createEnvironment`, `expiresAt` | zod's `z.string().datetime()` accepts what PostgreSQL's timestamptz refuses (year 0, or a fraction of more than 128 digits, which overflows `timestamptz_in`'s work buffer): the insert fails and the route answers 500 `INTERNAL`, a validation-shaped input with nothing written or counted | the same: `environments.PostgresTimestamp` refuses exactly those, in the job, where the insert would fail | `server/environments` `TestPostgresTimestampVectors` (`testdata/pg-timestamps.json`); the core fixture's "create a preview" requests |
+| `http/app.ts` `searchConfigItems`, a hit's environments | listed in the order of a query without `ORDER BY`, so the order is whatever PostgreSQL's plan gives and is not guaranteed: an index scan through `environments_live_name_key` (`project_id`, `name`) gives Project, then name, while a sequential scan of the same rows gives another order | by Project, then name (byte order), chosen on purpose: the index-scan order, which the fixture's TypeScript server used | the core fixture's search requests |
 | PostgreSQL's text and jsonb, under every route | U+0000 in a string written to a text or jsonb column fails the statement: the transaction rolls back and the route answers 500 `INTERNAL`; a lone surrogate reaches a text column as U+FFFD (Node's UTF-8) and fails in jsonb | the same: `write.Text` for text columns (U+0000 refused, lone surrogates as U+FFFD), `jsvalue.JsonbRefuses` for jsonb (`audit.Record`, `write.Idempotent`). **Every later slice applies them to each text or jsonb value it writes**, at the point the TypeScript statement would fail, and records the case in its parity fixture | `server/write` `TestText`; the core fixture's U+0000 and lone-surrogate requests |
 
 Not reproduced:

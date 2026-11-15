@@ -436,10 +436,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "searchConfigItems": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "securityApprovalKeys": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -449,10 +445,6 @@
         "step": "ADR-0059 step 4"
       },
       "startGitHubAppRegistration": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "strictRetrieval": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -481,10 +473,6 @@
         "step": "ADR-0059 step 4"
       },
       "updateWebhook": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "validateEnvironment": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       }
