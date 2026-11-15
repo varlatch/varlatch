@@ -240,6 +240,14 @@ var ignoresQuery = map[string]bool{
 	"GET /v1/organizations": true,
 }
 
+// boundQuery is what the generated wrapper binds for an operation that
+// reads its own query (readsItself) yet whose document requires a query
+// parameter: a fixed value that satisfies the binder, while the operation
+// reads the request's own query (keepRaw), as the TypeScript route does.
+var boundQuery = map[string]string{
+	"GET /v1/organizations/{org}/config-items": "q=_",
+}
+
 // builtOperation wraps a built /v1 operation's generated handler:
 // authentication first (unless the operation authenticates otherwise),
 // then the operation, with the writer and request in its context.
@@ -258,7 +266,7 @@ func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.Handler
 		}
 		if ignoresQuery[pattern] || readsItself[pattern] {
 			u := *r.URL
-			u.RawQuery = ""
+			u.RawQuery = boundQuery[pattern]
 			r.URL = &u
 		}
 		stages.Admitted(r.Context())

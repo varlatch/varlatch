@@ -4,9 +4,11 @@ package orgs_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"io"
 	"log/slog"
 	"net/http"
@@ -237,10 +239,27 @@ func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 			pairs = append(pairs, "{rev:"+it.(map[string]any)["name"].(string)+"}", r["id"].(string))
 		}
 	}
+	// {cursor:PROJECT/ITEM}: a search cursor after that hit, as
+	// encodeCursor writes it.
+	projectOf := map[string]string{}
+	for _, e := range f.Rows["environments"] {
+		projectOf[e["id"].(string)] = e["project_id"].(string)
+	}
+	cursors := map[string]bool{}
+	for _, v := range f.Rows["env_values"] {
+		project := projectOf[v["environment_id"].(string)]
+		slug, ok := live[project]
+		key := "{cursor:" + slug + "/" + v["item_name"].(string) + "}"
+		if !ok || cursors[key] {
+			continue
+		}
+		cursors[key] = true
+		pairs = append(pairs, key, base64.RawURLEncoding.EncodeToString(jsvalue.Stringify([]any{slug, v["item_name"], project})))
+	}
 	paths := strings.NewReplacer(pairs...)
 	return func(p string) string {
 		out := paths.Replace(p)
-		if strings.Contains(out, "{rev:") || strings.Contains(out, "{project:") || strings.Contains(out, "{env:") || strings.Contains(out, "{ver:") {
+		if strings.Contains(out, "{rev:") || strings.Contains(out, "{project:") || strings.Contains(out, "{env:") || strings.Contains(out, "{ver:") || strings.Contains(out, "{cursor:") {
 			t.Fatalf("%s: a placeholder the rows do not fill", p)
 		}
 		return out

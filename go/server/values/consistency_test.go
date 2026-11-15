@@ -5,6 +5,7 @@ package values_test
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -235,42 +236,106 @@ func TestRevocationAfterTheSnapshotBegan(t *testing.T) {
 	}
 }
 
-// Writes and their audit events, committing all the while, never abort a
-// retrieval: each sees one state, whole.
+// changeSet sets A and B together, in one change set, through the writer.
+func (wd *world) changeSet(value string) {
+	wd.t.Helper()
+	ctx := context.Background()
+	project, err := projects.Get(ctx, wd.store.Reader(), wd.org, "api")
+	if err != nil {
+		wd.t.Fatal(err)
+	}
+	e, err := environments.Get(ctx, wd.store.Reader(), project.ID, "dev")
+	if err != nil {
+		wd.t.Fatal(err)
+	}
+	if _, _, _, err := values.ApplyChangeSet(ctx, wd.w, wd.rootKEK, alice(), values.Target{OrganizationID: wd.org, Project: project, Env: e},
+		[]values.Change{{Op: "set", Item: "A", Value: value}, {Op: "set", Item: "B", Value: value}}, "req_w", write.Claim{IdentityID: "idn_a"}, time.Now); err != nil {
+		wd.t.Fatal(err)
+	}
+}
+
+// Change sets, and their audit events, committing in the middle of
+// retrievals never abort one nor show it half a set. A handshake makes the
+// overlap certain: each retrieval's hook commits a change set (A and B to
+// the round's number) between its reads, and returns only once the write
+// committed; the retrieval must still see the previous round's pair, whole,
+// and the next one the new pair. Every round's write must have committed
+// mid-retrieval.
 func TestConcurrentWritesNeverAbortARetrieval(t *testing.T) {
 	wd := newWorld(t)
 	wd.contract([]string{"A", "B"})
-	wd.set("dev", "A", "0")
-	wd.set("dev", "B", "0")
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for i := 1; ; i++ {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			project, _ := projects.Get(context.Background(), wd.store.Reader(), wd.org, "api")
-			e, _ := environments.Get(context.Background(), wd.store.Reader(), project.ID, "dev")
-			v := string(rune('0' + i%10))
-			// A and B change together, in one change set.
-			if _, _, _, err := values.ApplyChangeSet(context.Background(), wd.w, wd.rootKEK, alice(), values.Target{OrganizationID: wd.org, Project: project, Env: e},
-				[]values.Change{{Op: "set", Item: "A", Value: v}, {Op: "set", Item: "B", Value: v}}, "req_w", write.Claim{IdentityID: "idn_a"}, time.Now); err != nil {
-				t.Error(err)
-				return
-			}
+	wd.changeSet("0")
+	const rounds = 20
+	committed := 0
+	for i := 1; i <= rounds; i++ {
+		want := strconv.Itoa(i - 1)
+		ctx := values.WithReadHook(context.Background(), once(t, betweenValueReads, func() {
+			wd.changeSet(strconv.Itoa(i))
+			committed++
+		}))
+		got, _, err := wd.read(ctx, alice(), "dev")
+		if err != nil {
+			t.Fatalf("round %d: the retrieval failed: %v", i, err)
 		}
-	})
-	for range 100 {
-		got, _, err := wd.read(context.Background(), alice(), "dev")
+		if got["A"] != want || got["B"] != want {
+			t.Fatalf("round %d: saw %v, want both %s", i, got, want)
+		}
+	}
+	if committed != rounds {
+		t.Fatalf("%d of %d writes committed mid-retrieval", committed, rounds)
+	}
+	if got, _, _ := wd.read(context.Background(), alice(), "dev"); got["A"] != strconv.Itoa(rounds) || got["B"] != strconv.Itoa(rounds) {
+		t.Fatalf("after: %v", got)
+	}
+}
+
+// A strict retrieval's values, manifest, state digest and verdicts all come
+// from its snapshot: a write between its reads changes none of them; the
+// next strict retrieval has the new value, version and digest.
+func TestStrictRetrievalFromItsSnapshot(t *testing.T) {
+	wd := newWorld(t)
+	// PORT is an integer, so the write mid-retrieval makes it invalid.
+	rev, _, err := contracts.Push(context.Background(), wd.w, alice(), wd.org, wd.project.ID, jsvalue.Object{
+		{Key: "schemaVersion", Value: 1.0}, {Key: "semanticsVersion", Value: 3.0},
+		{Key: "items", Value: []any{jsvalue.Object{{Key: "name", Value: "PORT"}, {Key: "required", Value: jsvalue.Object{{Key: "kind", Value: "always"}}},
+			{Key: "sensitive", Value: false}, {Key: "type", Value: "integer"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := contracts.Activate(context.Background(), wd.w, alice(), wd.org, wd.project.ID, rev.ID); err != nil {
+		t.Fatal(err)
+	}
+	wd.set("dev", "PORT", "8080")
+	strict := func(ctx context.Context) jsvalue.Object {
+		t.Helper()
+		out, err := wd.svc.StrictRetrieval(ctx, values.Request{
+			Principal: alice(), RequestID: "req_test", Method: "POST",
+			Route: "/v1/organizations/:org/projects/:project/environments/:environment/retrievals",
+			Org:   "acme", Project: "api", Environment: "dev",
+		}, func() (any, error) { return jsvalue.Object{{Key: "mode", Value: "strict"}}, nil })
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got["A"] != got["B"] {
-			t.Fatalf("half a change set: %v", got)
-		}
+		return out
 	}
-	close(stop)
-	wg.Wait()
+	field := func(o jsvalue.Object, path ...string) any {
+		var v any = o
+		for _, k := range path {
+			v, _ = v.(jsvalue.Object).Get(k)
+		}
+		return v
+	}
+	item := func(o jsvalue.Object) jsvalue.Object { return field(o, "items").([]any)[0].(jsvalue.Object) }
+	before := strict(context.Background())
+	during := strict(values.WithReadHook(context.Background(), once(t, betweenValueReads, func() { wd.set("dev", "PORT", "not a port") })))
+	after := strict(context.Background())
+	if field(item(during), "value") != "8080" || field(item(during), "versionId") != field(item(before), "versionId") ||
+		field(during, "stateDigest") != field(before, "stateDigest") || field(during, "validation", "valid") != true {
+		t.Fatalf("in flight: %v", during)
+	}
+	if field(item(after), "value") != "not a port" || field(after, "stateDigest") == field(before, "stateDigest") ||
+		field(after, "validation", "valid") != false {
+		t.Fatalf("after: %v", after)
+	}
 }

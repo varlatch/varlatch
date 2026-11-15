@@ -151,6 +151,7 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "getInstallationRelease", "getInstallationBackups",
     // Step 4.1d: the writes of values.
     "setValue", "deleteValue", "applyChangeSet",
+    "validateEnvironment", "strictRetrieval", "searchConfigItems",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is

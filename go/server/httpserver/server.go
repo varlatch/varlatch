@@ -156,6 +156,11 @@ var BuiltOperations = []string{
 	setValuePattern,
 	deleteValuePattern,
 	applyChangeSetPattern,
+	// Step 4.1d: validation and strict retrieval (values.go), and the
+	// Config Item search (search.go).
+	validatePattern,
+	strictPattern,
+	searchPattern,
 }
 
 // Server is the handler.

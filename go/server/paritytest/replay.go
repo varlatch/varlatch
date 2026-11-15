@@ -4,7 +4,9 @@ package paritytest
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,6 +22,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 )
@@ -298,12 +301,70 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// CheckDigests is go-fixture-kit.ts checkDigests: an answer's state
+// digests, recomputed from the manifest in the same answer (stateDigest
+// and categoryDigests), so a digest the file masks is still checked: each
+// is the manifest's, which the file compares, normalized, byte for byte.
+func CheckDigests(t testing.TB, body []byte, where string) {
+	t.Helper()
+	var b struct {
+		Manifest *struct {
+			ProjectID   any              `json:"projectId"`
+			Environment any              `json:"environment"`
+			Contract    any              `json:"contract"`
+			Items       []map[string]any `json:"items"`
+		} `json:"manifest"`
+		StateDigest  *string           `json:"stateDigest"`
+		StateDigests map[string]string `json:"stateDigests"`
+	}
+	if json.Unmarshal(body, &b) != nil || b.Manifest == nil {
+		return
+	}
+	var whole map[string]any
+	if err := json.Unmarshal(body, &whole); err != nil {
+		return
+	}
+	digest := func(v any) string {
+		canon, err := envelope.CanonicalJSON(v)
+		if err != nil {
+			t.Fatalf("%s: %v", where, err)
+		}
+		sum := sha256.Sum256([]byte(canon))
+		return "sha256:" + hex.EncodeToString(sum[:])
+	}
+	m := b.Manifest
+	if b.StateDigest != nil && *b.StateDigest != digest(whole["manifest"]) {
+		t.Errorf("%s: stateDigest is not its manifest's", where)
+	}
+	if b.StateDigests != nil {
+		items, rotation := []any{}, []any{}
+		for _, i := range m.Items {
+			items = append(items, map[string]any{"name": i["name"], "source": i["source"], "valueRowId": i["valueRowId"], "versionId": i["versionId"]})
+			if r, ok := i["retiringVersionId"]; ok {
+				rotation = append(rotation, map[string]any{"name": i["name"], "retiringVersionId": r})
+			}
+		}
+		want := map[string]string{
+			"environment": digest(map[string]any{"projectId": m.ProjectID, "environment": m.Environment}),
+			"contract":    digest(m.Contract), "items": digest(items), "rotation": digest(rotation),
+		}
+		for k, v := range want {
+			if b.StateDigests[k] != v {
+				t.Errorf("%s: stateDigests.%s is not its manifest's", where, k)
+			}
+		}
+		if len(b.StateDigests) != len(want) {
+			t.Errorf("%s: stateDigests: %v", where, b.StateDigests)
+		}
+	}
+}
+
 // Mask is go-fixture-kit.ts mask: each named member of a JSON text, a
-// string, reads "{masked}".
+// string or a flat object, reads "{masked}".
 func Mask(text string, members []string) string {
 	for _, m := range members {
 		key, _ := json.Marshal(m)
-		re := regexp.MustCompile(`(` + regexp.QuoteMeta(string(key)) + `:)"(?:[^"\\]|\\.)*"`)
+		re := regexp.MustCompile(`(` + regexp.QuoteMeta(string(key)) + `:)(?:"(?:[^"\\]|\\.)*"|\{[^{}]*\})`)
 		text = re.ReplaceAllString(text, `${1}"{masked}"`)
 	}
 	return text
@@ -589,6 +650,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			}
 			id := rec.Header().Get("X-Request-Id")
 			ids[id] = true
+			CheckDigests(t, rec.Body.Bytes(), name)
 			pres[i] = pre{rec, id, strings.ReplaceAll(rec.Body.String(), id, "{requestId}")}
 		}
 		sort.SliceStable(pres, func(i, j int) bool {
