@@ -334,6 +334,9 @@ func TestStrictRetrievalFromItsSnapshot(t *testing.T) {
 		field(during, "stateDigest") != field(before, "stateDigest") || field(during, "validation", "valid") != true {
 		t.Fatalf("in flight: %v", during)
 	}
+	if v, ok := field(item(after), "versionId").(string); !ok || v == "" || v == field(item(before), "versionId") {
+		t.Fatalf("after: the version %v, before %v", field(item(after), "versionId"), field(item(before), "versionId"))
+	}
 	if field(item(after), "value") != "not a port" || field(after, "stateDigest") == field(before, "stateDigest") ||
 		field(after, "validation", "valid") != false {
 		t.Fatalf("after: %v", after)

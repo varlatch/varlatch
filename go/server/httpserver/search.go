@@ -9,10 +9,12 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/lib/whatwg"
 	"github.com/varlatch/varlatch/go/server/api"
@@ -136,10 +138,7 @@ func (o *operations) SearchConfigItems(ctx context.Context, _ api.SearchConfigIt
 	}
 	// A literal case-insensitive substring: toLowerCase on both sides.
 	lowered := jsLower(needle)
-	type hit struct {
-		projectID, projectSlug, projectName, name string
-		envs                                      []query.SearchEnvironmentsRow
-	}
+	type hit = searchHit
 	hits := map[string]*hit{}
 	var order []*hit
 	for _, e := range eligible {
@@ -158,7 +157,8 @@ func (o *operations) SearchConfigItems(ctx context.Context, _ api.SearchConfigIt
 			key := e.ProjectID + "\x00" + n
 			h, ok := hits[key]
 			if !ok {
-				h = &hit{projectID: e.ProjectID, projectSlug: e.ProjectSlug, projectName: e.ProjectName, name: n}
+				h = &hit{projectID: e.ProjectID, projectSlug: e.ProjectSlug, projectName: e.ProjectName, name: n,
+					key: [3]string{e.ProjectSlug, n, e.ProjectID}}
 				hits[key] = h
 				order = append(order, h)
 			}
@@ -166,21 +166,14 @@ func (o *operations) SearchConfigItems(ctx context.Context, _ api.SearchConfigIt
 		}
 	}
 	// Ordered by project slug, the exact item name, then the project's
-	// id, as JavaScript compares strings.
-	tuple := func(h *hit) []string { return []string{h.projectSlug, h.name, h.projectID} }
-	lt := func(a, b []string) bool {
-		for i := range 3 {
-			if a[i] != b[i] {
-				return jsLess(a[i], b[i])
-			}
-		}
-		return false
-	}
-	sortStable(order, func(a, b *hit) bool { return lt(tuple(a), tuple(b)) })
+	// id, as JavaScript compares strings (n log n: every hit is sorted
+	// before the page is cut).
+	sortHits(order, compareKeys)
 	if after != nil {
+		cursor := [3]string(after)
 		var kept []*hit
 		for _, h := range order {
-			if lt(after, tuple(h)) {
+			if compareKeys(cursor, h.key) < 0 {
 				kept = append(kept, h)
 			}
 		}
@@ -192,7 +185,7 @@ func (o *operations) SearchConfigItems(ctx context.Context, _ api.SearchConfigIt
 	}
 	var next any
 	if len(order) > limit && len(page) > 0 {
-		next = encodeCursor(tuple(page[len(page)-1]))
+		next = encodeCursor(page[len(page)-1].key[:])
 	}
 	// Sensitivity from each Project's active Contract; an item it does not
 	// name is sensitive.
@@ -209,16 +202,17 @@ func (o *operations) SearchConfigItems(ctx context.Context, _ api.SearchConfigIt
 		if err != nil {
 			return nil, err
 		}
-		sensitive[h.projectID] = func(name string) bool {
-			if active == nil {
-				return true
-			}
+		named := map[string]bool{}
+		if active != nil {
 			for _, it := range active.Items {
-				if it.Name == name {
-					return it.Sensitive
+				if _, ok := named[it.Name]; !ok {
+					named[it.Name] = it.Sensitive
 				}
 			}
-			return true
+		}
+		sensitive[h.projectID] = func(name string) bool {
+			s, ok := named[name]
+			return !ok || s
 		}
 	}
 	items := make([]any, 0, len(page))
@@ -242,25 +236,64 @@ func (o *operations) SearchConfigItems(ctx context.Context, _ api.SearchConfigIt
 	return ok(jsvalue.Object{{Key: "items", Value: items}, {Key: "nextCursor", Value: next}}), nil
 }
 
-// sortStable is a stable insertion-merge sort by less (sort.SliceStable on
-// a typed slice).
-func sortStable[T any](s []T, less func(a, b T) bool) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && less(s[j], s[j-1]); j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
+// searchHit is one item name of one Project that matched, with the
+// environments it is effective in.
+type searchHit struct {
+	projectID, projectSlug, projectName, name string
+	envs                                      []query.SearchEnvironmentsRow
+	key                                       [3]string // the sort key and cursor tuple
 }
 
-// jsLess is JavaScript's a < b on strings: by UTF-16 code units.
-func jsLess(a, b string) bool {
-	ua, ub := utf16.Encode([]rune(a)), utf16.Encode([]rune(b))
-	for i := 0; i < len(ua) && i < len(ub); i++ {
-		if ua[i] != ub[i] {
-			return ua[i] < ub[i]
+// sortHits sorts hits by key with cmp, stably, in O(n log n) comparisons.
+func sortHits(hits []*searchHit, cmp func(a, b [3]string) int) {
+	slices.SortStableFunc(hits, func(a, b *searchHit) int { return cmp(a.key, b.key) })
+}
+
+// compareKeys orders two search keys member by member, as JavaScript
+// compares strings.
+func compareKeys(a, b [3]string) int {
+	for i := range a {
+		if c := jsCompare(a[i], b[i]); c != 0 {
+			return c
 		}
 	}
-	return len(ua) < len(ub)
+	return 0
+}
+
+// jsCompare is JavaScript's string order (a < b by UTF-16 code units), as
+// -1, 0 or 1, without converting either string. Code points compare as
+// their code units do, except that a supplementary code point (a surrogate
+// pair, 0xD800 up) sorts before a BMP code point from 0xE000.
+func jsCompare(a, b string) int {
+	for a != "" && b != "" {
+		ra, na := utf8.DecodeRuneInString(a)
+		rb, nb := utf8.DecodeRuneInString(b)
+		if ra != rb {
+			if (ra >= 0x10000) != (rb >= 0x10000) {
+				ra, rb = firstUnit(ra), firstUnit(rb)
+			}
+			if ra < rb {
+				return -1
+			}
+			return 1
+		}
+		a, b = a[na:], b[nb:]
+	}
+	switch {
+	case a == "" && b == "":
+		return 0
+	case a == "":
+		return -1
+	}
+	return 1
+}
+
+// firstUnit is a code point's first UTF-16 code unit.
+func firstUnit(r rune) rune {
+	if r >= 0x10000 {
+		return 0xD800 + (r-0x10000)>>10
+	}
+	return r
 }
 
 // jsLower is String.prototype.toLowerCase.
