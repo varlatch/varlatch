@@ -1,0 +1,2286 @@
+{
+  "comment": "Written by services/varlatchd/test/go-core-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+  "ref": "v0.22.0",
+  "rootKek": "faabd8a04e9e49af4462fe5e0d4cfbeef42a939fb20491f89920447d7a0b5d64",
+  "tokens": {
+    "alice": "vlt_cli_LOKEdMDiIVtUPZ09HHDMbaHgUJ8H3C-jTc4D2mienjY",
+    "bob": "vlt_cli_7KsCJjdrNp-t822i12YR6tXpgDW8bql-jJ1b-fGZQeI",
+    "carol": "vlt_cli_FZUOnNIcPPGKatlV98aVO6WP3vv9ecXk4hZrFQ79YTg",
+    "ci": "vlt_svc_FMIOjhYIriS8fL6nbWKtgUsb5pWUggNTAbRq_MOFvU4",
+    "agent": "vlt_agr_fAl8ZTPb0hCXYUo6jq9SEAr9bohSy4rntmFYaloXp7c",
+    "invalid": "vlt_cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "rows": {
+    "installation": [
+      {
+        "id": "inst_2usw7vqlzxcqjheovssrxwsc3q",
+        "kek_canary": {
+          "nonce": "Fdx6yxM255o6RUDW",
+          "authTag": "jUbqzS6+S/RLzHSnx8Thew==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "4192wyewfKnf02XZV6iKvO1pSRi2GZPRi7X2rvm2gec=",
+          "formatVersion": 1
+        },
+        "bootstrapped_at": "2026-11-15T09:57:52.698Z",
+        "created_at": "2026-11-15T09:57:52.653Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "public_url": null
+      }
+    ],
+    "identities": [
+      {
+        "id": "idn_3e25y2bfdlgfhbvmpxp544gp3a",
+        "kind": "service",
+        "name": "deploy",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-15T09:57:52.865Z",
+        "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_fois6rpaqwvbct6orbokj2pel4",
+        "kind": "agent",
+        "name": "helper",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-15T09:57:52.893Z",
+        "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+        "kind": "human",
+        "name": "bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-11-15T09:57:52.698Z",
+        "organization_id": null,
+        "last_seen_at": "2026-11-15T09:57:52.756Z",
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_m7cahaacteveoza4my54bwx6ha",
+        "kind": "human",
+        "name": "carol",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      }
+    ],
+    "user": [],
+    "auth_user_links": [],
+    "credentials": [
+      {
+        "id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
+        "identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "0496f5331f603a1ebc429de182fd82ba51e6196ba376bfe9d0128dfe2e193837",
+        "created_at": "2026-11-15T09:57:52.843Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_m7cahaacteveoza4my54bwx6ha",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_kddu7a5baa2cnuwinfazehw5xq",
+        "identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "68bbd198d497cbb5e96f56ea686158376e61555ea2041aa2e062cc4c43df6517",
+        "created_at": "2026-11-15T09:57:52.835Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "8804facbf531c590200b4acf09e13224771b3325a5449070af3f6d888d466009",
+        "created_at": "2026-11-15T09:57:52.713Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-11-15T09:57:52.747Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_nuuj57fqngpkfgrp2dblun3m3u",
+        "identity_id": "idn_3e25y2bfdlgfhbvmpxp544gp3a",
+        "kind": "service",
+        "name": "deploy credential",
+        "token_hash": "38a5ca0327e6c0031cba3d01cfb622647b56e7e45d628945eaaa8b25c49a0691",
+        "created_at": "2026-11-15T09:57:52.865Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_xtfyee6n5tshp7gtzucgpdy4pe",
+        "identity_id": "idn_fois6rpaqwvbct6orbokj2pel4",
+        "kind": "agent-run",
+        "name": null,
+        "token_hash": "14091ef1c9efa12a657da7ce71991989c3ce638a5b2cffee6d46b1c9b325d0c9",
+        "created_at": "2026-11-15T09:57:52.904Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_fois6rpaqwvbct6orbokj2pel4",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ],
+    "organizations": [
+      {
+        "id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+        "slug": "reported",
+        "name": "Reported",
+        "wrapped_org_kek": {
+          "nonce": "IgZhyLP7HA3l+WcC",
+          "authTag": "j+yYMIu7Gc6ghGOtYDrVAg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "Tnae5jmVDc18vozD/yC9q3wpixSanmP6NrUVdVg+eYw=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T09:57:52.808Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_4ovjrys6zxmik775pu2zanbpxy",
+        "slug": "frozen",
+        "name": "Frozen",
+        "wrapped_org_kek": {
+          "nonce": "+L5eCV+bTIGzXBVC",
+          "authTag": "IcNIt1HsCDO7uaDKubimCA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "M2HXCGOOebTXGoup/ZEBmf2LDBhRFA3vmXoCoSuvjow=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T09:57:52.781Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_dkoizrnd4epcyzzvskocxhngla",
+        "slug": "deleting",
+        "name": "Deleting",
+        "wrapped_org_kek": {
+          "nonce": "HdCfOBNHR3tBrPq3",
+          "authTag": "7xdZ8soS0DXFVV3BeZw06Q==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "tWDRLKpt9er1fb9+PbdDighPG+fspJ7jW42kZFTbfOo=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T09:57:52.823Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_eomam26zhyhe2uyzb7xg3bmade",
+        "slug": "acme",
+        "name": "Acme",
+        "wrapped_org_kek": {
+          "nonce": "1KLpY+2JCYcZmPlj",
+          "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T09:57:52.762Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
+        "slug": "guarded",
+        "name": "Guarded",
+        "wrapped_org_kek": {
+          "nonce": "C4zQPlpJ8Clz9rjB",
+          "authTag": "DDqWHzgYo0eUSbHIlWFgjg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "rT++q2zymOAuFZvdK7SewiCk98MyXwcc3oL+bNkMR0M=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T09:57:52.796Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      }
+    ],
+    "org_memberships": [
+      {
+        "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "role": "admin",
+        "created_at": "2026-11-15T09:57:52.808Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_4ovjrys6zxmik775pu2zanbpxy",
+        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "role": "admin",
+        "created_at": "2026-11-15T09:57:52.781Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_dkoizrnd4epcyzzvskocxhngla",
+        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "role": "admin",
+        "created_at": "2026-11-15T09:57:52.823Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+        "identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+        "role": "member",
+        "created_at": "2026-11-15T09:57:52.832Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "role": "admin",
+        "created_at": "2026-11-15T09:57:52.762Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
+        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "role": "admin",
+        "created_at": "2026-11-15T09:57:52.796Z",
+        "removed_at": null,
+        "version": 0
+      }
+    ],
+    "grants": [],
+    "requirements": [],
+    "security_controls": [
+      {
+        "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+        "control": "passkey-verification",
+        "mode": "report",
+        "config": null,
+        "version": 3,
+        "changed_by": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "changed_at": "2026-11-15T09:57:52.920Z"
+      },
+      {
+        "organization_id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
+        "control": "passkey-verification",
+        "mode": "enforce",
+        "config": null,
+        "version": 3,
+        "changed_by": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "changed_at": "2026-11-15T09:57:52.913Z"
+      }
+    ],
+    "organization_freezes": [
+      {
+        "id": "ofz_pyukw75dgtioaunefmacdeehdi",
+        "organization_id": "org_4ovjrys6zxmik775pu2zanbpxy",
+        "frozen_by": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "frozen_at": "2026-03-01T00:00:00.000Z",
+        "reason": "incident drill",
+        "lifted_at": null,
+        "lifted_by": null,
+        "lift_method": null
+      }
+    ],
+    "organization_deletions": [
+      {
+        "id": "odl_7c4n7xvw43jedi5vozncjvf6ri",
+        "organization_id": "org_dkoizrnd4epcyzzvskocxhngla",
+        "requested_by": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "scheduled_at": "2026-03-01T00:00:00.000Z",
+        "run_after": "2099-03-01T00:00:00.000Z",
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "cancelled_at": null,
+        "completed_at": null
+      }
+    ]
+  },
+  "sideTables": [
+    {
+      "name": "organizations",
+      "orderBy": "id",
+      "volatile": [
+        "created_at",
+        "wrapped_org_kek"
+      ]
+    },
+    {
+      "name": "org_memberships",
+      "orderBy": "organization_id, identity_id",
+      "volatile": [
+        "created_at"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "id": "POST create",
+      "name": "create",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "New Co",
+        "slug": "newco"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#1}\",\"slug\":\"newco\",\"name\":\"New Co\",\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.created",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "{org#1}",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "newco"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "{fresh}",
+            "deleted_at": null,
+            "id": "{org#1}",
+            "key_rotation_state": "idle",
+            "name": "New Co",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "newco",
+            "wrapped_org_kek": "{fresh}"
+          }
+        ],
+        "org_memberships": [
+          {
+            "created_at": "{fresh}",
+            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+            "organization_id": "{org#1}",
+            "removed_at": null,
+            "role": "admin",
+            "version": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "POST create, the same slug again",
+      "name": "create, the same slug again",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "Again",
+        "slug": "newco"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Organization slug already exists\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an existing Organization's slug",
+      "name": "create, an existing Organization's slug",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "X",
+        "slug": "acme"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Organization slug already exists\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an invalid slug",
+      "name": "create, an invalid slug",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "X",
+        "slug": "Bad_Slug"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Invalid organization slug\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a slug starting with a dash",
+      "name": "create, a slug starting with a dash",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "X",
+        "slug": "-x"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Invalid organization slug\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a slug of 64 characters",
+      "name": "create, a slug of 64 characters",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "X",
+        "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Invalid organization slug\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a slug of 63 characters",
+      "name": "create, a slug of 63 characters",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "Long",
+        "slug": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#2}\",\"slug\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"name\":\"Long\",\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.created",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "{org#2}",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "{fresh}",
+            "deleted_at": null,
+            "id": "{org#2}",
+            "key_rotation_state": "idle",
+            "name": "Long",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "wrapped_org_kek": "{fresh}"
+          }
+        ],
+        "org_memberships": [
+          {
+            "created_at": "{fresh}",
+            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+            "organization_id": "{org#2}",
+            "removed_at": null,
+            "role": "admin",
+            "version": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "POST create, a slug ending in a newline",
+      "name": "create, a slug ending in a newline",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "X",
+        "slug": "acme2\n"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Invalid organization slug\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, no name",
+      "name": "create, no name",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "slug": "x1"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Invalid input: expected string, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an empty name",
+      "name": "create, an empty name",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "",
+        "slug": "x2"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Too small: expected string to have >=1 characters\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a name of 201 characters",
+      "name": "create, a name of 201 characters",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "slug": "x3"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Too big: expected string to have <=200 characters\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a name of 200 characters beyond ASCII",
+      "name": "create, a name of 200 characters beyond ASCII",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé𝄞",
+        "slug": "unicode"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#3}\",\"slug\":\"unicode\",\"name\":\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé𝄞\",\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.created",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "{org#3}",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "unicode"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "{fresh}",
+            "deleted_at": null,
+            "id": "{org#3}",
+            "key_rotation_state": "idle",
+            "name": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé𝄞",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "unicode",
+            "wrapped_org_kek": "{fresh}"
+          }
+        ],
+        "org_memberships": [
+          {
+            "created_at": "{fresh}",
+            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+            "organization_id": "{org#3}",
+            "removed_at": null,
+            "role": "admin",
+            "version": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "POST create, a name that is not a string",
+      "name": "create, a name that is not a string",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": 42,
+        "slug": "x4"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Invalid input: expected string, received number\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a slug that is not a string",
+      "name": "create, a slug that is not a string",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "X",
+        "slug": null
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"slug: Invalid input: expected string, received null\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an empty object",
+      "name": "create, an empty object",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {},
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Invalid input: expected string, received undefined; slug: Invalid input: expected string, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an array",
+      "name": "create, an array",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": [
+        "newco"
+      ],
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Invalid input: expected object, received array\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, not JSON",
+      "name": "create, not JSON",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "rawBody": "slug=x",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, extra members",
+      "name": "create, extra members",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "Extra",
+        "slug": "extra",
+        "id": "org_mine"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#4}\",\"slug\":\"extra\",\"name\":\"Extra\",\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.created",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "{org#4}",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "extra"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "{fresh}",
+            "deleted_at": null,
+            "id": "{org#4}",
+            "key_rotation_state": "idle",
+            "name": "Extra",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "extra",
+            "wrapped_org_kek": "{fresh}"
+          }
+        ],
+        "org_memberships": [
+          {
+            "created_at": "{fresh}",
+            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+            "organization_id": "{org#4}",
+            "removed_at": null,
+            "role": "admin",
+            "version": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "POST create by a member",
+      "name": "create by a member",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "bob",
+      "body": {
+        "name": "Bob's",
+        "slug": "bobs"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#5}\",\"slug\":\"bobs\",\"name\":\"Bob's\",\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_kddu7a5baa2cnuwinfazehw5xq",
+          "decision": "info",
+          "event_type": "organization.created",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "{org#5}",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "bobs"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "{fresh}",
+            "deleted_at": null,
+            "id": "{org#5}",
+            "key_rotation_state": "idle",
+            "name": "Bob's",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "bobs",
+            "wrapped_org_kek": "{fresh}"
+          }
+        ],
+        "org_memberships": [
+          {
+            "created_at": "{fresh}",
+            "identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+            "organization_id": "{org#5}",
+            "removed_at": null,
+            "role": "admin",
+            "version": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "POST create by a machine",
+      "name": "create by a machine",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "ci",
+      "body": {
+        "name": "Machine",
+        "slug": "machine"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Only humans may create organizations\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create by an agent run",
+      "name": "create by an agent run",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "agent",
+      "body": {
+        "name": "Agent",
+        "slug": "agent"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Agent-run credentials are read-only: this credential cannot perform write operations\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create without a credential",
+      "name": "create without a credential",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "none",
+      "body": {
+        "name": "None",
+        "slug": "none"
+      },
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"AUTHENTICATION_REQUIRED\",\"message\":\"Provide a Varlatch bearer credential\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create with an invalid credential",
+      "name": "create with an invalid credential",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "invalid",
+      "body": {
+        "name": "None",
+        "slug": "none"
+      },
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"Credential is invalid, revoked, or expired\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "reason": "invalid"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET get by slug",
+      "name": "get by slug",
+      "method": "GET",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get by id",
+      "name": "get by id",
+      "method": "GET",
+      "path": "/v1/organizations/{orgId}",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get as a member",
+      "name": "get as a member",
+      "method": "GET",
+      "path": "/v1/organizations/acme",
+      "credential": "bob",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get as an outsider",
+      "name": "get as an outsider",
+      "method": "GET",
+      "path": "/v1/organizations/acme",
+      "credential": "carol",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.read",
+          "actor_identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET get as its service identity",
+      "name": "get as its service identity",
+      "method": "GET",
+      "path": "/v1/organizations/acme",
+      "credential": "ci",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.read",
+          "actor_identity_id": "idn_3e25y2bfdlgfhbvmpxp544gp3a",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nuuj57fqngpkfgrp2dblun3m3u",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET get as its agent",
+      "name": "get as its agent",
+      "method": "GET",
+      "path": "/v1/organizations/acme",
+      "credential": "agent",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.read",
+          "actor_identity_id": "idn_fois6rpaqwvbct6orbokj2pel4",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_xtfyee6n5tshp7gtzucgpdy4pe",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET get an unknown Organization",
+      "name": "get an unknown Organization",
+      "method": "GET",
+      "path": "/v1/organizations/nope",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get a frozen Organization",
+      "name": "get a frozen Organization",
+      "method": "GET",
+      "path": "/v1/organizations/frozen",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_4ovjrys6zxmik775pu2zanbpxy\",\"slug\":\"frozen\",\"name\":\"Frozen\",\"createdAt\":\"2026-11-15T09:57:52.781Z\",\"incidentFreeze\":{\"id\":\"ofz_pyukw75dgtioaunefmacdeehdi\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\",\"frozenBy\":{\"id\":\"idn_m5zgvospusdlhnckecsg22kgdm\",\"name\":\"Alice\"},\"reason\":\"incident drill\",\"liftedAt\":null,\"liftedBy\":null,\"liftMethod\":null}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get a frozen Organization as an outsider",
+      "name": "get a frozen Organization as an outsider",
+      "method": "GET",
+      "path": "/v1/organizations/frozen",
+      "credential": "carol",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.read",
+          "actor_identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_4ovjrys6zxmik775pu2zanbpxy",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET get under passkey-verification enforce",
+      "name": "get under passkey-verification enforce",
+      "method": "GET",
+      "path": "/v1/organizations/guarded",
+      "credential": "alice",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PASSKEY_VERIFICATION_REQUIRED\",\"message\":\"This Organization requires a sign-in with a trusted passkey that verifies you with a PIN or biometric, and your sign-in carries no passkey evidence (it may predate this check). Sign in again with such a passkey: in the dashboard, sign out and sign in; for the CLI, run varlatch login and approve it with that passkey.\",\"requestId\":\"{requestId}\",\"details\":{\"control\":\"passkey-verification\",\"reason\":\"no-evidence\"}}}"
+      },
+      "audit": [
+        {
+          "action": "organization.read",
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "evidence": "no-evidence",
+            "reason": "passkey_verification_required"
+          },
+          "organization_id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET get under passkey-verification report",
+      "name": "get under passkey-verification report",
+      "method": "GET",
+      "path": "/v1/organizations/reported",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_4oru5bxf5vyb6tq3pztwdz2r44\",\"slug\":\"reported\",\"name\":\"Reported\",\"createdAt\":\"2026-11-15T09:57:52.808Z\",\"incidentFreeze\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get an Organization being deleted",
+      "name": "get an Organization being deleted",
+      "method": "GET",
+      "path": "/v1/organizations/deleting",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_dkoizrnd4epcyzzvskocxhngla\",\"slug\":\"deleting\",\"name\":\"Deleting\",\"createdAt\":\"2026-11-15T09:57:52.823Z\",\"incidentFreeze\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get the new Organization",
+      "name": "get the new Organization",
+      "method": "GET",
+      "path": "/v1/organizations/newco",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#1}\",\"slug\":\"newco\",\"name\":\"New Co\",\"createdAt\":\"{time}\",\"incidentFreeze\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get, with a query",
+      "name": "get, with a query",
+      "method": "GET",
+      "path": "/v1/organizations/acme?include=everything",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get, an encoded slug",
+      "name": "get, an encoded slug",
+      "method": "GET",
+      "path": "/v1/organizations/ac%6De",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get without a credential",
+      "name": "get without a credential",
+      "method": "GET",
+      "path": "/v1/organizations/acme",
+      "credential": "none",
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"AUTHENTICATION_REQUIRED\",\"message\":\"Provide a Varlatch bearer credential\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename",
+      "name": "rename",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "body": {
+        "name": "  Acme Robotics  "
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme Robotics\",\"createdAt\":\"2026-11-15T09:57:52.762Z\"}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.renamed",
+          "listener": "ordinary",
+          "metadata": {
+            "name": "Acme Robotics",
+            "previousName": "Acme"
+          },
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "acme"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "2026-11-15T09:57:52.762Z",
+            "deleted_at": null,
+            "id": "org_eomam26zhyhe2uyzb7xg3bmade",
+            "key_rotation_state": "idle",
+            "name": "Acme Robotics",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "acme",
+            "wrapped_org_kek": {
+              "algorithm": "aes-256-gcm",
+              "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
+              "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
+              "formatVersion": 1,
+              "nonce": "1KLpY+2JCYcZmPlj"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "PATCH rename, extra members",
+      "name": "rename, extra members",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "body": {
+        "name": "Acme",
+        "slug": "other"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\"}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.renamed",
+          "listener": "ordinary",
+          "metadata": {
+            "name": "Acme",
+            "previousName": "Acme Robotics"
+          },
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "acme"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "2026-11-15T09:57:52.762Z",
+            "deleted_at": null,
+            "id": "org_eomam26zhyhe2uyzb7xg3bmade",
+            "key_rotation_state": "idle",
+            "name": "Acme",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "acme",
+            "wrapped_org_kek": {
+              "algorithm": "aes-256-gcm",
+              "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
+              "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
+              "formatVersion": 1,
+              "nonce": "1KLpY+2JCYcZmPlj"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "PATCH rename, only spaces",
+      "name": "rename, only spaces",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "body": {
+        "name": "   "
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Too small: expected string to have >=1 characters\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename, 201 characters after trimming",
+      "name": "rename, 201 characters after trimming",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "body": {
+        "name": " xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx "
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Too big: expected string to have <=200 characters\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename, 200 characters after trimming",
+      "name": "rename, 200 characters after trimming",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "body": {
+        "name": " yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy "
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\",\"createdAt\":\"2026-11-15T09:57:52.762Z\"}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.renamed",
+          "listener": "ordinary",
+          "metadata": {
+            "name": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+            "previousName": "Acme"
+          },
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "acme"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "2026-11-15T09:57:52.762Z",
+            "deleted_at": null,
+            "id": "org_eomam26zhyhe2uyzb7xg3bmade",
+            "key_rotation_state": "idle",
+            "name": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "acme",
+            "wrapped_org_kek": {
+              "algorithm": "aes-256-gcm",
+              "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
+              "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
+              "formatVersion": 1,
+              "nonce": "1KLpY+2JCYcZmPlj"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "PATCH rename, a name that is not a string",
+      "name": "rename, a name that is not a string",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "body": {
+        "name": 42
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Invalid input: expected string, received number\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename, null",
+      "name": "rename, null",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "body": {
+        "name": null
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Invalid input: expected string, received null\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename, no name",
+      "name": "rename, no name",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "body": {},
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"name: Invalid input: expected string, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename, not JSON",
+      "name": "rename, not JSON",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "rawBody": "{",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename as a member",
+      "name": "rename as a member",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "bob",
+      "body": {
+        "name": "By Bob"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_kddu7a5baa2cnuwinfazehw5xq",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename as an outsider",
+      "name": "rename as an outsider",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "carol",
+      "body": {
+        "name": "By Carol"
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename as an outsider, not JSON",
+      "name": "rename as an outsider, not JSON",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "carol",
+      "rawBody": "{",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename as its service identity",
+      "name": "rename as its service identity",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "ci",
+      "body": {
+        "name": "By CI"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_3e25y2bfdlgfhbvmpxp544gp3a",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nuuj57fqngpkfgrp2dblun3m3u",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename as its agent",
+      "name": "rename as its agent",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "agent",
+      "body": {
+        "name": "By the agent"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Agent-run credentials are read-only: this credential cannot perform write operations\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename a frozen Organization",
+      "name": "rename a frozen Organization",
+      "method": "PATCH",
+      "path": "/v1/organizations/frozen",
+      "credential": "alice",
+      "body": {
+        "name": "Thawed"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_pyukw75dgtioaunefmacdeehdi\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_pyukw75dgtioaunefmacdeehdi",
+            "method": "PATCH",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org"
+          },
+          "organization_id": "org_4ovjrys6zxmik775pu2zanbpxy",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_pyukw75dgtioaunefmacdeehdi"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename an Organization being deleted",
+      "name": "rename an Organization being deleted",
+      "method": "PATCH",
+      "path": "/v1/organizations/deleting",
+      "credential": "alice",
+      "body": {
+        "name": "Kept"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_7c4n7xvw43jedi5vozncjvf6ri\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename under passkey-verification enforce",
+      "name": "rename under passkey-verification enforce",
+      "method": "PATCH",
+      "path": "/v1/organizations/guarded",
+      "credential": "alice",
+      "body": {
+        "name": "Guarded"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PASSKEY_VERIFICATION_REQUIRED\",\"message\":\"This Organization requires a sign-in with a trusted passkey that verifies you with a PIN or biometric, and your sign-in carries no passkey evidence (it may predate this check). Sign in again with such a passkey: in the dashboard, sign out and sign in; for the CLI, run varlatch login and approve it with that passkey.\",\"requestId\":\"{requestId}\",\"details\":{\"control\":\"passkey-verification\",\"reason\":\"no-evidence\"}}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "evidence": "no-evidence",
+            "reason": "passkey_verification_required"
+          },
+          "organization_id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename under passkey-verification report",
+      "name": "rename under passkey-verification report",
+      "method": "PATCH",
+      "path": "/v1/organizations/reported",
+      "credential": "alice",
+      "body": {
+        "name": "Reported Inc"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_4oru5bxf5vyb6tq3pztwdz2r44\",\"slug\":\"reported\",\"name\":\"Reported Inc\",\"createdAt\":\"2026-11-15T09:57:52.808Z\"}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.renamed",
+          "listener": "ordinary",
+          "metadata": {
+            "name": "Reported Inc",
+            "previousName": "Reported"
+          },
+          "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "reported"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "2026-11-15T09:57:52.808Z",
+            "deleted_at": null,
+            "id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+            "key_rotation_state": "idle",
+            "name": "Reported Inc",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "reported",
+            "wrapped_org_kek": {
+              "algorithm": "aes-256-gcm",
+              "authTag": "j+yYMIu7Gc6ghGOtYDrVAg==",
+              "ciphertext": "Tnae5jmVDc18vozD/yC9q3wpixSanmP6NrUVdVg+eYw=",
+              "formatVersion": 1,
+              "nonce": "IgZhyLP7HA3l+WcC"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "PATCH rename an unknown Organization",
+      "name": "rename an unknown Organization",
+      "method": "PATCH",
+      "path": "/v1/organizations/nope",
+      "credential": "alice",
+      "body": {
+        "name": "Nobody"
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename by id",
+      "name": "rename by id",
+      "method": "PATCH",
+      "path": "/v1/organizations/{orgId}",
+      "credential": "alice",
+      "body": {
+        "name": "Acme by id"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme by id\",\"createdAt\":\"2026-11-15T09:57:52.762Z\"}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.renamed",
+          "listener": "ordinary",
+          "metadata": {
+            "name": "Acme by id",
+            "previousName": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+          },
+          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "acme"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "2026-11-15T09:57:52.762Z",
+            "deleted_at": null,
+            "id": "org_eomam26zhyhe2uyzb7xg3bmade",
+            "key_rotation_state": "idle",
+            "name": "Acme by id",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "acme",
+            "wrapped_org_kek": {
+              "algorithm": "aes-256-gcm",
+              "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
+              "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
+              "formatVersion": 1,
+              "nonce": "1KLpY+2JCYcZmPlj"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "GET get after the renames",
+      "name": "get after the renames",
+      "method": "GET",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme by id\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create after the renames",
+      "name": "create after the renames",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "Acme Robotics",
+        "slug": "acme-robotics"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#6}\",\"slug\":\"acme-robotics\",\"name\":\"Acme Robotics\",\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "decision": "info",
+          "event_type": "organization.created",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "{org#6}",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "acme-robotics"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": [
+          {
+            "created_at": "{fresh}",
+            "deleted_at": null,
+            "id": "{org#6}",
+            "key_rotation_state": "idle",
+            "name": "Acme Robotics",
+            "org_kek_destroyed_at": null,
+            "root_kek_version": 1,
+            "security_epoch": 0,
+            "slug": "acme-robotics",
+            "wrapped_org_kek": "{fresh}"
+          }
+        ],
+        "org_memberships": [
+          {
+            "created_at": "{fresh}",
+            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+            "organization_id": "{org#6}",
+            "removed_at": null,
+            "role": "admin",
+            "version": 0
+          }
+        ]
+      }
+    }
+  ],
+  "counters": [
+    {
+      "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+      "config_version": 3,
+      "control": "passkey-verification",
+      "count": 1,
+      "operation": "organization.manage",
+      "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+      "reason": "no-evidence"
+    },
+    {
+      "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+      "config_version": 3,
+      "control": "passkey-verification",
+      "count": 1,
+      "operation": "organization.read",
+      "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+      "reason": "no-evidence"
+    }
+  ]
+}

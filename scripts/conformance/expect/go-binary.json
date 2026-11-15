@@ -100,10 +100,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "createOrganization": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "createPlatformConnection": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -233,10 +229,6 @@
         "step": "ADR-0059 step 4"
       },
       "getInstallationRelease": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "getOrganization": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -441,10 +433,6 @@
         "step": "ADR-0059 step 4"
       },
       "renameIdentity": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "renameOrganization": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

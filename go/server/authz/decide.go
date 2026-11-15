@@ -216,6 +216,8 @@ type Organization struct {
 	ID   string
 	Slug string
 	Name string
+	// CreatedAt is in microseconds since the epoch.
+	CreatedAt int64
 }
 
 // EnterOrganization is resolveOrganization with organizationEntryChecks
@@ -235,7 +237,7 @@ func EnterOrganization(ctx context.Context, db query.DBTX, slugOrID string, prin
 	if err != nil {
 		return Organization{}, err
 	}
-	org := Organization{ID: row.ID, Slug: row.Slug, Name: row.Name}
+	org := Organization{ID: row.ID, Slug: row.Slug, Name: row.Name, CreatedAt: row.CreatedAt}
 	if principal == nil || exception != "" {
 		return org, nil
 	}

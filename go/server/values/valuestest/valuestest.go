@@ -8,20 +8,12 @@ package valuestest
 
 import (
 	"bytes"
-	"context"
-	"database/sql"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"sort"
-	"strings"
-	"time"
 
-	"github.com/varlatch/varlatch/go/lib/storage"
-	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/paritytest"
 )
 
 // Row is one row as PostgreSQL held it (JSON numbers kept as json.Number).
@@ -108,106 +100,9 @@ func Read(path string) (Fixture, error) {
 	return f, err
 }
 
-type mapping struct {
-	Tables map[string]struct {
-		SQLite  string                     `json:"sqlite"`
-		Columns map[string]json.RawMessage `json:"columns"`
-	} `json:"tables"`
-}
-
-var isoTime = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$`)
-
-// Prepare makes the database file at path: the schema (db.Init), then the
-// fixture's rows, each PostgreSQL table and column by its mapping
-// (go/server/db/mapping.json), as the migration will copy them: booleans
-// as 0 and 1, times as microseconds, jsonb and arrays as JSON text. The
-// rows' foreign keys are the source database's, so they are not checked
-// while loading. The file is closed when Prepare returns, its WAL
-// truncated.
-func Prepare(path string, f Fixture) error {
-	ctx := context.Background()
-	store, err := storage.Open(ctx, storage.Options{Path: path})
-	if err != nil {
-		return err
-	}
-	if _, err := db.Init(ctx, store, "test"); err != nil {
-		_ = store.Close()
-		return err
-	}
-	if err := store.Close(); err != nil {
-		return err
-	}
-	raw, err := os.ReadFile(filepath.Join(here(), "..", "..", "db", "mapping.json"))
-	if err != nil {
-		return err
-	}
-	var m mapping
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return err
-	}
-	conn, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(0)&_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)")
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	for _, table := range Tables {
-		tm, ok := m.Tables[table]
-		if !ok {
-			return fmt.Errorf("no mapping for %s", table)
-		}
-		for _, r := range f.Rows[table] {
-			keys := make([]string, 0, len(r))
-			for k := range r {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			var cols, marks []string
-			var args []any
-			for _, pg := range keys {
-				var col string
-				if err := json.Unmarshal(tm.Columns[pg], &col); err != nil {
-					return fmt.Errorf("%s.%s has no column name in the mapping: %w", table, pg, err)
-				}
-				v, err := sqliteValue(r[pg])
-				if err != nil {
-					return fmt.Errorf("%s.%s: %w", table, pg, err)
-				}
-				cols, marks, args = append(cols, col), append(marks, "?"), append(args, v)
-			}
-			q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tm.SQLite, strings.Join(cols, ", "), strings.Join(marks, ", "))
-			if _, err := conn.Exec(q, args...); err != nil {
-				return fmt.Errorf("%s: %w", q, err)
-			}
-		}
-	}
-	_, err = conn.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-	return err
-}
-
-func sqliteValue(v any) (any, error) {
-	switch x := v.(type) {
-	case bool:
-		if x {
-			return 1, nil
-		}
-		return 0, nil
-	case json.Number:
-		return x.Int64()
-	case string:
-		if isoTime.MatchString(x) {
-			ts, err := time.Parse(time.RFC3339Nano, x)
-			if err != nil {
-				return nil, err
-			}
-			return ts.UnixMicro(), nil
-		}
-		return x, nil
-	case map[string]any, []any:
-		b, err := json.Marshal(x)
-		return string(b), err
-	}
-	return v, nil
-}
+// Prepare makes the database file at path from the fixture's rows
+// (paritytest.Prepare, the parity kit's loader).
+func Prepare(path string, f Fixture) error { return paritytest.Prepare(path, f.Rows, Tables) }
 
 // Slugged returns the ID of the row of table whose slug is slug (and, for
 // a Project, whose Organization is org).

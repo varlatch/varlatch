@@ -166,7 +166,8 @@ The server's packages:
     `BuiltOperations` lists the ones served (`GET /v1/meta`, and step
     3.4's: who am I, the caller's credentials, passkeys and profile,
     the CLI credential exchange, device sign-in, the caller's
-    organizations); a built operation authenticates its bearer first
+    organizations; step 3.6's read path of values; step 4.1a's creating,
+    reading and renaming an Organization); a built operation authenticates its bearer first
     (`authn.go`), unless it authenticates otherwise;
   - the TypeScript server's error envelope, and its two known differences
     (decision 4): an unknown route answers the plain-text `404 Not Found`
@@ -328,6 +329,40 @@ The server's packages:
     TypeScript server's replay has; `testdata/ts-vectors.json` holds that
     server's digests (`bodyHash`) and replays
     (`services/varlatchd/test/go-write-vectors.test.ts`).
+- `server/orgs` (step 4.1a): creating an Organization (its KEK wrapped
+  under the Root KEK, its first admin, `organization.created`) and renaming
+  it (the writer's checks and the passkey-verification checkpoint inside
+  the job), each one job of the single writer; served as
+  `createOrganization`, `getOrganization` and `renameOrganization` by
+  `server/httpserver/organizations.go`, which reads their bodies as the
+  TypeScript routes do (`c.req.json()` without a fallback: a body that is
+  not JSON answers 500 `INTERNAL` there, and here).
+- `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
+  decision 3). `services/varlatchd/test/go-fixture-kit.ts` has the
+  TypeScript server build a database through its own `/v1`, run a table of
+  requests and record each answer (status, the headers that matter, the
+  body byte for byte), the audit events, the rows each request added or
+  changed in the slice's side tables, and the report counts; `Prepare`
+  loads the rows through the schema mapping and `Replay` runs the same
+  requests against varlatchd and requires the same answers. What a write
+  makes that a file cannot fix is normalized the same way on both sides: a
+  new domain ID becomes `{<prefix>#<n>}` by first appearance, a new time
+  `{time}`, a new time or envelope in a side table's volatile column
+  `{fresh}` (the Go test opens every new Organization KEK with the file's
+  Root KEK). Every column a write fills with a new time must be listed as
+  volatile. `testdata/core-v0.22.0.json` is step 4.1's file
+  (`go-core-fixture.test.ts`, regenerated with `VARLATCH_WRITE_GO_VECTORS=1`
+  as the other vectors); 4.1a records the Organization operations in it,
+  and the later 4.1 pull requests add theirs. `server/values/valuestest`
+  loads its fixtures with the same `Prepare`.
+- `server/api/openapicheck` (step 4.1a): the TypeScript tests' OpenAPI
+  check (`test/helpers/openapi-check.ts`) for Go tests: the status is
+  documented, the content type listed, and a JSON body valid against its
+  schema with every object closed, errors included (JSON Schema 2020-12,
+  `santhosh-tekuri/jsonschema/v6`); with `Requests`, an accepted request's
+  body too. The parity replays (`server/orgs`, `server/values`) check
+  every response with it; their requests are outside the document on
+  purpose in places, as the TypeScript fixtures run the unchecked app.
 - `server/ids`, `server/domainerr`: domain IDs (`db/ids.ts`) and
   `DomainError`.
 

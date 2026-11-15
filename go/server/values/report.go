@@ -137,3 +137,11 @@ func (s *Service) queueCount(r auth.PendingReport, operation string, at int64) {
 		}
 	}()
 }
+
+// QueueAccessCount is queueAccessCount for a request served outside the
+// read path (an Organization route): passkey-verification's report count
+// of a request that succeeded, under the first action it was authorized
+// for, after the response. Settled waits for it too.
+func (s *Service) QueueAccessCount(r auth.PendingReport, operation string, at int64) {
+	s.queueCount(r, operation, at)
+}

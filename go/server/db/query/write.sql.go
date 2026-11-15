@@ -13,6 +13,45 @@ import (
 	"strings"
 )
 
+const currentFreeze = `-- name: CurrentFreeze :one
+SELECT f.id, f.frozen_at, f.frozen_by, a.name AS frozen_by_name, f.reason, f.lifted_at, f.lifted_by,
+       b.name AS lifted_by_name, f.lift_method
+FROM organization_freezes f
+JOIN identities a ON a.id = f.frozen_by
+LEFT JOIN identities b ON b.id = f.lifted_by
+WHERE f.organization_id = ? AND f.lifted_at IS NULL
+`
+
+type CurrentFreezeRow struct {
+	ID           string
+	FrozenAt     int64
+	FrozenBy     string
+	FrozenByName string
+	Reason       string
+	LiftedAt     sql.NullInt64
+	LiftedBy     sql.NullString
+	LiftedByName sql.NullString
+	LiftMethod   sql.NullString
+}
+
+// domain/freeze.ts currentFreeze: the open incident freeze, as members see it.
+func (q *Queries) CurrentFreeze(ctx context.Context, organizationID string) (CurrentFreezeRow, error) {
+	row := q.db.QueryRowContext(ctx, currentFreeze, organizationID)
+	var i CurrentFreezeRow
+	err := row.Scan(
+		&i.ID,
+		&i.FrozenAt,
+		&i.FrozenBy,
+		&i.FrozenByName,
+		&i.Reason,
+		&i.LiftedAt,
+		&i.LiftedBy,
+		&i.LiftedByName,
+		&i.LiftMethod,
+	)
+	return i, err
+}
+
 const idempotencyClaim = `-- name: IdempotencyClaim :one
 SELECT body_hash, response FROM idempotency_keys WHERE identity_id = ? AND endpoint = ? AND idempotency_key = ?
 `
@@ -55,6 +94,41 @@ func (q *Queries) InsertIdempotencyClaim(ctx context.Context, arg InsertIdempote
 		arg.BodyHash,
 		arg.Response,
 	)
+	return err
+}
+
+const insertOrganization = `-- name: InsertOrganization :exec
+INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES (?, ?, ?, ?)
+`
+
+type InsertOrganizationParams struct {
+	ID            string
+	Slug          string
+	Name          string
+	WrappedOrgKek sql.NullString
+}
+
+func (q *Queries) InsertOrganization(ctx context.Context, arg InsertOrganizationParams) error {
+	_, err := q.db.ExecContext(ctx, insertOrganization,
+		arg.ID,
+		arg.Slug,
+		arg.Name,
+		arg.WrappedOrgKek,
+	)
+	return err
+}
+
+const insertOrganizationAdmin = `-- name: InsertOrganizationAdmin :exec
+INSERT INTO org_memberships (organization_id, identity_id, role) VALUES (?, ?, 'admin')
+`
+
+type InsertOrganizationAdminParams struct {
+	OrganizationID string
+	IdentityID     string
+}
+
+func (q *Queries) InsertOrganizationAdmin(ctx context.Context, arg InsertOrganizationAdminParams) error {
+	_, err := q.db.ExecContext(ctx, insertOrganizationAdmin, arg.OrganizationID, arg.IdentityID)
 	return err
 }
 
@@ -115,6 +189,39 @@ func (q *Queries) OrganizationDeletedAt(ctx context.Context, id string) (sql.Nul
 	return deleted_at, err
 }
 
+const organizationNames = `-- name: OrganizationNames :one
+SELECT slug, name, created_at FROM organizations WHERE id = ?
+`
+
+type OrganizationNamesRow struct {
+	Slug      string
+	Name      string
+	CreatedAt int64
+}
+
+func (q *Queries) OrganizationNames(ctx context.Context, id string) (OrganizationNamesRow, error) {
+	row := q.db.QueryRowContext(ctx, organizationNames, id)
+	var i OrganizationNamesRow
+	err := row.Scan(&i.Slug, &i.Name, &i.CreatedAt)
+	return i, err
+}
+
+const organizationSlugTaken = `-- name: OrganizationSlugTaken :one
+
+SELECT count(*) FROM organizations WHERE slug = ?
+`
+
+// Organizations (domain/orgs.ts, step 4.1a).
+// The slug is unique across every Organization, deleted ones included
+// (organizations.slug UNIQUE): checked before the insert, which the
+// TypeScript server leaves to the constraint.
+func (q *Queries) OrganizationSlugTaken(ctx context.Context, slug string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, organizationSlugTaken, slug)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const projectDeletedAt = `-- name: ProjectDeletedAt :one
 SELECT deleted_at FROM projects WHERE id = ? AND organization_id = ?
 `
@@ -129,4 +236,18 @@ func (q *Queries) ProjectDeletedAt(ctx context.Context, arg ProjectDeletedAtPara
 	var deleted_at sql.NullInt64
 	err := row.Scan(&deleted_at)
 	return deleted_at, err
+}
+
+const renameOrganization = `-- name: RenameOrganization :exec
+UPDATE organizations SET name = ? WHERE id = ?
+`
+
+type RenameOrganizationParams struct {
+	Name string
+	ID   string
+}
+
+func (q *Queries) RenameOrganization(ctx context.Context, arg RenameOrganizationParams) error {
+	_, err := q.db.ExecContext(ctx, renameOrganization, arg.Name, arg.ID)
+	return err
 }

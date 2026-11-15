@@ -309,6 +309,8 @@ func serve(opts Options, h *hooks) int {
 		Auth:           auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK}),
 		Realtime:       hub,
 		Values:         readPath,
+		Writer:         &write.Writer{Store: store, Gates: gates},
+		RootKEK:        rootKEK,
 		Log:            log,
 	})
 	if err != nil {
