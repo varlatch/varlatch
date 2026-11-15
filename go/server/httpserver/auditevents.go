@@ -79,7 +79,7 @@ func auditLimit(raw []string) int {
 	if len(raw) == 0 {
 		return 100
 	}
-	f := math.Floor(jsToNumber(raw[0]))
+	f := math.Floor(jsvalue.ToNumber(raw[0]))
 	if f == 0 || math.IsNaN(f) {
 		f = 100
 	}
