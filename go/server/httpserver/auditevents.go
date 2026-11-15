@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/pgtime"
 )
 
 // The audit log's reads (ADR-0016; ADR-0059 step 4.3c): listAuditEvents
@@ -60,35 +60,17 @@ func pgTimestamptzText(micros int64) string {
 	return s + "+00"
 }
 
-var pgTimestamptzInput = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})[ Tt](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([Zz])|([+-])(\d{2})(?::?(\d{2}))?)?$`)
-
-// parseCursorTime is $3::timestamptz for a cursor's time: PostgreSQL's
-// text form (and the ISO form with a T). Other text PostgreSQL would read
-// (a date alone, 'epoch') is refused here as an internal error, as text
-// PostgreSQL cannot read is there; a cursor this server made never holds
-// either.
-func parseCursorTime(s string) (int64, error) {
-	m := pgTimestamptzInput.FindStringSubmatch(s)
-	if m == nil {
-		return 0, fmt.Errorf("audit cursor: invalid input syntax for type timestamp with time zone: %q", s)
+// cursorTime is $3::timestamptz for a cursor's time, read as PostgreSQL
+// reads it (pgtime) when the page is read: any form its timestamptz input
+// takes, now and today at the time of the query, and infinity after
+// every event; the text it refuses fails the request as PostgreSQL's
+// error does the TypeScript server's.
+func (o *operations) cursorTime(s string) (int64, error) {
+	t, err := pgtime.Parse(s, o.s.opts.Now(), o.s.opts.Zones)
+	if err != nil {
+		return 0, fmt.Errorf("audit cursor: %w", err)
 	}
-	n := func(i int) int { v, _ := strconv.Atoi(m[i]); return v }
-	t := time.Date(n(1), time.Month(n(2)), n(3), n(4), n(5), n(6), 0, time.UTC)
-	if int(t.Month()) != n(2) || t.Day() != n(3) || n(4) > 23 || n(5) > 59 || n(6) > 59 {
-		return 0, fmt.Errorf("audit cursor: date/time field value out of range: %q", s)
-	}
-	offset := int64(0)
-	if m[9] != "" {
-		offset = int64(n(10)*3600 + n(11)*60)
-		if m[9] == "-" {
-			offset = -offset
-		}
-	}
-	var frac float64
-	if m[7] != "" {
-		frac, _ = strconv.ParseFloat("0"+m[7], 64)
-	}
-	return (t.Unix()-offset)*1_000_000 + int64(math.RoundToEven(frac*1_000_000)), nil
+	return t.UnixMicro(), nil
 }
 
 // auditLimit is Math.max(1, Math.min(Math.floor(Number(limit ?? 100)) ||
@@ -157,7 +139,7 @@ func (o *operations) ListAuditEvents(ctx context.Context, _ api.ListAuditEventsR
 		case len(decoded) == 0:
 			where = append(where, "0")
 		default:
-			at, err := parseCursorTime(decoded[0])
+			at, err := o.cursorTime(decoded[0])
 			if err != nil {
 				return nil, err
 			}

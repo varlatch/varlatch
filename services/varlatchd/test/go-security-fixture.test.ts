@@ -362,6 +362,18 @@ function auditRequests(): Omit<RequestCase, "id">[] {
     list("audit, a cursor that is not base64 JSON", "sec", "?cursor=nope"),
     list("audit, a cursor whose time is not a time", "sec", `?cursor=${B64(["not a time", "evt_a"])}`),
     list("audit, a bad cursor and a bad filter", "sec", `?cursor=${B64(["not a time", "evt_a"])}&decision=maybe`),
+    // The cursor's time is whatever PostgreSQL's timestamptz input reads
+    // (go/server/pgtime; its vectors cover the rest).
+    list("audit, a cursor with a date only", "sec", `?decision=deny&cursor=${B64(["2099-01-01", "evt_a"])}`),
+    list("audit, a cursor at the epoch", "sec", `?cursor=${B64(["epoch", "evt_a"])}`),
+    list("audit, a cursor at infinity", "sec", `?decision=deny&cursor=${B64(["infinity", "evt_a"])}`),
+    list("audit, a cursor at -infinity", "sec", `?cursor=${B64(["-infinity", "evt_a"])}`),
+    list("audit, a cursor with a month name and an abbreviation", "sec", `?decision=deny&cursor=${B64(["Jan 8 2099 04:05:06 PST", "evt_a"])}`),
+    list("audit, a cursor as a Julian day", "sec", `?decision=deny&cursor=${B64(["J2488070", "evt_a"])}`),
+    list("audit, a cursor with a POSIX zone", "sec", `?decision=deny&cursor=${B64(["2099-01-01 04:05 xyz5", "evt_a"])}`),
+    list("audit, a cursor run together", "sec", `?decision=deny&cursor=${B64(["20990101T040506.5-07"])}`),
+    list("audit, a cursor on a day that does not exist", "sec", `?cursor=${B64(["2099-02-30", "evt_a"])}`),
+    list("audit, a cursor with a zone out of range", "sec", `?cursor=${B64(["2099-01-01 00:00+16", "evt_a"])}`),
     list("audit as a member", "sec", "", "bob"),
     list("audit as an outsider", "sec", "", "carol"),
     list("audit of a frozen Organization", "polar"),

@@ -506,9 +506,14 @@ The server's packages:
   filters of `server/audit/filters.go` (`audit/filters.ts`; since and until
   read as PostgreSQL reads them, the fraction rounded to microseconds). The
   listing's cursor carries `occurred_at` in PostgreSQL's text form, so a
-  cursor either server made reads the same on the other; a cursor time in
-  another form PostgreSQL would also read (a date alone, `epoch`) answers
-  500 `INTERNAL` here, as text PostgreSQL cannot read does there. The
+  cursor either server made reads the same on the other. Its time is read
+  as PostgreSQL 17's timestamptz input reads it (`server/pgtime`, a port of
+  that input; the TypeScript server hands it to PostgreSQL as
+  `$3::timestamptz`): every form it takes, now and today at the time of the
+  query, infinity after every event, and the text it refuses answering 500
+  `INTERNAL` as it does there. Zone names come from the host's tz database
+  (`/usr/share/zoneinfo`), as PostgreSQL's packages read theirs, so for a
+  zone name both servers answer as their hosts' databases do. The
   export streams NDJSON a batch of 250 at a time up to the high-water mark.
   `audit.Record` gives the events of one call the clock's time in
   microseconds, as PostgreSQL's `now()` gives one transaction's, so events
@@ -522,9 +527,23 @@ The server's packages:
   the commands run as processes of their own). They print the TypeScript
   admin CLI's lines, or the outcome as JSON with `--json`; a refusal prints
   `varlatchd admin <command>: <code>: <message>` and exits 1 (the TypeScript
-  CLI prints one generic line), a usage error exits 64. The exclusive takers
-  of the Organization and person gates are checked against the TypeScript
-  code (`write` `TestExclusiveTakersAgainstTypeScript`).
+  CLI prints one generic line), a usage error exits 64. The TypeScript
+  code's exclusive takers of the Organization and person gates are
+  inventoried by line pattern and each mapped to the Go function meant to
+  take the gate (`write` `TestExclusiveTakersAgainstTypeScript`): a new
+  taker on either side fails the test, but the mapping is reviewed, not
+  proved; the gates the Go functions take are their own tests'.
+- `server/pgtime` (step 4.3c): PostgreSQL 17's timestamptz input, ported
+  (ParseDateTime, DecodeDateTime and tm2timestamp of `datetime.c` and
+  `timestamp.c`; `pg_tzset`, `tzload`, `tzparse` and the DST boundary
+  search of `src/timezone`; the Default abbreviations), in a UTC session
+  with DateStyle ISO, MDY: what the audit cursor's time reads as. Its
+  vectors (`testdata/timestamptz-vectors.json`, 4,854 inputs from
+  `testdata/gen-vectors.py`) are PostgreSQL 17.6's answers, instant and
+  SQLSTATE, read with that server's tz files (`testdata/zoneinfo`);
+  `go-timestamptz-vectors.test.ts` checks the same file against PGlite.
+  Ported code is under the PostgreSQL License as well
+  (`LICENSE-PostgreSQL`, `scripts/third-party-code.json`).
 - `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
   decision 3). `services/varlatchd/test/go-fixture-kit.ts` has the
   TypeScript server build a database through its own `/v1`, run a table of
