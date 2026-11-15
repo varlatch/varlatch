@@ -7,23 +7,39 @@
  * go-values-fixture.test.ts for the slices that write.
  *
  * Per request the file holds the status, the headers that matter, the body
- * byte for byte, the audit events it wrote, and the rows it added or
- * changed in the slice's side tables (`sideTables`); at the end, the
- * Security Control report counts. Every answer is recorded on the file's
- * own rows, loaded into a fresh database (loadRows), the way the check
- * replays it, so a file never drifts from this code: each run of the
- * fixture's test replays the file here too and requires the same answers.
+ * byte for byte, the audit events it wrote, and the rows it inserted,
+ * updated and deleted in the slice's side tables (`sideTables`, diffed by
+ * primary key); at the end, the Security Control report counts. A request
+ * with `concurrent: n` is sent n times at once, and its answers are kept
+ * sorted. Every answer is recorded on the file's own rows, loaded into a
+ * fresh database (loadRows), the way the check replays it, so a file never
+ * drifts from this code: each run of a fixture's test replays the file
+ * here too, requires the same answers, and rebuilds the database to check
+ * the file's rows are still what this code makes (expectSameRows).
+ *
+ * Rows are compared in PostgreSQL's typed form, as the pg driver reads
+ * them (times as ISO strings, booleans, jsonb parsed, bigint as text): the
+ * Go side converts its SQLite rows back to that form with the schema's
+ * column types. One canonical text (canonical(): object keys sorted,
+ * JSON.stringify's escaping) orders and compares them on both sides.
  *
  * Writes make what the file cannot hold fixed: new domain IDs, new
  * timestamps, new envelopes. Both sides normalize them the same way
- * (normalize): a domain ID that the file's rows do not hold becomes
- * `{<prefix>#<n>}`, numbered per prefix by first appearance across the
- * run (the body, then the audit events walked with their keys sorted,
- * then the side rows); an ISO timestamp the rows do not hold becomes
- * `{time}`; in a side table, a column listed `volatile` whose value the
- * file's rows do not hold for that column becomes `{fresh}` (the Go side
- * checks such an envelope opens, with the file's Root KEK). The request id
- * is `{requestId}`.
+ * (Normalizer):
+ *   - a domain ID the file's rows do not hold becomes `{<prefix>#<n>}`,
+ *     numbered per prefix by first appearance: in the body, then the
+ *     audit events (keys walked sorted), then the side rows, table by
+ *     table, inserted, updated, deleted, each group ordered by the
+ *     table's stable semantic key (`sortBy`) with the IDs not numbered
+ *     yet masked. Two rows of a group that the masked key cannot tell
+ *     apart fail the recording: anchor them in the body or the audit
+ *     events, or declare a key that does;
+ *   - an ISO timestamp the rows do not hold becomes `{time}`;
+ *   - in a side row, a `volatile` column whose value the file's rows do
+ *     not hold for that column becomes `{fresh}` (the Go side checks such
+ *     an envelope opens, with the file's Root KEK). Every column a write
+ *     fills with a new time or envelope must be listed;
+ *   - the request id becomes `{requestId}`.
  */
 import { expect } from "vitest";
 import type { AppCtx } from "../src/domain/ctx.js";
@@ -36,10 +52,17 @@ export type Row = Record<string, unknown>;
 export interface Table {
   name: string;
   orderBy: string;
+  /** Columns whose values each build makes anew (random keys, hashes), for expectSameRows. */
+  random?: string[];
 }
 
-/** A table whose added or changed rows each request records. */
-export interface SideTable extends Table {
+/** A table whose inserted, updated and deleted rows each request records. */
+export interface SideTable {
+  name: string;
+  /** The primary key's columns: rows are diffed by them. */
+  key: string[];
+  /** A stable semantic key: orders a group of rows before fresh IDs are numbered. */
+  sortBy: string[];
   /** Columns a write fills with what cannot be fixed (a time, an envelope). */
   volatile?: string[];
 }
@@ -51,17 +74,32 @@ export interface RequestCase {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   credential: string;
-  /** A JSON body, or the exact text of one that is not JSON. */
+  /** A JSON body, or the exact text of one that is not JSON (or holds what JSON.stringify would rewrite). */
   body?: unknown;
   rawBody?: string;
   userAgent?: string;
+  /** Sent this many times at once; the answers are kept sorted. */
+  concurrent?: number;
+}
+
+export interface Answer {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export interface SideChange {
+  inserted?: Row[];
+  updated?: Row[];
+  deleted?: Row[];
 }
 
 export interface Recorded extends RequestCase {
-  expect: { status: number; headers: Record<string, string>; body: string };
+  expect: Answer;
+  /** Every answer of a concurrent request, sorted. */
+  answers?: Answer[];
   audit: Row[];
-  /** Side table to the rows the request added or changed, normalized. */
-  side: Record<string, Row[]>;
+  side: Record<string, SideChange>;
 }
 
 export interface Fixture {
@@ -91,8 +129,18 @@ export function withIds(cases: Omit<RequestCase, "id">[]): RequestCase[] {
 
 const json = (v: unknown): unknown => (v instanceof Date ? v.toISOString() : v);
 
+/** The canonical text: object keys sorted, JSON.stringify's escaping and numbers. */
+export function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Row;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
 /** The tables' rows as PostgreSQL holds them, in their order. */
-export async function exportRows(db: AppCtx["db"], tables: readonly Table[]): Promise<Record<string, Row[]>> {
+export async function exportRows(db: AppCtx["db"], tables: readonly Pick<Table, "name" | "orderBy">[]): Promise<Record<string, Row[]>> {
   const out: Record<string, Row[]> = {};
   for (const t of tables) {
     const res = await db.query(`SELECT * FROM "${t.name}" ORDER BY ${t.orderBy}`);
@@ -144,7 +192,7 @@ export class Normalizer {
         for (const [col, v] of Object.entries(row)) {
           const key = `${table}.${col}`;
           if (!this.columns.has(key)) this.columns.set(key, new Set());
-          this.columns.get(key)!.add(JSON.stringify(v));
+          this.columns.get(key)!.add(canonical(v));
         }
       }
     }
@@ -177,22 +225,50 @@ export class Normalizer {
     return v;
   }
 
-  /** Side rows: volatile columns first, then sorted by their form with new IDs masked, then numbered. */
+  /** IDs not numbered yet masked as {prefix}: a group's order before its numbering. */
+  private masked(v: unknown): string {
+    return canonical(v).replace(ID, (m, p: string) => (this.known.has(m) ? m : (this.fresh.get(m) ?? `{${p}}`)));
+  }
+
+  /** One group of side rows (a table's inserted, updated or deleted rows), normalized. */
   side(table: SideTable, rows: Row[]): Row[] {
     const marked = rows.map((r) =>
       Object.fromEntries(Object.entries(r).map(([c, v]) =>
-        [c, table.volatile?.includes(c) && v !== null && !this.columns.get(`${table.name}.${c}`)?.has(JSON.stringify(v)) ? "{fresh}" : v])),
+        [c, table.volatile?.includes(c) && v !== null && !this.columns.get(`${table.name}.${c}`)?.has(canonical(v)) ? "{fresh}" : v])),
     );
-    const mask = (r: Row) => JSON.stringify(sortKeys(r)).replace(ID, (m, p: string) => (this.known.has(m) ? m : `{${p}}`));
-    return marked.sort((a, b) => (mask(a) < mask(b) ? -1 : mask(a) > mask(b) ? 1 : 0)).map((r) => this.value(r) as Row);
+    const keyed = marked.map((r) => ({ r, k: this.masked(table.sortBy.map((c) => r[c] ?? null)) }));
+    keyed.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+    for (let i = 1; i < keyed.length; i++) {
+      const [a, b] = [keyed[i - 1]!, keyed[i]!];
+      if (a.k === b.k && (this.unnumbered(a.r) || this.unnumbered(b.r))) {
+        throw new Error(`${table.name}: two rows share the semantic key ${b.k}: anchor their new IDs in the body or the audit events, or declare a sortBy that tells them apart`);
+      }
+    }
+    // Numbered in that order, then kept in the order of their normalized text.
+    return keyed.map(({ r }) => this.value(r) as Row).sort((a, b) => (canonical(a) < canonical(b) ? -1 : canonical(a) > canonical(b) ? 1 : 0));
+  }
+
+  /** Whether a row holds a new ID not numbered yet. */
+  private unnumbered(r: Row): boolean {
+    return [...canonical(r).matchAll(ID)].some((m) => !this.known.has(m[0]) && !this.fresh.has(m[0]));
   }
 }
 
-function sortKeys(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(sortKeys);
-  if (v !== null && typeof v === "object") return Object.fromEntries(Object.keys(v as Row).sort().map((k) => [k, sortKeys((v as Row)[k])]));
-  return v;
+const by = (keys: string[]) => (r: Row) => canonical(keys.map((k) => r[k] ?? null));
+
+/** What a request changed in a side table, by primary key. */
+function diff(t: SideTable, before: Row[], after: Row[]): { inserted: Row[]; updated: Row[]; deleted: Row[] } {
+  const key = by(t.key);
+  const was = new Map(before.map((r) => [key(r), r]));
+  const now = new Map(after.map((r) => [key(r), r]));
+  return {
+    inserted: after.filter((r) => !was.has(key(r))),
+    updated: after.filter((r) => was.has(key(r)) && canonical(was.get(key(r))) !== canonical(r)),
+    deleted: before.filter((r) => !now.has(key(r))),
+  };
 }
+
+const answerOrder = (a: Answer, b: Answer) => (a.status - b.status) || (a.body < b.body ? -1 : a.body > b.body ? 1 : 0);
 
 /**
  * Runs the table against a database, recording each answer and what it
@@ -207,33 +283,43 @@ export async function record(
 ): Promise<{ requests: Recorded[]; counters: Row[] }> {
   const norm = new Normalizer(f.rows);
   const out: Recorded[] = [];
-  const dump = async (t: SideTable) => (await exportRows(ctx.db, [t]))[t.name]!;
+  const dump = async (t: SideTable) => (await exportRows(ctx.db, [{ name: t.name, orderBy: t.key.map((k) => `"${k}"`).join(", ") }]))[t.name]!;
   for (const c of cases) {
     const before = Number(((await ctx.db.query("SELECT max(event_order) AS n FROM audit_events")).rows[0] as { n: unknown }).n ?? 0);
-    const sideBefore = new Map<string, Set<string>>();
-    for (const t of f.sideTables) sideBefore.set(t.name, new Set((await dump(t)).map((r) => JSON.stringify(r))));
+    const sideBefore = new Map<string, Row[]>();
+    for (const t of f.sideTables) sideBefore.set(t.name, await dump(t));
     const headers: Record<string, string> = { "Content-Type": "application/json", "User-Agent": c.userAgent ?? CLI_AGENT };
     if (c.credential !== "none") headers.Authorization = `Bearer ${f.tokens[c.credential]}`;
     const init: RequestInit = { method: c.method, headers };
     if (c.rawBody !== undefined) init.body = c.rawBody;
     else if ("body" in c) init.body = JSON.stringify(c.body);
-    const res = await app.request(path(c.path), init);
-    const requestId = res.headers.get("X-Request-Id") ?? "";
-    const body = norm.text(await res.text(), requestId);
-    const kept: Record<string, string> = {};
-    for (const h of HEADERS) {
-      const v = res.headers.get(h);
-      if (v !== null) kept[h] = norm.text(v, requestId);
-    }
+    const responses = await Promise.all(Array.from({ length: c.concurrent ?? 1 }, () => app.request(path(c.path), init)));
+    const raw = await Promise.all(responses.map(async (res) => ({ res, id: res.headers.get("X-Request-Id") ?? "", text: await res.text() })));
+    // Sorted before normalizing (a request id differs per answer), so the
+    // fresh IDs are numbered in the sorted order.
+    const pre = raw.map(({ res, id, text }) => ({ res, id, status: res.status, text: text.replaceAll(id, REQUEST_ID) }));
+    pre.sort((a, b) => (a.status - b.status) || (a.text < b.text ? -1 : a.text > b.text ? 1 : 0));
+    const answers: Answer[] = pre.map(({ res, id, status, text }) => {
+      const kept: Record<string, string> = {};
+      for (const h of HEADERS) {
+        const v = res.headers.get(h);
+        if (v !== null) kept[h] = norm.text(v, id);
+      }
+      return { status, headers: kept, body: norm.text(text) };
+    });
+    answers.sort(answerOrder);
     await accessCountsSettled();
+    const ids = new Set(raw.map((r) => r.id));
     const audit = ((await ctx.db.query(`SELECT ${AUDIT_COLUMNS} FROM audit_events WHERE event_order > $1 ORDER BY event_order`, [before])).rows as Row[])
-      .map((r) => norm.value(r, requestId) as Row);
-    const side: Record<string, Row[]> = {};
+      .map((r) => norm.value({ ...r, request_id: ids.has(r.request_id as string) ? REQUEST_ID : r.request_id }) as Row);
+    const side: Record<string, SideChange> = {};
     for (const t of f.sideTables) {
-      const changed = (await dump(t)).filter((r) => !sideBefore.get(t.name)!.has(JSON.stringify(r)));
-      if (changed.length > 0) side[t.name] = norm.side(t, changed);
+      const d = diff(t, sideBefore.get(t.name)!, await dump(t));
+      const change: SideChange = {};
+      for (const k of ["inserted", "updated", "deleted"] as const) if (d[k].length > 0) change[k] = norm.side(t, d[k]);
+      if (Object.keys(change).length > 0) side[t.name] = change;
     }
-    out.push({ ...c, expect: { status: res.status, headers: kept, body }, audit, side });
+    out.push({ ...c, expect: answers[0]!, ...(c.concurrent ? { answers } : {}), audit, side });
   }
   const counters = ((await ctx.db.query(
     "SELECT organization_id, control, config_version, operation, actor_identity_id, reason, count FROM security_control_counters ORDER BY organization_id, control, operation, actor_identity_id, reason",
@@ -241,28 +327,46 @@ export async function record(
   return { requests: out, counters };
 }
 
-/** The request definitions of a table, by id, without answers. */
-export function definitions(cases: RequestCase[]): Map<string, RequestCase> {
-  return new Map(cases.map((c) => [c.id, {
+/** The request definitions of a table, in order, without answers. */
+export function definitions(cases: RequestCase[]): RequestCase[] {
+  return cases.map((c) => ({
     id: c.id, name: c.name, method: c.method, path: c.path, credential: c.credential,
-    ...("body" in c ? { body: c.body } : {}), ...(c.rawBody !== undefined ? { rawBody: c.rawBody } : {}), ...(c.userAgent !== undefined ? { userAgent: c.userAgent } : {}),
-  }]));
+    ...("body" in c ? { body: c.body } : {}), ...(c.rawBody !== undefined ? { rawBody: c.rawBody } : {}),
+    ...(c.userAgent !== undefined ? { userAgent: c.userAgent } : {}), ...(c.concurrent !== undefined ? { concurrent: c.concurrent } : {}),
+  }));
 }
 
-/** A committed file's requests must be the table's: one added, removed or changed and not regenerated fails. */
+/** A committed file's requests must be the table's, in its order: one added, removed, moved or changed and not regenerated fails. */
 export function expectCurrentTable(f: Fixture, want: RequestCase[]) {
-  const w = definitions(want);
-  const have = definitions(f.requests);
-  expect([...have.keys()].sort(), "the file's requests are not the table's: regenerate it").toEqual([...w.keys()].sort());
-  for (const [id, def] of w) expect(have.get(id), `${id}: changed since the file was written; regenerate it`).toEqual(def);
+  expect(definitions(f.requests).map((c) => c.id), "the file's requests are not the table's, in its order: regenerate it").toEqual(definitions(want).map((c) => c.id));
+  expect(definitions(f.requests), "a request changed since the file was written: regenerate it").toEqual(definitions(want));
 }
 
 export function expectSameAnswers(f: Fixture, got: { requests: Recorded[]; counters: Row[] }) {
   for (const [i, want] of f.requests.entries()) {
     const have = got.requests[i]!;
-    expect({ name: want.name, ...have.expect }).toEqual({ name: want.name, ...want.expect });
+    expect({ name: want.name, ...have.expect, answers: have.answers }).toEqual({ name: want.name, ...want.expect, answers: want.answers });
     expect({ name: want.name, audit: have.audit }).toEqual({ name: want.name, audit: want.audit });
     expect({ name: want.name, side: have.side }).toEqual({ name: want.name, side: want.side });
   }
   expect(got.counters).toEqual(f.counters);
+}
+
+/**
+ * The file's rows are still what this code builds: a fresh build's rows
+ * against the file's, per table, as multisets, with what each build makes
+ * anew masked (domain IDs as {prefix}, times as {time}, each table's
+ * `random` columns as {random}). A change in what the setup writes (a new
+ * column, a default, a value) fails here, so the file is regenerated.
+ */
+export function expectSameRows(tables: readonly Table[], file: Record<string, Row[]>, built: Record<string, Row[]>) {
+  const shape = (t: Table, r: Row) =>
+    canonical(Object.fromEntries(Object.entries(r).map(([c, v]) => [c, t.random?.includes(c) && v !== null ? "{random}" : v])))
+      .replace(ID, (_m, p: string) => `{${p}}`)
+      .replace(ISO, "{time}");
+  for (const t of tables) {
+    const a = (file[t.name] ?? []).map((r) => shape(t, r)).sort();
+    const b = (built[t.name] ?? []).map((r) => shape(t, r)).sort();
+    expect({ table: t.name, rows: a }, "the file's rows are not what this code builds now: regenerate it").toEqual({ table: t.name, rows: b });
+  }
 }

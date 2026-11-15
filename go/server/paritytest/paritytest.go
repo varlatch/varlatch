@@ -39,10 +39,13 @@ import (
 // Row is one row as PostgreSQL held it (JSON numbers kept as json.Number).
 type Row = map[string]any
 
-// SideTable is a table whose added or changed rows each request records.
+// SideTable is a table whose inserted, updated and deleted rows each
+// request records, diffed by its primary key (Key) and ordered by a stable
+// semantic key (SortBy) before new IDs are numbered.
 type SideTable struct {
-	Name    string `json:"name"`
-	OrderBy string `json:"orderBy"`
+	Name   string   `json:"name"`
+	Key    []string `json:"key"`
+	SortBy []string `json:"sortBy"`
 	// Volatile columns hold what a write cannot fix (a time, an envelope).
 	Volatile []string `json:"volatile,omitempty"`
 }
@@ -57,13 +60,15 @@ type Recorded struct {
 	Body       *any    `json:"body,omitempty"`
 	RawBody    *string `json:"rawBody,omitempty"`
 	UserAgent  string  `json:"userAgent,omitempty"`
-	Expect     struct {
-		Status  int               `json:"status"`
-		Headers map[string]string `json:"headers"`
-		Body    string            `json:"body"`
-	} `json:"expect"`
-	Audit []Row            `json:"audit"`
-	Side  map[string][]Row `json:"side"`
+	// Concurrent requests are sent this many times at once; Answers holds
+	// every answer, sorted, and Expect the first.
+	Concurrent int      `json:"concurrent,omitempty"`
+	Expect     answer   `json:"expect"`
+	Answers    []answer `json:"answers,omitempty"`
+	Audit      []Row    `json:"audit"`
+	// Side is, per side table, the "inserted", "updated" and "deleted"
+	// rows, normalized, in PostgreSQL's form.
+	Side map[string]map[string][]Row `json:"side"`
 }
 
 // UnmarshalJSON tells a JSON null body from none.

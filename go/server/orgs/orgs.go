@@ -52,6 +52,13 @@ func Create(ctx context.Context, w *write.Writer, rootKEK []byte, actorID, slug,
 	// The creator at step 2 of the TypeScript order, shared: the new
 	// Organization is the job's own row.
 	err := w.Job(ctx, []write.Gate{write.Person(actorID, write.Shared)}, func(ctx context.Context, tx *storage.Tx) error {
+		// The name as PostgreSQL takes it: U+0000 fails the insert (before
+		// its unique check) with 500 INTERNAL, a lone surrogate is stored
+		// as U+FFFD (write.Text).
+		stored, err := write.Text(name)
+		if err != nil {
+			return err
+		}
 		q := query.New(tx)
 		taken, err := q.OrganizationSlugTaken(ctx, slug)
 		if err != nil {
@@ -70,7 +77,7 @@ func Create(ctx context.Context, w *write.Writer, rootKEK []byte, actorID, slug,
 		if err != nil {
 			return err
 		}
-		if err := q.InsertOrganization(ctx, query.InsertOrganizationParams{ID: id, Slug: slug, Name: name, WrappedOrgKek: sql.NullString{String: string(b), Valid: true}}); err != nil {
+		if err := q.InsertOrganization(ctx, query.InsertOrganizationParams{ID: id, Slug: slug, Name: stored, WrappedOrgKek: sql.NullString{String: string(b), Valid: true}}); err != nil {
 			return err
 		}
 		if err := q.InsertOrganizationAdmin(ctx, query.InsertOrganizationAdminParams{OrganizationID: id, IdentityID: actorID}); err != nil {
@@ -112,7 +119,14 @@ func Rename(ctx context.Context, w *write.Writer, p *auth.Principal, organizatio
 		if err != nil {
 			return err
 		}
-		if err := q.RenameOrganization(ctx, query.RenameOrganizationParams{Name: name, ID: organizationID}); err != nil {
+		// U+0000 fails the update; a lone surrogate is stored as U+FFFD,
+		// and then fails in the audit event's jsonb metadata, which holds
+		// the name as sent (both 500 INTERNAL, as PostgreSQL fails them).
+		stored, err := write.Text(name)
+		if err != nil {
+			return err
+		}
+		if err := q.RenameOrganization(ctx, query.RenameOrganizationParams{Name: stored, ID: organizationID}); err != nil {
 			return err
 		}
 		action, actor := "organization.manage", p.Identity.ID

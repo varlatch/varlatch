@@ -30,7 +30,7 @@ import { newId } from "../src/db/ids.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { expectCurrentTable, expectSameAnswers, exportRows, loadRows, record, withIds, type Fixture, type RequestCase, type SideTable, type Table } from "./go-fixture-kit.js";
+import { expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, withIds, type Fixture, type RequestCase, type SideTable, type Table } from "./go-fixture-kit.js";
 
 // The unwrapped app: some requests are outside the OpenAPI document on
 // purpose (bodies that are not JSON, extra members).
@@ -39,12 +39,12 @@ const { buildApp } = await vi.importActual<typeof import("../src/http/app.js")>(
 const FILE = new URL("../../../go/server/paritytest/testdata/core-v0.22.0.json", import.meta.url);
 
 const TABLES: Table[] = [
-  { name: "installation", orderBy: "id" },
+  { name: "installation", orderBy: "id", random: ["kek_canary"] },
   { name: "identities", orderBy: "id" },
-  { name: "user", orderBy: "id" },
-  { name: "auth_user_links", orderBy: "better_auth_user_id" },
-  { name: "credentials", orderBy: "id" },
-  { name: "organizations", orderBy: "id" },
+  { name: "user", orderBy: "id", random: ["id"] },
+  { name: "auth_user_links", orderBy: "better_auth_user_id", random: ["better_auth_user_id"] },
+  { name: "credentials", orderBy: "id", random: ["token_hash"] },
+  { name: "organizations", orderBy: "id", random: ["wrapped_org_kek"] },
   { name: "org_memberships", orderBy: "organization_id, identity_id" },
   { name: "grants", orderBy: "id" },
   { name: "requirements", orderBy: "id" },
@@ -54,9 +54,12 @@ const TABLES: Table[] = [
 ];
 
 const SIDE: SideTable[] = [
-  { name: "organizations", orderBy: "id", volatile: ["created_at", "wrapped_org_kek"] },
-  { name: "org_memberships", orderBy: "organization_id, identity_id", volatile: ["created_at"] },
+  { name: "organizations", key: ["id"], sortBy: ["slug"], volatile: ["created_at", "wrapped_org_kek"] },
+  { name: "org_memberships", key: ["organization_id", "identity_id"], sortBy: ["organization_id", "identity_id"], volatile: ["created_at"] },
 ];
+
+/** The CLI in assisted mode (ADR-0043 Decision 3): its requests are attributed so. */
+const ASSISTED_AGENT = "varlatch-cli/0.22.0 (linux; x64; assisted)";
 
 const ORG = "/v1/organizations";
 
@@ -89,6 +92,15 @@ function requestTable(): RequestCase[] {
     create("create by a machine", "ci", { name: "Machine", slug: "machine" }),
     create("create by an agent run", "agent", { name: "Agent", slug: "agent" }),
     create("create without a credential", "none", { name: "None", slug: "none" }),
+    // PostgreSQL refuses U+0000 in text: 500, nothing written. A lone
+    // surrogate reaches the text column as U+FFFD. Sent as text: a JSON
+    // round trip would rewrite them.
+    { name: "create, U+0000 in the name", method: "POST", path: ORG, credential: "alice", rawBody: '{"name":"a\\u0000b","slug":"nul"}' },
+    { name: "create, a duplicate slug and U+0000 in the name", method: "POST", path: ORG, credential: "alice", rawBody: '{"name":"a\\u0000b","slug":"acme"}' },
+    { name: "create, a lone surrogate in the name", method: "POST", path: ORG, credential: "alice", rawBody: '{"name":"a\\ud800b","slug":"surrogate"}' },
+    { ...create("create in assisted mode", "alice", { name: "Assisted", slug: "assisted" }), userAgent: ASSISTED_AGENT },
+    create("create, a deleted Organization's slug", "alice", { name: "Again", slug: "gone" }),
+    { ...create("create, the same slug twice at once", "alice", { name: "Twice", slug: "twice" }), concurrent: 2 },
     create("create with an invalid credential", "invalid", { name: "None", slug: "none" }),
     // getOrganization.
     get("get by slug", "acme"),
@@ -107,6 +119,8 @@ function requestTable(): RequestCase[] {
     get("get, with a query", "acme?include=everything"),
     get("get, an encoded slug", "ac%6De"),
     get("get without a credential", "acme", "none"),
+    get("get an Organization whose deletion completed", "gone"),
+    get("get a deleted Organization by id", "{goneId}"),
     // renameOrganization.
     rename("rename", "acme", "alice", { name: "  Acme Robotics  " }),
     rename("rename, extra members", "acme", "alice", { name: "Acme", slug: "other" }),
@@ -127,6 +141,10 @@ function requestTable(): RequestCase[] {
     rename("rename under passkey-verification enforce", "guarded", "alice", { name: "Guarded" }),
     rename("rename under passkey-verification report", "reported", "alice", { name: "Reported Inc" }),
     rename("rename an unknown Organization", "nope", "alice", { name: "Nobody" }),
+    rename("rename an Organization whose deletion completed", "gone", "alice", { name: "Back" }),
+    { name: "rename, U+0000 in the name", method: "PATCH", path: `${ORG}/acme`, credential: "alice", rawBody: '{"name":"a\\u0000b"}' },
+    { name: "rename, a lone surrogate in the name", method: "PATCH", path: `${ORG}/acme`, credential: "alice", rawBody: '{"name":"a\\ud800b"}' },
+    { ...rename("rename in assisted mode", "acme", "alice", { name: "Acme Assisted" }), userAgent: ASSISTED_AGENT },
     rename("rename by id", "{orgId}", "alice", { name: "Acme by id" }),
     get("get after the renames", "acme"),
     create("create after the renames", "alice", { name: "Acme Robotics", slug: "acme-robotics" }),
@@ -152,7 +170,7 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
     return text ? JSON.parse(text) : null;
   };
   const orgs: Record<string, string> = {};
-  for (const slug of ["acme", "frozen", "guarded", "reported", "deleting"]) {
+  for (const slug of ["acme", "frozen", "guarded", "reported", "deleting", "gone"]) {
     orgs[slug] = (await call("POST", ORG, { name: slug[0]!.toUpperCase() + slug.slice(1), slug })).id;
   }
   const person = async (name: string, member: boolean) => {
@@ -177,6 +195,13 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
     "INSERT INTO organization_deletions (id, organization_id, requested_by, scheduled_at, run_after, approval_required) VALUES ($1, $2, $3, '2026-03-01T00:00:00.000Z', '2099-03-01T00:00:00.000Z', false)",
     [newId("organizationDeletion"), orgs.deleting, alice],
   );
+  // A deletion that ran: the Organization deleted, its KEK destroyed, as
+  // the deletion worker leaves it (orgdeletion.ts).
+  await db.query(
+    "INSERT INTO organization_deletions (id, organization_id, requested_by, scheduled_at, run_after, approval_required, completed_at) VALUES ($1, $2, $3, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z', false, '2026-03-02T00:00:01.000Z')",
+    [newId("organizationDeletion"), orgs.gone, alice],
+  );
+  await db.query("UPDATE organizations SET deleted_at = '2026-03-02T00:00:01.000Z', wrapped_org_kek = NULL, org_kek_destroyed_at = '2026-03-02T00:00:01.000Z' WHERE id = $1", [orgs.gone]);
   return { ctx, tokens };
 }
 
@@ -185,8 +210,8 @@ async function replay(f: Fixture) {
   const db = await loadRows(f.rows, TABLES);
   try {
     const ctx: AppCtx = { db, rootKek: Buffer.from(f.rootKek, "hex") };
-    const orgId = f.rows.organizations!.find((o) => o.slug === "acme")!.id as string;
-    return await record(ctx, buildApp(ctx), f, f.requests, (p) => p.replace("{orgId}", orgId));
+    const idOf = (slug: string) => f.rows.organizations!.find((o) => o.slug === slug)!.id as string;
+    return await record(ctx, buildApp(ctx), f, f.requests, (p) => p.replace("{orgId}", idOf("acme")).replace("{goneId}", idOf("gone")));
   } finally {
     await db.close();
   }
@@ -219,5 +244,12 @@ describe("the fixture is this server's answers", () => {
     expectCurrentTable(f, requestTable());
     expect(f.sideTables).toEqual(SIDE);
     expectSameAnswers(f, await replay(f));
+    // The file's rows are still what the setup builds.
+    const { ctx } = await build();
+    try {
+      expectSameRows(TABLES, f.rows, await exportRows(ctx.db, TABLES));
+    } finally {
+      await ctx.close();
+    }
   }, 120_000);
 });

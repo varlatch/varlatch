@@ -9,13 +9,19 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+	"unicode/utf16"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 )
 
 var (
@@ -23,21 +29,124 @@ var (
 	isoPattern = regexp.MustCompile(`\b\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\b`)
 )
 
-// Normalizer is go-fixture-kit.ts's: a domain ID the fixture's rows do not
-// hold becomes {<prefix>#<n>}, numbered per prefix by first appearance
-// across the run; an ISO timestamp they do not hold becomes {time}; in a
-// side table, a volatile column whose value the rows do not hold for that
-// column becomes {fresh}; the request id becomes {requestId}.
+// Canonical is go-fixture-kit.ts's canonical(): JSON text with object keys
+// sorted, JSON.stringify's escaping and numbers. Rows of both servers are
+// ordered and compared by it.
+func Canonical(v any) string {
+	var b bytes.Buffer
+	canonical(&b, v)
+	return b.String()
+}
+
+func canonical(b *bytes.Buffer, v any) {
+	switch x := v.(type) {
+	case nil:
+		b.WriteString("null")
+	case bool:
+		b.WriteString(strconv.FormatBool(x))
+	case string:
+		jsvalue.Quote(b, x)
+	case float64:
+		b.WriteString(jsvalue.Number(x))
+	case int64:
+		b.WriteString(jsvalue.Number(float64(x)))
+	case int:
+		b.WriteString(jsvalue.Number(float64(x)))
+	case json.Number:
+		f, _ := x.Float64()
+		b.WriteString(jsvalue.Number(f))
+	case []any:
+		b.WriteByte('[')
+		for i, e := range x {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			canonical(b, e)
+		}
+		b.WriteByte(']')
+	case jsvalue.Object:
+		m := map[string]any{}
+		for _, mem := range x {
+			m[mem.Key] = mem.Value
+		}
+		canonical(b, m)
+	case map[string]any:
+		keys := sortedKeys(x)
+		b.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			jsvalue.Quote(b, k)
+			b.WriteByte(':')
+			canonical(b, x[k])
+		}
+		b.WriteByte('}')
+	default:
+		jsvalue.Quote(b, fmt.Sprint(x))
+	}
+}
+
+// less compares as JavaScript compares strings: by UTF-16 code units.
+func less(a, b string) bool {
+	ua, ub := utf16.Encode([]rune(a)), utf16.Encode([]rune(b))
+	for i := 0; i < len(ua) && i < len(ub); i++ {
+		if ua[i] != ub[i] {
+			return ua[i] < ub[i]
+		}
+	}
+	return len(ua) < len(ub)
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return less(keys[i], keys[j]) })
+	return keys
+}
+
+// plain is a JSON value as plain Go values (objects as maps), from a
+// jsvalue or from JSON text.
+func plain(v any) any {
+	switch x := v.(type) {
+	case jsvalue.Object:
+		m := make(map[string]any, len(x))
+		for _, mem := range x {
+			m[mem.Key] = plain(mem.Value)
+		}
+		return m
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, e := range x {
+			m[k] = plain(e)
+		}
+		return m
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = plain(e)
+		}
+		return out
+	}
+	return v
+}
+
+// Normalizer is go-fixture-kit.ts's (see its header): new domain IDs as
+// {<prefix>#<n>} by first appearance, new times as {time}, a side row's
+// volatile columns that hold no value of the file's rows as {fresh}, the
+// request id as {requestId}.
 type Normalizer struct {
 	known   map[string]bool
-	columns map[string]map[any]bool // table.column: the values the rows hold, in SQLite's form
+	columns map[string]map[string]bool // table.column: the canonical values the rows hold
 	fresh   map[string]string
 	counts  map[string]int
 }
 
 // NewNormalizer knows the fixture's rows.
 func NewNormalizer(rows map[string][]Row) *Normalizer {
-	n := &Normalizer{known: map[string]bool{}, columns: map[string]map[any]bool{}, fresh: map[string]string{}, counts: map[string]int{}}
+	n := &Normalizer{known: map[string]bool{}, columns: map[string]map[string]bool{}, fresh: map[string]string{}, counts: map[string]int{}}
 	var walk func(v any)
 	walk = func(v any) {
 		switch x := v.(type) {
@@ -64,11 +173,9 @@ func NewNormalizer(rows map[string][]Row) *Normalizer {
 			for col, v := range r {
 				key := table + "." + col
 				if n.columns[key] == nil {
-					n.columns[key] = map[any]bool{}
+					n.columns[key] = map[string]bool{}
 				}
-				if sv, err := SQLiteValue(v); err == nil {
-					n.columns[key][fmt.Sprint(sv)] = true
-				}
+				n.columns[key][Canonical(v)] = true
 			}
 		}
 	}
@@ -113,13 +220,8 @@ func (n *Normalizer) Value(v any, requestID string) any {
 		}
 		return out
 	case map[string]any:
-		keys := make([]string, 0, len(x))
-		for k := range x {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
 		out := make(map[string]any, len(x))
-		for _, k := range keys {
+		for _, k := range sortedKeys(x) {
 			out[k] = n.Value(x[k], requestID)
 		}
 		return out
@@ -127,35 +229,64 @@ func (n *Normalizer) Value(v any, requestID string) any {
 	return v
 }
 
-// Side normalizes a side table's changed rows, in SQLite's form: volatile
-// columns first, then the rows in the order of their form with new IDs
-// masked, then the IDs numbered.
-func (n *Normalizer) Side(t SideTable, rows []Row) []Row {
-	marked := make([]Row, len(rows))
+func (n *Normalizer) masked(v any) string {
+	return idPattern.ReplaceAllStringFunc(Canonical(v), func(m string) string {
+		if n.known[m] {
+			return m
+		}
+		if p, ok := n.fresh[m]; ok {
+			return p
+		}
+		return "{" + m[:strings.IndexByte(m, '_')] + "}"
+	})
+}
+
+func (n *Normalizer) unnumbered(r Row) bool {
+	for _, m := range idPattern.FindAllString(Canonical(r), -1) {
+		if _, ok := n.fresh[m]; !n.known[m] && !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Side normalizes one group of side rows (a table's inserted, updated or
+// deleted rows, in PostgreSQL's form), as the kit does: volatile columns,
+// then the rows ordered by their semantic key with new IDs not numbered
+// yet masked (two rows the key cannot tell apart are an error), numbered
+// in that order, and kept in the order of their normalized text.
+func (n *Normalizer) Side(t SideTable, rows []Row) ([]Row, error) {
+	type keyed struct {
+		r Row
+		k string
+	}
+	list := make([]keyed, len(rows))
 	for i, r := range rows {
 		m := Row{}
 		for c, v := range r {
-			if v != nil && contains(t.Volatile, c) && !n.columns[t.Name+"."+c][fmt.Sprint(v)] {
+			if v != nil && contains(t.Volatile, c) && !n.columns[t.Name+"."+c][Canonical(v)] {
 				v = "{fresh}"
 			}
 			m[c] = v
 		}
-		marked[i] = m
+		key := make([]any, len(t.SortBy))
+		for j, c := range t.SortBy {
+			key[j] = m[c]
+		}
+		list[i] = keyed{m, n.masked(key)}
 	}
-	mask := func(r Row) string {
-		b, _ := json.Marshal(r)
-		return idPattern.ReplaceAllStringFunc(string(b), func(m string) string {
-			if n.known[m] {
-				return m
-			}
-			return "{" + m[:strings.IndexByte(m, '_')] + "}"
-		})
+	sort.SliceStable(list, func(i, j int) bool { return less(list[i].k, list[j].k) })
+	for i := 1; i < len(list); i++ {
+		if list[i].k == list[i-1].k && (n.unnumbered(list[i].r) || n.unnumbered(list[i-1].r)) {
+			return nil, fmt.Errorf("%s: two rows share the semantic key %s: anchor their new IDs in the body or the audit events, or declare a sortBy that tells them apart", t.Name, list[i].k)
+		}
 	}
-	sort.SliceStable(marked, func(i, j int) bool { return mask(marked[i]) < mask(marked[j]) })
-	for i, r := range marked {
-		marked[i] = n.Value(map[string]any(r), "").(map[string]any)
+	out := make([]Row, len(list))
+	for i, e := range list {
+		out[i] = n.Value(map[string]any(e.r), "").(map[string]any)
 	}
-	return marked
+	sort.SliceStable(out, func(i, j int) bool { return less(Canonical(out[i]), Canonical(out[j])) })
+	return out, nil
 }
 
 func contains(list []string, s string) bool {
@@ -176,7 +307,7 @@ type Target struct {
 	// Path fills a request's path ({orgId} and the like).
 	Path func(string) string
 	// Check, when set, sees every exchange (the OpenAPI check).
-	Check func(t *testing.T, req *http.Request, body []byte, rec *httptest.ResponseRecorder)
+	Check func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder)
 }
 
 // AuditColumns are the audit event columns a fixture records.
@@ -184,7 +315,7 @@ var AuditColumns = []string{"event_type", "actor_identity_id", "credential_id", 
 	"authz", "tailnet", "listener", "request_id", "metadata", "client", "schema_version"}
 
 // Rows reads a query's rows, each column by name.
-func Rows(t *testing.T, store *storage.DB, q string, args ...any) []Row {
+func Rows(t testing.TB, store *storage.DB, q string, args ...any) []Row {
 	t.Helper()
 	rs, err := store.Reader().Query(q, args...)
 	if err != nil {
@@ -211,57 +342,178 @@ func Rows(t *testing.T, store *storage.DB, q string, args ...any) []Row {
 	return out
 }
 
-// Canonical is a value or JSON text as plain Go values, so two rows
-// compare without their member order or their number types.
-func Canonical(v any) any {
-	if s, ok := v.(string); ok && (strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[")) {
-		var out any
-		if json.Unmarshal([]byte(s), &out) == nil {
-			return out
-		}
-	}
-	if m, ok := v.(map[string]any); ok {
-		out := map[string]any{}
-		for k, e := range m {
-			out[k] = Canonical(e)
-		}
-		v = out
-	}
-	b, _ := json.Marshal(v)
-	var out any
-	_ = json.Unmarshal(b, &out)
-	return out
+// schema is PostgreSQL's column types (db/testdata/pg-v0.22.0.json) and
+// the mapping's SQLite names, to read a Go row back in PostgreSQL's form.
+type schema struct {
+	types  map[string]map[string]string // table -> PostgreSQL column -> type
+	sqlite map[string]string            // table -> SQLite table
+	cols   map[string]map[string]string // table -> PostgreSQL column -> SQLite column
 }
 
-// Replay runs every request of f against target and requires the
-// TypeScript server's answers.
-func Replay(t *testing.T, target Target, f Fixture) {
+var (
+	schemaOnce sync.Once
+	schemaVal  schema
+	schemaErr  error
+)
+
+func readSchema() (schema, error) {
+	schemaOnce.Do(func() {
+		raw, err := os.ReadFile(filepath.Join(here(), "..", "db", "testdata", "pg-v0.22.0.json"))
+		if err != nil {
+			schemaErr = err
+			return
+		}
+		var dump struct {
+			Tables []struct {
+				Name    string `json:"name"`
+				Columns []struct {
+					Name string `json:"name"`
+					Type string `json:"type"`
+				} `json:"columns"`
+			} `json:"tables"`
+		}
+		if schemaErr = json.Unmarshal(raw, &dump); schemaErr != nil {
+			return
+		}
+		m, err := readMapping()
+		if err != nil {
+			schemaErr = err
+			return
+		}
+		s := schema{types: map[string]map[string]string{}, sqlite: map[string]string{}, cols: map[string]map[string]string{}}
+		for _, t := range dump.Tables {
+			s.types[t.Name] = map[string]string{}
+			for _, c := range t.Columns {
+				s.types[t.Name][c.Name] = c.Type
+			}
+		}
+		for name, t := range m.Tables {
+			s.sqlite[name] = t.SQLite
+			s.cols[name] = map[string]string{}
+			for pg, raw := range t.Columns {
+				var col string
+				if json.Unmarshal(raw, &col) == nil {
+					s.cols[name][pg] = col
+				}
+			}
+		}
+		schemaVal = s
+	})
+	return schemaVal, schemaErr
+}
+
+// pgValue is a SQLite value as the pg driver reads the PostgreSQL column
+// the mapping copies it from (go-fixture-kit.ts's exportRows).
+func pgValue(typ string, v any) (any, error) {
+	if v == nil {
+		return nil, nil
+	}
+	switch typ {
+	case "boolean":
+		n, ok := v.(int64)
+		if !ok {
+			return nil, fmt.Errorf("boolean %v", v)
+		}
+		return n != 0, nil
+	case "timestamp with time zone":
+		n, ok := v.(int64)
+		if !ok {
+			return nil, fmt.Errorf("time %v", v)
+		}
+		// A JavaScript Date: milliseconds.
+		return time.UnixMicro(n).UTC().Format("2006-01-02T15:04:05.000Z"), nil
+	case "bigint":
+		// The kit's PGlite reads int8 as a number.
+		return v, nil
+	case "jsonb", "json", "text[]":
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s %v", typ, v)
+		}
+		parsed, err := jsvalue.Parse([]byte(s))
+		return plain(parsed), err
+	}
+	return v, nil
+}
+
+// pgRows reads a table's rows in PostgreSQL's form, with its column names.
+func pgRows(t testing.TB, store *storage.DB, table string) []Row {
 	t.Helper()
-	norm := NewNormalizer(f.Rows)
-	mapped := map[string]string{}
-	m, err := readMapping()
+	s, err := readSchema()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, st := range f.SideTables {
-		mapped[st.Name] = m.Tables[st.Name].SQLite
+	var out []Row
+	for _, r := range Rows(t, store, "SELECT * FROM "+s.sqlite[table]) {
+		pr := Row{}
+		for pg, col := range s.cols[table] {
+			v, err := pgValue(s.types[table][pg], r[col])
+			if err != nil {
+				t.Fatalf("%s.%s: %v", table, pg, err)
+			}
+			pr[pg] = v
+		}
+		out = append(out, pr)
 	}
-	dump := func(st SideTable) []Row {
-		return Rows(t, target.Store, "SELECT * FROM "+mapped[st.Name])
+	return out
+}
+
+// sideChange is what a request changed in a side table, by primary key.
+type sideChange struct{ inserted, updated, deleted []Row }
+
+func diff(st SideTable, before, after []Row) sideChange {
+	key := func(r Row) string {
+		k := make([]any, len(st.Key))
+		for i, c := range st.Key {
+			k[i] = r[c]
+		}
+		return Canonical(k)
 	}
-	key := func(r Row) string { b, _ := json.Marshal(r); return string(b) }
+	was, now := map[string]Row{}, map[string]Row{}
+	for _, r := range before {
+		was[key(r)] = r
+	}
+	for _, r := range after {
+		now[key(r)] = r
+	}
+	var d sideChange
+	for _, r := range after {
+		if old, ok := was[key(r)]; !ok {
+			d.inserted = append(d.inserted, r)
+		} else if Canonical(old) != Canonical(r) {
+			d.updated = append(d.updated, r)
+		}
+	}
+	for _, r := range before {
+		if _, ok := now[key(r)]; !ok {
+			d.deleted = append(d.deleted, r)
+		}
+	}
+	return d
+}
+
+type answer struct {
+	Status  int               `json:"status"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
+}
+
+var keptHeaders = []string{"Cache-Control", "Retry-After", "Content-Type", "Varlatch-Credential-Expires", "Location"}
+
+// Replay runs every request of f against target and requires the
+// TypeScript server's answers.
+func Replay(t testing.TB, target Target, f Fixture) {
+	t.Helper()
+	norm := NewNormalizer(f.Rows)
 	for _, c := range f.Requests {
 		name := c.ID
 		var before sql.NullInt64
 		if err := target.Store.Reader().QueryRow("SELECT max(event_order) FROM audit_events").Scan(&before); err != nil {
 			t.Fatal(err)
 		}
-		sideBefore := map[string]map[string]bool{}
+		sideBefore := map[string][]Row{}
 		for _, st := range f.SideTables {
-			sideBefore[st.Name] = map[string]bool{}
-			for _, r := range dump(st) {
-				sideBefore[st.Name][key(r)] = true
-			}
+			sideBefore[st.Name] = pgRows(t, target.Store, st.Name)
 		}
 		path := c.Path
 		if target.Path != nil {
@@ -274,95 +526,161 @@ func Replay(t *testing.T, target Target, f Fixture) {
 		case c.Body != nil:
 			body, _ = json.Marshal(*c.Body)
 		}
-		req := httptest.NewRequest(c.Method, path, bytes.NewReader(body))
-		if body == nil {
-			req = httptest.NewRequest(c.Method, path, http.NoBody)
+		n := max(c.Concurrent, 1)
+		recs := make([]*httptest.ResponseRecorder, n)
+		var wg sync.WaitGroup
+		for i := range n {
+			req := httptest.NewRequest(c.Method, path, bytes.NewReader(body))
+			if body == nil {
+				req = httptest.NewRequest(c.Method, path, http.NoBody)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			ua := c.UserAgent
+			if ua == "" {
+				ua = CLIAgent
+			}
+			req.Header.Set("User-Agent", ua)
+			if c.Credential != "none" {
+				req.Header.Set("Authorization", "Bearer "+f.Tokens[c.Credential])
+			}
+			recs[i] = httptest.NewRecorder()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				target.Handler.ServeHTTP(recs[i], req)
+			}()
 		}
-		req.Header.Set("Content-Type", "application/json")
-		ua := c.UserAgent
-		if ua == "" {
-			ua = CLIAgent
-		}
-		req.Header.Set("User-Agent", ua)
-		if c.Credential != "none" {
-			req.Header.Set("Authorization", "Bearer "+f.Tokens[c.Credential])
-		}
-		rec := httptest.NewRecorder()
-		target.Handler.ServeHTTP(rec, req)
+		wg.Wait()
 		if target.Settled != nil {
 			target.Settled()
 		}
-		if target.Check != nil {
-			target.Check(t, httptest.NewRequest(c.Method, path, bytes.NewReader(body)), body, rec)
+		ids := map[string]bool{}
+		type pre struct {
+			rec  *httptest.ResponseRecorder
+			id   string
+			text string
 		}
-		id := rec.Header().Get("X-Request-Id")
-		got := norm.Text(rec.Body.String(), id)
-		if rec.Code != c.Expect.Status || got != c.Expect.Body {
-			t.Errorf("%s: %d %s\n want %d %s", name, rec.Code, got, c.Expect.Status, c.Expect.Body)
-		}
-		for _, h := range []string{"Cache-Control", "Retry-After", "Content-Type", "Varlatch-Credential-Expires", "Location"} {
-			g := rec.Header().Get(h)
-			if g != "" {
-				g = norm.Text(g, id)
+		pres := make([]pre, n)
+		for i, rec := range recs {
+			if target.Check != nil {
+				target.Check(t, httptest.NewRequest(c.Method, path, bytes.NewReader(body)), body, rec)
 			}
-			if w := c.Expect.Headers[h]; g != w {
+			id := rec.Header().Get("X-Request-Id")
+			ids[id] = true
+			pres[i] = pre{rec, id, strings.ReplaceAll(rec.Body.String(), id, "{requestId}")}
+		}
+		sort.SliceStable(pres, func(i, j int) bool {
+			if pres[i].rec.Code != pres[j].rec.Code {
+				return pres[i].rec.Code < pres[j].rec.Code
+			}
+			return less(pres[i].text, pres[j].text)
+		})
+		answers := make([]answer, n)
+		for i, p := range pres {
+			a := answer{Status: p.rec.Code, Headers: map[string]string{}, Body: norm.Text(p.text, "")}
+			for _, h := range keptHeaders {
+				if v := p.rec.Header().Get(h); v != "" {
+					a.Headers[h] = norm.Text(v, p.id)
+				}
+			}
+			answers[i] = a
+		}
+		sort.SliceStable(answers, func(i, j int) bool {
+			if answers[i].Status != answers[j].Status {
+				return answers[i].Status < answers[j].Status
+			}
+			return less(answers[i].Body, answers[j].Body)
+		})
+		got := answers[0]
+		if got.Status != c.Expect.Status || got.Body != c.Expect.Body {
+			t.Errorf("%s: %d %s\n want %d %s", name, got.Status, got.Body, c.Expect.Status, c.Expect.Body)
+		}
+		for _, h := range keptHeaders {
+			if g, w := got.Headers[h], c.Expect.Headers[h]; g != w {
 				t.Errorf("%s: %s %q, want %q", name, h, g, w)
 			}
 		}
-		var audit []any
+		if c.Concurrent > 0 {
+			if g, w := Canonical(plainJSON(answers)), Canonical(plainJSON(c.Answers)); g != w {
+				t.Errorf("%s: answers\n  %s\n want %s", name, g, w)
+			}
+		}
+		// The audit events, keys walked sorted, in PostgreSQL's form.
+		s, err := readSchema()
+		if err != nil {
+			t.Fatal(err)
+		}
+		audit := []any{}
 		for _, r := range Rows(t, target.Store, "SELECT "+strings.Join(AuditColumns, ", ")+" FROM audit_events WHERE event_order > ? ORDER BY event_order", before.Int64) {
-			for k, v := range r {
-				r[k] = Canonical(v)
+			pr := map[string]any{}
+			for _, col := range AuditColumns {
+				v, err := pgValue(s.types["audit_events"][col], r[col])
+				if err != nil {
+					t.Fatalf("audit_events.%s: %v", col, err)
+				}
+				if str, ok := v.(string); ok && ids[str] && col == "request_id" {
+					v = "{requestId}"
+				}
+				pr[col] = v
 			}
-			audit = append(audit, Canonical(norm.Value(Canonical(r), id)))
+			audit = append(audit, norm.Value(pr, ""))
 		}
-		var wantAudit []any
+		wantAudit := []any{}
 		for _, r := range c.Audit {
-			wantAudit = append(wantAudit, Canonical(r))
+			wantAudit = append(wantAudit, r)
 		}
-		if !reflect.DeepEqual(audit, wantAudit) {
-			gb, _ := json.Marshal(audit)
-			wb, _ := json.Marshal(wantAudit)
-			t.Errorf("%s: audit\n  %s\n want %s", name, gb, wb)
+		if g, w := Canonical(audit), Canonical(plainJSON(wantAudit)); g != w {
+			t.Errorf("%s: audit\n  %s\n want %s", name, g, w)
 		}
+		gotSide := map[string]any{}
 		for _, st := range f.SideTables {
-			var changed []Row
-			for _, r := range dump(st) {
-				if !sideBefore[st.Name][key(r)] {
-					changed = append(changed, r)
+			d := diff(st, sideBefore[st.Name], pgRows(t, target.Store, st.Name))
+			change := map[string]any{}
+			for _, g := range []struct {
+				name string
+				rows []Row
+			}{{"inserted", d.inserted}, {"updated", d.updated}, {"deleted", d.deleted}} {
+				if len(g.rows) == 0 {
+					continue
 				}
-			}
-			var gotSide, wantSide []any
-			for _, r := range norm.Side(st, changed) {
-				gotSide = append(gotSide, Canonical(r))
-			}
-			for _, r := range c.Side[st.Name] {
-				sr := Row{}
-				for k, v := range r {
-					sv, err := SQLiteValue(v)
-					if err != nil {
-						t.Fatal(err)
-					}
-					sr[k] = sv
+				rows, err := norm.Side(st, g.rows)
+				if err != nil {
+					t.Fatal(err)
 				}
-				wantSide = append(wantSide, Canonical(sr))
+				list := make([]any, len(rows))
+				for i, r := range rows {
+					list[i] = map[string]any(r)
+				}
+				change[g.name] = list
 			}
-			if !reflect.DeepEqual(gotSide, wantSide) {
-				gb, _ := json.Marshal(gotSide)
-				wb, _ := json.Marshal(wantSide)
-				t.Errorf("%s: %s rows\n  %s\n want %s", name, st.Name, gb, wb)
+			if len(change) > 0 {
+				gotSide[st.Name] = change
 			}
 		}
+		if g, w := Canonical(gotSide), Canonical(plainJSON(c.Side)); g != w {
+			t.Errorf("%s: side tables\n  %s\n want %s", name, g, w)
+		}
 	}
-	var counters []any
+	counters := []any{}
 	for _, r := range Rows(t, target.Store, "SELECT organization_id, control, config_version, operation, actor_identity_id, reason, count FROM security_control_counters ORDER BY organization_id, control, operation, actor_identity_id, reason") {
-		counters = append(counters, Canonical(norm.Value(Canonical(r), "")))
+		counters = append(counters, norm.Value(map[string]any(r), ""))
 	}
-	var want []any
+	want := []any{}
 	for _, r := range f.Counters {
-		want = append(want, Canonical(r))
+		want = append(want, r)
 	}
-	if !reflect.DeepEqual(counters, want) {
-		t.Errorf("counters %v, want %v", counters, want)
+	if g, w := Canonical(counters), Canonical(plainJSON(want)); g != w {
+		t.Errorf("counters %s, want %s", g, w)
 	}
+}
+
+// plainJSON is a value as JSON reads it back (its own types as plain
+// values), so that the file's values and ours compare alike.
+func plainJSON(v any) any {
+	b, _ := json.Marshal(v)
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var out any
+	_ = dec.Decode(&out)
+	return out
 }

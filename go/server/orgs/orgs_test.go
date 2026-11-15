@@ -118,15 +118,27 @@ func TestRenameWaitsForAFreeze(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waiting := make(chan write.Gate, 1)
+	w.Gates.Observe(func(event string, g write.Gate) {
+		if event == "waiting" {
+			waiting <- g
+		}
+	})
 	done := make(chan error, 1)
 	go func() {
 		_, _, err := orgs.Rename(ctx, w, principal("idn_a"), org.ID, "Renamed")
 		done <- err
 	}()
+	// The rename reached its gate and waits there.
 	select {
+	case g := <-waiting:
+		if g != write.Organization(org.ID, write.Shared) {
+			t.Fatalf("waiting for %s", g)
+		}
 	case err := <-done:
 		t.Fatalf("the rename did not wait: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(10 * time.Second):
+		t.Fatal("the rename never reached its gate")
 	}
 	err = w.Store.Write(gctx, func(tx *storage.Tx) error {
 		_, err := tx.ExecContext(gctx, `INSERT INTO organization_freezes (id, organization_id, frozen_by, frozen_at, reason) VALUES ('ofz_1', ?, 'idn_a', 1, 'drill')`, org.ID)
@@ -135,10 +147,20 @@ func TestRenameWaitsForAFreeze(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case err := <-done:
+		t.Fatalf("the rename finished while the freeze held its gate: %v", err)
+	default:
+	}
 	release()
 	var frozen *authz.FrozenError
-	if err := <-done; !errors.As(err, &frozen) {
-		t.Fatalf("after the freeze: %v", err)
+	select {
+	case err := <-done:
+		if !errors.As(err, &frozen) {
+			t.Fatalf("after the freeze: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the rename did not finish after the freeze")
 	}
 	if n := paritytest.Rows(t, w.Store, `SELECT count(*) AS n FROM audit_events WHERE event_type = 'organization.renamed'`)[0]["n"]; n != int64(0) {
 		t.Errorf("%v renames recorded", n)

@@ -1,28 +1,28 @@
 {
   "comment": "Written by services/varlatchd/test/go-core-fixture.test.ts from the TypeScript server's own answers; do not edit.",
   "ref": "v0.22.0",
-  "rootKek": "faabd8a04e9e49af4462fe5e0d4cfbeef42a939fb20491f89920447d7a0b5d64",
+  "rootKek": "6ad53277adf1f1d1b786b944a3ba5d4bb478adf97f28bc6f18785fa3b62034a7",
   "tokens": {
-    "alice": "vlt_cli_LOKEdMDiIVtUPZ09HHDMbaHgUJ8H3C-jTc4D2mienjY",
-    "bob": "vlt_cli_7KsCJjdrNp-t822i12YR6tXpgDW8bql-jJ1b-fGZQeI",
-    "carol": "vlt_cli_FZUOnNIcPPGKatlV98aVO6WP3vv9ecXk4hZrFQ79YTg",
-    "ci": "vlt_svc_FMIOjhYIriS8fL6nbWKtgUsb5pWUggNTAbRq_MOFvU4",
-    "agent": "vlt_agr_fAl8ZTPb0hCXYUo6jq9SEAr9bohSy4rntmFYaloXp7c",
+    "alice": "vlt_cli_ioTb8XIIFgQNDwr7b4ZmqXGEHZrQuFDChuqoUAD1h08",
+    "bob": "vlt_cli_BrGMRhyAk4pv4LFyO9F8sCTKBYSw86uCjpWo75qgYjI",
+    "carol": "vlt_cli_gURXSxPgMDQUu-bbj_WBLjLuEvKsjlA-0BoUzH0GZKM",
+    "ci": "vlt_svc_Vc0x2-KX2zCAncuZt-nOy80kjw7FVGSC7wkvUyAg_YU",
+    "agent": "vlt_agr_hdjXjIKyqSw9xN7ixW-TsbWbcgmLY0idZTSWmYQArcY",
     "invalid": "vlt_cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   },
   "rows": {
     "installation": [
       {
-        "id": "inst_2usw7vqlzxcqjheovssrxwsc3q",
+        "id": "inst_ixff6hysufx7rnnyw57e2kmh34",
         "kek_canary": {
-          "nonce": "Fdx6yxM255o6RUDW",
-          "authTag": "jUbqzS6+S/RLzHSnx8Thew==",
+          "nonce": "GlWoMYAN/5YW6mhM",
+          "authTag": "XBMUXej/S0novLw8w+xz7A==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "4192wyewfKnf02XZV6iKvO1pSRi2GZPRi7X2rvm2gec=",
+          "ciphertext": "7o/39gh8DHA9RdeRADm0SHpXlsu5P1Ge9VKItzA/Mi8=",
           "formatVersion": 1
         },
-        "bootstrapped_at": "2026-11-15T09:57:52.698Z",
-        "created_at": "2026-11-15T09:57:52.653Z",
+        "bootstrapped_at": "2026-11-15T10:35:34.022Z",
+        "created_at": "2026-11-15T10:35:33.967Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "public_url": null
@@ -30,31 +30,9 @@
     ],
     "identities": [
       {
-        "id": "idn_3e25y2bfdlgfhbvmpxp544gp3a",
-        "kind": "service",
-        "name": "deploy",
-        "disabled": false,
-        "installation_admin": false,
-        "created_at": "2026-11-15T09:57:52.865Z",
-        "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
-        "last_seen_at": null,
-        "suspended_by_deletion": null
-      },
-      {
-        "id": "idn_fois6rpaqwvbct6orbokj2pel4",
-        "kind": "agent",
-        "name": "helper",
-        "disabled": false,
-        "installation_admin": false,
-        "created_at": "2026-11-15T09:57:52.893Z",
-        "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
-        "last_seen_at": null,
-        "suspended_by_deletion": null
-      },
-      {
-        "id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+        "id": "idn_6iumhq2nyujyz3pmky7ioyaxx4",
         "kind": "human",
-        "name": "bob",
+        "name": "carol",
         "disabled": false,
         "installation_admin": false,
         "created_at": "2026-01-01T00:00:00.000Z",
@@ -63,20 +41,42 @@
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "id": "idn_hmi2sfriufdku2qrczj2gvy73y",
+        "kind": "agent",
+        "name": "helper",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-15T10:35:34.260Z",
+        "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_mnqmwxeceaug44zui3iqhev22q",
+        "kind": "service",
+        "name": "deploy",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-15T10:35:34.225Z",
+        "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
         "kind": "human",
         "name": "Alice",
         "disabled": false,
         "installation_admin": true,
-        "created_at": "2026-11-15T09:57:52.698Z",
+        "created_at": "2026-11-15T10:35:34.022Z",
         "organization_id": null,
-        "last_seen_at": "2026-11-15T09:57:52.756Z",
+        "last_seen_at": "2026-11-15T10:35:34.088Z",
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_m7cahaacteveoza4my54bwx6ha",
+        "id": "idn_zrsuww2bht2djdvyjxojzd2h6i",
         "kind": "human",
-        "name": "carol",
+        "name": "bob",
         "disabled": false,
         "installation_admin": false,
         "created_at": "2026-01-01T00:00:00.000Z",
@@ -89,84 +89,12 @@
     "auth_user_links": [],
     "credentials": [
       {
-        "id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
-        "identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
-        "kind": "cli",
-        "name": null,
-        "token_hash": "0496f5331f603a1ebc429de182fd82ba51e6196ba376bfe9d0128dfe2e193837",
-        "created_at": "2026-11-15T09:57:52.843Z",
-        "expires_at": null,
-        "revoked_at": null,
-        "max_uses": null,
-        "use_count": 0,
-        "last_used_at": null,
-        "client": null,
-        "auth_session_id": null,
-        "issued_by": "idn_m7cahaacteveoza4my54bwx6ha",
-        "evidence_user_verified": null,
-        "evidence_passkey_id": null
-      },
-      {
-        "id": "crd_kddu7a5baa2cnuwinfazehw5xq",
-        "identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
-        "kind": "cli",
-        "name": null,
-        "token_hash": "68bbd198d497cbb5e96f56ea686158376e61555ea2041aa2e062cc4c43df6517",
-        "created_at": "2026-11-15T09:57:52.835Z",
-        "expires_at": null,
-        "revoked_at": null,
-        "max_uses": null,
-        "use_count": 0,
-        "last_used_at": null,
-        "client": null,
-        "auth_session_id": null,
-        "issued_by": "idn_lwc5ki4mdrmwaugre6taowdu6a",
-        "evidence_user_verified": null,
-        "evidence_passkey_id": null
-      },
-      {
-        "id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
-        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
-        "kind": "cli",
-        "name": null,
-        "token_hash": "8804facbf531c590200b4acf09e13224771b3325a5449070af3f6d888d466009",
-        "created_at": "2026-11-15T09:57:52.713Z",
-        "expires_at": null,
-        "revoked_at": null,
-        "max_uses": null,
-        "use_count": 0,
-        "last_used_at": "2026-11-15T09:57:52.747Z",
-        "client": null,
-        "auth_session_id": null,
-        "issued_by": "idn_m5zgvospusdlhnckecsg22kgdm",
-        "evidence_user_verified": null,
-        "evidence_passkey_id": null
-      },
-      {
-        "id": "crd_nuuj57fqngpkfgrp2dblun3m3u",
-        "identity_id": "idn_3e25y2bfdlgfhbvmpxp544gp3a",
-        "kind": "service",
-        "name": "deploy credential",
-        "token_hash": "38a5ca0327e6c0031cba3d01cfb622647b56e7e45d628945eaaa8b25c49a0691",
-        "created_at": "2026-11-15T09:57:52.865Z",
-        "expires_at": null,
-        "revoked_at": null,
-        "max_uses": null,
-        "use_count": 0,
-        "last_used_at": null,
-        "client": null,
-        "auth_session_id": null,
-        "issued_by": "idn_m5zgvospusdlhnckecsg22kgdm",
-        "evidence_user_verified": null,
-        "evidence_passkey_id": null
-      },
-      {
-        "id": "crd_xtfyee6n5tshp7gtzucgpdy4pe",
-        "identity_id": "idn_fois6rpaqwvbct6orbokj2pel4",
+        "id": "crd_5hdyxwi4oaoexdzr3kt7gl6vxy",
+        "identity_id": "idn_hmi2sfriufdku2qrczj2gvy73y",
         "kind": "agent-run",
         "name": null,
-        "token_hash": "14091ef1c9efa12a657da7ce71991989c3ce638a5b2cffee6d46b1c9b325d0c9",
-        "created_at": "2026-11-15T09:57:52.904Z",
+        "token_hash": "a9cd04263ab5e492c3873a918cae25de755b29f2b403ed0c3ed470fd3e02f691",
+        "created_at": "2026-11-15T10:35:34.273Z",
         "expires_at": null,
         "revoked_at": null,
         "max_uses": null,
@@ -174,97 +102,181 @@
         "last_used_at": null,
         "client": null,
         "auth_session_id": null,
-        "issued_by": "idn_fois6rpaqwvbct6orbokj2pel4",
+        "issued_by": "idn_hmi2sfriufdku2qrczj2gvy73y",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_gyqt7wivm35tf5tsi4wmvdvxze",
+        "identity_id": "idn_6iumhq2nyujyz3pmky7ioyaxx4",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "cbfae8530eb5837207143ca7980dc4ac72aaaee5cafaea1e2c918afbdd2152ba",
+        "created_at": "2026-11-15T10:35:34.198Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_6iumhq2nyujyz3pmky7ioyaxx4",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_kedtzugackvaqa6hupr3mv4aei",
+        "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "178244213a7cbd8659a71b8bf0cff5f48bfd5141a702dcfdcf1b8a198ab5e47f",
+        "created_at": "2026-11-15T10:35:34.038Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-11-15T10:35:34.074Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_ltr5rcwuw4sbbarzr6isgyladi",
+        "identity_id": "idn_mnqmwxeceaug44zui3iqhev22q",
+        "kind": "service",
+        "name": "deploy credential",
+        "token_hash": "7ffc51deab613033286604b5c69529a396fbfb8cc5f8b9390ec63b188108a808",
+        "created_at": "2026-11-15T10:35:34.225Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_pzbzzap7m76tvpklt2pquq4jgq",
+        "identity_id": "idn_zrsuww2bht2djdvyjxojzd2h6i",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "17a16d0096029f59d6614bc12157fa1101b76396527cb2d36eccd378316853c4",
+        "created_at": "2026-11-15T10:35:34.189Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_zrsuww2bht2djdvyjxojzd2h6i",
         "evidence_user_verified": null,
         "evidence_passkey_id": null
       }
     ],
     "organizations": [
       {
-        "id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
-        "slug": "reported",
-        "name": "Reported",
-        "wrapped_org_kek": {
-          "nonce": "IgZhyLP7HA3l+WcC",
-          "authTag": "j+yYMIu7Gc6ghGOtYDrVAg==",
-          "algorithm": "aes-256-gcm",
-          "ciphertext": "Tnae5jmVDc18vozD/yC9q3wpixSanmP6NrUVdVg+eYw=",
-          "formatVersion": 1
-        },
-        "deleted_at": null,
-        "created_at": "2026-11-15T09:57:52.808Z",
-        "root_kek_version": 1,
-        "key_rotation_state": "idle",
-        "org_kek_destroyed_at": null,
-        "security_epoch": 0
-      },
-      {
-        "id": "org_4ovjrys6zxmik775pu2zanbpxy",
+        "id": "org_37jnjid6y45oxtxr6di4n4nmmq",
         "slug": "frozen",
         "name": "Frozen",
         "wrapped_org_kek": {
-          "nonce": "+L5eCV+bTIGzXBVC",
-          "authTag": "IcNIt1HsCDO7uaDKubimCA==",
+          "nonce": "O335HiC++rHOEA4Q",
+          "authTag": "Y7jw9uO0HxOSVp48Zmafuw==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "M2HXCGOOebTXGoup/ZEBmf2LDBhRFA3vmXoCoSuvjow=",
+          "ciphertext": "LQLAITzjq7wKS63PIlWrnKnk31qr3hlIVFt9pNHcz+4=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-15T09:57:52.781Z",
+        "created_at": "2026-11-15T10:35:34.120Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
         "security_epoch": 0
       },
       {
-        "id": "org_dkoizrnd4epcyzzvskocxhngla",
+        "id": "org_4h42i7uoiy7fef7wvaklxpctpe",
+        "slug": "gone",
+        "name": "Gone",
+        "wrapped_org_kek": null,
+        "deleted_at": "2026-03-02T00:00:01.000Z",
+        "created_at": "2026-11-15T10:35:34.177Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": "2026-03-02T00:00:01.000Z",
+        "security_epoch": 0
+      },
+      {
+        "id": "org_c4h2p5abpybcax6e32mvfjqoqu",
         "slug": "deleting",
         "name": "Deleting",
         "wrapped_org_kek": {
-          "nonce": "HdCfOBNHR3tBrPq3",
-          "authTag": "7xdZ8soS0DXFVV3BeZw06Q==",
+          "nonce": "Tn/O2ujxIKYQQpcR",
+          "authTag": "RhWXzsPXxRpRF4WGzilXWQ==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "tWDRLKpt9er1fb9+PbdDighPG+fspJ7jW42kZFTbfOo=",
+          "ciphertext": "0ePFdt9gjeWfQn666T6JB3Zr/JvZr8Ha7cpoyoiyeXE=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-15T09:57:52.823Z",
+        "created_at": "2026-11-15T10:35:34.163Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
         "security_epoch": 0
       },
       {
-        "id": "org_eomam26zhyhe2uyzb7xg3bmade",
+        "id": "org_jq4eargd64bafujsdjnkxdm4xe",
+        "slug": "reported",
+        "name": "Reported",
+        "wrapped_org_kek": {
+          "nonce": "uKGwx4gz8q1S1eHA",
+          "authTag": "+enzI+NgQFB5FCqbl7r6lQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "0bRD9T0cJvzelODUqzGr9o5/ix6wbMhqb50OeG16ERQ=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T10:35:34.147Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
         "slug": "acme",
         "name": "Acme",
         "wrapped_org_kek": {
-          "nonce": "1KLpY+2JCYcZmPlj",
-          "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
+          "nonce": "j821x2auDO+yOXc1",
+          "authTag": "+ngoGvX2chBKFc7pOCc6jQ==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
+          "ciphertext": "FRijGk0IeVSEBFzQGON2nlL117SrGdsQ1MDO+SqIlVI=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-15T09:57:52.762Z",
+        "created_at": "2026-11-15T10:35:34.097Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
         "security_epoch": 0
       },
       {
-        "id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
+        "id": "org_ulzs3yrjj2snthwalhixqgpmhm",
         "slug": "guarded",
         "name": "Guarded",
         "wrapped_org_kek": {
-          "nonce": "C4zQPlpJ8Clz9rjB",
-          "authTag": "DDqWHzgYo0eUSbHIlWFgjg==",
+          "nonce": "eCafjZimvAA5U22g",
+          "authTag": "SNMOZ7Yk0eK9HPCNKobu4w==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "rT++q2zymOAuFZvdK7SewiCk98MyXwcc3oL+bNkMR0M=",
+          "ciphertext": "/JyL2ABEMkYevLbUxxC+47HTEQFuRJNxI2NISViftAc=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-15T09:57:52.796Z",
+        "created_at": "2026-11-15T10:35:34.133Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
@@ -273,50 +285,58 @@
     ],
     "org_memberships": [
       {
-        "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
-        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "organization_id": "org_37jnjid6y45oxtxr6di4n4nmmq",
+        "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
         "role": "admin",
-        "created_at": "2026-11-15T09:57:52.808Z",
+        "created_at": "2026-11-15T10:35:34.120Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_4ovjrys6zxmik775pu2zanbpxy",
-        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "organization_id": "org_4h42i7uoiy7fef7wvaklxpctpe",
+        "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
         "role": "admin",
-        "created_at": "2026-11-15T09:57:52.781Z",
+        "created_at": "2026-11-15T10:35:34.177Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_dkoizrnd4epcyzzvskocxhngla",
-        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "organization_id": "org_c4h2p5abpybcax6e32mvfjqoqu",
+        "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
         "role": "admin",
-        "created_at": "2026-11-15T09:57:52.823Z",
+        "created_at": "2026-11-15T10:35:34.163Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
-        "identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+        "organization_id": "org_jq4eargd64bafujsdjnkxdm4xe",
+        "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+        "role": "admin",
+        "created_at": "2026-11-15T10:35:34.147Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+        "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+        "role": "admin",
+        "created_at": "2026-11-15T10:35:34.097Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+        "identity_id": "idn_zrsuww2bht2djdvyjxojzd2h6i",
         "role": "member",
-        "created_at": "2026-11-15T09:57:52.832Z",
+        "created_at": "2026-11-15T10:35:34.187Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
-        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "organization_id": "org_ulzs3yrjj2snthwalhixqgpmhm",
+        "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
         "role": "admin",
-        "created_at": "2026-11-15T09:57:52.762Z",
-        "removed_at": null,
-        "version": 0
-      },
-      {
-        "organization_id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
-        "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
-        "role": "admin",
-        "created_at": "2026-11-15T09:57:52.796Z",
+        "created_at": "2026-11-15T10:35:34.133Z",
         "removed_at": null,
         "version": 0
       }
@@ -325,29 +345,29 @@
     "requirements": [],
     "security_controls": [
       {
-        "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+        "organization_id": "org_jq4eargd64bafujsdjnkxdm4xe",
         "control": "passkey-verification",
         "mode": "report",
         "config": null,
         "version": 3,
-        "changed_by": "idn_m5zgvospusdlhnckecsg22kgdm",
-        "changed_at": "2026-11-15T09:57:52.920Z"
+        "changed_by": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+        "changed_at": "2026-11-15T10:35:34.284Z"
       },
       {
-        "organization_id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
+        "organization_id": "org_ulzs3yrjj2snthwalhixqgpmhm",
         "control": "passkey-verification",
         "mode": "enforce",
         "config": null,
         "version": 3,
-        "changed_by": "idn_m5zgvospusdlhnckecsg22kgdm",
-        "changed_at": "2026-11-15T09:57:52.913Z"
+        "changed_by": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+        "changed_at": "2026-11-15T10:35:34.281Z"
       }
     ],
     "organization_freezes": [
       {
-        "id": "ofz_pyukw75dgtioaunefmacdeehdi",
-        "organization_id": "org_4ovjrys6zxmik775pu2zanbpxy",
-        "frozen_by": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "id": "ofz_te7qwm3glpmx7mkwnoqirj6e3a",
+        "organization_id": "org_37jnjid6y45oxtxr6di4n4nmmq",
+        "frozen_by": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
         "frozen_at": "2026-03-01T00:00:00.000Z",
         "reason": "incident drill",
         "lifted_at": null,
@@ -357,9 +377,9 @@
     ],
     "organization_deletions": [
       {
-        "id": "odl_7c4n7xvw43jedi5vozncjvf6ri",
-        "organization_id": "org_dkoizrnd4epcyzzvskocxhngla",
-        "requested_by": "idn_m5zgvospusdlhnckecsg22kgdm",
+        "id": "odl_4f7wob74sh3xt2zfbvgizlwex4",
+        "organization_id": "org_c4h2p5abpybcax6e32mvfjqoqu",
+        "requested_by": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
         "scheduled_at": "2026-03-01T00:00:00.000Z",
         "run_after": "2099-03-01T00:00:00.000Z",
         "approval_required": false,
@@ -368,13 +388,31 @@
         "cancelled_by": null,
         "cancelled_at": null,
         "completed_at": null
+      },
+      {
+        "id": "odl_xtkqu5nfrinid4ancdsz4mkruu",
+        "organization_id": "org_4h42i7uoiy7fef7wvaklxpctpe",
+        "requested_by": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+        "scheduled_at": "2026-03-01T00:00:00.000Z",
+        "run_after": "2026-03-02T00:00:00.000Z",
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "cancelled_at": null,
+        "completed_at": "2026-03-02T00:00:01.000Z"
       }
     ]
   },
   "sideTables": [
     {
       "name": "organizations",
-      "orderBy": "id",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "slug"
+      ],
       "volatile": [
         "created_at",
         "wrapped_org_kek"
@@ -382,7 +420,14 @@
     },
     {
       "name": "org_memberships",
-      "orderBy": "organization_id, identity_id",
+      "key": [
+        "organization_id",
+        "identity_id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "identity_id"
+      ],
       "volatile": [
         "created_at"
       ]
@@ -409,10 +454,10 @@
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.created",
           "listener": "ordinary",
@@ -427,30 +472,34 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "{fresh}",
-            "deleted_at": null,
-            "id": "{org#1}",
-            "key_rotation_state": "idle",
-            "name": "New Co",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "newco",
-            "wrapped_org_kek": "{fresh}"
-          }
-        ],
-        "org_memberships": [
-          {
-            "created_at": "{fresh}",
-            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
-            "organization_id": "{org#1}",
-            "removed_at": null,
-            "role": "admin",
-            "version": 0
-          }
-        ]
+        "organizations": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{org#1}",
+              "key_rotation_state": "idle",
+              "name": "New Co",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "newco",
+              "wrapped_org_kek": "{fresh}"
+            }
+          ]
+        },
+        "org_memberships": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+              "organization_id": "{org#1}",
+              "removed_at": null,
+              "role": "admin",
+              "version": 0
+            }
+          ]
+        }
       }
     },
     {
@@ -573,10 +622,10 @@
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.created",
           "listener": "ordinary",
@@ -591,30 +640,34 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "{fresh}",
-            "deleted_at": null,
-            "id": "{org#2}",
-            "key_rotation_state": "idle",
-            "name": "Long",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "wrapped_org_kek": "{fresh}"
-          }
-        ],
-        "org_memberships": [
-          {
-            "created_at": "{fresh}",
-            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
-            "organization_id": "{org#2}",
-            "removed_at": null,
-            "role": "admin",
-            "version": 0
-          }
-        ]
+        "organizations": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{org#2}",
+              "key_rotation_state": "idle",
+              "name": "Long",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "wrapped_org_kek": "{fresh}"
+            }
+          ]
+        },
+        "org_memberships": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+              "organization_id": "{org#2}",
+              "removed_at": null,
+              "role": "admin",
+              "version": 0
+            }
+          ]
+        }
       }
     },
     {
@@ -716,10 +769,10 @@
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.created",
           "listener": "ordinary",
@@ -734,30 +787,34 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "{fresh}",
-            "deleted_at": null,
-            "id": "{org#3}",
-            "key_rotation_state": "idle",
-            "name": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé𝄞",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "unicode",
-            "wrapped_org_kek": "{fresh}"
-          }
-        ],
-        "org_memberships": [
-          {
-            "created_at": "{fresh}",
-            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
-            "organization_id": "{org#3}",
-            "removed_at": null,
-            "role": "admin",
-            "version": 0
-          }
-        ]
+        "organizations": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{org#3}",
+              "key_rotation_state": "idle",
+              "name": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé𝄞",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "unicode",
+              "wrapped_org_kek": "{fresh}"
+            }
+          ]
+        },
+        "org_memberships": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+              "organization_id": "{org#3}",
+              "removed_at": null,
+              "role": "admin",
+              "version": 0
+            }
+          ]
+        }
       }
     },
     {
@@ -874,10 +931,10 @@
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.created",
           "listener": "ordinary",
@@ -892,30 +949,34 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "{fresh}",
-            "deleted_at": null,
-            "id": "{org#4}",
-            "key_rotation_state": "idle",
-            "name": "Extra",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "extra",
-            "wrapped_org_kek": "{fresh}"
-          }
-        ],
-        "org_memberships": [
-          {
-            "created_at": "{fresh}",
-            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
-            "organization_id": "{org#4}",
-            "removed_at": null,
-            "role": "admin",
-            "version": 0
-          }
-        ]
+        "organizations": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{org#4}",
+              "key_rotation_state": "idle",
+              "name": "Extra",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "extra",
+              "wrapped_org_kek": "{fresh}"
+            }
+          ]
+        },
+        "org_memberships": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+              "organization_id": "{org#4}",
+              "removed_at": null,
+              "role": "admin",
+              "version": 0
+            }
+          ]
+        }
       }
     },
     {
@@ -938,10 +999,10 @@
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+          "actor_identity_id": "idn_zrsuww2bht2djdvyjxojzd2h6i",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_kddu7a5baa2cnuwinfazehw5xq",
+          "credential_id": "crd_pzbzzap7m76tvpklt2pquq4jgq",
           "decision": "info",
           "event_type": "organization.created",
           "listener": "ordinary",
@@ -956,30 +1017,34 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "{fresh}",
-            "deleted_at": null,
-            "id": "{org#5}",
-            "key_rotation_state": "idle",
-            "name": "Bob's",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "bobs",
-            "wrapped_org_kek": "{fresh}"
-          }
-        ],
-        "org_memberships": [
-          {
-            "created_at": "{fresh}",
-            "identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
-            "organization_id": "{org#5}",
-            "removed_at": null,
-            "role": "admin",
-            "version": 0
-          }
-        ]
+        "organizations": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{org#5}",
+              "key_rotation_state": "idle",
+              "name": "Bob's",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "bobs",
+              "wrapped_org_kek": "{fresh}"
+            }
+          ]
+        },
+        "org_memberships": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "identity_id": "idn_zrsuww2bht2djdvyjxojzd2h6i",
+              "organization_id": "{org#5}",
+              "removed_at": null,
+              "role": "admin",
+              "version": 0
+            }
+          ]
+        }
       }
     },
     {
@@ -1043,6 +1108,279 @@
       "side": {}
     },
     {
+      "id": "POST create, U+0000 in the name",
+      "name": "create, U+0000 in the name",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "rawBody": "{\"name\":\"a\\u0000b\",\"slug\":\"nul\"}",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a duplicate slug and U+0000 in the name",
+      "name": "create, a duplicate slug and U+0000 in the name",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "rawBody": "{\"name\":\"a\\u0000b\",\"slug\":\"acme\"}",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a lone surrogate in the name",
+      "name": "create, a lone surrogate in the name",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "rawBody": "{\"name\":\"a\\ud800b\",\"slug\":\"surrogate\"}",
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#6}\",\"slug\":\"surrogate\",\"name\":\"a�b\",\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
+          "decision": "info",
+          "event_type": "organization.created",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "{org#6}",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "surrogate"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{org#6}",
+              "key_rotation_state": "idle",
+              "name": "a�b",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "surrogate",
+              "wrapped_org_kek": "{fresh}"
+            }
+          ]
+        },
+        "org_memberships": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+              "organization_id": "{org#6}",
+              "removed_at": null,
+              "role": "admin",
+              "version": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create in assisted mode",
+      "name": "create in assisted mode",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "Assisted",
+        "slug": "assisted"
+      },
+      "userAgent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#7}\",\"slug\":\"assisted\",\"name\":\"Assisted\",\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux, assisted",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
+          "decision": "info",
+          "event_type": "organization.created",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "{org#7}",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "assisted"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{org#7}",
+              "key_rotation_state": "idle",
+              "name": "Assisted",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "assisted",
+              "wrapped_org_kek": "{fresh}"
+            }
+          ]
+        },
+        "org_memberships": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+              "organization_id": "{org#7}",
+              "removed_at": null,
+              "role": "admin",
+              "version": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create, a deleted Organization's slug",
+      "name": "create, a deleted Organization's slug",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "Again",
+        "slug": "gone"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Organization slug already exists\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, the same slug twice at once",
+      "name": "create, the same slug twice at once",
+      "method": "POST",
+      "path": "/v1/organizations",
+      "credential": "alice",
+      "body": {
+        "name": "Twice",
+        "slug": "twice"
+      },
+      "concurrent": 2,
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{org#8}\",\"slug\":\"twice\",\"name\":\"Twice\",\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
+          "decision": "info",
+          "event_type": "organization.created",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "{org#8}",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "twice"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{org#8}",
+              "key_rotation_state": "idle",
+              "name": "Twice",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "twice",
+              "wrapped_org_kek": "{fresh}"
+            }
+          ]
+        },
+        "org_memberships": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+              "organization_id": "{org#8}",
+              "removed_at": null,
+              "role": "admin",
+              "version": 0
+            }
+          ]
+        }
+      },
+      "answers": [
+        {
+          "status": 201,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"id\":\"{org#8}\",\"slug\":\"twice\",\"name\":\"Twice\",\"createdAt\":\"{time}\"}"
+        },
+        {
+          "status": 422,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Organization slug already exists\",\"requestId\":\"{requestId}\"}}"
+        }
+      ]
+    },
+    {
       "id": "POST create with an invalid credential",
       "name": "create with an invalid credential",
       "method": "POST",
@@ -1092,7 +1430,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T10:35:34.097Z\",\"incidentFreeze\":null}"
       },
       "audit": [],
       "side": {}
@@ -1108,7 +1446,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T10:35:34.097Z\",\"incidentFreeze\":null}"
       },
       "audit": [],
       "side": {}
@@ -1124,7 +1462,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T10:35:34.097Z\",\"incidentFreeze\":null}"
       },
       "audit": [],
       "side": {}
@@ -1145,18 +1483,18 @@
       "audit": [
         {
           "action": "organization.read",
-          "actor_identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
+          "actor_identity_id": "idn_6iumhq2nyujyz3pmky7ioyaxx4",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
+          "credential_id": "crd_gyqt7wivm35tf5tsi4wmvdvxze",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1184,18 +1522,18 @@
       "audit": [
         {
           "action": "organization.read",
-          "actor_identity_id": "idn_3e25y2bfdlgfhbvmpxp544gp3a",
+          "actor_identity_id": "idn_mnqmwxeceaug44zui3iqhev22q",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_nuuj57fqngpkfgrp2dblun3m3u",
+          "credential_id": "crd_ltr5rcwuw4sbbarzr6isgyladi",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1223,18 +1561,18 @@
       "audit": [
         {
           "action": "organization.read",
-          "actor_identity_id": "idn_fois6rpaqwvbct6orbokj2pel4",
+          "actor_identity_id": "idn_hmi2sfriufdku2qrczj2gvy73y",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_xtfyee6n5tshp7gtzucgpdy4pe",
+          "credential_id": "crd_5hdyxwi4oaoexdzr3kt7gl6vxy",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1273,7 +1611,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_4ovjrys6zxmik775pu2zanbpxy\",\"slug\":\"frozen\",\"name\":\"Frozen\",\"createdAt\":\"2026-11-15T09:57:52.781Z\",\"incidentFreeze\":{\"id\":\"ofz_pyukw75dgtioaunefmacdeehdi\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\",\"frozenBy\":{\"id\":\"idn_m5zgvospusdlhnckecsg22kgdm\",\"name\":\"Alice\"},\"reason\":\"incident drill\",\"liftedAt\":null,\"liftedBy\":null,\"liftMethod\":null}}"
+        "body": "{\"id\":\"org_37jnjid6y45oxtxr6di4n4nmmq\",\"slug\":\"frozen\",\"name\":\"Frozen\",\"createdAt\":\"2026-11-15T10:35:34.120Z\",\"incidentFreeze\":{\"id\":\"ofz_te7qwm3glpmx7mkwnoqirj6e3a\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\",\"frozenBy\":{\"id\":\"idn_t5z3qkpozc2mh3tzjcthiwqllu\",\"name\":\"Alice\"},\"reason\":\"incident drill\",\"liftedAt\":null,\"liftedBy\":null,\"liftMethod\":null}}"
       },
       "audit": [],
       "side": {}
@@ -1294,18 +1632,18 @@
       "audit": [
         {
           "action": "organization.read",
-          "actor_identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
+          "actor_identity_id": "idn_6iumhq2nyujyz3pmky7ioyaxx4",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
+          "credential_id": "crd_gyqt7wivm35tf5tsi4wmvdvxze",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_4ovjrys6zxmik775pu2zanbpxy",
+          "organization_id": "org_37jnjid6y45oxtxr6di4n4nmmq",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1333,10 +1671,10 @@
       "audit": [
         {
           "action": "organization.read",
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
@@ -1344,7 +1682,7 @@
             "evidence": "no-evidence",
             "reason": "passkey_verification_required"
           },
-          "organization_id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
+          "organization_id": "org_ulzs3yrjj2snthwalhixqgpmhm",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1367,7 +1705,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_4oru5bxf5vyb6tq3pztwdz2r44\",\"slug\":\"reported\",\"name\":\"Reported\",\"createdAt\":\"2026-11-15T09:57:52.808Z\",\"incidentFreeze\":null}"
+        "body": "{\"id\":\"org_jq4eargd64bafujsdjnkxdm4xe\",\"slug\":\"reported\",\"name\":\"Reported\",\"createdAt\":\"2026-11-15T10:35:34.147Z\",\"incidentFreeze\":null}"
       },
       "audit": [],
       "side": {}
@@ -1383,7 +1721,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_dkoizrnd4epcyzzvskocxhngla\",\"slug\":\"deleting\",\"name\":\"Deleting\",\"createdAt\":\"2026-11-15T09:57:52.823Z\",\"incidentFreeze\":null}"
+        "body": "{\"id\":\"org_c4h2p5abpybcax6e32mvfjqoqu\",\"slug\":\"deleting\",\"name\":\"Deleting\",\"createdAt\":\"2026-11-15T10:35:34.163Z\",\"incidentFreeze\":null}"
       },
       "audit": [],
       "side": {}
@@ -1415,7 +1753,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T10:35:34.097Z\",\"incidentFreeze\":null}"
       },
       "audit": [],
       "side": {}
@@ -1431,7 +1769,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T10:35:34.097Z\",\"incidentFreeze\":null}"
       },
       "audit": [],
       "side": {}
@@ -1453,6 +1791,38 @@
       "side": {}
     },
     {
+      "id": "GET get an Organization whose deletion completed",
+      "name": "get an Organization whose deletion completed",
+      "method": "GET",
+      "path": "/v1/organizations/gone",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get a deleted Organization by id",
+      "name": "get a deleted Organization by id",
+      "method": "GET",
+      "path": "/v1/organizations/{goneId}",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
       "id": "PATCH rename",
       "name": "rename",
       "method": "PATCH",
@@ -1466,15 +1836,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme Robotics\",\"createdAt\":\"2026-11-15T09:57:52.762Z\"}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme Robotics\",\"createdAt\":\"2026-11-15T10:35:34.097Z\"}"
       },
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.renamed",
           "listener": "ordinary",
@@ -1482,7 +1852,7 @@
             "name": "Acme Robotics",
             "previousName": "Acme"
           },
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": null,
           "resource": {
             "organizationSlug": "acme"
@@ -1492,26 +1862,28 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "2026-11-15T09:57:52.762Z",
-            "deleted_at": null,
-            "id": "org_eomam26zhyhe2uyzb7xg3bmade",
-            "key_rotation_state": "idle",
-            "name": "Acme Robotics",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "acme",
-            "wrapped_org_kek": {
-              "algorithm": "aes-256-gcm",
-              "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
-              "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
-              "formatVersion": 1,
-              "nonce": "1KLpY+2JCYcZmPlj"
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T10:35:34.097Z",
+              "deleted_at": null,
+              "id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+              "key_rotation_state": "idle",
+              "name": "Acme Robotics",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "acme",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "+ngoGvX2chBKFc7pOCc6jQ==",
+                "ciphertext": "FRijGk0IeVSEBFzQGON2nlL117SrGdsQ1MDO+SqIlVI=",
+                "formatVersion": 1,
+                "nonce": "j821x2auDO+yOXc1"
+              }
             }
-          }
-        ]
+          ]
+        }
       }
     },
     {
@@ -1529,15 +1901,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T09:57:52.762Z\"}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme\",\"createdAt\":\"2026-11-15T10:35:34.097Z\"}"
       },
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.renamed",
           "listener": "ordinary",
@@ -1545,7 +1917,7 @@
             "name": "Acme",
             "previousName": "Acme Robotics"
           },
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": null,
           "resource": {
             "organizationSlug": "acme"
@@ -1555,26 +1927,28 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "2026-11-15T09:57:52.762Z",
-            "deleted_at": null,
-            "id": "org_eomam26zhyhe2uyzb7xg3bmade",
-            "key_rotation_state": "idle",
-            "name": "Acme",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "acme",
-            "wrapped_org_kek": {
-              "algorithm": "aes-256-gcm",
-              "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
-              "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
-              "formatVersion": 1,
-              "nonce": "1KLpY+2JCYcZmPlj"
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T10:35:34.097Z",
+              "deleted_at": null,
+              "id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+              "key_rotation_state": "idle",
+              "name": "Acme",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "acme",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "+ngoGvX2chBKFc7pOCc6jQ==",
+                "ciphertext": "FRijGk0IeVSEBFzQGON2nlL117SrGdsQ1MDO+SqIlVI=",
+                "formatVersion": 1,
+                "nonce": "j821x2auDO+yOXc1"
+              }
             }
-          }
-        ]
+          ]
+        }
       }
     },
     {
@@ -1629,15 +2003,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\",\"createdAt\":\"2026-11-15T09:57:52.762Z\"}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\",\"createdAt\":\"2026-11-15T10:35:34.097Z\"}"
       },
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.renamed",
           "listener": "ordinary",
@@ -1645,7 +2019,7 @@
             "name": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
             "previousName": "Acme"
           },
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": null,
           "resource": {
             "organizationSlug": "acme"
@@ -1655,26 +2029,28 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "2026-11-15T09:57:52.762Z",
-            "deleted_at": null,
-            "id": "org_eomam26zhyhe2uyzb7xg3bmade",
-            "key_rotation_state": "idle",
-            "name": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "acme",
-            "wrapped_org_kek": {
-              "algorithm": "aes-256-gcm",
-              "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
-              "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
-              "formatVersion": 1,
-              "nonce": "1KLpY+2JCYcZmPlj"
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T10:35:34.097Z",
+              "deleted_at": null,
+              "id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+              "key_rotation_state": "idle",
+              "name": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "acme",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "+ngoGvX2chBKFc7pOCc6jQ==",
+                "ciphertext": "FRijGk0IeVSEBFzQGON2nlL117SrGdsQ1MDO+SqIlVI=",
+                "formatVersion": 1,
+                "nonce": "j821x2auDO+yOXc1"
+              }
             }
-          }
-        ]
+          ]
+        }
       }
     },
     {
@@ -1768,18 +2144,18 @@
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_lwc5ki4mdrmwaugre6taowdu6a",
+          "actor_identity_id": "idn_zrsuww2bht2djdvyjxojzd2h6i",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_kddu7a5baa2cnuwinfazehw5xq",
+          "credential_id": "crd_pzbzzap7m76tvpklt2pquq4jgq",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1810,18 +2186,18 @@
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
+          "actor_identity_id": "idn_6iumhq2nyujyz3pmky7ioyaxx4",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
+          "credential_id": "crd_gyqt7wivm35tf5tsi4wmvdvxze",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1850,18 +2226,18 @@
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_m7cahaacteveoza4my54bwx6ha",
+          "actor_identity_id": "idn_6iumhq2nyujyz3pmky7ioyaxx4",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_g5vdbnlgbivh7737svsrzzyr7a",
+          "credential_id": "crd_gyqt7wivm35tf5tsi4wmvdvxze",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1892,18 +2268,18 @@
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_3e25y2bfdlgfhbvmpxp544gp3a",
+          "actor_identity_id": "idn_mnqmwxeceaug44zui3iqhev22q",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_nuuj57fqngpkfgrp2dblun3m3u",
+          "credential_id": "crd_ltr5rcwuw4sbbarzr6isgyladi",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1949,28 +2325,28 @@
           "Retry-After": "300",
           "Content-Type": "application/json"
         },
-        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_pyukw75dgtioaunefmacdeehdi\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_te7qwm3glpmx7mkwnoqirj6e3a\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": {
-            "freezeId": "ofz_pyukw75dgtioaunefmacdeehdi",
+            "freezeId": "ofz_te7qwm3glpmx7mkwnoqirj6e3a",
             "method": "PATCH",
             "reason": "organization_frozen",
             "route": "/v1/organizations/:org"
           },
-          "organization_id": "org_4ovjrys6zxmik775pu2zanbpxy",
+          "organization_id": "org_37jnjid6y45oxtxr6di4n4nmmq",
           "request_id": "{requestId}",
           "resource": {
-            "freezeId": "ofz_pyukw75dgtioaunefmacdeehdi"
+            "freezeId": "ofz_te7qwm3glpmx7mkwnoqirj6e3a"
           },
           "schema_version": 1,
           "tailnet": null
@@ -1992,7 +2368,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_7c4n7xvw43jedi5vozncjvf6ri\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_4f7wob74sh3xt2zfbvgizlwex4\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
       },
       "audit": [],
       "side": {}
@@ -2016,10 +2392,10 @@
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
@@ -2027,7 +2403,7 @@
             "evidence": "no-evidence",
             "reason": "passkey_verification_required"
           },
-          "organization_id": "org_r5du5pvuwhasa3c2qsh2vgyfnu",
+          "organization_id": "org_ulzs3yrjj2snthwalhixqgpmhm",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -2053,15 +2429,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_4oru5bxf5vyb6tq3pztwdz2r44\",\"slug\":\"reported\",\"name\":\"Reported Inc\",\"createdAt\":\"2026-11-15T09:57:52.808Z\"}"
+        "body": "{\"id\":\"org_jq4eargd64bafujsdjnkxdm4xe\",\"slug\":\"reported\",\"name\":\"Reported Inc\",\"createdAt\":\"2026-11-15T10:35:34.147Z\"}"
       },
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.renamed",
           "listener": "ordinary",
@@ -2069,7 +2445,7 @@
             "name": "Reported Inc",
             "previousName": "Reported"
           },
-          "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+          "organization_id": "org_jq4eargd64bafujsdjnkxdm4xe",
           "request_id": null,
           "resource": {
             "organizationSlug": "reported"
@@ -2079,26 +2455,28 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "2026-11-15T09:57:52.808Z",
-            "deleted_at": null,
-            "id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
-            "key_rotation_state": "idle",
-            "name": "Reported Inc",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "reported",
-            "wrapped_org_kek": {
-              "algorithm": "aes-256-gcm",
-              "authTag": "j+yYMIu7Gc6ghGOtYDrVAg==",
-              "ciphertext": "Tnae5jmVDc18vozD/yC9q3wpixSanmP6NrUVdVg+eYw=",
-              "formatVersion": 1,
-              "nonce": "IgZhyLP7HA3l+WcC"
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T10:35:34.147Z",
+              "deleted_at": null,
+              "id": "org_jq4eargd64bafujsdjnkxdm4xe",
+              "key_rotation_state": "idle",
+              "name": "Reported Inc",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "reported",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "+enzI+NgQFB5FCqbl7r6lQ==",
+                "ciphertext": "0bRD9T0cJvzelODUqzGr9o5/ix6wbMhqb50OeG16ERQ=",
+                "formatVersion": 1,
+                "nonce": "uKGwx4gz8q1S1eHA"
+              }
             }
-          }
-        ]
+          ]
+        }
       }
     },
     {
@@ -2121,6 +2499,124 @@
       "side": {}
     },
     {
+      "id": "PATCH rename an Organization whose deletion completed",
+      "name": "rename an Organization whose deletion completed",
+      "method": "PATCH",
+      "path": "/v1/organizations/gone",
+      "credential": "alice",
+      "body": {
+        "name": "Back"
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename, U+0000 in the name",
+      "name": "rename, U+0000 in the name",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "rawBody": "{\"name\":\"a\\u0000b\"}",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename, a lone surrogate in the name",
+      "name": "rename, a lone surrogate in the name",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "rawBody": "{\"name\":\"a\\ud800b\"}",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH rename in assisted mode",
+      "name": "rename in assisted mode",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme",
+      "credential": "alice",
+      "body": {
+        "name": "Acme Assisted"
+      },
+      "userAgent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme Assisted\",\"createdAt\":\"2026-11-15T10:35:34.097Z\"}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux, assisted",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
+          "decision": "info",
+          "event_type": "organization.renamed",
+          "listener": "ordinary",
+          "metadata": {
+            "name": "Acme Assisted",
+            "previousName": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+          },
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+          "request_id": null,
+          "resource": {
+            "organizationSlug": "acme"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T10:35:34.097Z",
+              "deleted_at": null,
+              "id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+              "key_rotation_state": "idle",
+              "name": "Acme Assisted",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "acme",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "+ngoGvX2chBKFc7pOCc6jQ==",
+                "ciphertext": "FRijGk0IeVSEBFzQGON2nlL117SrGdsQ1MDO+SqIlVI=",
+                "formatVersion": 1,
+                "nonce": "j821x2auDO+yOXc1"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
       "id": "PATCH rename by id",
       "name": "rename by id",
       "method": "PATCH",
@@ -2134,23 +2630,23 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme by id\",\"createdAt\":\"2026-11-15T09:57:52.762Z\"}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme by id\",\"createdAt\":\"2026-11-15T10:35:34.097Z\"}"
       },
       "audit": [
         {
           "action": "organization.manage",
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.renamed",
           "listener": "ordinary",
           "metadata": {
             "name": "Acme by id",
-            "previousName": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+            "previousName": "Acme Assisted"
           },
-          "organization_id": "org_eomam26zhyhe2uyzb7xg3bmade",
+          "organization_id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
           "request_id": null,
           "resource": {
             "organizationSlug": "acme"
@@ -2160,26 +2656,28 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "2026-11-15T09:57:52.762Z",
-            "deleted_at": null,
-            "id": "org_eomam26zhyhe2uyzb7xg3bmade",
-            "key_rotation_state": "idle",
-            "name": "Acme by id",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "acme",
-            "wrapped_org_kek": {
-              "algorithm": "aes-256-gcm",
-              "authTag": "gJQ81XfIBqFzCNhfUSoMNA==",
-              "ciphertext": "JWgDhOYT1TySlzNHxZ7pfipUs6f9hWG5LQ2V+Ug9ebo=",
-              "formatVersion": 1,
-              "nonce": "1KLpY+2JCYcZmPlj"
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T10:35:34.097Z",
+              "deleted_at": null,
+              "id": "org_tlmshfrgaaaf3j5sjfmgtexicq",
+              "key_rotation_state": "idle",
+              "name": "Acme by id",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "acme",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "+ngoGvX2chBKFc7pOCc6jQ==",
+                "ciphertext": "FRijGk0IeVSEBFzQGON2nlL117SrGdsQ1MDO+SqIlVI=",
+                "formatVersion": 1,
+                "nonce": "j821x2auDO+yOXc1"
+              }
             }
-          }
-        ]
+          ]
+        }
       }
     },
     {
@@ -2193,7 +2691,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"org_eomam26zhyhe2uyzb7xg3bmade\",\"slug\":\"acme\",\"name\":\"Acme by id\",\"createdAt\":\"2026-11-15T09:57:52.762Z\",\"incidentFreeze\":null}"
+        "body": "{\"id\":\"org_tlmshfrgaaaf3j5sjfmgtexicq\",\"slug\":\"acme\",\"name\":\"Acme by id\",\"createdAt\":\"2026-11-15T10:35:34.097Z\",\"incidentFreeze\":null}"
       },
       "audit": [],
       "side": {}
@@ -2213,20 +2711,20 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{org#6}\",\"slug\":\"acme-robotics\",\"name\":\"Acme Robotics\",\"createdAt\":\"{time}\"}"
+        "body": "{\"id\":\"{org#9}\",\"slug\":\"acme-robotics\",\"name\":\"Acme Robotics\",\"createdAt\":\"{time}\"}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+          "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_n6u4ip7nhkb7iljgtdg7mhubem",
+          "credential_id": "crd_kedtzugackvaqa6hupr3mv4aei",
           "decision": "info",
           "event_type": "organization.created",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "{org#6}",
+          "organization_id": "{org#9}",
           "request_id": null,
           "resource": {
             "organizationSlug": "acme-robotics"
@@ -2236,50 +2734,54 @@
         }
       ],
       "side": {
-        "organizations": [
-          {
-            "created_at": "{fresh}",
-            "deleted_at": null,
-            "id": "{org#6}",
-            "key_rotation_state": "idle",
-            "name": "Acme Robotics",
-            "org_kek_destroyed_at": null,
-            "root_kek_version": 1,
-            "security_epoch": 0,
-            "slug": "acme-robotics",
-            "wrapped_org_kek": "{fresh}"
-          }
-        ],
-        "org_memberships": [
-          {
-            "created_at": "{fresh}",
-            "identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
-            "organization_id": "{org#6}",
-            "removed_at": null,
-            "role": "admin",
-            "version": 0
-          }
-        ]
+        "organizations": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{org#9}",
+              "key_rotation_state": "idle",
+              "name": "Acme Robotics",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 0,
+              "slug": "acme-robotics",
+              "wrapped_org_kek": "{fresh}"
+            }
+          ]
+        },
+        "org_memberships": {
+          "inserted": [
+            {
+              "created_at": "{fresh}",
+              "identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
+              "organization_id": "{org#9}",
+              "removed_at": null,
+              "role": "admin",
+              "version": 0
+            }
+          ]
+        }
       }
     }
   ],
   "counters": [
     {
-      "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+      "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
       "config_version": 3,
       "control": "passkey-verification",
       "count": 1,
       "operation": "organization.manage",
-      "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+      "organization_id": "org_jq4eargd64bafujsdjnkxdm4xe",
       "reason": "no-evidence"
     },
     {
-      "actor_identity_id": "idn_m5zgvospusdlhnckecsg22kgdm",
+      "actor_identity_id": "idn_t5z3qkpozc2mh3tzjcthiwqllu",
       "config_version": 3,
       "control": "passkey-verification",
       "count": 1,
       "operation": "organization.read",
-      "organization_id": "org_4oru5bxf5vyb6tq3pztwdz2r44",
+      "organization_id": "org_jq4eargd64bafujsdjnkxdm4xe",
       "reason": "no-evidence"
     }
   ]
