@@ -534,3 +534,58 @@ func TestSummariesResumeAfterAnyJob(t *testing.T) {
 		t.Fatalf("summaries %v", ev)
 	}
 }
+
+// A clock moved back across an hour the worker already summarized loses no
+// count (the TypeScript server drops it): the count goes to the hour after
+// the last summarized one, and the summaries together carry every count.
+func TestCountsSurviveAClockMovedBack(t *testing.T) {
+	wd := newWorld(t)
+	ctx := context.Background()
+	var now time.Time
+	clock := func() time.Time { return now }
+	count := func() {
+		t.Helper()
+		if err := wd.store.Write(ctx, func(tx *storage.Tx) error {
+			return security.CountWouldBlock(ctx, tx, wd.org, []security.WouldBlock{{Control: "admin-step-up", ConfigVersion: 1, Operation: "grant.create", ActorIdentityID: "idn_a", Reason: "no-approval"}}, now.UnixMicro(), clock)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	total := func() int64 {
+		return paritytest.Rows(t, wd.store, `SELECT sum(count) AS n FROM security_control_counters`)[0]["n"].(int64)
+	}
+	ten := time.Date(2026, 3, 1, 10, 20, 0, 0, time.UTC)
+	now = ten
+	count()
+	now = ten.Add(50 * time.Minute) // 11:10: the 10:00 hour is summarized
+	if e, _, err := security.RunWorker(ctx, wd.w, clock); err != nil || e != 1 {
+		t.Fatalf("emitted %d: %v", e, err)
+	}
+	now = ten // the clock moves back
+	count()
+	if got := total(); got != 2 {
+		t.Fatalf("total %d after counting into a summarized hour, want 2", got)
+	}
+	// Further back, across two summarized hours: still kept.
+	now = ten.Add(3 * time.Hour) // 13:20: 11:00 summarized
+	if _, _, err := security.RunWorker(ctx, wd.w, clock); err != nil {
+		t.Fatal(err)
+	}
+	now = ten.Add(time.Hour) // 11:20, in the summarized 11:00 hour
+	count()
+	hours := paritytest.Rows(t, wd.store, `SELECT bucket_hour, emitted_at IS NULL AS open FROM security_control_counters ORDER BY bucket_hour`)
+	if len(hours) != 3 || hours[2]["bucket_hour"] != ten.Add(100*time.Minute).UnixMicro() || hours[2]["open"] != int64(1) {
+		t.Fatalf("buckets %v: the count belongs in the open 12:00 hour", hours)
+	}
+	if got := total(); got != 3 {
+		t.Fatalf("total %d, want 3", got)
+	}
+	now = ten.Add(6 * time.Hour)
+	if _, _, err := security.RunWorker(ctx, wd.w, clock); err != nil {
+		t.Fatal(err)
+	}
+	sum := paritytest.Rows(t, wd.store, `SELECT sum(json_extract(metadata, '$.count')) AS n, count(*) AS events FROM audit_events WHERE event_type = 'security_control.would_block'`)
+	if sum[0]["n"] != int64(3) {
+		t.Fatalf("the summaries carry %v counts in %v events, want 3", sum[0]["n"], sum[0]["events"])
+	}
+}

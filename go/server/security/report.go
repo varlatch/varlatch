@@ -159,12 +159,32 @@ func CountWouldBlock(ctx context.Context, db query.DBTX, organizationID string, 
 		}
 		// The bucket was already summarized: count in the current hour's.
 		params.BucketHour = seen - seen%Hour
-		if _, err = q.CountWouldBlock(ctx, params); err != nil {
+		if rows, err = q.CountWouldBlock(ctx, params); err != nil {
 			return err
 		}
-		// No row here would mean the current hour was summarized, which the
-		// worker never does before the hour ended; a lost count never
-		// changes the operation's outcome.
+		if len(rows) > 0 {
+			continue
+		}
+		// The current hour was summarized too, which only a clock moved
+		// back across a summarized hour allows. The TypeScript server drops
+		// the count there; here it goes to the hour after the last one
+		// summarized for this key, which no summary covers yet, so every
+		// committed count still reaches exactly one summary (go/README.md,
+		// Known TypeScript defects).
+		last, err := q.LastSummarizedBucket(ctx, query.LastSummarizedBucketParams{
+			OrganizationID: organizationID, Control: e.a.Control, ConfigVersion: e.a.ConfigVersion, Operation: e.a.Operation,
+			ActorIdentityID: e.a.ActorIdentityID, Reason: e.a.Reason,
+		})
+		if err != nil {
+			return err
+		}
+		params.BucketHour = last + Hour
+		if rows, err = q.CountWouldBlock(ctx, params); err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return fmt.Errorf("security: no open report bucket after %d for %s", last, e.a.Control)
+		}
 	}
 	return nil
 }

@@ -234,6 +234,39 @@ func (q *Queries) IdentityKindOf(ctx context.Context, id string) (string, error)
 	return kind, err
 }
 
+const lastSummarizedBucket = `-- name: LastSummarizedBucket :one
+SELECT CAST(max(bucket_hour) AS INTEGER) FROM security_control_counters
+WHERE organization_id = ?1 AND control = ?2
+  AND config_version = ?3 AND operation = ?4
+  AND actor_identity_id = ?5 AND reason = ?6
+  AND emitted_at IS NOT NULL
+`
+
+type LastSummarizedBucketParams struct {
+	OrganizationID  string
+	Control         string
+	ConfigVersion   int64
+	Operation       string
+	ActorIdentityID string
+	Reason          string
+}
+
+// The last summarized hour of one counter key: the hour after it has no
+// summary yet.
+func (q *Queries) LastSummarizedBucket(ctx context.Context, arg LastSummarizedBucketParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, lastSummarizedBucket,
+		arg.OrganizationID,
+		arg.Control,
+		arg.ConfigVersion,
+		arg.Operation,
+		arg.ActorIdentityID,
+		arg.Reason,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const markReportCounterEmitted = `-- name: MarkReportCounterEmitted :exec
 UPDATE security_control_counters SET emitted_at = ?1
 WHERE organization_id = ?2 AND control = ?3

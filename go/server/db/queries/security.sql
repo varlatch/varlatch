@@ -30,6 +30,15 @@ UPDATE organizations SET security_epoch = security_epoch + 1 WHERE id = ?;
 -- name: IdentityKindOf :one
 SELECT kind FROM identities WHERE id = ?;
 
+-- name: LastSummarizedBucket :one
+-- The last summarized hour of one counter key: the hour after it has no
+-- summary yet.
+SELECT CAST(max(bucket_hour) AS INTEGER) FROM security_control_counters
+WHERE organization_id = sqlc.arg(organization_id) AND control = sqlc.arg(control)
+  AND config_version = sqlc.arg(config_version) AND operation = sqlc.arg(operation)
+  AND actor_identity_id = sqlc.arg(actor_identity_id) AND reason = sqlc.arg(reason)
+  AND emitted_at IS NOT NULL;
+
 -- name: DueReportCounters :many
 -- securityreport.ts emitDueSummaries's claim: unemitted rows whose hour
 -- ended long enough ago, of a live Organization, in key order.
