@@ -3,6 +3,7 @@
 package paritytest
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,5 +25,18 @@ func TestHourClockKeepsAReplayInOneHour(t *testing.T) {
 	}
 	if d := later.Sub(first); d != 2*time.Minute {
 		t.Errorf("%v elapsed, want 2m0s", d)
+	}
+}
+
+// A replay whose clock leaves the hour it began in fails, saying so,
+// rather than splitting its report counts between two hours.
+func TestHourOverrunFails(t *testing.T) {
+	began := time.Date(2026, 11, 15, 22, 0, 0, 0, time.UTC)
+	if err := hourOverrun(began, began.Add(59*time.Minute+59*time.Second)); err != nil {
+		t.Errorf("within the hour: %v", err)
+	}
+	err := hourOverrun(began, began.Add(time.Hour))
+	if err == nil || !strings.Contains(err.Error(), "ran into the next hour") {
+		t.Errorf("past the hour: %v", err)
 	}
 }

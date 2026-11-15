@@ -393,6 +393,34 @@ type Target struct {
 	Now func() time.Time
 }
 
+// hourOverrun is the replay's failure when its clock has left the hour
+// it began in: past it, report counts would be kept in two hours.
+func hourOverrun(began, done time.Time) error {
+	if done.Truncate(time.Hour).Equal(began.Truncate(time.Hour)) {
+		return nil
+	}
+	return fmt.Errorf("the replay began at %s and ran into the next hour (%s): report counts are kept per hour, so a replay must take less than an hour on HourClock",
+		began.UTC().Format(time.RFC3339Nano), done.UTC().Format(time.RFC3339Nano))
+}
+
+// checkTimes checks the raw times a request wrote: each audit event after
+// event_order before, and each exposure row last seen from sent on, between
+// sent and done (microseconds, as stored).
+func checkTimes(t testing.TB, name string, store *storage.DB, before int64, sent, done time.Time) {
+	t.Helper()
+	low, high := sent.UnixMicro(), done.UnixMicro()
+	for _, r := range Rows(t, store, "SELECT event_type, occurred_at FROM audit_events WHERE event_order > ? ORDER BY event_order", before) {
+		if at := r["occurred_at"].(int64); at < low || at > high {
+			t.Errorf("%s: %s at %d, outside the request (%d to %d)", name, r["event_type"], at, low, high)
+		}
+	}
+	for _, r := range Rows(t, store, "SELECT first_at, last_at FROM member_exposure WHERE last_at >= ?", low) {
+		if last := r["last_at"].(int64); last > high {
+			t.Errorf("%s: an exposure last at %d, after the request (%d to %d)", name, last, low, high)
+		}
+	}
+}
+
 // HourClock is the clock a replay runs its server on: the real clock moved
 // back to the start of the hour the replay begins in. Report counts are
 // kept per hour (security_control_counters.bucket_hour), and the
@@ -624,6 +652,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 	if now == nil {
 		now = time.Now
 	}
+	began := now()
 	norm := NewNormalizer(f.Rows)
 	for index, c := range f.Requests {
 		name := c.ID
@@ -771,6 +800,14 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			}
 			raw.Audit = append(raw.Audit, pr)
 			audit = append(audit, norm.Value(pr, ""))
+		}
+		// The raw times: every event, and every exposure row it wrote, on
+		// the server's clock while the request was being answered.
+		checkTimes(t, name, target.Store, before.Int64, sent, done)
+		if target.Now != nil {
+			if err := hourOverrun(began, done); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
 		}
 		wantAudit := []any{}
 		for _, r := range c.Audit {

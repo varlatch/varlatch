@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/server/api"
+	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/pgtime"
@@ -320,7 +321,8 @@ var (
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	arrived := s.opts.Now()
 	id := newRequestID()
-	r = r.WithContext(context.WithValue(r.Context(), requestIDKey, id))
+	// The request's audit events take varlatchd's clock, as its services do.
+	r = r.WithContext(audit.WithClock(context.WithValue(r.Context(), requestIDKey, id), s.opts.Now))
 	rec := &recorder{ResponseWriter: w}
 	// The paths of the TypeScript deployment (target.go): nginx's decides
 	// whether the request reaches the API side at all; varlatchd's router

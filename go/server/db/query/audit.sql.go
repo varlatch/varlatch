@@ -84,9 +84,7 @@ func (q *Queries) HumanIdentities(ctx context.Context, ids []string) ([]string, 
 const indexExposure = `-- name: IndexExposure :exec
 INSERT INTO member_exposure (organization_id, identity_id, version_id, item_name, environment_id, way, first_at, last_at)
 VALUES (?1, ?2, ?3, ?4,
-        ?5, ?6,
-        coalesce(?7, CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
-        coalesce(?8, CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000))
+        ?5, ?6, ?7, ?8)
 ON CONFLICT (organization_id, identity_id, version_id, environment_id, way) DO UPDATE SET
   first_at = min(member_exposure.first_at, excluded.first_at),
   last_at = max(member_exposure.last_at, excluded.last_at)
@@ -99,13 +97,14 @@ type IndexExposureParams struct {
 	ItemName       string
 	EnvironmentID  string
 	Way            string
-	FirstAt        interface{}
-	LastAt         interface{}
+	FirstAt        int64
+	LastAt         int64
 }
 
 // One member_exposure row (ADR-0052 Decision 6, audit/exposure.ts
-// indexExposures); the caller indexes people only. A null time is now; the
-// first and last times only ever widen.
+// indexExposures); the caller indexes people only, and gives the times
+// (varlatchd's clock, as the events'). The first and last times only ever
+// widen.
 func (q *Queries) IndexExposure(ctx context.Context, arg IndexExposureParams) error {
 	_, err := q.db.ExecContext(ctx, indexExposure,
 		arg.OrganizationID,

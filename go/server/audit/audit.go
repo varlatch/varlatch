@@ -121,6 +121,23 @@ func WithAttribution(ctx context.Context, a Attribution) context.Context {
 	return context.WithValue(ctx, attributionKey{}, a)
 }
 
+type clockKey struct{}
+
+// WithClock gives ctx the clock Record reads the events' time from:
+// varlatchd's own (httpserver.Options.Now gives every request it serves).
+// A context without one reads time.Now.
+func WithClock(ctx context.Context, now func() time.Time) context.Context {
+	return context.WithValue(ctx, clockKey{}, now)
+}
+
+// clockOf is the clock ctx carries, or time.Now.
+func clockOf(ctx context.Context) func() time.Time {
+	if now, ok := ctx.Value(clockKey{}).(func() time.Time); ok && now != nil {
+		return now
+	}
+	return time.Now
+}
+
 // AttributionFrom returns the attribution ctx carries, if any.
 func AttributionFrom(ctx context.Context) (Attribution, bool) {
 	a, ok := ctx.Value(attributionKey{}).(Attribution)
@@ -158,21 +175,22 @@ func Record(ctx context.Context, db query.DBTX, events ...Event) ([]Recorded, er
 		}
 	}
 	q := query.New(db)
+	// The events' time, as PostgreSQL's now() gives every event of one
+	// transaction the same: the clock (WithClock) in microseconds, once per
+	// call (MAPPING.md: varlatchd passes its own times), so events of
+	// separate writes list in the order they happened. The exposure index
+	// rows take it too, as they take now() there.
+	at := clockOf(ctx)().UnixMicro()
 	var exposures []ExposureEntry
 	for _, e := range events {
 		if x, ok := ExposureFromEvent(e.indexable()); ok {
 			exposures = append(exposures, x)
 		}
 	}
-	if err := IndexExposures(ctx, q, exposures, nil); err != nil {
+	if err := IndexExposures(ctx, q, exposures, nil, at); err != nil {
 		return nil, err
 	}
 	acting, attributed := AttributionFrom(ctx)
-	// The events' time, as PostgreSQL's now() gives every event of one
-	// transaction the same: the clock in microseconds, once per call
-	// (MAPPING.md: varlatchd passes its own times), so events of separate
-	// writes list in the order they happened.
-	at := time.Now().UnixMicro()
 	out := make([]Recorded, 0, len(events))
 	for _, e := range events {
 		r, err := insert(ctx, q, e, acting, attributed, at)
@@ -301,7 +319,7 @@ func (e Event) indexable() Indexable {
 // machine activity, never a person's exposure). at, when not nil, gives
 // each entry's event time in microseconds (the backfill's); nil is now. The
 // first and last times only ever widen, so a replay changes nothing.
-func IndexExposures(ctx context.Context, q *query.Queries, entries []ExposureEntry, at []*int64) error {
+func IndexExposures(ctx context.Context, q *query.Queries, entries []ExposureEntry, at []*int64, now int64) error {
 	type row struct {
 		org, identity, version, item, env, way string
 		first, last                            *int64
@@ -310,8 +328,8 @@ func IndexExposures(ctx context.Context, q *query.Queries, entries []ExposureEnt
 	var keys []string
 	people := map[string]bool{}
 	for i, e := range entries {
-		var t *int64
-		if at != nil {
+		t := &now
+		if at != nil && at[i] != nil {
 			t = at[i]
 		}
 		people[e.IdentityID] = true
@@ -352,7 +370,7 @@ func IndexExposures(ctx context.Context, q *query.Queries, entries []ExposureEnt
 		}
 		if err := q.IndexExposure(ctx, query.IndexExposureParams{
 			OrganizationID: r.org, IdentityID: r.identity, VersionID: r.version, ItemName: r.item,
-			EnvironmentID: r.env, Way: r.way, FirstAt: nullInt(r.first), LastAt: nullInt(r.last),
+			EnvironmentID: r.env, Way: r.way, FirstAt: *r.first, LastAt: *r.last,
 		}); err != nil {
 			return fmt.Errorf("audit: indexing an exposure: %w", err)
 		}
@@ -367,11 +385,4 @@ func keysOf(m map[string]bool) []string {
 	}
 	slices.Sort(out)
 	return out
-}
-
-func nullInt(v *int64) sql.NullInt64 {
-	if v == nil {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: *v, Valid: true}
 }
