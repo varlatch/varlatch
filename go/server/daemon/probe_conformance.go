@@ -14,14 +14,14 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
-	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db/query"
 )
 
 // The conformance harness's probes (scripts/conformance README, "The
 // target contract"): fixed, named reads of server state that /v1 does not
 // show, which the go-binary target runs as `varlatchd admin
-// conformance-probe <name> [args] --config <file>`. Built only with the
+// conformance-probe <name> [args] --config <file>`, through the daemon
+// (control.go) like every host command. Built only with the
 // conformance build tag: a release has none of this.
 //
 //	expire-pending-device-sign-ins   every pending device sign-in expires now
@@ -31,17 +31,7 @@ import (
 var probeName = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
 
 func init() {
-	conformanceProbe = func(args []string, stdout, stderr io.Writer) int {
-		path := config.DefaultPath
-		var rest []string
-		for i := 0; i < len(args); i++ {
-			if args[i] == "--config" && i+1 < len(args) {
-				path = args[i+1]
-				i++
-				continue
-			}
-			rest = append(rest, args[i])
-		}
+	conformanceProbe = func(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io.Writer) int {
 		fail := func(err error) int {
 			fmt.Fprintf(stderr, "varlatchd admin conformance-probe: %v\n", err)
 			return ExitFailure
@@ -54,16 +44,8 @@ func init() {
 			fmt.Fprintln(stdout, "[]")
 			return ExitOK
 		}
-		cfg, err := config.Load(path)
-		if err != nil {
-			return fail(err)
-		}
-		ctx := context.Background()
-		store, err := storage.Open(ctx, storage.Options{Path: cfg.DatabasePath()})
-		if err != nil {
-			return fail(err)
-		}
-		defer store.Close()
+		store := env.store
+		var err error
 		var out any
 		switch rest[0] {
 		case "expire-pending-device-sign-ins":

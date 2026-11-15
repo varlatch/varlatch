@@ -37,6 +37,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/web"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 // Exit statuses of `varlatchd serve`.
@@ -170,6 +171,26 @@ func serve(opts Options, h *hooks) int {
 	if st, err := os.Stat(cfg.DataDir); err != nil || !st.IsDir() {
 		return fail(ExitFailure, "the data directory is not there", "dir", cfg.DataDir, "error", err)
 	}
+	// It holds the control socket and the lock: only this user may change
+	// its entries (datadir_unix.go).
+	dataDirID, err := checkServeDir(cfg.DataDir, os.Getuid())
+	if err != nil {
+		return fail(ExitConfig, "the data directory is not safe for the control socket and the lock file; fix its owner or mode and start varlatchd again", "error", err)
+	}
+	// One running owner of the data directory (feature-parity decision
+	// 11): held until serve returns, after the database closed.
+	unlock, err := lockDataDir(cfg.DataDir)
+	if errors.Is(err, errLocked) {
+		return fail(ExitFailure, "another varlatchd, or a varlatchd admin command running offline, holds this data directory's lock; refusing to start",
+			"dir", cfg.DataDir, "lock", LockFile)
+	}
+	if err != nil {
+		return fail(ExitFailure, "cannot lock the data directory", "dir", cfg.DataDir, "error", err)
+	}
+	defer unlock()
+	if err := sameDir(cfg.DataDir, dataDirID); err != nil {
+		return fail(ExitFailure, "the data directory changed while varlatchd took its lock", "error", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -223,6 +244,19 @@ func serve(opts Options, h *hooks) int {
 		if err := h.prepare(ctx, store, rootKEK, log); err != nil {
 			return fail(ExitFailure, "preparing the run", "error", err)
 		}
+	}
+	// The write path's gates, shared by requests and host commands
+	// (go/server/write); host commands arrive on the control socket, open
+	// before the listener so a command run once /readyz answers finds it.
+	gates := write.NewGates()
+	control, err := listenControl(&hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates}, log)
+	if err != nil {
+		return fail(ExitFailure, "cannot open the control socket in the data directory", "socket", ControlSocket, "error", err)
+	}
+	go control.serve(ctx)
+	defer control.close()
+	if err := sameDir(cfg.DataDir, dataDirID); err != nil {
+		return fail(ExitFailure, "the data directory changed while varlatchd opened its control socket", "error", err)
 	}
 
 	var trusts func(string) bool

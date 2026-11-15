@@ -27,6 +27,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/realtime"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 // The conformance harness's fixtures for the realtime suite (G11; the
@@ -35,8 +36,8 @@ import (
 // audit events that make signals, written straight to the database
 // because the /v1 writes that would make them are not built yet (ADR-0059
 // step 4). Run as `varlatchd admin conformance-fixture <fixture> [args]
-// --config <file>`, next to a running varlatchd, which publishes what they
-// commit within its poll interval. Built only with the conformance build
+// --config <file>`, through the running varlatchd (control.go), which
+// publishes what they commit. Built only with the conformance build
 // tag: a release has none of this. Each prints one line of JSON.
 //
 //	world <name>                    two Organizations and three people:
@@ -69,17 +70,7 @@ var fixtureTypes = func() []string {
 }()
 
 func init() {
-	conformanceFixture = func(args []string, stdout, stderr io.Writer) int {
-		path := config.DefaultPath
-		var rest []string
-		for i := 0; i < len(args); i++ {
-			if args[i] == "--config" && i+1 < len(args) {
-				path = args[i+1]
-				i++
-				continue
-			}
-			rest = append(rest, args[i])
-		}
+	conformanceFixture = func(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io.Writer) int {
 		fail := func(err error) int {
 			fmt.Fprintf(stderr, "varlatchd admin conformance-fixture: %v\n", err)
 			return ExitFailure
@@ -91,16 +82,8 @@ func init() {
 		if len(rest) == 0 {
 			return usage()
 		}
-		cfg, err := config.Load(path)
-		if err != nil {
-			return fail(err)
-		}
-		ctx := context.Background()
-		store, err := storage.Open(ctx, storage.Options{Path: cfg.DatabasePath()})
-		if err != nil {
-			return fail(err)
-		}
-		defer store.Close()
+		cfg, store := env.cfg, env.store
+		var err error
 		var out any
 		switch {
 		case rest[0] == "world" && len(rest) == 2 && fixtureName.MatchString(rest[1]):
@@ -110,9 +93,9 @@ func init() {
 			if convErr != nil || n < 1 || n > 200 {
 				return usage()
 			}
-			out, err = fixtureOrgs(ctx, store, cfg, rest[1], n)
+			out, err = gated(ctx, env, func(ctx context.Context) (any, error) { return fixtureOrgs(ctx, store, cfg, rest[1], n) }, write.Person(rest[1], write.Shared))
 		case rest[0] == "session" && len(rest) == 2 && fixtureID.MatchString(rest[1]):
-			out, err = fixtureSession(ctx, store, rest[1])
+			out, err = gated(ctx, env, func(ctx context.Context) (any, error) { return fixtureSession(ctx, store, rest[1]) }, write.Person(rest[1], write.Shared))
 		case rest[0] == "events" && len(rest) == 4:
 			n, convErr := strconv.Atoi(rest[3])
 			if convErr != nil || n < 1 || n > len(fixtureTypes) {
@@ -129,9 +112,21 @@ func init() {
 					orgs = append(orgs, &o)
 				}
 			}
-			out, err = fixtureEvents(ctx, store, orgs, optionalID(rest[2]), n)
+			var gates []write.Gate
+			for _, o := range orgs {
+				if o != nil {
+					gates = append(gates, write.Organization(*o, write.Shared))
+				}
+			}
+			if actor := optionalID(rest[2]); actor != nil {
+				gates = append(gates, write.Person(*actor, write.Shared))
+			}
+			out, err = gated(ctx, env, func(ctx context.Context) (any, error) { return fixtureEvents(ctx, store, orgs, optionalID(rest[2]), n) }, gates...)
 		case rest[0] == "remove-member" && len(rest) == 3 && fixtureID.MatchString(rest[1]) && fixtureID.MatchString(rest[2]):
-			out, err = fixtureRemoveMember(ctx, store, rest[1], rest[2])
+			// A member's removal takes the person exclusively (step 4
+			// decision 4's person gates).
+			out, err = gated(ctx, env, func(ctx context.Context) (any, error) { return fixtureRemoveMember(ctx, store, rest[1], rest[2]) },
+				write.Organization(rest[1], write.Shared), write.Person(rest[2], write.Exclusive))
 		default:
 			return usage()
 		}
@@ -142,6 +137,17 @@ func init() {
 		fmt.Fprintln(stdout, string(b))
 		return ExitOK
 	}
+}
+
+// gated runs a fixture's writes with the gates a writer of the same rows
+// takes, from the daemon's gate set, before any job is queued.
+func gated(ctx context.Context, env *hostEnv, fn func(context.Context) (any, error), gates ...write.Gate) (any, error) {
+	ctx, release, err := env.gates.Acquire(ctx, gates...)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return fn(ctx)
 }
 
 func optionalID(s string) *string {

@@ -48,9 +48,9 @@ CHECKED_DOCS='^(CHANGELOG|THIRD-PARTY-NOTICES)\.md$'
 # The Go rewrite, which go.yml checks.
 GO='^go/|^\.github/workflows/go\.yml$'
 # Go test data that services/varlatchd's tests produce from the TypeScript
-# server or Node.js, or read (go-authz-vectors, go-audit-vectors, go-parity,
+# server or Node.js, or read (go-authz-vectors, go-audit-vectors, go-write-vectors, go-parity,
 # go-values-fixture).
-SHARED='^go/server/(authz|audit)/testdata/ts-vectors\.json$|^go/server/httpserver/testdata/known-differences\.json$|^go/server/values/testdata/values-v[0-9.]+\.json$|^go/server/daemon/seed_contract\.json$|^go/server/whatwg/(nodeidna_table\.go|testdata/node-idna\.json|testdata/nodeidna\.mjs)$'
+SHARED='^go/server/(authz|audit|write)/testdata/ts-vectors\.json$|^go/server/httpserver/testdata/known-differences\.json$|^go/server/values/testdata/values-v[0-9.]+\.json$|^go/server/daemon/seed_contract\.json$|^go/server/whatwg/(nodeidna_table\.go|testdata/node-idna\.json|testdata/nodeidna\.mjs)$'
 
 # True when a path lies inside a workspace package (pnpm-workspace.yaml).
 in_package() {

@@ -106,9 +106,50 @@ was read; a failure to read it stays 1). The unit has `RestartPreventExitStatus=
 recover --identity <id> [--enable] | --new-admin [--cli-credential]`
 (with `--config <file>`) print exactly what the TypeScript admin CLI
 prints: a one-time enrollment URL, or a CLI credential on the last line.
-They open the database beside a running varlatchd. A build with the
-`conformance` tag also has `varlatchd admin conformance-probe`, the
-conformance harness's device sign-in probes; a release has none.
+A build with the `conformance` tag also has `varlatchd admin
+conformance-probe`, `conformance-fixture` and `conformance-seed`, the
+conformance harness's probes and fixtures; a release has none.
+
+Host commands write through the daemon (step 4 decision 11,
+`server/daemon/control.go`), because the write path's gates live in its
+memory (`server/write`):
+
+- `serve` holds an exclusive lock (`flock`) on `varlatchd.lock` in the data
+  directory for its whole life; a second `serve` refuses to start, and so
+  does a `serve` while an admin command runs offline. The kernel releases
+  the lock when the process ends, however it ends.
+- `serve` listens on `varlatchd.sock` in the data directory (mode 0600)
+  and accepts a connection only from its own user or root (the peer's
+  credentials, `SO_PEERCRED`). A command sent there runs inside the
+  daemon, with its gates and its writer, and its output and exit status
+  come back as if it ran in the caller.
+- The data directory holds both, and the database, each opened by path,
+  so the path itself must be trusted (`datadir_unix.go`): its last
+  component is the directory, never a symbolic link; the path is resolved
+  one component at a time, following each symbolic link by hand (at most
+  40), and every directory it passes through is owned by root or a
+  trusted user and is not writable by its group or others unless its
+  sticky bit is set (as `/tmp`'s), and every link it follows, at any hop,
+  is owned by root or a trusted user (macOS's `/var` and `/tmp` pass);
+  and the directory is owned by the user varlatchd runs as and writable by
+  no one else. `serve` refuses to start
+  (78) otherwise, and checks after taking the lock and after binding the
+  socket that the path still leads to the same directory (device and
+  inode). `varlatchd admin` makes the same checks (trusting root, itself
+  and the directory's owner; a non-root caller must own the directory),
+  refuses a socket file that is not a socket owned by the directory's
+  owner, and refuses a server whose peer credentials are not that owner's
+  or root's. The shipped unit's directory (`/var/lib/varlatch`,
+  `StateDirectoryMode=0700`) passes.
+- A command takes the gates of the people and Organizations it writes, from
+  the daemon's gate set, before its jobs are queued (`recover --identity`
+  its subject, exclusively with `--enable`, as `issueRecoveryGrant` locks
+  it; the conformance fixtures as the writers of the same rows would).
+- `varlatchd admin ...` tries the socket first. If nothing answers, it
+  takes the lock without waiting and runs the same code offline (creating
+  the schema and the installation on a fresh data directory, as `serve`
+  would); if a daemon holds the lock but its socket does not answer, it
+  refuses and writes nothing.
 
 The server's packages:
 
@@ -256,6 +297,37 @@ The server's packages:
   (`testdata/node-idna.json`). After a Node.js update, regenerate both
   with `node go/server/whatwg/testdata/nodeidna.mjs`; the vector test in
   `services/varlatchd` fails until then.
+- `server/write` (step 4.1a): the write path without row locks (step 4
+  decision 4). The TypeScript server orders every row lock by one order
+  (`domain/liveness.ts`, ADR-0054 amendment E) and holds some across
+  outbound calls; varlatchd has one writer instead, and:
+  - `CheckLive` makes the checks the TypeScript code makes under a row lock
+    (the Organization live, no deletion open, no incident freeze, the
+    Project and environments live) inside the write job that depends on
+    them, with the same refusals; `Checkpoint` is passkey-verification's
+    `requireOrganizationAccess`;
+  - in-process gates replace the advisory locks and the row locks held
+    across a call: reader-writer gates with a name and a key, at four
+    levels (step 0's singletons, the Organization, people, resources),
+    taken all at once in one order (level, name, key), before the job is
+    queued and released after its answer. A waiting exclusive taker keeps
+    new shared ones out. The tracer refuses a gate taken out of order, and
+    in test binaries one taken inside a write job, the counterpart of
+    `test/helpers/lock-trace.ts`;
+  - `RunEffect` runs an external effect (ADR-0054 Decision 7) in five
+    parts: its gates; the authoritative checks in one read snapshot under
+    them; a claim, held by its resource gate and written with the outcome;
+    the call, with the TypeScript deadline (90 s while passkey-verification
+    is at report or enforce); and the final job, which checks the
+    Organization again and writes the outcome, with the outbound refusals
+    the call noted (written alone if the effect fails). No network call is
+    made while the write transaction is held (ADR-0059 Decision 2);
+  - `Idempotent`: an Idempotency-Key's claim, the domain write and the
+    stored response are one job (ADR-0018 section 8). The stored response
+    is jsonb's form, so a replay's body has jsonb's member order, as the
+    TypeScript server's replay has; `testdata/ts-vectors.json` holds that
+    server's digests (`bodyHash`) and replays
+    (`services/varlatchd/test/go-write-vectors.test.ts`).
 - `server/ids`, `server/domainerr`: domain IDs (`db/ids.ts`) and
   `DomainError`.
 
@@ -379,6 +451,30 @@ how G1 and G2 are judged. Step 2 is complete once its last pull request (the rel
 target, expected failures, gate mode and the weekly matrix,
 `.github/workflows/conformance.yml`) is merged and the weekly matrix
 passes, every failure in it listed with a reason.
+
+## Known TypeScript defects
+
+The TypeScript line is frozen (step 4 decision 5). A difference in what
+`/v1` says on the wire is kept, as ADR-0059 Decision 3 requires; a defect
+of integrity or availability is not reproduced. No conformance check may
+assert one of the defects below. A defect that matters for security is
+kept out of this repository until the TypeScript release line fixes it.
+
+Kept, because they are on the wire:
+
+| TypeScript | What it does | Go | Shown by |
+| --- | --- | --- | --- |
+| `http/app.ts`, an unknown `/v1` route | Hono's plain-text `404 Not Found` | the same (step 3 decision 4) | `server/httpserver/testdata/known-differences.json` |
+| `http/app.ts`, the request window | `429` with `PERMISSION_DENIED` | the same | the same file |
+| `http/app.ts` `withIdempotency` | a replay answers the stored response read back from jsonb, so its members come in jsonb's order (shorter keys first), not the first answer's | the same | `server/write` `TestReplayVectors` |
+| PostgreSQL's text and jsonb, under every route | U+0000 in a string written to a text or jsonb column fails the statement: the transaction rolls back and the route answers 500 `INTERNAL`; a lone surrogate reaches a text column as U+FFFD (Node's UTF-8) and fails in jsonb | the same: `write.Text` for text columns (U+0000 refused, lone surrogates as U+FFFD), `jsvalue.JsonbRefuses` for jsonb (`audit.Record`, `write.Idempotent`). **Every later slice applies them to each text or jsonb value it writes**, at the point the TypeScript statement would fail, and records the case in its parity fixture | `server/write` `TestText`; the core fixture's U+0000 and lone-surrogate requests |
+
+Not reproduced:
+
+| TypeScript | Effect | Go | Shown by | Conformance |
+| --- | --- | --- | --- | --- |
+| `mirror/publisher.ts:209` orders Convex mirror events by the text form of `event_order` | events after position 9 can be published out of order | nothing to port: there is no Convex in Go | | none |
+| `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | step 4.3's concurrent export test (pending) | none |
 
 ## Before the first Go release
 
