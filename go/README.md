@@ -325,6 +325,20 @@ The server's packages:
   when the request has one (`write.Idempotent`: the claim, the write and
   the stored response in the same job, so a refused write stores no
   claim), the digest over zod's output in its schema's member order.
+  Dual-phase rotation (step 4.2, `rotation.go`; ADR-0027, the grace hint
+  of ADR-0053): `beginRotation` writes a new primary version and keeps the
+  prior one retiring until a deadline (the request's grace, else the
+  Contract's `rotationGraceSeconds`, else a day; at most 30 days; refused
+  with `ROTATION_IN_PROGRESS` while one is in flight, a rotation past its
+  deadline being over), and `completeRotation` drops the retiring version
+  early (a no-op success when none is pinned). A plain write or a deletion
+  supersedes a rotation in flight. `rotation_test.go` races begin,
+  complete and a plain write on one item: every state is one the
+  TypeScript code allows (no rotation, or one in flight whose retiring
+  version is the current one's predecessor), and the committed events
+  replayed in order give the final row. Rotations in flight are data the
+  migration copies as they are (step 7: the retiring version, the
+  deadline, the start); the read path already honours them.
   Validation and strict retrieval (step 4.1d, `validate.go`, `strict.go`;
   ADR-0038 Decisions 5 and 6): `validateEnvironment`'s verdicts and
   `strictRetrieval`'s values, manifest, per-category digests, caller view,
@@ -528,7 +542,12 @@ The server's packages:
   (`{ver:PROJECT/ENVIRONMENT/ITEM}`, a value's current version), the
   Go test opening every value version a request wrote and finding a
   value a request sent, then validation, strict retrieval and search
-  (`{cursor:PROJECT/ITEM}`, a search cursor after that hit). Name later files `<area>-v<release>.json` in
+  (`{cursor:PROJECT/ITEM}`, a search cursor after that hit); 4.2 the
+  rotations, in acme/rotate (in flight, past their window, completed,
+  superseded; the Go test checks each new rotation's window against its
+  grace, which the file holds only as `{time}`). Both sides start a fresh
+  server before every 500th request (`WINDOW_BATCH`,
+  `paritytest.WindowBatch`), so no request meets the request window. Name later files `<area>-v<release>.json` in
   `testdata/` (the secret scan's allow list and `scripts/ci-changes.sh`
   match that). `server/values/valuestest` loads its fixtures with the same
   `Prepare`.

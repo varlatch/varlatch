@@ -14,9 +14,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -35,10 +37,31 @@ var coreTables = []string{"installation", "identities", "user", "auth_user_links
 	"environments", "env_values", "capabilities", "value_versions", "idempotency_keys"}
 
 type server struct {
+	opts    httpserver.Options
+	mu      sync.Mutex
 	handler *httpserver.Server
 	store   *storage.DB
 	values  *values.Service
 	rootKEK []byte
+}
+
+// current is the server answering now.
+func (s *server) current() *httpserver.Server {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.handler
+}
+
+// restart starts a fresh server on the same database and services: a new
+// request window (paritytest.WindowBatch).
+func (s *server) restart(t testing.TB) {
+	h, err := httpserver.New(s.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handler = h
 }
 
 func newServer(t *testing.T, f paritytest.Fixture) *server {
@@ -57,13 +80,14 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	vs := values.New(store, rootKEK, values.Options{Log: log})
-	h, err := httpserver.New(httpserver.Options{
+	opts := httpserver.Options{
 		// The TypeScript server's SERVER_VERSION, which the installation
 		// release read reports.
 		Version: f.Version(), Backend: daemon.NewBackend(store, rootKEK), Log: log,
 		Auth: auth.New(store, auth.Options{Log: log, RootKEK: rootKEK}), Values: vs,
 		Writer: &write.Writer{Store: store, Gates: write.NewGates()}, RootKEK: rootKEK,
-	})
+	}
+	h, err := httpserver.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +95,7 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 		vs.Settled()
 		_ = store.Close()
 	})
-	return &server{handler: h, store: store, values: vs, rootKEK: rootKEK}
+	return &server{opts: opts, handler: h, store: store, values: vs, rootKEK: rootKEK}
 }
 
 // The core fixture's operations give the TypeScript server's answers: the
@@ -107,7 +131,10 @@ func replayCoreFile(t *testing.T, name string) {
 		t.Fatalf("%d stored Idempotency-Key claims: the fixture has none to replay", n)
 	}
 	s := newServer(t, f)
-	paritytest.Replay(t, s.target(t, f), f)
+	target := s.target(t, f)
+	begins := 0
+	target.Inspect = rotationDeadlines(&begins)
+	paritytest.Replay(t, target, f)
 	known := map[string]bool{}
 	for _, o := range f.Rows["organizations"] {
 		known[o["id"].(string)] = true
@@ -135,6 +162,88 @@ func replayCoreFile(t *testing.T, name string) {
 		t.Errorf("%d Organizations created, the fixture %d", created, want)
 	}
 	checkWrittenValues(t, s, f)
+	if want := beginsIn(f); begins != want || want < 12 {
+		t.Errorf("%d begun rotations checked, the file has %d", begins, want)
+	}
+}
+
+// rotationHints are the Contract hints on the fixture's rotated items
+// (acme/rotate's HINTED), as go-core-fixture.test.ts holds them.
+var rotationHints = map[string]int64{"rotate/HINTED": 3600}
+
+// rotationDeadlines checks what the file holds only as {time}: for every
+// rotation a request began, the answer's rotationDeadline,
+// value.rotation_started's metadata.deadline and the stored
+// rotation_deadline are the same instant, the request's time plus its
+// grace (the request's own, else the Contract's hint, else a day; at most
+// 30 days). begins counts the rotations it checked.
+func rotationDeadlines(begins *int) func(testing.TB, paritytest.Recorded, paritytest.Raw) {
+	return func(t testing.TB, c paritytest.Recorded, raw paritytest.Raw) {
+		if c.Method != http.MethodPost || !strings.HasSuffix(c.Path, "/rotations") {
+			return
+		}
+		segments := strings.Split(c.Path, "/")
+		grace := int64(86_400)
+		var body struct{ GraceSeconds *float64 }
+		if c.Body != nil && json.Unmarshal(*c.Body, &body) == nil && body.GraceSeconds != nil {
+			grace = int64(*body.GraceSeconds)
+		} else if hint, ok := rotationHints[segments[5]+"/"+segments[9]]; ok {
+			grace = hint
+		}
+		grace = min(grace, 2_592_000)
+		for i, status := range raw.Statuses {
+			if status != http.StatusCreated {
+				continue
+			}
+			*begins++
+			var answer struct{ PrimaryVersionID, RotationDeadline string }
+			if err := json.Unmarshal(raw.Bodies[i], &answer); err != nil {
+				t.Errorf("%s: %v", c.Name, err)
+				continue
+			}
+			var audited, stored any
+			for _, e := range raw.Audit {
+				resource, _ := e["resource"].(map[string]any)
+				metadata, _ := e["metadata"].(map[string]any)
+				if e["event_type"] == "value.rotation_started" && resource["versionId"] == answer.PrimaryVersionID {
+					audited = metadata["deadline"]
+				}
+			}
+			for _, r := range raw.Side["env_values"] {
+				if r["current_version_id"] == answer.PrimaryVersionID {
+					stored = r["rotation_deadline"]
+				}
+			}
+			if audited != answer.RotationDeadline || stored != answer.RotationDeadline {
+				t.Errorf("%s: the answer's, the audit event's and the stored deadline differ: %q %v %v", c.Name, answer.RotationDeadline, audited, stored)
+				continue
+			}
+			at, err := time.Parse(time.RFC3339Nano, answer.RotationDeadline)
+			low, high := raw.Sent.Add(time.Duration(grace)*time.Second).Truncate(time.Millisecond), raw.Done.Add(time.Duration(grace)*time.Second)
+			if err != nil || at.Before(low) || at.After(high) {
+				t.Errorf("%s: deadline %s is not the request's time plus %d s", c.Name, answer.RotationDeadline, grace)
+			}
+		}
+	}
+}
+
+// beginsIn counts the rotations the file's requests begin (answers of 201).
+func beginsIn(f paritytest.Fixture) int {
+	n := 0
+	for _, r := range f.Requests {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.Path, "/rotations") {
+			continue
+		}
+		if len(r.Answers) == 0 && r.Expect.Status == http.StatusCreated {
+			n++
+		}
+		for _, a := range r.Answers {
+			if a.Status == http.StatusCreated {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // checkWrittenValues opens every value version the requests wrote with
@@ -285,7 +394,8 @@ func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 
 func (s *server) target(t testing.TB, f paritytest.Fixture) paritytest.Target {
 	return paritytest.Target{
-		Handler: s.handler, Store: s.store, Settled: s.values.Settled,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.current().ServeHTTP(w, r) }),
+		Store:   s.store, Settled: s.values.Settled, Restart: func() { s.restart(t) },
 		Path: fillPath(t, f),
 		// Responses only: some requests are outside the document on
 		// purpose, as the TypeScript fixture runs the unchecked app.
@@ -312,6 +422,9 @@ func (f *failures) Errorf(format string, args ...any) {
 // rename that also removes an unrelated membership (a deleted side row),
 // or that changes another Organization (an updated one), fails it.
 func TestReplayNoticesUnintendedChanges(t *testing.T) {
+	if raceDetector {
+		t.Skip("checks the replay's checks, not concurrency: run without the race detector (a replay takes minutes under it)")
+	}
 	f, err := paritytest.Read(paritytest.Path("core-v0.22.0.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -342,6 +455,75 @@ func TestReplayNoticesUnintendedChanges(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s: not noticed (%d other differences)", sabotage, len(rec.errs))
+		}
+	}
+}
+
+// The deadline check notices a begun rotation's deadline changed in the
+// answer or in the audit event, which the normalized comparison cannot
+// (both read {time} there). The answer is changed on the wire; the audit
+// event, append-only, on its way to the check.
+func TestReplayNoticesWrongRotationDeadlines(t *testing.T) {
+	if raceDetector {
+		t.Skip("checks the replay's checks, not concurrency: run without the race detector (a replay takes minutes under it)")
+	}
+	f, err := paritytest.Read(paritytest.Path("core-v0.22.0.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shifted := regexp.MustCompile(`"rotationDeadline":"([^"]+)"`)
+	later := func(iso string) string {
+		at, _ := time.Parse(time.RFC3339Nano, iso)
+		return at.Add(time.Second).UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+	// One replay (a replay is minutes under the race detector): the
+	// answer changed on HINTED's begin, the audit event on GRACED's.
+	s := newServer(t, f)
+	target := s.target(t, f)
+	real := target.Handler
+	target.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/values/HINTED/rotations") {
+			real.ServeHTTP(w, r)
+			return
+		}
+		rec := httptest.NewRecorder()
+		real.ServeHTTP(rec, r)
+		body := shifted.ReplaceAllFunc(rec.Body.Bytes(), func(m []byte) []byte {
+			return []byte(`"rotationDeadline":"` + later(string(shifted.FindSubmatch(m)[1])) + `"`)
+		})
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(body)
+	})
+	target.Check = nil
+	begins := 0
+	check := rotationDeadlines(&begins)
+	// Audit events are append-only: the audited deadline is changed on
+	// its way to the check, as a server that audited another would.
+	target.Inspect = func(t testing.TB, c paritytest.Recorded, raw paritytest.Raw) {
+		if strings.Contains(c.Path, "/GRACED/rotations") {
+			for _, e := range raw.Audit {
+				if m, ok := e["metadata"].(map[string]any); ok && e["event_type"] == "value.rotation_started" {
+					m["deadline"] = later(m["deadline"].(string))
+				}
+			}
+		}
+		check(t, c, raw)
+	}
+	rec := &failures{TB: t}
+	paritytest.Replay(rec, target, f)
+	for _, want := range []string{
+		"begin a rotation, the Contract's grace: the answer's, the audit event's and the stored deadline differ",
+		"begin a rotation, its own grace: the answer's, the audit event's and the stored deadline differ",
+	} {
+		found := false
+		for _, e := range rec.errs {
+			found = found || strings.Contains(e, want)
+		}
+		if !found {
+			t.Errorf("not noticed: %s (%d other differences)", want, len(rec.errs))
 		}
 	}
 }

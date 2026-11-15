@@ -13,6 +13,42 @@ import (
 	"strings"
 )
 
+const beginValueRotation = `-- name: BeginValueRotation :exec
+UPDATE env_values SET current_version_id = ?, retiring_version_id = ?, rotation_deadline = ?, rotation_started_at = ?
+WHERE id = ?
+`
+
+type BeginValueRotationParams struct {
+	CurrentVersionID  sql.NullString
+	RetiringVersionID sql.NullString
+	RotationDeadline  sql.NullInt64
+	RotationStartedAt sql.NullInt64
+	ID                string
+}
+
+// beginRotation (ADR-0027): the new primary, the prior one retiring until
+// the deadline.
+func (q *Queries) BeginValueRotation(ctx context.Context, arg BeginValueRotationParams) error {
+	_, err := q.db.ExecContext(ctx, beginValueRotation,
+		arg.CurrentVersionID,
+		arg.RetiringVersionID,
+		arg.RotationDeadline,
+		arg.RotationStartedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const completeValueRotation = `-- name: CompleteValueRotation :exec
+UPDATE env_values SET retiring_version_id = NULL, rotation_deadline = NULL, rotation_started_at = NULL WHERE id = ?
+`
+
+// completeRotation (ADR-0027): the retiring version dropped.
+func (q *Queries) CompleteValueRotation(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, completeValueRotation, id)
+	return err
+}
+
 const deleteLiveValue = `-- name: DeleteLiveValue :execrows
 UPDATE env_values SET deleted_at = ?, current_version_id = NULL,
   retiring_version_id = NULL, rotation_deadline = NULL, rotation_started_at = NULL
@@ -129,6 +165,55 @@ type SetCurrentValueVersionParams struct {
 func (q *Queries) SetCurrentValueVersion(ctx context.Context, arg SetCurrentValueVersionParams) error {
 	_, err := q.db.ExecContext(ctx, setCurrentValueVersion, arg.CurrentVersionID, arg.ID)
 	return err
+}
+
+const valueRotationOf = `-- name: ValueRotationOf :many
+SELECT id, current_version_id, retiring_version_id, rotation_deadline, deleted_at FROM env_values
+WHERE environment_id = ? AND item_name = ?
+`
+
+type ValueRotationOfParams struct {
+	EnvironmentID string
+	ItemName      string
+}
+
+type ValueRotationOfRow struct {
+	ID                string
+	CurrentVersionID  sql.NullString
+	RetiringVersionID sql.NullString
+	RotationDeadline  sql.NullInt64
+	DeletedAt         sql.NullInt64
+}
+
+// beginRotation and completeRotation: the item's value row with its
+// rotation, deleted or not.
+func (q *Queries) ValueRotationOf(ctx context.Context, arg ValueRotationOfParams) ([]ValueRotationOfRow, error) {
+	rows, err := q.db.QueryContext(ctx, valueRotationOf, arg.EnvironmentID, arg.ItemName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ValueRotationOfRow
+	for rows.Next() {
+		var i ValueRotationOfRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CurrentVersionID,
+			&i.RetiringVersionID,
+			&i.RotationDeadline,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const valueRowsOfItems = `-- name: ValueRowsOfItems :many

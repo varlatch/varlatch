@@ -381,7 +381,34 @@ type Target struct {
 	Path func(string) string
 	// Check, when set, sees every exchange (the OpenAPI check).
 	Check func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder)
+	// Restart, when set, starts the server afresh on the same database
+	// before every WindowBatch-th request, as the kit does.
+	Restart func()
+	// Inspect, when set, sees each request's answers, audit events and side
+	// rows before any normalization, with when it was sent and answered:
+	// for checks the normalized comparison cannot make (a new time's value).
+	Inspect func(t testing.TB, c Recorded, raw Raw)
 }
+
+// Raw is what one request of a replay produced, before normalization.
+type Raw struct {
+	// Sent is when the request was sent, Done when every answer was in.
+	Sent, Done time.Time
+	// Statuses and Bodies are the answers, in sending order.
+	Statuses []int
+	Bodies   [][]byte
+	// Audit holds the audit events it wrote, in PostgreSQL's form.
+	Audit []map[string]any
+	// Side holds the rows it inserted or updated, by table, in
+	// PostgreSQL's form.
+	Side map[string][]Row
+}
+
+// WindowBatch is how many requests each server of a replay answers (the
+// kit's WINDOW_BATCH): both sides start a fresh one before every 500th
+// request, so no request meets the request window (600 per minute per
+// client), however long the fixture grows.
+const WindowBatch = 500
 
 // AuditColumns are the audit event columns a fixture records.
 var AuditColumns = []string{"event_type", "actor_identity_id", "credential_id", "organization_id", "action", "resource", "decision",
@@ -578,8 +605,11 @@ var keptHeaders = []string{"Cache-Control", "Retry-After", "Content-Type", "Varl
 func Replay(t testing.TB, target Target, f Fixture) {
 	t.Helper()
 	norm := NewNormalizer(f.Rows)
-	for _, c := range f.Requests {
+	for index, c := range f.Requests {
 		name := c.ID
+		if index > 0 && index%WindowBatch == 0 && target.Restart != nil {
+			target.Restart()
+		}
 		var before sql.NullInt64
 		if err := target.Store.Reader().QueryRow("SELECT max(event_order) FROM audit_events").Scan(&before); err != nil {
 			t.Fatal(err)
@@ -608,6 +638,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		}
 		n := max(c.Concurrent, 1)
 		recs := make([]*httptest.ResponseRecorder, n)
+		sent := time.Now()
 		var wg sync.WaitGroup
 		for i := range n {
 			req := httptest.NewRequest(c.Method, path, bytes.NewReader(body))
@@ -634,6 +665,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			}()
 		}
 		wg.Wait()
+		done := time.Now()
 		if target.Settled != nil {
 			target.Settled()
 		}
@@ -695,6 +727,11 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			t.Fatal(err)
 		}
 		audit := []any{}
+		raw := Raw{Sent: sent, Done: done, Side: map[string][]Row{}}
+		for _, rec := range recs {
+			raw.Statuses = append(raw.Statuses, rec.Code)
+			raw.Bodies = append(raw.Bodies, rec.Body.Bytes())
+		}
 		for _, r := range Rows(t, target.Store, "SELECT "+strings.Join(AuditColumns, ", ")+" FROM audit_events WHERE event_order > ? ORDER BY event_order", before.Int64) {
 			pr := map[string]any{}
 			for _, col := range AuditColumns {
@@ -707,6 +744,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 				}
 				pr[col] = v
 			}
+			raw.Audit = append(raw.Audit, pr)
 			audit = append(audit, norm.Value(pr, ""))
 		}
 		wantAudit := []any{}
@@ -719,6 +757,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		gotSide := map[string]any{}
 		for _, st := range f.SideTables {
 			d := diff(st, sideBefore[st.Name], pgRows(t, target.Store, st.Name))
+			raw.Side[st.Name] = append(append([]Row{}, d.inserted...), d.updated...)
 			change := map[string]any{}
 			for _, g := range []struct {
 				name string
@@ -743,6 +782,9 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		}
 		if g, w := Canonical(gotSide), Canonical(plainJSON(c.Side)); g != w {
 			t.Errorf("%s: side tables\n  %s\n want %s", name, g, w)
+		}
+		if target.Inspect != nil {
+			target.Inspect(t, c, raw)
 		}
 	}
 	counters := []any{}

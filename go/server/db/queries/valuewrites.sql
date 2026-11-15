@@ -33,3 +33,19 @@ WHERE id = ?;
 UPDATE env_values SET deleted_at = ?, current_version_id = NULL,
   retiring_version_id = NULL, rotation_deadline = NULL, rotation_started_at = NULL
 WHERE environment_id = ? AND item_name = ? AND deleted_at IS NULL;
+
+-- name: ValueRotationOf :many
+-- beginRotation and completeRotation: the item's value row with its
+-- rotation, deleted or not.
+SELECT id, current_version_id, retiring_version_id, rotation_deadline, deleted_at FROM env_values
+WHERE environment_id = ? AND item_name = ?;
+
+-- name: BeginValueRotation :exec
+-- beginRotation (ADR-0027): the new primary, the prior one retiring until
+-- the deadline.
+UPDATE env_values SET current_version_id = ?, retiring_version_id = ?, rotation_deadline = ?, rotation_started_at = ?
+WHERE id = ?;
+
+-- name: CompleteValueRotation :exec
+-- completeRotation (ADR-0027): the retiring version dropped.
+UPDATE env_values SET retiring_version_id = NULL, rotation_deadline = NULL, rotation_started_at = NULL WHERE id = ?;

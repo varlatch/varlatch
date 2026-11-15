@@ -166,6 +166,9 @@ var BuiltOperations = []string{
 	changeSecurityControlPattern,
 	securityControlReportPattern,
 	securityApprovalKeysPattern,
+	// Step 4.2: rotation (valuewrites.go).
+	beginRotationPattern,
+	completeRotationPattern,
 }
 
 // Server is the handler.

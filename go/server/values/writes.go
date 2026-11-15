@@ -133,6 +133,15 @@ type valueRow = query.ValueRowsOfItemsRow
 // Organization's KEK, its predecessor named, the row pointed at it (a plain
 // write supersedes any rotation in flight).
 func sealVersion(ctx context.Context, q *query.Queries, orgKEK []byte, organizationID, valueID, versionID, value string, previous sql.NullString, actor string, at int64) error {
+	if err := insertVersion(ctx, q, orgKEK, organizationID, valueID, versionID, value, previous, actor, at); err != nil {
+		return err
+	}
+	return q.SetCurrentValueVersion(ctx, query.SetCurrentValueVersionParams{CurrentVersionID: sql.NullString{String: versionID, Valid: true}, ID: valueID})
+}
+
+// insertVersion writes a new version of a value row, sealed under the
+// Organization's KEK, its predecessor named; the row is left as it is.
+func insertVersion(ctx context.Context, q *query.Queries, orgKEK []byte, organizationID, valueID, versionID, value string, previous sql.NullString, actor string, at int64) error {
 	sealed, err := SealValue(orgKEK, organizationID, valueID, versionID, nodeUTF8(value))
 	if err != nil {
 		return err
@@ -145,14 +154,11 @@ func sealVersion(ctx context.Context, q *query.Queries, orgKEK []byte, organizat
 	if err != nil {
 		return err
 	}
-	if err := q.InsertValueVersion(ctx, query.InsertValueVersionParams{
+	return q.InsertValueVersion(ctx, query.InsertValueVersionParams{
 		ID: versionID, ValueID: valueID, Payload: sql.NullString{String: string(payload), Valid: true},
 		WrappedDek: sql.NullString{String: string(dek), Valid: true}, PreviousVersionID: previous,
 		CreatedBy: sql.NullString{String: actor, Valid: true}, CreatedAt: at,
-	}); err != nil {
-		return err
-	}
-	return q.SetCurrentValueVersion(ctx, query.SetCurrentValueVersionParams{CurrentVersionID: sql.NullString{String: versionID, Valid: true}, ID: valueID})
+	})
 }
 
 // SetInput is setValue's body as its zod schema leaves it.
