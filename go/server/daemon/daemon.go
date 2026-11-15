@@ -173,7 +173,8 @@ func serve(opts Options, h *hooks) int {
 	}
 	// It holds the control socket and the lock: only this user may change
 	// its entries (datadir_unix.go).
-	if err := checkServeDir(cfg.DataDir, os.Getuid()); err != nil {
+	dataDirID, err := checkServeDir(cfg.DataDir, os.Getuid())
+	if err != nil {
 		return fail(ExitConfig, "the data directory is not safe for the control socket and the lock file; fix its owner or mode and start varlatchd again", "error", err)
 	}
 	// One running owner of the data directory (feature-parity decision
@@ -187,6 +188,9 @@ func serve(opts Options, h *hooks) int {
 		return fail(ExitFailure, "cannot lock the data directory", "dir", cfg.DataDir, "error", err)
 	}
 	defer unlock()
+	if err := sameDir(cfg.DataDir, dataDirID); err != nil {
+		return fail(ExitFailure, "the data directory changed while varlatchd took its lock", "error", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -251,6 +255,9 @@ func serve(opts Options, h *hooks) int {
 	}
 	go control.serve(ctx)
 	defer control.close()
+	if err := sameDir(cfg.DataDir, dataDirID); err != nil {
+		return fail(ExitFailure, "the data directory changed while varlatchd opened its control socket", "error", err)
+	}
 
 	var trusts func(string) bool
 	if cfg.TrustedProxies != "" {

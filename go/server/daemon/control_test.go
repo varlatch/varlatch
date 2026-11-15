@@ -271,11 +271,11 @@ func TestDataDirectoryOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Owned by someone else (as seen by a check for another uid).
-	if err := checkServeDir(in.data, os.Getuid()+1); err == nil || !strings.Contains(err.Error(), "not by the user varlatchd runs as") {
+	if _, err := checkServeDir(in.data, os.Getuid()+1); err == nil || !strings.Contains(err.Error(), "uid") {
 		t.Errorf("another owner: %v", err)
 	}
 	if os.Getuid() != 0 {
-		if err := checkClientDir(in.data, os.Getuid()+1); err == nil || !strings.Contains(err.Error(), "not by you") {
+		if _, _, err := checkClientDir(in.data, os.Getuid()+1); err == nil || !strings.Contains(err.Error(), "not by you") {
 			t.Errorf("admin, another owner: %v", err)
 		}
 	}
@@ -375,5 +375,90 @@ func TestRecoverTakesItsSubjectsGate(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("recover --enable did not finish after the effect")
+	}
+}
+
+// The data directory's path must lead to the same directory for as long as
+// varlatchd uses it: a symbolic link as the last component, or an ancestor
+// someone else may replace entries of (0777 without the sticky bit), is
+// refused by serve (78) and by varlatchd admin; a sticky world-writable
+// ancestor (/tmp) is not. A directory swapped under the path after the
+// check is caught by the identity check serve repeats after the lock and
+// the socket.
+func TestDataDirectoryPath(t *testing.T) {
+	in := newInstall(t, "")
+	serveRefuses := func(want string) {
+		t.Helper()
+		var stderr syncBuffer
+		if code := Serve(Options{ConfigPath: in.conf, Stderr: &stderr}); code != ExitConfig || !strings.Contains(stderr.String(), want) {
+			t.Errorf("serve: %d %s", code, stderr.String())
+		}
+		if code, _, errOut := runAdmin(t, "bootstrap", "--config", in.conf); code != ExitConfig || !strings.Contains(errOut, want) {
+			t.Errorf("admin: %d %s", code, errOut)
+		}
+	}
+	real := in.data
+
+	// A link as the last component.
+	link := filepath.Join(in.dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	in.data = link
+	in.write(t, "")
+	serveRefuses("is a symbolic link")
+
+	// An ancestor anyone may write, without the sticky bit.
+	open := filepath.Join(in.dir, "open")
+	if err := os.Mkdir(open, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(open, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	in.data = filepath.Join(open, "data")
+	if err := os.Mkdir(in.data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	in.write(t, "")
+	serveRefuses("without the sticky bit")
+	// The same reached through a link in a trusted ancestor: the resolved
+	// path is checked too.
+	via := filepath.Join(in.dir, "via")
+	if err := os.Symlink(open, via); err != nil {
+		t.Fatal(err)
+	}
+	in.data = filepath.Join(via, "data")
+	in.write(t, "")
+	serveRefuses("without the sticky bit")
+	// With the sticky bit, as /tmp has, it is trusted.
+	if err := os.Chmod(open, os.ModeSticky|0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checkServeDir(filepath.Join(open, "data"), os.Getuid()); err != nil {
+		t.Errorf("a sticky ancestor: %v", err)
+	}
+
+	// A directory swapped under the path after the check.
+	id, err := checkServeDir(real, os.Getuid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sameDir(real, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(real, real+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := sameDir(real, id); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Errorf("swapped: %v", err)
+	}
+
+	// The client accepts the directory's owner or root on the socket.
+	if !serverPeerAllowed(1000, 1000) || !serverPeerAllowed(0, 1000) || serverPeerAllowed(1001, 1000) {
+		t.Error("serverPeerAllowed")
 	}
 }

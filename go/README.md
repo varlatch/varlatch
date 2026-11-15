@@ -123,12 +123,21 @@ memory (`server/write`):
   credentials, `SO_PEERCRED`). A command sent there runs inside the
   daemon, with its gates and its writer, and its output and exit status
   come back as if it ran in the caller.
-- The data directory holds both, so `serve` refuses to start (78) when it
-  is not owned by the user varlatchd runs as or its group or others may
-  write it, and `varlatchd admin` refuses to connect through such a
-  directory, or through a socket file that is not a socket owned by the
-  directory's owner (a non-root caller must also own the directory). The
-  shipped unit's directory (`StateDirectoryMode=0700`) passes.
+- The data directory holds both, and the database, each opened by path,
+  so the path itself must be trusted (`datadir_unix.go`): its last
+  component is the directory, never a symbolic link; every directory on
+  the way to it, as configured and as resolved, is owned by root or a
+  trusted user and is not writable by its group or others unless its
+  sticky bit is set (as `/tmp`'s); and the directory is owned by the user
+  varlatchd runs as and writable by no one else. `serve` refuses to start
+  (78) otherwise, and checks after taking the lock and after binding the
+  socket that the path still leads to the same directory (device and
+  inode). `varlatchd admin` makes the same checks (trusting root, itself
+  and the directory's owner; a non-root caller must own the directory),
+  refuses a socket file that is not a socket owned by the directory's
+  owner, and refuses a server whose peer credentials are not that owner's
+  or root's. The shipped unit's directory (`/var/lib/varlatch`,
+  `StateDirectoryMode=0700`) passes.
 - A command takes the gates of the people and Organizations it writes, from
   the daemon's gate set, before its jobs are queued (`recover --identity`
   its subject, exclusively with `--enable`, as `issueRecoveryGrant` locks

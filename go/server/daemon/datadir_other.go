@@ -6,5 +6,10 @@ package daemon
 
 // varlatchd serves on Unix systems only; elsewhere lockDataDir refuses, so
 // there is nothing to check.
-func checkServeDir(string, int) error  { return nil }
-func checkClientDir(string, int) error { return nil }
+
+type dirID struct{}
+
+func checkServeDir(string, int) (dirID, error)       { return dirID{}, nil }
+func checkClientDir(string, int) (int, dirID, error) { return -1, dirID{}, nil }
+func serverPeerAllowed(int, int) bool                { return false }
+func sameDir(string, dirID) error                    { return nil }

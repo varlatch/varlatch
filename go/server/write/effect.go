@@ -226,6 +226,12 @@ func RunEffect[C, R any](ctx context.Context, w *Writer, e Effect[C, R]) (R, []a
 		return nil
 	})
 	if err != nil {
+		// Rolled back: whatever failed, once the deadline passed the answer
+		// is the deadline's, as the TypeScript effect answers any error it
+		// catches after its signal fired.
+		if st.expired() {
+			err = ErrEffectDeadline()
+		}
 		if werr := writeRefusals(ctx, w, st); werr != nil {
 			return zero, nil, errors.Join(err, werr)
 		}

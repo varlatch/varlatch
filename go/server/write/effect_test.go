@@ -280,3 +280,44 @@ func TestEffectDeadlineBindsTheFinalJob(t *testing.T) {
 		})
 	}
 }
+
+// A final job that fails once the deadline passed answers the deadline,
+// not its own error, and keeps nothing: its savepoint rolled back what it
+// wrote before failing; the refusals are written alone.
+func TestEffectFinalFailingAfterTheDeadline(t *testing.T) {
+	defer func(d time.Duration) { EffectDeadline = d }(EffectDeadline)
+	EffectDeadline = 20 * time.Millisecond
+	w := newWriter(t)
+	exec(t, w.Store, `INSERT INTO security_controls (organization_id, control, mode, version, changed_by) VALUES ('org_a', 'passkey-verification', 'report', 1, 'idn_a')`)
+	own := domainerr.New("VERSION_CONFLICT", "the App changed")
+	_, _, err := RunEffect(context.Background(), w, Effect[string, string]{
+		OrganizationID: "org_a",
+		Call: func(ctx context.Context) (string, error) {
+			NoteRefusal(ctx, audit.Event{Type: "outbound.refused", Decision: audit.Deny, OrganizationID: ptr("org_a")})
+			return "ok", nil
+		},
+		Final: func(ctx context.Context, tx *storage.Tx, called string) (string, error) {
+			if _, err := recordOutcome(ctx, tx, called); err != nil {
+				return "", err
+			}
+			time.Sleep(40 * time.Millisecond)
+			return "", own
+		},
+	})
+	if errors.Is(err, own) || code(err) != "STATE_CHANGED" {
+		t.Fatalf("%v", err)
+	}
+	if outcomes(t, w) != 0 || count(t, w.Store, `SELECT count(*) FROM audit_events WHERE event_type = 'outbound.refused'`) != 1 {
+		t.Error("the outcome was kept, or the refusal lost")
+	}
+	// Before the deadline, the final job's own error is the answer.
+	EffectDeadline = 10 * time.Second
+	_, _, err = RunEffect(context.Background(), w, Effect[string, string]{
+		OrganizationID: "org_a",
+		Call:           func(context.Context) (string, error) { return "ok", nil },
+		Final:          func(context.Context, *storage.Tx, string) (string, error) { return "", own },
+	})
+	if !errors.Is(err, own) {
+		t.Errorf("before the deadline: %v", err)
+	}
+}

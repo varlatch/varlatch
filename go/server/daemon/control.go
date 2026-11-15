@@ -162,13 +162,22 @@ func (c *controlServer) handle(ctx context.Context, conn *net.UnixConn) {
 // under the lock, else not at all. args[0] is the command.
 func route(cfg *config.Config, args []string, stdin []byte, stdout, stderr io.Writer) int {
 	what := "varlatchd admin " + args[0]
-	if err := checkClientDir(cfg.DataDir, os.Getuid()); err != nil {
+	owner, id, err := checkClientDir(cfg.DataDir, os.Getuid())
+	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v; nothing was sent or written\n", what, err)
 		return ExitConfig
 	}
 	path := filepath.Join(cfg.DataDir, ControlSocket)
 	if conn, err := net.DialTimeout("unix", path, 5*time.Second); err == nil {
-		return viaSocket(conn.(*net.UnixConn), what, args, stdin, stdout, stderr)
+		uc := conn.(*net.UnixConn)
+		// The server must be the data directory's owner (or root): a socket
+		// someone else put there is refused before anything is sent.
+		if peer, ok := peerUID(uc); !ok || !serverPeerAllowed(peer, owner) {
+			_ = uc.Close()
+			fmt.Fprintf(stderr, "%s: the process on %s is not the data directory's owner (uid %d) or root; nothing was sent or written\n", what, path, owner)
+			return ExitConfig
+		}
+		return viaSocket(uc, what, args, stdin, stdout, stderr)
 	}
 	unlock, err := lockDataDir(cfg.DataDir)
 	if errors.Is(err, errLocked) {
@@ -181,6 +190,12 @@ func route(cfg *config.Config, args []string, stdin []byte, stdout, stderr io.Wr
 		return ExitFailure
 	}
 	defer unlock()
+	if owner >= 0 {
+		if err := sameDir(cfg.DataDir, id); err != nil {
+			fmt.Fprintf(stderr, "%s: %v; nothing was written\n", what, err)
+			return ExitFailure
+		}
+	}
 	env, status := openOffline(cfg, what, stderr)
 	if env == nil {
 		return status
