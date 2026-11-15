@@ -30,7 +30,7 @@ import (
 // coreTables are the tables of core-v0.22.0.json (go-core-fixture.test.ts).
 var coreTables = []string{"installation", "identities", "user", "auth_user_links", "credentials", "organizations", "org_memberships",
 	"grants", "requirements", "security_controls", "organization_freezes", "organization_deletions", "projects", "contract_revisions",
-	"environments", "env_values", "capabilities"}
+	"environments", "env_values", "capabilities", "value_versions", "idempotency_keys"}
 
 type server struct {
 	handler *httpserver.Server
@@ -115,11 +115,92 @@ func TestTypeScriptFixture(t *testing.T) {
 	if created != want || want < 8 {
 		t.Errorf("%d Organizations created, the fixture %d", created, want)
 	}
+	checkWrittenValues(t, s, f)
 }
 
-// fillPath is go-core-fixture.test.ts's: {orgId} and {goneId}, acme's
-// live {project:SLUG} and {env:PROJECT/NAME}, and {rev:KEY}, the revision
-// holding an item named KEY.
+// checkWrittenValues opens every value version the requests wrote with
+// its Organization's KEK: each holds a value one of the requests sent
+// (JSON-decoded as Node decodes it: a lone surrogate is U+FFFD), and as
+// many were written as the fixture's side rows say.
+func checkWrittenValues(t *testing.T, s *server, f paritytest.Fixture) {
+	t.Helper()
+	sent := map[string]bool{}
+	var collect func(v any)
+	collect = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, e := range x {
+				if s, ok := e.(string); ok && k == "value" {
+					sent[s] = true
+				}
+				collect(e)
+			}
+		case []any:
+			for _, e := range x {
+				collect(e)
+			}
+		}
+	}
+	want := 0
+	for _, r := range f.Requests {
+		var raw []byte
+		switch {
+		case r.RawBody != nil:
+			raw = []byte(*r.RawBody)
+		case r.Body != nil:
+			raw = *r.Body
+		}
+		var v any
+		if json.Unmarshal(raw, &v) == nil {
+			collect(v)
+		}
+		want += len(r.Side["value_versions"]["inserted"])
+	}
+	known := map[string]bool{}
+	for _, v := range f.Rows["value_versions"] {
+		known[v["id"].(string)] = true
+	}
+	rows := paritytest.Rows(t, s.store, `SELECT vv.id, vv.value_id, vv.payload, vv.wrapped_dek, o.id AS org, o.wrapped_org_kek
+		FROM value_versions vv JOIN env_values ev ON ev.id = vv.value_id JOIN environments e ON e.id = ev.environment_id
+		JOIN projects p ON p.id = e.project_id JOIN organizations o ON o.id = p.organization_id`)
+	written := 0
+	for _, r := range rows {
+		id := r["id"].(string)
+		if known[id] {
+			continue
+		}
+		written++
+		var wrapped envelope.Envelope
+		var sealed envelope.EncryptedValue
+		if json.Unmarshal([]byte(r["wrapped_org_kek"].(string)), &wrapped) != nil ||
+			json.Unmarshal([]byte(r["payload"].(string)), &sealed.Payload) != nil ||
+			json.Unmarshal([]byte(r["wrapped_dek"].(string)), &sealed.WrappedDEK) != nil {
+			t.Fatalf("%s: unreadable envelopes", id)
+		}
+		org := r["org"].(string)
+		kek, err := envelope.UnwrapOrgKEK(s.rootKEK, wrapped, org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, err := envelope.DecryptValue(kek, org, r["value_id"].(string), id, sealed)
+		if err != nil {
+			t.Errorf("%s: does not open: %v", id, err)
+			continue
+		}
+		if !sent[string(plain)] {
+			t.Errorf("%s holds %q, which no request sent", id, plain)
+		}
+	}
+	// A concurrent request's side rows are everything its answers wrote.
+	if written != want || want < 200 {
+		t.Errorf("%d value versions written, the fixture %d", written, want)
+	}
+}
+
+// fillPath is go-core-fixture.test.ts's, for a request's path and body:
+// {orgId} and {goneId}, acme's live {project:SLUG}, {env:PROJECT/NAME} and
+// {ver:PROJECT/ENVIRONMENT/ITEM} (the value's current version), and
+// {rev:KEY}, the revision holding an item named KEY.
 func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 	idOf := func(slug string) string {
 		for _, o := range f.Rows["organizations"] {
@@ -138,9 +219,16 @@ func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 			pairs = append(pairs, "{project:"+p["slug"].(string)+"}", p["id"].(string))
 		}
 	}
+	envs := map[string]string{} // acme's live environments: id to PROJECT/NAME
 	for _, e := range f.Rows["environments"] {
 		if slug, ok := live[e["project_id"].(string)]; ok && e["deleted_at"] == nil {
+			envs[e["id"].(string)] = slug + "/" + e["name"].(string)
 			pairs = append(pairs, "{env:"+slug+"/"+e["name"].(string)+"}", e["id"].(string))
+		}
+	}
+	for _, v := range f.Rows["env_values"] {
+		if env, ok := envs[v["environment_id"].(string)]; ok && v["current_version_id"] != nil {
+			pairs = append(pairs, "{ver:"+env+"/"+v["item_name"].(string)+"}", v["current_version_id"].(string))
 		}
 	}
 	for _, r := range f.Rows["contract_revisions"] {
@@ -152,7 +240,7 @@ func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 	paths := strings.NewReplacer(pairs...)
 	return func(p string) string {
 		out := paths.Replace(p)
-		if strings.Contains(out, "{rev:") || strings.Contains(out, "{project:") || strings.Contains(out, "{env:") {
+		if strings.Contains(out, "{rev:") || strings.Contains(out, "{project:") || strings.Contains(out, "{env:") || strings.Contains(out, "{ver:") {
 			t.Fatalf("%s: a placeholder the rows do not fill", p)
 		}
 		return out

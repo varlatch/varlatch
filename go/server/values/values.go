@@ -221,6 +221,23 @@ func (t *tracker) requireAccess(ctx context.Context, db query.DBTX, req Request,
 	return nil
 }
 
+// hookKey carries, in tests, a function a retrieval calls between two of
+// its reads (WithReadHook); a production context has none.
+type hookKey struct{}
+
+// WithReadHook returns a context whose retrievals call hook at points
+// between their reads, inside the snapshot: a test commits a write there
+// and checks the retrieval does not see it (retrieval-consistency).
+func WithReadHook(ctx context.Context, hook func(point string)) context.Context {
+	return context.WithValue(ctx, hookKey{}, hook)
+}
+
+func readHook(ctx context.Context, point string) {
+	if h, ok := ctx.Value(hookKey{}).(func(string)); ok {
+		h(point)
+	}
+}
+
 // snapshot runs read in one read transaction of the read-only pool.
 func (s *Service) snapshot(ctx context.Context, read func(tx *sql.Tx, now int64) error) error {
 	m := stages.Start()
@@ -322,6 +339,7 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 	if err := load(st.Env.ID, "self"); err != nil {
 		return err
 	}
+	readHook(ctx, "between the environment's values and its parent's")
 	if st.Env.ParentEnvironmentID.Valid {
 		if err := load(st.Env.ParentEnvironmentID.String, "parent"); err != nil {
 			return err

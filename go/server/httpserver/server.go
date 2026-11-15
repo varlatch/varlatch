@@ -152,6 +152,10 @@ var BuiltOperations = []string{
 	deleteEnvironmentPattern,
 	"GET /v1/installation/release",
 	"GET /v1/installation/backups",
+	// Step 4.1d: the writes of values (valuewrites.go).
+	setValuePattern,
+	deleteValuePattern,
+	applyChangeSetPattern,
 }
 
 // Server is the handler.

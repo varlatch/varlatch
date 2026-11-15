@@ -164,7 +164,7 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 		{"POST", "/v1/organizations/acme/teams", strings.Repeat("x", 4096)},
 		{"GET", "/v1/organizations/acme/teams", ""},
 		{"GET", "/v1/organizations/acme/teams/core/members?limit=not-a-number", ""},
-		{"DELETE", "/v1/organizations/acme/projects/api/environments/development/values/DATABASE_URL", ""},
+		{"DELETE", "/v1/organizations/acme/teams/core", ""},
 		{"PATCH", "/v1/me/profile", "{}"},
 	}
 	for _, c := range cases {

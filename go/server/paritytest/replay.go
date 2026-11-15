@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	idPattern  = regexp.MustCompile(`\b([a-z]{3,4})_[a-z2-7]{26}\b`)
+	idPattern  = regexp.MustCompile(`\b([a-z]{2,4})_[a-z2-7]{26}\b`)
 	isoPattern = regexp.MustCompile(`\b\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\b`)
 )
 
@@ -298,13 +298,25 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// Mask is go-fixture-kit.ts mask: each named member of a JSON text, a
+// string, reads "{masked}".
+func Mask(text string, members []string) string {
+	for _, m := range members {
+		key, _ := json.Marshal(m)
+		re := regexp.MustCompile(`(` + regexp.QuoteMeta(string(key)) + `:)"(?:[^"\\]|\\.)*"`)
+		text = re.ReplaceAllString(text, `${1}"{masked}"`)
+	}
+	return text
+}
+
 // Target is the server a fixture is replayed against.
 type Target struct {
 	Handler http.Handler
 	Store   *storage.DB
 	// Settled waits for the work a response leaves behind (report counts).
 	Settled func()
-	// Path fills a request's path ({orgId} and the like).
+	// Path fills a request's placeholders ({orgId} and the like) in its
+	// path and its body.
 	Path func(string) string
 	// Check, when set, sees every exchange (the OpenAPI check).
 	Check func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder)
@@ -524,7 +536,14 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		case c.RawBody != nil:
 			body = []byte(*c.RawBody)
 		case c.Body != nil:
-			body, _ = json.Marshal(*c.Body)
+			var b bytes.Buffer
+			if err := json.Compact(&b, *c.Body); err != nil {
+				t.Fatalf("%s: the body: %v", name, err)
+			}
+			body = b.Bytes()
+		}
+		if body != nil && target.Path != nil {
+			body = []byte(target.Path(string(body)))
 		}
 		n := max(c.Concurrent, 1)
 		recs := make([]*httptest.ResponseRecorder, n)
@@ -540,6 +559,9 @@ func Replay(t testing.TB, target Target, f Fixture) {
 				ua = CLIAgent
 			}
 			req.Header.Set("User-Agent", ua)
+			for k, v := range c.Headers {
+				req.Header.Set(k, v)
+			}
 			if c.Credential != "none" {
 				req.Header.Set("Authorization", "Bearer "+f.Tokens[c.Credential])
 			}
@@ -577,7 +599,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		})
 		answers := make([]answer, n)
 		for i, p := range pres {
-			a := answer{Status: p.rec.Code, Headers: map[string]string{}, Body: norm.Text(p.text, "")}
+			a := answer{Status: p.rec.Code, Headers: map[string]string{}, Body: norm.Text(Mask(p.text, c.Masked), "")}
 			for _, h := range keptHeaders {
 				if v := p.rec.Header().Get(h); v != "" {
 					a.Headers[h] = norm.Text(v, p.id)

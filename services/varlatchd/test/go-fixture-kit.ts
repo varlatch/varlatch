@@ -82,6 +82,14 @@ export interface RequestCase {
   body?: unknown;
   rawBody?: string;
   userAgent?: string;
+  /** Sent as they are (an Idempotency-Key). */
+  headers?: Record<string, string>;
+  /**
+   * Members of the answer's body masked as "{masked}", wherever they
+   * occur: a digest over rows a request made, which cannot repeat (the
+   * read path's stateDigest after writes; the values fixture pins it).
+   */
+  masked?: string[];
   /** Sent this many times at once; the answers are kept sorted. */
   concurrent?: number;
 }
@@ -172,7 +180,7 @@ export async function loadRows(rows: Record<string, Row[]>, tables: readonly Tab
   return db;
 }
 
-const ID = /\b([a-z]{3,4})_[a-z2-7]{26}\b/g;
+const ID = /\b([a-z]{2,4})_[a-z2-7]{26}\b/g;
 /** A domain ID, or a random column's token in relabel (`r_rand` and 21 letters: prefix `r`). */
 const TOKEN_OR_ID = /\b([a-z]{1,4})_(?:rand[a-j]{21}|[a-z2-7]{26})\b/g;
 const ISO = /\b\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\b/g;
@@ -274,6 +282,16 @@ function diff(t: SideTable, before: Row[], after: Row[]): { inserted: Row[]; upd
   };
 }
 
+/** The answer's text with the members named masked (RequestCase.masked). */
+export function mask(text: string, members: string[] | undefined): string {
+  let out = text;
+  for (const m of members ?? []) {
+    const key = JSON.stringify(m).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp("(" + key + ':)"(?:[^"\\\\]|\\\\.)*"', "g"), '$1"{masked}"');
+  }
+  return out;
+}
+
 const answerOrder = (a: Answer, b: Answer) => (a.status - b.status) || (a.body < b.body ? -1 : a.body > b.body ? 1 : 0);
 
 /**
@@ -285,6 +303,7 @@ export async function record(
   app: { request: (path: string, init: RequestInit) => Response | Promise<Response> },
   f: Pick<Fixture, "rows" | "tokens" | "sideTables">,
   cases: RequestCase[],
+  /** Fills a request's placeholders, in its path and its body. */
   path: (p: string) => string = (p) => p,
 ): Promise<{ requests: Recorded[]; counters: Row[] }> {
   const norm = new Normalizer(f.rows);
@@ -296,9 +315,11 @@ export async function record(
     for (const t of f.sideTables) sideBefore.set(t.name, await dump(t));
     const headers: Record<string, string> = { "Content-Type": "application/json", "User-Agent": c.userAgent ?? CLI_AGENT };
     if (c.credential !== "none") headers.Authorization = `Bearer ${f.tokens[c.credential]}`;
+    Object.assign(headers, c.headers ?? {});
     const init: RequestInit = { method: c.method, headers };
-    if (c.rawBody !== undefined) init.body = c.rawBody;
-    else if ("body" in c) init.body = JSON.stringify(c.body);
+    // Placeholders are filled in the body as in the path.
+    if (c.rawBody !== undefined) init.body = path(c.rawBody);
+    else if ("body" in c) init.body = path(JSON.stringify(c.body));
     const responses = await Promise.all(Array.from({ length: c.concurrent ?? 1 }, () => app.request(path(c.path), init)));
     const raw = await Promise.all(responses.map(async (res) => ({ res, id: res.headers.get("X-Request-Id") ?? "", text: await res.text() })));
     // Sorted before normalizing (a request id differs per answer), so the
@@ -311,7 +332,7 @@ export async function record(
         const v = res.headers.get(h);
         if (v !== null) kept[h] = norm.text(v, id);
       }
-      return { status, headers: kept, body: norm.text(text) };
+      return { status, headers: kept, body: norm.text(mask(text, c.masked)) };
     });
     answers.sort(answerOrder);
     await accessCountsSettled();
@@ -338,7 +359,9 @@ export function definitions(cases: RequestCase[]): RequestCase[] {
   return cases.map((c) => ({
     id: c.id, name: c.name, method: c.method, path: c.path, credential: c.credential,
     ...("body" in c ? { body: c.body } : {}), ...(c.rawBody !== undefined ? { rawBody: c.rawBody } : {}),
-    ...(c.userAgent !== undefined ? { userAgent: c.userAgent } : {}), ...(c.concurrent !== undefined ? { concurrent: c.concurrent } : {}),
+    ...(c.userAgent !== undefined ? { userAgent: c.userAgent } : {}), ...(c.headers !== undefined ? { headers: c.headers } : {}),
+    ...(c.masked !== undefined ? { masked: c.masked } : {}),
+    ...(c.concurrent !== undefined ? { concurrent: c.concurrent } : {}),
   }));
 }
 

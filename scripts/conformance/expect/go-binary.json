@@ -20,10 +20,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "applyChangeSet": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "approveOrganizationDeletion": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -145,10 +141,6 @@
         "step": "ADR-0059 step 4"
       },
       "deleteTeam": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "deleteValue": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -453,10 +445,6 @@
         "step": "ADR-0059 step 4"
       },
       "securityControlReport": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "setValue": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

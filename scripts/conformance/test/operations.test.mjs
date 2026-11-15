@@ -149,6 +149,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "listProjects", "createProject", "getProject", "renameProject",
     "listEnvironments", "createEnvironment", "getEnvironment", "deleteEnvironment",
     "getInstallationRelease", "getInstallationBackups",
+    // Step 4.1d: the writes of values.
+    "setValue", "deleteValue", "applyChangeSet",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is
@@ -162,7 +164,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // and (step 3.5) degraded live updates; (step 3.6) with the target's own
   // seed and the read path of values, varlatch mcp's reads and the server
   // logs check; (step 4.1c) cli-core's env list checks, on the Projects
-  // and environments reads. Every other one lacks something.
+  // and environments reads; (step 4.1d) the sdk suite, on the value
+  // writes. Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys(), targetCapabilities("go-binary"));
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
@@ -171,7 +174,7 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     Object.keys(inventory.checks).filter((id) => id.startsWith("realtime-events.")).sort(),
   );
   const expected = Object.keys(inventory.checks).filter((id) =>
-    /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs)\./.test(id) ||
+    /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs|sdk)\./.test(id) ||
     ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format",
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id));
   assert.deepEqual(runs.sort(), expected.sort());
