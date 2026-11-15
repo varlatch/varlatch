@@ -178,6 +178,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "listSecurityControls", "changeSecurityControl", "securityControlReport", "securityApprovalKeys",
     // Step 4.2: rotation.
     "beginRotation", "completeRotation",
+    // Step 4.3c: the incident freeze and the audit log's reads.
+    "getIncidentFreeze", "freezeOrganization", "liftIncidentFreeze", "listAuditEvents", "exportAuditEvents",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is
@@ -200,8 +202,10 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // but for their groups on audit, webhooks, Requirements,
   // service identities and agent-safe runs, and the three checks that read
   // the audit log or identities themselves. (4.3a) The security suite, on
-  // the Security Controls. (Step 4.2) values's rotation group. Every other
-  // one lacks something.
+  // the Security Controls; (4.3c) on the audit log's reads, the
+  // dashboard's audit-feed group, client-runtime's audit-export group and
+  // values' two filtered audit checks. (Step 4.2) values's rotation group.
+  // Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
@@ -210,17 +214,17 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     Object.keys(inventory.checks).filter((id) => id.startsWith("realtime-events.")).sort(),
   );
   const notYet = {
-    dashboard: ["audit-feed"], values: ["tailnet"], p4: ["audit", "webhooks"], onboarding: [],
-    "client-runtime": ["service-identities", "audit-export"], "strict-run": ["service-identities", "agent-safe"],
+    dashboard: [], values: ["tailnet"], p4: ["audit", "webhooks"], onboarding: [],
+    "client-runtime": ["service-identities"], "strict-run": ["service-identities", "agent-safe"],
   };
-  const ownLacking = ["values.row-says-value-last-changed-filtered", "values.item-history-lists-item-changes-filtered", "onboarding.workload-invite-recommended-not-required"];
+  const ownLacking = ["onboarding.workload-invite-recommended-not-required"];
   const expected = Object.entries(inventory.checks).filter(([id, c]) =>
     /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs|sdk|security)\./.test(id) ||
     ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format",
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
     (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
-  assert.equal(runs.length, 250);
+  assert.equal(runs.length, 258);
   // The groups still lacking lack exactly their own operations.
   for (const [suite, groups] of Object.entries(notYet)) {
     for (const g of groups) {

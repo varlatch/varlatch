@@ -19,8 +19,8 @@ SELECT * FROM audit_events WHERE event_type = ? ORDER BY event_order;
 INSERT INTO audit_events
   (id, schema_version, event_type, actor_identity_id, authentication_method_id,
    credential_id, organization_id, action, resource, decision, authz, tailnet,
-   listener, request_id, metadata, client)
-VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+   listener, request_id, metadata, client, occurred_at)
+VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING event_order, occurred_at;
 
 -- name: GetAuditEvent :one

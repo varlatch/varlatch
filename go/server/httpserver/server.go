@@ -169,6 +169,13 @@ var BuiltOperations = []string{
 	// Step 4.2: rotation (valuewrites.go).
 	beginRotationPattern,
 	completeRotationPattern,
+	// Step 4.3c: the incident freeze (freeze.go) and the audit log's reads
+	// (auditevents.go).
+	getIncidentFreezePattern,
+	freezeOrganizationPattern,
+	liftIncidentFreezePattern,
+	listAuditEventsPattern,
+	exportAuditEventsPattern,
 }
 
 // Server is the handler.

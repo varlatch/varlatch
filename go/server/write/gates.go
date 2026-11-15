@@ -138,6 +138,8 @@ type rw struct {
 	readers, writersWaiting, users int
 	writer                         bool
 	changed                        chan struct{}
+	// waiting are the takers waiting for the gate, by mode.
+	waiting map[Mode]int
 }
 
 // Gates holds the process's gates. The zero value is not usable; use
@@ -213,7 +215,7 @@ func (gs *Gates) acquire(ctx context.Context, g Gate) error {
 	gs.mu.Lock()
 	r := gs.held[s]
 	if r == nil {
-		r = &rw{changed: make(chan struct{})}
+		r = &rw{changed: make(chan struct{}), waiting: map[Mode]int{}}
 		gs.held[s] = r
 	}
 	r.users++
@@ -224,6 +226,9 @@ func (gs *Gates) acquire(ctx context.Context, g Gate) error {
 	for {
 		free := !r.writer && (g.Mode == Shared && r.writersWaiting == 0 || g.Mode == Exclusive && r.readers == 0)
 		if free {
+			if waited {
+				r.waiting[g.Mode]--
+			}
 			if g.Mode == Exclusive {
 				r.writersWaiting--
 				r.writer = true
@@ -239,16 +244,22 @@ func (gs *Gates) acquire(ctx context.Context, g Gate) error {
 		}
 		wait := r.changed
 		obs := gs.observe
+		if !waited {
+			r.waiting[g.Mode]++
+		}
 		gs.mu.Unlock()
-		if !waited && obs != nil {
+		if !waited {
 			waited = true
-			obs("waiting", g)
+			if obs != nil {
+				obs("waiting", g)
+			}
 		}
 		select {
 		case <-wait:
 			gs.mu.Lock()
 		case <-ctx.Done():
 			gs.mu.Lock()
+			r.waiting[g.Mode]--
 			if g.Mode == Exclusive {
 				r.writersWaiting--
 			}
@@ -296,4 +307,20 @@ func (gs *Gates) PersonGate(ctx context.Context, identityID string, exclusive bo
 		mode = Exclusive
 	}
 	return gs.Acquire(ctx, Person(identityID, mode))
+}
+
+// Waiting reports the gates a taker is waiting for now, one entry per
+// waiting taker (tests, and a host command's wait seen from outside).
+func (gs *Gates) Waiting() []Gate {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+	var out []Gate
+	for s, r := range gs.held {
+		for _, m := range []Mode{Shared, Exclusive} {
+			for range r.waiting[m] {
+				out = append(out, Gate{Level: s.level, Name: s.name, Key: s.key, Mode: m})
+			}
+		}
+	}
+	return out
 }

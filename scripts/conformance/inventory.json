@@ -227,13 +227,7 @@
         "audit-feed": {
           "title": "the audit feed, and the strict policy check, which needs it loaded",
           "operations": [
-            "listAuditEvents",
-            "listIdentities",
-            "listRoles",
-            "listGroups",
-            "listTeams",
-            "listPlatformConnections",
-            "listOrgSyncTargets"
+            "listAuditEvents"
           ]
         }
       }
@@ -372,7 +366,7 @@
       ],
       "groups": {
         "audit": {
-          "title": "the audit timeline: filters, the provenance drawer, sentences with names",
+          "title": "the audit timeline: filters, the provenance drawer, sentences with names; it filters for identity.created events, which the service identities earlier suites create give it",
           "operations": [
             "listAuditEvents",
             "listIdentities",
@@ -380,7 +374,8 @@
             "listGroups",
             "listTeams",
             "listPlatformConnections",
-            "listOrgSyncTargets"
+            "listOrgSyncTargets",
+            "createServiceIdentity"
           ]
         },
         "webhooks": {

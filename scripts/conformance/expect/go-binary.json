@@ -144,15 +144,7 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "exportAuditEvents": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "exportDeletedOrganizationAuditEvents": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "freezeOrganization": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -161,10 +153,6 @@
         "step": "ADR-0059 step 4"
       },
       "getGitHubApp": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "getIncidentFreeze": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -205,14 +193,6 @@
         "step": "ADR-0059 step 4"
       },
       "issueIdentityCredential": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "liftIncidentFreeze": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "listAuditEvents": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
