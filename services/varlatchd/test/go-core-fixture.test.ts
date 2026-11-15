@@ -30,7 +30,7 @@ import { newId } from "../src/db/ids.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, withIds, type Fixture, type RequestCase, type SideTable, type Table } from "./go-fixture-kit.js";
+import { expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, withIds, type Fixture, type RequestCase, type Row, type SideTable, type Table } from "./go-fixture-kit.js";
 
 // The unwrapped app: some requests are outside the OpenAPI document on
 // purpose (bodies that are not JSON, extra members).
@@ -239,6 +239,29 @@ describe.skipIf(process.env.VARLATCH_WRITE_GO_VECTORS !== "1")("writing the fixt
 });
 
 describe("the fixture is this server's answers", () => {
+  it("the rows check keeps relationships: a moved membership or swapped IDs fail it, a consistent renaming does not", () => {
+    const f = JSON.parse(readFileSync(FILE, "utf8")) as Fixture;
+    const idOf = (slug: string) => f.rows.organizations!.find((o) => o.slug === slug)!.id as string;
+    const fails = (mutate: (rows: Record<string, Row[]>) => void) => {
+      const copy = structuredClone(f.rows);
+      mutate(copy);
+      expect(() => expectSameRows(TABLES, f.rows, copy)).toThrow();
+    };
+    // A membership moved to another Organization.
+    fails((rows) => {
+      const m = rows.org_memberships!.find((r) => r.role === "member")!;
+      m.organization_id = idOf("frozen");
+    });
+    // Two Organizations swap IDs (their memberships, controls and freezes stay).
+    fails((rows) => {
+      const [a, b] = [rows.organizations!.find((o) => o.slug === "acme")!, rows.organizations!.find((o) => o.slug === "frozen")!];
+      [a.id, b.id] = [b.id, a.id];
+    });
+    // Every ID renamed consistently is the same database.
+    const renamed = JSON.parse(JSON.stringify(f.rows).replace(/\b([a-z]{3,4})_([a-z2-7]{26})\b/g, (_m, p: string, rest: string) => `${p}_${[...rest].reverse().join("")}`)) as Record<string, Row[]>;
+    expectSameRows(TABLES, f.rows, renamed);
+  });
+
   it("core-v0.22.0.json", async () => {
     const f = JSON.parse(readFileSync(FILE, "utf8")) as Fixture;
     expectCurrentTable(f, requestTable());

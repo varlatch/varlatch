@@ -354,19 +354,53 @@ export function expectSameAnswers(f: Fixture, got: { requests: Recorded[]; count
 
 /**
  * The file's rows are still what this code builds: a fresh build's rows
- * against the file's, per table, as multisets, with what each build makes
- * anew masked (domain IDs as {prefix}, times as {time}, each table's
- * `random` columns as {random}). A change in what the setup writes (a new
- * column, a default, a value) fails here, so the file is regenerated.
+ * against the file's, per table, as multisets. What each build makes anew
+ * is relabelled, never dropped: times become {time}, each table's `random`
+ * columns {random}, and every domain ID a placeholder of its own, one to
+ * one, numbered by first appearance as the tables are walked in their
+ * order, each table's rows ordered by their text with the IDs not numbered
+ * yet masked. So a relationship survives: a membership moved to another
+ * Organization, or two rows that swap IDs, compare different. Two rows
+ * that the walk cannot order (the same text with new IDs masked) fail the
+ * check until a table's earlier rows anchor them.
  */
 export function expectSameRows(tables: readonly Table[], file: Record<string, Row[]>, built: Record<string, Row[]>) {
-  const shape = (t: Table, r: Row) =>
-    canonical(Object.fromEntries(Object.entries(r).map(([c, v]) => [c, t.random?.includes(c) && v !== null ? "{random}" : v])))
-      .replace(ID, (_m, p: string) => `{${p}}`)
-      .replace(ISO, "{time}");
+  const a = relabel(tables, file);
+  const b = relabel(tables, built);
   for (const t of tables) {
-    const a = (file[t.name] ?? []).map((r) => shape(t, r)).sort();
-    const b = (built[t.name] ?? []).map((r) => shape(t, r)).sort();
-    expect({ table: t.name, rows: a }, "the file's rows are not what this code builds now: regenerate it").toEqual({ table: t.name, rows: b });
+    expect({ table: t.name, rows: a.get(t.name) }, "the file's rows are not what this code builds now: regenerate it").toEqual({ table: t.name, rows: b.get(t.name) });
   }
+}
+
+/** Each table's rows as texts, relabelled one to one (see expectSameRows). */
+export function relabel(tables: readonly Table[], rows: Record<string, Row[]>): Map<string, string[]> {
+  const ids = new Map<string, string>();
+  const counts = new Map<string, number>();
+  const label = (text: string, number: boolean) =>
+    text.replace(ID, (m, p: string) => {
+      let l = ids.get(m);
+      if (!l && number) {
+        const n = (counts.get(p) ?? 0) + 1;
+        counts.set(p, n);
+        l = `{${p}#${n}}`;
+        ids.set(m, l);
+      }
+      return l ?? `{?${p}}`;
+    });
+  const out = new Map<string, string[]>();
+  for (const t of tables) {
+    const texts = (rows[t.name] ?? []).map((r) =>
+      canonical(Object.fromEntries(Object.entries(r).map(([c, v]) => [c, t.random?.includes(c) && v !== null ? "{random}" : v]))).replace(ISO, "{time}"),
+    );
+    const keyed = texts.map((text) => ({ text, k: label(text, false) })).sort((x, y) => (x.k < y.k ? -1 : x.k > y.k ? 1 : 0));
+    for (let i = 1; i < keyed.length; i++) {
+      // The same text with IDs left to number: their order, and so their
+      // labels, would be a guess.
+      if (keyed[i]!.k === keyed[i - 1]!.k && keyed[i]!.k.includes("{?")) {
+        throw new Error(`${t.name}: two rows cannot be told apart once their new IDs are masked (${keyed[i]!.k})`);
+      }
+    }
+    out.set(t.name, keyed.map(({ text }) => label(text, true)).sort());
+  }
+  return out;
 }
