@@ -214,7 +214,46 @@ func TestReplayVectors(t *testing.T) {
 		if err != nil || !replayed || again.Status != c.ReplayStatus || string(jsvalue.Stringify(again.Payload)) != c.Replay {
 			t.Errorf("%s: replay %v %d %s, want %d %s", c.Name, err, again.Status, jsvalue.Stringify(again.Payload), c.ReplayStatus, c.Replay)
 		}
+		// A claim stored in another member order (copied from PostgreSQL,
+		// whose text a copy need not keep) answers the same: the order is
+		// jsonb's, applied on reading.
+		parsed, err := jsvalue.Parse([]byte(stored))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Store.Write(ctx, func(tx *storage.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE idempotency_keys SET response = ? WHERE idempotency_key = ?`, string(jsvalue.Stringify(reversed(parsed))), claim.Key)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		again, replayed, err = Idempotent(ctx, w.Store, claim, nil, func(tx *storage.Tx) (Response, error) {
+			t.Fatal("the write ran again")
+			return Response{}, nil
+		})
+		if err != nil || !replayed || string(jsvalue.Stringify(again.Payload)) != c.Replay {
+			t.Errorf("%s: replay of a reordered claim %v %s, want %s", c.Name, err, jsvalue.Stringify(again.Payload), c.Replay)
+		}
 	}
+}
+
+// reversed is v with every object's members in reverse order.
+func reversed(v any) any {
+	switch x := v.(type) {
+	case jsvalue.Object:
+		o := make(jsvalue.Object, len(x))
+		for i, m := range x {
+			o[len(x)-1-i] = jsvalue.Member{Key: m.Key, Value: reversed(m.Value)}
+		}
+		return o
+	case []any:
+		a := make([]any, len(x))
+		for i, e := range x {
+			a[i] = reversed(e)
+		}
+		return a
+	}
+	return v
 }
 
 // The claim, the write and the stored response are one job: a write that

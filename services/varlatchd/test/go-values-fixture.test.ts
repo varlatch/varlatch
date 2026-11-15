@@ -47,21 +47,18 @@
  *
  * (v0.21.0's sources come from git: the tag must be fetched.)
  */
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
-import { createWrappedOrgKek, decryptValue, encryptValue, unwrapOrgKek } from "../src/crypto/hierarchy.js";
+import { decryptValue, unwrapOrgKek } from "../src/crypto/hierarchy.js";
 import type { Envelope } from "../src/crypto/aead.js";
 import { newId } from "../src/db/ids.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { accessCountsSettled } from "../src/domain/securityreport.js";
 import { migratedTestDb } from "./helpers/pglite.js";
+import { resealWith } from "./go-fixture-kit.js";
 
 // The unwrapped app, as go-parity.test.ts uses it: some of the table's
 // requests are outside the OpenAPI document on purpose (a body with both
@@ -70,12 +67,7 @@ import { migratedTestDb } from "./helpers/pglite.js";
 const { buildApp } = await vi.importActual<typeof import("../src/http/app.js")>("../src/http/app.js");
 
 const OUT_DIR = new URL("../../../go/server/values/testdata/", import.meta.url);
-/**
- * The conformance runner's seed Contract (scripts/conformance/run.mjs seed)
- * as this server stores it: varlatchd admin conformance-seed (a conformance
- * build) writes this revision, so the Go target's seed is the runner's.
- */
-const SEED_CONTRACT_FILE = new URL("../../../go/server/daemon/seed_contract.json", import.meta.url);
+/** The conformance runner's seed Contract (scripts/conformance/run.mjs seed), in a Project of its own. */
 const SEED_CONTRACT = {
   schemaVersion: 1,
   items: [
@@ -86,7 +78,6 @@ const SEED_CONTRACT = {
   ],
 };
 const FILES = { "v0.22.0": "values-v0.22.0.json", "v0.21.0": "values-v0.21.0.json" } as const;
-const REPO_ROOT = new URL("../../../", import.meta.url);
 
 /** The tables the read path reads, in an order that satisfies their foreign keys once each is sorted (rowOrder). */
 const TABLES = [
@@ -307,8 +298,6 @@ const VALUES: Record<string, [string, string][]> = {
   staging: [["PORT", "8080"]],
 };
 
-let seedContract: { contract: string; contentHash: string } | null = null;
-
 async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; tokens: Record<string, string>; plaintexts: Record<string, string>; ids: { devId: string; orgId: string; projectId: string } }> {
   const db = await migratedTestDb();
   const ctx = { db, rootKek: generateKey(), close: db.close };
@@ -360,9 +349,7 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   }
   // The runner's seed Contract, pushed to a Project of its own.
   await call("POST", "/v1/organizations/acme/projects", { name: "Seed", slug: "seed", contractAuthority: "git" });
-  const seeded = await call("POST", "/v1/organizations/acme/projects/seed/contract/revisions", { contract: SEED_CONTRACT });
-  const seedRow = (await db.query("SELECT contract, content_hash FROM contract_revisions WHERE id = $1", [seeded.id])).rows[0] as { contract: unknown; content_hash: string };
-  seedContract = { contract: JSON.stringify(seedRow.contract), contentHash: seedRow.content_hash };
+  await call("POST", "/v1/organizations/acme/projects/seed/contract/revisions", { contract: SEED_CONTRACT });
   // Fixed times, so the file holds whatever day the Go tests run: the
   // rotation window open, one preview expired.
   await db.query("UPDATE env_values SET rotation_deadline = '2099-06-01T00:00:00.000Z' WHERE rotation_deadline IS NOT NULL");
@@ -465,56 +452,6 @@ async function exportRows(db: AppCtx["db"]): Promise<Record<string, Row[]>> {
     out[table] = (res.rows as Row[]).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, json(v)])));
   }
   return out;
-}
-
-/** Every v0.21.0 envelope the read path opens: the canary, each Organization KEK and value sealed again by that release's code. */
-async function resealWith(ref: string, rootKek: Buffer, rows: Record<string, Row[]>, plaintexts: Record<string, string>): Promise<void> {
-  const crypto = await loadHierarchy(ref);
-  for (const inst of rows.installation!) inst.kek_canary = crypto.createCanary(rootKek, inst.id as string) as Envelope;
-  const kekOf = new Map<string, Buffer>();
-  for (const org of rows.organizations!) {
-    const { orgKek, wrapped } = crypto.createWrappedOrgKek(rootKek, org.id as string) as { orgKek: Buffer; wrapped: Envelope };
-    kekOf.set(org.id as string, orgKek);
-    org.wrapped_org_kek = wrapped;
-  }
-  const envOf = new Map(rows.environments!.map((e) => [e.id, e]));
-  const projectOf = new Map(rows.projects!.map((p) => [p.id, p]));
-  const valueOf = new Map(rows.env_values!.map((v) => [v.id, v]));
-  for (const version of rows.value_versions!) {
-    const value = valueOf.get(version.value_id)!;
-    const project = projectOf.get(envOf.get(value.environment_id)!.project_id)!;
-    const orgId = project.organization_id as string;
-    const sealed = crypto.encryptValue(kekOf.get(orgId)!, orgId, value.id as string, version.id as string, Buffer.from(plaintexts[version.id as string]!, "utf8")) as {
-      payload: Envelope;
-      wrappedDek: Envelope;
-    };
-    version.payload = sealed.payload;
-    version.wrapped_dek = sealed.wrappedDek;
-  }
-}
-
-/** A release's hierarchy.ts and canary.ts with their aead.ts and canonical JSON, from git (as go/lib/envelope/testdata/tsfixtures.mjs loads them). */
-async function loadHierarchy(ref: string): Promise<Record<string, (...args: unknown[]) => unknown>> {
-  const show = (path: string) => execFileSync("git", ["-C", REPO_ROOT.pathname, "show", `${ref}:${path}`], { encoding: "utf8" });
-  const dir = mkdtempSync(join(tmpdir(), "varlatch-values-"));
-  try {
-    writeFileSync(join(dir, "package.json"), '{"type":"module"}\n');
-    for (const [name, path] of [
-      ["aead.ts", "services/varlatchd/src/crypto/aead.ts"],
-      ["hierarchy.ts", "services/varlatchd/src/crypto/hierarchy.ts"],
-      ["canary.ts", "services/varlatchd/src/crypto/canary.ts"],
-      ["canonical.ts", "packages/contract/src/canonical.ts"],
-    ]) {
-      writeFileSync(
-        join(dir, name!),
-        show(path!).replaceAll('from "@varlatch/contract"', 'from "./canonical.ts"').replace(/from "\.\/(aead|hierarchy|canary)\.js"/g, 'from "./$1.ts"'),
-      );
-    }
-    const load = (name: string) => import(/* @vite-ignore */ pathToFileURL(join(dir, name)).href);
-    return { ...(await load("hierarchy.ts")), ...(await load("canary.ts")) } as Record<string, (...args: unknown[]) => unknown>;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 }
 
 /** Load a file's rows into a fresh database, as they were exported. */
@@ -641,7 +578,7 @@ describe.skipIf(process.env.VARLATCH_WRITE_GO_VECTORS !== "1")("writing the fixt
       const cases = requestTable(ids);
       for (const ref of ["v0.22.0", "v0.21.0"] as const) {
         const fileRows = structuredClone(rows);
-        if (ref === "v0.21.0") await resealWith(ref, ctx.rootKek, fileRows, plaintexts);
+        if (ref === "v0.21.0") await resealWith(ref, ctx.rootKek, fileRows, (version) => plaintexts[version.id as string]!);
         const draft: Fixture = {
           comment: "Written by services/varlatchd/test/go-values-fixture.test.ts from the TypeScript server's own answers; do not edit.",
           ref,
@@ -658,7 +595,6 @@ describe.skipIf(process.env.VARLATCH_WRITE_GO_VECTORS !== "1")("writing the fixt
         const fixture: Fixture = { ...draft, ...recorded };
         writeFileSync(new URL(FILES[ref], OUT_DIR), JSON.stringify(fixture, null, 2) + "\n");
       }
-      writeFileSync(SEED_CONTRACT_FILE, JSON.stringify({ comment: "Written by services/varlatchd/test/go-values-fixture.test.ts: the conformance runner's seed Contract as this server stores it; do not edit.", ...seedContract }, null, 2) + "\n");
     } finally {
       await ctx.close();
     }
@@ -666,34 +602,6 @@ describe.skipIf(process.env.VARLATCH_WRITE_GO_VECTORS !== "1")("writing the fixt
 });
 
 describe("the fixtures are this server's answers", () => {
-  it("seed_contract.json is the runner's seed Contract as this server stores it", async () => {
-    const want = JSON.parse(readFileSync(SEED_CONTRACT_FILE, "utf8")) as { contract: string; contentHash: string };
-    const db = await migratedTestDb();
-    try {
-      const ctx = { db, rootKek: generateKey() };
-      await ensureInstallation(ctx);
-      const grant = await issueBootstrapGrant(ctx);
-      const { identityId } = await consumeSetupGrant(ctx, grant.token, { adminName: "Seed" });
-      const token = (await issueCredential(db, { identityId, kind: "cli" })).token;
-      const app = buildApp(ctx);
-      const post = async (path: string, body: unknown) => {
-        const res = await app.request(path, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        expect(res.status, await res.clone().text()).toBeLessThan(300);
-        return res.json();
-      };
-      await post("/v1/organizations", { name: "Acme", slug: "acme" });
-      await post("/v1/organizations/acme/projects", { name: "API", slug: "api", contractAuthority: "git" });
-      const revision = await post("/v1/organizations/acme/projects/api/contract/revisions", { contract: SEED_CONTRACT });
-      const row = (await db.query("SELECT contract, content_hash FROM contract_revisions WHERE id = $1", [revision.id])).rows[0] as { contract: unknown; content_hash: string };
-      expect({ contract: JSON.parse(JSON.stringify(row.contract)), contentHash: row.content_hash }).toEqual({ contract: JSON.parse(want.contract), contentHash: want.contentHash });
-      // The runner's own seed Contract is this one.
-      const runner = readFileSync(new URL("../../../scripts/conformance/run.mjs", import.meta.url), "utf8");
-      for (const item of SEED_CONTRACT.items) expect(runner).toContain(`name: "${item.name}"`);
-    } finally {
-      await db.close();
-    }
-  });
-
   for (const file of Object.values(FILES)) {
     it(file, async () => {
       const f = readFixture(new URL(file, OUT_DIR).pathname);

@@ -126,7 +126,9 @@ func Idempotent(ctx context.Context, store *storage.DB, c Claim, replay func(tx 
 // storedResponse reads a stored {status, payload} as the TypeScript server
 // reads it back from jsonb: the payload's members in jsonb's order, as
 // JSON.parse enumerates them. So a replay's body can differ in member
-// order from the first answer's, there as here.
+// order from the first answer's, there as here. The order is applied on
+// reading, whatever order the stored text has: a claim copied from
+// PostgreSQL (step 7) or written by an earlier Go build answers the same.
 func storedResponse(text string) (Response, error) {
 	v, err := jsvalue.Parse([]byte(text))
 	if err != nil {
@@ -142,5 +144,5 @@ func storedResponse(text string) (Response, error) {
 		return Response{}, errors.New("write: a stored idempotent response has no status")
 	}
 	payload, _ := o.Get("payload")
-	return Response{Status: int(n), Payload: payload}, nil
+	return Response{Status: int(n), Payload: jsvalue.JSOrder(jsvalue.Jsonb(payload))}, nil
 }

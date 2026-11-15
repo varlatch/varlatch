@@ -22,7 +22,6 @@ import {
   staleBecause,
 } from "../lib/operations.mjs";
 import { parseSuiteOutput, resultLine } from "../lib/results.mjs";
-import { targetCapabilities } from "../targets/capabilities.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
@@ -98,20 +97,6 @@ test("a check needs its suite's operations and its own; the seed lacks when an o
   assert.ok(lackingChecks(inventory, new Map([["whoami", {}]])).has("cli-core.whoami-human-format"));
 });
 
-test("a target with the seed capability writes the seed itself: it lacks only what it lists", () => {
-  const caps = ["go-server", "seed"];
-  // The /v1 writes the runner's seed uses do not make the seed lack.
-  const bySeed = lackingChecks(inventory, ["pushContractRevision", "setValue"], caps);
-  assert.ok(!bySeed.has("mcp.lists-read-tools-only"));
-  assert.ok(!setupLacks(inventory, "seed", ["createOrganization", "setValue"], caps));
-  // An operation a check needs besides the seed still lacks, by its own name.
-  assert.deepEqual(lackingChecks(inventory, ["listEnvironments", "setValue"], caps).get("cli-core.env-list-json"), ["listEnvironments"]);
-  // Without the capability, the seed lacks as before.
-  assert.ok(setupLacks(inventory, "seed", ["setValue"], ["go-server"]));
-  // Recover is a target operation, never written by the seed capability.
-  assert.ok(setupLacks(inventory, "admin-recover", ["admin-recover"], caps));
-});
-
 test("lacks entries: a known operation (never the seed itself), a reason and the step that adds it", () => {
   assert.deepEqual(lacksProblems("x", { whoami: { reason: "r", step: "s" }, "admin-recover": { reason: "r", step: "s" } }, { inventory, openapi }), []);
   const problems = lacksProblems("x", { noSuch: { reason: "r", step: "s" }, seed: { reason: "r", step: "s" }, whoami: { reason: "r" }, getMeta: { reason: "", step: "s" } }, { inventory, openapi }).join("\n");
@@ -123,7 +108,7 @@ test("lacks entries: a known operation (never the seed itself), a reason and the
   assert.match(validateExpectations(file, { targetName: "go-binary", inventory, cliVersions: [], openapi }).join("\n"), /ts-source is not a go-binary target/);
 });
 
-test("expect/go-binary.json lacks every operation but the ones the Go server has, each with a step of ADR-0059 step 3 or 4", () => {
+test("expect/go-binary.json lacks every operation but the ones the Go server has, each with a step of ADR-0059 step 4 (serving the CLI: step 6)", () => {
   assert.deepEqual(validateExpectations(goExpect, { targetName: "go-binary", inventory, cliVersions: ["0.21.0", "0.22.0"], openapi }), []);
   const lacks = lacksFor(goExpect, "go-binary");
   // ADR-0059 step 3.4: the browser session's paths, and the /v1 operations
@@ -157,17 +142,19 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // Of the named operations only serving the CLI is lacking (the seed is
   // lacking through the writes it uses, never listed).
   for (const [name, op] of Object.entries(inventory.operations)) assert.equal(lacks.has(name), !op.uses && name === "serve-cli", name);
-  for (const [op, e] of lacks) assert.match(e.step, /^ADR-0059 step (3\.[3-6]|4)$/, op);
+  // Serving the CLI waits for the Go CLI and installers (feature-parity
+  // decision 13); every other gap is step 4's.
+  for (const [op, e] of lacks) assert.equal(e.step, op === "serve-cli" ? "ADR-0059 step 6" : "ADR-0059 step 4", op);
   // The conformance checks the Go server runs (step 3.4): the passkey
   // bootstrap, the CLI's token sign-in and whoami, the CLI browser login,
   // device sign-in with the dashboard's sign-in and the proxy probe's
   // pending cap, and the CLI-download-off checks, which need only /v1/meta;
-  // and (step 3.5) degraded live updates; (step 3.6) with the target's own
-  // seed and the read path of values, varlatch mcp's reads and the server
-  // logs check; (step 4.1c) cli-core's env list checks, on the Projects
-  // and environments reads; (step 4.1d) the sdk suite, on the value
-  // writes. Every other one lacks something.
-  const lacking = lackingChecks(inventory, lacks.keys(), targetCapabilities("go-binary"));
+  // and (step 3.5) degraded live updates; (step 3.6) the read path of
+  // values, varlatch mcp's reads and the server logs check; (step 4.1c)
+  // cli-core's env list checks, on the Projects and environments reads;
+  // (step 4.1d) the sdk suite, on the value writes. Each seeds through
+  // /v1. Every other one lacks something.
+  const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
   assert.deepEqual(

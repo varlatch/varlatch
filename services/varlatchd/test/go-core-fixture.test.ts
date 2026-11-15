@@ -18,7 +18,12 @@
  * of acme with an Agent Run credential; Projects in the Organizations,
  * their Contract revisions pushed and activated through /v1 (REVISIONS,
  * PUSHED). Rows the routes that set them need passkey approvals for (the
- * freeze, the controls, the deletion) are written directly.
+ * freeze, the controls, the deletion) are written directly. Two writes
+ * run under an Idempotency-Key, so the rows hold claims this server
+ * stored, which requests replay (the migration copies them, step 7).
+ *
+ * Two files (FILES): the rows as this code sealed them, and the same rows
+ * sealed again by v0.21.0's code; the same requests, the same answers.
  *
  * Every run checks the committed file: its requests must be the table's,
  * and this server, on the file's rows, must give the recorded answers.
@@ -36,13 +41,26 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@varlatch/contract";
-import { checkDigests, expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, withIds, type Fixture, type RequestCase, type Row, type SideTable, type Table } from "./go-fixture-kit.js";
+import { checkDigests, expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, resealWith, withIds, type Fixture, type RequestCase, type Row, type SideTable, type Table } from "./go-fixture-kit.js";
+import type { Envelope } from "../src/crypto/aead.js";
+import { decryptValue, unwrapOrgKek } from "../src/crypto/hierarchy.js";
 
 // The unwrapped app: some requests are outside the OpenAPI document on
 // purpose (bodies that are not JSON, extra members).
-const { buildApp } = await vi.importActual<typeof import("../src/http/app.js")>("../src/http/app.js");
+const { buildApp, SERVER_VERSION } = await vi.importActual<typeof import("../src/http/app.js")>("../src/http/app.js");
 
-const FILE = new URL("../../../go/server/paritytest/testdata/core-v0.22.0.json", import.meta.url);
+/**
+ * One file per release whose envelopes must open (G3): core-v0.22.0.json
+ * as this code sealed the rows; core-v0.21.0.json the same rows and
+ * requests with the canary, every Organization KEK and every value
+ * version sealed again by v0.21.0's crypto code (resealWith; the tag must
+ * be fetched to regenerate it).
+ */
+const FILES = {
+  "v0.22.0": new URL("../../../go/server/paritytest/testdata/core-v0.22.0.json", import.meta.url),
+  "v0.21.0": new URL("../../../go/server/paritytest/testdata/core-v0.21.0.json", import.meta.url),
+} as const;
+const FILE = FILES["v0.22.0"];
 
 const TABLES: Table[] = [
   { name: "installation", orderBy: "id", random: ["kek_canary"] },
@@ -418,7 +436,7 @@ function contractRequests(): Omit<RequestCase, "id">[] {
 
 // ---- Projects and environments, and the installation reads (step 4.1c)
 
-type Call = (method: string, path: string, body?: unknown) => Promise<any>;
+type Call = (method: string, path: string, body?: unknown, headers?: Record<string, string>) => Promise<any>;
 
 /**
  * The environments build() makes through /v1, and what only rows can say:
@@ -750,6 +768,11 @@ async function buildValues(call: Call) {
   for (const org of ["frozen", "guarded", "reported", "deleting"]) {
     await call("PUT", V(org, "app", "development", "ITEM"), { value: `${org} value` });
   }
+  // Claims this server stores (idempotency_keys: the body's digest and the
+  // stored response), which the migration copies (ADR-0059 step 7): a
+  // request with the same key and body replays from them.
+  await call("PUT", V("acme", "api", "development", "STORED"), { value: "stored by TypeScript" }, { "Idempotency-Key": "ts-stored" });
+  await call("POST", `${ORG}/acme/projects/api/environments/development/changes`, { changes: [{ op: "set", item: "STORED_CS", value: "cs" }] }, { "Idempotency-Key": "ts-stored-cs" });
 }
 
 function valueRequests(): Omit<RequestCase, "id">[] {
@@ -883,6 +906,15 @@ function valueRequests(): Omit<RequestCase, "id">[] {
     keyed(changes("apply a change set with a key, replayed", "development", { changes: [set("CS_KEYED", "k"), drop("CS_ONE")] }), "key-cs"),
     keyed(changes("apply a change set with a key, another body", "development", { changes: [set("CS_KEYED", "other")] }), "key-cs"),
     keyed(changes("apply a change set with a key, another environment", "staging", { changes: [set("CS_KEYED", "k"), drop("CS_ONE")] }), "key-cs"),
+    // The claims the build stored through this server: a replay answers
+    // the stored response and writes nothing; another body conflicts with
+    // the stored digest; the same key is another identity's own (a new
+    // write).
+    keyed(put("replay a claim the TypeScript server stored", "development", "STORED", { value: "stored by TypeScript" }), "ts-stored"),
+    keyed(put("replay a stored claim, another body", "development", "STORED", { value: "other" }), "ts-stored"),
+    keyed(put("a stored claim's key, another identity", "development", "STORED", { value: "stored by TypeScript" }, "bob"), "ts-stored"),
+    keyed(changes("replay a change set the TypeScript server stored", "development", { changes: [set("STORED_CS", "cs")] }), "ts-stored-cs"),
+    keyed(changes("replay a stored change set, another body", "development", { changes: [set("STORED_CS", "other")] }), "ts-stored-cs"),
     { ...changes("apply a guarded change set twice at once", "staging", { changes: [set("API_URL", "https://race.example.com", "{ver:api/staging/API_URL}")] }), concurrent: 2 },
     // What the writes left, through the read path.
     read("values after the writes", "development"),
@@ -1081,10 +1113,10 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   const { identityId: alice } = await consumeSetupGrant(ctx, grant.token, { adminName: "Alice" });
   const tokens: Record<string, string> = { alice: (await issueCredential(ctx.db, { identityId: alice, kind: "cli" })).token };
   const app = buildApp(ctx);
-  const call = async (method: string, path: string, body?: unknown) => {
+  const call: Call = async (method, path, body, headers = {}) => {
     const res = await app.request(path, {
       method,
-      headers: { Authorization: `Bearer ${tokens.alice}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${tokens.alice}`, "Content-Type": "application/json", ...headers },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const text = await res.text();
@@ -1153,25 +1185,46 @@ async function replay(f: Fixture) {
   }
 }
 
+/** Each value version's plaintext, opened with this code from the rows. */
+function plaintexts(rows: Record<string, Row[]>, rootKek: Buffer): (version: Row) => string {
+  const orgOf = new Map(rows.organizations!.map((o) => [o.id, o]));
+  const projectOf = new Map(rows.projects!.map((p) => [p.id, p]));
+  const envOf = new Map(rows.environments!.map((e) => [e.id, e]));
+  const valueOf = new Map(rows.env_values!.map((v) => [v.id, v]));
+  return (version) => {
+    const value = valueOf.get(version.value_id)!;
+    const orgId = projectOf.get(envOf.get(value.environment_id)!.project_id)!.organization_id as string;
+    const orgKek = unwrapOrgKek(rootKek, orgOf.get(orgId)!.wrapped_org_kek as Envelope, orgId);
+    const sealed = { payload: version.payload as Envelope, wrappedDek: version.wrapped_dek as Envelope };
+    return decryptValue(orgKek, orgId, value.id as string, version.id as string, sealed).toString("utf8");
+  };
+}
+
 describe.skipIf(process.env.VARLATCH_WRITE_GO_VECTORS !== "1")("writing the fixture", () => {
-  it("builds the database, records the answers and writes the file", async () => {
+  it("builds the database, records the answers and writes both files", async () => {
     const { ctx, tokens } = await build();
     try {
-      const draft: Fixture = {
-        comment: "Written by services/varlatchd/test/go-core-fixture.test.ts from the TypeScript server's own answers; do not edit.",
-        ref: "v0.22.0",
-        rootKek: ctx.rootKek.toString("hex"),
-        tokens,
-        rows: await exportRows(ctx.db, TABLES),
-        sideTables: SIDE,
-        requests: requestTable().map((c) => ({ ...c, expect: { status: 0, headers: {}, body: "" }, audit: [], side: {} })),
-        counters: [],
-      };
-      writeFileSync(FILE, JSON.stringify({ ...draft, ...(await replay(draft)) }, null, 2) + "\n");
+      const rows = await exportRows(ctx.db, TABLES);
+      for (const [ref, file] of Object.entries(FILES)) {
+        const fileRows = structuredClone(rows);
+        if (ref === "v0.21.0") await resealWith(ref, ctx.rootKek, fileRows, plaintexts(rows, ctx.rootKek));
+        const draft: Fixture = {
+          comment: "Written by services/varlatchd/test/go-core-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+          ref,
+          serverVersion: SERVER_VERSION,
+          rootKek: ctx.rootKek.toString("hex"),
+          tokens,
+          rows: fileRows,
+          sideTables: SIDE,
+          requests: requestTable().map((c) => ({ ...c, expect: { status: 0, headers: {}, body: "" }, audit: [], side: {} })),
+          counters: [],
+        };
+        writeFileSync(file, JSON.stringify({ ...draft, ...(await replay(draft)) }, null, 2) + "\n");
+      }
     } finally {
       await ctx.close();
     }
-  }, 300_000);
+  }, 600_000);
 });
 
 describe("the fixture is this server's answers", () => {
@@ -1239,17 +1292,40 @@ describe("the fixture is this server's answers", () => {
     expect(() => checkDigests(JSON.stringify({ ...good, stateDigests: { ...good.stateDigests, items: sha([]) } }), "bad")).toThrow(/stateDigests/);
   });
 
-  it("core-v0.22.0.json", async () => {
-    const f = JSON.parse(readFileSync(FILE, "utf8")) as Fixture;
-    expectCurrentTable(f, requestTable());
-    expect(f.sideTables).toEqual(SIDE);
-    expectSameAnswers(f, await replay(f));
-    // The file's rows are still what the setup builds.
-    const { ctx } = await build();
-    try {
-      expectSameRows(TABLES, f.rows, await exportRows(ctx.db, TABLES));
-    } finally {
-      await ctx.close();
+  for (const [ref, file] of Object.entries(FILES)) {
+    it(`core-${ref}.json`, async () => {
+      const f = JSON.parse(readFileSync(file, "utf8")) as Fixture;
+      expect(f.ref).toBe(ref);
+      expect(f.serverVersion).toBe(SERVER_VERSION);
+      expectCurrentTable(f, requestTable());
+      expect(f.sideTables).toEqual(SIDE);
+      expectSameAnswers(f, await replay(f));
+      // The file's rows are still what the setup builds (envelopes aside).
+      const { ctx } = await build();
+      try {
+        expectSameRows(TABLES, f.rows, await exportRows(ctx.db, TABLES));
+      } finally {
+        await ctx.close();
+      }
+    }, 180_000);
+  }
+
+  it("core-v0.21.0.json is core-v0.22.0.json's rows and requests, every envelope sealed again, the claims this server stored kept", () => {
+    const [now, old] = [FILES["v0.22.0"], FILES["v0.21.0"]].map((u) => JSON.parse(readFileSync(u, "utf8")) as Fixture);
+    const sealed: Record<string, string[]> = { installation: ["kek_canary"], organizations: ["wrapped_org_kek"], value_versions: ["payload", "wrapped_dek"] };
+    const without = (rows: Record<string, Row[]>) =>
+      Object.fromEntries(Object.entries(rows).map(([t, rs]) => [t, rs.map((r) => Object.fromEntries(Object.entries(r).filter(([c]) => !(sealed[t] ?? []).includes(c))))]));
+    expect(without(old.rows)).toEqual(without(now.rows));
+    // The same requests and answers; the rows a request wrote carry each
+    // file's own envelopes.
+    const answers = (f: Fixture) => f.requests.map(({ side: _side, ...r }) => r);
+    expect(answers(old)).toEqual(answers(now));
+    expect(old.rootKek).toBe(now.rootKek);
+    for (const [t, cols] of Object.entries(sealed)) {
+      for (const [i, r] of old.rows[t]!.entries()) {
+        for (const c of cols) if (r[c] !== null) expect(r[c], `${t}[${i}].${c}`).not.toEqual(now.rows[t]![i]![c]);
+      }
     }
-  }, 120_000);
+    expect(now.rows.idempotency_keys!.map((r) => r.idempotency_key).sort()).toEqual(["ts-stored", "ts-stored-cs"]);
+  });
 });

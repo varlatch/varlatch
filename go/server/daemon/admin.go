@@ -34,16 +34,15 @@ import (
 //
 // They refuse with the wrong Root KEK. Exit 0 on success, 1 on a refusal
 // or failure, 64 on a usage error, 78 on a configuration error.
-func Admin(args []string, stdout, stderr io.Writer) int { return admin(args, os.Stdin, stdout, stderr) }
+func Admin(args []string, stdout, stderr io.Writer) int { return admin(args, stdout, stderr) }
 
-func admin(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func admin(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return adminUsage(stderr, "no command")
 	}
 	sub := args[0]
 	conformance := sub == "conformance-probe" && conformanceProbe != nil ||
-		sub == "conformance-fixture" && conformanceFixture != nil ||
-		sub == "conformance-seed" && conformanceSeed != nil
+		sub == "conformance-fixture" && conformanceFixture != nil
 	if sub != "bootstrap" && sub != "recover" && !conformance {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
@@ -78,15 +77,7 @@ func admin(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, err.Error())
 		return ExitFailure
 	}
-	var input []byte
-	if sub == "conformance-seed" {
-		if input, err = io.ReadAll(io.LimitReader(stdin, 1<<16)); err != nil {
-			fmt.Fprintf(stderr, "varlatchd admin %s: %v\n", sub, err)
-			return ExitFailure
-		}
-		defer clear(input)
-	}
-	return route(cfg, append([]string{sub}, rest...), input, stdout, stderr)
+	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
 
 func adminUsage(stderr io.Writer, msg string) int {
@@ -169,15 +160,13 @@ func openOffline(cfg *config.Config, what string, stderr io.Writer) (*hostEnv, i
 }
 
 // runHost runs one host command, in the daemon or offline, with env.
-func runHost(ctx context.Context, env *hostEnv, args []string, stdin []byte, stdout, stderr io.Writer) int {
+func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int {
 	sub, rest := args[0], args[1:]
 	switch {
 	case sub == "conformance-probe" && conformanceProbe != nil:
 		return conformanceProbe(ctx, env, rest, stdout, stderr)
 	case sub == "conformance-fixture" && conformanceFixture != nil:
 		return conformanceFixture(ctx, env, rest, stdout, stderr)
-	case sub == "conformance-seed" && conformanceSeed != nil:
-		return conformanceSeed(ctx, env, rest, stdin, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":
 		return adminUsage(stderr, "unknown command "+sub)
 	}
@@ -264,10 +253,6 @@ var conformanceProbe func(ctx context.Context, env *hostEnv, args []string, stdo
 // conformanceFixture is `varlatchd admin conformance-fixture`, in a build
 // with the conformance tag only (fixture_conformance.go); nil otherwise.
 var conformanceFixture func(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int
-
-// conformanceSeed is `varlatchd admin conformance-seed`, in a build with the
-// conformance tag only (seed_conformance.go); nil otherwise.
-var conformanceSeed func(ctx context.Context, env *hostEnv, args []string, stdin []byte, stdout, stderr io.Writer) int
 
 // issuer is the base of the enrollment URLs: the public URL as configured,
 // else http://localhost and the listener's port, as the TypeScript

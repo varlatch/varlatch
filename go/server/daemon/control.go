@@ -63,8 +63,7 @@ type hostEnv struct {
 }
 
 type controlRequest struct {
-	Args  []string `json:"args"`
-	Stdin []byte   `json:"stdin,omitempty"`
+	Args []string `json:"args"`
 }
 
 type controlResponse struct {
@@ -154,13 +153,13 @@ func (c *controlServer) handle(ctx context.Context, conn *net.UnixConn) {
 		return
 	}
 	var stdout, stderr bytes.Buffer
-	status := runHost(ctx, c.env, req.Args, req.Stdin, &stdout, &stderr)
+	status := runHost(ctx, c.env, req.Args, &stdout, &stderr)
 	_ = json.NewEncoder(conn).Encode(controlResponse{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), Status: status})
 }
 
 // route runs a host command: through the daemon's socket, else offline
 // under the lock, else not at all. args[0] is the command.
-func route(cfg *config.Config, args []string, stdin []byte, stdout, stderr io.Writer) int {
+func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 	what := "varlatchd admin " + args[0]
 	owner, id, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
@@ -177,7 +176,7 @@ func route(cfg *config.Config, args []string, stdin []byte, stdout, stderr io.Wr
 			fmt.Fprintf(stderr, "%s: the process on %s is not the data directory's owner (uid %d) or root; nothing was sent or written\n", what, path, owner)
 			return ExitConfig
 		}
-		return viaSocket(uc, what, args, stdin, stdout, stderr)
+		return viaSocket(uc, what, args, stdout, stderr)
 	}
 	unlock, err := lockDataDir(cfg.DataDir)
 	if errors.Is(err, errLocked) {
@@ -201,13 +200,13 @@ func route(cfg *config.Config, args []string, stdin []byte, stdout, stderr io.Wr
 		return status
 	}
 	defer env.store.Close()
-	return runHost(context.Background(), env, args, stdin, stdout, stderr)
+	return runHost(context.Background(), env, args, stdout, stderr)
 }
 
-func viaSocket(conn *net.UnixConn, what string, args []string, stdin []byte, stdout, stderr io.Writer) int {
+func viaSocket(conn *net.UnixConn, what string, args []string, stdout, stderr io.Writer) int {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(controlTimeout))
-	if err := json.NewEncoder(conn).Encode(controlRequest{Args: args, Stdin: stdin}); err != nil {
+	if err := json.NewEncoder(conn).Encode(controlRequest{Args: args}); err != nil {
 		fmt.Fprintf(stderr, "%s: the control socket: %v\n", what, err)
 		return ExitFailure
 	}

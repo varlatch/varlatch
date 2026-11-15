@@ -60,7 +60,7 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 	h, err := httpserver.New(httpserver.Options{
 		// The TypeScript server's SERVER_VERSION, which the installation
 		// release read reports.
-		Version: strings.TrimPrefix(f.Ref, "v"), Backend: daemon.NewBackend(store, rootKEK), Log: log,
+		Version: f.Version(), Backend: daemon.NewBackend(store, rootKEK), Log: log,
 		Auth: auth.New(store, auth.Options{Log: log, RootKEK: rootKEK}), Values: vs,
 		Writer: &write.Writer{Store: store, Gates: write.NewGates()}, RootKEK: rootKEK,
 	})
@@ -81,13 +81,30 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 // Projects, Contract revisions, environments, values, Capabilities), the
 // report counts; every response valid against the OpenAPI document. Every Organization the
 // requests created has a KEK that opens with the installation's Root KEK.
+// TestTypeScriptFixture replays both core files: core-v0.22.0.json, the
+// rows as v0.22.0 sealed them, and core-v0.21.0.json, the same rows with
+// every envelope sealed by v0.21.0 (a v0.21.0 installation after its
+// upgrade). Both hold Idempotency-Key claims the TypeScript server stored,
+// which the migration copies (step 7): a replay answers from them.
 func TestTypeScriptFixture(t *testing.T) {
-	f, err := paritytest.Read(paritytest.Path("core-v0.22.0.json"))
+	for _, name := range []string{"core-v0.22.0.json", "core-v0.21.0.json"} {
+		t.Run(name, func(t *testing.T) { replayCoreFile(t, name) })
+	}
+}
+
+func replayCoreFile(t *testing.T, name string) {
+	f, err := paritytest.Read(paritytest.Path(name))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(f.Requests) < 50 {
 		t.Fatalf("%d requests: the fixture is incomplete", len(f.Requests))
+	}
+	if want := "v" + strings.TrimSuffix(strings.TrimPrefix(name, "core-v"), ".json"); f.Ref != want {
+		t.Fatalf("ref %q, want %q", f.Ref, want)
+	}
+	if n := len(f.Rows["idempotency_keys"]); n < 2 {
+		t.Fatalf("%d stored Idempotency-Key claims: the fixture has none to replay", n)
 	}
 	s := newServer(t, f)
 	paritytest.Replay(t, s.target(t, f), f)

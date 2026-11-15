@@ -96,14 +96,27 @@ func (r *Recorded) UnmarshalJSON(b []byte) error {
 
 // Fixture is one file the kit wrote.
 type Fixture struct {
-	Comment    string            `json:"comment"`
-	Ref        string            `json:"ref"`
-	RootKEK    string            `json:"rootKek"`
-	Tokens     map[string]string `json:"tokens"`
-	Rows       map[string][]Row  `json:"rows"`
-	SideTables []SideTable       `json:"sideTables"`
-	Requests   []Recorded        `json:"requests"`
-	Counters   []Row             `json:"counters"`
+	Comment string `json:"comment"`
+	// Ref is the release whose code sealed the rows' envelopes.
+	Ref string `json:"ref"`
+	// ServerVersion is the SERVER_VERSION of the server that answered,
+	// which the installation release read reports; Ref's when empty.
+	ServerVersion string            `json:"serverVersion,omitempty"`
+	RootKEK       string            `json:"rootKek"`
+	Tokens        map[string]string `json:"tokens"`
+	Rows          map[string][]Row  `json:"rows"`
+	SideTables    []SideTable       `json:"sideTables"`
+	Requests      []Recorded        `json:"requests"`
+	Counters      []Row             `json:"counters"`
+}
+
+// Version is the version the replaying server must report: the answering
+// server's, as the file records it.
+func (f Fixture) Version() string {
+	if f.ServerVersion != "" {
+		return f.ServerVersion
+	}
+	return strings.TrimPrefix(f.Ref, "v")
 }
 
 // CLIAgent is the User-Agent a request sends when it names none.

@@ -329,23 +329,6 @@ export async function goServer(state, operation, ...args) {
   return JSON.parse(admin(state, ["conformance-fixture", ...args]));
 }
 
-/**
- * The seed capability: `varlatchd admin conformance-seed`, which writes the
- * runner's seed (run.mjs seed: acme, api with development and production,
- * its Contract and the two values) straight to the database while the /v1
- * writes it uses are not built (ADR-0059 step 4). The Secret's value goes
- * on standard input, never in an argument.
- */
-export async function seed(state, identity, secret) {
-  const r = spawnSync(state.binary, ["admin", "conformance-seed", "--identity", identity, "--config", state.conf], {
-    encoding: "utf8",
-    timeout: 60_000,
-    input: secret,
-  });
-  if (r.status !== 0) throw new Error(`varlatchd admin conformance-seed exited ${r.status ?? r.signal}: ${(r.stderr || r.stdout).trim().slice(0, 500)}`);
-  return JSON.parse(r.stdout);
-}
-
 /** A fixed, named probe of server state (the target contract): `varlatchd admin conformance-probe`. */
 export async function probe(state, probeName, ...args) {
   if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
