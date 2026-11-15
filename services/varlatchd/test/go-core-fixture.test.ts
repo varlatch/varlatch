@@ -41,7 +41,7 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@varlatch/contract";
-import { checkDigests, expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, resealWith, withIds, type Fixture, type RequestCase, type Row, type SideTable, type Table } from "./go-fixture-kit.js";
+import { checkDigests, expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, resealWith, withIds, type Fixture, type RawAnswer, type RequestCase, type Row, type SideTable, type Table } from "./go-fixture-kit.js";
 import type { Envelope } from "../src/crypto/aead.js";
 import { decryptValue, unwrapOrgKek } from "../src/crypto/hierarchy.js";
 
@@ -1313,15 +1313,52 @@ function rotationRequests(): Omit<RequestCase, "id">[] {
 }
 
 /** The file's answers, recorded on its own rows. */
-async function replay(f: Fixture) {
+async function replay(f: Fixture, inspect?: (c: RequestCase, raw: RawAnswer) => void) {
   const db = await loadRows(f.rows, TABLES);
   try {
     const ctx: AppCtx = { db, rootKek: Buffer.from(f.rootKek, "hex") };
-    return await record(ctx, () => buildApp(ctx), f, f.requests, fillPath(f.rows));
+    return await record(ctx, () => buildApp(ctx), f, f.requests, fillPath(f.rows), inspect);
   } finally {
     await db.close();
   }
 }
+
+/** The Contract hints on the fixture's rotated items (acme/rotate's HINTED); the Go replay holds the same table. */
+const ROTATION_HINTS: Record<string, number> = { "rotate/HINTED": 3600 };
+
+/**
+ * A begun rotation's deadline is a new time, which the file holds only as
+ * {time}: for every rotation a request began, the answer's
+ * rotationDeadline, value.rotation_started's metadata.deadline and the
+ * stored rotation_deadline are the same instant, the request's time plus
+ * its grace (the request's own, else the Contract's hint, else a day; at
+ * most 30 days). Counts each begin it checked.
+ */
+function rotationDeadlines(checked: { begins: number; problems: string[] }) {
+  return (c: RequestCase, raw: RawAnswer) => {
+    if (c.method !== "POST" || !c.path.endsWith("/rotations")) return;
+    const segments = c.path.split("/");
+    const requested = (c.body as { graceSeconds?: unknown } | undefined)?.graceSeconds;
+    const grace = Math.min(typeof requested === "number" ? requested : ROTATION_HINTS[`${segments[5]}/${segments[9]}`] ?? 86_400, 2_592_000);
+    raw.statuses.forEach((status, i) => {
+      if (status !== 201) return;
+      checked.begins++;
+      const answer = JSON.parse(raw.bodies[i]!) as { primaryVersionId: string; rotationDeadline: string };
+      const event = raw.audit.find((e) => e.event_type === "value.rotation_started" && (e.resource as { versionId?: string }).versionId === answer.primaryVersionId);
+      const row = raw.side.env_values?.find((r) => r.current_version_id === answer.primaryVersionId);
+      const deadlines = [answer.rotationDeadline, (event?.metadata as { deadline?: string } | undefined)?.deadline, row?.rotation_deadline];
+      const at = Date.parse(answer.rotationDeadline);
+      if (new Set(deadlines).size !== 1) checked.problems.push(`${c.name}: the answer's, the audit event's and the stored deadline differ: ${JSON.stringify(deadlines)}`);
+      else if (!(at >= raw.sent + grace * 1000 && at <= raw.done + grace * 1000)) {
+        checked.problems.push(`${c.name}: deadline ${answer.rotationDeadline} is not the request's time plus ${grace} s`);
+      }
+    });
+  };
+}
+
+/** How many rotations the file's requests begin (answers of 201). */
+const beginsIn = (f: Fixture) =>
+  f.requests.filter((r) => r.method === "POST" && r.path.endsWith("/rotations")).reduce((n, r) => n + (r.answers ?? [r.expect]).filter((a) => a.status === 201).length, 0);
 
 /** Each value version's plaintext, opened with this code from the rows. */
 function plaintexts(rows: Record<string, Row[]>, rootKek: Buffer): (version: Row) => string {
@@ -1357,7 +1394,9 @@ describe.skipIf(process.env.VARLATCH_WRITE_GO_VECTORS !== "1")("writing the fixt
           requests: requestTable().map((c) => ({ ...c, expect: { status: 0, headers: {}, body: "" }, audit: [], side: {} })),
           counters: [],
         };
-        writeFileSync(file, JSON.stringify({ ...draft, ...(await replay(draft)) }, null, 2) + "\n");
+        const deadlines = { begins: 0, problems: [] as string[] };
+        writeFileSync(file, JSON.stringify({ ...draft, ...(await replay(draft, rotationDeadlines(deadlines))) }, null, 2) + "\n");
+        expect(deadlines.problems).toEqual([]);
       }
     } finally {
       await ctx.close();
@@ -1409,6 +1448,30 @@ describe("the fixture is this server's answers", () => {
     expectSameRows(TABLES, f.rows, renamed);
   });
 
+  it("the rotation deadline check refuses a deadline changed in the answer or the audit event, or a wrong grace", () => {
+    const c = { id: "x", name: "begin", method: "POST", path: `${ORG}/acme/projects/rotate/environments/development/values/GRACED/rotations`, credential: "alice", body: { value: "v", graceSeconds: 120 } } as RequestCase;
+    const sent = Date.parse("2026-11-15T12:00:00.000Z");
+    const deadline = new Date(sent + 120_000).toISOString();
+    const raw = (answer: string, audited: string, stored: string): RawAnswer => ({
+      sent, done: sent + 5, statuses: [201],
+      bodies: [JSON.stringify({ primaryVersionId: "ver_new", rotationDeadline: answer })],
+      audit: [{ event_type: "value.rotation_started", resource: { versionId: "ver_new" }, metadata: { deadline: audited } }],
+      side: { env_values: [{ current_version_id: "ver_new", rotation_deadline: stored }] },
+    });
+    const run = (r: RawAnswer, at = c) => {
+      const checked = { begins: 0, problems: [] as string[] };
+      rotationDeadlines(checked)(at, r);
+      return checked;
+    };
+    expect(run(raw(deadline, deadline, deadline))).toEqual({ begins: 1, problems: [] });
+    const later = new Date(sent + 121_000).toISOString();
+    expect(run(raw(later, deadline, deadline)).problems.join()).toMatch(/differ/);
+    expect(run(raw(deadline, later, deadline)).problems.join()).toMatch(/differ/);
+    expect(run(raw(later, later, later)).problems.join()).toMatch(/plus 120 s/);
+    // Without the request's grace, the default day.
+    expect(run(raw(deadline, deadline, deadline), { ...c, body: { value: "v" } }).problems.join()).toMatch(/plus 86400 s/);
+  });
+
   it("checkDigests accepts digests that are their manifest's and refuses one that is not", () => {
     const manifest = {
       manifestVersion: 1, projectId: "prj_a", environment: { id: "env_a" }, contract: null,
@@ -1437,7 +1500,11 @@ describe("the fixture is this server's answers", () => {
       expect(f.serverVersion).toBe(SERVER_VERSION);
       expectCurrentTable(f, requestTable());
       expect(f.sideTables).toEqual(SIDE);
-      expectSameAnswers(f, await replay(f));
+      const deadlines = { begins: 0, problems: [] as string[] };
+      expectSameAnswers(f, await replay(f, rotationDeadlines(deadlines)));
+      expect(deadlines.problems).toEqual([]);
+      expect(deadlines.begins).toBe(beginsIn(f));
+      expect(deadlines.begins).toBeGreaterThanOrEqual(12);
       // The file's rows are still what the setup builds (envelopes aside).
       const { ctx } = await build();
       try {

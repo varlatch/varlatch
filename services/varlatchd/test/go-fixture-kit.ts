@@ -122,6 +122,18 @@ export interface Recorded extends RequestCase {
   side: Record<string, SideChange>;
 }
 
+/** What one request produced before normalization (record's inspect). */
+export interface RawAnswer {
+  /** When the request was sent and when every answer was in, in milliseconds. */
+  sent: number;
+  done: number;
+  statuses: number[];
+  bodies: string[];
+  /** The audit events it wrote, and the side rows it inserted or updated, as PostgreSQL returns them. */
+  audit: Row[];
+  side: Record<string, Row[]>;
+}
+
 export interface Fixture {
   comment: string;
   /** The release whose code sealed the rows' envelopes. */
@@ -356,6 +368,12 @@ export async function record(
   cases: RequestCase[],
   /** Fills a request's placeholders, in its path and its body. */
   path: (p: string) => string = (p) => p,
+  /**
+   * Sees each request's answers, audit events and side rows before any
+   * normalization, with when it was sent and answered (as the Go replay's
+   * Target.Inspect): for checks the normalized comparison cannot make.
+   */
+  inspect?: (c: RequestCase, raw: RawAnswer) => void,
 ): Promise<{ requests: Recorded[]; counters: Row[] }> {
   const norm = new Normalizer(f.rows);
   const out: Recorded[] = [];
@@ -373,7 +391,9 @@ export async function record(
     // Placeholders are filled in the body as in the path.
     if (c.rawBody !== undefined) init.body = path(c.rawBody);
     else if ("body" in c) init.body = path(JSON.stringify(c.body));
+    const sent = Date.now();
     const responses = await Promise.all(Array.from({ length: c.concurrent ?? 1 }, () => app.request(path(c.path), init)));
+    const done = Date.now();
     const raw = await Promise.all(responses.map(async (res) => ({ res, id: res.headers.get("X-Request-Id") ?? "", text: await res.text() })));
     // Sorted before normalizing (a request id differs per answer), so the
     // fresh IDs are numbered in the sorted order.
@@ -391,15 +411,18 @@ export async function record(
     answers.sort(answerOrder);
     await accessCountsSettled();
     const ids = new Set(raw.map((r) => r.id));
-    const audit = ((await ctx.db.query(`SELECT ${AUDIT_COLUMNS} FROM audit_events WHERE event_order > $1 ORDER BY event_order`, [before])).rows as Row[])
-      .map((r) => norm.value({ ...r, request_id: ids.has(r.request_id as string) ? REQUEST_ID : r.request_id }) as Row);
+    const rawAudit = (await ctx.db.query(`SELECT ${AUDIT_COLUMNS} FROM audit_events WHERE event_order > $1 ORDER BY event_order`, [before])).rows as Row[];
+    const audit = rawAudit.map((r) => norm.value({ ...r, request_id: ids.has(r.request_id as string) ? REQUEST_ID : r.request_id }) as Row);
     const side: Record<string, SideChange> = {};
+    const rawSide: Record<string, Row[]> = {};
     for (const t of f.sideTables) {
       const d = diff(t, sideBefore.get(t.name)!, await dump(t));
+      rawSide[t.name] = [...d.inserted, ...d.updated];
       const change: SideChange = {};
       for (const k of ["inserted", "updated", "deleted"] as const) if (d[k].length > 0) change[k] = norm.side(t, d[k]);
       if (Object.keys(change).length > 0) side[t.name] = change;
     }
+    inspect?.(c, { sent, done, statuses: raw.map((r) => r.res.status), bodies: raw.map((r) => r.text), audit: rawAudit, side: rawSide });
     out.push({ ...c, expect: answers[0]!, ...(c.concurrent ? { answers } : {}), audit, side });
   }
   const counters = ((await ctx.db.query(
