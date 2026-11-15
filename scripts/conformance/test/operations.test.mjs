@@ -145,6 +145,10 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "createOrganization", "getOrganization", "renameOrganization",
     // Step 4.1b: Contracts.
     "getActiveContract", "pushContractRevision", "getContractRevision", "activateContractRevision",
+    // Step 4.1c: Projects and environments, and the two installation reads.
+    "listProjects", "createProject", "getProject", "renameProject",
+    "listEnvironments", "createEnvironment", "getEnvironment", "deleteEnvironment",
+    "getInstallationRelease", "getInstallationBackups",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is
@@ -157,7 +161,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // pending cap, and the CLI-download-off checks, which need only /v1/meta;
   // and (step 3.5) degraded live updates; (step 3.6) with the target's own
   // seed and the read path of values, varlatch mcp's reads and the server
-  // logs check. Every other one lacks something.
+  // logs check; (step 4.1c) cli-core's env list checks, on the Projects
+  // and environments reads. Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys(), targetCapabilities("go-binary"));
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
@@ -167,7 +172,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   );
   const expected = Object.keys(inventory.checks).filter((id) =>
     /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs)\./.test(id) ||
-    ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format"].includes(id));
+    ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format",
+      "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id));
   assert.deepEqual(runs.sort(), expected.sort());
 });
 

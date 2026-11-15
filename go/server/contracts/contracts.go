@@ -263,6 +263,24 @@ func parsed(r query.ContractRevision) (contract.Contract, error) {
 	return contract.Normalize(v, contract.Options{})
 }
 
+// Active is activeContractOf: the Project's active Contract, or nil when it
+// has none (activeID is the active revision as the caller read the
+// Project); RESOURCE_NOT_FOUND if that revision is not the Project's.
+func Active(ctx context.Context, db query.DBTX, projectID string, activeID sql.NullString) (*contract.Contract, error) {
+	if !activeID.Valid {
+		return nil, nil
+	}
+	r, err := Get(ctx, db, projectID, activeID.String)
+	if err != nil {
+		return nil, err
+	}
+	c, err := parsed(r)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 // Activate is activateRevision (ADR-0013): in one job behind the
 // Organization's and the requester's gates, the writer's checks, the
 // Project's active revision read in the job (so two activations each diff

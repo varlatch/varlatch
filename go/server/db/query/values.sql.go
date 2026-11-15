@@ -177,7 +177,7 @@ func (q *Queries) ExportControl(ctx context.Context, organizationID string) (Exp
 }
 
 const liveEnvironment = `-- name: LiveEnvironment :one
-SELECT id, project_id, name, kind, tier, parent_environment_id, expires_at FROM environments
+SELECT id, project_id, name, kind, tier, parent_environment_id, owner_identity_id, expires_at, created_at FROM environments
 WHERE project_id = ?1 AND (id = ?2 OR name = ?2) AND deleted_at IS NULL
 `
 
@@ -193,7 +193,9 @@ type LiveEnvironmentRow struct {
 	Kind                string
 	Tier                string
 	ParentEnvironmentID sql.NullString
+	OwnerIdentityID     sql.NullString
 	ExpiresAt           sql.NullInt64
+	CreatedAt           int64
 }
 
 // domain/environments.ts getEnvironment: by ID or name, not deleted.
@@ -207,7 +209,9 @@ func (q *Queries) LiveEnvironment(ctx context.Context, arg LiveEnvironmentParams
 		&i.Kind,
 		&i.Tier,
 		&i.ParentEnvironmentID,
+		&i.OwnerIdentityID,
 		&i.ExpiresAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -240,7 +244,7 @@ func (q *Queries) LiveOrganizationExists(ctx context.Context, id string) (int64,
 }
 
 const liveProject = `-- name: LiveProject :one
-SELECT id, organization_id, slug, name, active_contract_revision_id FROM projects
+SELECT id, organization_id, slug, name, contract_authority, active_contract_revision_id, created_at FROM projects
 WHERE organization_id = ?1 AND (id = ?2 OR slug = ?2) AND deleted_at IS NULL
 `
 
@@ -254,7 +258,9 @@ type LiveProjectRow struct {
 	OrganizationID           string
 	Slug                     string
 	Name                     string
+	ContractAuthority        string
 	ActiveContractRevisionID sql.NullString
+	CreatedAt                int64
 }
 
 // domain/projects.ts getProject: by ID or slug, not deleted.
@@ -266,7 +272,9 @@ func (q *Queries) LiveProject(ctx context.Context, arg LiveProjectParams) (LiveP
 		&i.OrganizationID,
 		&i.Slug,
 		&i.Name,
+		&i.ContractAuthority,
 		&i.ActiveContractRevisionID,
+		&i.CreatedAt,
 	)
 	return i, err
 }

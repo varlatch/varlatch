@@ -373,6 +373,31 @@ The server's packages:
   jsonb's text and answered in jsonb's member order, as PostgreSQL hands it
   back to the TypeScript server; a Contract jsonb refuses (U+0000, a lone
   surrogate) fails the push with 500, as the insert fails there.
+- `server/projects` and `server/environments` (step 4.1c): an
+  Organization's Projects (`domain/projects.ts` without deletion, which is
+  step 4.12: creating and renaming one) and a Project's environments
+  (`domain/environments.ts`: creating a root or a derived one, ADR-0012
+  and ADR-0020, and removing one, ADR-0025), each write one job behind the
+  Organization's and the requester's shared gates, with the writer's
+  checks and the passkey-verification checkpoint where the TypeScript code
+  runs them (a derived environment's parent before the checkpoint, a
+  root's rules before it; an environment's removal checks the active
+  Contract's references before the job, as there). Their `created_at` is
+  the clock's microseconds, read in the job, not the column default's
+  milliseconds: the lists are ordered by `created_at, id`, so Projects and
+  environments created within one millisecond still list in creation
+  order. An environment's `expiresAt` is stored as PostgreSQL stores it
+  (`PostgresTimestamp`: the fraction rounded to microseconds half to even,
+  year 0 refused with 500), held to PostgreSQL by
+  `testdata/pg-timestamps.json` (`go-timestamp-vectors.test.ts`).
+  `audit.ISOTime` writes years past 9999 as `toISOString` does
+  (`+010000-…`). Served by `server/httpserver/projects.go`, with
+  `environmentsOut`'s tailnet fields (`tailnetRequired`, and the covering
+  Requirements' IDs for a caller holding `policy.read`, decided without a
+  record). `server/httpserver/installation.go` answers the two
+  installation reads as the TypeScript server does without a maintenance
+  directory: no release check recorded yet (`varlatch upgrade --check`
+  arrives in step 6) and no backup supervisor (step 4.14).
 - `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
   decision 3). `services/varlatchd/test/go-fixture-kit.ts` has the
   TypeScript server build a database through its own `/v1`, run a table of
@@ -403,8 +428,9 @@ The server's packages:
   regenerated with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors);
   4.1a records the Organization operations in it, 4.1b the Contract
   operations (request paths name rows by placeholders: `{project:SLUG}`,
-  and `{rev:KEY}` for the revision holding an item named KEY), and the
-  later 4.1 pull requests add theirs. Name later files `<area>-v<release>.json` in
+  and `{rev:KEY}` for the revision holding an item named KEY), 4.1c the
+  Projects, environments (`{env:PROJECT/NAME}`) and installation reads,
+  and 4.1d adds its own. Name later files `<area>-v<release>.json` in
   `testdata/` (the secret scan's allow list and `scripts/ci-changes.sh`
   match that). `server/values/valuestest` loads its fixtures with the same
   `Prepare`.
@@ -572,6 +598,8 @@ Kept, because they are on the wire:
 | `http/app.ts`, an unknown `/v1` route | Hono's plain-text `404 Not Found` | the same (step 3 decision 4) | `server/httpserver/testdata/known-differences.json` |
 | `http/app.ts`, the request window | `429` with `PERMISSION_DENIED` | the same | the same file |
 | `http/app.ts` `withIdempotency` | a replay answers the stored response read back from jsonb, so its members come in jsonb's order (shorter keys first), not the first answer's | the same | `server/write` `TestReplayVectors` |
+| `domain/environments.ts` `deleteEnvironment`, an environment with live derived ones | the refusal lists them (its message and `details.children`) from a query without `ORDER BY`: PostgreSQL's heap order, which tuple pruning and space reuse change, so not reproducible | by name, the order the core fixture's case records | the core fixture's "delete a root with derived environments" |
+| `http/app.ts` `createEnvironment`, `expiresAt` | zod's `z.string().datetime()` accepts what PostgreSQL's timestamptz refuses (year 0, or a fraction of more than 128 digits, which overflows `timestamptz_in`'s work buffer): the insert fails and the route answers 500 `INTERNAL`, a validation-shaped input with nothing written or counted | the same: `environments.PostgresTimestamp` refuses exactly those, in the job, where the insert would fail | `server/environments` `TestPostgresTimestampVectors` (`testdata/pg-timestamps.json`); the core fixture's "create a preview" requests |
 | PostgreSQL's text and jsonb, under every route | U+0000 in a string written to a text or jsonb column fails the statement: the transaction rolls back and the route answers 500 `INTERNAL`; a lone surrogate reaches a text column as U+FFFD (Node's UTF-8) and fails in jsonb | the same: `write.Text` for text columns (U+0000 refused, lone surrogates as U+FFFD), `jsvalue.JsonbRefuses` for jsonb (`audit.Record`, `write.Idempotent`). **Every later slice applies them to each text or jsonb value it writes**, at the point the TypeScript statement would fail, and records the case in its parity fixture | `server/write` `TestText`; the core fixture's U+0000 and lone-surrogate requests |
 
 Not reproduced:

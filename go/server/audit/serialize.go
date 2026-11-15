@@ -74,7 +74,16 @@ func ISOTime(micros int64) string {
 	if micros < 0 && micros%1000 != 0 {
 		ms-- // floor, as the parser's millisecond arithmetic gives
 	}
-	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05.000Z")
+	t := time.UnixMilli(ms).UTC()
+	if y := t.Year(); y < 0 || y > 9999 {
+		// toISOString's expanded years: a sign and six digits.
+		sign := "+"
+		if y < 0 {
+			sign, y = "-", -y
+		}
+		return fmt.Sprintf("%s%06d", sign, y) + t.Format("-01-02T15:04:05.000Z")
+	}
+	return t.Format("2006-01-02T15:04:05.000Z")
 }
 
 // Serialize is serializeAuditEvent: the public wire shape of an audit event

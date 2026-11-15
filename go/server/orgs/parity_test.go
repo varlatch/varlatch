@@ -29,7 +29,8 @@ import (
 
 // coreTables are the tables of core-v0.22.0.json (go-core-fixture.test.ts).
 var coreTables = []string{"installation", "identities", "user", "auth_user_links", "credentials", "organizations", "org_memberships",
-	"grants", "requirements", "security_controls", "organization_freezes", "organization_deletions", "projects", "contract_revisions"}
+	"grants", "requirements", "security_controls", "organization_freezes", "organization_deletions", "projects", "contract_revisions",
+	"environments", "env_values", "capabilities"}
 
 type server struct {
 	handler *httpserver.Server
@@ -55,7 +56,9 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	vs := values.New(store, rootKEK, values.Options{Log: log})
 	h, err := httpserver.New(httpserver.Options{
-		Version: "test", Backend: daemon.NewBackend(store, rootKEK), Log: log,
+		// The TypeScript server's SERVER_VERSION, which the installation
+		// release read reports.
+		Version: strings.TrimPrefix(f.Ref, "v"), Backend: daemon.NewBackend(store, rootKEK), Log: log,
 		Auth: auth.New(store, auth.Options{Log: log, RootKEK: rootKEK}), Values: vs,
 		Writer: &write.Writer{Store: store, Gates: write.NewGates()}, RootKEK: rootKEK,
 	})
@@ -70,10 +73,11 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 }
 
 // The core fixture's operations give the TypeScript server's answers: the
-// Organization operations (step 4.1a) and the Contract operations (4.1b).
-// Every request, its audit events, the side rows it wrote (Organizations,
-// memberships, Projects, Contract revisions), the report counts; every
-// response valid against the OpenAPI document. Every Organization the
+// Organization operations (step 4.1a), the Contract operations (4.1b), and
+// the Projects, environments and installation reads (4.1c). Every request,
+// its audit events, the side rows it wrote (Organizations, memberships,
+// Projects, Contract revisions, environments, values, Capabilities), the
+// report counts; every response valid against the OpenAPI document. Every Organization the
 // requests created has a KEK that opens with the installation's Root KEK.
 func TestTypeScriptFixture(t *testing.T) {
 	f, err := paritytest.Read(paritytest.Path("core-v0.22.0.json"))
@@ -114,7 +118,8 @@ func TestTypeScriptFixture(t *testing.T) {
 }
 
 // fillPath is go-core-fixture.test.ts's: {orgId} and {goneId}, acme's
-// {project:SLUG}, and {rev:KEY}, the revision holding an item named KEY.
+// live {project:SLUG} and {env:PROJECT/NAME}, and {rev:KEY}, the revision
+// holding an item named KEY.
 func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 	idOf := func(slug string) string {
 		for _, o := range f.Rows["organizations"] {
@@ -126,9 +131,16 @@ func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 	}
 	acme := idOf("acme")
 	pairs := []string{"{orgId}", acme, "{goneId}", idOf("gone")}
+	live := map[string]string{} // acme's live Projects: id to slug
 	for _, p := range f.Rows["projects"] {
-		if p["organization_id"] == acme {
+		if p["organization_id"] == acme && p["deleted_at"] == nil {
+			live[p["id"].(string)] = p["slug"].(string)
 			pairs = append(pairs, "{project:"+p["slug"].(string)+"}", p["id"].(string))
+		}
+	}
+	for _, e := range f.Rows["environments"] {
+		if slug, ok := live[e["project_id"].(string)]; ok && e["deleted_at"] == nil {
+			pairs = append(pairs, "{env:"+slug+"/"+e["name"].(string)+"}", e["id"].(string))
 		}
 	}
 	for _, r := range f.Rows["contract_revisions"] {
@@ -140,7 +152,7 @@ func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 	paths := strings.NewReplacer(pairs...)
 	return func(p string) string {
 		out := paths.Replace(p)
-		if strings.Contains(out, "{rev:") || strings.Contains(out, "{project:") {
+		if strings.Contains(out, "{rev:") || strings.Contains(out, "{project:") || strings.Contains(out, "{env:") {
 			t.Fatalf("%s: a placeholder the rows do not fill", p)
 		}
 		return out
