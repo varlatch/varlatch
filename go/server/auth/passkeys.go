@@ -223,6 +223,11 @@ func (s *Service) verifyAssertion(ctx context.Context, tx query.DBTX, identityID
 // unused challenge of the same three is superseded. At most 10 per person
 // per 10 minutes.
 func (s *Service) StartConfirmation(ctx context.Context, identityID, sessionID, passkeyID string) (RequestOptions, error) {
+	release, gateErr := s.personGate(ctx, identityID, true)
+	if gateErr != nil {
+		return RequestOptions{}, gateErr
+	}
+	defer release()
 	if s.rp == nil {
 		return RequestOptions{}, errNoPublicURL
 	}
@@ -293,6 +298,11 @@ func (s *Service) StartConfirmation(ctx context.Context, identityID, sessionID, 
 // challenge or assertion stays consumed and is audited as
 // authentication.failed; the refusal names the reason (details.reason).
 func (s *Service) Confirm(ctx context.Context, identityID, sessionID, passkeyID string, response json.RawMessage, requestID string) (OwnPasskey, error) {
+	release, gateErr := s.personGate(ctx, identityID, true)
+	if gateErr != nil {
+		return OwnPasskey{}, gateErr
+	}
+	defer release()
 	if s.rp == nil {
 		return OwnPasskey{}, errNoPublicURL
 	}
@@ -401,6 +411,11 @@ func (s *Service) Confirm(ctx context.Context, identityID, sessionID, passkeyID 
 // Varlatch-Approval header ("" for none), consumed in the removal's job.
 // Without one the intent is created and the answer is STEP_UP_REQUIRED.
 func (s *Service) RemoveOwnPasskey(ctx context.Context, req Requester, passkeyID, approvalID string) error {
+	release, gateErr := s.personGate(ctx, req.IdentityID, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer release()
 	var needed *ApprovalNeeded
 	err := s.store.Write(ctx, func(tx *storage.Tx) error {
 		needed = nil
@@ -440,6 +455,10 @@ func (s *Service) RemoveOwnPasskey(ctx context.Context, req Requester, passkeyID
 		return err
 	})
 	if needed != nil && errors.Is(err, needed) {
+		// The intent is created after the removal's gate is released, in
+		// createApproval's own job, as withApproval creates it after the
+		// operation's transaction ended.
+		release()
 		return s.stepUpRequired(ctx, req, needed.Binding)
 	}
 	return err

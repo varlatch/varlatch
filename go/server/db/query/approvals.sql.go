@@ -170,6 +170,25 @@ func (q *Queries) CancelApprovalIntent(ctx context.Context, arg CancelApprovalIn
 	return err
 }
 
+const closeApprovalIntent = `-- name: CloseApprovalIntent :execrows
+UPDATE approval_intents SET closed_at = ?1, close_reason = ?2
+WHERE id = ?3 AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > ?1
+`
+
+type CloseApprovalIntentParams struct {
+	Now    sql.NullInt64
+	Reason sql.NullString
+	ID     string
+}
+
+func (q *Queries) CloseApprovalIntent(ctx context.Context, arg CloseApprovalIntentParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, closeApprovalIntent, arg.Now, arg.Reason, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const consumeApprovalChallenge = `-- name: ConsumeApprovalChallenge :execrows
 UPDATE approval_intent_challenges SET consumed_at = ?1
 WHERE id = ?2 AND consumed_at IS NULL AND expires_at > ?1
@@ -399,6 +418,96 @@ type OpenApprovalsOfCredentialParams struct {
 
 func (q *Queries) OpenApprovalsOfCredential(ctx context.Context, arg OpenApprovalsOfCredentialParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, openApprovalsOfCredential, arg.CredentialID, arg.Now)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const openIntentsOfOrganization = `-- name: OpenIntentsOfOrganization :many
+SELECT id, operation, json_extract(target, '$.control') AS control FROM approval_intents
+WHERE organization_id = ?1 AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > ?2
+ORDER BY id
+`
+
+type OpenIntentsOfOrganizationParams struct {
+	OrganizationID sql.NullString
+	Now            int64
+}
+
+type OpenIntentsOfOrganizationRow struct {
+	ID        string
+	Operation string
+	Control   interface{}
+}
+
+// closeOpenApprovals's candidates, in id order; the filter is the caller's.
+func (q *Queries) OpenIntentsOfOrganization(ctx context.Context, arg OpenIntentsOfOrganizationParams) ([]OpenIntentsOfOrganizationRow, error) {
+	rows, err := q.db.QueryContext(ctx, openIntentsOfOrganization, arg.OrganizationID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OpenIntentsOfOrganizationRow
+	for rows.Next() {
+		var i OpenIntentsOfOrganizationRow
+		if err := rows.Scan(&i.ID, &i.Operation, &i.Control); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const precheckApprovalIntent = `-- name: PrecheckApprovalIntent :one
+SELECT count(*) FROM approval_intents
+WHERE id = ?1 AND approved_at IS NOT NULL AND consumed_at IS NULL AND closed_at IS NULL
+  AND expires_at > ?2
+  AND identity_id = ?3 AND operation = ?4
+  AND ((origin = 'cli' AND credential_id = ?5)
+       OR (origin = 'dashboard' AND ?6 = 'browser' AND auth_session_id = ?7))
+  AND organization_id IS ?8 AND json(target) = json(?9)
+  AND body_hash = ?10 AND query_hash = ?11
+  AND expected_version IS ?12
+`
+
+type PrecheckApprovalIntentParams struct {
+	ID              string
+	Now             int64
+	IdentityID      string
+	Operation       string
+	CredentialID    string
+	CredentialKind  interface{}
+	AuthSessionID   sql.NullString
+	OrganizationID  sql.NullString
+	Target          interface{}
+	BodyHash        string
+	QueryHash       string
+	ExpectedVersion sql.NullInt64
+}
+
+// precheckApproval: whether an approved, unexpired intent for exactly this
+// request exists, consuming nothing.
+func (q *Queries) PrecheckApprovalIntent(ctx context.Context, arg PrecheckApprovalIntentParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, precheckApprovalIntent,
+		arg.ID,
+		arg.Now,
+		arg.IdentityID,
+		arg.Operation,
+		arg.CredentialID,
+		arg.CredentialKind,
+		arg.AuthSessionID,
+		arg.OrganizationID,
+		arg.Target,
+		arg.BodyHash,
+		arg.QueryHash,
+		arg.ExpectedVersion,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err

@@ -128,8 +128,7 @@ func (r reply) VisitGetEffectiveConfigurationResponse(w http.ResponseWriter) err
 func (r reply) VisitDiscloseSecretsResponse(w http.ResponseWriter) error           { return r.visit(w) }
 
 // valuesError adds what the TypeScript server's onError adds to a
-// refusal: Retry-After for an incident freeze; and answers an export this
-// build does not serve with the shared stub's code.
+// refusal: Retry-After for an incident freeze.
 func valuesError(err error) error {
 	var frozen *authz.FrozenError
 	if errors.As(err, &frozen) {
@@ -163,10 +162,14 @@ func (o *operations) DiscloseSecrets(ctx context.Context, _ api.DiscloseSecretsR
 	if err != nil {
 		return nil, err
 	}
-	body, err := o.s.opts.Values.Disclose(ctx, req, rawOf(ctx).body)
-	if errors.Is(err, values.ErrExportUnderEnforce) {
-		return nil, &notBuiltError{operation: disclosurePattern, detail: err.Error()}
+	// The Varlatch-Approval header as sent: read only by an export under
+	// admin-step-up's enforce, so with the control off a malformed one
+	// changes nothing (approvalHeaderOf).
+	if raw := rawOf(ctx); raw.approvalPresent {
+		h := raw.approval
+		req.Approval = &h
 	}
+	body, err := o.s.opts.Values.Disclose(ctx, req, rawOf(ctx).body)
 	if err != nil {
 		return nil, valuesError(err)
 	}
@@ -214,9 +217,3 @@ func (o *operations) StrictRetrieval(ctx context.Context, _ api.StrictRetrievalR
 	stages.Since(ctx, "encoding", m)
 	return ok(encoded(b)), nil
 }
-
-// notBuiltError answers 501 NOT_IMPLEMENTED_YET from inside an operation
-// that is built except for one case.
-type notBuiltError struct{ operation, detail string }
-
-func (e *notBuiltError) Error() string { return e.detail }

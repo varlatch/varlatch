@@ -1,0 +1,1026 @@
+{
+  "comment": "Written by services/varlatchd/test/go-approval-vectors.test.ts from the TypeScript server's code; do not edit.",
+  "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "invisible": [
+    [
+      0,
+      31
+    ],
+    [
+      127,
+      160
+    ],
+    [
+      173,
+      173
+    ],
+    [
+      847,
+      847
+    ],
+    [
+      1536,
+      1541
+    ],
+    [
+      1564,
+      1564
+    ],
+    [
+      1757,
+      1757
+    ],
+    [
+      1807,
+      1807
+    ],
+    [
+      2192,
+      2193
+    ],
+    [
+      2274,
+      2274
+    ],
+    [
+      4447,
+      4448
+    ],
+    [
+      5760,
+      5760
+    ],
+    [
+      6068,
+      6069
+    ],
+    [
+      6155,
+      6159
+    ],
+    [
+      8192,
+      8207
+    ],
+    [
+      8232,
+      8239
+    ],
+    [
+      8287,
+      8303
+    ],
+    [
+      10240,
+      10240
+    ],
+    [
+      12288,
+      12288
+    ],
+    [
+      12644,
+      12644
+    ],
+    [
+      65024,
+      65039
+    ],
+    [
+      65279,
+      65279
+    ],
+    [
+      65440,
+      65440
+    ],
+    [
+      65520,
+      65531
+    ],
+    [
+      69821,
+      69821
+    ],
+    [
+      69837,
+      69837
+    ],
+    [
+      78896,
+      78911
+    ],
+    [
+      113824,
+      113827
+    ],
+    [
+      119155,
+      119162
+    ],
+    [
+      917504,
+      921599
+    ]
+  ],
+  "labels": [
+    {
+      "name": "",
+      "quoted": "\"\"",
+      "labelWithId": "role \"\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"\""
+    },
+    {
+      "name": "reader",
+      "quoted": "\"reader\"",
+      "labelWithId": "role \"reader\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"reader\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"reader\""
+    },
+    {
+      "name": "Bob",
+      "quoted": "\"Bob\"",
+      "labelWithId": "role \"Bob\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"Bob\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"Bob\""
+    },
+    {
+      "name": "Bob ",
+      "quoted": "\"Bob \"",
+      "labelWithId": "role \"Bob \" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"Bob \" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"Bob \""
+    },
+    {
+      "name": " Bob",
+      "quoted": "\" Bob\"",
+      "labelWithId": "role \" Bob\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\" Bob\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \" Bob\""
+    },
+    {
+      "name": "a\"b",
+      "quoted": "\"a\\\"b\"",
+      "labelWithId": "role \"a\\\"b\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"a\\\"b\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"a\\\"b\""
+    },
+    {
+      "name": "a\\b",
+      "quoted": "\"a\\\\b\"",
+      "labelWithId": "role \"a\\\\b\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"a\\\\b\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"a\\\\b\""
+    },
+    {
+      "name": "a\\u{200B}b",
+      "quoted": "\"a\\\\u{200B}b\"",
+      "labelWithId": "role \"a\\\\u{200B}b\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"a\\\\u{200B}b\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"a\\\\u{200B}b\""
+    },
+    {
+      "name": "(rol_abcdefghijklmnopqrstuvwxyz)",
+      "quoted": "\"(rol_abcdefghijklmnopqrstuvwxyz)\"",
+      "labelWithId": "role \"(rol_abcdefghijklmnopqrstuvwxyz)\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"(rol_abcdefghijklmnopqrstuvwxyz)\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"(rol_abcdefghijklmnopqrstuvwxyz)\""
+    },
+    {
+      "name": "x\" (idn_abc)",
+      "quoted": "\"x\\\" (idn_abc)\"",
+      "labelWithId": "role \"x\\\" (idn_abc)\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"x\\\" (idn_abc)\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"x\\\" (idn_abc)\""
+    },
+    {
+      "name": "tab\there",
+      "quoted": "\"tab\\there\"",
+      "labelWithId": "role \"tab\\there\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"tab\\there\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"tab\\there\""
+    },
+    {
+      "name": "line\nbreak",
+      "quoted": "\"line\\nbreak\"",
+      "labelWithId": "role \"line\\nbreak\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"line\\nbreak\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"line\\nbreak\""
+    },
+    {
+      "name": "cr\rlf",
+      "quoted": "\"cr\\rlf\"",
+      "labelWithId": "role \"cr\\rlf\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"cr\\rlf\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"cr\\rlf\""
+    },
+    {
+      "name": "nul\u0000x",
+      "quoted": "\"nul\\u0000x\"",
+      "labelWithId": "role \"nul\\u0000x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"nul\\u0000x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"nul\\u0000x\""
+    },
+    {
+      "name": "delx",
+      "quoted": "\"del\\u{007F}x\"",
+      "labelWithId": "role \"del\\u{007F}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"del\\u{007F}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"del\\u{007F}x\""
+    },
+    {
+      "name": "c1x",
+      "quoted": "\"c1\\u{0085}x\"",
+      "labelWithId": "role \"c1\\u{0085}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"c1\\u{0085}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"c1\\u{0085}x\""
+    },
+    {
+      "name": "nbsp x",
+      "quoted": "\"nbsp\\u{00A0}x\"",
+      "labelWithId": "role \"nbsp\\u{00A0}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"nbsp\\u{00A0}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"nbsp\\u{00A0}x\""
+    },
+    {
+      "name": "ogham x",
+      "quoted": "\"ogham\\u{1680}x\"",
+      "labelWithId": "role \"ogham\\u{1680}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"ogham\\u{1680}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"ogham\\u{1680}x\""
+    },
+    {
+      "name": "en x",
+      "quoted": "\"en\\u{2002}x\"",
+      "labelWithId": "role \"en\\u{2002}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"en\\u{2002}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"en\\u{2002}x\""
+    },
+    {
+      "name": "zw​sp",
+      "quoted": "\"zw\\u{200B}sp\"",
+      "labelWithId": "role \"zw\\u{200B}sp\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"zw\\u{200B}sp\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"zw\\u{200B}sp\""
+    },
+    {
+      "name": "zwnj‌",
+      "quoted": "\"zwnj\\u{200C}\"",
+      "labelWithId": "role \"zwnj\\u{200C}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"zwnj\\u{200C}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"zwnj\\u{200C}\""
+    },
+    {
+      "name": "zwj‍",
+      "quoted": "\"zwj\\u{200D}\"",
+      "labelWithId": "role \"zwj\\u{200D}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"zwj\\u{200D}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"zwj\\u{200D}\""
+    },
+    {
+      "name": "lrm‎",
+      "quoted": "\"lrm\\u{200E}\"",
+      "labelWithId": "role \"lrm\\u{200E}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"lrm\\u{200E}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"lrm\\u{200E}\""
+    },
+    {
+      "name": "rlo‮",
+      "quoted": "\"rlo\\u{202E}\"",
+      "labelWithId": "role \"rlo\\u{202E}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"rlo\\u{202E}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"rlo\\u{202E}\""
+    },
+    {
+      "name": "ls x",
+      "quoted": "\"ls\\u{2028}x\"",
+      "labelWithId": "role \"ls\\u{2028}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"ls\\u{2028}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"ls\\u{2028}x\""
+    },
+    {
+      "name": "ps x",
+      "quoted": "\"ps\\u{2029}x\"",
+      "labelWithId": "role \"ps\\u{2029}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"ps\\u{2029}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"ps\\u{2029}x\""
+    },
+    {
+      "name": "nnbsp x",
+      "quoted": "\"nnbsp\\u{202F}x\"",
+      "labelWithId": "role \"nnbsp\\u{202F}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"nnbsp\\u{202F}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"nnbsp\\u{202F}x\""
+    },
+    {
+      "name": "mmsp x",
+      "quoted": "\"mmsp\\u{205F}x\"",
+      "labelWithId": "role \"mmsp\\u{205F}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"mmsp\\u{205F}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"mmsp\\u{205F}x\""
+    },
+    {
+      "name": "ideo　x",
+      "quoted": "\"ideo\\u{3000}x\"",
+      "labelWithId": "role \"ideo\\u{3000}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"ideo\\u{3000}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"ideo\\u{3000}x\""
+    },
+    {
+      "name": "bom﻿x",
+      "quoted": "\"bom\\u{FEFF}x\"",
+      "labelWithId": "role \"bom\\u{FEFF}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"bom\\u{FEFF}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"bom\\u{FEFF}x\""
+    },
+    {
+      "name": "vs16️",
+      "quoted": "\"vs16\\u{FE0F}\"",
+      "labelWithId": "role \"vs16\\u{FE0F}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"vs16\\u{FE0F}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"vs16\\u{FE0F}\""
+    },
+    {
+      "name": "vs-sup󠄀",
+      "quoted": "\"vs-sup\\u{E0100}\"",
+      "labelWithId": "role \"vs-sup\\u{E0100}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"vs-sup\\u{E0100}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"vs-sup\\u{E0100}\""
+    },
+    {
+      "name": "mongolian᠎x",
+      "quoted": "\"mongolian\\u{180E}x\"",
+      "labelWithId": "role \"mongolian\\u{180E}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"mongolian\\u{180E}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"mongolian\\u{180E}x\""
+    },
+    {
+      "name": "hangulㅤx",
+      "quoted": "\"hangul\\u{3164}x\"",
+      "labelWithId": "role \"hangul\\u{3164}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"hangul\\u{3164}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"hangul\\u{3164}x\""
+    },
+    {
+      "name": "braille⠀x",
+      "quoted": "\"braille\\u{2800}x\"",
+      "labelWithId": "role \"braille\\u{2800}x\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"braille\\u{2800}x\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"braille\\u{2800}x\""
+    },
+    {
+      "name": "soft­hyphen",
+      "quoted": "\"soft\\u{00AD}hyphen\"",
+      "labelWithId": "role \"soft\\u{00AD}hyphen\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"soft\\u{00AD}hyphen\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"soft\\u{00AD}hyphen\""
+    },
+    {
+      "name": "cgj͏",
+      "quoted": "\"cgj\\u{034F}\"",
+      "labelWithId": "role \"cgj\\u{034F}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"cgj\\u{034F}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"cgj\\u{034F}\""
+    },
+    {
+      "name": "tag󠁁",
+      "quoted": "\"tag\\u{E0041}\"",
+      "labelWithId": "role \"tag\\u{E0041}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"tag\\u{E0041}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"tag\\u{E0041}\""
+    },
+    {
+      "name": "shorthand𛲠",
+      "quoted": "\"shorthand\\u{1BCA0}\"",
+      "labelWithId": "role \"shorthand\\u{1BCA0}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"shorthand\\u{1BCA0}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"shorthand\\u{1BCA0}\""
+    },
+    {
+      "name": "interlinear￹",
+      "quoted": "\"interlinear\\u{FFF9}\"",
+      "labelWithId": "role \"interlinear\\u{FFF9}\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"interlinear\\u{FFF9}\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"interlinear\\u{FFF9}\""
+    },
+    {
+      "name": "emoji😀",
+      "quoted": "\"emoji😀\"",
+      "labelWithId": "role \"emoji😀\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"emoji😀\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"emoji😀\""
+    },
+    {
+      "name": "é",
+      "quoted": "\"é\"",
+      "labelWithId": "role \"é\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"é\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"é\""
+    },
+    {
+      "name": "日本語",
+      "quoted": "\"日本語\"",
+      "labelWithId": "role \"日本語\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"日本語\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"日本語\""
+    },
+    {
+      "name": "􏿿",
+      "quoted": "\"􏿿\"",
+      "labelWithId": "role \"􏿿\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"􏿿\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"􏿿\""
+    },
+    {
+      "name": "�",
+      "quoted": "\"�\"",
+      "labelWithId": "role \"�\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"�\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"�\""
+    },
+    {
+      "name": "back\\u{0041}slash",
+      "quoted": "\"back\\\\u{0041}slash\"",
+      "labelWithId": "role \"back\\\\u{0041}slash\" (rol_abcdefghijklmnopqrstuvwxyz)",
+      "labelWithoutKind": "\"back\\\\u{0041}slash\" (idn_abcdefghijklmnopqrstuvwxyz)",
+      "unnamed": "grant with unknown id \"back\\\\u{0041}slash\""
+    }
+  ],
+  "lists": [
+    {
+      "names": [],
+      "quotedList": "[]",
+      "list": "[]"
+    },
+    {
+      "names": [
+        "a"
+      ],
+      "quotedList": "[\"a\"]",
+      "list": "[\"a\" (idn_x)]"
+    },
+    {
+      "names": [
+        "",
+        "reader",
+        "Bob",
+        "Bob ",
+        " Bob",
+        "a\"b"
+      ],
+      "quotedList": "[\"\", \"reader\", \"Bob\", \"Bob \", \" Bob\", \"a\\\"b\"]",
+      "list": "[\"\" (idn_x), \"reader\" (idn_x), \"Bob\" (idn_x), \"Bob \" (idn_x), \" Bob\" (idn_x), \"a\\\"b\" (idn_x)]"
+    },
+    {
+      "names": [
+        "tab\there",
+        "line\nbreak",
+        "cr\rlf",
+        "nul\u0000x",
+        "delx",
+        "c1x",
+        "nbsp x",
+        "ogham x",
+        "en x",
+        "zw​sp"
+      ],
+      "quotedList": "[\"tab\\there\", \"line\\nbreak\", \"cr\\rlf\", \"nul\\u0000x\", \"del\\u{007F}x\", \"c1\\u{0085}x\", \"nbsp\\u{00A0}x\", \"ogham\\u{1680}x\", \"en\\u{2002}x\", \"zw\\u{200B}sp\"]",
+      "list": "[\"tab\\there\" (idn_x), \"line\\nbreak\" (idn_x), \"cr\\rlf\" (idn_x), \"nul\\u0000x\" (idn_x), \"del\\u{007F}x\" (idn_x), \"c1\\u{0085}x\" (idn_x), \"nbsp\\u{00A0}x\" (idn_x), \"ogham\\u{1680}x\" (idn_x), \"en\\u{2002}x\" (idn_x), \"zw\\u{200B}sp\" (idn_x)]"
+    }
+  ],
+  "maps": [
+    {
+      "map": {},
+      "quotedMap": "{}"
+    },
+    {
+      "map": {
+        "repo": "acme/api",
+        "ref": "main"
+      },
+      "quotedMap": "{\"ref\": \"main\", \"repo\": \"acme/api\"}"
+    },
+    {
+      "map": {
+        "": "back\\u{0041}slash",
+        "reader": "�",
+        "Bob": "􏿿",
+        "Bob ": "日本語",
+        " Bob": "é",
+        "a\"b": "emoji😀",
+        "a\\b": "interlinear￹",
+        "a\\u{200B}b": "shorthand𛲠",
+        "(rol_abcdefghijklmnopqrstuvwxyz)": "tag󠁁",
+        "x\" (idn_abc)": "cgj͏",
+        "tab\there": "soft­hyphen",
+        "line\nbreak": "braille⠀x"
+      },
+      "quotedMap": "{\"\": \"back\\\\u{0041}slash\", \" Bob\": \"é\", \"(rol_abcdefghijklmnopqrstuvwxyz)\": \"tag\\u{E0041}\", \"Bob\": \"􏿿\", \"Bob \": \"日本語\", \"a\\\"b\": \"emoji😀\", \"a\\\\b\": \"interlinear\\u{FFF9}\", \"a\\\\u{200B}b\": \"shorthand\\u{1BCA0}\", \"line\\nbreak\": \"braille\\u{2800}x\", \"reader\": \"�\", \"tab\\there\": \"soft\\u{00AD}hyphen\", \"x\\\" (idn_abc)\": \"cgj\\u{034F}\"}"
+    }
+  ],
+  "digests": [
+    {
+      "value": null,
+      "canonical": "null",
+      "body": "hmac-v1:846f66357d9e1932920ea98483df6ee5ba0b680064c24dcb39d50628c0eea10c",
+      "query": "hmac-v1:655073fa15188b43e12f407a4e19de9d92d434af97cd1a8afc148a0152033f52"
+    },
+    {
+      "value": true,
+      "canonical": "true",
+      "body": "hmac-v1:d5dcee4625e4dbd50b9550db9b9b2a42e45429bf9753e0bd16d39affdb132293",
+      "query": "hmac-v1:b7f4cee52a37afb9eadb0ba2da411baf92bc36df58e169be21b55fd3a99070cc"
+    },
+    {
+      "value": 0,
+      "canonical": "0",
+      "body": "hmac-v1:6790f6ba2d129728644d9a8243ebc489b97d24cf2b0b771fd22df863fc1fdb57",
+      "query": "hmac-v1:0903a59d0d127a079aa1d41143fb271a8cb172da7d41e1b530e84e42bfc3c53f"
+    },
+    {
+      "value": 1.5,
+      "canonical": "1.5",
+      "body": "hmac-v1:aa31a0bb9a622f971a04e6f70c55a59dc9dfae0eb1cb491cba87210ac85094b6",
+      "query": "hmac-v1:5a37228aedada5d1c789e774b3f2fffc9a65b8e474aab687848c49f8e6ad21c1"
+    },
+    {
+      "value": 1e+21,
+      "canonical": "1e+21",
+      "body": "hmac-v1:fe3fc395d9d60f6c0ab9b95659b0d174c3927d518d8543ee59a41c6d87784738",
+      "query": "hmac-v1:a6856141dcf70472a0fbdeb270798cb58f5dd923681a319dfed2edb8532d6878"
+    },
+    {
+      "value": 123456789012,
+      "canonical": "123456789012",
+      "body": "hmac-v1:34ec7a233bed81001b214d631c6658da76fa62bd10a1eb03a54b171adc1ae800",
+      "query": "hmac-v1:e867c6b43001ebb735bd35b1f1cd09cde8f8567ed90cc9ca9ca12407522970f7"
+    },
+    {
+      "value": "text",
+      "canonical": "\"text\"",
+      "body": "hmac-v1:a8dc6c87714b548ae12be6019f8bf7109177218256986ec66c2a941cae18b277",
+      "query": "hmac-v1:906c5f2e254f643d52e74c0e66fb531ce04753f360da0a2e2dec9eb348206f56"
+    },
+    {
+      "value": "é😀 ",
+      "canonical": "\"é😀 \"",
+      "body": "hmac-v1:bba9f27551ddf8f57cc1761f4017113bf042d8319157c39a9887a12857a78f3a",
+      "query": "hmac-v1:0e6a01e4f1cb7ab5db0cd7b49001944137d8a5aeedfdfc242c59fed99e150103"
+    },
+    {
+      "value": [],
+      "canonical": "[]",
+      "body": "hmac-v1:3ee56d842a2036259afaa69b58debd82385d0fe708ffe329d8ec5e5558f83b83",
+      "query": "hmac-v1:8604b289eecbedb0623546e8ebf75397cc1a7fcc95f3f68931e176419fc67ff5"
+    },
+    {
+      "value": {},
+      "canonical": "{}",
+      "body": "hmac-v1:d75ed1418cbc55ea3c9541a451aa6500f87bed8076cd32b6ca6178191689c11e",
+      "query": "hmac-v1:92eace965d3f0c902712659453d835ca648161f931d09abd9d3532e1e68acb83"
+    },
+    {
+      "value": {
+        "b": 1,
+        "a": 2
+      },
+      "canonical": "{\"a\":2,\"b\":1}",
+      "body": "hmac-v1:8dd582075e1d4fdaa134cd6fcbb0dffa1a59c50e26af1c4e52386dfc41fb3424",
+      "query": "hmac-v1:8109e3fe36338ff2487bad428c6f475322ee9dd7214eda57775dcddb692d2d5e"
+    },
+    {
+      "value": {
+        "z": null,
+        "a": [
+          3,
+          {
+            "y": "x",
+            "b": false
+          }
+        ]
+      },
+      "canonical": "{\"a\":[3,{\"b\":false,\"y\":\"x\"}],\"z\":null}",
+      "body": "hmac-v1:015f1d4dea3fbc8fc083f8bcf75802a0aafa003b746baab2b1451b0305969d5c",
+      "query": "hmac-v1:444798e5f23a953107ff91f83f6dfa04a4a0923faddb4e3d32402fc96102e517"
+    },
+    {
+      "value": {
+        "9": 9,
+        "10": 8,
+        "é": 1,
+        "z": 2,
+        "Z": 3,
+        "😀": 4,
+        "～": 5,
+        "a\u0000": 6,
+        "": 7
+      },
+      "canonical": "{\"\":7,\"10\":8,\"9\":9,\"Z\":3,\"a\\u0000\":6,\"z\":2,\"é\":1,\"😀\":4,\"～\":5}",
+      "body": "hmac-v1:ed48ff3049338bf96003ff777c4beb6b11c14efd0ab14a9bff123bef9d97f365",
+      "query": "hmac-v1:2fa8422ad81632d7a3d034ba9d7dfc45b08cd161df34c75de48f808120aaea31"
+    },
+    {
+      "value": {
+        "mode": "off",
+        "config": null,
+        "expectedVersion": 3
+      },
+      "canonical": "{\"config\":null,\"expectedVersion\":3,\"mode\":\"off\"}",
+      "body": "hmac-v1:e9936b8105241af42e2a5b998ad768c180926a38f3aefdc167c01fbf45bd0ee9",
+      "query": "hmac-v1:2144aa313eb489bfe7db8a03be1bfe115741e799e6576dc61d5fdee5626a5049"
+    },
+    {
+      "value": {
+        "mode": "enforce",
+        "config": {
+          "maxTtlSeconds": 7200,
+          "defaultTtlSeconds": 600
+        },
+        "expectedVersion": 0
+      },
+      "canonical": "{\"config\":{\"defaultTtlSeconds\":600,\"maxTtlSeconds\":7200},\"expectedVersion\":0,\"mode\":\"enforce\"}",
+      "body": "hmac-v1:b3fd9c4f72ecf66191155612744b19374d3380f9afdc53f801422822ad73e141",
+      "query": "hmac-v1:82e964aa1011dbe709c1e6e41c02e0d1a341e614a9764fdcf0aba17805e503c5"
+    },
+    {
+      "value": {
+        "purpose": "export",
+        "mode": "items",
+        "requested": [
+          "A",
+          "B"
+        ],
+        "disclosed": [
+          "A"
+        ]
+      },
+      "canonical": "{\"disclosed\":[\"A\"],\"mode\":\"items\",\"purpose\":\"export\",\"requested\":[\"A\",\"B\"]}",
+      "body": "hmac-v1:cb0e08ead0e8b45810af7cdc605ee7eb77f6fc9e61b4c12333abc509e6b7c966",
+      "query": "hmac-v1:4b6fd0fead4e82b6e7997324b5d9ab90a8547ee7f912b3aafa717410992a56c1"
+    },
+    {
+      "value": {
+        "control": "admin-step-up"
+      },
+      "canonical": "{\"control\":\"admin-step-up\"}",
+      "body": "hmac-v1:1dbe6685be23f70d792d4301201067cb74dfe7ff5cbb526f752902bc70c5acf7",
+      "query": "hmac-v1:3592dabf4856fbf567f0ab829d449b49e5c3b46a75e9cb4d5c20c325bccada4d"
+    },
+    {
+      "value": {
+        "projectId": "prj_a",
+        "environmentId": "env_b"
+      },
+      "canonical": "{\"environmentId\":\"env_b\",\"projectId\":\"prj_a\"}",
+      "body": "hmac-v1:7eef1cb6c2b22c09cd2bac3760c91c28f57329e2d6020b5f10a48f660ab6d7d5",
+      "query": "hmac-v1:ad114ca538c19f5bb28f6f9fe10ea5f024e3580edda78ec31f29051a2b11d6bf"
+    }
+  ],
+  "operations": [
+    "security_control.change",
+    "passkey.remove",
+    "organization.unfreeze",
+    "requirement.update",
+    "requirement.revoke",
+    "identity.create",
+    "credential.issue",
+    "identity.reactivate",
+    "oidc_binding.create",
+    "oidc_binding.delete",
+    "grant.create",
+    "grant.replace",
+    "grant.revoke",
+    "role.create",
+    "role.update",
+    "role.delete",
+    "group.create",
+    "group.update",
+    "group.delete",
+    "group.member_add",
+    "group.member_remove",
+    "team.create",
+    "team.update",
+    "team.delete",
+    "team.member_add",
+    "team.member_remove",
+    "team.project_add",
+    "team.project_remove",
+    "member.invite_admin",
+    "member.promote",
+    "member.demote",
+    "member.remove",
+    "webhook.create",
+    "webhook.update",
+    "webhook.delete",
+    "connection.create",
+    "connection.replace_credential",
+    "connection.delete",
+    "github_app.register",
+    "github_app.import",
+    "github_app.replace_key",
+    "github_app.remove",
+    "project.delete",
+    "organization.delete",
+    "secret.export",
+    "audit_export.change",
+    "audit_export.remove"
+  ],
+  "controlOperations": {
+    "requirement-protection": [
+      "requirement.update",
+      "requirement.revoke"
+    ],
+    "admin-step-up": [
+      "identity.create",
+      "credential.issue",
+      "identity.reactivate",
+      "oidc_binding.create",
+      "oidc_binding.delete",
+      "grant.create",
+      "grant.replace",
+      "grant.revoke",
+      "role.create",
+      "role.update",
+      "role.delete",
+      "group.create",
+      "group.update",
+      "group.delete",
+      "group.member_add",
+      "group.member_remove",
+      "team.create",
+      "team.update",
+      "team.delete",
+      "team.member_add",
+      "team.member_remove",
+      "team.project_add",
+      "team.project_remove",
+      "member.invite_admin",
+      "member.promote",
+      "member.demote",
+      "member.remove",
+      "webhook.create",
+      "webhook.update",
+      "webhook.delete",
+      "connection.create",
+      "connection.replace_credential",
+      "connection.delete",
+      "github_app.register",
+      "github_app.import",
+      "github_app.replace_key",
+      "github_app.remove",
+      "project.delete",
+      "organization.delete",
+      "secret.export"
+    ]
+  },
+  "duringFreeze": [
+    "connection.delete",
+    "grant.revoke",
+    "member.demote",
+    "member.remove",
+    "oidc_binding.delete",
+    "organization.unfreeze",
+    "security_control.change"
+  ],
+  "exports": [
+    {
+      "project": "API",
+      "environment": "production",
+      "request": {
+        "items": [
+          "B",
+          "A",
+          "B"
+        ]
+      },
+      "selected": [
+        "B",
+        "A"
+      ],
+      "binding": {
+        "operation": "secret.export",
+        "organizationId": "org_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target": {
+          "projectId": "prj_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "environmentId": "env_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": {
+          "purpose": "export",
+          "mode": "items",
+          "requested": [
+            "A",
+            "B"
+          ],
+          "disclosed": [
+            "A",
+            "B"
+          ]
+        },
+        "query": {},
+        "expectedVersion": null,
+        "summary": {
+          "title": "Export 2 Secrets of project \"API\" (prj_aaaaaaaaaaaaaaaaaaaaaaaaaa) / environment \"production\" (env_aaaaaaaaaaaaaaaaaaaaaaaaaa) to a file: [\"A\", \"B\"]",
+          "changes": [
+            {
+              "field": "selection",
+              "from": null,
+              "to": "the Secrets requested",
+              "loosens": false
+            },
+            {
+              "field": "requested",
+              "from": null,
+              "to": "[\"A\", \"B\"]",
+              "loosens": false
+            },
+            {
+              "field": "disclosed",
+              "from": null,
+              "to": "[\"A\", \"B\"]",
+              "loosens": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "project": "API",
+      "environment": "production",
+      "request": {
+        "scope": "all-authorized-secrets"
+      },
+      "selected": [
+        "Z",
+        "a",
+        "B"
+      ],
+      "binding": {
+        "operation": "secret.export",
+        "organizationId": "org_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target": {
+          "projectId": "prj_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "environmentId": "env_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": {
+          "purpose": "export",
+          "mode": "all-authorized-secrets",
+          "requested": null,
+          "disclosed": [
+            "B",
+            "Z",
+            "a"
+          ]
+        },
+        "query": {},
+        "expectedVersion": null,
+        "summary": {
+          "title": "Export 3 Secrets of project \"API\" (prj_aaaaaaaaaaaaaaaaaaaaaaaaaa) / environment \"production\" (env_aaaaaaaaaaaaaaaaaaaaaaaaaa) to a file: [\"B\", \"Z\", \"a\"]",
+          "changes": [
+            {
+              "field": "selection",
+              "from": null,
+              "to": "every Secret you may reveal",
+              "loosens": false
+            },
+            {
+              "field": "disclosed",
+              "from": null,
+              "to": "[\"B\", \"Z\", \"a\"]",
+              "loosens": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "project": "My \"api\"",
+      "environment": "dev​",
+      "request": {
+        "items": [
+          "S"
+        ]
+      },
+      "selected": [
+        "S"
+      ],
+      "binding": {
+        "operation": "secret.export",
+        "organizationId": "org_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target": {
+          "projectId": "prj_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "environmentId": "env_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": {
+          "purpose": "export",
+          "mode": "items",
+          "requested": [
+            "S"
+          ],
+          "disclosed": [
+            "S"
+          ]
+        },
+        "query": {},
+        "expectedVersion": null,
+        "summary": {
+          "title": "Export 1 Secret of project \"My \\\"api\\\"\" (prj_aaaaaaaaaaaaaaaaaaaaaaaaaa) / environment \"dev\\u{200B}\" (env_aaaaaaaaaaaaaaaaaaaaaaaaaa) to a file: [\"S\"]",
+          "changes": [
+            {
+              "field": "selection",
+              "from": null,
+              "to": "the Secrets requested",
+              "loosens": false
+            },
+            {
+              "field": "requested",
+              "from": null,
+              "to": "[\"S\"]",
+              "loosens": false
+            },
+            {
+              "field": "disclosed",
+              "from": null,
+              "to": "[\"S\"]",
+              "loosens": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "project": "API",
+      "environment": "dev",
+      "request": {
+        "items": [
+          "X"
+        ]
+      },
+      "selected": [],
+      "binding": null
+    },
+    {
+      "project": "API",
+      "environment": "dev",
+      "request": {
+        "items": [
+          "😀",
+          "～",
+          "é"
+        ]
+      },
+      "selected": [
+        "😀",
+        "～",
+        "é"
+      ],
+      "binding": {
+        "operation": "secret.export",
+        "organizationId": "org_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target": {
+          "projectId": "prj_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "environmentId": "env_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": {
+          "purpose": "export",
+          "mode": "items",
+          "requested": [
+            "é",
+            "😀",
+            "～"
+          ],
+          "disclosed": [
+            "é",
+            "😀",
+            "～"
+          ]
+        },
+        "query": {},
+        "expectedVersion": null,
+        "summary": {
+          "title": "Export 3 Secrets of project \"API\" (prj_aaaaaaaaaaaaaaaaaaaaaaaaaa) / environment \"dev\" (env_aaaaaaaaaaaaaaaaaaaaaaaaaa) to a file: [\"é\", \"😀\", \"～\"]",
+          "changes": [
+            {
+              "field": "selection",
+              "from": null,
+              "to": "the Secrets requested",
+              "loosens": false
+            },
+            {
+              "field": "requested",
+              "from": null,
+              "to": "[\"é\", \"😀\", \"～\"]",
+              "loosens": false
+            },
+            {
+              "field": "disclosed",
+              "from": null,
+              "to": "[\"é\", \"😀\", \"～\"]",
+              "loosens": false
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
@@ -94,6 +95,9 @@ type ApprovalSummary struct {
 	Changes []ApprovalChange
 }
 
+// JS is the summary as an intent stores it and an approver reads it.
+func (s ApprovalSummary) JS() jsvalue.Object { return s.value() }
+
 func (s ApprovalSummary) value() jsvalue.Object {
 	changes := make([]any, 0, len(s.Changes))
 	for _, c := range s.Changes {
@@ -123,6 +127,21 @@ type Binding struct {
 	Summary         ApprovalSummary
 }
 
+// jsCompare is JavaScript's string order (a < b): by UTF-16 code units,
+// which byte order differs from for a code point above U+FFFF against one
+// from U+E000 to U+FFFF.
+func jsCompare(a, b string) int {
+	return slices.Compare(utf16.Encode([]rune(a)), utf16.Encode([]rune(b)))
+}
+
+// CanonicalJSON is canonicalJson: JSON with object keys sorted, so equal
+// values hash equally whatever their key order.
+func CanonicalJSON(v any) string { return canonicalJSON(v) }
+
+// ApprovalHash is approvalHash: the keyed hash of a normalized body or
+// query ("body" or "query") an approval binds.
+func ApprovalHash(key []byte, kind string, value any) string { return approvalHash(key, kind, value) }
+
 // canonicalJSON is canonicalJson: JSON with object keys sorted, so equal
 // values hash equally whatever their key order.
 func canonicalJSON(v any) string {
@@ -134,7 +153,7 @@ func canonicalJSON(v any) string {
 		for k := range x {
 			keys = append(keys, k)
 		}
-		slices.Sort(keys)
+		slices.SortFunc(keys, jsCompare)
 		parts := make([]string, len(keys))
 		for i, k := range keys {
 			parts[i] = string(jsvalue.Stringify(k)) + ":" + string(jsvalue.Stringify(x[k]))
@@ -142,7 +161,7 @@ func canonicalJSON(v any) string {
 		return "{" + strings.Join(parts, ",") + "}"
 	case jsvalue.Object:
 		sorted := slices.Clone(x)
-		slices.SortStableFunc(sorted, func(a, b jsvalue.Member) int { return strings.Compare(a.Key, b.Key) })
+		slices.SortStableFunc(sorted, func(a, b jsvalue.Member) int { return jsCompare(a.Key, b.Key) })
 		parts := make([]string, 0, len(sorted))
 		for _, m := range sorted {
 			parts = append(parts, string(jsvalue.Stringify(m.Key))+":"+canonicalJSON(m.Value))
@@ -319,6 +338,11 @@ var OperationsDuringFreeze = map[string]bool{
 // credential, within the bounds (createApproval). Only a person's
 // dashboard or CLI credential can be approved.
 func (s *Service) createApproval(ctx context.Context, req Requester, b Binding) (jsvalue.Object, error) {
+	release, gateErr := s.personGate(ctx, req.IdentityID, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer release()
 	if req.IdentityKind != "human" || (req.CredentialKind != KindBrowser && req.CredentialKind != KindCLI) {
 		return nil, &domainerr.Error{Code: "PERMISSION_DENIED", Message: "This needs a person's approval with a passkey, which a machine credential cannot give",
 			Details: jsvalue.Object{{Key: "reason", Value: "machine-credential"}}}
@@ -587,6 +611,11 @@ func (s *Service) GetApproval(ctx context.Context, req Requester, approvalID str
 // bound to the intent, the person and their session; it expires with the
 // intent at the latest. At most 20 per person per 10 minutes.
 func (s *Service) StartApproval(ctx context.Context, identityID, sessionID, approvalID string) (RequestOptions, error) {
+	release, gateErr := s.personGate(ctx, identityID, true)
+	if gateErr != nil {
+		return RequestOptions{}, gateErr
+	}
+	defer release()
 	if s.rp == nil {
 		return RequestOptions{}, errNoPublicURL
 	}
@@ -659,6 +688,11 @@ func (s *Service) StartApproval(ctx context.Context, identityID, sessionID, appr
 // the passkey that asserted. A refused challenge or assertion stays
 // consumed and is audited as authentication.failed.
 func (s *Service) ApproveApproval(ctx context.Context, identityID, sessionID, approvalID string, response json.RawMessage, requestID string) (jsvalue.Object, error) {
+	release, gateErr := s.personGate(ctx, identityID, true)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer release()
 	if s.rp == nil {
 		return nil, errNoPublicURL
 	}
@@ -755,6 +789,11 @@ func (s *Service) ApproveApproval(ctx context.Context, identityID, sessionID, ap
 // (cancelApproval): one of the person's approvals that is pending, or
 // approved and not used yet.
 func (s *Service) CancelApproval(ctx context.Context, identityID, approvalID string) (jsvalue.Object, error) {
+	release, gateErr := s.personGate(ctx, identityID, true)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer release()
 	var view jsvalue.Object
 	err := s.store.Write(ctx, func(tx *storage.Tx) error {
 		now := s.micros()
@@ -778,4 +817,108 @@ func (s *Service) CancelApproval(ctx context.Context, identityID, approvalID str
 		return err
 	})
 	return view, err
+}
+
+// ApprovalOperations is APPROVAL_OPERATIONS: every operation an approval
+// can be asked for (the schema's approval_intents_operation_check).
+var ApprovalOperations = []string{
+	"security_control.change", "passkey.remove", "organization.unfreeze",
+	"requirement.update", "requirement.revoke",
+	"identity.create", "credential.issue", "identity.reactivate", "oidc_binding.create", "oidc_binding.delete",
+	"grant.create", "grant.replace", "grant.revoke",
+	"role.create", "role.update", "role.delete",
+	"group.create", "group.update", "group.delete", "group.member_add", "group.member_remove",
+	"team.create", "team.update", "team.delete", "team.member_add", "team.member_remove",
+	"team.project_add", "team.project_remove",
+	"member.invite_admin", "member.promote", "member.demote", "member.remove",
+	"webhook.create", "webhook.update", "webhook.delete",
+	"connection.create", "connection.replace_credential", "connection.delete",
+	"github_app.register", "github_app.import", "github_app.replace_key", "github_app.remove",
+	"project.delete", "organization.delete", "secret.export",
+	"audit_export.change", "audit_export.remove",
+}
+
+// ControlApprovalOperations is CONTROL_APPROVAL_OPERATIONS: the operations
+// a control at enforce asks approvals for, per control. The operator's
+// reset of a control closes their open intents with its own.
+var ControlApprovalOperations = map[string][]string{
+	"requirement-protection": {"requirement.update", "requirement.revoke"},
+	"admin-step-up": {
+		"identity.create", "credential.issue", "identity.reactivate", "oidc_binding.create", "oidc_binding.delete",
+		"grant.create", "grant.replace", "grant.revoke",
+		"role.create", "role.update", "role.delete",
+		"group.create", "group.update", "group.delete", "group.member_add", "group.member_remove",
+		"team.create", "team.update", "team.delete", "team.member_add", "team.member_remove",
+		"team.project_add", "team.project_remove",
+		"member.invite_admin", "member.promote", "member.demote", "member.remove",
+		"webhook.create", "webhook.update", "webhook.delete",
+		"connection.create", "connection.replace_credential", "connection.delete",
+		"github_app.register", "github_app.import", "github_app.replace_key", "github_app.remove",
+		"project.delete", "organization.delete", "secret.export",
+	},
+}
+
+// PrecheckApproval is precheckApproval: before an operation asks anything
+// outside Varlatch (amendment D), an approved, unexpired intent for
+// exactly this request must exist; nothing is consumed (consumption, in
+// the final job, checks everything again). It refuses as consumption does.
+func (s *Service) PrecheckApproval(ctx context.Context, db query.DBTX, req Requester, approvalID string, b Binding) error {
+	now := s.micros()
+	bodyHash, queryHash := approvalHash(s.rootKEK, "body", b.Body), approvalHash(s.rootKEK, "query", b.Query)
+	var kind any = req.CredentialKind
+	n, err := query.New(db).PrecheckApprovalIntent(ctx, query.PrecheckApprovalIntentParams{
+		ID: approvalID, Now: now, IdentityID: req.IdentityID, Operation: b.Operation,
+		CredentialID: req.CredentialID, CredentialKind: kind, AuthSessionID: nullStr(req.AuthSessionID),
+		OrganizationID: nullStr(b.OrganizationID), Target: canonicalJSON(b.Target), BodyHash: bodyHash, QueryHash: queryHash,
+		ExpectedVersion: nullInt(b.ExpectedVersion),
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return s.refusalOf(ctx, db, req, approvalID, b, bodyHash, queryHash, now)
+	}
+	return nil
+}
+
+// Close reasons (closeOpenApprovals).
+const (
+	CloseReset               = "reset"
+	CloseOrganizationDeleted = "organization-deleted"
+	CloseFrozen              = "frozen"
+)
+
+// CloseOpenApprovals is closeOpenApprovals, in the caller's write job: every
+// open intent of the Organization the filter selects closed with reason.
+// controls (nil: no filter by control) selects changes of those controls
+// and the operations they ask approvals for (ControlApprovalOperations);
+// operations (nil: any) narrows to those operations. The caller holds the
+// Organization's gate exclusive, so no intent of it is created meanwhile,
+// and a start, approval or consumption is one job, so none is in flight.
+// It returns how many it closed.
+func (s *Service) CloseOpenApprovals(ctx context.Context, tx query.DBTX, organizationID, reason string, controls, operations []string) (int, error) {
+	now := s.micros()
+	q := query.New(tx)
+	open, err := q.OpenIntentsOfOrganization(ctx, query.OpenIntentsOfOrganizationParams{OrganizationID: sql.NullString{String: organizationID, Valid: true}, Now: now})
+	if err != nil {
+		return 0, err
+	}
+	var gated []string
+	for _, c := range controls {
+		gated = append(gated, ControlApprovalOperations[c]...)
+	}
+	closed := 0
+	for _, r := range open {
+		control, _ := r.Control.(string)
+		byControl := controls == nil || r.Operation == "security_control.change" && slices.Contains(controls, control) || slices.Contains(gated, r.Operation)
+		if !byControl || operations != nil && !slices.Contains(operations, r.Operation) {
+			continue
+		}
+		n, err := q.CloseApprovalIntent(ctx, query.CloseApprovalIntentParams{Now: sql.NullInt64{Int64: now, Valid: true}, Reason: sql.NullString{String: reason, Valid: true}, ID: r.ID})
+		if err != nil {
+			return 0, err
+		}
+		closed += int(n)
+	}
+	return closed, nil
 }

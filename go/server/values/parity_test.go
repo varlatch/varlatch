@@ -376,37 +376,3 @@ func TestGoSealedFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-// An export while admin-step-up is at enforce is the one disclosure this
-// build does not serve (its approval comes with step 4's protected
-// writes): it answers the stub's 501, discloses nothing and audits nothing.
-func TestExportUnderEnforceIsNotServed(t *testing.T) {
-	f := readFixture(t, "testdata/values-v0.22.0.json")
-	for _, c := range f.Rows["security_controls"] {
-		if c["control"] == "admin-step-up" {
-			c["mode"] = "enforce"
-		}
-	}
-	s := newServer(t, f)
-	before := s.lastAudit()
-	for _, body := range []string{`{"scope":"all-authorized-secrets","purpose":"export"}`, `{"items":["DB_PASS"],"purpose":"export"}`} {
-		req := httptest.NewRequest("POST", "/v1/organizations/acme/projects/api/environments/development/disclosures", strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+f.Tokens["alice"])
-		rec := httptest.NewRecorder()
-		s.handler.ServeHTTP(rec, req)
-		if rec.Code != 501 || !strings.Contains(rec.Body.String(), `"code":"NOT_IMPLEMENTED_YET"`) || strings.Contains(rec.Body.String(), "hunter2") {
-			t.Errorf("%s: %d %s", body, rec.Code, rec.Body.String())
-		}
-	}
-	if after := s.lastAudit(); after != before {
-		t.Errorf("%d audit events recorded", after-before)
-	}
-	// A disclosure that is not an export is served as before.
-	req := httptest.NewRequest("POST", "/v1/organizations/acme/projects/api/environments/development/disclosures", strings.NewReader(`{"items":["DB_PASS"]}`))
-	req.Header.Set("Authorization", "Bearer "+f.Tokens["alice"])
-	rec := httptest.NewRecorder()
-	s.handler.ServeHTTP(rec, req)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "hunter2-hunter2") {
-		t.Errorf("not an export: %d %s", rec.Code, rec.Body.String())
-	}
-}

@@ -159,6 +159,50 @@ func (q *Queries) CurrentValuesOfEnvironment(ctx context.Context, environmentID 
 	return items, nil
 }
 
+const environmentsFreshness = `-- name: EnvironmentsFreshness :many
+SELECT id, deleted_at, expires_at FROM environments WHERE id IN (/*SLICE:ids*/?)
+`
+
+type EnvironmentsFreshnessRow struct {
+	ID        string
+	DeletedAt sql.NullInt64
+	ExpiresAt sql.NullInt64
+}
+
+// exportstepup.ts freshnessOf: the environment and its parent as they are now.
+func (q *Queries) EnvironmentsFreshness(ctx context.Context, ids []string) ([]EnvironmentsFreshnessRow, error) {
+	query := environmentsFreshness
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EnvironmentsFreshnessRow
+	for rows.Next() {
+		var i EnvironmentsFreshnessRow
+		if err := rows.Scan(&i.ID, &i.DeletedAt, &i.ExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const exportControl = `-- name: ExportControl :one
 SELECT mode, version FROM security_controls WHERE organization_id = ? AND control = 'admin-step-up' AND mode <> 'off'
 `
@@ -299,6 +343,23 @@ func (q *Queries) ProjectContractRevision(ctx context.Context, arg ProjectContra
 	row := q.db.QueryRowContext(ctx, projectContractRevision, arg.ID, arg.ProjectID)
 	var i ProjectContractRevisionRow
 	err := row.Scan(&i.ID, &i.ContentHash, &i.Contract)
+	return i, err
+}
+
+const projectFreshness = `-- name: ProjectFreshness :one
+SELECT active_contract_revision_id, deleted_at FROM projects WHERE id = ?
+`
+
+type ProjectFreshnessRow struct {
+	ActiveContractRevisionID sql.NullString
+	DeletedAt                sql.NullInt64
+}
+
+// exportstepup.ts freshnessOf: the Project as it is now.
+func (q *Queries) ProjectFreshness(ctx context.Context, id string) (ProjectFreshnessRow, error) {
+	row := q.db.QueryRowContext(ctx, projectFreshness, id)
+	var i ProjectFreshnessRow
+	err := row.Scan(&i.ActiveContractRevisionID, &i.DeletedAt)
 	return i, err
 }
 

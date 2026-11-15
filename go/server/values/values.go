@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -46,6 +47,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/stages"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 // Purposes a client may declare for a disclosure (DISCLOSURE_PURPOSES).
@@ -62,6 +64,9 @@ type Service struct {
 	// queueAccessCount): bounded, best effort.
 	counts  sync.WaitGroup
 	pending chan struct{}
+
+	approvals *auth.Service
+	gates     *write.Gates
 }
 
 // Options configures New.
@@ -69,6 +74,12 @@ type Options struct {
 	Log *slog.Logger
 	// Now is the clock (tests); nil is time.Now.
 	Now func() time.Time
+	// Approvals and Gates serve an export under admin-step-up's enforce
+	// (exportstepup.ts): its approval is consumed in the disclosure's audit
+	// job, behind the Organization's and the requester's gates. Without
+	// them such an export is refused.
+	Approvals *auth.Service
+	Gates     *write.Gates
 }
 
 // maxQueuedCounts is ACCESS_COUNTS.maxQueued: counts beyond it are dropped.
@@ -82,7 +93,8 @@ func New(store *storage.DB, rootKEK []byte, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Service{store: store, rootKEK: rootKEK, log: opts.Log, now: opts.Now, pending: make(chan struct{}, maxQueuedCounts)}
+	return &Service{store: store, rootKEK: rootKEK, log: opts.Log, now: opts.Now, pending: make(chan struct{}, maxQueuedCounts),
+		approvals: opts.Approvals, gates: opts.Gates}
 }
 
 // Settled waits until every queued report count has run (tests, and a stop).
@@ -98,6 +110,9 @@ type Request struct {
 	// Org, Project and Environment are the route's parameters, decoded as
 	// the TypeScript server reads them.
 	Org, Project, Environment string
+	// Approval is the Varlatch-Approval header as sent, nil for none: read
+	// only by an export under admin-step-up's enforce.
+	Approval *string
 }
 
 func (r Request) authzPrincipal() authz.Principal {
@@ -309,43 +324,10 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 		}
 		st.revision, st.contract = &rev, &c
 	}
-	byName := map[string]int{}
-	var items []Item
-	load := func(environmentID, source string) error {
-		rows, err := q.CurrentValuesOfEnvironment(ctx, environmentID)
-		if err != nil {
-			return err
-		}
-		for _, r := range rows {
-			if _, seen := byName[r.ItemName]; source == "parent" && seen {
-				continue
-			}
-			it := Item{
-				Name: r.ItemName, Sensitive: sensitivityOf(st.contract, r.ItemName), Source: source,
-				ValueRowID: r.ID, VersionID: r.CurrentVersionID.String,
-			}
-			if r.RetiringVersionID.Valid && r.RotationDeadline.Valid && r.RotationDeadline.Int64 > now {
-				it.RetiringVersionID = r.RetiringVersionID.String
-			}
-			if i, seen := byName[r.ItemName]; seen {
-				items[i] = it
-			} else {
-				byName[r.ItemName] = len(items)
-				items = append(items, it)
-			}
-		}
-		return nil
-	}
-	if err := load(st.Env.ID, "self"); err != nil {
+	items, err := resolveItems(ctx, q, st, now)
+	if err != nil {
 		return err
 	}
-	readHook(ctx, "between the environment's values and its parent's")
-	if st.Env.ParentEnvironmentID.Valid {
-		if err := load(st.Env.ParentEnvironmentID.String, "parent"); err != nil {
-			return err
-		}
-	}
-	sort.SliceStable(items, func(i, j int) bool { return utf16Less(items[i].Name, items[j].Name) })
 	st.Items = items
 
 	rowOf := map[string]string{}
@@ -384,6 +366,51 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 		st.ciphertext[r.ID] = c
 	}
 	return nil
+}
+
+// resolveItems is resolveItems: the environment's own current values,
+// then its parent's for names it does not set, each with the version a
+// rotation retires while its window is open at now, sorted by name as
+// JavaScript sorts strings.
+func resolveItems(ctx context.Context, q *query.Queries, st *State, now int64) ([]Item, error) {
+	byName := map[string]int{}
+	var items []Item
+	load := func(environmentID, source string) error {
+		rows, err := q.CurrentValuesOfEnvironment(ctx, environmentID)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			if _, seen := byName[r.ItemName]; source == "parent" && seen {
+				continue
+			}
+			it := Item{
+				Name: r.ItemName, Sensitive: sensitivityOf(st.contract, r.ItemName), Source: source,
+				ValueRowID: r.ID, VersionID: r.CurrentVersionID.String,
+			}
+			if r.RetiringVersionID.Valid && r.RotationDeadline.Valid && r.RotationDeadline.Int64 > now {
+				it.RetiringVersionID = r.RetiringVersionID.String
+			}
+			if i, seen := byName[r.ItemName]; seen {
+				items[i] = it
+			} else {
+				byName[r.ItemName] = len(items)
+				items = append(items, it)
+			}
+		}
+		return nil
+	}
+	if err := load(st.Env.ID, "self"); err != nil {
+		return nil, err
+	}
+	readHook(ctx, "between the environment's values and its parent's")
+	if st.Env.ParentEnvironmentID.Valid {
+		if err := load(st.Env.ParentEnvironmentID.String, "parent"); err != nil {
+			return nil, err
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool { return utf16Less(items[i].Name, items[j].Name) })
+	return items, nil
 }
 
 // expired is assertNotExpired.
@@ -466,21 +493,43 @@ func (s *Service) orgKEK(st *State) ([]byte, error) {
 }
 
 // beforeAudit runs in the audit's write job, before its events.
-type beforeAudit func(ctx context.Context, tx *storage.Tx) error
+// beforeAudit runs in the audit job before the events: a report count, or
+// an export's phase 2. Metadata it returns is added to every event.
+type beforeAudit func(ctx context.Context, tx *storage.Tx) (jsvalue.Object, error)
 
 // AuditThenDecrypt is auditThenDecrypt: events are committed, as one
 // write job, before anything is decrypted; if the job fails, nothing is
 // decrypted and the error ends the request. Then exactly versionIDs are
 // opened from the captured ciphertext; nothing is read again.
-func (s *Service) auditThenDecrypt(ctx context.Context, st *State, events []audit.Event, versionIDs []string, before beforeAudit) (map[string]string, error) {
+func (s *Service) auditThenDecrypt(ctx context.Context, st *State, events []audit.Event, versionIDs []string, before beforeAudit, gates ...write.Gate) (map[string]string, error) {
 	if len(events) > 0 {
-		err := s.store.Write(ctx, func(tx *storage.Tx) error {
+		run := s.store.Write
+		if len(gates) > 0 {
+			// An export's phase 2: its gates before the job, released once
+			// the job has its answer.
+			gctx, release, err := s.gates.Acquire(ctx, gates...)
+			if err != nil {
+				return nil, err
+			}
+			defer release()
+			ctx = gctx
+		}
+		err := run(ctx, func(tx *storage.Tx) error {
+			out := events
 			if before != nil {
-				if err := before(ctx, tx); err != nil {
+				added, err := before(ctx, tx)
+				if err != nil {
 					return err
 				}
+				if len(added) > 0 {
+					out = make([]audit.Event, len(events))
+					for i, e := range events {
+						e.Metadata = append(slices.Clone(e.Metadata), added...)
+						out[i] = e
+					}
+				}
 			}
-			_, err := audit.Record(ctx, tx, events...)
+			_, err := audit.Record(ctx, tx, out...)
 			return err
 		})
 		if err != nil {

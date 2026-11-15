@@ -68,6 +68,11 @@ const TABLES: Table[] = [
   { name: "credentials", orderBy: "id", random: ["token_hash"] },
   { name: "organizations", orderBy: "id", random: ["wrapped_org_kek"] },
   { name: "org_memberships", orderBy: "organization_id, identity_id" },
+  { name: "projects", orderBy: "id" },
+  { name: "contract_revisions", orderBy: "id" },
+  { name: "environments", orderBy: "id" },
+  { name: "env_values", orderBy: "id" },
+  { name: "value_versions", orderBy: "id", random: ["payload", "wrapped_dek"] },
   { name: "security_controls", orderBy: "organization_id, control" },
   { name: "security_control_counters", orderBy: "organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour" },
   // The intents' hashes are keyed by the build's random Root KEK.
@@ -97,6 +102,7 @@ const APPROVALS = {
   pending: aprId("pending"),
   other: aprId("otherbody"),
   unknown: aprId("unknown"),
+  export: aprId("export"),
 } as const;
 
 const LIFETIME_REP = { defaultTtlSeconds: 3600, maxTtlSeconds: 86_400 };
@@ -116,6 +122,10 @@ function requestTable(): RequestCase[] {
     ({ name, method: "GET", path: `${ORG}/${org}/security/control-report${query}`, credential });
   const keys = (name: string, org: string, credential = "alice"): Omit<RequestCase, "id"> =>
     ({ name, method: "GET", path: `${ORG}/${org}/security/approval-keys`, credential });
+  const exp = (name: string, org: string, body: unknown, credential = "alice", approval?: string): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${ORG}/${org}/projects/api/environments/production/disclosures`, credential, body,
+    ...(approval !== undefined ? { headers: { "Varlatch-Approval": approval } } : {}),
+  });
   return withIds([
     // listSecurityControls.
     list("list, every control off", "sec"),
@@ -226,9 +236,24 @@ function requestTable(): RequestCase[] {
     keys("approval keys as an outsider", "sec", "carol"),
     keys("approval keys of a frozen Organization", "frozen"),
     keys("approval keys of an unknown Organization", "nope"),
+    // An export under admin-step-up's enforce (exportstepup.ts, step
+    // 4.3b), in enf. alice2 holds an approved intent for exporting
+    // S from enf's api/production.
+    exp("export, no approval", "enf", { scope: "all-authorized-secrets", purpose: "export" }, "alice2"),
+    exp("export with its approval", "enf", { items: ["S", "S"], purpose: "export" }, "alice2", APPROVALS.export),
+    exp("export, the approval used again", "enf", { items: ["S"], purpose: "export" }, "alice2", APPROVALS.export),
+    exp("export, a malformed approval header", "enf", { items: ["S"], purpose: "export" }, "alice2", "not-an-approval"),
+    exp("export, an approval for another set", "enf", { items: ["S", "T"], purpose: "export" }, "alice2", APPROVALS.pending),
+    exp("export of nothing needs no approval", "enf", { items: ["NOPE"], purpose: "export" }, "alice2"),
+    exp("a disclosure that is not an export", "enf", { items: ["S"] }, "alice2", "not-an-approval"),
+    exp("a scan", "enf", { items: ["T"], purpose: "scan" }, "alice2"),
+    // (No export under report here: its count before the audit insert's
+    // locks is the lock-order inversion of the Go defects register, which
+    // this suite's lock tracer refuses. go/server/values covers the count.)
     // The report and the controls after the table's changes.
     list("list after the changes", "sec"),
     report("report after the changes", "rep"),
+    report("enf's report after the exports", "enf"),
   ]);
 }
 
@@ -264,6 +289,22 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   const orgs: Record<string, string> = {};
   for (const slug of ["sec", "rep", "enf", "frozen", "deleting", "guard", "gone"]) {
     orgs[slug] = (await call("POST", ORG, { name: slug[0]!.toUpperCase() + slug.slice(1), slug })).id;
+  }
+  // A Project with two Secrets in enf and rep, for the exports, before any
+  // control applies.
+  const projects: Record<string, { project: string; env: string }> = {};
+  for (const org of ["enf", "rep"]) {
+    const project = (await call("POST", `${ORG}/${org}/projects`, { name: "API", slug: "api", contractAuthority: "managed" })).id;
+    const env = (await call("POST", `${ORG}/${org}/projects/api/environments`, { name: "production", tier: "production" })).id;
+    const secret = (name: string) => ({ name, required: { kind: "never" }, sensitive: true, type: "string" });
+    const rev = await call("POST", `${ORG}/${org}/projects/api/contract/revisions`, {
+      contract: { schemaVersion: 1, items: [secret("S"), secret("T")] }, provenance: { source: "build" },
+    });
+    await call("POST", `${ORG}/${org}/projects/api/contract/revisions/${rev.id}/activate`);
+    for (const [item, value] of [["S", "s-value"], ["T", "t-value"]]) {
+      await call("PUT", `${ORG}/${org}/projects/api/environments/production/values/${item}`, { value: `${org}-${value}` });
+    }
+    projects[org] = { project, env };
   }
   const set = (org: string, control: string, body: unknown) => call("PATCH", `${ORG}/${org}/security/controls/${control}`, body);
   // rep's passkey-verification last: from then on its accesses are counted.
@@ -353,6 +394,19 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   await intent(APPROVALS.repOff, "admin-step-up", { mode: "off", config: null, expectedVersion: 1 }, 1, { approved: true });
   await intent(APPROVALS.pending, "requirement-protection", { mode: "off", config: null, expectedVersion: 1 }, 1, { approved: false });
   await intent(APPROVALS.other, "passkey-verification", { mode: "off", config: null, expectedVersion: 0 }, 0, { approved: true });
+  // An approved export of S from enf's api/production (exportBinding).
+  await db.query(
+    `INSERT INTO approval_intents
+       (id, credential_id, identity_id, organization_id, operation, target, body_hash, query_hash, expected_version, summary, origin,
+        created_at, expires_at, poll_interval, approved_at, approved_with_passkey_id, approval_user_verified)
+     VALUES ($1, $2, $3, $4, 'secret.export', $5::jsonb, $6, $7, NULL, $8::jsonb, 'cli',
+             '2026-01-10T00:00:00.000Z', '2099-01-01T00:00:00.000Z', 5, '2026-01-10T00:01:00.000Z', 'PasskeyConf001', true)`,
+    [
+      APPROVALS.export, alice2.credentialId, alice, orgs.enf, canonicalJson({ projectId: projects.enf!.project, environmentId: projects.enf!.env }),
+      approvalHash(ctx.rootKek, "body", { purpose: "export", mode: "items", requested: ["S"], disclosed: ["S"] }),
+      approvalHash(ctx.rootKek, "query", {}), JSON.stringify({ title: "Export S", changes: [] }),
+    ],
+  );
 
   await db.query(
     "INSERT INTO organization_freezes (id, organization_id, frozen_by, frozen_at, reason) VALUES ($1, $2, $3, '2026-03-01T00:00:00.000Z', 'incident drill')",

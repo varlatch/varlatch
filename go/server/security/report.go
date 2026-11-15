@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
@@ -93,11 +92,6 @@ type WouldBlock struct {
 // Hour is an hour in microseconds, the counters' bucket.
 const Hour = int64(time.Hour / time.Microsecond)
 
-// utf16Less is JavaScript's a < b on strings: by UTF-16 code units.
-func utf16Less(a, b string) bool {
-	return slices.Compare(utf16.Encode([]rune(a)), utf16.Encode([]rune(b))) < 0
-}
-
 // padVersion is String(v).padStart(10, "0").
 func padVersion(v int64) string {
 	s := strconv.FormatInt(v, 10)
@@ -135,10 +129,10 @@ func CountWouldBlock(ctx context.Context, db query.DBTX, organizationID string, 
 		ordered = append(ordered, e)
 	}
 	slices.SortFunc(ordered, func(a, b *entry) int {
-		if utf16Less(a.key, b.key) {
+		if jsLess(a.key, b.key) {
 			return -1
 		}
-		if utf16Less(b.key, a.key) {
+		if jsLess(b.key, a.key) {
 			return 1
 		}
 		return 0
