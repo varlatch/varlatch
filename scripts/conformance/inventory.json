@@ -221,16 +221,22 @@
         "listProjects",
         "listEnvironments",
         "getActiveContract",
-        "getEffectiveConfiguration",
-        "listIdentities",
-        "listAuditEvents",
-        "listPlatformConnections",
-        "listOrgSyncTargets",
-        "listRoles",
-        "listGroups",
-        "listTeams",
-        "listWebhooks"
-      ]
+        "getEffectiveConfiguration"
+      ],
+      "groups": {
+        "audit-feed": {
+          "title": "the audit feed, and the strict policy check, which needs it loaded",
+          "operations": [
+            "listAuditEvents",
+            "listIdentities",
+            "listRoles",
+            "listGroups",
+            "listTeams",
+            "listPlatformConnections",
+            "listOrgSyncTargets"
+          ]
+        }
+      }
     },
     "enroll-steps": {
       "title": "the enroll page's next steps against a stub server (ADR-0058 Decision 4)",
@@ -252,25 +258,32 @@
         "setValue",
         "deleteValue",
         "discloseSecrets",
-        "createRequirement",
-        "deleteRequirement",
         "listEnvironments",
         "createEnvironment",
         "listProjects",
-        "listOrgSyncTargets",
         "getActiveContract",
         "getEffectiveConfiguration",
-        "listPlatformConnections",
         "applyChangeSet",
-        "beginRotation",
-        "completeRotation",
-        "listSyncTargets",
-        "listAuditEvents",
-        "listIdentities",
-        "listRequirements",
         "deleteEnvironment",
         "getOrganization"
-      ]
+      ],
+      "groups": {
+        "rotation": {
+          "title": "dual-phase rotation from the item panel",
+          "operations": [
+            "beginRotation",
+            "completeRotation"
+          ]
+        },
+        "tailnet": {
+          "title": "tailnet-only values: a Tailnet Requirement on production, what the dashboard then withholds, and its removal",
+          "operations": [
+            "createRequirement",
+            "deleteRequirement",
+            "listRequirements"
+          ]
+        }
+      }
     },
     "access": {
       "title": "access",
@@ -352,24 +365,34 @@
         "listMyCredentials",
         "revokeMyCredential",
         "getOrganization",
-        "listAuditEvents",
-        "listIdentities",
         "listProjects",
         "listEnvironments",
-        "listPlatformConnections",
-        "listOrgSyncTargets",
-        "listRoles",
-        "listGroups",
-        "listTeams",
-        "listWebhooks",
-        "createWebhook",
-        "updateWebhook",
-        "revokeWebhook",
         "searchConfigItems",
-        "getEffectiveConfiguration",
-        "listSyncTargets",
-        "getOrganizationDeletion"
-      ]
+        "getEffectiveConfiguration"
+      ],
+      "groups": {
+        "audit": {
+          "title": "the audit timeline: filters, the provenance drawer, sentences with names",
+          "operations": [
+            "listAuditEvents",
+            "listIdentities",
+            "listRoles",
+            "listGroups",
+            "listTeams",
+            "listPlatformConnections",
+            "listOrgSyncTargets"
+          ]
+        },
+        "webhooks": {
+          "title": "audit webhooks: register, edit and revoke on the audit page",
+          "operations": [
+            "listWebhooks",
+            "createWebhook",
+            "updateWebhook",
+            "revokeWebhook"
+          ]
+        }
+      }
     },
     "onboarding": {
       "title": "onboarding",
@@ -391,12 +414,10 @@
         "listProjects",
         "listEnvironments",
         "getActiveContract",
-        "listIdentities",
         "getEffectiveConfiguration",
         "createProject",
         "createEnvironment",
-        "renameProject",
-        "listAuditEvents"
+        "renameProject"
       ]
     },
     "realtime": {
@@ -546,19 +567,31 @@
         "createProject",
         "getProject",
         "createEnvironment",
-        "createServiceIdentity",
-        "createGrant",
         "pushContractRevision",
         "activateContractRevision",
         "getActiveContract",
         "setValue",
-        "exportAuditEvents",
         "getMeta",
         "listOrganizations",
         "getEffectiveConfiguration",
         "discloseSecrets",
         "getContractRevision"
-      ]
+      ],
+      "groups": {
+        "service-identities": {
+          "title": "two service identities with partial grants (one without Secrets, one without the Contract), and the runs as them",
+          "operations": [
+            "createServiceIdentity",
+            "createGrant"
+          ]
+        },
+        "audit-export": {
+          "title": "what the audit export records: the scans' and runs' disclosures, and no value in it",
+          "operations": [
+            "exportAuditEvents"
+          ]
+        }
+      }
     },
     "strict-run": {
       "title": "strict startup (varlatch run --strict)",
@@ -569,22 +602,36 @@
         "createProject",
         "getProject",
         "createEnvironment",
-        "createServiceIdentity",
-        "createGrant",
         "pushContractRevision",
         "activateContractRevision",
         "setValue",
         "deleteValue",
-        "listIdentities",
-        "listCapabilities",
         "getMeta",
         "listOrganizations",
         "strictRetrieval",
-        "issueCapability",
-        "revokeCapability",
         "getEffectiveConfiguration",
         "discloseSecrets"
-      ]
+      ],
+      "groups": {
+        "service-identities": {
+          "title": "two service identities with partial grants (one without Secrets, one without the Contract), and the strict runs as them",
+          "operations": [
+            "createServiceIdentity",
+            "createGrant"
+          ]
+        },
+        "agent-safe": {
+          "title": "agent-safe strict runs: a Broker, Agents, an operator without reveal, and the Capabilities issued and revoked",
+          "operations": [
+            "createServiceIdentity",
+            "createGrant",
+            "listIdentities",
+            "issueCapability",
+            "revokeCapability",
+            "listCapabilities"
+          ]
+        }
+      }
     },
     "mcp": {
       "title": "varlatch mcp over stdio",
@@ -777,6 +824,7 @@
     "dashboard.csp-strict": {
       "suite": "dashboard",
       "kind": "conformance",
+      "group": "audit-feed",
       "title": "the dashboard is served with a strict Content-Security-Policy, and the session, the /v1 views and the audit feed load under it"
     },
     "dashboard.csp-connect-src-convex": {
@@ -808,6 +856,7 @@
     "dashboard.audit-feed-shows-events": {
       "suite": "dashboard",
       "kind": "conformance",
+      "group": "audit-feed",
       "title": "reactive audit mirror shows events"
     },
     "dashboard.no-content-security-policy-violations": {
@@ -953,7 +1002,10 @@
     "values.row-says-value-last-changed-filtered": {
       "suite": "values",
       "kind": "conformance",
-      "title": "row says when the value last changed (filtered audit log)"
+      "title": "row says when the value last changed (filtered audit log)",
+      "operations": [
+        "listAuditEvents"
+      ]
     },
     "values.reveal-one-secret-discloses-only-secret": {
       "suite": "values",
@@ -1003,16 +1055,19 @@
     "values.rotating-badge-shown-after-begin": {
       "suite": "values",
       "kind": "conformance",
+      "group": "rotation",
       "title": "rotating badge shown after begin"
     },
     "values.disclosure-returns-new-primary-retiring-value": {
       "suite": "values",
       "kind": "conformance",
+      "group": "rotation",
       "title": "disclosure returns the new primary and the retiring value"
     },
     "values.retiring-value-dropped-after-finishing-rotation": {
       "suite": "values",
       "kind": "conformance",
+      "group": "rotation",
       "title": "retiring value dropped after finishing rotation"
     },
     "values.grid-shows-stored-reference-text-ref": {
@@ -1063,7 +1118,10 @@
     "values.item-history-lists-item-changes-filtered": {
       "suite": "values",
       "kind": "conformance",
-      "title": "item history lists this item's changes (filtered audit log)"
+      "title": "item history lists this item's changes (filtered audit log)",
+      "operations": [
+        "listAuditEvents"
+      ]
     },
     "values.export-holds-non-secret-values-leaves-secrets": {
       "suite": "values",
@@ -1078,71 +1136,85 @@
     "values.tailnet-requirement-production-created": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "tailnet requirement on production created"
     },
     "values.without-tailnet-endpoint-notice-offers-no": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "without a tailnet endpoint the notice offers no Connect"
     },
     "values.plaintext-revealed-before-requirement-leaves-open": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "plaintext revealed before the requirement leaves the open page"
     },
     "values.export-dialog-already-open-stops-offering": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "an export dialog already open stops offering Download"
     },
     "values.environments-say-which-values-need-tailnet": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "environments say which values need the tailnet"
     },
     "values.grid-column-has-no-reveal": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "grid column has no Reveal"
     },
     "values.bulk-reveal-leaves-production-out": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "bulk Reveal leaves production out"
     },
     "values.cell-menu-has-no-reveal": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "cell menu has no Reveal"
     },
     "values.export-explains-instead-exporting": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "export explains instead of exporting"
     },
     "values.environment-header-says-tailnet-only": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "environment header says tailnet only"
     },
     "values.editor-has-no-reveal-all-no": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "editor has no Reveal all and no row Reveal"
     },
     "values.item-panel-has-no-reveal": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "item panel has no Reveal"
     },
     "values.tailnet-only-environment-gets-no-disclosure-no": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "a tailnet-only environment gets no disclosure and no values request"
     },
     "values.tailnet-requirement-removed": {
       "suite": "values",
       "kind": "conformance",
+      "group": "tailnet",
       "title": "tailnet requirement removed"
     },
     "values.scratch-environment-created": {
@@ -1443,61 +1515,73 @@
     "p4.authoritative-audit-history-renders": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "audit",
       "title": "authoritative audit history renders"
     },
     "p4.text-filter-narrows-timeline": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "audit",
       "title": "text filter narrows the timeline"
     },
     "p4.filter-keeps-only-matching-events": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "audit",
       "title": "filter keeps only matching events"
     },
     "p4.provenance-drawer-shows-event-request-ids": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "audit",
       "title": "provenance drawer shows event + request ids"
     },
     "p4.timeline-reads-sentences-names-not-raw": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "audit",
       "title": "timeline reads as sentences with names, not raw IDs"
     },
     "p4.decision-filter-applies": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "audit",
       "title": "decision filter applies"
     },
     "p4.webhook-signing-secret-shown-once": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "webhooks",
       "title": "webhook signing secret shown once"
     },
     "p4.webhook-secret-dismissed-not-re-shown": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "webhooks",
       "title": "webhook secret dismissed, not re-shown"
     },
     "p4.webhook-row-lists-event-type-filter": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "webhooks",
       "title": "webhook row lists its event-type filter"
     },
     "p4.webhook-edited-place-new-url-filter": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "webhooks",
       "title": "webhook edited in place: new URL, filter cleared to all events"
     },
     "p4.no-new-signing-secret-shown-edit": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "webhooks",
       "title": "no new signing secret shown on edit"
     },
     "p4.webhook-revoked-dashboard": {
       "suite": "p4",
       "kind": "conformance",
+      "group": "webhooks",
       "title": "webhook revoked from dashboard"
     },
     "p4.git-contract-items-render": {
@@ -1723,7 +1807,10 @@
     "onboarding.workload-invite-recommended-not-required": {
       "suite": "onboarding",
       "kind": "conformance",
-      "title": "workload + invite are recommended, not required"
+      "title": "workload + invite are recommended, not required",
+      "operations": [
+        "listIdentities"
+      ]
     },
     "onboarding.no-empty-project-list": {
       "suite": "onboarding",
@@ -2499,42 +2586,52 @@
     "client-runtime.export-context-identity-without-secret-reveal": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-export-context",
       "title": "--export-context: an identity without secret.reveal still starts the child"
     },
     "client-runtime.export-context-withheld-secret-left-parent": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-export-context",
       "title": "--export-context: a withheld Secret is left to the parent's copy"
     },
     "client-runtime.export-context-withheld-secrets-recorded": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-export-context",
       "title": "--export-context: withheld Secrets are recorded as withheld, inherited or absent"
     },
     "client-runtime.export-context-withheld-run-context-holds-no": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-export-context",
       "title": "--export-context: the withheld run's context holds no value"
     },
     "client-runtime.export-context-without-contract-read-starts": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-export-context",
       "title": "--export-context without contract.read starts nothing and says why"
     },
     "client-runtime.export-context-run-cannot-export-context": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-export-context",
-      "title": "--export-context: a run that cannot export its context discloses no Secret"
+      "title": "--export-context: a run that cannot export its context discloses no Secret",
+      "operations": [
+        "exportAuditEvents"
+      ]
     },
     "client-runtime.same-identity-default-run-without-flag": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run",
       "title": "the same identity's default run, without the flag, gets no context"
     },
@@ -2655,6 +2752,7 @@
     "client-runtime.types-required-secret-withheld-server-one": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "types-typescript",
       "title": "types: a required Secret withheld by the server is one ConfigError issue"
     },
@@ -2679,6 +2777,7 @@
     "client-runtime.scan-nothing-read-nothing-disclosed": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "audit-export",
       "feature": "scan",
       "title": "scan: with nothing to read, nothing is disclosed"
     },
@@ -2727,18 +2826,21 @@
     "client-runtime.scan-scan-read-files-one-audited": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "audit-export",
       "feature": "scan",
       "title": "scan: each scan that read files is one audited disclosure with purpose \"scan\""
     },
     "client-runtime.run-disclosures-audited-without-purpose": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "audit-export",
       "feature": "run",
       "title": "run disclosures are audited without a purpose"
     },
     "client-runtime.audit-export-holds-no-value": {
       "suite": "client-runtime",
       "kind": "conformance",
+      "group": "audit-export",
       "title": "the audit export holds no value"
     },
     "client-runtime.varlatchd-logs-hold-no-value": {
@@ -2839,102 +2941,119 @@
     "strict-run.withheld-required-secret-stops-startup-default": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-strict",
       "title": "a withheld required Secret stops startup; its default does not replace it"
     },
     "strict-run.parent-value-does-not-replace-withheld": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-strict",
       "title": "a parent value does not replace a withheld one without an allowance"
     },
     "strict-run.allowed-inherited-value-stands-withheld-one": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-strict",
       "title": "an allowed inherited value stands in for a withheld one"
     },
     "strict-run.run-context-records-withheld-inherited": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-strict",
       "title": "the run context records it as withheld and inherited"
     },
     "strict-run.allowed-inherited-value-validated": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-strict",
       "title": "an allowed inherited value is validated"
     },
     "strict-run.without-contract-read-strict-startup-does-not": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "service-identities",
       "feature": "run-strict",
       "title": "without contract.read, strict startup does not start the child"
     },
     "strict-run.agent-safe-strict-starts-agent-preflight-passes": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "agent-safe strict starts the Agent when the preflight passes"
     },
     "strict-run.agent-receives-placeholder-never-secret-parent": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "the Agent receives a Placeholder, never the Secret or the parent's copy"
     },
     "strict-run.non-sensitive-values-defaults-arrive": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "non-sensitive values and defaults still arrive"
     },
     "strict-run.run-context-records-secret-delivered-varlatch": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "the run context records the Secret as delivered by Varlatch"
     },
     "strict-run.no-secret-value-appears-agent-environment": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "no Secret value appears in the Agent's environment or the output"
     },
     "strict-run.agent-without-secret-use-issuance-does-not": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "an Agent without secret.use at issuance does not start"
     },
     "strict-run.operator-who-cannot-validate-secrets-does": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "an operator who cannot validate Secrets does not start the Agent"
     },
     "strict-run.agent-safe-strict-run-untargeted-secret-does": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "an agent-safe strict run with an untargeted Secret does not start"
     },
     "strict-run.omitting-required-secret-startup-violation": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "omitting a required Secret is a startup violation"
     },
     "strict-run.allow-inherited-may-not-name-secret-agent-safe": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "--allow-inherited may not name a Secret in an agent-safe run"
     },
     "strict-run.refused-run-leaves-no-live-capability": {
       "suite": "strict-run",
       "kind": "conformance",
+      "group": "agent-safe",
       "feature": "run-strict-agent-safe",
       "title": "a refused run leaves no live Capability behind"
     },

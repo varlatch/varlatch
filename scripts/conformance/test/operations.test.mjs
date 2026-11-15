@@ -76,6 +76,17 @@ test("operations: every name known; named operations well formed", () => {
   ]) assert.match(problems, want);
 });
 
+test("a check in an operation group needs its suite's, its group's and its own operations", () => {
+  const id = "client-runtime.export-context-run-cannot-export-context";
+  const ops = operationsOf(inventory, id);
+  for (const op of ["createProject", "createServiceIdentity", "createGrant", "exportAuditEvents"]) assert.ok(ops.includes(op), op);
+  // A check outside the group does not need the group's operations.
+  assert.ok(!operationsOf(inventory, "client-runtime.redact-run-exits-child-status").includes("createServiceIdentity"));
+  const lacking = lackingChecks(inventory, ["exportAuditEvents"]);
+  assert.deepEqual(lacking.get(id), ["exportAuditEvents"]);
+  assert.ok(lacking.has("client-runtime.audit-export-holds-no-value") && !lacking.has("client-runtime.export-context-identity-without-secret-reveal"));
+});
+
 test("a check needs its suite's operations and its own; the seed lacks when an operation it uses does", () => {
   const inv = structuredClone(inventory);
   inv.checks["mcp.lists-read-tools-only"] = { ...inv.checks["mcp.lists-read-tools-only"], operations: ["strictRetrieval"] };
@@ -153,7 +164,13 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // values, varlatch mcp's reads and the server logs check; (step 4.1c)
   // cli-core's env list checks, on the Projects and environments reads;
   // (step 4.1d) the sdk suite, on the value writes. Each seeds through
-  // /v1. Every other one lacks something.
+  // /v1. And (4.1e, feature-parity decision 2) every check of the suites
+  // split into operation groups whose group and own operations are built:
+  // the dashboard, values, p4, onboarding, client-runtime and strict-run,
+  // but for their groups on audit, webhooks, rotation, Requirements,
+  // service identities and agent-safe runs, and the three checks that read
+  // the audit log or identities themselves. Every other one lacks
+  // something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
@@ -161,11 +178,26 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     Object.entries(inventory.checks).filter(([id, c]) => c.kind === "go-server" && !lacking.has(id)).map(([id]) => id).sort(),
     Object.keys(inventory.checks).filter((id) => id.startsWith("realtime-events.")).sort(),
   );
-  const expected = Object.keys(inventory.checks).filter((id) =>
+  const notYet = {
+    dashboard: ["audit-feed"], values: ["rotation", "tailnet"], p4: ["audit", "webhooks"], onboarding: [],
+    "client-runtime": ["service-identities", "audit-export"], "strict-run": ["service-identities", "agent-safe"],
+  };
+  const ownLacking = ["values.row-says-value-last-changed-filtered", "values.item-history-lists-item-changes-filtered", "onboarding.workload-invite-recommended-not-required"];
+  const expected = Object.entries(inventory.checks).filter(([id, c]) =>
     /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs|sdk)\./.test(id) ||
     ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format",
-      "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id));
+      "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
+    (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
+  assert.equal(runs.length, 238);
+  // The groups still lacking lack exactly their own operations.
+  for (const [suite, groups] of Object.entries(notYet)) {
+    for (const g of groups) {
+      const ids = Object.entries(inventory.checks).filter(([, c]) => c.suite === suite && c.group === g).map(([id]) => id);
+      assert.ok(ids.length > 0 && ids.every((id) => lacking.has(id)), `${suite} ${g}`);
+      for (const id of ids) assert.ok(lacking.get(id).every((op) => inventory.suites[suite].groups[g].operations.includes(op) || (inventory.checks[id].operations ?? []).includes(op)), id);
+    }
+  }
 });
 
 test("probes: a /v1 or named HTTP operation is asked by its route; a target operation through the adapter; the seed never", () => {

@@ -354,14 +354,27 @@ async function main() {
       await pace(entry.suite);
       const around = entry.around === "convex-down" ? await convexDown(entry.suite) : null;
       const start = Date.now();
-      const out = await runSuite(join(REPO_ROOT, suite.script), args, { ...suiteEnv, CONFORMANCE_SUITE: entry.suite }, scratch);
+      // The suite skips each operation group all of whose checks lack an
+      // operation (suite-kit's group()), so its setup never meets one.
+      const out = await runSuite(join(REPO_ROOT, suite.script), args, { ...suiteEnv, CONFORMANCE_SUITE: entry.suite, CONFORMANCE_LACKING: JSON.stringify([...lacked].sort()) }, scratch);
       const end = Date.now();
       (windows[entry.suite] ??= []).push({ start, end });
       if (around) await around.finish();
       const parsed = parseSuiteOutput(`${out.stdout}\n${out.stderr}`);
       // What the suite printed for a check that lacks an operation is
-      // replaced by the runner's target-lacks.
-      for (const r of parsed.results) if (!lacked.has(r.id)) reports.push({ suite: entry.suite, ...r });
+      // replaced by the runner's target-lacks, and for a ts-stack (or
+      // go-server) check on a target without that capability, by not
+      // applicable: a suite that runs everywhere can hold one
+      // (dashboard.csp-connect-src-convex).
+      for (const r of parsed.results) {
+        if (lacked.has(r.id)) continue;
+        const capability = TARGET_SPECIFIC[inventory.checks[r.id]?.kind];
+        if (capability && !capabilities.includes(capability)) {
+          reports.push({ suite: entry.suite, id: r.id, status: "N/A", text: `the target lacks ${capability}` });
+          continue;
+        }
+        reports.push({ suite: entry.suite, ...r });
+      }
       reportLacks();
       for (const message of parsed.errors) errors.push({ suite: entry.suite, message });
       const failedResults = parsed.results.some((r) => r.status === "FAIL");

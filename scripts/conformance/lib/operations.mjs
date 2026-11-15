@@ -16,9 +16,10 @@
  *                                       uses is.
  *
  * Each suite in the inventory lists the operations it needs
- * (`suites.<name>.operations`), and a check may add its own
- * (`checks.<id>.operations`, for a feature group that needs more than the
- * rest of its suite).
+ * (`suites.<name>.operations`): what every check of it needs, its shared
+ * setup included. An operation group adds the operations its checks and
+ * their setup need (`suites.<name>.groups.<group>.operations`, a check's
+ * `group`), and a check may add its own (`checks.<id>.operations`).
  *
  * A target declares what it lacks in its expectations file
  * (expect/<target>.json `lacks`, keyed by target, each with a reason and the
@@ -131,7 +132,10 @@ export function operationProblems(inventory, openapi) {
       seen.add(op);
     }
   };
-  for (const [name, suite] of Object.entries(inventory.suites ?? {})) listed(`suite ${name}`, suite.operations);
+  for (const [name, suite] of Object.entries(inventory.suites ?? {})) {
+    listed(`suite ${name}`, suite.operations);
+    for (const [group, g] of Object.entries(suite.groups ?? {})) listed(`suite ${name} group ${group}`, g?.operations);
+  }
   for (const [id, check] of Object.entries(inventory.checks ?? {})) {
     listed(`check ${id}`, check.operations);
     if (check.operations && check.reportedBy === "runner") problems.push(`check ${id}: a check the runner reports needs no operation`);
@@ -139,11 +143,13 @@ export function operationProblems(inventory, openapi) {
   return problems;
 }
 
-/** The operations a check needs: its suite's and its own. */
+/** The operations a check needs: its suite's, its group's and its own. */
 export function operationsOf(inventory, id) {
   const check = inventory.checks?.[id];
   if (!check) return [];
-  return [...new Set([...(inventory.suites?.[check.suite]?.operations ?? []), ...(check.operations ?? [])])].sort();
+  const suite = inventory.suites?.[check.suite];
+  const group = check.group ? suite?.groups?.[check.group]?.operations ?? [] : [];
+  return [...new Set([...(suite?.operations ?? []), ...group, ...(check.operations ?? [])])].sort();
 }
 
 /** A set of operation names from a Set, a Map (its keys) or any iterable. */

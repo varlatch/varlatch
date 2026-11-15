@@ -95,6 +95,17 @@ test("each version-gated feature is gated in every suite that has its checks, an
   }
 });
 
+test("each operation group is skipped in its suite's script, and only its suite's groups are named", () => {
+  for (const [suite, entry] of Object.entries(inventory.suites)) {
+    if (entry.runner) continue;
+    const source = readFileSync(join(repoRoot, entry.script), "utf8");
+    const named = new Set([...source.matchAll(/\bkit\.group\(\s*["']([a-z0-9-]+)["']\s*\)/g)].map((m) => m[1]));
+    assert.deepEqual([...named].sort(), Object.keys(entry.groups ?? {}).sort(), suite);
+    // A check skipped on its own names a check of this suite.
+    for (const m of source.matchAll(/\bkit\.runs\(\s*["']([a-z0-9.-]+)["']\s*\)/g)) assert.equal(inventory.checks[m[1]]?.suite, suite, m[1]);
+  }
+});
+
 test("every lifecycle and installer suite (scripts/test-*.mjs) is an external suite with its replacement, and only those", () => {
   const scripts = readdirSync(join(repoRoot, "scripts")).filter((f) => /^test-.*\.mjs$/.test(f)).map((f) => `scripts/${f}`).sort();
   const listed = Object.values(inventory.externalSuites ?? {}).map((s) => s.script).sort();

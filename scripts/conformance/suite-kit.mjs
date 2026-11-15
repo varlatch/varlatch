@@ -19,6 +19,12 @@
  * reports every check of the group `PREDATES-CLI` and returns false, and the
  * suite skips the group. The runner confirms each such result against the
  * CLI's verified version; a suite cannot claim it on its own.
+ *
+ * A suite split into operation groups (inventory `suites.<name>.groups`)
+ * runs each group's setup and checks behind `kit.group("<group>")`: false
+ * when the target lacks an operation every check of the group needs (the
+ * runner says which checks lack, in CONFORMANCE_LACKING, and reports them
+ * target-lacks itself), and the suite skips the group.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -47,14 +53,23 @@ export function cliVersion() {
  * `detailOnFailure` is set (for suites whose details are whole command
  * outputs). `separator` keeps each suite's existing look.
  */
+/** The checks of this suite the runner reports target-lacks (CONFORMANCE_LACKING). */
+const lacking = () => new Set(JSON.parse(process.env.CONFORMANCE_LACKING || "[]"));
+
 export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
   let failures = 0;
   const skipped = new Set();
+  const skippedGroups = new Set();
   const check = (id, name, ok, detail = "") => {
     if (!ID.test(id)) throw new Error(`not a check ID: ${id}`);
     const feature = inventory().checks[id]?.feature;
     if (feature && skipped.has(feature)) {
       error(`${id} reported a result after its feature group ${feature} was reported as predating the CLI`);
+      return false;
+    }
+    const group = inventory().checks[id]?.group;
+    if (group && skippedGroups.has(group)) {
+      error(`${id} reported a result after its operation group ${group} was skipped`);
       return false;
     }
     const shown = detail && (!detailOnFailure || !ok) ? `${separator}${detail}` : "";
@@ -87,10 +102,37 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
     }
     return false;
   };
+  /**
+   * Whether this suite's operation group `group` runs on the target: false
+   * when every check of the group lacks an operation (CONFORMANCE_LACKING),
+   * and the suite must then skip the group's setup and checks.
+   */
+  const group = (name) => {
+    const inv = inventory();
+    const suite = process.env.CONFORMANCE_SUITE;
+    if (!suite) throw new Error("CONFORMANCE_SUITE is not set: run the suite through scripts/conformance/run.mjs");
+    if (!inv.suites?.[suite]?.groups?.[name]) throw new Error(`${suite} has no operation group ${name} in the inventory`);
+    const ids = Object.entries(inv.checks).filter(([, c]) => c.suite === suite && c.group === name).map(([id]) => id);
+    if (ids.some((id) => !lacking().has(id))) return true;
+    skippedGroups.add(name);
+    return false;
+  };
+  /**
+   * Whether check `id` of this suite runs on the target: false when it
+   * lacks an operation (its own, beyond its group's), and the suite then
+   * skips the work only that check needs.
+   */
+  const runs = (id) => {
+    const suite = process.env.CONFORMANCE_SUITE;
+    if (inventory().checks[id]?.suite !== suite) throw new Error(`${id} is not a check of ${suite} in the inventory`);
+    return !lacking().has(id);
+  };
   return {
     check,
     error,
     supports,
+    group,
+    runs,
     get failures() {
       return failures;
     },

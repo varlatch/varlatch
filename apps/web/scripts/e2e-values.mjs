@@ -39,7 +39,8 @@ await cdp.send("WebAuthn.addVirtualAuthenticator", {
     automaticPresenceSimulation: true,
   },
 });
-const { check, finish } = reporter();
+const kit = reporter();
+const { check, finish } = kit;
 page.on("console", (m) => {
   if (m.type() === "error") console.log(`  [browser] ${m.text().slice(0, 140)}`);
 });
@@ -157,10 +158,13 @@ await page.waitForSelector('[data-testid="values-table"]', { timeout: 20000 });
 await page.waitForSelector('[data-row="PORT"]');
 check("values.non-sensitive-value-visible", "non-sensitive value visible", (await rowText("PORT")).includes("4000"));
 check("values.secret-masked-default", "secret masked by default", (await rowText("DATABASE_URL")).includes("••••"));
-const changedShown = await page
-  .waitForFunction(() => document.querySelector('[data-row="PORT"]')?.textContent.includes("changed"), null, { timeout: 10000 })
-  .then(() => true, () => false);
-check("values.row-says-value-last-changed-filtered", "row says when the value last changed (filtered audit log)", changedShown, await rowText("PORT"));
+// The filtered audit log's own checks (listAuditEvents).
+if (kit.runs("values.row-says-value-last-changed-filtered")) {
+  const changedShown = await page
+    .waitForFunction(() => document.querySelector('[data-row="PORT"]')?.textContent.includes("changed"), null, { timeout: 10000 })
+    .then(() => true, () => false);
+  check("values.row-says-value-last-changed-filtered", "row says when the value last changed (filtered audit log)", changedShown, await rowText("PORT"));
+}
 
 // 5. Per-item reveal is audited and does not over-disclose.
 await page.click('[data-testid="eye-DATABASE_URL"]');
@@ -219,32 +223,35 @@ check(
 await page.keyboard.press("Escape");
 check("values.esc-leaves-no-draft", "Esc leaves no draft", (await page.locator('[data-testid="dirty-count"]').count()) === 0);
 
-// 6c. Dual-phase rotation from the item panel: overlap the old value with the new one.
-await apiJson(`${API}/environments/development/values/API_KEY`, "PUT", { value: "key-v1" });
-await page.reload();
-await page.waitForSelector('[data-row="API_KEY"]', { timeout: 20000 });
-await page.click('[data-row="API_KEY"]');
-await page.waitForSelector('[data-testid="item-panel"]');
-await page.click('[data-testid="rotate-API_KEY"]');
-await page.fill('[data-testid="rotate-value"]', "key-v2");
-await page.click('[data-testid="confirm-rotate"]');
-await page.waitForSelector('[data-testid="rotating-API_KEY"]', { timeout: 10000 });
-check("values.rotating-badge-shown-after-begin", "rotating badge shown after begin", true);
-const rotDisc = await (
-  await apiJson(`${API}/environments/development/disclosures`, "POST", { items: ["API_KEY"] })
-).json();
-check(
-  "values.disclosure-returns-new-primary-retiring-value", "disclosure returns the new primary and the retiring value",
-  rotDisc.items[0].value === "key-v2" && rotDisc.items[0].retiring?.value === "key-v1",
-  JSON.stringify(rotDisc.items[0]),
-);
-await page.click('[data-testid="complete-rotation-API_KEY"]');
-await page.waitForFunction(() => !document.querySelector('[data-testid="rotating-API_KEY"]'), null, { timeout: 10000 });
-const afterComplete = await (
-  await apiJson(`${API}/environments/development/disclosures`, "POST", { items: ["API_KEY"] })
-).json();
-check("values.retiring-value-dropped-after-finishing-rotation", "retiring value dropped after finishing rotation", afterComplete.items[0].retiring === undefined);
-await apiJson(`${API}/environments/development/values/API_KEY`, "DELETE"); // cleanup
+// Operation group rotation: beginRotation and completeRotation.
+if (kit.group("rotation")) {
+  // 6c. Dual-phase rotation from the item panel: overlap the old value with the new one.
+  await apiJson(`${API}/environments/development/values/API_KEY`, "PUT", { value: "key-v1" });
+  await page.reload();
+  await page.waitForSelector('[data-row="API_KEY"]', { timeout: 20000 });
+  await page.click('[data-row="API_KEY"]');
+  await page.waitForSelector('[data-testid="item-panel"]');
+  await page.click('[data-testid="rotate-API_KEY"]');
+  await page.fill('[data-testid="rotate-value"]', "key-v2");
+  await page.click('[data-testid="confirm-rotate"]');
+  await page.waitForSelector('[data-testid="rotating-API_KEY"]', { timeout: 10000 });
+  check("values.rotating-badge-shown-after-begin", "rotating badge shown after begin", true);
+  const rotDisc = await (
+    await apiJson(`${API}/environments/development/disclosures`, "POST", { items: ["API_KEY"] })
+  ).json();
+  check(
+    "values.disclosure-returns-new-primary-retiring-value", "disclosure returns the new primary and the retiring value",
+    rotDisc.items[0].value === "key-v2" && rotDisc.items[0].retiring?.value === "key-v1",
+    JSON.stringify(rotDisc.items[0]),
+  );
+  await page.click('[data-testid="complete-rotation-API_KEY"]');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="rotating-API_KEY"]'), null, { timeout: 10000 });
+  const afterComplete = await (
+    await apiJson(`${API}/environments/development/disclosures`, "POST", { items: ["API_KEY"] })
+  ).json();
+  check("values.retiring-value-dropped-after-finishing-rotation", "retiring value dropped after finishing rotation", afterComplete.items[0].retiring === undefined);
+  await apiJson(`${API}/environments/development/values/API_KEY`, "DELETE"); // cleanup
+}
 
 // 6d. The grid shows a reference as its stored text with a ref hint.
 await page.goto(`${base}/o/acme/p/api`);
@@ -291,10 +298,12 @@ check("values.reveal-1-leaves-url", "?reveal=1 leaves the URL", !page.url().incl
 await page.goto(`${base}/o/acme/p/api/e/production?item=DATABASE_URL`);
 await page.waitForSelector('[data-testid="item-panel"]', { timeout: 20000 });
 check("values.item-opens-item-panel", "?item= opens the item panel", ((await page.textContent('[data-testid="item-panel"]')) ?? "").includes("DATABASE_URL"));
-const history = await page
-  .waitForSelector('[data-testid="panel-history"]', { timeout: 10000 })
-  .then((el) => el.textContent(), () => "");
-check("values.item-history-lists-item-changes-filtered", "item history lists this item's changes (filtered audit log)", (history ?? "").includes("set the value"), history?.slice(0, 120));
+if (kit.runs("values.item-history-lists-item-changes-filtered")) {
+  const history = await page
+    .waitForSelector('[data-testid="panel-history"]', { timeout: 10000 })
+    .then((el) => el.textContent(), () => "");
+  check("values.item-history-lists-item-changes-filtered", "item history lists this item's changes (filtered audit log)", (history ?? "").includes("set the value"), history?.slice(0, 120));
+}
 
 // 10. Export .env: non-secret values only unless secrets are explicitly included.
 await page.goto(`${base}/o/acme/p/api`);
@@ -311,94 +320,97 @@ check(
 );
 check("values.export-made-no-disclosure", "export made no disclosure", disclosures.length === 4);
 
-// 10b. Tailnet-only values: a Tailnet Requirement on production keeps every
-// value out of the dashboard, which never has Tailnet Context. Plaintext
-// revealed before the requirement appeared leaves the open page, the
-// environment says so, every Reveal path gives way to the explanation
-// (?reveal=1 included), and the page asks for no values and no disclosure.
-await page.goto(`${base}/o/acme/p/api/e/production`);
-await page.waitForSelector('[data-row="DATABASE_URL"]', { timeout: 20000 });
-await page.click('[data-testid="reveal-all"]');
-await waitText('[data-row="DATABASE_URL"]', "prod-rotated");
-// A second tab holds production's export dialog open, values loaded.
-const exportPage = await context.newPage();
-await exportPage.goto(`${base}/o/acme/p/api`);
-await exportPage.waitForSelector(cellSel("DATABASE_URL", "production", "set"), { timeout: 20000 });
-await exportPage.click('[data-testid="export-menu"]');
-await exportPage.click('[data-testid="export-production"]');
-await exportPage.waitForSelector('[data-testid="export-download"]:not([disabled])', { timeout: 10000 });
-const tailnetReq = await apiJson("/v1/organizations/acme/requirements", "POST", {
-  kind: "tailnet",
-  target: { kind: "tier", tier: "production" },
-  selector: { tailnet: "example.ts.net", tags: ["tag:prod"] },
-});
-check("values.tailnet-requirement-production-created", "tailnet requirement on production created", tailnetReq.status === 201, `status ${tailnetReq.status}`);
-const tailnetReqId = (await tailnetReq.json()).id;
-// No reload: the requirement reaches the open page as a live update.
-await page.waitForSelector('[data-testid="tailnet-only-notice"]', { timeout: 30000 });
-// This installation serves no tailnet browser endpoint: nothing to connect to.
-check("values.without-tailnet-endpoint-notice-offers-no", "without a tailnet endpoint the notice offers no Connect", (await page.locator('[data-testid="tailnet-connect"]').count()) === 0);
-check(
-  "values.plaintext-revealed-before-requirement-leaves-open", "plaintext revealed before the requirement leaves the open page",
-  !(await rowText("DATABASE_URL")).includes("prod-rotated"),
-  await rowText("DATABASE_URL"),
-);
-// The dialog that was already open follows: explanation, no Download.
-await exportPage.waitForSelector('[data-testid="export-tailnet-only"]', { timeout: 30000 });
-check("values.export-dialog-already-open-stops-offering", "an export dialog already open stops offering Download", await exportPage.locator('[data-testid="export-download"]').isDisabled());
-await exportPage.close();
-const valueReads = [];
-page.on("request", (req) => {
-  if (req.url().includes("/environments/production/effective-configuration?include=values")) valueReads.push(req.url());
-});
-const disclosuresBefore = disclosureRequests.length;
-const flagged = (await (await apiJson(`${API}/environments`, "GET")).json()).items;
-check(
-  "values.environments-say-which-values-need-tailnet", "environments say which values need the tailnet",
-  flagged.find((e) => e.name === "production")?.tailnetRequired === true &&
-    flagged.find((e) => e.name === "development")?.tailnetRequired === false,
-);
+// Operation group tailnet: Requirements.
+if (kit.group("tailnet")) {
+  // 10b. Tailnet-only values: a Tailnet Requirement on production keeps every
+  // value out of the dashboard, which never has Tailnet Context. Plaintext
+  // revealed before the requirement appeared leaves the open page, the
+  // environment says so, every Reveal path gives way to the explanation
+  // (?reveal=1 included), and the page asks for no values and no disclosure.
+  await page.goto(`${base}/o/acme/p/api/e/production`);
+  await page.waitForSelector('[data-row="DATABASE_URL"]', { timeout: 20000 });
+  await page.click('[data-testid="reveal-all"]');
+  await waitText('[data-row="DATABASE_URL"]', "prod-rotated");
+  // A second tab holds production's export dialog open, values loaded.
+  const exportPage = await context.newPage();
+  await exportPage.goto(`${base}/o/acme/p/api`);
+  await exportPage.waitForSelector(cellSel("DATABASE_URL", "production", "set"), { timeout: 20000 });
+  await exportPage.click('[data-testid="export-menu"]');
+  await exportPage.click('[data-testid="export-production"]');
+  await exportPage.waitForSelector('[data-testid="export-download"]:not([disabled])', { timeout: 10000 });
+  const tailnetReq = await apiJson("/v1/organizations/acme/requirements", "POST", {
+    kind: "tailnet",
+    target: { kind: "tier", tier: "production" },
+    selector: { tailnet: "example.ts.net", tags: ["tag:prod"] },
+  });
+  check("values.tailnet-requirement-production-created", "tailnet requirement on production created", tailnetReq.status === 201, `status ${tailnetReq.status}`);
+  const tailnetReqId = (await tailnetReq.json()).id;
+  // No reload: the requirement reaches the open page as a live update.
+  await page.waitForSelector('[data-testid="tailnet-only-notice"]', { timeout: 30000 });
+  // This installation serves no tailnet browser endpoint: nothing to connect to.
+  check("values.without-tailnet-endpoint-notice-offers-no", "without a tailnet endpoint the notice offers no Connect", (await page.locator('[data-testid="tailnet-connect"]').count()) === 0);
+  check(
+    "values.plaintext-revealed-before-requirement-leaves-open", "plaintext revealed before the requirement leaves the open page",
+    !(await rowText("DATABASE_URL")).includes("prod-rotated"),
+    await rowText("DATABASE_URL"),
+  );
+  // The dialog that was already open follows: explanation, no Download.
+  await exportPage.waitForSelector('[data-testid="export-tailnet-only"]', { timeout: 30000 });
+  check("values.export-dialog-already-open-stops-offering", "an export dialog already open stops offering Download", await exportPage.locator('[data-testid="export-download"]').isDisabled());
+  await exportPage.close();
+  const valueReads = [];
+  page.on("request", (req) => {
+    if (req.url().includes("/environments/production/effective-configuration?include=values")) valueReads.push(req.url());
+  });
+  const disclosuresBefore = disclosureRequests.length;
+  const flagged = (await (await apiJson(`${API}/environments`, "GET")).json()).items;
+  check(
+    "values.environments-say-which-values-need-tailnet", "environments say which values need the tailnet",
+    flagged.find((e) => e.name === "production")?.tailnetRequired === true &&
+      flagged.find((e) => e.name === "development")?.tailnetRequired === false,
+  );
 
-await page.goto(`${base}/o/acme/p/api`);
-await page.waitForSelector('[data-testid="tailnet-only-production"]', { timeout: 20000 });
-await page.waitForSelector(cellSel("DATABASE_URL", "production", "set"), { timeout: 20000 });
-check("values.grid-column-has-no-reveal", "grid column has no Reveal", (await page.locator('[data-testid="reveal-column-production"]').count()) === 0);
-if ((await page.locator('[data-testid="reveal-menu"]').count()) > 0) {
-  await page.click('[data-testid="reveal-menu"]');
-  check("values.bulk-reveal-leaves-production-out", "bulk Reveal leaves production out", (await page.locator('[data-testid="reveal-in-production"]').count()) === 0);
+  await page.goto(`${base}/o/acme/p/api`);
+  await page.waitForSelector('[data-testid="tailnet-only-production"]', { timeout: 20000 });
+  await page.waitForSelector(cellSel("DATABASE_URL", "production", "set"), { timeout: 20000 });
+  check("values.grid-column-has-no-reveal", "grid column has no Reveal", (await page.locator('[data-testid="reveal-column-production"]').count()) === 0);
+  if ((await page.locator('[data-testid="reveal-menu"]').count()) > 0) {
+    await page.click('[data-testid="reveal-menu"]');
+    check("values.bulk-reveal-leaves-production-out", "bulk Reveal leaves production out", (await page.locator('[data-testid="reveal-in-production"]').count()) === 0);
+    await page.keyboard.press("Escape");
+  }
+  await page.hover(cellSel("DATABASE_URL", "production", "set"));
+  await page.click('[aria-label="More for DATABASE_URL in production"]');
+  const cellMenu = (await page.textContent('[role="menu"]')) ?? "";
+  check("values.cell-menu-has-no-reveal", "cell menu has no Reveal", !cellMenu.includes("Reveal"), cellMenu);
   await page.keyboard.press("Escape");
-}
-await page.hover(cellSel("DATABASE_URL", "production", "set"));
-await page.click('[aria-label="More for DATABASE_URL in production"]');
-const cellMenu = (await page.textContent('[role="menu"]')) ?? "";
-check("values.cell-menu-has-no-reveal", "cell menu has no Reveal", !cellMenu.includes("Reveal"), cellMenu);
-await page.keyboard.press("Escape");
-await page.click('[data-testid="export-menu"]');
-await page.click('[data-testid="export-production"]');
-await page.waitForSelector('[data-testid="export-tailnet-only"]', { timeout: 10000 });
-check("values.export-explains-instead-exporting", "export explains instead of exporting", await page.locator('[data-testid="export-download"]').isDisabled());
-await page.keyboard.press("Escape");
+  await page.click('[data-testid="export-menu"]');
+  await page.click('[data-testid="export-production"]');
+  await page.waitForSelector('[data-testid="export-tailnet-only"]', { timeout: 10000 });
+  check("values.export-explains-instead-exporting", "export explains instead of exporting", await page.locator('[data-testid="export-download"]').isDisabled());
+  await page.keyboard.press("Escape");
 
-await page.goto(`${base}/o/acme/p/api/e/production?reveal=1`);
-await page.waitForSelector('[data-testid="tailnet-only-notice"]', { timeout: 20000 });
-await page.waitForSelector('[data-row="DATABASE_URL"]', { timeout: 20000 });
-await page.waitForFunction(() => !location.search.includes("reveal=1"), null, { timeout: 10000 });
-check("values.environment-header-says-tailnet-only", "environment header says tailnet only", (await page.locator('[data-testid="tailnet-only-production"]').count()) > 0);
-check(
-  "values.editor-has-no-reveal-all-no", "editor has no Reveal all and no row Reveal",
-  (await page.locator('[data-testid="reveal-all"]').count()) === 0 &&
-    (await page.locator('[data-testid="eye-DATABASE_URL"]').count()) === 0,
-);
-await page.goto(`${base}/o/acme/p/api/e/production?item=DATABASE_URL`);
-await page.waitForSelector('[data-testid="item-panel"]', { timeout: 20000 });
-check("values.item-panel-has-no-reveal", "item panel has no Reveal", (await page.locator('[data-testid="panel-reveal"]').count()) === 0);
-check(
-  "values.tailnet-only-environment-gets-no-disclosure-no", "a tailnet-only environment gets no disclosure and no values request",
-  disclosureRequests.length === disclosuresBefore && valueReads.length === 0,
-  `${disclosureRequests.length - disclosuresBefore} disclosures, ${valueReads.length} value reads`,
-);
-const tailnetRemoved = await apiJson(`/v1/organizations/acme/requirements/${tailnetReqId}`, "DELETE");
-check("values.tailnet-requirement-removed", "tailnet requirement removed", tailnetRemoved.status === 204, `status ${tailnetRemoved.status}`);
+  await page.goto(`${base}/o/acme/p/api/e/production?reveal=1`);
+  await page.waitForSelector('[data-testid="tailnet-only-notice"]', { timeout: 20000 });
+  await page.waitForSelector('[data-row="DATABASE_URL"]', { timeout: 20000 });
+  await page.waitForFunction(() => !location.search.includes("reveal=1"), null, { timeout: 10000 });
+  check("values.environment-header-says-tailnet-only", "environment header says tailnet only", (await page.locator('[data-testid="tailnet-only-production"]').count()) > 0);
+  check(
+    "values.editor-has-no-reveal-all-no", "editor has no Reveal all and no row Reveal",
+    (await page.locator('[data-testid="reveal-all"]').count()) === 0 &&
+      (await page.locator('[data-testid="eye-DATABASE_URL"]').count()) === 0,
+  );
+  await page.goto(`${base}/o/acme/p/api/e/production?item=DATABASE_URL`);
+  await page.waitForSelector('[data-testid="item-panel"]', { timeout: 20000 });
+  check("values.item-panel-has-no-reveal", "item panel has no Reveal", (await page.locator('[data-testid="panel-reveal"]').count()) === 0);
+  check(
+    "values.tailnet-only-environment-gets-no-disclosure-no", "a tailnet-only environment gets no disclosure and no values request",
+    disclosureRequests.length === disclosuresBefore && valueReads.length === 0,
+    `${disclosureRequests.length - disclosuresBefore} disclosures, ${valueReads.length} value reads`,
+  );
+  const tailnetRemoved = await apiJson(`/v1/organizations/acme/requirements/${tailnetReqId}`, "DELETE");
+  check("values.tailnet-requirement-removed", "tailnet requirement removed", tailnetRemoved.status === 204, `status ${tailnetRemoved.status}`);
+}
 
 // 11. Deleting an environment: plain confirm for development tier, typed name for production.
 const scratch = await apiJson(`${API}/environments`, "POST", { name: "scratch", tier: "development" });
