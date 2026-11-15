@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
-	"github.com/varlatch/varlatch/go/server/whatwg"
 )
 
 // RedactWebhookURL is redactWebhookUrl (ADR-0029 §7): the URL with its

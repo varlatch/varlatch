@@ -19,11 +19,11 @@
  * - destination: authz/destination.ts, and Node's domainToASCII and isIP
  *   under it.
  *
- * - nodeidna: go/server/whatwg's table of what Node's URL host parser
+ * - nodeidna: go/lib/whatwg's table of what Node's URL host parser
  *   knows about each code point, and Node's answers for every code point
- *   (go/server/whatwg/testdata/nodeidna.mjs), which destination.ts reaches
+ *   (go/lib/whatwg/testdata/nodeidna.mjs), which destination.ts reaches
  *   through domainToASCII. Regenerate those two files with
- *   `node go/server/whatwg/testdata/nodeidna.mjs` after a Node.js update.
+ *   `node go/lib/whatwg/testdata/nodeidna.mjs` after a Node.js update.
  *
  * The file is checked here: it must equal what this code produces now.
  * After a change to the evaluator, loadGrants, decide, the freeze checks or
@@ -589,10 +589,10 @@ it("the Go authorization vectors are current", { timeout: 300_000 }, async () =>
   expect(committed === text, "go/server/authz/testdata/ts-vectors.json is stale: regenerate it (see the header of this file)").toBe(true);
 });
 
-it("go/server/whatwg's table of Node's host parser is current", { timeout: 300_000 }, async () => {
+it("go/lib/whatwg's table of Node's host parser is current", { timeout: 300_000 }, async () => {
   // @ts-expect-error: a plain ES module without types
-  const idna = (await import("../../../go/server/whatwg/testdata/nodeidna.mjs")) as { stale: () => string[] };
+  const idna = (await import("../../../go/lib/whatwg/testdata/nodeidna.mjs")) as { stale: () => string[] };
   // Node's answers and ada's version must match; the Node.js patch release
   // the files were generated with may differ from the one running here.
-  expect(idna.stale(), "regenerate them: node go/server/whatwg/testdata/nodeidna.mjs").toEqual([]);
+  expect(idna.stale(), "regenerate them: node go/lib/whatwg/testdata/nodeidna.mjs").toEqual([]);
 });

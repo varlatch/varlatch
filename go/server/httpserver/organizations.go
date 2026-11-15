@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
@@ -17,7 +18,6 @@ import (
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/orgs"
-	"github.com/varlatch/varlatch/go/server/whatwg"
 )
 
 // Organizations (ADR-0059 step 4.1a): createOrganization,

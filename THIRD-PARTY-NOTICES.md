@@ -271,7 +271,7 @@ both licenses.
 
 | Project | Version | License | What | Files |
 | --- | --- | --- | --- | --- |
-| [ada](https://github.com/ada-url/ada/blob/b12a893a45809da8103bb4f1e2f6f5ee13f9100b/src/ada_idna.cpp) | 4.0.0 (`b12a893a4580`) | MIT | Domain to ASCII and label validity (ada::idna::to_ascii and is_label_valid), ported to Go. ada is dual-licensed Apache-2.0 OR MIT; Varlatch takes it under MIT. | `go/server/whatwg/idna.go` |
+| [ada](https://github.com/ada-url/ada/blob/b12a893a45809da8103bb4f1e2f6f5ee13f9100b/src/ada_idna.cpp) | 4.0.0 (`b12a893a4580`) | MIT | Domain to ASCII and label validity (ada::idna::to_ascii and is_label_valid), ported to Go. ada is dual-licensed Apache-2.0 OR MIT; Varlatch takes it under MIT. | `go/lib/whatwg/idna.go` |
 
 ## License texts
 

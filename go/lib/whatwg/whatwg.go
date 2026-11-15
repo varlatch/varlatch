@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 
 // Package whatwg is the part of the WHATWG URL Standard that the TypeScript
 // server's code depends on through Node.js: the host parser (as
@@ -413,8 +413,9 @@ type URL struct {
 var defaultPorts = map[string]string{"http": "80", "https": "443", "ws": "80", "wss": "443", "ftp": "21"}
 
 // ParseURL parses an absolute URL as `new URL(input)` does: the special
-// schemes, file without its Windows drive letter rules, and non-special
-// schemes. It reports false where `new URL` throws.
+// schemes, file, and non-special schemes. It reports false where `new URL`
+// throws. A file URL's Windows drive letter is kept in its pathname as
+// written ("|" is not turned into ":").
 func ParseURL(input string) (URL, bool) {
 	input = strings.TrimFunc(input, func(r rune) bool { return r <= 0x20 })
 	input = removeTabNewline(input)
@@ -546,7 +547,16 @@ func parseFile(rest string) (URL, bool) {
 		if end < 0 {
 			end = len(rest)
 		}
-		if host := rest[:end]; host != "" {
+		host := rest[:end]
+		if len(host) == 2 && isAlpha(host[0]) && (host[1] == ':' || host[1] == '|') {
+			// A Windows drive letter where the host would be: the file host
+			// state hands it to the path state ("file://C:/x" is the path
+			// "/C:/x"), and nothing fails.
+			host, rest = "", "/"+rest
+		} else {
+			rest = rest[end:]
+		}
+		if host != "" {
 			h, ok := ParseHost(host, true)
 			if !ok {
 				return URL{}, false
@@ -555,7 +565,6 @@ func parseFile(rest string) (URL, bool) {
 				u.Host = h
 			}
 		}
-		rest = rest[end:]
 	}
 	path := rest
 	if i := strings.IndexAny(path, "?#"); i >= 0 {
