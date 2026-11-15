@@ -10,6 +10,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { validateInventory } from "../lib/inventory.mjs";
 import { PLAN } from "../plan.mjs";
 
@@ -104,6 +105,162 @@ test("each operation group is skipped in its suite's script, and only its suite'
     // A check skipped on its own names a check of this suite.
     for (const m of source.matchAll(/\bkit\.runs\(\s*["']([a-z0-9.-]+)["']\s*\)/g)) assert.equal(inventory.checks[m[1]]?.suite, suite, m[1]);
   }
+});
+
+/**
+ * The kit.group() and kit.runs() calls in a script that do not follow the
+ * gate convention, read from the script's syntax tree (TypeScript's parser,
+ * on JavaScript). This is a lint aid, not a proof: the guarantee is at run
+ * time (a result reported for a skipped group fails the run, in the kit and
+ * in the runner, and a skipped group's setup meets the target's 501s). The
+ * convention, and nothing else:
+ *   1. `if (call) { ... }`: a block with at least one statement and no
+ *      else. The call may be one conjunct of the condition
+ *      (`if (kit.supports("f") && kit.group("g")) { ... }`).
+ *   2. `if (!call) return;`, `continue;` or `break;` (bare: no value, no
+ *      label; alone or as a block's only statement), as a statement of a
+ *      block with work after it: `return` in a function's own body,
+ *      `continue` and `break` in the body of the loop they leave.
+ *   3. Either through a const, `const g = kit.group("g");`, every use of
+ *      `g` the condition of form 1 or 2.
+ * A gate inside a function counts only when the function is called (its
+ * name is used elsewhere, or it is passed as an argument or called where it
+ * stands). Anything else is a violation.
+ */
+function ungatedCalls(source) {
+  const sf = ts.createSourceFile("suite.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const out = [];
+  const isKit = (e) => ts.isIdentifier(e) && e.text === "kit";
+  const isGate = (name) => name === "group" || name === "runs";
+  const label = (call) => `kit.${call.expression.name.text}(${call.arguments.map((a) => a.getText(sf)).join(", ")})`;
+  const outer = (n) => {
+    while (ts.isParenthesizedExpression(n.parent)) n = n.parent;
+    return n;
+  };
+  const isLoop = (n) => ts.isForStatement(n) || ts.isForOfStatement(n) || ts.isForInStatement(n) || ts.isWhileStatement(n) || ts.isDoStatement(n);
+  const isFunction = (n) => ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isMethodDeclaration(n);
+  const references = (name, declaration) => {
+    const refs = [];
+    const walk = (n) => {
+      if (ts.isIdentifier(n) && n.text === name && n !== declaration) refs.push(n);
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
+    return refs;
+  };
+  // The bare exit an early-exit gate's then-branch is, or null.
+  const exitOf = (s) => {
+    if (ts.isBlock(s)) return s.statements.length === 1 ? exitOf(s.statements[0]) : null;
+    if (ts.isReturnStatement(s) && !s.expression) return s;
+    if ((ts.isContinueStatement(s) || ts.isBreakStatement(s)) && !s.label) return s;
+    return null;
+  };
+  // Form 2's place: a statement of a block with work after it, the block
+  // being the function's own body (return) or the loop's body it leaves.
+  const exitsBeforeWork = (ifs) => {
+    const exit = exitOf(ifs.thenStatement);
+    const block = ifs.parent;
+    if (!exit || ifs.elseStatement || !ts.isBlock(block)) return false;
+    if (block.statements.indexOf(ifs) >= block.statements.length - 1) return false;
+    return ts.isReturnStatement(exit) ? isFunction(block.parent) && block.parent.body === block : isLoop(block.parent) && block.parent.statement === block;
+  };
+  // Whether an expression (a call, or a const's name) is a gate.
+  const gates = (n) => {
+    let e = outer(n);
+    if (ts.isPrefixUnaryExpression(e.parent) && e.parent.operator === ts.SyntaxKind.ExclamationToken) {
+      const not = outer(e.parent);
+      return ts.isIfStatement(not.parent) && not.parent.expression === not && exitsBeforeWork(not.parent);
+    }
+    while (ts.isBinaryExpression(e.parent) && e.parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) e = outer(e.parent);
+    const ifs = e.parent;
+    return ts.isIfStatement(ifs) && ifs.expression === e && !ifs.elseStatement && ts.isBlock(ifs.thenStatement) && ifs.thenStatement.statements.length > 0;
+  };
+  // Whether every function around a node is called.
+  const called = (n) => {
+    for (let p = n.parent; p; p = p.parent) {
+      if (!isFunction(p)) continue;
+      const f = outer(p);
+      if (ts.isCallExpression(f.parent) && (f.parent.expression === f || f.parent.arguments.includes(f))) continue;
+      const name = ts.isFunctionDeclaration(p) ? p.name : ts.isVariableDeclaration(f.parent) && f.parent.initializer === f && ts.isIdentifier(f.parent.name) ? f.parent.name : null;
+      if (!name || references(name.text, name).length === 0) return false;
+    }
+    return true;
+  };
+  const visit = (n) => {
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && isKit(n.expression.expression) && isGate(n.expression.name.text)) {
+      const d = outer(n).parent;
+      const viaConst =
+        ts.isVariableDeclaration(d) && d.initializer === outer(n) && ts.isIdentifier(d.name) &&
+        (d.parent.flags & ts.NodeFlags.Const) !== 0 &&
+        ((refs) => refs.length > 0 && refs.every((r) => gates(r) && called(r)))(references(d.name.text, d.name));
+      if (!((gates(n) || viaConst) && called(n))) out.push(label(n));
+    } else if (ts.isElementAccessExpression(n) && isKit(n.expression) && ts.isStringLiteral(n.argumentExpression) && isGate(n.argumentExpression.text)) {
+      out.push(`kit[${n.argumentExpression.getText(sf)}]`);
+    } else if (ts.isVariableDeclaration(n) && n.initializer && isKit(n.initializer) && ts.isObjectBindingPattern(n.name)) {
+      for (const el of n.name.elements) {
+        const key = (el.propertyName ?? el.name).getText(sf);
+        if (isGate(key)) out.push(`${key} taken from kit`);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+test("each kit.group() and kit.runs() result gates the work it names", () => {
+  for (const [suite, entry] of Object.entries(inventory.suites)) {
+    if (entry.runner) continue;
+    assert.deepEqual(ungatedCalls(readFileSync(join(repoRoot, entry.script), "utf8")), [], suite);
+  }
+});
+
+test("the gate detector: the convention, whatever its formatting, and nothing else", () => {
+  const ok = (code) => assert.deepEqual(ungatedCalls(code), [], code);
+  const bad = (code, found) => assert.deepEqual(ungatedCalls(code), [found], code);
+  // 1. The work in a non-empty block, no else; a conjunct.
+  ok('if (kit.group("a")) { setup(); }');
+  ok('if(kit.group("a")){setup()}');
+  ok('if (\n  kit.group(\n    "a",\n  )\n) {\n  setup();\n}');
+  ok('if (kit . group ("a")) { setup(); }');
+  ok('if ((kit.group("a"))) { setup(); }');
+  ok('if (kit.supports("f") && kit.group("a")) { setup(); }');
+  // 2. A bare exit before the work, in the function's body or the loop's.
+  ok('function f() { if (!kit.group("a")) return; setup(); }\nf();');
+  ok('for (const x of xs) { if (!kit.group("a")) { continue; } setup(x); }');
+  ok('while (true) { if (!kit.group("a")) break; setup(); }');
+  // 3. Through a const used only as those conditions; inside a called function.
+  ok('const a = kit.group("a");\nif (a) { setup(); }\nif (a) { more(); }');
+  ok('const f = () => { const a = kit.runs("s.x"); if (!a) return; check(); };\nawait f();');
+  ok('items.forEach((i) => { if (kit.runs("s.x")) { check(i); } });');
+  ok('(async () => { if (kit.group("a")) { setup(); } })();');
+  // Violations: Sol's counterexamples, from both reviews.
+  bad('kit.group ("a");\nsetup();', 'kit.group("a")');
+  bad('const a = kit.group("a");\nconsole.log(a ? "run" : "skip");\nsetup();', 'kit.group("a")');
+  bad('function f() { if (!kit.group("a")) return setup(); }\nf();', 'kit.group("a")');
+  bad('if (kit.group("a")) {} else { setup(); }', 'kit.group("a")');
+  bad('if (kit.group("a")) { x(); } else { setup(); }', 'kit.group("a")');
+  bad('for (const o of outer) { if (!kit.group("a")) { for (const i of inner) { continue; } } setup(o); }', 'kit.group("a")');
+  bad('for (const o of outer) { if (!kit.group("a")) { for (const i of inner) continue; } setup(o); }', 'kit.group("a")');
+  bad('function never() { if (kit.group("a")) { setup(); } }\nsetup();', 'kit.group("a")');
+  // And the other shapes.
+  bad('if (kit.group("a")) {}', 'kit.group("a")');
+  bad('if (kit.group("a")) setup();', 'kit.group("a")');
+  bad('if (kit.group("a") || x) { setup(); }', 'kit.group("a")');
+  bad('function f() { if (!kit.group("a")) { log(); } setup(); }\nf();', 'kit.group("a")');
+  bad('function f() { if (!kit.group("a")) return; }\nf();', 'kit.group("a")');
+  bad('function f() { if (!kit.group("a")) throw new Error("skip"); setup(); }\nf();', 'kit.group("a")');
+  bad('function f() { if (!kit.group("a") && x) return; setup(); }\nf();', 'kit.group("a")');
+  bad('function f() { for (;;) { if (!kit.group("a")) return; setup(); } }\nf();', 'kit.group("a")');
+  bad('outer: for (;;) { for (;;) { if (!kit.group("a")) continue outer; setup(); } }', 'kit.group("a")');
+  bad('if (!kit.group("a")) return;\nsetup();', 'kit.group("a")');
+  bad('const a = kit.group("a");\nif (a) { setup(); }\nlog(a);', 'kit.group("a")');
+  bad('const a = kit.group("a");\nsetup();', 'kit.group("a")');
+  bad('let a = kit.group("a");\nif (a) { setup(); }', 'kit.group("a")');
+  bad('const ok = !kit.group("a");\nif (ok) { setup(); }', 'kit.group("a")');
+  bad('await f(kit.runs("s.x"));', 'kit.runs("s.x")');
+  bad('if (kit["group"]("a")) { setup(); }', 'kit["group"]');
+  bad('const { group } = kit;\nif (group("a")) { setup(); }', "group taken from kit");
 });
 
 test("every lifecycle and installer suite (scripts/test-*.mjs) is an external suite with its replacement, and only those", () => {

@@ -22,10 +22,12 @@ type parityTable struct {
 	NginxVectors []struct{ Target, Nginx string } `json:"nginxVectors"`
 	Routes       []struct {
 		Method, Target, Credential, Expect, Code, Text string
-		Body                                           *string
-		BodySize                                       int  `json:"bodySize"`
-		Chunked                                        bool `json:"chunked"`
-		Status                                         int
+		// Message, when set, is the error's exact message (zod's issues).
+		Message  string
+		Body     *string
+		BodySize int  `json:"bodySize"`
+		Chunked  bool `json:"chunked"`
+		Status   int
 	} `json:"routes"`
 	ForwardedFor []struct {
 		Peer    string
@@ -164,7 +166,8 @@ func TestParityRoutes(t *testing.T) {
 			if ct != "application/json" {
 				t.Errorf("%s: Content-Type %q", name, ct)
 			} else if e := decode(t, w); !head && (e.Error.Code != c.Code ||
-				(c.Code == "AUTHENTICATION_REQUIRED" && e.Error.Message != "Provide a Varlatch bearer credential")) {
+				(c.Code == "AUTHENTICATION_REQUIRED" && e.Error.Message != "Provide a Varlatch bearer credential") ||
+				(c.Message != "" && e.Error.Message != c.Message)) {
 				t.Errorf("%s: %s", name, w.Body.String())
 			}
 		default:

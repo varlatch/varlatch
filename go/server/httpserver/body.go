@@ -58,6 +58,9 @@ type bodyField struct {
 	options  []string
 }
 
+// maxSafeInteger is Number.MAX_SAFE_INTEGER, the bound of zod's .int().
+const maxSafeInteger = 1<<53 - 1
+
 // bodySchemas are the built operations' zod schemas (http/app.ts).
 var bodySchemas = map[string][]bodyField{
 	"POST /v1/me/credentials/cli": {
@@ -153,21 +156,36 @@ func validateBody(schema []bodyField, raw []byte) ([]byte, []string) {
 				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected number, received %s", f.name, got))
 				continue
 			}
-			// JSON.parse's number: a literal beyond a double is Infinity,
-			// which z.number() refuses.
-			x, err := strconv.ParseFloat(string(bytes.TrimSpace(v)), 64)
-			if err != nil || math.IsInf(x, 0) {
-				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected number, received Infinity", f.name))
+			// JSON.parse's number: a literal beyond a double is Infinity or
+			// -Infinity, which z.number() refuses by that name (ParseFloat's
+			// only error here; an underflow is 0, as in JavaScript).
+			x, _ := strconv.ParseFloat(string(bytes.TrimSpace(v)), 64)
+			if math.IsInf(x, 0) {
+				name := "Infinity"
+				if x < 0 {
+					name = "-Infinity"
+				}
+				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected number, received %s", f.name, name))
 				continue
 			}
-			switch {
-			case x != math.Trunc(x) || math.Abs(x) > 1<<53-1:
+			// .int(): a fraction ends the checks; an integer beyond the safe
+			// range is one issue, and the bounds are still checked (zod 4).
+			if x != math.Trunc(x) {
 				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected int, received number", f.name))
-			case x < f.min:
+				continue
+			}
+			before := len(issues)
+			if x > maxSafeInteger {
+				issues = append(issues, fmt.Sprintf("%s: Too big: expected int to be <=%d", f.name, int64(maxSafeInteger)))
+			} else if x < -maxSafeInteger {
+				issues = append(issues, fmt.Sprintf("%s: Too small: expected int to be >=-%d", f.name, int64(maxSafeInteger)))
+			}
+			if x < f.min {
 				issues = append(issues, fmt.Sprintf("%s: Too small: expected number to be >=%s", f.name, jsNumber(int64(f.min))))
-			case x > f.max:
+			} else if x > f.max {
 				issues = append(issues, fmt.Sprintf("%s: Too big: expected number to be <=%s", f.name, jsNumber(int64(f.max))))
-			default:
+			}
+			if len(issues) == before {
 				obj[f.name] = json.RawMessage(strconv.FormatInt(int64(x), 10))
 			}
 		case kindDatetime:

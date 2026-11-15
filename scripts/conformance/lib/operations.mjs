@@ -30,6 +30,8 @@
  * below), and requires exactly the stub's answer.
  */
 
+import { predates } from "./inventory.mjs";
+
 /** The code of the Go server's shared stub (go/server/httpserver NotImplementedYet). */
 export const NOT_IMPLEMENTED_YET = "NOT_IMPLEMENTED_YET";
 
@@ -177,6 +179,43 @@ export function lackingChecks(inventory, lacks) {
     if (missing.length > 0) out.set(id, missing);
   }
   return out;
+}
+
+/**
+ * The operation groups of a suite the target skips: those every check of
+ * which lacks an operation (the checks `lacked`). A suite skips them
+ * (suite-kit's group()), so a result it reports for one of their checks
+ * means it ran the group's work anyway.
+ */
+export function skippedGroups(inventory, suite, lacked) {
+  const set = asSet(lacked);
+  const out = new Set();
+  for (const group of Object.keys(inventory.suites?.[suite]?.groups ?? {})) {
+    const ids = Object.entries(inventory.checks ?? {}).filter(([, c]) => c.suite === suite && c.group === group).map(([id]) => id);
+    if (ids.length > 0 && ids.every((id) => set.has(id))) out.add(group);
+  }
+  return out;
+}
+
+/**
+ * The results a suite reported for checks of groups the target skips,
+ * each a problem that fails the run: the suite ran work the target lacks.
+ * The one result allowed there is PREDATES-CLI, and only when the CLI
+ * under test really predates the check's feature (lib/inventory.mjs
+ * predates, as the run's evaluation decides it: a CLI built from source,
+ * cliVersion null, predates nothing). Returns the problems' messages.
+ */
+export function skippedGroupProblems(inventory, suite, lacked, results, cliVersion) {
+  const skipped = skippedGroups(inventory, suite, lacked);
+  const problems = [];
+  for (const r of results) {
+    const group = inventory.checks?.[r.id]?.group;
+    if (!group || !skipped.has(group)) continue;
+    const feature = inventory.checks[r.id].feature;
+    if (r.status === "PREDATES-CLI" && feature && inventory.features?.[feature] && predates(inventory, feature, cliVersion)) continue;
+    problems.push(`${r.id} reported ${r.status}, but its operation group ${group} is skipped on this target: the suite ran work the target lacks`);
+  }
+  return problems;
 }
 
 /** Whether a named setup operation (the seed, bootstrap) cannot run on a target lacking `lacks`. */

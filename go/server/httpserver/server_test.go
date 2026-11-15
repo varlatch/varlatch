@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -569,5 +570,32 @@ func TestAccessLogWindowOpened(t *testing.T) {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("access log:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A request whose client went away fails with context.Canceled: answered as
+// any internal error, but logged at debug level only, as the TypeScript
+// server (which never cancels a request's work) logs nothing for it. The
+// same error on a request still in flight is an error.
+func TestCancelledRequestIsNotLoggedAsError(t *testing.T) {
+	var logs bytes.Buffer
+	s, _, _, _ := newTestServer(t, func(o *Options) { o.Log = slog.New(slog.NewTextHandler(&logs, nil)) })
+	failed := fmt.Errorf("query: %w", context.Canceled)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	s.answerError(w, httptest.NewRequest("GET", "/v1/organizations/acme", nil).WithContext(ctx), failed)
+	if w.Code != 500 || decode(t, w).Error.Code != "INTERNAL" {
+		t.Errorf("cancelled: %d %s", w.Code, w.Body.String())
+	}
+	if logs.Len() != 0 {
+		t.Errorf("a cancelled request was logged at info level or above: %q", logs.String())
+	}
+
+	w = httptest.NewRecorder()
+	s.answerError(w, httptest.NewRequest("GET", "/v1/organizations/acme", nil), failed)
+	if w.Code != 500 || !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "answering a request failed") {
+		t.Errorf("in flight: %d, logs %q", w.Code, logs.String())
 	}
 }

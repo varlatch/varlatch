@@ -72,12 +72,12 @@ async function identity(name, envActions, projectActions) {
 // Operation group service-identities: two service identities with partial
 // grants, and the checks that run as them.
 const identities = kit.group("service-identities");
-const readerToken = identities
-  ? await identity("strict reader", ["environment.read", "config.metadata.read", "config.value.read"], ["contract.read"])
-  : null;
-const noContractToken = identities
-  ? await identity("no contract reader", ["environment.read", "config.metadata.read", "config.value.read", "secret.reveal"], [])
-  : null;
+let readerToken = null;
+let noContractToken = null;
+if (identities) {
+  readerToken = await identity("strict reader", ["environment.read", "config.metadata.read", "config.value.read"], ["contract.read"]);
+  noContractToken = await identity("no contract reader", ["environment.read", "config.metadata.read", "config.value.read", "secret.reveal"], []);
+}
 
 /** A CLI checkout logged in as one identity. */
 async function workspace(token) {
@@ -118,8 +118,12 @@ async function run(cli, flags, parentEnv = {}) {
 }
 
 const admin = await workspace(adminToken);
-const reader = identities ? await workspace(readerToken) : null;
-const noContract = identities ? await workspace(noContractToken) : null;
+let reader = null;
+let noContract = null;
+if (identities) {
+  reader = await workspace(readerToken);
+  noContract = await workspace(noContractToken);
+}
 const base = [
   item("DATABASE_URL", { sensitive: true, type: "url", defaultValue: "postgres://default.invalid/app" }),
   item("PORT", { type: "number", defaultValue: "3000" }),
