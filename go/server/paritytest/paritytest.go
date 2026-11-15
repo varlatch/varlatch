@@ -52,14 +52,21 @@ type SideTable struct {
 
 // Recorded is one request of the table and the TypeScript server's answer.
 type Recorded struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Method     string  `json:"method"`
-	Path       string  `json:"path"`
-	Credential string  `json:"credential"`
-	Body       *any    `json:"body,omitempty"`
-	RawBody    *string `json:"rawBody,omitempty"`
-	UserAgent  string  `json:"userAgent,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Credential string `json:"credential"`
+	// Body is the JSON body as the file holds it, sent as that text (its
+	// member order kept, as JSON.stringify sends it there).
+	Body      *json.RawMessage `json:"body,omitempty"`
+	RawBody   *string          `json:"rawBody,omitempty"`
+	UserAgent string           `json:"userAgent,omitempty"`
+	// Headers are sent as they are (an Idempotency-Key).
+	Headers map[string]string `json:"headers,omitempty"`
+	// Masked members of the answer's body read "{masked}" (go-fixture-kit.ts
+	// mask): a digest over rows a request made, which cannot repeat.
+	Masked []string `json:"masked,omitempty"`
 	// Concurrent requests are sent this many times at once; Answers holds
 	// every answer, sorted, and Expect the first.
 	Concurrent int      `json:"concurrent,omitempty"`
@@ -82,9 +89,7 @@ func (r *Recorded) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	if raw, ok := probe["body"]; ok && r.Body == nil {
-		var v any
-		_ = json.Unmarshal(raw, &v)
-		r.Body = &v
+		r.Body = &raw // null
 	}
 	return nil
 }

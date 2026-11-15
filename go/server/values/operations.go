@@ -47,6 +47,7 @@ func (s *Service) EffectiveConfiguration(ctx context.Context, req Request, inclu
 		if st, err = scope(ctx, tx, req); err != nil {
 			return err
 		}
+		readHook(ctx, "after the scope, before authorization")
 		r := st.resource()
 		metadata, err := t.decide(ctx, tx, req, "config.metadata.read", r, true)
 		if err != nil {

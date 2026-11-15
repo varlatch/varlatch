@@ -308,6 +308,23 @@ The server's packages:
   (database or envelope) with the tests that prove it; `g3_test.go` fails
   when an entry names a test that does not exist or that CI does not run,
   or when a purpose has no entry.
+  Its writes (step 4.1d, `writes.go`): `setValue`, `deleteValue` and
+  `applyChangeSet` (`domain/values.ts`), each one job of the single writer
+  behind the Organization's and the requester's shared gates, in the
+  TypeScript order (the item's name, the environment's expiry, the
+  Organization's KEK and the active Contract; the writer's checks and the
+  checkpoint; a deletion's value found before the checkpoint; a change
+  set's every version guard before any write), with each version sealed
+  under the Organization's KEK (a lone surrogate in a value as U+FFFD, as
+  Node encodes it; U+0000 kept, since a value is sealed, not stored as
+  text). `setValue` and `applyChangeSet` run under an Idempotency-Key
+  when the request has one (`write.Idempotent`: the claim, the write and
+  the stored response in the same job, so a refused write stores no
+  claim), the digest over zod's output in its schema's member order.
+  `WithReadHook` lets a test commit a write between a retrieval's reads:
+  `consistency_test.go` holds retrieval-consistency's cases (a parent's
+  write, a Contract activation, a grant revocation, and change sets all
+  the while: each retrieval sees one state, whole).
   `services/varlatchd/test/go-values-fixture.test.ts` writes them (and
   `server/daemon/seed_contract.json`, the conformance seed's Contract) and
   checks the committed files are still that server's answers:
@@ -423,14 +440,21 @@ The server's packages:
   check the file's rows are still what the setup makes (new IDs, and the
   values of each table's declared random columns, relabelled one to one in
   a fixed walk, never masked, so a moved foreign key or swapped IDs count
-  as a difference).
+  as a difference). A request may send headers (an Idempotency-Key);
+  its placeholders are filled in its body as in its path; and members of
+  its answer named in `masked` read `"{masked}"` on both sides (a digest
+  over rows earlier requests made, which cannot repeat). A domain ID's
+  prefix has two to four letters (a change set's `cs_`).
   `testdata/core-v0.22.0.json` is step 4.1's file (`go-core-fixture.test.ts`,
   regenerated with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors);
   4.1a records the Organization operations in it, 4.1b the Contract
   operations (request paths name rows by placeholders: `{project:SLUG}`,
   and `{rev:KEY}` for the revision holding an item named KEY), 4.1c the
   Projects, environments (`{env:PROJECT/NAME}`) and installation reads,
-  and 4.1d adds its own. Name later files `<area>-v<release>.json` in
+  and 4.1d the value writes, under Idempotency-Keys too
+  (`{ver:PROJECT/ENVIRONMENT/ITEM}`, a value's current version), the
+  Go test opening every value version a request wrote and finding a
+  value a request sent. Name later files `<area>-v<release>.json` in
   `testdata/` (the secret scan's allow list and `scripts/ci-changes.sh`
   match that). `server/values/valuestest` loads its fixtures with the same
   `Prepare`.

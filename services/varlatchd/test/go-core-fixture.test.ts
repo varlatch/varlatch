@@ -61,6 +61,9 @@ const TABLES: Table[] = [
   { name: "environments", orderBy: "id" },
   { name: "env_values", orderBy: "id" },
   { name: "capabilities", orderBy: "id" },
+  { name: "value_versions", orderBy: "id", random: ["payload", "wrapped_dek"] },
+  // An Idempotency-Key's digest is keyed by the build's random Root KEK.
+  { name: "idempotency_keys", orderBy: "identity_id, endpoint, idempotency_key", random: ["body_hash"] },
 ];
 
 const SIDE: SideTable[] = [
@@ -69,8 +72,10 @@ const SIDE: SideTable[] = [
   { name: "projects", key: ["id"], sortBy: ["organization_id", "slug"], volatile: ["created_at"] },
   { name: "contract_revisions", key: ["id"], sortBy: ["project_id", "content_hash"], volatile: ["created_at"] },
   { name: "environments", key: ["id"], sortBy: ["project_id", "name", "deleted_at"], volatile: ["created_at", "deleted_at"] },
-  { name: "env_values", key: ["id"], sortBy: ["environment_id", "item_name"], volatile: ["deleted_at"] },
+  { name: "env_values", key: ["id"], sortBy: ["environment_id", "item_name"], volatile: ["created_at", "deleted_at"] },
   { name: "capabilities", key: ["id"], sortBy: ["environment_id", "run_id"], volatile: ["revoked_at"] },
+  { name: "value_versions", key: ["id"], sortBy: ["value_id", "previous_version_id"], volatile: ["payload", "wrapped_dek", "created_at"] },
+  { name: "idempotency_keys", key: ["identity_id", "endpoint", "idempotency_key"], sortBy: ["identity_id", "endpoint", "idempotency_key"], volatile: ["created_at"] },
 ];
 
 /** The CLI in assisted mode (ADR-0043 Decision 3): its requests are attributed so. */
@@ -168,6 +173,7 @@ function requestTable(): RequestCase[] {
     create("create after the renames", "alice", { name: "Acme Robotics", slug: "acme-robotics" }),
     ...contractRequests(),
     ...projectRequests(),
+    ...valueRequests(),
   ]);
 }
 
@@ -239,7 +245,11 @@ const PROJECTS: [string, string, "git" | "managed"][] = [
   ["gone", "app", "git"],
 ];
 
-/** A request path's placeholders: {rev:KEY}, {project:SLUG} and {env:PROJECT/NAME} (acme's). */
+/**
+ * A request's placeholders, in its path and its body: {rev:KEY},
+ * {project:SLUG}, {env:PROJECT/NAME} and {ver:PROJECT/ENVIRONMENT/ITEM}
+ * (the value's current version), acme's, as the file's rows hold them.
+ */
 function fillPath(rows: Record<string, Row[]>): (p: string) => string {
   const orgOf = (slug: string) => rows.organizations!.find((o) => o.slug === slug)!.id as string;
   return (p) =>
@@ -247,6 +257,13 @@ function fillPath(rows: Record<string, Row[]>): (p: string) => string {
       .replace("{orgId}", orgOf("acme"))
       .replace("{goneId}", orgOf("gone"))
       .replace(/\{project:([a-z]+)\}/g, (_m, slug: string) => rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug && r.deleted_at === null)!.id as string)
+      .replace(/\{ver:([a-z0-9-]+)\/([^}]+)\/([A-Z][A-Z0-9_]*)\}/g, (_m, slug: string, name: string, item: string) => {
+        const project = rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug && r.deleted_at === null)!;
+        const env = rows.environments!.find((e) => e.project_id === project.id && e.name === name && e.deleted_at === null)!;
+        const value = rows.env_values!.find((v) => v.environment_id === env.id && v.item_name === item);
+        if (!value?.current_version_id) throw new Error(`no current version of ${slug}/${name}/${item}`);
+        return value.current_version_id as string;
+      })
       .replace(/\{env:([a-z0-9-]+)\/([^}]+)\}/g, (_m, slug: string, name: string) => {
         const project = rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug && r.deleted_at === null)!;
         const env = rows.environments!.find((e) => e.project_id === project.id && e.name === name && e.deleted_at === null);
@@ -697,6 +714,175 @@ function projectRequests(): Omit<RequestCase, "id">[] {
   ];
 }
 
+// ---- Values: setValue, deleteValue, applyChangeSet (step 4.1d)
+
+/**
+ * The values build() writes through /v1: acme/api's development holds
+ * API_URL, LOG_LEVEL, DB_HOST, DATABASE_URL (which references DB_HOST) and
+ * a deleted OLD_ITEM; development/alice overrides LOG_LEVEL; staging holds
+ * API_URL; production/expired is a preview that expired in 2020; each
+ * guarded Organization's app/development holds ITEM.
+ */
+async function buildValues(call: Call) {
+  const V = (org: string, project: string, env: string, item: string) =>
+    `${ORG}/${org}/projects/${project}/environments/${encodeURIComponent(env)}/values/${item}`;
+  for (const [env, item, value] of [
+    ["development", "API_URL", "https://dev.example.com"],
+    ["development", "LOG_LEVEL", "debug"],
+    ["development", "DB_HOST", "db.dev"],
+    ["development", "DATABASE_URL", "postgres://${DB_HOST}/app"],
+    ["development", "OLD_ITEM", "gone soon"],
+    ["development/alice", "LOG_LEVEL", "trace"],
+    ["staging", "API_URL", "https://staging.example.com"],
+  ] as const) {
+    await call("PUT", V("acme", "api", env, item), { value });
+  }
+  await call("DELETE", V("acme", "api", "development", "OLD_ITEM"));
+  await call("POST", `${ORG}/acme/projects/api/environments`, { name: "production/expired", parentEnvironmentId: "production", kind: "preview", expiresAt: "2020-01-01T00:00:00Z" });
+  for (const org of ["frozen", "guarded", "reported", "deleting"]) {
+    await call("PUT", V(org, "app", "development", "ITEM"), { value: `${org} value` });
+  }
+}
+
+function valueRequests(): Omit<RequestCase, "id">[] {
+  const E = (env: string, project = "api", org = "acme") => `${ORG}/${org}/projects/${project}/environments/${env}`;
+  const put = (name: string, env: string, item: string, body: unknown, credential = "alice", org = "acme", project = org === "acme" ? "api" : "app"): Omit<RequestCase, "id"> => ({
+    name, method: "PUT", path: `${E(env, project, org)}/values/${item}`, credential, body,
+  });
+  const putRaw = (name: string, env: string, item: string, rawBody: string): Omit<RequestCase, "id"> => ({ name, method: "PUT", path: `${E(env)}/values/${item}`, credential: "alice", rawBody });
+  const keyed = (c: Omit<RequestCase, "id">, key: string): Omit<RequestCase, "id"> => ({ ...c, headers: { "Idempotency-Key": key } });
+  const del = (name: string, env: string, item: string, credential = "alice", org = "acme", project = org === "acme" ? "api" : "app"): Omit<RequestCase, "id"> => ({
+    name, method: "DELETE", path: `${E(env, project, org)}/values/${item}`, credential,
+  });
+  const changes = (name: string, env: string, body: unknown, credential = "alice", org = "acme", project = org === "acme" ? "api" : "app"): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: `${E(env, project, org)}/changes`, credential, body,
+  });
+  const set = (item: string, value: string, expectedVersionId?: string) => ({ op: "set", item, value, ...(expectedVersionId ? { expectedVersionId } : {}) });
+  const drop = (item: string, expectedVersionId?: string) => ({ op: "delete", item, ...(expectedVersionId ? { expectedVersionId } : {}) });
+  // The stateDigest covers versions earlier requests made: masked.
+  const read = (name: string, env: string, credential = "alice"): Omit<RequestCase, "id"> => ({
+    name, method: "GET", path: `${E(env)}/effective-configuration?include=values`, credential, masked: ["stateDigest"],
+  });
+  return [
+    // setValue.
+    put("set a value", "development", "NEW_ITEM", { value: "one" }),
+    put("set a value again", "development", "NEW_ITEM", { value: "two" }),
+    put("set a value, its expected version", "development", "API_URL", { value: "https://dev2.example.com", expectedVersionId: "{ver:api/development/API_URL}" }),
+    put("set a value, a stale expected version", "development", "API_URL", { value: "https://dev3.example.com", expectedVersionId: "{ver:api/development/API_URL}" }),
+    put("set a value, an expected version for a new item", "development", "BRAND_NEW", { value: "x", expectedVersionId: "ver_aaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+    put("set a value, a deleted one again", "development", "OLD_ITEM", { value: "back" }),
+    put("set a value, empty", "development", "EMPTY", { value: "" }),
+    putRaw("set a value, U+0000 in it", "development", "NUL_VALUE", '{"value":"a\\u0000b"}'),
+    putRaw("set a value, a lone surrogate in it", "development", "LONE_VALUE", '{"value":"a\\ud800b"}'),
+    put("set a value, beyond ASCII", "development", "UNICODE", { value: "héllo ✓ 😀" }),
+    put("set a value with a reference", "development", "SERVICE_URL", { value: "${API_URL}/v1 and $${LITERAL}" }),
+    put("set a value, an encoded name", "development", "PLAIN%5FITEM", { value: "plain" }),
+    put("set a value, an invalid name", "development", "lower_case", { value: "x" }),
+    put("set a value, a name starting with a digit", "development", "1ITEM", { value: "x" }),
+    put("set a value, a reserved name", "development", "VARLATCH_RUN_CONTEXT", { value: "x" }),
+    put("set a value, no value", "development", "X1", {}),
+    put("set a value, a number", "development", "X2", { value: 7 }),
+    put("set a value, a null expected version", "development", "X3", { value: "x", expectedVersionId: null }),
+    put("set a value, an array", "development", "X4", ["x"]),
+    putRaw("set a value, not JSON", "development", "X5", "{"),
+    put("set a value, extra members", "development", "EXTRA", { value: "x", versionId: "ver_mine", sensitive: false }),
+    put("set a value in a derived environment", "development%2Falice", "API_URL", { value: "https://alice.example.com" }),
+    put("set a value in a removed environment", "development%2Fpr-1", "X6", { value: "x" }),
+    put("set a value in an unknown environment", "nope", "X7", { value: "x" }),
+    put("set a value in an expired environment", "production%2Fexpired", "X8", { value: "x" }),
+    put("set a value, an invalid name in an expired environment", "production%2Fexpired", "lower", { value: "x" }),
+    put("set a value as a member", "development", "BY_BOB", { value: "bob" }, "bob"),
+    put("set a value in production as a member", "production", "BY_BOB", { value: "bob" }, "bob"),
+    put("set a value as an outsider", "development", "BY_CAROL", { value: "carol" }, "carol"),
+    put("set a value as an outsider, an invalid body", "development", "BY_CAROL", {}, "carol"),
+    put("set a value as its service identity", "development", "BY_CI", { value: "ci" }, "ci"),
+    put("set a value as its agent", "development", "BY_AGENT", { value: "agent" }, "agent"),
+    put("set a value without a credential", "development", "BY_NONE", { value: "none" }, "none"),
+    put("set a value in a frozen Organization", "development", "ITEM", { value: "x" }, "alice", "frozen"),
+    put("set a value under passkey-verification enforce", "development", "ITEM", { value: "x" }, "alice", "guarded"),
+    put("set a value under passkey-verification report", "development", "ITEM", { value: "reported again" }, "alice", "reported"),
+    put("set a value in an Organization being deleted", "development", "ITEM", { value: "x" }, "alice", "deleting"),
+    { ...put("set a value in assisted mode", "development", "ASSISTED", { value: "assisted" }), userAgent: ASSISTED_AGENT },
+    // setValue under an Idempotency-Key.
+    keyed(put("set a value with a key", "development", "KEYED", { value: "k1" }), "key-1"),
+    keyed(put("set a value with a key, replayed", "development", "KEYED", { value: "k1" }), "key-1"),
+    // Another text, the same parsed body: zod strips the extra member, so the digest is the same.
+    { name: "set a value with a key, replayed with an extra member", method: "PUT", path: `${E("development")}/values/KEYED`, credential: "alice", rawBody: '{"note":"x","value":"k1"}', headers: { "Idempotency-Key": "key-1" } },
+    keyed(put("set a value with a key, another body", "development", "KEYED", { value: "k2" }), "key-1"),
+    keyed(put("set a value with a key, another item", "development", "KEYED_TOO", { value: "k1" }), "key-1"),
+    put("set a value without the key, the same item", "development", "KEYED", { value: "k3" }),
+    keyed(put("set a value with a key, replayed after a change", "development", "KEYED", { value: "k1" }), "key-1"),
+    keyed(put("set a value with a key, its expected version stale", "development", "API_URL", { value: "x", expectedVersionId: "{ver:api/development/API_URL}" }), "key-stale"),
+    keyed(put("set a value with a key, after its refusal", "development", "API_URL", { value: "x", expectedVersionId: "{ver:api/development/API_URL}" }), "key-stale"),
+    keyed(put("set a value, a key of 200 characters", "development", "LONG_KEY", { value: "x" }), "k".repeat(200)),
+    keyed(put("set a value, a key of 201 characters", "development", "LONG_KEY", { value: "y" }), "k".repeat(201)),
+    keyed(put("set a value, an empty key", "development", "EMPTY_KEY", { value: "x" }), ""),
+    keyed(put("set a value with a key, an invalid name", "development", "lower", { value: "x" }), "key-invalid"),
+    keyed(put("set a value with a key, under passkey-verification enforce", "development", "ITEM", { value: "x" }, "alice", "guarded"), "key-guarded"),
+    keyed(put("set a value with a key, under passkey-verification report", "development", "ITEM", { value: "keyed report" }, "alice", "reported"), "key-reported"),
+    keyed(put("set a value with a key, under report, replayed", "development", "ITEM", { value: "keyed report" }, "alice", "reported"), "key-reported"),
+    { ...keyed(put("set a value with a key, twice at once", "development", "TWICE", { value: "t" }), "key-twice"), concurrent: 2 },
+    // deleteValue.
+    del("delete a value", "development", "NEW_ITEM"),
+    del("delete a value again", "development", "NEW_ITEM"),
+    del("delete a value that never was", "development", "NEVER"),
+    del("delete a value, an invalid name", "development", "lower_case"),
+    del("delete a value inherited from the parent", "development%2Falice", "DB_HOST"),
+    del("delete a value in an expired environment", "production%2Fexpired", "NEVER"),
+    del("delete a value in a removed environment", "development%2Fpr-1", "NEVER"),
+    del("delete a value as a member", "development", "BY_BOB", "bob"),
+    del("delete a value in production as a member", "production", "NEVER", "bob"),
+    del("delete a value as an outsider", "development", "API_URL", "carol"),
+    del("delete a value as its agent", "development", "API_URL", "agent"),
+    del("delete a value in a frozen Organization", "development", "ITEM", "alice", "frozen"),
+    del("delete a value under passkey-verification enforce", "development", "ITEM", "alice", "guarded"),
+    del("delete a value under passkey-verification enforce, not there", "development", "NEVER", "alice", "guarded"),
+    del("delete a value under passkey-verification report", "development", "ITEM", "alice", "reported"),
+    del("delete a value in an Organization being deleted", "development", "ITEM", "alice", "deleting"),
+    // applyChangeSet.
+    changes("apply a change set", "development", { changes: [set("CS_ONE", "1"), set("CS_TWO", "2"), drop("EMPTY")] }),
+    changes("apply a change set, expected versions", "development", { changes: [set("LOG_LEVEL", "info", "{ver:api/development/LOG_LEVEL}"), drop("DB_HOST", "{ver:api/development/DB_HOST}")] }),
+    changes("apply a change set, every kind of conflict", "development", {
+      changes: [set("LOG_LEVEL", "warn", "{ver:api/development/LOG_LEVEL}"), drop("NEVER"), drop("NEVER_TWO", "ver_bbbbbbbbbbbbbbbbbbbbbbbbbb"), set("CS_NEW", "x", "ver_cccccccccccccccccccccccccc"), drop("OLD_ITEM")],
+    }),
+    changes("apply a change set, a deleted value set again", "development", { changes: [set("DB_HOST", "db2.dev")] }),
+    changes("apply a change set, members in another order and extra", "development", { changes: [{ value: "z", item: "CS_ORDER", op: "set", note: "x" }], other: true }),
+    changes("apply a change set, an item twice", "development", { changes: [set("CS_DUP", "1"), drop("CS_DUP")] }),
+    changes("apply a change set, an invalid name", "development", { changes: [set("CS_OK", "1"), set("bad name", "2")] }),
+    changes("apply a change set, a reserved name", "development", { changes: [set("VARLATCH_RUN_CONTEXT", "x")] }),
+    changes("apply a change set, empty", "development", { changes: [] }),
+    changes("apply a change set, 200 changes", "development", { changes: Array.from({ length: 200 }, (_, i) => set(`BULK_${i}`, String(i))) }),
+    changes("apply a change set, 201 changes", "development", { changes: Array.from({ length: 201 }, (_, i) => set(`BULK_${i}`, "x")) }),
+    changes("apply a change set, 201 changes, every one wrong", "development", { changes: Array.from({ length: 201 }, () => ({ op: "move" })) }),
+    changes("apply a change set, wrong elements", "development", { changes: [1, null, [], {}, { op: "SET" }, { op: "set" }, { op: "set", item: "", value: 1, expectedVersionId: null }, { op: "delete", item: 5 }] }),
+    changes("apply a change set, no changes", "development", {}),
+    changes("apply a change set, changes not an array", "development", { changes: { op: "set" } }),
+    changes("apply a change set, an array body", "development", [set("A", "1")]),
+    { name: "apply a change set, not JSON", method: "POST", path: `${E("development")}/changes`, credential: "alice", rawBody: "[" },
+    { name: "apply a change set, U+0000 and a lone surrogate", method: "POST", path: `${E("development")}/changes`, credential: "alice", rawBody: '{"changes":[{"op":"set","item":"CS_NUL","value":"a\\u0000b"},{"op":"set","item":"CS_LONE","value":"\\udc00"}]}' },
+    changes("apply a change set in an expired environment", "production%2Fexpired", { changes: [set("A", "1")] }),
+    changes("apply a change set in an expired environment, invalid", "production%2Fexpired", { changes: [] }),
+    changes("apply a change set as a member", "development", { changes: [set("CS_BOB", "b")] }, "bob"),
+    changes("apply a change set in production as a member", "production", { changes: [set("CS_BOB", "b")] }, "bob"),
+    changes("apply a change set as an outsider", "development", { changes: [set("CS_CAROL", "c")] }, "carol"),
+    changes("apply a change set as its agent", "development", { changes: [set("CS_AGENT", "a")] }, "agent"),
+    changes("apply a change set in a frozen Organization", "development", { changes: [set("ITEM", "x")] }, "alice", "frozen"),
+    changes("apply a change set under passkey-verification enforce", "development", { changes: [set("ITEM", "x")] }, "alice", "guarded"),
+    changes("apply a change set under passkey-verification report", "development", { changes: [set("CS_REPORTED", "r")] }, "alice", "reported"),
+    changes("apply a change set in an Organization being deleted", "development", { changes: [set("ITEM", "x")] }, "alice", "deleting"),
+    { ...changes("apply a change set in assisted mode", "development", { changes: [set("CS_ASSISTED", "a")] }), userAgent: ASSISTED_AGENT },
+    keyed(changes("apply a change set with a key", "development", { changes: [set("CS_KEYED", "k"), drop("CS_ONE")] }), "key-cs"),
+    keyed(changes("apply a change set with a key, replayed", "development", { changes: [set("CS_KEYED", "k"), drop("CS_ONE")] }), "key-cs"),
+    keyed(changes("apply a change set with a key, another body", "development", { changes: [set("CS_KEYED", "other")] }), "key-cs"),
+    keyed(changes("apply a change set with a key, another environment", "staging", { changes: [set("CS_KEYED", "k"), drop("CS_ONE")] }), "key-cs"),
+    { ...changes("apply a guarded change set twice at once", "staging", { changes: [set("API_URL", "https://race.example.com", "{ver:api/staging/API_URL}")] }), concurrent: 2 },
+    // What the writes left, through the read path.
+    read("values after the writes", "development"),
+    read("values after the writes, a derived environment", "development%2Falice"),
+    read("values after the writes, as a member", "development", "bob"),
+  ];
+}
+
 async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; tokens: Record<string, string> }> {
   const db = await migratedTestDb();
   const ctx = { db, rootKek: generateKey(), close: db.close };
@@ -729,6 +915,7 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   // Step 4.1c's environments, before the freeze, controls and deletions
   // below would refuse them.
   await buildEnvironments(db, call, alice);
+  await buildValues(call);
   const person = async (name: string, member: boolean) => {
     const id = newId("identity");
     await db.query("INSERT INTO identities (id, kind, name, created_at) VALUES ($1, 'human', $2, '2026-01-01T00:00:00.000Z')", [id, name]);
