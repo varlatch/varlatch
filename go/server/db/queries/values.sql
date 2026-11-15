@@ -7,12 +7,12 @@ SELECT id, wrapped_org_kek FROM organizations WHERE id = ?;
 
 -- name: LiveProject :one
 -- domain/projects.ts getProject: by ID or slug, not deleted.
-SELECT id, organization_id, slug, name, active_contract_revision_id FROM projects
+SELECT id, organization_id, slug, name, contract_authority, active_contract_revision_id, created_at FROM projects
 WHERE organization_id = sqlc.arg(organization_id) AND (id = sqlc.arg(slug_or_id) OR slug = sqlc.arg(slug_or_id)) AND deleted_at IS NULL;
 
 -- name: LiveEnvironment :one
 -- domain/environments.ts getEnvironment: by ID or name, not deleted.
-SELECT id, project_id, name, kind, tier, parent_environment_id, expires_at FROM environments
+SELECT id, project_id, name, kind, tier, parent_environment_id, owner_identity_id, expires_at, created_at FROM environments
 WHERE project_id = sqlc.arg(project_id) AND (id = sqlc.arg(name_or_id) OR name = sqlc.arg(name_or_id)) AND deleted_at IS NULL;
 
 -- name: ProjectContractRevision :one

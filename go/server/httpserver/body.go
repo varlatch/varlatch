@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -38,7 +39,15 @@ const (
 	kindInt
 	kindRecord
 	kindEnum
+	// kindDatetime is z.string().datetime(): a string matching zod's ISO
+	// datetime (a valid date, "T", seconds required, any fraction, "Z").
+	kindDatetime
 )
+
+// zodDatetime is zod 4's z.string().datetime() pattern (regexes.js:
+// datetime({ offset: false, local: false }), \d ASCII as JavaScript reads
+// it without the u flag).
+var zodDatetime = regexp.MustCompile(`^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$`)
 
 type bodyField struct {
 	name     string
@@ -117,7 +126,7 @@ func validateBody(schema []bodyField, raw []byte) ([]byte, []string) {
 		v, present := obj[f.name]
 		if !present {
 			if f.required {
-				expected := map[fieldKind]string{kindString: "string", kindInt: "number", kindRecord: "record", kindEnum: "enum"}[f.kind]
+				expected := map[fieldKind]string{kindString: "string", kindInt: "number", kindRecord: "record", kindEnum: "enum", kindDatetime: "string"}[f.kind]
 				if f.kind == kindEnum {
 					issues = append(issues, fmt.Sprintf("%s: Invalid option: expected one of %s", f.name, quoteOptions(f.options)))
 				} else {
@@ -160,6 +169,13 @@ func validateBody(schema []bodyField, raw []byte) ([]byte, []string) {
 				issues = append(issues, fmt.Sprintf("%s: Too big: expected number to be <=%s", f.name, jsNumber(int64(f.max))))
 			default:
 				obj[f.name] = json.RawMessage(strconv.FormatInt(int64(x), 10))
+			}
+		case kindDatetime:
+			var s string
+			if got != "string" || json.Unmarshal(v, &s) != nil {
+				issues = append(issues, fmt.Sprintf("%s: Invalid input: expected string, received %s", f.name, got))
+			} else if !zodDatetime.MatchString(s) {
+				issues = append(issues, fmt.Sprintf("%s: Invalid ISO datetime", f.name))
 			}
 		case kindRecord:
 			if got != "object" {

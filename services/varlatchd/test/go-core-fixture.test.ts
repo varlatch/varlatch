@@ -56,7 +56,11 @@ const TABLES: Table[] = [
   { name: "organization_freezes", orderBy: "id" },
   { name: "organization_deletions", orderBy: "id" },
   { name: "projects", orderBy: "id" },
-  { name: "contract_revisions", orderBy: "id" },
+  // A Contract that names an environment hashes its random ID.
+  { name: "contract_revisions", orderBy: "id", random: ["content_hash"] },
+  { name: "environments", orderBy: "id" },
+  { name: "env_values", orderBy: "id" },
+  { name: "capabilities", orderBy: "id" },
 ];
 
 const SIDE: SideTable[] = [
@@ -64,6 +68,9 @@ const SIDE: SideTable[] = [
   { name: "org_memberships", key: ["organization_id", "identity_id"], sortBy: ["organization_id", "identity_id"], volatile: ["created_at"] },
   { name: "projects", key: ["id"], sortBy: ["organization_id", "slug"], volatile: ["created_at"] },
   { name: "contract_revisions", key: ["id"], sortBy: ["project_id", "content_hash"], volatile: ["created_at"] },
+  { name: "environments", key: ["id"], sortBy: ["project_id", "name", "deleted_at"], volatile: ["created_at", "deleted_at"] },
+  { name: "env_values", key: ["id"], sortBy: ["environment_id", "item_name"], volatile: ["deleted_at"] },
+  { name: "capabilities", key: ["id"], sortBy: ["environment_id", "run_id"], volatile: ["revoked_at"] },
 ];
 
 /** The CLI in assisted mode (ADR-0043 Decision 3): its requests are attributed so. */
@@ -160,6 +167,7 @@ function requestTable(): RequestCase[] {
     get("get after the renames", "acme"),
     create("create after the renames", "alice", { name: "Acme Robotics", slug: "acme-robotics" }),
     ...contractRequests(),
+    ...projectRequests(),
   ]);
 }
 
@@ -231,14 +239,20 @@ const PROJECTS: [string, string, "git" | "managed"][] = [
   ["gone", "app", "git"],
 ];
 
-/** A request path's placeholders: {rev:KEY} and {project:SLUG} (acme's). */
+/** A request path's placeholders: {rev:KEY}, {project:SLUG} and {env:PROJECT/NAME} (acme's). */
 function fillPath(rows: Record<string, Row[]>): (p: string) => string {
   const orgOf = (slug: string) => rows.organizations!.find((o) => o.slug === slug)!.id as string;
   return (p) =>
     p
       .replace("{orgId}", orgOf("acme"))
       .replace("{goneId}", orgOf("gone"))
-      .replace(/\{project:([a-z]+)\}/g, (_m, slug: string) => rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug)!.id as string)
+      .replace(/\{project:([a-z]+)\}/g, (_m, slug: string) => rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug && r.deleted_at === null)!.id as string)
+      .replace(/\{env:([a-z0-9-]+)\/([^}]+)\}/g, (_m, slug: string, name: string) => {
+        const project = rows.projects!.find((r) => r.organization_id === orgOf("acme") && r.slug === slug && r.deleted_at === null)!;
+        const env = rows.environments!.find((e) => e.project_id === project.id && e.name === name && e.deleted_at === null);
+        if (!env) throw new Error(`no environment ${slug}/${name}`);
+        return env.id as string;
+      })
       .replace(/\{rev:([A-Z0-9_]+)\}/g, (_m, key: string) => {
         const rev = rows.contract_revisions!.find((r) => (r.contract as { items: { name: string }[] }).items.some((i) => i.name === key));
         if (!rev) throw new Error(`no revision holds ${key}`);
@@ -377,6 +391,309 @@ function contractRequests(): Omit<RequestCase, "id">[] {
   ];
 }
 
+// ---- Projects and environments, and the installation reads (step 4.1c)
+
+type Call = (method: string, path: string, body?: unknown) => Promise<any>;
+
+/**
+ * The environments build() makes through /v1, and what only rows can say:
+ * acme/api's development, staging and production roots, development/alice
+ * (personal), development/pr-1 (a preview that expires in 2099) and
+ * development/old (one that expired in 2020); a tailnet Requirement on the
+ * production tier; acme/refs, whose active Contract names its development
+ * root in a requiredness selector, and whose staging root holds a value
+ * and two Capabilities (one revoked);
+ * acme/oldp, a deleted Project; and a development root in each guarded
+ * Organization's app.
+ */
+async function buildEnvironments(db: AppCtx["db"], call: Call, alice: string) {
+  const P = (org: string, project: string) => `${ORG}/${org}/projects/${project}/environments`;
+  const ids: Record<string, string> = {};
+  for (const [name, tier] of [["development", "development"], ["staging", "staging"], ["production", "production"]] as const) {
+    ids[name] = (await call("POST", P("acme", "api"), { name, tier })).id;
+  }
+  await call("POST", P("acme", "api"), { name: "development/alice", parentEnvironmentId: ids.development });
+  await call("POST", P("acme", "api"), { name: "development/pr-1", parentEnvironmentId: "development", kind: "preview", expiresAt: "2099-01-01T00:00:00.000Z" });
+  await call("POST", P("acme", "api"), { name: "development/old", parentEnvironmentId: "development", kind: "preview", expiresAt: "2020-01-01T00:00:00Z" });
+  for (const org of ["frozen", "guarded", "reported", "deleting"]) {
+    await call("POST", P(org, "app"), { name: "development", tier: "development" });
+    await call("POST", P(org, "app"), { name: "development/pr-1", parentEnvironmentId: "development", kind: "preview" });
+  }
+  await call("POST", `${ORG}/acme/projects`, { name: "Refs", slug: "refs", contractAuthority: "git" });
+  const refsDev = (await call("POST", P("acme", "refs"), { name: "development", tier: "development" })).id;
+  const refsStaging = (await call("POST", P("acme", "refs"), { name: "staging", tier: "staging" })).id;
+  const refs = await call("POST", `${ORG}/acme/projects/refs/contract/revisions`, {
+    contract: doc([
+      item("REFERENCED", { required: { kind: "selector", selector: { kind: "environments", environmentIds: [refsDev] } } }),
+      item("ALSO_REFERENCED", { required: { kind: "selector", selector: { kind: "environments", environmentIds: [refsDev, "envz_other"] } } }),
+    ]),
+  });
+  await call("POST", `${ORG}/acme/projects/refs/contract/revisions/${refs.id}/activate`);
+  await call("POST", `${ORG}/acme/projects`, { name: "Old", slug: "oldp", contractAuthority: "git" });
+  await db.query("UPDATE projects SET deleted_at = '2026-03-03T00:00:00.000Z' WHERE slug = 'oldp'");
+  await call("POST", `${ORG}/acme/requirements`, {
+    kind: "tailnet",
+    target: { kind: "tier", tier: "production" },
+    selector: { tailnet: "example.ts.net", tags: ["tag:prod"] },
+  });
+  // A value and two Capabilities (one revoked already) on refs/staging, as
+  // rows (their routes are later slices'): its removal soft-deletes the
+  // value and revokes the live Capability.
+  const refsProject = (await db.query("SELECT id, organization_id FROM projects WHERE slug = 'refs'")).rows[0] as { id: string; organization_id: string };
+  await db.query("INSERT INTO env_values (id, environment_id, item_name) VALUES ($1, $2, 'API_URL')", [newId("value"), refsStaging]);
+  for (const [run, revoked] of [["run-live", null], ["run-revoked", "2026-03-04T00:00:00.000Z"]] as const) {
+    await db.query(
+      `INSERT INTO capabilities (id, organization_id, broker_identity_id, agent_identity_id, project_id, environment_id, items, destinations, secret_hash, run_id, expires_at, revoked_at, created_by)
+       VALUES ($1, $2, $3, $3, $4, $5, ARRAY['API_URL'], ARRAY[]::text[], 'sha256:00', $6, '2099-01-01T00:00:00.000Z', $7, $3)`,
+      [newId("capability"), refsProject.organization_id, alice, refsProject.id, refsStaging, run, revoked],
+    );
+  }
+}
+
+function projectRequests(): Omit<RequestCase, "id">[] {
+  const P = (org = "acme") => `${ORG}/${org}/projects`;
+  const list = (name: string, credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({ name, method: "GET", path: P(org), credential });
+  const create = (name: string, body: unknown, credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({ name, method: "POST", path: P(org), credential, body });
+  const createRaw = (name: string, rawBody: string): Omit<RequestCase, "id"> => ({ name, method: "POST", path: P(), credential: "alice", rawBody });
+  const get = (name: string, project: string, credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({ name, method: "GET", path: `${P(org)}/${project}`, credential });
+  const rename = (name: string, project: string, body: unknown, credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "PATCH", path: `${P(org)}/${project}`, credential, body,
+  });
+  const renameRaw = (name: string, rawBody: string): Omit<RequestCase, "id"> => ({ name, method: "PATCH", path: `${P()}/api`, credential: "alice", rawBody });
+  const E = (project = "api", org = "acme") => `${P(org)}/${project}/environments`;
+  const envs = (name: string, project = "api", credential = "alice", org = "acme"): Omit<RequestCase, "id"> => ({ name, method: "GET", path: E(project, org), credential });
+  const newEnv = (name: string, body: unknown, credential = "alice", project = "api", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "POST", path: E(project, org), credential, body,
+  });
+  const env = (name: string, environment: string, credential = "alice", project = "api", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "GET", path: `${E(project, org)}/${environment}`, credential,
+  });
+  const del = (name: string, environment: string, credential = "alice", project = "api", org = "acme"): Omit<RequestCase, "id"> => ({
+    name, method: "DELETE", path: `${E(project, org)}/${environment}`, credential,
+  });
+  const install = (name: string, what: "release" | "backups", credential = "alice"): Omit<RequestCase, "id"> => ({
+    name, method: "GET", path: `/v1/installation/${what}`, credential,
+  });
+  return [
+    // listProjects.
+    list("projects"),
+    list("projects, the Organization by id", "alice", "{orgId}"),
+    list("projects as a member", "bob"),
+    list("projects as an outsider", "carol"),
+    list("projects as its service identity", "ci"),
+    list("projects as its agent", "agent"),
+    list("projects without a credential", "none"),
+    list("projects of an unknown Organization", "alice", "nope"),
+    list("projects of a frozen Organization", "alice", "frozen"),
+    list("projects under passkey-verification enforce", "alice", "guarded"),
+    list("projects under passkey-verification report", "alice", "reported"),
+    list("projects of an Organization being deleted", "alice", "deleting"),
+    list("projects of an Organization whose deletion completed", "alice", "gone"),
+    // createProject.
+    create("create a Project", { name: "Web", slug: "web", contractAuthority: "managed" }),
+    create("create a Project, the same slug again", { name: "Web again", slug: "web", contractAuthority: "git" }),
+    create("create a Project, an invalid slug", { name: "X", slug: "Bad_Slug", contractAuthority: "git" }),
+    create("create a Project, a slug of 64 characters", { name: "X", slug: "p".repeat(64), contractAuthority: "git" }),
+    create("create a Project, a slug of 63 characters", { name: "Long", slug: "q".repeat(63), contractAuthority: "git" }),
+    create("create a Project, a slug ending in a newline", { name: "X", slug: "web2\n", contractAuthority: "git" }),
+    create("create a Project, an empty name", { name: "", slug: "x1", contractAuthority: "git" }),
+    create("create a Project, a name of 201 characters", { name: "n".repeat(201), slug: "x2", contractAuthority: "git" }),
+    create("create a Project, a name of 200 emoji", { name: "😀".repeat(200), slug: "emoji", contractAuthority: "git" }),
+    create("create a Project, no contract authority", { name: "X", slug: "x3" }),
+    create("create a Project, an unknown contract authority", { name: "X", slug: "x4", contractAuthority: "svn" }),
+    create("create a Project, every member wrong", { name: 1, slug: null, contractAuthority: true }),
+    create("create a Project, an array", [{ name: "X", slug: "x5", contractAuthority: "git" }]),
+    createRaw("create a Project, not JSON", "{"),
+    create("create a Project, extra members", { name: "Extra", slug: "extra", contractAuthority: "git", id: "prj_mine", organizationId: "org_other" }),
+    create("create a Project as a member", { name: "Bob's", slug: "bobs", contractAuthority: "git" }, "bob"),
+    create("create a Project as an outsider", { name: "Carol's", slug: "carols", contractAuthority: "git" }, "carol"),
+    create("create a Project as an outsider, an invalid body", {}, "carol"),
+    create("create a Project as its service identity", { name: "CI", slug: "ci", contractAuthority: "git" }, "ci"),
+    create("create a Project as its agent", { name: "Agent", slug: "agent", contractAuthority: "git" }, "agent"),
+    create("create a Project without a credential", { name: "None", slug: "none", contractAuthority: "git" }, "none"),
+    create("create a Project in a frozen Organization", { name: "X", slug: "x6", contractAuthority: "git" }, "alice", "frozen"),
+    create("create a Project under passkey-verification enforce", { name: "X", slug: "x7", contractAuthority: "git" }, "alice", "guarded"),
+    create("create a Project under passkey-verification report", { name: "Reported", slug: "reported", contractAuthority: "git" }, "alice", "reported"),
+    create("create a Project in an Organization being deleted", { name: "X", slug: "x8", contractAuthority: "git" }, "alice", "deleting"),
+    create("create a Project in an unknown Organization", { name: "X", slug: "x9", contractAuthority: "git" }, "alice", "nope"),
+    createRaw("create a Project, U+0000 in the name", '{"name":"a\\u0000b","slug":"nul","contractAuthority":"git"}'),
+    createRaw("create a Project, a lone surrogate in the name", '{"name":"a\\ud800b","slug":"lone","contractAuthority":"git"}'),
+    { ...create("create a Project in assisted mode", { name: "Assisted", slug: "assisted", contractAuthority: "git" }), userAgent: ASSISTED_AGENT },
+    { ...create("create a Project, the same slug twice at once", { name: "Twice", slug: "twice", contractAuthority: "git" }), concurrent: 2 },
+    // getProject.
+    get("project", "api"),
+    get("project by id", "{project:api}"),
+    get("project, an encoded slug", "ap%69"),
+    get("project, a deleted one", "oldp"),
+    get("project, unknown", "nope"),
+    get("project as a member", "api", "bob"),
+    get("project as an outsider", "api", "carol"),
+    get("project as its service identity", "api", "ci"),
+    get("project as its agent", "api", "agent"),
+    get("project in a frozen Organization", "app", "alice", "frozen"),
+    get("project under passkey-verification enforce", "app", "alice", "guarded"),
+    get("project under passkey-verification report", "app", "alice", "reported"),
+    get("project in an Organization being deleted", "app", "alice", "deleting"),
+    get("project, the new one", "web"),
+    // renameProject.
+    rename("rename a Project", "api", { name: "API Gateway" }),
+    rename("rename a Project, extra members", "api", { name: "API", slug: "other" }),
+    rename("rename a Project, 200 characters", "web", { name: "w".repeat(200) }),
+    rename("rename a Project, 201 characters", "web", { name: "w".repeat(201) }),
+    rename("rename a Project, 200 emoji", "web", { name: "😀".repeat(200) }),
+    rename("rename a Project, 100 emoji", "web", { name: "😀".repeat(100) }),
+    rename("rename a Project, empty", "api", { name: "" }),
+    rename("rename a Project, only spaces", "api", { name: "   " }),
+    rename("rename a Project, not a string", "api", { name: 7 }),
+    rename("rename a Project, no name", "api", {}),
+    renameRaw("rename a Project, not JSON", "{"),
+    renameRaw("rename a Project, U+0000 in the name", '{"name":"a\\u0000b"}'),
+    renameRaw("rename a Project, a lone surrogate in the name", '{"name":"a\\ud800b"}'),
+    rename("rename a Project as a member", "api", { name: "By Bob" }, "bob"),
+    rename("rename a Project as an outsider", "api", { name: "By Carol" }, "carol"),
+    rename("rename a Project as its service identity", "api", { name: "By CI" }, "ci"),
+    rename("rename a Project as its agent", "api", { name: "By the agent" }, "agent"),
+    rename("rename a Project, unknown", "nope", { name: "Nobody" }),
+    rename("rename a Project, a deleted one", "oldp", { name: "Back" }),
+    rename("rename a Project in a frozen Organization", "app", { name: "Thawed" }, "alice", "frozen"),
+    rename("rename a Project under passkey-verification enforce", "app", { name: "Guarded" }, "alice", "guarded"),
+    rename("rename a Project under passkey-verification report", "app", { name: "Reported app" }, "alice", "reported"),
+    rename("rename a Project in an Organization being deleted", "app", { name: "Kept" }, "alice", "deleting"),
+    rename("rename a Project by id", "{project:api}", { name: "API by id" }),
+    { ...rename("rename a Project in assisted mode", "api", { name: "API assisted" }), userAgent: ASSISTED_AGENT },
+    { ...rename("rename a Project twice at once", "refs", { name: "Refs renamed" }), concurrent: 2 },
+    get("project after the renames", "api"),
+    list("projects after the changes"),
+    // listEnvironments.
+    envs("environments"),
+    envs("environments as a member", "api", "bob"),
+    envs("environments as an outsider", "api", "carol"),
+    envs("environments as its service identity", "api", "ci"),
+    envs("environments as its agent", "api", "agent"),
+    envs("environments of a Project with none", "web"),
+    envs("environments of an unknown Project", "nope"),
+    envs("environments of a deleted Project", "oldp"),
+    envs("environments in a frozen Organization", "app", "alice", "frozen"),
+    envs("environments under passkey-verification enforce", "app", "alice", "guarded"),
+    envs("environments under passkey-verification report", "app", "alice", "reported"),
+    // createEnvironment: roots.
+    newEnv("create a root", { name: "qa", tier: "staging" }),
+    newEnv("create a root, no tier", { name: "qa2" }),
+    newEnv("create a root, personal", { name: "qa3", tier: "staging", kind: "personal" }),
+    newEnv("create a root, shared named", { name: "qa4", tier: "staging", kind: "shared" }),
+    newEnv("create a root, an invalid name", { name: "Bad Name", tier: "staging" }),
+    newEnv("create a root, a name with a slash", { name: "a/b", tier: "staging" }),
+    newEnv("create a root, a name of 64 characters", { name: "e".repeat(64), tier: "staging" }),
+    newEnv("create a root, a name that exists", { name: "development", tier: "development" }),
+    newEnv("create a root, an unknown tier", { name: "qa5", tier: "prod" }),
+    newEnv("create a root, expiring", { name: "qa6", tier: "staging", expiresAt: "2099-01-01T00:00:00Z" }),
+    newEnv("create a root, an empty parent", { name: "qa7", tier: "development", parentEnvironmentId: "" }),
+    newEnv("create a root, every member wrong", { name: "", tier: 1, kind: "temporary", parentEnvironmentId: 2, expiresAt: "tomorrow" }),
+    newEnv("create a root, no name", { tier: "staging" }),
+    newEnv("create a root, null members", { name: "qa8", tier: null }),
+    newEnv("create an environment, an array", [{ name: "qa9", tier: "staging" }]),
+    { name: "create an environment, not JSON", method: "POST", path: E(), credential: "alice", rawBody: "{" },
+    newEnv("create a root, extra members", { name: "qa10", tier: "staging", ownerIdentityId: "idn_other", id: "env_mine" }),
+    // createEnvironment: derived.
+    newEnv("create a derived environment", { name: "development/bob", parentEnvironmentId: "development" }),
+    newEnv("create a preview", { name: "staging/pr-2", parentEnvironmentId: "staging", kind: "preview", expiresAt: "2099-06-30T12:34:56.1234567Z" }),
+    newEnv("create a preview, a fraction rounded up", { name: "staging/pr-3", parentEnvironmentId: "staging", kind: "preview", expiresAt: "2099-06-30T12:34:56.9999996Z" }),
+    newEnv("create a preview, half a microsecond", { name: "staging/pr-4", parentEnvironmentId: "staging", kind: "preview", expiresAt: "2099-06-30T12:34:56.0000005Z" }),
+    newEnv("create a preview, a leap day", { name: "staging/pr-5", parentEnvironmentId: "staging", kind: "preview", expiresAt: "2096-02-29T00:00:00Z" }),
+    newEnv("create a preview, not a leap day", { name: "staging/pr-6", parentEnvironmentId: "staging", kind: "preview", expiresAt: "2097-02-29T00:00:00Z" }),
+    newEnv("create a preview, year 0", { name: "staging/pr-7", parentEnvironmentId: "staging", kind: "preview", expiresAt: "0000-01-01T00:00:00Z" }),
+    newEnv("create a preview, a date only", { name: "staging/pr-8", parentEnvironmentId: "staging", kind: "preview", expiresAt: "2099-01-01" }),
+    newEnv("create a preview, an offset", { name: "staging/pr-9", parentEnvironmentId: "staging", kind: "preview", expiresAt: "2099-01-01T00:00:00+02:00" }),
+    newEnv("create a preview, no seconds", { name: "staging/pr-10", parentEnvironmentId: "staging", kind: "preview", expiresAt: "2099-01-01T00:00Z" }),
+    newEnv("create a preview, a number", { name: "staging/pr-11", parentEnvironmentId: "staging", kind: "preview", expiresAt: 4070908800000 }),
+    newEnv("create a preview of production", { name: "production/pr-1", parentEnvironmentId: "production", kind: "preview" }),
+    newEnv("create a personal environment of production", { name: "production/alice", parentEnvironmentId: "production" }),
+    newEnv("create a derived environment, shared", { name: "development/shared", parentEnvironmentId: "development", kind: "shared" }),
+    newEnv("create a derived environment, another tier", { name: "development/x", parentEnvironmentId: "development", tier: "staging" }),
+    newEnv("create a derived environment, its own tier named", { name: "development/y", parentEnvironmentId: "development", tier: "development" }),
+    newEnv("create a derived environment of a derived one", { name: "development/alice/z", parentEnvironmentId: "development/alice" }),
+    newEnv("create a derived environment, another parent's name", { name: "staging/z", parentEnvironmentId: "development" }),
+    newEnv("create a derived environment, no suffix", { name: "development/", parentEnvironmentId: "development" }),
+    newEnv("create a derived environment, an unknown parent", { name: "nope/z", parentEnvironmentId: "nope" }),
+    newEnv("create a derived environment, expiring personal", { name: "development/exp", parentEnvironmentId: "development", expiresAt: "2099-01-01T00:00:00Z" }),
+    newEnv("create a derived environment, the name exists", { name: "development/alice", parentEnvironmentId: "development" }),
+    // createEnvironment: who and where.
+    newEnv("create a root as a member", { name: "bobs", tier: "development" }, "bob"),
+    newEnv("create a derived environment as a member", { name: "development/bob2", parentEnvironmentId: "development" }, "bob"),
+    newEnv("create a derived environment of production as a member", { name: "production/pr-2", parentEnvironmentId: "production", kind: "preview" }, "bob"),
+    newEnv("create an environment as an outsider", { name: "carols", tier: "development" }, "carol"),
+    newEnv("create an environment as an outsider, an invalid body", { name: "" }, "carol"),
+    newEnv("create an environment as an outsider, an unknown parent", { name: "nope/z", parentEnvironmentId: "nope" }, "carol"),
+    newEnv("create an environment as its service identity", { name: "ci", tier: "development" }, "ci"),
+    newEnv("create an environment as its agent", { name: "agents", tier: "development" }, "agent"),
+    newEnv("create an environment without a credential", { name: "none", tier: "development" }, "none"),
+    newEnv("create an environment in an unknown Project", { name: "x", tier: "development" }, "alice", "nope"),
+    newEnv("create an environment in a deleted Project", { name: "x", tier: "development" }, "alice", "oldp"),
+    newEnv("create an environment in a frozen Organization", { name: "x", tier: "development" }, "alice", "app", "frozen"),
+    newEnv("create a root under passkey-verification enforce", { name: "x", tier: "development" }, "alice", "app", "guarded"),
+    newEnv("create a root under passkey-verification enforce, an invalid name", { name: "Bad", tier: "development" }, "alice", "app", "guarded"),
+    newEnv("create a derived environment under passkey-verification enforce, invalid", { name: "staging/x", parentEnvironmentId: "development" }, "alice", "app", "guarded"),
+    newEnv("create a derived environment under passkey-verification enforce, an unknown parent", { name: "nope/x", parentEnvironmentId: "nope" }, "alice", "app", "guarded"),
+    newEnv("create a root under passkey-verification report", { name: "qa", tier: "staging" }, "alice", "app", "reported"),
+    newEnv("create an environment in an Organization being deleted", { name: "x", tier: "development" }, "alice", "app", "deleting"),
+    { ...newEnv("create an environment in assisted mode", { name: "assisted", tier: "development" }), userAgent: ASSISTED_AGENT },
+    { ...newEnv("create an environment twice at once", { name: "twice", tier: "development" }), concurrent: 2 },
+    // getEnvironment.
+    env("environment", "development"),
+    env("environment by id", "{env:api/development}"),
+    env("environment, production with its Requirement", "production"),
+    env("environment, production as a member", "production", "bob"),
+    env("environment, a derived one encoded", "development%2Falice"),
+    env("environment, a derived one encoded twice", "development%252Falice"),
+    env("environment, an escape that does not decode", "%25E0%25A4%25A"),
+    env("environment, an expired preview", "development%2Fold"),
+    env("environment, unknown", "nope"),
+    env("environment, unknown in an unknown Project", "nope", "alice", "nope"),
+    env("environment as a member", "development", "bob"),
+    env("environment as an outsider", "development", "carol"),
+    env("environment as its service identity", "development", "ci"),
+    env("environment as its agent", "development", "agent"),
+    env("environment in a frozen Organization", "development", "alice", "app", "frozen"),
+    env("environment under passkey-verification enforce", "development", "alice", "app", "guarded"),
+    env("environment under passkey-verification report", "development", "alice", "app", "reported"),
+    // deleteEnvironment.
+    del("delete a preview", "development%2Fpr-1"),
+    del("delete it again", "development%2Fpr-1"),
+    del("delete an expired preview", "development%2Fold"),
+    del("delete a root with derived environments", "development"),
+    del("delete a root the active Contract names", "development", "alice", "refs"),
+    del("delete a root the active Contract does not name, with a value and Capabilities", "staging", "alice", "refs"),
+    del("delete an unknown environment", "nope"),
+    del("delete an environment as a member, a root", "qa", "bob"),
+    del("delete an environment as a member, a derived one", "development%2Fbob", "bob"),
+    del("delete an environment as an outsider", "qa", "carol"),
+    del("delete an environment as its service identity", "qa", "ci"),
+    del("delete an environment as its agent", "qa", "agent"),
+    del("delete an environment without a credential", "qa", "none"),
+    del("delete an environment in a frozen Organization", "development%2Fpr-1", "alice", "app", "frozen"),
+    del("delete an environment under passkey-verification enforce", "development%2Fpr-1", "alice", "app", "guarded"),
+    del("delete an environment under passkey-verification report", "development%2Fpr-1", "alice", "app", "reported"),
+    del("delete an environment in an Organization being deleted", "development%2Fpr-1", "alice", "app", "deleting"),
+    { ...del("delete an environment in assisted mode", "qa"), userAgent: ASSISTED_AGENT },
+    { ...del("delete an environment twice at once", "twice"), concurrent: 2 },
+    envs("environments after the changes"),
+    newEnv("create a derived environment, a deleted parent", { name: "staging/x", parentEnvironmentId: "staging", kind: "preview" }, "alice", "refs"),
+    newEnv("create a root, a deleted root's name", { name: "staging", tier: "staging" }, "alice", "refs"),
+    newEnv("create a derived environment, a deleted one's name", { name: "development/old", parentEnvironmentId: "development", kind: "preview" }),
+    // The installation reads.
+    install("installation release", "release"),
+    install("installation release as a member", "release", "bob"),
+    install("installation release as its service identity", "release", "ci"),
+    install("installation release without a credential", "release", "none"),
+    install("installation backups", "backups"),
+    install("installation backups as a member", "backups", "bob"),
+    install("installation backups as its agent", "backups", "agent"),
+    // A deleted Project's slug is free again.
+    create("create a Project, a deleted Project's slug", { name: "Old again", slug: "oldp", contractAuthority: "git" }),
+    get("project, the slug's new Project", "oldp"),
+  ];
+}
+
 async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; tokens: Record<string, string> }> {
   const db = await migratedTestDb();
   const ctx = { db, rootKek: generateKey(), close: db.close };
@@ -406,6 +723,9 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
     const rev = await call("POST", `${ORG}/${org}/projects/${project}/contract/revisions`, { contract: REVISIONS[key], provenance: { source: "build" } });
     if (activate) await call("POST", `${ORG}/${org}/projects/${project}/contract/revisions/${rev.id}/activate`);
   }
+  // Step 4.1c's environments, before the freeze, controls and deletions
+  // below would refuse them.
+  await buildEnvironments(db, call, alice);
   const person = async (name: string, member: boolean) => {
     const id = newId("identity");
     await db.query("INSERT INTO identities (id, kind, name, created_at) VALUES ($1, 'human', $2, '2026-01-01T00:00:00.000Z')", [id, name]);

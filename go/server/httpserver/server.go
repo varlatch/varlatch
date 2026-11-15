@@ -140,6 +140,18 @@ var BuiltOperations = []string{
 	pushRevisionPattern,
 	getRevisionPattern,
 	activateRevisionPattern,
+	// Step 4.1c: Projects and environments (projects.go), and the two
+	// installation reads (installation.go).
+	listProjectsPattern,
+	createProjectPattern,
+	getProjectPattern,
+	renameProjectPattern,
+	listEnvironmentsPattern,
+	createEnvironmentPattern,
+	getEnvironmentPattern,
+	deleteEnvironmentPattern,
+	"GET /v1/installation/release",
+	"GET /v1/installation/backups",
 }
 
 // Server is the handler.

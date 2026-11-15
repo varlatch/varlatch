@@ -160,10 +160,10 @@ func TestEveryOperationRoutedToStubOrBuilt(t *testing.T) {
 func TestStubAnswersBeforeEverything(t *testing.T) {
 	s, b, _, _ := newTestServer(t, nil)
 	cases := []struct{ method, path, body string }{
-		{"POST", "/v1/organizations/acme/projects", "{not json"},
-		{"POST", "/v1/organizations/acme/projects", strings.Repeat("x", 4096)},
-		{"GET", "/v1/organizations/acme/projects", ""},
-		{"GET", "/v1/organizations/acme/projects/api?limit=not-a-number", ""},
+		{"POST", "/v1/organizations/acme/teams", "{not json"},
+		{"POST", "/v1/organizations/acme/teams", strings.Repeat("x", 4096)},
+		{"GET", "/v1/organizations/acme/teams", ""},
+		{"GET", "/v1/organizations/acme/teams/core/members?limit=not-a-number", ""},
 		{"DELETE", "/v1/organizations/acme/projects/api/environments/development/values/DATABASE_URL", ""},
 		{"PATCH", "/v1/me/profile", "{}"},
 	}
@@ -185,8 +185,8 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 		t.Errorf("the stub reached the backend: %+v", b)
 	}
 	// The stub names the operation's route.
-	w := do(s, "GET", "/v1/organizations/acme/projects/api", "", nil)
-	if e := decode(t, w); !strings.HasPrefix(e.Error.Message, "GET /v1/organizations/{org}/projects/{project} is not built yet") {
+	w := do(s, "GET", "/v1/organizations/acme/teams/core/members", "", nil)
+	if e := decode(t, w); !strings.HasPrefix(e.Error.Message, "GET /v1/organizations/{org}/teams/{team}/members is not built yet") {
 		t.Errorf("message %q", e.Error.Message)
 	}
 }
@@ -195,8 +195,8 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 // its generated handler, not the stub (here one this package does not
 // implement, so the handler is reached and fails as an internal error).
 func TestBuiltOperationLeavesTheStub(t *testing.T) {
-	s, _, _, _ := newTestServer(t, func(o *Options) { o.Built = []string{"GET /v1/organizations/{org}/projects"} })
-	w := do(s, "GET", "/v1/organizations/acme/projects", "", map[string]string{"Authorization": "Bearer x"})
+	s, _, _, _ := newTestServer(t, func(o *Options) { o.Built = []string{"GET /v1/organizations/{org}/teams"} })
+	w := do(s, "GET", "/v1/organizations/acme/teams", "", map[string]string{"Authorization": "Bearer x"})
 	if w.Code == http.StatusNotImplemented {
 		t.Fatalf("still the stub: %s", w.Body.String())
 	}

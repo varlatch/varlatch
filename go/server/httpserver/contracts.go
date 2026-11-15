@@ -52,10 +52,11 @@ func (p *projectRequest) resource() authz.Resource {
 	return authz.Resource{OrganizationID: p.org.ID, ProjectID: p.project.ID}
 }
 
-// enterProject is projectScope: the Organization as the request enters it,
-// then the route's Project, live (RESOURCE_NOT_FOUND otherwise).
-func (o *operations) enterProject(ctx context.Context, route string) (*projectRequest, error) {
-	q, err := o.enterRoute(ctx, route, "")
+// enterProject is projectScope: the Organization as the request enters it
+// (under the route's incident-freeze exception, "" for none), then the
+// route's Project, live (RESOURCE_NOT_FOUND otherwise).
+func (o *operations) enterProject(ctx context.Context, route, exception string) (*projectRequest, error) {
+	q, err := o.enterRoute(ctx, route, exception)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +88,7 @@ func (p *projectRequest) revisionReply(ctx context.Context, status int, rev quer
 // GetActiveContract is GET …/contract: the active revision, or
 // RESOURCE_NOT_FOUND when the Project has none.
 func (o *operations) GetActiveContract(ctx context.Context, _ api.GetActiveContractRequestObject) (api.GetActiveContractResponseObject, error) {
-	p, err := o.enterProject(ctx, "/v1/organizations/:org/projects/:project/contract")
+	p, err := o.enterProject(ctx, "/v1/organizations/:org/projects/:project/contract", "")
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +108,7 @@ func (o *operations) GetActiveContract(ctx context.Context, _ api.GetActiveContr
 // GetContractRevision is GET …/contract/revisions/{revision}: revisions are
 // immutable and hold no values (ADR-0038 D6, D13).
 func (o *operations) GetContractRevision(ctx context.Context, _ api.GetContractRevisionRequestObject) (api.GetContractRevisionResponseObject, error) {
-	p, err := o.enterProject(ctx, "/v1/organizations/:org/projects/:project/contract/revisions/:revision")
+	p, err := o.enterProject(ctx, "/v1/organizations/:org/projects/:project/contract/revisions/:revision", "")
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +126,7 @@ func (o *operations) GetContractRevision(ctx context.Context, _ api.GetContractR
 // z.object({ contract: z.unknown(), provenance: z.record(z.string(), z.string()).optional() }),
 // read with c.req.json() once authorization decided.
 func (o *operations) PushContractRevision(ctx context.Context, _ api.PushContractRevisionRequestObject) (api.PushContractRevisionResponseObject, error) {
-	p, err := o.enterProject(ctx, "/v1/organizations/:org/projects/:project/contract/revisions")
+	p, err := o.enterProject(ctx, "/v1/organizations/:org/projects/:project/contract/revisions", "")
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +175,7 @@ func (o *operations) PushContractRevision(ctx context.Context, _ api.PushContrac
 
 // ActivateContractRevision is POST …/contract/revisions/{revision}/activate.
 func (o *operations) ActivateContractRevision(ctx context.Context, _ api.ActivateContractRevisionRequestObject) (api.ActivateContractRevisionResponseObject, error) {
-	p, err := o.enterProject(ctx, "/v1/organizations/:org/projects/:project/contract/revisions/:revision/activate")
+	p, err := o.enterProject(ctx, "/v1/organizations/:org/projects/:project/contract/revisions/:revision/activate", "")
 	if err != nil {
 		return nil, err
 	}
