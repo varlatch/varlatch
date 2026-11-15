@@ -79,7 +79,9 @@ jobs:
     # Drafts run nothing, as in ci.yml.
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # About 15 minutes on a typical runner and over 20 on a slow one (the build
+    # cache is off, so every run compiles every target from scratch).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
