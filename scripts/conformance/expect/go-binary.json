@@ -44,10 +44,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "changeSecurityControl": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "checkAuditExport": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -292,10 +288,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "listSecurityControls": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "listSyncTargets": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -433,14 +425,6 @@
         "step": "ADR-0059 step 4"
       },
       "scheduleOrganizationDeletion": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "securityApprovalKeys": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "securityControlReport": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

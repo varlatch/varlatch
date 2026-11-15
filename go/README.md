@@ -438,6 +438,30 @@ The server's packages:
   reads them. Search keeps no derived state (no index or cache): every
   search reads the live rows, so the migration (step 7) has nothing of
   its own to copy.
+- `server/security` (step 4.3a): the Organization's Security Controls
+  (ADR-0054). A change (`ChangeControl`, `domain/securitycontrols.ts`)
+  takes the Organization's gate exclusive, so it waits for every external
+  effect of the Organization and every later one sees the new mode, and
+  the requester's gate (exclusive when the request carries an approval);
+  in its job, the writer's checks (a change is recovery while frozen), the
+  passkey-verification checkpoint, `organization.manage` rechecked (a
+  denial audited after the job only while a control is on), the expected
+  version, then a loosening change consumes the step-up approval bound to
+  exactly it (`auth.ConsumeApproval`), or answers `STEP_UP_REQUIRED` with
+  a new intent (`WithApproval`, `auth.StepUpRequired`). `Prepare` is the
+  protected-operation framework (`protected.ts`) the later slices' writes
+  run in their jobs: the controls read in the job, credential-lifetime's
+  refusals and default, the existence preflight, the checkpoint, the exact
+  binding, consumption, and the report counts (`Prepared.Count`). Report
+  counters (`securityreport.ts`) are counted in the counting operation's
+  own job, and the summary worker (`RunLoop`, every 60 seconds in the
+  daemon, under a singleton gate) turns each hour's rows into
+  `security_control.would_block` events once the hour has been over for 10
+  minutes, a batch per job, then deletes rows 35 days after their summary.
+  Served by `server/httpserver/security.go` (`listSecurityControls`,
+  `changeSecurityControl`, `securityControlReport`,
+  `securityApprovalKeys`). Counters, their summaries and open intents are
+  data the migration copies (step 7).
 - `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
   decision 3). `services/varlatchd/test/go-fixture-kit.ts` has the
   TypeScript server build a database through its own `/v1`, run a table of
@@ -659,6 +683,7 @@ Kept, because they are on the wire:
 | `domain/environments.ts` `deleteEnvironment`, an environment with live derived ones | the refusal lists them (its message and `details.children`) from a query without `ORDER BY`: PostgreSQL's heap order, which tuple pruning and space reuse change, so not reproducible | by name, the order the core fixture's case records | the core fixture's "delete a root with derived environments" |
 | `http/app.ts` `createEnvironment`, `expiresAt` | zod's `z.string().datetime()` accepts what PostgreSQL's timestamptz refuses (year 0, or a fraction of more than 128 digits, which overflows `timestamptz_in`'s work buffer): the insert fails and the route answers 500 `INTERNAL`, a validation-shaped input with nothing written or counted | the same: `environments.PostgresTimestamp` refuses exactly those, in the job, where the insert would fail | `server/environments` `TestPostgresTimestampVectors` (`testdata/pg-timestamps.json`); the core fixture's "create a preview" requests |
 | `http/app.ts` `searchConfigItems`, a hit's environments | listed in the order of a query without `ORDER BY`, so the order is whatever PostgreSQL's plan gives and is not guaranteed: an index scan through `environments_live_name_key` (`project_id`, `name`) gives Project, then name, while a sequential scan of the same rows gives another order | by Project, then name (byte order), chosen on purpose: the index-scan order, which the fixture's TypeScript server used | the core fixture's search requests |
+| `domain/approvalKeys.ts`, the admins' order | `ORDER BY i.name`, under the database's collation (the test databases' C collation, byte order; a production cluster's may be a locale's) | byte order, as the fixture's TypeScript server sorted them | the security fixture's approval-keys requests |
 | PostgreSQL's text and jsonb, under every route | U+0000 in a string written to a text or jsonb column fails the statement: the transaction rolls back and the route answers 500 `INTERNAL`; a lone surrogate reaches a text column as U+FFFD (Node's UTF-8) and fails in jsonb | the same: `write.Text` for text columns (U+0000 refused, lone surrogates as U+FFFD), `jsvalue.JsonbRefuses` for jsonb (`audit.Record`, `write.Idempotent`). **Every later slice applies them to each text or jsonb value it writes**, at the point the TypeScript statement would fail, and records the case in its parity fixture | `server/write` `TestText`; the core fixture's U+0000 and lone-surrogate requests |
 
 Not reproduced:
@@ -666,7 +691,7 @@ Not reproduced:
 | TypeScript | Effect | Go | Shown by | Conformance |
 | --- | --- | --- | --- | --- |
 | `mirror/publisher.ts:209` orders Convex mirror events by the text form of `event_order` | events after position 9 can be published out of order | nothing to port: there is no Convex in Go | | none |
-| `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | step 4.3's concurrent export test (pending) | none |
+| `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | `server/values` `TestConcurrentExportsUnderReportCountExactly`: 24 concurrent named and all-authorized exports in one bucket all succeed and the counter is exact | none |
 
 ## Before the first Go release
 

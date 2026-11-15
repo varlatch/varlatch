@@ -660,6 +660,20 @@
         "deleteEnvironment"
       ]
     },
+    "security": {
+      "title": "Security Controls over the API (ADR-0054): controls, changes and step-up approvals, report counts, approval keys",
+      "script": "scripts/conformance/suites/security.mjs",
+      "operations": [
+        "admin-recover",
+        "whoami",
+        "createOrganization",
+        "listSecurityControls",
+        "changeSecurityControl",
+        "cancelApproval",
+        "securityControlReport",
+        "securityApprovalKeys"
+      ]
+    },
     "doctor": {
       "title": "read-only doctor of the Compose installation (ADR-0035 D8)",
       "script": "scripts/conformance/suites/doctor.mjs",
@@ -3123,6 +3137,51 @@
       "suite": "sdk",
       "kind": "conformance",
       "title": "a refused credential surfaces as the sdk's VarlatchApiError with status 401"
+    },
+    "security.new-organization-all-off": {
+      "suite": "security",
+      "kind": "conformance",
+      "title": "a new Organization's Security Controls are all off at version 0, never changed, each offering off, report and enforce"
+    },
+    "security.tightening-changes-without-approval": {
+      "suite": "security",
+      "kind": "conformance",
+      "title": "turning a control from off to report needs no approval: it changes at once, to version 1, recorded as the caller's change"
+    },
+    "security.stale-version-conflict": {
+      "suite": "security",
+      "kind": "conformance",
+      "title": "a change at a version the control has left answers VERSION_CONFLICT with the current version, and changes nothing"
+    },
+    "security.loosening-asks-for-approval": {
+      "suite": "security",
+      "kind": "conformance",
+      "title": "turning a control off without an approval answers STEP_UP_REQUIRED with a pending approval for exactly that change, and changes nothing"
+    },
+    "security.pending-approval-refused": {
+      "suite": "security",
+      "kind": "conformance",
+      "title": "the same change repeated with the approval before it is approved answers APPROVAL_INVALID (pending)"
+    },
+    "security.enforce-passkey-verification-self-lockout-refused": {
+      "suite": "security",
+      "kind": "conformance",
+      "title": "enforcing passkey-verification from a sign-in it would refuse is refused (PASSKEY_VERIFICATION_REQUIRED, change refused) and changes nothing"
+    },
+    "security.report-counts-accesses": {
+      "suite": "security",
+      "kind": "conformance",
+      "title": "passkey-verification at report counts each access it would have refused, in the current hour, not yet summarized, under the action and the person"
+    },
+    "security.report-window-bounded": {
+      "suite": "security",
+      "kind": "conformance",
+      "title": "a report window beyond 30 days is refused (VALIDATION_FAILED)"
+    },
+    "security.approval-keys-list-admins": {
+      "suite": "security",
+      "kind": "conformance",
+      "title": "the approval keys list the Organization's admins with their passkeys' trust, names and dates, never a credential id or key"
     },
     "doctor.exits-0": {
       "suite": "doctor",

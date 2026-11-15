@@ -35,6 +35,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/realtime"
+	"github.com/varlatch/varlatch/go/server/security"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/web"
 	"github.com/varlatch/varlatch/go/server/write"
@@ -297,6 +298,17 @@ func serve(opts Options, h *hooks) int {
 	// closes.
 	readPath := values.New(store, rootKEK, values.Options{Log: log})
 	defer readPath.Settled()
+	writer := &write.Writer{Store: store, Gates: gates}
+	// The Security Control report summary (feature-parity decision 10):
+	// every minute, each hour's report counts become audit events once the
+	// hour has been over for 10 minutes. A stop ends it before the
+	// database closes.
+	reportDone := make(chan struct{})
+	go func() {
+		defer close(reportDone)
+		security.RunLoop(ctx, writer, security.SummaryInterval, time.Now, log)
+	}()
+	defer func() { cancel(); <-reportDone }()
 	handler, err := httpserver.New(httpserver.Options{
 		Version:        buildinfo.Version,
 		PublicURL:      cfg.PublicURL,
@@ -309,7 +321,7 @@ func serve(opts Options, h *hooks) int {
 		Auth:           auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK}),
 		Realtime:       hub,
 		Values:         readPath,
-		Writer:         &write.Writer{Store: store, Gates: gates},
+		Writer:         writer,
 		RootKEK:        rootKEK,
 		Log:            log,
 	})

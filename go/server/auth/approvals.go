@@ -18,6 +18,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/ids"
@@ -41,10 +42,11 @@ import (
 //     when it fits exactly, and revalidates the requesting credential.
 //     Consumption and the operation commit or roll back together.
 //
-// In varlatchd so far the one operation that asks for an approval is
-// removing a trusted passkey while the person belongs to an Organization
-// with a Security Control at enforce (passkey.remove); the approval
-// operations themselves read, start, approve and cancel any intent.
+// The operations that ask for one: removing a trusted passkey while the
+// person belongs to an Organization with a Security Control at enforce
+// (passkey.remove, here), and an Organization's protected operations
+// (go/server/security), which consume one with ConsumeApproval in their
+// own write job and answer StepUpRequired when they were given none.
 
 // Approval limits (APPROVALS).
 const (
@@ -285,11 +287,33 @@ func (s *Service) approvalView(r intent, now int64) (jsvalue.Object, error) {
 	}, nil
 }
 
-// errApprovalNeeded is an operation's need of an approval it was not given:
-// it rolls its write job back, and the caller creates the intent.
-type errApprovalNeeded struct{ binding Binding }
+// ApprovalNeeded is an operation's need of an approval it was not given
+// (ApprovalNeeded): returned from its write job, it rolls the job back,
+// and the caller answers StepUpRequired with the binding.
+type ApprovalNeeded struct{ Binding Binding }
 
-func (e *errApprovalNeeded) Error() string { return e.binding.Operation + " needs a step-up approval" }
+func (e *ApprovalNeeded) Error() string { return e.Binding.Operation + " needs a step-up approval" }
+
+// UsedApproval is the approval a consumption used, for the operation's
+// audit record (UsedApproval).
+type UsedApproval struct {
+	ID           string
+	PasskeyID    string
+	UserVerified bool
+}
+
+// OperationsDuringFreeze are the Organization-bound operations an intent
+// may be created for while the Organization is frozen for an incident
+// (OPERATIONS_DURING_FREEZE, ADR-0055 Decisions 3 and 6).
+var OperationsDuringFreeze = map[string]bool{
+	"organization.unfreeze":   true,
+	"security_control.change": true,
+	"oidc_binding.delete":     true,
+	"grant.revoke":            true,
+	"member.remove":           true,
+	"member.demote":           true,
+	"connection.delete":       true,
+}
 
 // createApproval stores a pending intent for the binding, requested by this
 // credential, within the bounds (createApproval). Only a person's
@@ -324,7 +348,9 @@ func (s *Service) createApproval(ctx context.Context, req Requester, b Binding) 
 			return err
 		}
 		if b.OrganizationID != nil {
-			return errors.New("approvals: an Organization's operation cannot ask for an approval in this varlatchd yet")
+			if err := intentOrganization(ctx, tx, req, b); err != nil {
+				return err
+			}
 		}
 		open, err := q.OpenApprovalsOfCredential(ctx, query.OpenApprovalsOfCredentialParams{CredentialID: req.CredentialID, Now: now})
 		if err != nil {
@@ -368,6 +394,44 @@ func (s *Service) createApproval(ctx context.Context, req Requester, b Binding) 
 	return view, err
 }
 
+// intentOrganization is createApproval's checks of an Organization-bound
+// intent, in its job: the Organization live, not frozen for an incident
+// unless the operation runs during one, and the requester's
+// passkey-verification checkpoint, so a refused sign-in creates no intent.
+func intentOrganization(ctx context.Context, tx query.DBTX, req Requester, b Binding) error {
+	live, err := query.New(tx).LiveOrganizationExists(ctx, *b.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if live == 0 {
+		return domainerr.New("RESOURCE_NOT_FOUND", "Organization not found")
+	}
+	if !OperationsDuringFreeze[b.Operation] {
+		if err := authz.RefuseIfIncidentFrozen(ctx, tx, *b.OrganizationID, ""); err != nil {
+			return err
+		}
+	}
+	p := &Principal{
+		Identity:   Identity{ID: req.IdentityID, Kind: req.IdentityKind},
+		Credential: Credential{ID: req.CredentialID, Kind: req.CredentialKind},
+	}
+	out, err := PasskeyVerification(ctx, tx, p, []string{*b.OrganizationID})
+	if err != nil {
+		return err
+	}
+	if reason, ok := out.Blocked[*b.OrganizationID]; ok {
+		return PasskeyVerificationRequired(*b.OrganizationID, reason)
+	}
+	return nil
+}
+
+// StepUpRequired is the answer to an operation that needs an approval it
+// was not given (withApproval): the intent created for the binding, in
+// details.approval, or why none could be created.
+func (s *Service) StepUpRequired(ctx context.Context, req Requester, b Binding) error {
+	return s.stepUpRequired(ctx, req, b)
+}
+
 // stepUpRequired is the answer to an operation that needs an approval: the
 // intent created for it, in details.approval.
 func (s *Service) stepUpRequired(ctx context.Context, req Requester, b Binding) error {
@@ -388,6 +452,13 @@ func (s *Service) stepUpRequired(ctx context.Context, req Requester, b Binding) 
 // INVALID_CREDENTIAL when the credential ended meanwhile; the job then
 // rolls back, the consumption with it.
 func (s *Service) consumeApproval(ctx context.Context, tx query.DBTX, req Requester, approvalID string, b Binding) error {
+	_, err := s.ConsumeApproval(ctx, tx, req, approvalID, b)
+	return err
+}
+
+// ConsumeApproval is consumeApproval for an operation's write job: the
+// approval it used, or the refusal (the job then rolls back).
+func (s *Service) ConsumeApproval(ctx context.Context, tx query.DBTX, req Requester, approvalID string, b Binding) (UsedApproval, error) {
 	q := query.New(tx)
 	now := s.micros()
 	bodyHash, queryHash := approvalHash(s.rootKEK, "body", b.Body), approvalHash(s.rootKEK, "query", b.Query)
@@ -399,17 +470,17 @@ func (s *Service) consumeApproval(ctx context.Context, tx query.DBTX, req Reques
 		ExpectedVersion: nullInt(b.ExpectedVersion),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return s.refusalOf(ctx, tx, req, approvalID, b, bodyHash, queryHash, now)
+		return UsedApproval{}, s.refusalOf(ctx, tx, req, approvalID, b, bodyHash, queryHash, now)
 	}
 	if err != nil {
-		return err
+		return UsedApproval{}, err
 	}
 	// A dashboard intent needs its session alive, and the requester's.
 	if consumed.AuthSessionID.Valid {
 		if _, err := q.LiveSessionOfIdentity(ctx, query.LiveSessionOfIdentityParams{ID: consumed.AuthSessionID.String, IdentityID: req.IdentityID, Now: now}); errors.Is(err, sql.ErrNoRows) {
-			return ApprovalInvalid("session-ended", &approvalID)
+			return UsedApproval{}, ApprovalInvalid("session-ended", &approvalID)
 		} else if err != nil {
-			return err
+			return UsedApproval{}, err
 		}
 	}
 	// Revalidate: the requesting credential is live and its person enabled;
@@ -422,12 +493,12 @@ func (s *Service) consumeApproval(ctx context.Context, tx query.DBTX, req Reques
 		ID: req.CredentialID, IdentityID: req.IdentityID, Now: sql.NullInt64{Int64: now, Valid: true}, AuthSessionID: session,
 	})
 	if err != nil {
-		return err
+		return UsedApproval{}, err
 	}
 	if n == 0 {
-		return domainerr.New("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired")
+		return UsedApproval{}, domainerr.New("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired")
 	}
-	return nil
+	return UsedApproval{ID: consumed.ID, PasskeyID: consumed.ApprovedWithPasskeyID.String, UserVerified: consumed.ApprovalUserVerified.Bool}, nil
 }
 
 // refusalOf is why an approval does not fit this request now.

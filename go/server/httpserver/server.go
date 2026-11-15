@@ -161,6 +161,11 @@ var BuiltOperations = []string{
 	validatePattern,
 	strictPattern,
 	searchPattern,
+	// Step 4.3a: Security Controls (security.go).
+	listSecurityControlsPattern,
+	changeSecurityControlPattern,
+	securityControlReportPattern,
+	securityApprovalKeysPattern,
 }
 
 // Server is the handler.

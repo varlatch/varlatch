@@ -401,7 +401,7 @@ func (s *Service) Confirm(ctx context.Context, identityID, sessionID, passkeyID 
 // Varlatch-Approval header ("" for none), consumed in the removal's job.
 // Without one the intent is created and the answer is STEP_UP_REQUIRED.
 func (s *Service) RemoveOwnPasskey(ctx context.Context, req Requester, passkeyID, approvalID string) error {
-	var needed *errApprovalNeeded
+	var needed *ApprovalNeeded
 	err := s.store.Write(ctx, func(tx *storage.Tx) error {
 		needed = nil
 		q := query.New(tx)
@@ -428,7 +428,7 @@ func (s *Service) RemoveOwnPasskey(ctx context.Context, req Requester, passkeyID
 					Summary: ApprovalSummary{Title: "Remove your trusted passkey " + name},
 				}
 				if approvalID == "" {
-					needed = &errApprovalNeeded{binding: b}
+					needed = &ApprovalNeeded{Binding: b}
 					return needed
 				}
 				if err := s.consumeApproval(ctx, tx, req, approvalID, b); err != nil {
@@ -440,7 +440,7 @@ func (s *Service) RemoveOwnPasskey(ctx context.Context, req Requester, passkeyID
 		return err
 	})
 	if needed != nil && errors.Is(err, needed) {
-		return s.stepUpRequired(ctx, req, needed.binding)
+		return s.stepUpRequired(ctx, req, needed.Binding)
 	}
 	return err
 }

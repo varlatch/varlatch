@@ -1,0 +1,4856 @@
+{
+  "comment": "Written by services/varlatchd/test/go-security-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+  "ref": "v0.22.0",
+  "serverVersion": "0.22.0",
+  "rootKek": "50b068660ada63727c09a9f3d0d53ef9e8c0f3149b16259fbcd149b231fc597c",
+  "tokens": {
+    "alice": "vlt_cli_Ary-b4F4T05tHivT4Hwp5jiyb3hbXuegkqrkSOD1XNQ",
+    "alice2": "vlt_cli_psfa4geUscP_-JVLs-BmHevAZOOlsD7L3Dei7BoL57E",
+    "bob": "vlt_cli_bzqJsa_MwSW9M-pOhyw4QRpIf4VFiE2TdTi91koAL-4",
+    "carol": "vlt_cli_8YWdzrZvY97hW06LIzyoMIcAVvB0R8fcL85XRu4bPkw",
+    "dave": "vlt_cli_tBWDKeHEM5SyTTBHzIjVn4KCk4waemuQ4QsI51YV3U8",
+    "erin": "vlt_cli_9ihoEJ1MJmkL22ZdY4sNCrUoROk118AkdyvJtf0hVLk",
+    "ci": "vlt_svc_MYjvh0UcFo6B4WbX4bnejjcoRVA1R8WQmwCEEPMyB4M",
+    "invalid": "vlt_cli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "rows": {
+    "installation": [
+      {
+        "id": "inst_egl7skz7z5ygyyhdax2saqy2ki",
+        "kek_canary": {
+          "nonce": "/0N/LmvqmrHTbkwk",
+          "authTag": "RSOfwoiIb5qYESAoD7X/gQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "d6c2UNTrpT1UVONWTXpAZsJYq/4KcZspJf6967kKth4=",
+          "formatVersion": 1
+        },
+        "bootstrapped_at": "2026-11-15T18:26:54.024Z",
+        "created_at": "2026-11-15T18:26:53.981Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "public_url": null
+      }
+    ],
+    "identities": [
+      {
+        "id": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+        "kind": "human",
+        "name": "dave",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-11-15T18:26:54.024Z",
+        "organization_id": null,
+        "last_seen_at": "2026-11-15T18:26:54.092Z",
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_eossm73cqxtk3osek4p3cubite",
+        "kind": "service",
+        "name": "deploy",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-15T18:26:54.457Z",
+        "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_ez7pwbx5v2nxuhtdgyjqakv7c4",
+        "kind": "human",
+        "name": "bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_kt76t5fjrx4oh5ixrnhvj574ji",
+        "kind": "human",
+        "name": "frank",
+        "disabled": true,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_plzn5yncjaptrpsxfd6wcjomhu",
+        "kind": "human",
+        "name": "carol",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_zuiqcejlkiafasvsvwwdkyppka",
+        "kind": "human",
+        "name": "erin",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      }
+    ],
+    "user": [
+      {
+        "id": "UserDave00001",
+        "name": "dave",
+        "email": "dave@varlatch.placeholder.invalid",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "auth_user_links": [
+      {
+        "better_auth_user_id": "UserDave00001",
+        "identity_id": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+        "created_at": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "passkey": [
+      {
+        "id": "PasskeyBare001",
+        "name": null,
+        "publicKey": "pk",
+        "userId": "UserDave00001",
+        "credentialID": "cred-PasskeyBare001",
+        "counter": 0,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": null,
+        "createdAt": null,
+        "aaguid": null
+      },
+      {
+        "id": "PasskeyConf001",
+        "name": "Phone",
+        "publicKey": "pk",
+        "userId": "UserDave00001",
+        "credentialID": "cred-PasskeyConf001",
+        "counter": 0,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": null,
+        "createdAt": "2026-01-03T00:00:00.000Z",
+        "aaguid": null
+      },
+      {
+        "id": "PasskeyConf002",
+        "name": "Tablet",
+        "publicKey": "pk",
+        "userId": "UserDave00001",
+        "credentialID": "cred-PasskeyConf002",
+        "counter": 0,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": null,
+        "createdAt": "2026-01-04T00:00:00.000Z",
+        "aaguid": null
+      },
+      {
+        "id": "PasskeySetup01",
+        "name": "Laptop",
+        "publicKey": "pk",
+        "userId": "UserDave00001",
+        "credentialID": "cred-PasskeySetup01",
+        "counter": 0,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": null,
+        "createdAt": "2026-01-02T00:00:00.000Z",
+        "aaguid": null
+      },
+      {
+        "id": "PasskeyUncon01",
+        "name": "Old key",
+        "publicKey": "pk",
+        "userId": "UserDave00001",
+        "credentialID": "cred-PasskeyUncon01",
+        "counter": 0,
+        "deviceType": "singleDevice",
+        "backedUp": false,
+        "transports": null,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "aaguid": null
+      }
+    ],
+    "passkey_provenance": [
+      {
+        "passkey_id": "PasskeyConf001",
+        "trust": "trusted",
+        "trusted_via": "confirmed",
+        "trusted_at": "2026-02-05T08:00:00.000Z",
+        "setup_grant_kind": null,
+        "confirmed_by_passkey_id": "PasskeySetup01",
+        "recorded_at": "2026-02-05T08:00:00.000Z"
+      },
+      {
+        "passkey_id": "PasskeyConf002",
+        "trust": "trusted",
+        "trusted_via": "confirmed",
+        "trusted_at": "2026-02-03T08:00:00.000Z",
+        "setup_grant_kind": null,
+        "confirmed_by_passkey_id": "PasskeySetup01",
+        "recorded_at": "2026-02-03T08:00:00.000Z"
+      },
+      {
+        "passkey_id": "PasskeySetup01",
+        "trust": "trusted",
+        "trusted_via": "setup-grant",
+        "trusted_at": "2026-01-02T00:00:00.000Z",
+        "setup_grant_kind": "invite",
+        "confirmed_by_passkey_id": null,
+        "recorded_at": "2026-01-02T00:00:00.000Z"
+      },
+      {
+        "passkey_id": "PasskeyUncon01",
+        "trust": "unconfirmed",
+        "trusted_via": null,
+        "trusted_at": null,
+        "setup_grant_kind": null,
+        "confirmed_by_passkey_id": null,
+        "recorded_at": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "credentials": [
+      {
+        "id": "crd_7jmk4nm3o7tmtojluoff5njlie",
+        "identity_id": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "3caea04befceda5440013feb0d0c97216fae5a1b7e1d210f714b5f8afafff193",
+        "created_at": "2026-11-15T18:26:54.430Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_momq2xzpmxhv4fcig2k67lxolq",
+        "identity_id": "idn_zuiqcejlkiafasvsvwwdkyppka",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "dbffebc0f771dd1906d8f12d39ef1460edc05a8a13f3e592e99aca3154177780",
+        "created_at": "2026-11-15T18:26:54.439Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_zuiqcejlkiafasvsvwwdkyppka",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "706fbf874a1ab575394cf15982d37c1b22db6586268ef6af637275d012a1105c",
+        "created_at": "2026-11-15T18:26:54.040Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-11-15T18:26:54.080Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_vpgk3wzvdjmbxddopnhga7rfae",
+        "identity_id": "idn_plzn5yncjaptrpsxfd6wcjomhu",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "b9401b3008591d37c08ce8196cbfe93a84cc66e6207e9b48eafd0cc2431f98bd",
+        "created_at": "2026-11-15T18:26:54.422Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_plzn5yncjaptrpsxfd6wcjomhu",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_wmycgwtr7ushck2dkbpm6t4deq",
+        "identity_id": "idn_eossm73cqxtk3osek4p3cubite",
+        "kind": "service",
+        "name": "deploy credential",
+        "token_hash": "31ccc5ad6e505c02996164c26ce6ef519e98df7a0531e84816bd1d616c294de1",
+        "created_at": "2026-11-15T18:26:54.457Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_xohnuxj73oytnkxtys4d4ajpeq",
+        "identity_id": "idn_ez7pwbx5v2nxuhtdgyjqakv7c4",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "d225c3a74ee3cb6a38e37776980f04d757c94facdd846b3bac09d1da4aeb4a46",
+        "created_at": "2026-11-15T18:26:54.416Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_ez7pwbx5v2nxuhtdgyjqakv7c4",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_yn7cfzg37xxrqpcrfsa2ps22ey",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "7ef6e0cacc51bc8e01261d8d3ac6e6955db4824dbc22588831cd9cab5ba4b967",
+        "created_at": "2026-11-15T18:26:54.050Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ],
+    "organizations": [
+      {
+        "id": "org_d6hdjmsdcvbjneehiqyhxdzcua",
+        "slug": "deleting",
+        "name": "Deleting",
+        "wrapped_org_kek": {
+          "nonce": "dvidsw7C6W8CUSzE",
+          "authTag": "tgqcoMgc9NXLUR4GGA/GHw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "9P1mgSkEXQ1wVnSO0h1Hvz1TU5E7lckVIIC9bc8LiJY=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T18:26:54.150Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+        "slug": "enf",
+        "name": "Enf",
+        "wrapped_org_kek": {
+          "nonce": "+oPG3zQr9irX1zM9",
+          "authTag": "vO0EhVvVGOVaBDhJUYFRGg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "Yxy78GIniOHd2xmpfu1jP1jEwCyI7ysDSM81QAkU2vc=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T18:26:54.128Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 5
+      },
+      {
+        "id": "org_jnmvsjlhwwsasgq2dlfo74phge",
+        "slug": "guard",
+        "name": "Guard",
+        "wrapped_org_kek": {
+          "nonce": "EmKF9CyzXAV0rHu0",
+          "authTag": "Juic64Oe9llMHJ1YT2cPKA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "10SOTfA0x80vW5+M8EAca+D2zQ/NTGh1rZPr7IRNiu0=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T18:26:54.162Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_joe3fb5nq62orseyvz7tjteb54",
+        "slug": "gone",
+        "name": "Gone",
+        "wrapped_org_kek": null,
+        "deleted_at": "2026-03-02T00:00:01.000Z",
+        "created_at": "2026-11-15T18:26:54.173Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": "2026-03-02T00:00:01.000Z",
+        "security_epoch": 0
+      },
+      {
+        "id": "org_n6b2dduyagzoxfx325dka6o2gm",
+        "slug": "frozen",
+        "name": "Frozen",
+        "wrapped_org_kek": {
+          "nonce": "p6oCubv+zN4fl0X6",
+          "authTag": "MJLXANr9KaIcxN9YIq6X9Q==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "m0N//HZRFtCTr16EPRU3+3T9fVLlxn+W+njt+SQIXTA=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T18:26:54.139Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 1
+      },
+      {
+        "id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "slug": "rep",
+        "name": "Rep",
+        "wrapped_org_kek": {
+          "nonce": "JwV/XR/yRDN7iy/f",
+          "authTag": "gpXQ+ktyamU/WWrALlyQUw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "nkjuJRcBY9gylodn9qzEKJofb4scYuChVggseZw7muU=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T18:26:54.115Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 4
+      },
+      {
+        "id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+        "slug": "sec",
+        "name": "Sec",
+        "wrapped_org_kek": {
+          "nonce": "ELqWhKXMrN4ERka4",
+          "authTag": "ScIkAsV2jPextqJv4U2lPg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "Y/MwKJ2KyIHwrTTIVUc+K/16JN+sVleaOLpnIj4mboA=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-15T18:26:54.097Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      }
+    ],
+    "org_memberships": [
+      {
+        "organization_id": "org_d6hdjmsdcvbjneehiqyhxdzcua",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.150Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.128Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_jnmvsjlhwwsasgq2dlfo74phge",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.162Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_joe3fb5nq62orseyvz7tjteb54",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.173Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_n6b2dduyagzoxfx325dka6o2gm",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.139Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.115Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+        "identity_id": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.428Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.097Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+        "identity_id": "idn_ez7pwbx5v2nxuhtdgyjqakv7c4",
+        "role": "member",
+        "created_at": "2026-11-15T18:26:54.414Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+        "identity_id": "idn_kt76t5fjrx4oh5ixrnhvj574ji",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.445Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+        "identity_id": "idn_zuiqcejlkiafasvsvwwdkyppka",
+        "role": "admin",
+        "created_at": "2026-11-15T18:26:54.437Z",
+        "removed_at": null,
+        "version": 0
+      }
+    ],
+    "security_controls": [
+      {
+        "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+        "control": "admin-step-up",
+        "mode": "enforce",
+        "config": null,
+        "version": 2,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.346Z"
+      },
+      {
+        "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+        "control": "credential-lifetime",
+        "mode": "enforce",
+        "config": {
+          "maxTtlSeconds": 7200,
+          "defaultTtlSeconds": 600
+        },
+        "version": 1,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.366Z"
+      },
+      {
+        "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+        "control": "passkey-verification",
+        "mode": "report",
+        "config": null,
+        "version": 1,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.386Z"
+      },
+      {
+        "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+        "control": "requirement-protection",
+        "mode": "enforce",
+        "config": null,
+        "version": 1,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.303Z"
+      },
+      {
+        "organization_id": "org_jnmvsjlhwwsasgq2dlfo74phge",
+        "control": "passkey-verification",
+        "mode": "enforce",
+        "config": null,
+        "version": 3,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.511Z"
+      },
+      {
+        "organization_id": "org_n6b2dduyagzoxfx325dka6o2gm",
+        "control": "admin-step-up",
+        "mode": "report",
+        "config": null,
+        "version": 1,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.407Z"
+      },
+      {
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "control": "admin-step-up",
+        "mode": "report",
+        "config": null,
+        "version": 1,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.235Z"
+      },
+      {
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "control": "credential-lifetime",
+        "mode": "report",
+        "config": {
+          "maxTtlSeconds": 86400,
+          "defaultTtlSeconds": 3600
+        },
+        "version": 1,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.259Z"
+      },
+      {
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "control": "passkey-verification",
+        "mode": "report",
+        "config": null,
+        "version": 1,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.280Z"
+      },
+      {
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "control": "requirement-protection",
+        "mode": "report",
+        "config": null,
+        "version": 1,
+        "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "changed_at": "2026-11-15T18:26:54.208Z"
+      }
+    ],
+    "security_control_counters": [
+      {
+        "organization_id": "org_joe3fb5nq62orseyvz7tjteb54",
+        "control": "admin-step-up",
+        "config_version": 1,
+        "operation": "grant.create",
+        "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "reason": "no-approval",
+        "bucket_hour": "2026-03-01T10:00:00.000Z",
+        "count": 1,
+        "first_seen": "2026-03-01T10:05:00.000Z",
+        "last_seen": "2026-03-01T10:50:00.000Z",
+        "emitted_at": null
+      },
+      {
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "control": "admin-step-up",
+        "config_version": 1,
+        "operation": "grant.create",
+        "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "reason": "no-approval",
+        "bucket_hour": "2026-03-01T10:00:00.000Z",
+        "count": 3,
+        "first_seen": "2026-03-01T10:05:00.000Z",
+        "last_seen": "2026-03-01T10:50:00.000Z",
+        "emitted_at": null
+      },
+      {
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "control": "admin-step-up",
+        "config_version": 1,
+        "operation": "grant.create",
+        "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "reason": "no-approval",
+        "bucket_hour": "2026-03-01T11:00:00.000Z",
+        "count": 1,
+        "first_seen": "2026-03-01T11:05:00.000Z",
+        "last_seen": "2026-03-01T11:50:00.000Z",
+        "emitted_at": null
+      },
+      {
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "control": "credential-lifetime",
+        "config_version": 1,
+        "operation": "credential.issue",
+        "actor_identity_id": "idn_eossm73cqxtk3osek4p3cubite",
+        "reason": "would-default",
+        "bucket_hour": "2026-03-01T11:00:00.000Z",
+        "count": 2,
+        "first_seen": "2026-03-01T11:05:00.000Z",
+        "last_seen": "2026-03-01T11:50:00.000Z",
+        "emitted_at": null
+      },
+      {
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "control": "passkey-verification",
+        "config_version": 1,
+        "operation": "organization.read",
+        "actor_identity_id": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+        "reason": "no-evidence",
+        "bucket_hour": "2026-02-01T09:00:00.000Z",
+        "count": 4,
+        "first_seen": "2026-02-01T09:05:00.000Z",
+        "last_seen": "2026-02-01T09:50:00.000Z",
+        "emitted_at": "2026-02-01T10:15:00.000Z"
+      }
+    ],
+    "approval_intents": [
+      {
+        "id": "apr_otherbodyaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_yn7cfzg37xxrqpcrfsa2ps22ey",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "auth_session_id": null,
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "operation": "security_control.change",
+        "target": {
+          "control": "passkey-verification"
+        },
+        "body_hash": "hmac-v1:7481d67dd135c8fc79e2b8d9ced06fa050d8942d49891ddc7237f209717bc716",
+        "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+        "expected_version": 0,
+        "summary": {
+          "title": "Turn off the passkey-verification security control of Rep",
+          "changes": [
+            {
+              "to": "off",
+              "from": "report",
+              "field": "mode",
+              "loosens": true
+            }
+          ]
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      },
+      {
+        "id": "apr_pendingaaaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_yn7cfzg37xxrqpcrfsa2ps22ey",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "auth_session_id": null,
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "operation": "security_control.change",
+        "target": {
+          "control": "requirement-protection"
+        },
+        "body_hash": "hmac-v1:dc6e05af43b2bc66f2e4af204fe3f9081184b031cb91378d0ff7e9bde238284f",
+        "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+        "expected_version": 1,
+        "summary": {
+          "title": "Turn off the requirement-protection security control of Rep",
+          "changes": [
+            {
+              "to": "off",
+              "from": "report",
+              "field": "mode",
+              "loosens": true
+            }
+          ]
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": null,
+        "approved_with_passkey_id": null,
+        "approval_user_verified": null,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      },
+      {
+        "id": "apr_repoffaaaaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_yn7cfzg37xxrqpcrfsa2ps22ey",
+        "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "auth_session_id": null,
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "operation": "security_control.change",
+        "target": {
+          "control": "admin-step-up"
+        },
+        "body_hash": "hmac-v1:dc6e05af43b2bc66f2e4af204fe3f9081184b031cb91378d0ff7e9bde238284f",
+        "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+        "expected_version": 1,
+        "summary": {
+          "title": "Turn off the admin-step-up security control of Rep",
+          "changes": [
+            {
+              "to": "off",
+              "from": "report",
+              "field": "mode",
+              "loosens": true
+            }
+          ]
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      }
+    ],
+    "organization_freezes": [
+      {
+        "id": "ofz_cfp72k7haxhf3utqekgx2cti4q",
+        "organization_id": "org_n6b2dduyagzoxfx325dka6o2gm",
+        "frozen_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "frozen_at": "2026-03-01T00:00:00.000Z",
+        "reason": "incident drill",
+        "lifted_at": null,
+        "lifted_by": null,
+        "lift_method": null
+      }
+    ],
+    "organization_deletions": [
+      {
+        "id": "odl_fceh2nfhmzn4yfe5n7gyn2h5b4",
+        "organization_id": "org_joe3fb5nq62orseyvz7tjteb54",
+        "requested_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "scheduled_at": "2026-03-01T00:00:00.000Z",
+        "run_after": "2026-03-02T00:00:00.000Z",
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "cancelled_at": null,
+        "completed_at": "2026-03-02T00:00:01.000Z"
+      },
+      {
+        "id": "odl_vwr2i2wwhyeddcgbuszrvmwsty",
+        "organization_id": "org_d6hdjmsdcvbjneehiqyhxdzcua",
+        "requested_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "scheduled_at": "2026-03-01T00:00:00.000Z",
+        "run_after": "2099-03-01T00:00:00.000Z",
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "cancelled_at": null,
+        "completed_at": null
+      }
+    ]
+  },
+  "sideTables": [
+    {
+      "name": "organizations",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "slug"
+      ]
+    },
+    {
+      "name": "security_controls",
+      "key": [
+        "organization_id",
+        "control"
+      ],
+      "sortBy": [
+        "organization_id",
+        "control"
+      ],
+      "volatile": [
+        "changed_at"
+      ]
+    },
+    {
+      "name": "security_control_counters",
+      "key": [
+        "organization_id",
+        "control",
+        "config_version",
+        "operation",
+        "actor_identity_id",
+        "reason",
+        "bucket_hour"
+      ],
+      "sortBy": [
+        "organization_id",
+        "control",
+        "config_version",
+        "operation",
+        "actor_identity_id",
+        "reason"
+      ],
+      "volatile": [
+        "bucket_hour",
+        "first_seen",
+        "last_seen",
+        "emitted_at"
+      ]
+    },
+    {
+      "name": "approval_intents",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "operation",
+        "target",
+        "body_hash"
+      ],
+      "volatile": [
+        "created_at",
+        "expires_at",
+        "consumed_at"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "id": "GET list, every control off",
+      "name": "list, every control off",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"control\":\"requirement-protection\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"admin-step-up\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"passkey-verification\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"credential-lifetime\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]}],\"availableModes\":[\"off\",\"report\"]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list, every control at report",
+      "name": "list, every control at report",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"control\":\"requirement-protection\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"2026-11-15T18:26:54.208Z\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"admin-step-up\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"2026-11-15T18:26:54.235Z\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"passkey-verification\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"2026-11-15T18:26:54.280Z\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"config\":{\"defaultTtlSeconds\":3600,\"maxTtlSeconds\":86400},\"version\":1,\"changedAt\":\"2026-11-15T18:26:54.259Z\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]}],\"availableModes\":[\"off\",\"report\"]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 1,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.read",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET list, three at enforce",
+      "name": "list, three at enforce",
+      "method": "GET",
+      "path": "/v1/organizations/enf/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"control\":\"requirement-protection\",\"mode\":\"enforce\",\"config\":null,\"version\":1,\"changedAt\":\"2026-11-15T18:26:54.303Z\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"admin-step-up\",\"mode\":\"enforce\",\"config\":null,\"version\":2,\"changedAt\":\"2026-11-15T18:26:54.346Z\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"passkey-verification\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"2026-11-15T18:26:54.386Z\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"credential-lifetime\",\"mode\":\"enforce\",\"config\":{\"defaultTtlSeconds\":600,\"maxTtlSeconds\":7200},\"version\":1,\"changedAt\":\"2026-11-15T18:26:54.366Z\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]}],\"availableModes\":[\"off\",\"report\"]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 1,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.read",
+              "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET list by id",
+      "name": "list by id",
+      "method": "GET",
+      "path": "/v1/organizations/{secId}/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"control\":\"requirement-protection\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"admin-step-up\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"passkey-verification\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"credential-lifetime\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]}],\"availableModes\":[\"off\",\"report\"]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list as a member",
+      "name": "list as a member",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/controls",
+      "credential": "bob",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"control\":\"requirement-protection\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"admin-step-up\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"passkey-verification\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"credential-lifetime\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]}],\"availableModes\":[\"off\",\"report\"]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list as an admin",
+      "name": "list as an admin",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/controls",
+      "credential": "dave",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"control\":\"requirement-protection\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"admin-step-up\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"passkey-verification\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"credential-lifetime\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]}],\"availableModes\":[\"off\",\"report\"]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list as an outsider",
+      "name": "list as an outsider",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/controls",
+      "credential": "carol",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.read",
+          "actor_identity_id": "idn_plzn5yncjaptrpsxfd6wcjomhu",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_vpgk3wzvdjmbxddopnhga7rfae",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET list as its service identity",
+      "name": "list as its service identity",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/controls",
+      "credential": "ci",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.read",
+          "actor_identity_id": "idn_eossm73cqxtk3osek4p3cubite",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_wmycgwtr7ushck2dkbpm6t4deq",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET list an unknown Organization",
+      "name": "list an unknown Organization",
+      "method": "GET",
+      "path": "/v1/organizations/nope/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list a frozen Organization",
+      "name": "list a frozen Organization",
+      "method": "GET",
+      "path": "/v1/organizations/frozen/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"control\":\"requirement-protection\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"admin-step-up\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"2026-11-15T18:26:54.407Z\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"passkey-verification\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"credential-lifetime\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]}],\"availableModes\":[\"off\",\"report\"]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list an Organization being deleted",
+      "name": "list an Organization being deleted",
+      "method": "GET",
+      "path": "/v1/organizations/deleting/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"control\":\"requirement-protection\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"admin-step-up\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"passkey-verification\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"credential-lifetime\",\"mode\":\"off\",\"config\":null,\"version\":0,\"changedAt\":null,\"changedBy\":null,\"availableModes\":[\"off\",\"report\",\"enforce\"]}],\"availableModes\":[\"off\",\"report\"]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list under passkey-verification enforce",
+      "name": "list under passkey-verification enforce",
+      "method": "GET",
+      "path": "/v1/organizations/guard/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PASSKEY_VERIFICATION_REQUIRED\",\"message\":\"This Organization requires a sign-in with a trusted passkey that verifies you with a PIN or biometric, and your sign-in carries no passkey evidence (it may predate this check). Sign in again with such a passkey: in the dashboard, sign out and sign in; for the CLI, run varlatch login and approve it with that passkey.\",\"requestId\":\"{requestId}\",\"details\":{\"control\":\"passkey-verification\",\"reason\":\"no-evidence\"}}}"
+      },
+      "audit": [
+        {
+          "action": "organization.read",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "evidence": "no-evidence",
+            "reason": "passkey_verification_required"
+          },
+          "organization_id": "org_jnmvsjlhwwsasgq2dlfo74phge",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET list an Organization whose deletion completed",
+      "name": "list an Organization whose deletion completed",
+      "method": "GET",
+      "path": "/v1/organizations/gone/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list without a credential",
+      "name": "list without a credential",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/controls",
+      "credential": "none",
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"AUTHENTICATION_REQUIRED\",\"message\":\"Provide a Varlatch bearer credential\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH tighten admin-step-up to report",
+      "name": "tighten admin-step-up to report",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"admin-step-up\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "admin-step-up",
+            "fromDefaultTtlSeconds": null,
+            "fromMaxTtlSeconds": null,
+            "fromMode": "off",
+            "fromVersion": 0,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": null,
+            "toMaxTtlSeconds": null,
+            "toMode": "report",
+            "toVersion": 1
+          },
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "admin-step-up"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.097Z",
+              "deleted_at": null,
+              "id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "key_rotation_state": "idle",
+              "name": "Sec",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 1,
+              "slug": "sec",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "ScIkAsV2jPextqJv4U2lPg==",
+                "ciphertext": "Y/MwKJ2KyIHwrTTIVUc+K/16JN+sVleaOLpnIj4mboA=",
+                "formatVersion": 1,
+                "nonce": "ELqWhKXMrN4ERka4"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "inserted": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": null,
+              "control": "admin-step-up",
+              "mode": "report",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "version": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH the same state again",
+      "name": "the same state again",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"admin-step-up\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":false,\"loosened\":false}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a stale expected version",
+      "name": "a stale expected version",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "enforce",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VERSION_CONFLICT\",\"message\":\"admin-step-up is at version 1, not 0: it changed meanwhile. Read it again\",\"requestId\":\"{requestId}\",\"details\":{\"currentVersion\":1}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH tighten admin-step-up to enforce",
+      "name": "tighten admin-step-up to enforce",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "enforce",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"admin-step-up\",\"mode\":\"enforce\",\"config\":null,\"version\":2,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "admin-step-up",
+            "fromDefaultTtlSeconds": null,
+            "fromMaxTtlSeconds": null,
+            "fromMode": "report",
+            "fromVersion": 1,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": null,
+            "toMaxTtlSeconds": null,
+            "toMode": "enforce",
+            "toVersion": 2
+          },
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "admin-step-up"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.097Z",
+              "deleted_at": null,
+              "id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "key_rotation_state": "idle",
+              "name": "Sec",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 2,
+              "slug": "sec",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "ScIkAsV2jPextqJv4U2lPg==",
+                "ciphertext": "Y/MwKJ2KyIHwrTTIVUc+K/16JN+sVleaOLpnIj4mboA=",
+                "formatVersion": 1,
+                "nonce": "ELqWhKXMrN4ERka4"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "updated": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": null,
+              "control": "admin-step-up",
+              "mode": "enforce",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "version": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH credential-lifetime at report without configuration",
+      "name": "credential-lifetime at report without configuration",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"config: credential-lifetime needs defaultTtlSeconds and maxTtlSeconds unless it is off\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH credential-lifetime configured while off",
+      "name": "credential-lifetime configured while off",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": {
+          "defaultTtlSeconds": 900,
+          "maxTtlSeconds": 3600
+        },
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"credential-lifetime\",\"mode\":\"off\",\"config\":{\"defaultTtlSeconds\":900,\"maxTtlSeconds\":3600},\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "credential-lifetime",
+            "fromDefaultTtlSeconds": null,
+            "fromMaxTtlSeconds": null,
+            "fromMode": "off",
+            "fromVersion": 0,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": 900,
+            "toMaxTtlSeconds": 3600,
+            "toMode": "off",
+            "toVersion": 1
+          },
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "credential-lifetime"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.097Z",
+              "deleted_at": null,
+              "id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "key_rotation_state": "idle",
+              "name": "Sec",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 3,
+              "slug": "sec",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "ScIkAsV2jPextqJv4U2lPg==",
+                "ciphertext": "Y/MwKJ2KyIHwrTTIVUc+K/16JN+sVleaOLpnIj4mboA=",
+                "formatVersion": 1,
+                "nonce": "ELqWhKXMrN4ERka4"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "inserted": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": {
+                "defaultTtlSeconds": 900,
+                "maxTtlSeconds": 3600
+              },
+              "control": "credential-lifetime",
+              "mode": "off",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "version": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH credential-lifetime to report, keeping its configuration",
+      "name": "credential-lifetime to report, keeping its configuration",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"config\":{\"defaultTtlSeconds\":900,\"maxTtlSeconds\":3600},\"version\":2,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "credential-lifetime",
+            "fromDefaultTtlSeconds": 900,
+            "fromMaxTtlSeconds": 3600,
+            "fromMode": "off",
+            "fromVersion": 1,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": 900,
+            "toMaxTtlSeconds": 3600,
+            "toMode": "report",
+            "toVersion": 2
+          },
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "credential-lifetime"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.097Z",
+              "deleted_at": null,
+              "id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "key_rotation_state": "idle",
+              "name": "Sec",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 4,
+              "slug": "sec",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "ScIkAsV2jPextqJv4U2lPg==",
+                "ciphertext": "Y/MwKJ2KyIHwrTTIVUc+K/16JN+sVleaOLpnIj4mboA=",
+                "formatVersion": 1,
+                "nonce": "ELqWhKXMrN4ERka4"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "updated": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": {
+                "defaultTtlSeconds": 900,
+                "maxTtlSeconds": 3600
+              },
+              "control": "credential-lifetime",
+              "mode": "report",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "version": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH credential-lifetime shrunk",
+      "name": "credential-lifetime shrunk",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": {
+          "defaultTtlSeconds": 600,
+          "maxTtlSeconds": 1800
+        },
+        "expectedVersion": 2
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"config\":{\"defaultTtlSeconds\":600,\"maxTtlSeconds\":1800},\"version\":3,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "credential-lifetime",
+            "fromDefaultTtlSeconds": 900,
+            "fromMaxTtlSeconds": 3600,
+            "fromMode": "report",
+            "fromVersion": 2,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": 600,
+            "toMaxTtlSeconds": 1800,
+            "toMode": "report",
+            "toVersion": 3
+          },
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "credential-lifetime"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.097Z",
+              "deleted_at": null,
+              "id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "key_rotation_state": "idle",
+              "name": "Sec",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 5,
+              "slug": "sec",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "ScIkAsV2jPextqJv4U2lPg==",
+                "ciphertext": "Y/MwKJ2KyIHwrTTIVUc+K/16JN+sVleaOLpnIj4mboA=",
+                "formatVersion": 1,
+                "nonce": "ELqWhKXMrN4ERka4"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "updated": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": {
+                "defaultTtlSeconds": 600,
+                "maxTtlSeconds": 1800
+              },
+              "control": "credential-lifetime",
+              "mode": "report",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "version": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH credential-lifetime grown, no approval",
+      "name": "credential-lifetime grown, no approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": {
+          "defaultTtlSeconds": 600,
+          "maxTtlSeconds": 7200
+        },
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#1} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#1}\",\"operation\":\"security_control.change\",\"organization\":{\"id\":\"org_qaqdjc5gm2xk3fwwdl6f7ad7me\",\"slug\":\"sec\",\"name\":\"Sec\"},\"summary\":{\"title\":\"Loosen the credential-lifetime security control of Sec\",\"changes\":[{\"to\":\"7200\",\"from\":\"1800\",\"field\":\"maxTtlSeconds\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#1}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:f458c111b943204f0b00677cfd2f21e7251ce323c73b08867abfa26617b12d93",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+              "expected_version": 3,
+              "expires_at": "{fresh}",
+              "id": "{apr#1}",
+              "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "last_polled_at": null,
+              "operation": "security_control.change",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "maxTtlSeconds",
+                    "from": "1800",
+                    "loosens": true,
+                    "to": "7200"
+                  }
+                ],
+                "title": "Loosen the credential-lifetime security control of Sec"
+              },
+              "target": {
+                "control": "credential-lifetime"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH credential-lifetime cleared at report",
+      "name": "credential-lifetime cleared at report",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": null,
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"config: credential-lifetime needs defaultTtlSeconds and maxTtlSeconds unless it is off\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH credential-lifetime off and cleared, no approval",
+      "name": "credential-lifetime off and cleared, no approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "mode": "off",
+        "config": null,
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#2} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#2}\",\"operation\":\"security_control.change\",\"organization\":{\"id\":\"org_qaqdjc5gm2xk3fwwdl6f7ad7me\",\"slug\":\"sec\",\"name\":\"Sec\"},\"summary\":{\"title\":\"Turn off the credential-lifetime security control of Sec\",\"changes\":[{\"to\":\"off\",\"from\":\"report\",\"field\":\"mode\",\"loosens\":true},{\"to\":null,\"from\":\"600\",\"field\":\"defaultTtlSeconds\",\"loosens\":true},{\"to\":null,\"from\":\"1800\",\"field\":\"maxTtlSeconds\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#2}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:b3fe740c9c77450df652ed3491522daa0baa68cde8d24dc7712749676dcf8a51",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+              "expected_version": 3,
+              "expires_at": "{fresh}",
+              "id": "{apr#2}",
+              "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "last_polled_at": null,
+              "operation": "security_control.change",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "mode",
+                    "from": "report",
+                    "loosens": true,
+                    "to": "off"
+                  },
+                  {
+                    "field": "defaultTtlSeconds",
+                    "from": "600",
+                    "loosens": true,
+                    "to": null
+                  },
+                  {
+                    "field": "maxTtlSeconds",
+                    "from": "1800",
+                    "loosens": true,
+                    "to": null
+                  }
+                ],
+                "title": "Turn off the credential-lifetime security control of Sec"
+              },
+              "target": {
+                "control": "credential-lifetime"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH credential-lifetime enforce with a bigger default, no approval",
+      "name": "credential-lifetime enforce with a bigger default, no approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "mode": "enforce",
+        "config": {
+          "defaultTtlSeconds": 900,
+          "maxTtlSeconds": 1800
+        },
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#3} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#3}\",\"operation\":\"security_control.change\",\"organization\":{\"id\":\"org_qaqdjc5gm2xk3fwwdl6f7ad7me\",\"slug\":\"sec\",\"name\":\"Sec\"},\"summary\":{\"title\":\"Loosen the credential-lifetime security control of Sec\",\"changes\":[{\"to\":\"enforce\",\"from\":\"report\",\"field\":\"mode\",\"loosens\":false},{\"to\":\"900\",\"from\":\"600\",\"field\":\"defaultTtlSeconds\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#3}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:9edaa879d72aad83756650677b617b0136c543c9ed5bc5eb360818567519b8f3",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+              "expected_version": 3,
+              "expires_at": "{fresh}",
+              "id": "{apr#3}",
+              "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "last_polled_at": null,
+              "operation": "security_control.change",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "mode",
+                    "from": "report",
+                    "loosens": false,
+                    "to": "enforce"
+                  },
+                  {
+                    "field": "defaultTtlSeconds",
+                    "from": "600",
+                    "loosens": true,
+                    "to": "900"
+                  }
+                ],
+                "title": "Loosen the credential-lifetime security control of Sec"
+              },
+              "target": {
+                "control": "credential-lifetime"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH configuration for requirement-protection",
+      "name": "configuration for requirement-protection",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/requirement-protection",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "config": {
+          "defaultTtlSeconds": 1,
+          "maxTtlSeconds": 2
+        },
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"config: requirement-protection has no configuration\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH configuration with its default above its maximum",
+      "name": "configuration with its default above its maximum",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": {
+          "defaultTtlSeconds": 10,
+          "maxTtlSeconds": 5
+        },
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"config: 0 < defaultTtlSeconds <= maxTtlSeconds\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH requirement-protection to enforce",
+      "name": "requirement-protection to enforce",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/requirement-protection",
+      "credential": "alice",
+      "body": {
+        "mode": "enforce",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"requirement-protection\",\"mode\":\"enforce\",\"config\":null,\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "requirement-protection",
+            "fromDefaultTtlSeconds": null,
+            "fromMaxTtlSeconds": null,
+            "fromMode": "off",
+            "fromVersion": 0,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": null,
+            "toMaxTtlSeconds": null,
+            "toMode": "enforce",
+            "toVersion": 1
+          },
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "requirement-protection"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.097Z",
+              "deleted_at": null,
+              "id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "key_rotation_state": "idle",
+              "name": "Sec",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 6,
+              "slug": "sec",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "ScIkAsV2jPextqJv4U2lPg==",
+                "ciphertext": "Y/MwKJ2KyIHwrTTIVUc+K/16JN+sVleaOLpnIj4mboA=",
+                "formatVersion": 1,
+                "nonce": "ELqWhKXMrN4ERka4"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "inserted": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": null,
+              "control": "requirement-protection",
+              "mode": "enforce",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "version": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH turn admin-step-up off, no approval",
+      "name": "turn admin-step-up off, no approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 2
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#4} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#4}\",\"operation\":\"security_control.change\",\"organization\":{\"id\":\"org_qaqdjc5gm2xk3fwwdl6f7ad7me\",\"slug\":\"sec\",\"name\":\"Sec\"},\"summary\":{\"title\":\"Turn off the admin-step-up security control of Sec\",\"changes\":[{\"to\":\"off\",\"from\":\"enforce\",\"field\":\"mode\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#4}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:bfdb77e3bcb8219a68ffdd6a47e375b84453464284f552ae630e430d123cbfc5",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+              "expected_version": 2,
+              "expires_at": "{fresh}",
+              "id": "{apr#4}",
+              "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "last_polled_at": null,
+              "operation": "security_control.change",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "mode",
+                    "from": "enforce",
+                    "loosens": true,
+                    "to": "off"
+                  }
+                ],
+                "title": "Turn off the admin-step-up security control of Sec"
+              },
+              "target": {
+                "control": "admin-step-up"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH turn admin-step-up off at a stale version",
+      "name": "turn admin-step-up off at a stale version",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VERSION_CONFLICT\",\"message\":\"admin-step-up is at version 2, not 1: it changed meanwhile. Read it again\",\"requestId\":\"{requestId}\",\"details\":{\"currentVersion\":2}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH passkey-verification to enforce from an unverified sign-in",
+      "name": "passkey-verification to enforce from an unverified sign-in",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/passkey-verification",
+      "credential": "alice",
+      "body": {
+        "mode": "enforce",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PASSKEY_VERIFICATION_REQUIRED\",\"message\":\"Enforcing passkey-verification would refuse your own sign-in: your sign-in carries no passkey evidence (it may predate this check). Sign in again with a trusted passkey that verifies you with a PIN or biometric, then turn it on. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"control\":\"passkey-verification\",\"reason\":\"no-evidence\",\"change\":\"refused\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH passkey-verification to report",
+      "name": "passkey-verification to report",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/passkey-verification",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"passkey-verification\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "passkey-verification",
+            "fromDefaultTtlSeconds": null,
+            "fromMaxTtlSeconds": null,
+            "fromMode": "off",
+            "fromVersion": 0,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": null,
+            "toMaxTtlSeconds": null,
+            "toMode": "report",
+            "toVersion": 1
+          },
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "passkey-verification"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.097Z",
+              "deleted_at": null,
+              "id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "key_rotation_state": "idle",
+              "name": "Sec",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 7,
+              "slug": "sec",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "ScIkAsV2jPextqJv4U2lPg==",
+                "ciphertext": "Y/MwKJ2KyIHwrTTIVUc+K/16JN+sVleaOLpnIj4mboA=",
+                "formatVersion": 1,
+                "nonce": "ELqWhKXMrN4ERka4"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "inserted": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": null,
+              "control": "passkey-verification",
+              "mode": "report",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "version": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH an unknown control",
+      "name": "an unknown control",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/everything",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"No such security control\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH an encoded control name",
+      "name": "an encoded control name",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/%70asskey-verification",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"passkey-verification\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":false,\"loosened\":false}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 1,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH as a member",
+      "name": "as a member",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "bob",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 2
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ez7pwbx5v2nxuhtdgyjqakv7c4",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_xohnuxj73oytnkxtys4d4ajpeq",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH as an outsider",
+      "name": "as an outsider",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "carol",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 2
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_plzn5yncjaptrpsxfd6wcjomhu",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_vpgk3wzvdjmbxddopnhga7rfae",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH as its service identity",
+      "name": "as its service identity",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "ci",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 2
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_eossm73cqxtk3osek4p3cubite",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_wmycgwtr7ushck2dkbpm6t4deq",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH as an admin",
+      "name": "as an admin",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/requirement-protection",
+      "credential": "dave",
+      "body": {
+        "mode": "enforce",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"requirement-protection\",\"mode\":\"enforce\",\"config\":null,\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":false,\"loosened\":false}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 1,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH without a credential",
+      "name": "without a credential",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "none",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 2
+      },
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"AUTHENTICATION_REQUIRED\",\"message\":\"Provide a Varlatch bearer credential\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH an unknown Organization",
+      "name": "an unknown Organization",
+      "method": "PATCH",
+      "path": "/v1/organizations/nope/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a frozen Organization, tightening",
+      "name": "a frozen Organization, tightening",
+      "method": "PATCH",
+      "path": "/v1/organizations/frozen/security/controls/requirement-protection",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"requirement-protection\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "requirement-protection",
+            "fromDefaultTtlSeconds": null,
+            "fromMaxTtlSeconds": null,
+            "fromMode": "off",
+            "fromVersion": 0,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": null,
+            "toMaxTtlSeconds": null,
+            "toMode": "report",
+            "toVersion": 1
+          },
+          "organization_id": "org_n6b2dduyagzoxfx325dka6o2gm",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "requirement-protection"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.139Z",
+              "deleted_at": null,
+              "id": "org_n6b2dduyagzoxfx325dka6o2gm",
+              "key_rotation_state": "idle",
+              "name": "Frozen",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 2,
+              "slug": "frozen",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "MJLXANr9KaIcxN9YIq6X9Q==",
+                "ciphertext": "m0N//HZRFtCTr16EPRU3+3T9fVLlxn+W+njt+SQIXTA=",
+                "formatVersion": 1,
+                "nonce": "p6oCubv+zN4fl0X6"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "inserted": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": null,
+              "control": "requirement-protection",
+              "mode": "report",
+              "organization_id": "org_n6b2dduyagzoxfx325dka6o2gm",
+              "version": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH a frozen Organization, loosening without an approval",
+      "name": "a frozen Organization, loosening without an approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/frozen/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#5} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#5}\",\"operation\":\"security_control.change\",\"organization\":{\"id\":\"org_n6b2dduyagzoxfx325dka6o2gm\",\"slug\":\"frozen\",\"name\":\"Frozen\"},\"summary\":{\"title\":\"Turn off the admin-step-up security control of Frozen\",\"changes\":[{\"to\":\"off\",\"from\":\"report\",\"field\":\"mode\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#5}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:dc6e05af43b2bc66f2e4af204fe3f9081184b031cb91378d0ff7e9bde238284f",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+              "expected_version": 1,
+              "expires_at": "{fresh}",
+              "id": "{apr#5}",
+              "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "last_polled_at": null,
+              "operation": "security_control.change",
+              "organization_id": "org_n6b2dduyagzoxfx325dka6o2gm",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "mode",
+                    "from": "report",
+                    "loosens": true,
+                    "to": "off"
+                  }
+                ],
+                "title": "Turn off the admin-step-up security control of Frozen"
+              },
+              "target": {
+                "control": "admin-step-up"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH an Organization being deleted",
+      "name": "an Organization being deleted",
+      "method": "PATCH",
+      "path": "/v1/organizations/deleting/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_vwr2i2wwhyeddcgbuszrvmwsty\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH under passkey-verification enforce",
+      "name": "under passkey-verification enforce",
+      "method": "PATCH",
+      "path": "/v1/organizations/guard/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PASSKEY_VERIFICATION_REQUIRED\",\"message\":\"This Organization requires a sign-in with a trusted passkey that verifies you with a PIN or biometric, and your sign-in carries no passkey evidence (it may predate this check). Sign in again with such a passkey: in the dashboard, sign out and sign in; for the CLI, run varlatch login and approve it with that passkey.\",\"requestId\":\"{requestId}\",\"details\":{\"control\":\"passkey-verification\",\"reason\":\"no-evidence\"}}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "evidence": "no-evidence",
+            "reason": "passkey_verification_required"
+          },
+          "organization_id": "org_jnmvsjlhwwsasgq2dlfo74phge",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH an Organization whose deletion completed",
+      "name": "an Organization whose deletion completed",
+      "method": "PATCH",
+      "path": "/v1/organizations/gone/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH no expected version",
+      "name": "no expected version",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"expectedVersion: Invalid input: expected number, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a negative expected version",
+      "name": "a negative expected version",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": -1
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"expectedVersion: Too small: expected number to be >=0\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a fractional expected version",
+      "name": "a fractional expected version",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 1.5
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"expectedVersion: Invalid input: expected int, received number\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH an expected version beyond a safe integer",
+      "name": "an expected version beyond a safe integer",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 9007199254740992
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"expectedVersion: Too big: expected int to be <=9007199254740991\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a string expected version",
+      "name": "a string expected version",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": "2"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"expectedVersion: Invalid input: expected number, received string\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH an unknown mode",
+      "name": "an unknown mode",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "on",
+        "expectedVersion": 2
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"mode: Invalid option: expected one of \\\"off\\\"|\\\"report\\\"|\\\"enforce\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a null mode",
+      "name": "a null mode",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": null,
+        "expectedVersion": 2
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"mode: Invalid option: expected one of \\\"off\\\"|\\\"report\\\"|\\\"enforce\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH an extra member",
+      "name": "an extra member",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 2,
+        "reason": "drill"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Unrecognized key: \\\"reason\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH two extra members",
+      "name": "two extra members",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 2,
+        "a": 1,
+        "b": 2
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Unrecognized keys: \\\"a\\\", \\\"b\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH an empty configuration",
+      "name": "an empty configuration",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": {},
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"config.defaultTtlSeconds: Invalid input: expected number, received undefined; config.maxTtlSeconds: Invalid input: expected number, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a configuration out of range, with an extra member",
+      "name": "a configuration out of range, with an extra member",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": {
+          "defaultTtlSeconds": 0,
+          "maxTtlSeconds": 315360001,
+          "x": 1
+        },
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"config.defaultTtlSeconds: Too small: expected number to be >=1; config.maxTtlSeconds: Too big: expected number to be <=315360000; config: Unrecognized key: \\\"x\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a configuration of the wrong types",
+      "name": "a configuration of the wrong types",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": {
+          "defaultTtlSeconds": 1.5,
+          "maxTtlSeconds": "1"
+        },
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"config.defaultTtlSeconds: Invalid input: expected int, received number; config.maxTtlSeconds: Invalid input: expected number, received string\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH huge configuration numbers",
+      "name": "huge configuration numbers",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": {
+          "defaultTtlSeconds": 1e+300,
+          "maxTtlSeconds": -1e+300
+        },
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"config.defaultTtlSeconds: Too big: expected int to be <=9007199254740991; config.defaultTtlSeconds: Too big: expected number to be <=315360000; config.maxTtlSeconds: Too small: expected int to be >=-9007199254740991; config.maxTtlSeconds: Too small: expected number to be >=1\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a configuration that is an array",
+      "name": "a configuration that is an array",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": [],
+        "expectedVersion": 3
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"config: Invalid input: expected object, received array\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH everything wrong at once",
+      "name": "everything wrong at once",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "x",
+        "config": 1,
+        "zz": 1
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"mode: Invalid option: expected one of \\\"off\\\"|\\\"report\\\"|\\\"enforce\\\"; config: Invalid input: expected object, received number; expectedVersion: Invalid input: expected number, received undefined; (root): Unrecognized key: \\\"zz\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH an array body",
+      "name": "an array body",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": [
+        1
+      ],
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Invalid input: expected object, received array\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a null body",
+      "name": "a null body",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": null,
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Invalid input: expected object, received null\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH not JSON",
+      "name": "not JSON",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "rawBody": "mode=report",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Invalid input: expected object, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH an empty body",
+      "name": "an empty body",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "rawBody": "",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Invalid input: expected object, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH a duplicate member",
+      "name": "a duplicate member",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "alice",
+      "rawBody": "{\"mode\":\"x\",\"expectedVersion\":2,\"mode\":\"enforce\"}",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"admin-step-up\",\"mode\":\"enforce\",\"config\":null,\"version\":2,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":false,\"loosened\":false}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 2,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH loosen with an approval of another request",
+      "name": "loosen with an approval of another request",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/passkey-verification",
+      "credential": "alice2",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_otherbodyaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"This approval was given for another request: another operation, target, body or credential\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"mismatch\",\"approvalId\":\"apr_otherbodyaaaaaaaaaaaaaaaaa\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH loosen with a pending approval",
+      "name": "loosen with a pending approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/requirement-protection",
+      "credential": "alice2",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_pendingaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"This approval has not been approved yet\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"pending\",\"approvalId\":\"apr_pendingaaaaaaaaaaaaaaaaaaa\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH loosen with a malformed approval header",
+      "name": "loosen with a malformed approval header",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/admin-step-up",
+      "credential": "alice2",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "headers": {
+        "Varlatch-Approval": "not-an-approval"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"No approval of yours has this id\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"not-found\",\"approvalId\":null}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH loosen with an unknown approval",
+      "name": "loosen with an unknown approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/admin-step-up",
+      "credential": "alice2",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_unknownaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"No approval of yours has this id\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"not-found\",\"approvalId\":\"{apr#6}\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH loosen with an approval another credential asked for",
+      "name": "loosen with an approval another credential asked for",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/admin-step-up",
+      "credential": "alice",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_repoffaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"This approval was given for another request: another operation, target, body or credential\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"mismatch\",\"approvalId\":\"apr_repoffaaaaaaaaaaaaaaaaaaaa\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH loosen with someone else's approval",
+      "name": "loosen with someone else's approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/admin-step-up",
+      "credential": "dave",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 2
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_repoffaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"No approval of yours has this id\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"not-found\",\"approvalId\":\"apr_repoffaaaaaaaaaaaaaaaaaaaa\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH loosen with an approval, at a stale version",
+      "name": "loosen with an approval, at a stale version",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/admin-step-up",
+      "credential": "alice2",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 0
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_repoffaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VERSION_CONFLICT\",\"message\":\"admin-step-up is at version 1, not 0: it changed meanwhile. Read it again\",\"requestId\":\"{requestId}\",\"details\":{\"currentVersion\":1}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH loosen with its approval",
+      "name": "loosen with its approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/admin-step-up",
+      "credential": "alice2",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_repoffaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"admin-step-up\",\"mode\":\"off\",\"config\":null,\"version\":2,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":true}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_yn7cfzg37xxrqpcrfsa2ps22ey",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": "apr_repoffaaaaaaaaaaaaaaaaaaaa",
+            "approvalPasskeyId": "PasskeyConf001",
+            "approvalUserVerified": true,
+            "control": "admin-step-up",
+            "fromDefaultTtlSeconds": null,
+            "fromMaxTtlSeconds": null,
+            "fromMode": "report",
+            "fromVersion": 1,
+            "loosened": true,
+            "loosenedFields": "mode",
+            "toDefaultTtlSeconds": null,
+            "toMaxTtlSeconds": null,
+            "toMode": "off",
+            "toVersion": 2
+          },
+          "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "admin-step-up"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.115Z",
+              "deleted_at": null,
+              "id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "key_rotation_state": "idle",
+              "name": "Rep",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 5,
+              "slug": "rep",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "gpXQ+ktyamU/WWrALlyQUw==",
+                "ciphertext": "nkjuJRcBY9gylodn9qzEKJofb4scYuChVggseZw7muU=",
+                "formatVersion": 1,
+                "nonce": "JwV/XR/yRDN7iy/f"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "updated": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": null,
+              "control": "admin-step-up",
+              "mode": "off",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "version": 2
+            }
+          ]
+        },
+        "security_control_counters": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 1,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "reason": "no-evidence"
+            }
+          ]
+        },
+        "approval_intents": {
+          "updated": [
+            {
+              "approval_user_verified": true,
+              "approved_at": "2026-01-10T00:01:00.000Z",
+              "approved_with_passkey_id": "PasskeyConf001",
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:dc6e05af43b2bc66f2e4af204fe3f9081184b031cb91378d0ff7e9bde238284f",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": "{fresh}",
+              "created_at": "2026-01-10T00:00:00.000Z",
+              "credential_id": "crd_yn7cfzg37xxrqpcrfsa2ps22ey",
+              "expected_version": 1,
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "apr_repoffaaaaaaaaaaaaaaaaaaaa",
+              "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "last_polled_at": null,
+              "operation": "security_control.change",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "mode",
+                    "from": "report",
+                    "loosens": true,
+                    "to": "off"
+                  }
+                ],
+                "title": "Turn off the admin-step-up security control of Rep"
+              },
+              "target": {
+                "control": "admin-step-up"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH the approval used again",
+      "name": "the approval used again",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/requirement-protection",
+      "credential": "alice2",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_repoffaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"This approval was already used; ask for a new one\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"consumed\",\"approvalId\":\"apr_repoffaaaaaaaaaaaaaaaaaaaa\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH tighten with an approval it does not need",
+      "name": "tighten with an approval it does not need",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/admin-step-up",
+      "credential": "alice2",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 2
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_pendingaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"admin-step-up\",\"mode\":\"report\",\"config\":null,\"version\":3,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_yn7cfzg37xxrqpcrfsa2ps22ey",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "admin-step-up",
+            "fromDefaultTtlSeconds": null,
+            "fromMaxTtlSeconds": null,
+            "fromMode": "off",
+            "fromVersion": 2,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": null,
+            "toMaxTtlSeconds": null,
+            "toMode": "report",
+            "toVersion": 3
+          },
+          "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "admin-step-up"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.115Z",
+              "deleted_at": null,
+              "id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "key_rotation_state": "idle",
+              "name": "Rep",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 6,
+              "slug": "rep",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "gpXQ+ktyamU/WWrALlyQUw==",
+                "ciphertext": "nkjuJRcBY9gylodn9qzEKJofb4scYuChVggseZw7muU=",
+                "formatVersion": 1,
+                "nonce": "JwV/XR/yRDN7iy/f"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "updated": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": null,
+              "control": "admin-step-up",
+              "mode": "report",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "version": 3
+            }
+          ]
+        },
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 2,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH loosen, no approval, in an Organization at report",
+      "name": "loosen, no approval, in an Organization at report",
+      "method": "PATCH",
+      "path": "/v1/organizations/rep/security/controls/requirement-protection",
+      "credential": "alice2",
+      "body": {
+        "mode": "off",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#7} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#7}\",\"operation\":\"security_control.change\",\"organization\":{\"id\":\"org_pvhryjsoby2squxkw7dt7srl5q\",\"slug\":\"rep\",\"name\":\"Rep\"},\"summary\":{\"title\":\"Turn off the requirement-protection security control of Rep\",\"changes\":[{\"to\":\"off\",\"from\":\"report\",\"field\":\"mode\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#7}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:dc6e05af43b2bc66f2e4af204fe3f9081184b031cb91378d0ff7e9bde238284f",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_yn7cfzg37xxrqpcrfsa2ps22ey",
+              "expected_version": 1,
+              "expires_at": "{fresh}",
+              "id": "{apr#7}",
+              "identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "last_polled_at": null,
+              "operation": "security_control.change",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:f240e2a37cab1a6efba20a5864dc01925ed5c98f46bb2fe8916771499721aff2",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "mode",
+                    "from": "report",
+                    "loosens": true,
+                    "to": "off"
+                  }
+                ],
+                "title": "Turn off the requirement-protection security control of Rep"
+              },
+              "target": {
+                "control": "requirement-protection"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH a sixth open approval of one credential",
+      "name": "a sixth open approval of one credential",
+      "method": "PATCH",
+      "path": "/v1/organizations/sec/security/controls/requirement-protection",
+      "credential": "alice",
+      "body": {
+        "mode": "report",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 429,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RATE_LIMITED\",\"message\":\"At most 5 approvals may be open for one credential; approve, cancel or let one expire\",\"requestId\":\"{requestId}\",\"details\":{\"cap\":\"open-per-credential\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH tighten, in an Organization at enforce",
+      "name": "tighten, in an Organization at enforce",
+      "method": "PATCH",
+      "path": "/v1/organizations/enf/security/controls/credential-lifetime",
+      "credential": "alice",
+      "body": {
+        "config": {
+          "defaultTtlSeconds": 300,
+          "maxTtlSeconds": 3600
+        },
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"control\":{\"control\":\"credential-lifetime\",\"mode\":\"enforce\",\"config\":{\"defaultTtlSeconds\":300,\"maxTtlSeconds\":3600},\"version\":2,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"}},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "info",
+          "event_type": "security_control.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": null,
+            "control": "credential-lifetime",
+            "fromDefaultTtlSeconds": 600,
+            "fromMaxTtlSeconds": 7200,
+            "fromMode": "enforce",
+            "fromVersion": 1,
+            "loosened": false,
+            "loosenedFields": "",
+            "toDefaultTtlSeconds": 300,
+            "toMaxTtlSeconds": 3600,
+            "toMode": "enforce",
+            "toVersion": 2
+          },
+          "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+          "request_id": "{requestId}",
+          "resource": {
+            "control": "credential-lifetime"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "organizations": {
+          "updated": [
+            {
+              "created_at": "2026-11-15T18:26:54.128Z",
+              "deleted_at": null,
+              "id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+              "key_rotation_state": "idle",
+              "name": "Enf",
+              "org_kek_destroyed_at": null,
+              "root_kek_version": 1,
+              "security_epoch": 6,
+              "slug": "enf",
+              "wrapped_org_kek": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "vO0EhVvVGOVaBDhJUYFRGg==",
+                "ciphertext": "Yxy78GIniOHd2xmpfu1jP1jEwCyI7ysDSM81QAkU2vc=",
+                "formatVersion": 1,
+                "nonce": "+oPG3zQr9irX1zM9"
+              }
+            }
+          ]
+        },
+        "security_controls": {
+          "updated": [
+            {
+              "changed_at": "{fresh}",
+              "changed_by": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "config": {
+                "defaultTtlSeconds": 300,
+                "maxTtlSeconds": 3600
+              },
+              "control": "credential-lifetime",
+              "mode": "enforce",
+              "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+              "version": 2
+            }
+          ]
+        },
+        "security_control_counters": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 1,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET report",
+      "name": "report",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"organizationId\":\"org_pvhryjsoby2squxkw7dt7srl5q\",\"days\":30,\"since\":\"{time}\",\"generatedAt\":\"{time}\",\"summaryDelayMinutes\":10,\"controls\":[{\"control\":\"requirement-protection\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"admin-step-up\",\"mode\":\"report\",\"version\":3,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"passkey-verification\",\"mode\":\"report\",\"version\":1,\"total\":3,\"currentHour\":3,\"pending\":3,\"entries\":[{\"configVersion\":1,\"operation\":\"organization.manage\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":2,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"},{\"configVersion\":1,\"operation\":\"organization.read\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":1,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"}]},{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]}]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 3,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET report of one day",
+      "name": "report of one day",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report?days=1",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"organizationId\":\"org_pvhryjsoby2squxkw7dt7srl5q\",\"days\":1,\"since\":\"{time}\",\"generatedAt\":\"{time}\",\"summaryDelayMinutes\":10,\"controls\":[{\"control\":\"requirement-protection\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"admin-step-up\",\"mode\":\"report\",\"version\":3,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"passkey-verification\",\"mode\":\"report\",\"version\":1,\"total\":4,\"currentHour\":4,\"pending\":4,\"entries\":[{\"configVersion\":1,\"operation\":\"organization.manage\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":3,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"},{\"configVersion\":1,\"operation\":\"organization.read\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":1,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"}]},{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]}]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 4,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET report of 30 days",
+      "name": "report of 30 days",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report?days=30",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"organizationId\":\"org_pvhryjsoby2squxkw7dt7srl5q\",\"days\":30,\"since\":\"{time}\",\"generatedAt\":\"{time}\",\"summaryDelayMinutes\":10,\"controls\":[{\"control\":\"requirement-protection\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"admin-step-up\",\"mode\":\"report\",\"version\":3,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"passkey-verification\",\"mode\":\"report\",\"version\":1,\"total\":5,\"currentHour\":5,\"pending\":5,\"entries\":[{\"configVersion\":1,\"operation\":\"organization.manage\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":4,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"},{\"configVersion\":1,\"operation\":\"organization.read\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":1,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"}]},{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]}]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 5,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET report of 0 days",
+      "name": "report of 0 days",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report?days=0",
+      "credential": "alice",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"days must be an integer in 1..30\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET report of 31 days",
+      "name": "report of 31 days",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report?days=31",
+      "credential": "alice",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"days must be an integer in 1..30\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET report of 100 days",
+      "name": "report of 100 days",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report?days=100",
+      "credential": "alice",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"days must be an integer in 1..30\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET report, days not a number",
+      "name": "report, days not a number",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report?days=abc",
+      "credential": "alice",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"days must be an integer in 1..30\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET report, days empty",
+      "name": "report, days empty",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report?days=",
+      "credential": "alice",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"days must be an integer in 1..30\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET report, days twice",
+      "name": "report, days twice",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report?days=2&days=abc",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"organizationId\":\"org_pvhryjsoby2squxkw7dt7srl5q\",\"days\":2,\"since\":\"{time}\",\"generatedAt\":\"{time}\",\"summaryDelayMinutes\":10,\"controls\":[{\"control\":\"requirement-protection\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"admin-step-up\",\"mode\":\"report\",\"version\":3,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"passkey-verification\",\"mode\":\"report\",\"version\":1,\"total\":6,\"currentHour\":6,\"pending\":6,\"entries\":[{\"configVersion\":1,\"operation\":\"organization.manage\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":5,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"},{\"configVersion\":1,\"operation\":\"organization.read\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":1,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"}]},{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]}]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 6,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET report, every control off",
+      "name": "report, every control off",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/control-report",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"organizationId\":\"org_qaqdjc5gm2xk3fwwdl6f7ad7me\",\"days\":30,\"since\":\"{time}\",\"generatedAt\":\"{time}\",\"summaryDelayMinutes\":10,\"controls\":[{\"control\":\"requirement-protection\",\"mode\":\"enforce\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"admin-step-up\",\"mode\":\"enforce\",\"version\":2,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"passkey-verification\",\"mode\":\"report\",\"version\":1,\"total\":3,\"currentHour\":3,\"pending\":3,\"entries\":[{\"configVersion\":1,\"operation\":\"organization.manage\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":2,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"},{\"configVersion\":1,\"operation\":\"organization.manage\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_bbg6dsrm5q5ekmj3kxe2vzk3uu\",\"name\":\"dave\",\"kind\":\"human\"},\"count\":1,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"}]},{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"version\":3,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]}]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 3,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET report as a member",
+      "name": "report as a member",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/control-report",
+      "credential": "bob",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ez7pwbx5v2nxuhtdgyjqakv7c4",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_xohnuxj73oytnkxtys4d4ajpeq",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET report as an outsider",
+      "name": "report as an outsider",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report",
+      "credential": "carol",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_plzn5yncjaptrpsxfd6wcjomhu",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_vpgk3wzvdjmbxddopnhga7rfae",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET report of a frozen Organization",
+      "name": "report of a frozen Organization",
+      "method": "GET",
+      "path": "/v1/organizations/frozen/security/control-report",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"organizationId\":\"org_n6b2dduyagzoxfx325dka6o2gm\",\"days\":30,\"since\":\"{time}\",\"generatedAt\":\"{time}\",\"summaryDelayMinutes\":10,\"controls\":[{\"control\":\"requirement-protection\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"admin-step-up\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"passkey-verification\",\"mode\":\"off\",\"version\":0,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"credential-lifetime\",\"mode\":\"off\",\"version\":0,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]}]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET report of an Organization being deleted",
+      "name": "report of an Organization being deleted",
+      "method": "GET",
+      "path": "/v1/organizations/deleting/security/control-report",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"organizationId\":\"org_d6hdjmsdcvbjneehiqyhxdzcua\",\"days\":30,\"since\":\"{time}\",\"generatedAt\":\"{time}\",\"summaryDelayMinutes\":10,\"controls\":[{\"control\":\"requirement-protection\",\"mode\":\"off\",\"version\":0,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"admin-step-up\",\"mode\":\"off\",\"version\":0,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"passkey-verification\",\"mode\":\"off\",\"version\":0,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"credential-lifetime\",\"mode\":\"off\",\"version\":0,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]}]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET report under passkey-verification enforce",
+      "name": "report under passkey-verification enforce",
+      "method": "GET",
+      "path": "/v1/organizations/guard/security/control-report",
+      "credential": "alice",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PASSKEY_VERIFICATION_REQUIRED\",\"message\":\"This Organization requires a sign-in with a trusted passkey that verifies you with a PIN or biometric, and your sign-in carries no passkey evidence (it may predate this check). Sign in again with such a passkey: in the dashboard, sign out and sign in; for the CLI, run varlatch login and approve it with that passkey.\",\"requestId\":\"{requestId}\",\"details\":{\"control\":\"passkey-verification\",\"reason\":\"no-evidence\"}}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_nvllzl63ebi6gwgaz35tvv57yy",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "evidence": "no-evidence",
+            "reason": "passkey_verification_required"
+          },
+          "organization_id": "org_jnmvsjlhwwsasgq2dlfo74phge",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET report of an unknown Organization",
+      "name": "report of an unknown Organization",
+      "method": "GET",
+      "path": "/v1/organizations/nope/security/control-report",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET approval keys",
+      "name": "approval keys",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/approval-keys",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"generatedAt\":\"{time}\",\"summary\":{\"admins\":3,\"withTrustedKey\":1,\"withoutTrustedKey\":2},\"items\":[{\"identity\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"trusted\":0,\"unconfirmed\":0,\"lastConfirmedAt\":null,\"passkeys\":[]},{\"identity\":{\"id\":\"idn_bbg6dsrm5q5ekmj3kxe2vzk3uu\",\"name\":\"dave\"},\"trusted\":3,\"unconfirmed\":2,\"lastConfirmedAt\":\"2026-02-05T08:00:00.000Z\",\"passkeys\":[{\"name\":\"Laptop\",\"trust\":\"trusted\",\"trustedVia\":\"setup-grant\",\"createdAt\":\"2026-01-02T00:00:00.000Z\",\"trustedAt\":\"2026-01-02T00:00:00.000Z\"},{\"name\":\"Phone\",\"trust\":\"trusted\",\"trustedVia\":\"confirmed\",\"createdAt\":\"2026-01-03T00:00:00.000Z\",\"trustedAt\":\"2026-02-05T08:00:00.000Z\"},{\"name\":\"Tablet\",\"trust\":\"trusted\",\"trustedVia\":\"confirmed\",\"createdAt\":\"2026-01-04T00:00:00.000Z\",\"trustedAt\":\"2026-02-03T08:00:00.000Z\"},{\"name\":null,\"trust\":\"unconfirmed\",\"trustedVia\":null,\"createdAt\":null,\"trustedAt\":null},{\"name\":\"Old key\",\"trust\":\"unconfirmed\",\"trustedVia\":null,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"trustedAt\":null}]},{\"identity\":{\"id\":\"idn_zuiqcejlkiafasvsvwwdkyppka\",\"name\":\"erin\"},\"trusted\":0,\"unconfirmed\":0,\"lastConfirmedAt\":null,\"passkeys\":[]}]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 4,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET approval keys, no admin with a passkey",
+      "name": "approval keys, no admin with a passkey",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/approval-keys",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"generatedAt\":\"{time}\",\"summary\":{\"admins\":1,\"withTrustedKey\":0,\"withoutTrustedKey\":1},\"items\":[{\"identity\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"trusted\":0,\"unconfirmed\":0,\"lastConfirmedAt\":null,\"passkeys\":[]}]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 7,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET approval keys as a member",
+      "name": "approval keys as a member",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/approval-keys",
+      "credential": "bob",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_ez7pwbx5v2nxuhtdgyjqakv7c4",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_xohnuxj73oytnkxtys4d4ajpeq",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET approval keys as an admin",
+      "name": "approval keys as an admin",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/approval-keys",
+      "credential": "dave",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"generatedAt\":\"{time}\",\"summary\":{\"admins\":3,\"withTrustedKey\":1,\"withoutTrustedKey\":2},\"items\":[{\"identity\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"trusted\":0,\"unconfirmed\":0,\"lastConfirmedAt\":null,\"passkeys\":[]},{\"identity\":{\"id\":\"idn_bbg6dsrm5q5ekmj3kxe2vzk3uu\",\"name\":\"dave\"},\"trusted\":3,\"unconfirmed\":2,\"lastConfirmedAt\":\"2026-02-05T08:00:00.000Z\",\"passkeys\":[{\"name\":\"Laptop\",\"trust\":\"trusted\",\"trustedVia\":\"setup-grant\",\"createdAt\":\"2026-01-02T00:00:00.000Z\",\"trustedAt\":\"2026-01-02T00:00:00.000Z\"},{\"name\":\"Phone\",\"trust\":\"trusted\",\"trustedVia\":\"confirmed\",\"createdAt\":\"2026-01-03T00:00:00.000Z\",\"trustedAt\":\"2026-02-05T08:00:00.000Z\"},{\"name\":\"Tablet\",\"trust\":\"trusted\",\"trustedVia\":\"confirmed\",\"createdAt\":\"2026-01-04T00:00:00.000Z\",\"trustedAt\":\"2026-02-03T08:00:00.000Z\"},{\"name\":null,\"trust\":\"unconfirmed\",\"trustedVia\":null,\"createdAt\":null,\"trustedAt\":null},{\"name\":\"Old key\",\"trust\":\"unconfirmed\",\"trustedVia\":null,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"trustedAt\":null}]},{\"identity\":{\"id\":\"idn_zuiqcejlkiafasvsvwwdkyppka\",\"name\":\"erin\"},\"trusted\":0,\"unconfirmed\":0,\"lastConfirmedAt\":null,\"passkeys\":[]}]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 2,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET approval keys as an outsider",
+      "name": "approval keys as an outsider",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/approval-keys",
+      "credential": "carol",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_plzn5yncjaptrpsxfd6wcjomhu",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_vpgk3wzvdjmbxddopnhga7rfae",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET approval keys of a frozen Organization",
+      "name": "approval keys of a frozen Organization",
+      "method": "GET",
+      "path": "/v1/organizations/frozen/security/approval-keys",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"generatedAt\":\"{time}\",\"summary\":{\"admins\":1,\"withTrustedKey\":0,\"withoutTrustedKey\":1},\"items\":[{\"identity\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"trusted\":0,\"unconfirmed\":0,\"lastConfirmedAt\":null,\"passkeys\":[]}]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET approval keys of an unknown Organization",
+      "name": "approval keys of an unknown Organization",
+      "method": "GET",
+      "path": "/v1/organizations/nope/security/approval-keys",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list after the changes",
+      "name": "list after the changes",
+      "method": "GET",
+      "path": "/v1/organizations/sec/security/controls",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"control\":\"requirement-protection\",\"mode\":\"enforce\",\"config\":null,\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"admin-step-up\",\"mode\":\"enforce\",\"config\":null,\"version\":2,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"passkey-verification\",\"mode\":\"report\",\"config\":null,\"version\":1,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]},{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"config\":{\"defaultTtlSeconds\":600,\"maxTtlSeconds\":1800},\"version\":3,\"changedAt\":\"{time}\",\"changedBy\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\"},\"availableModes\":[\"off\",\"report\",\"enforce\"]}],\"availableModes\":[\"off\",\"report\"]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 1,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.read",
+              "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET report after the changes",
+      "name": "report after the changes",
+      "method": "GET",
+      "path": "/v1/organizations/rep/security/control-report",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"organizationId\":\"org_pvhryjsoby2squxkw7dt7srl5q\",\"days\":30,\"since\":\"{time}\",\"generatedAt\":\"{time}\",\"summaryDelayMinutes\":10,\"controls\":[{\"control\":\"requirement-protection\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"admin-step-up\",\"mode\":\"report\",\"version\":3,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]},{\"control\":\"passkey-verification\",\"mode\":\"report\",\"version\":1,\"total\":8,\"currentHour\":8,\"pending\":8,\"entries\":[{\"configVersion\":1,\"operation\":\"organization.manage\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":7,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"},{\"configVersion\":1,\"operation\":\"organization.read\",\"reason\":\"no-evidence\",\"actor\":{\"id\":\"idn_ebyovhtoimqnskbdsdyphifpze\",\"name\":\"Alice\",\"kind\":\"human\"},\"count\":1,\"firstSeen\":\"{time}\",\"lastSeen\":\"{time}\"}]},{\"control\":\"credential-lifetime\",\"mode\":\"report\",\"version\":1,\"total\":0,\"currentHour\":0,\"pending\":0,\"entries\":[]}]}"
+      },
+      "audit": [],
+      "side": {
+        "security_control_counters": {
+          "updated": [
+            {
+              "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "passkey-verification",
+              "count": 8,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "organization.manage",
+              "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+              "reason": "no-evidence"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "counters": [
+    {
+      "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+      "config_version": 1,
+      "control": "passkey-verification",
+      "count": 1,
+      "operation": "organization.manage",
+      "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+      "reason": "no-evidence"
+    },
+    {
+      "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+      "config_version": 1,
+      "control": "passkey-verification",
+      "count": 1,
+      "operation": "organization.read",
+      "organization_id": "org_hwjwtajwkg6qcpn5vva6zxsj24",
+      "reason": "no-evidence"
+    },
+    {
+      "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+      "config_version": 1,
+      "control": "admin-step-up",
+      "count": 1,
+      "operation": "grant.create",
+      "organization_id": "org_joe3fb5nq62orseyvz7tjteb54",
+      "reason": "no-approval"
+    },
+    {
+      "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+      "config_version": 1,
+      "control": "admin-step-up",
+      "count": 3,
+      "operation": "grant.create",
+      "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+      "reason": "no-approval"
+    },
+    {
+      "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+      "config_version": 1,
+      "control": "admin-step-up",
+      "count": 1,
+      "operation": "grant.create",
+      "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+      "reason": "no-approval"
+    },
+    {
+      "actor_identity_id": "idn_eossm73cqxtk3osek4p3cubite",
+      "config_version": 1,
+      "control": "credential-lifetime",
+      "count": 2,
+      "operation": "credential.issue",
+      "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+      "reason": "would-default"
+    },
+    {
+      "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+      "config_version": 1,
+      "control": "passkey-verification",
+      "count": 8,
+      "operation": "organization.manage",
+      "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+      "reason": "no-evidence"
+    },
+    {
+      "actor_identity_id": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+      "config_version": 1,
+      "control": "passkey-verification",
+      "count": 4,
+      "operation": "organization.read",
+      "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+      "reason": "no-evidence"
+    },
+    {
+      "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+      "config_version": 1,
+      "control": "passkey-verification",
+      "count": 1,
+      "operation": "organization.read",
+      "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+      "reason": "no-evidence"
+    },
+    {
+      "actor_identity_id": "idn_bbg6dsrm5q5ekmj3kxe2vzk3uu",
+      "config_version": 1,
+      "control": "passkey-verification",
+      "count": 2,
+      "operation": "organization.manage",
+      "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+      "reason": "no-evidence"
+    },
+    {
+      "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+      "config_version": 1,
+      "control": "passkey-verification",
+      "count": 4,
+      "operation": "organization.manage",
+      "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+      "reason": "no-evidence"
+    },
+    {
+      "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+      "config_version": 1,
+      "control": "passkey-verification",
+      "count": 1,
+      "operation": "organization.read",
+      "organization_id": "org_qaqdjc5gm2xk3fwwdl6f7ad7me",
+      "reason": "no-evidence"
+    }
+  ],
+  "summaries": {
+    "emitted": 3,
+    "deleted": 2,
+    "audit": [
+      {
+        "action": null,
+        "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "authz": null,
+        "client": null,
+        "credential_id": null,
+        "decision": "info",
+        "event_type": "security_control.would_block",
+        "listener": null,
+        "metadata": {
+          "bucketHour": "2026-03-01T10:00:00.000Z",
+          "configVersion": 1,
+          "control": "admin-step-up",
+          "count": 3,
+          "firstSeen": "2026-03-01T10:05:00.000Z",
+          "lastSeen": "2026-03-01T10:50:00.000Z",
+          "operation": "grant.create",
+          "reason": "no-approval"
+        },
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "request_id": null,
+        "resource": {
+          "control": "admin-step-up"
+        },
+        "schema_version": 1,
+        "tailnet": null
+      },
+      {
+        "action": null,
+        "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "authz": null,
+        "client": null,
+        "credential_id": null,
+        "decision": "info",
+        "event_type": "security_control.would_block",
+        "listener": null,
+        "metadata": {
+          "bucketHour": "2026-03-01T11:00:00.000Z",
+          "configVersion": 1,
+          "control": "admin-step-up",
+          "count": 1,
+          "firstSeen": "2026-03-01T11:05:00.000Z",
+          "lastSeen": "2026-03-01T11:50:00.000Z",
+          "operation": "grant.create",
+          "reason": "no-approval"
+        },
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "request_id": null,
+        "resource": {
+          "control": "admin-step-up"
+        },
+        "schema_version": 1,
+        "tailnet": null
+      },
+      {
+        "action": null,
+        "actor_identity_id": "idn_eossm73cqxtk3osek4p3cubite",
+        "authz": null,
+        "client": null,
+        "credential_id": null,
+        "decision": "info",
+        "event_type": "security_control.would_block",
+        "listener": null,
+        "metadata": {
+          "bucketHour": "2026-03-01T11:00:00.000Z",
+          "configVersion": 1,
+          "control": "credential-lifetime",
+          "count": 2,
+          "firstSeen": "2026-03-01T11:05:00.000Z",
+          "lastSeen": "2026-03-01T11:50:00.000Z",
+          "operation": "credential.issue",
+          "reason": "would-default"
+        },
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "request_id": null,
+        "resource": {
+          "control": "credential-lifetime"
+        },
+        "schema_version": 1,
+        "tailnet": null
+      }
+    ],
+    "counters": [
+      {
+        "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "bucket_hour": "2026-03-01T10:00:00.000Z",
+        "config_version": 1,
+        "control": "admin-step-up",
+        "count": 3,
+        "emitted_at": "{time}",
+        "first_seen": "2026-03-01T10:05:00.000Z",
+        "last_seen": "2026-03-01T10:50:00.000Z",
+        "operation": "grant.create",
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "reason": "no-approval"
+      },
+      {
+        "actor_identity_id": "idn_ebyovhtoimqnskbdsdyphifpze",
+        "bucket_hour": "2026-03-01T11:00:00.000Z",
+        "config_version": 1,
+        "control": "admin-step-up",
+        "count": 1,
+        "emitted_at": "{time}",
+        "first_seen": "2026-03-01T11:05:00.000Z",
+        "last_seen": "2026-03-01T11:50:00.000Z",
+        "operation": "grant.create",
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "reason": "no-approval"
+      },
+      {
+        "actor_identity_id": "idn_eossm73cqxtk3osek4p3cubite",
+        "bucket_hour": "2026-03-01T11:00:00.000Z",
+        "config_version": 1,
+        "control": "credential-lifetime",
+        "count": 2,
+        "emitted_at": "{time}",
+        "first_seen": "2026-03-01T11:05:00.000Z",
+        "last_seen": "2026-03-01T11:50:00.000Z",
+        "operation": "credential.issue",
+        "organization_id": "org_pvhryjsoby2squxkw7dt7srl5q",
+        "reason": "would-default"
+      }
+    ]
+  }
+}
