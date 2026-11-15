@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 )
 
 // Contract Semantics (packages/contract semantics.ts): what an item means
@@ -175,7 +177,8 @@ func validateV1(it Item, value string) string {
 		}
 		return "must be a boolean"
 	case "url":
-		if urlValid(value) {
+		// `new URL(value)` succeeds, as Node.js parses it (ada).
+		if _, ok := whatwg.ParseURL(value); ok {
 			return ""
 		}
 		return "must be a valid URL"

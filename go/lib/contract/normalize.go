@@ -72,7 +72,8 @@ func (c *checker) object(path []string, v any, present bool, known []string, fie
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			quote(&b, k)
+			// zod's stringifyPrimitive: the key in plain quotes, unescaped.
+			b.WriteString(`"` + k + `"`)
 		}
 		word := "key"
 		if len(unknown) > 1 {
@@ -149,9 +150,7 @@ func (c *checker) boolean(path []string, v any, present bool) bool {
 func optionsText(options []string) string {
 	q := make([]string, len(options))
 	for i, o := range options {
-		var b bytes.Buffer
-		quote(&b, o)
-		q[i] = b.String()
+		q[i] = `"` + o + `"` // zod's stringifyPrimitive
 	}
 	return strings.Join(q, "|")
 }

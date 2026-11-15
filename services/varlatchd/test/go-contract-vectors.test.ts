@@ -11,7 +11,11 @@
  *   normalizeContract reports (zod's messages, in its order, and the
  *   Contract rules) or the normalized Contract's canonical bytes and
  *   content hash, which Go must reproduce byte for byte;
- * - diff: diffContracts on pairs of normalized Contracts.
+ * - diff: diffContracts on pairs of normalized Contracts;
+ * - parse: JSON text as bytes (base64) and what JSON.parse makes of it as
+ *   the CLI reads a Contract file (Buffer#toString("utf8"), then
+ *   JSON.parse), written back with JSON.stringify, or that it throws:
+ *   lone surrogates, invalid UTF-8, member order and repeats.
  *
  * The file is checked here: it must equal what this code produces now.
  * After a change, regenerate it and commit the result:
@@ -143,6 +147,79 @@ const NORMALIZE: [string, string, boolean?][] = [
     item("A", { type: "enum" }), item("a"), item("B", { rotationGraceSeconds: 0, required: { kind: "never", x: 1 } }), item("A"), item("VARLATCH_RUN_CONTEXT", { enumValues: ["x"] }),
   ], { semanticsVersion: 4 }))],
   ["zod and rule problems together", text(contract([item("A"), item("A", { sensitive: 1 })]))],
+  // Lone UTF-16 surrogates, written as escapes: they reach the canonical
+  // bytes (as \udxxx) and the hash, and count as one code point each.
+  ["a lone high surrogate in a description", withString("description", "a\\ud800b")],
+  ["a lone low surrogate in an example", withString("example", "\\udc00")],
+  ["a reversed pair", withString("description", "\\udc00\\ud800")],
+  ["an escaped pair is its code point", withString("description", "\\ud83d\\ude00 \\uD83D\\uDE00")],
+  ["a high surrogate before a pair", withString("rotationHint", "\\ud800\\ud83d\\ude00")],
+  ["lone surrogates sort by UTF-16 units", '{"schemaVersion":1,"items":[{"name":"E","required":{"kind":"always"},"sensitive":false,"type":"enum","enumValues":["\\udfff","\\uffff","\\ud83d\\ude00","\\ud800","a","\\ud800"]}]}'],
+  ["a description of 4096 lone surrogates", withString("description", "\\ud800".repeat(4096))],
+  ["a description of 4097 lone surrogates", withString("description", "\\ud800".repeat(4097))],
+  ["an unrecognized key with a lone surrogate", '{"schemaVersion":1,"items":[],"\\ud800":1}'],
+  ["unrecognized keys zod quotes without escaping", '{"schemaVersion":1,"items":[],"a\\"b":1,"c\\\\d":2,"e\\nf":3}'],
+  ["an enum value that is a lone surrogate, not listed", '{"schemaVersion":1,"items":[{"name":"E","required":{"kind":"always"},"sensitive":false,"type":"enum","enumValues":["a"],"defaultValue":"\\udc00"}]}'],
+  // __proto__ is an own member after JSON.parse: a strict object reports it.
+  ["__proto__ at the root", '{"schemaVersion":1,"items":[],"__proto__":1}'],
+  ["__proto__ in an item", '{"schemaVersion":1,"items":[{"name":"A","required":{"kind":"always"},"sensitive":false,"type":"string","__proto__":{"description":"x"}}]}'],
+  ["__proto__ in a requiredness", '{"schemaVersion":1,"items":[{"name":"A","required":{"kind":"always","__proto__":1},"sensitive":false,"type":"string"}]}'],
+  ["only __proto__", '{"__proto__":{"schemaVersion":1,"items":[]}}'],
+];
+
+/** A one-item Contract whose string member `key` is the JSON text `escaped` (escapes kept as written). */
+function withString(key: string, escaped: string): string {
+  return `{"schemaVersion":1,"items":[{"name":"A","required":{"kind":"always"},"sensitive":false,"type":"string","${key}":"${escaped}"}]}`;
+}
+
+/** JSON text as bytes, for parse vectors. */
+const PARSE: [string, number[] | string][] = [
+  ["a lone high surrogate", '"a\\ud800b"'],
+  ["a lone low surrogate", '"\\udc00"'],
+  ["a reversed pair", '"\\udc00\\ud800"'],
+  ["an escaped pair", '"\\ud83d\\ude00"'],
+  ["an escaped pair, upper case", '"\\uD83D\\uDE00"'],
+  ["a pair and a stray low surrogate", '"\\ud83d\\ude00\\ude00"'],
+  ["a high surrogate before a pair", '"\\ud800\\ud800\\udc00"'],
+  ["a high surrogate before a short escape", '"\\ud800\\u00e9"'],
+  ["a high surrogate at the end", '"x\\ud800"'],
+  ["every short escape", '"\\/\\b\\f\\n\\r\\t\\"\\\\\\u0041\\u00e9"'],
+  ["member order and a repeated key", '{"b":1,"a":2,"1":3,"0":4,"b":5}'],
+  ["__proto__ is a member", '{"__proto__":1,"x":[true,false,null]}'],
+  ["keys with surrogates", '{"\\ud800":1,"\\ud83d\\ude00":2}'],
+  ["integers and negative zero", "[1,-0,0,10,-5,1e3,2E+2,5e-0]"],
+  ["whitespace JSON allows", ' \t\r\n[ 1 , {\n} ]\n'],
+  ["a truncated three-byte sequence", [0x22, 0xe2, 0x82, 0x22]],
+  ["surrogate code points as raw bytes", [0x22, 0xed, 0xa0, 0x80, 0x22]],
+  ["an overlong encoding", [0x22, 0xc0, 0xaf, 0x22]],
+  ["beyond U+10FFFF", [0x22, 0xf4, 0x90, 0x80, 0x80, 0x22]],
+  ["a truncated four-byte sequence", [0x22, 0xf0, 0x9f, 0x98, 0x22]],
+  ["a lone continuation byte", [0x22, 0x80, 0x80, 0x22]],
+  ["0xff", [0x22, 0xff, 0x22]],
+  ["E0 then a low continuation", [0x22, 0xe0, 0x80, 0x41, 0x22]],
+  ["ED then a high continuation", [0x22, 0xed, 0xbf, 0xbf, 0x22]],
+  ["valid four-byte UTF-8", [0x22, 0xf0, 0x9f, 0x98, 0x80, 0x22]],
+  ["invalid UTF-8 in a key", [0x7b, 0x22, 0xc3, 0x22, 0x3a, 0x31, 0x7d]],
+  ["a byte order mark", [0xef, 0xbb, 0xbf, 0x31]],
+  ["a short \\u escape", '"\\ud80"'],
+  ["a bad \\u escape", '"\\u00zz"'],
+  ["a bad escape", '"\\x"'],
+  ["a raw control character", '"a\u0001b"'],
+  ["a raw line feed", '"a\nb"'],
+  ["a leading zero", "01"],
+  ["a bare decimal point", "1."],
+  ["no integer part", ".5"],
+  ["a minus sign alone", "-"],
+  ["a plus sign", "+1"],
+  ["an empty exponent", "1e"],
+  ["a trailing comma in an array", "[1,]"],
+  ["a trailing comma in an object", '{"a":1,}'],
+  ["a single-quoted string", "'a'"],
+  ["text after the value", '"x" y'],
+  ["a no-break space", "\u00a01"],
+  ["nothing", ""],
+  ["NaN", "NaN"],
+  ["True", "True"],
 ];
 
 /** Pairs of Contracts for diffContracts. */
@@ -177,7 +254,17 @@ it("go/lib/contract/testdata/ts-vectors.json is @varlatch/contract's answers", (
     const b = normalizeContract(to);
     return { name, from: canonicalJson(a), to: canonicalJson(b), diff: JSON.parse(canonicalJson(diffContracts(a, b))) as unknown };
   });
-  const out = JSON.stringify({ comment: "Written by services/varlatchd/test/go-contract-vectors.test.ts from @varlatch/contract; never edit.", normalize, diff }, null, 2) + "\n";
+  const parse = PARSE.map(([name, input]) => {
+    const bytes = typeof input === "string" ? Buffer.from(input, "utf8") : Buffer.from(input);
+    try {
+      return { name, bytes: bytes.toString("base64"), json: JSON.stringify(JSON.parse(bytes.toString("utf8"))) };
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+      return { name, bytes: bytes.toString("base64"), error: true };
+    }
+  });
+  if (new Set(parse.map((v) => v.name)).size !== parse.length) throw new Error("two parse vectors share a name");
+  const out = JSON.stringify({ comment: "Written by services/varlatchd/test/go-contract-vectors.test.ts from @varlatch/contract; never edit.", normalize, diff, parse }, null, 2) + "\n";
   if (process.env.VARLATCH_WRITE_GO_VECTORS === "1") {
     writeFileSync(OUT, out);
     return;

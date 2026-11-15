@@ -134,13 +134,15 @@ func TestSemanticsVectors(t *testing.T) {
 
 type tsVectors struct {
 	Normalize []struct {
-		Name             string   `json:"name"`
-		Input            string   `json:"input"`
-		VersionUndecided bool     `json:"versionUndecided"`
-		Canonical        *string  `json:"canonical"`
-		Hash             string   `json:"hash"`
-		Message          string   `json:"message"`
-		Issues           []string `json:"issues"`
+		Name             string  `json:"name"`
+		Input            string  `json:"input"`
+		VersionUndecided bool    `json:"versionUndecided"`
+		Canonical        *string `json:"canonical"`
+		Hash             string  `json:"hash"`
+		// Read with ParseJSON: a message may hold a lone surrogate, which
+		// encoding/json would turn into U+FFFD.
+		Message json.RawMessage `json:"message"`
+		Issues  json.RawMessage `json:"issues"`
 	} `json:"normalize"`
 	Diff []struct {
 		Name string          `json:"name"`
@@ -148,6 +150,22 @@ type tsVectors struct {
 		To   string          `json:"to"`
 		Diff json.RawMessage `json:"diff"`
 	} `json:"diff"`
+	Parse []struct {
+		Name  string `json:"name"`
+		Bytes []byte `json:"bytes"`
+		JSON  string `json:"json"`
+		Error bool   `json:"error"`
+	} `json:"parse"`
+}
+
+// jsText is a string member of the vectors file, lone surrogates kept.
+func jsText(t *testing.T, raw json.RawMessage) any {
+	t.Helper()
+	v, err := ParseJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
 }
 
 func readTSVectors(t *testing.T) tsVectors {
@@ -194,15 +212,66 @@ func TestNormalizeVectors(t *testing.T) {
 			}
 			continue
 		}
+		var want []string
+		for _, i := range jsText(t, c.Issues).([]any) {
+			want = append(want, i.(string))
+		}
 		var ve *ValidationError
 		if !errors.As(err, &ve) {
-			t.Errorf("%s: %v, want the issues %q", c.Name, err, c.Issues)
+			t.Errorf("%s: %v, want the issues %q", c.Name, err, want)
 			continue
 		}
-		if !slices.Equal(ve.Issues, c.Issues) || ve.Error() != c.Message {
-			t.Errorf("%s:\n  %q\n want %q", c.Name, ve.Issues, c.Issues)
+		if !slices.Equal(ve.Issues, want) || ve.Error() != jsText(t, c.Message).(string) {
+			t.Errorf("%s:\n  %q\n want %q", c.Name, ve.Issues, want)
 		}
 	}
+}
+
+// ParseJSON is JSON.parse on the text the CLI decodes from a Contract
+// file: what it reads, written back as JSON.stringify writes it (members in
+// JavaScript's order, a repeated key's last value), or that it refuses.
+func TestParseVectors(t *testing.T) {
+	v := readTSVectors(t)
+	if len(v.Parse) < 40 {
+		t.Fatalf("%d vectors", len(v.Parse))
+	}
+	for _, c := range v.Parse {
+		got, err := ParseJSON(c.Bytes)
+		switch {
+		case c.Error:
+			if err == nil {
+				t.Errorf("%s: read %s, want a refusal", c.Name, stringify(got))
+			}
+		case err != nil:
+			t.Errorf("%s: %v", c.Name, err)
+		case stringify(got) != c.JSON:
+			t.Errorf("%s:\n  %s\n want %s", c.Name, stringify(got), c.JSON)
+		}
+	}
+}
+
+// stringify is JSON.stringify for the parse vectors' values (integers only).
+func stringify(v any) string {
+	switch x := v.(type) {
+	case Object:
+		var b strings.Builder
+		b.WriteByte('{')
+		for i, k := range x.keys() {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			e, _ := x.get(k)
+			b.WriteString(string(Canonical(k)) + ":" + stringify(e))
+		}
+		return b.String() + "}"
+	case []any:
+		parts := make([]string, len(x))
+		for i, e := range x {
+			parts[i] = stringify(e)
+		}
+		return "[" + strings.Join(parts, ",") + "]"
+	}
+	return string(Canonical(v))
 }
 
 // diffContracts' answers.
@@ -245,5 +314,9 @@ func TestJavaScriptStrings(t *testing.T) {
 	}
 	if !strings.Contains(string(Canonical("\u2028\x7f")), "\u2028\x7f") {
 		t.Error("JSON.stringify leaves U+2028 and DEL")
+	}
+	// The same string, read from JSON text, keeps its surrogate.
+	if v, err := ParseJSON([]byte(`"a\ud800b"`)); err != nil || v != lone {
+		t.Errorf("ParseJSON: %q %v", v, err)
 	}
 }

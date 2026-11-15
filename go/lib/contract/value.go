@@ -4,10 +4,6 @@ package contract
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"math"
 	"strconv"
 	"unicode/utf8"
@@ -85,70 +81,6 @@ func arrayIndexLess(a, b string) bool {
 	x, _ := strconv.ParseUint(a, 10, 64)
 	y, _ := strconv.ParseUint(b, 10, 64)
 	return x < y
-}
-
-// ParseJSON reads JSON text into the value model, numbers as JSON.parse
-// reads them. A \u escape of a lone surrogate becomes U+FFFD here (Go's
-// decoder); varlatchd hands over strings that keep it.
-func ParseJSON(text []byte) (any, error) {
-	dec := json.NewDecoder(bytes.NewReader(text))
-	dec.UseNumber()
-	v, err := parseValue(dec)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("contract: text after the JSON value")
-	}
-	return v, nil
-}
-
-func parseValue(dec *json.Decoder) (any, error) {
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, err
-	}
-	switch t := tok.(type) {
-	case json.Delim:
-		switch t {
-		case '{':
-			o := Object{}
-			for dec.More() {
-				kt, err := dec.Token()
-				if err != nil {
-					return nil, err
-				}
-				k, _ := kt.(string)
-				v, err := parseValue(dec)
-				if err != nil {
-					return nil, err
-				}
-				o = append(o, Member{k, v})
-			}
-			_, err := dec.Token()
-			return o, err
-		case '[':
-			a := []any{}
-			for dec.More() {
-				v, err := parseValue(dec)
-				if err != nil {
-					return nil, err
-				}
-				a = append(a, v)
-			}
-			_, err := dec.Token()
-			return a, err
-		}
-		return nil, fmt.Errorf("contract: unexpected %v", t)
-	case json.Number:
-		f, err := strconv.ParseFloat(string(t), 64)
-		if err != nil && !errors.Is(err, strconv.ErrRange) {
-			return nil, err
-		}
-		return f, nil
-	default:
-		return t, nil
-	}
 }
 
 // jsType is a value's type as zod names it after "received".
