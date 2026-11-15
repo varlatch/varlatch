@@ -199,8 +199,14 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 		return Result{}, ErrRunning
 	}
 	defer s.running.Unlock()
-	if s.o.Admission != nil && s.o.Admission.Isolated() {
-		return Result{}, ErrMaintenance
+	// Admitted for the whole run, as a request is: a gate that opens
+	// meanwhile sees it in Busy until it ends.
+	if s.o.Admission != nil {
+		leave, ok := s.o.Admission.Enter()
+		if !ok {
+			return Result{}, ErrMaintenance
+		}
+		defer leave()
 	}
 	cfg := s.o.Config
 	if cfg.BackupKeyFile == "" {

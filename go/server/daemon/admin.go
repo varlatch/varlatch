@@ -242,9 +242,30 @@ func openOffline(cfg *config.Config, what string, stderr io.Writer) (*hostEnv, i
 	return env, ExitOK
 }
 
-// runHost runs one host command, in the daemon or offline, with env.
+// MaintenanceRefusal is the TypeScript admin CLI's refusal of an ordinary
+// command during installation maintenance (cli.ts).
+const MaintenanceRefusal = "Installation is in maintenance; ordinary admin operations are blocked"
+
+// writes reports whether a host command may write the installation: all
+// but the backup and maintenance commands, which take the admission their
+// own way (backup run enters it; maintenance manages it; backup status
+// only reads).
+func writes(sub string) bool { return sub != "backup" && sub != "maintenance" }
+
+// runHost runs one host command, in the daemon or offline, with env. A
+// command that writes enters the maintenance admission first, before any
+// gate or job, and is counted until it ends; while a gate is open it is
+// refused, as the TypeScript admin CLI refuses it.
 func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int {
 	sub, rest := args[0], args[1:]
+	if writes(sub) && env.admission != nil {
+		leave, ok := env.admission.Enter()
+		if !ok {
+			fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, MaintenanceRefusal)
+			return ExitFailure
+		}
+		defer leave()
+	}
 	switch {
 	case sub == "conformance-probe" && conformanceProbe != nil:
 		return conformanceProbe(ctx, env, rest, stdout, stderr)

@@ -203,6 +203,12 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 			return ExitFailure
 		}
 	}
+	// Offline under a gate: refused before the database is opened (the
+	// first use would create the installation), as in the daemon.
+	if writes(args[0]) && maintenance.Open(cfg.DataDir, nil).Isolated() {
+		fmt.Fprintf(stderr, "%s: %s\n", what, MaintenanceRefusal)
+		return ExitFailure
+	}
 	env, status := openOffline(cfg, what, stderr)
 	if env == nil {
 		return status

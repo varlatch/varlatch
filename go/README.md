@@ -273,6 +273,27 @@ daemon's maintenance admission and its one backup at a time.
   it shows its maintenance screen. The TypeScript exemption of
   `/.well-known/jwks.json` (the Convex mirror's key fetch) has no Go
   counterpart.
+- **Everything else that writes** enters the same admission, and an
+  admitted piece of work is counted (`Admission.Busy`) until it ends, so a
+  gate can tell when the work it waits for has finished:
+  - host commands that write (`bootstrap`, `recover`, `security reset`,
+    `unfreeze`, and the conformance build's probes and fixtures), through
+    the socket or offline, enter before they take a gate or queue a job;
+    under a gate they are refused with the TypeScript admin CLI's
+    message, `Installation is in maintenance; ordinary admin operations
+    are blocked`, and exit 1. Offline that check comes before the
+    database is opened. `maintenance begin|end|status` and `backup status`
+    stay available;
+  - a backup run is admitted for its whole length, in one step with the
+    check (`Enter`);
+  - the Security Control report loop enters for each pass and skips the
+    pass under a gate, as `startSecurityReportLoop` does;
+  - a passkey-verification report count, which runs after its response,
+    enters on its own and is dropped under a gate. The TypeScript server
+    runs those counts outside admission;
+  - the other loops write nothing: the realtime publisher reads the audit
+    log, the trusted-proxy refresh resolves names, and the storage
+    engine's checkpoints move no data in or out of the database.
 - **An archive** is format 3 (`lib/backup`): `varlatch.db`, the snapshot,
   and `configuration.json`, `{"formatVersion":1,"settings":{...}}` with
   the non-key settings by their `varlatchd.conf` names (paths on this
@@ -893,6 +914,12 @@ Not reproduced:
 | `mirror/publisher.ts:209` orders Convex mirror events by the text form of `event_order` | events after position 9 can be published out of order | nothing to port: there is no Convex in Go | | none |
 | `domain/securityreport.ts` `countWouldBlock`, a count whose hour and the current hour are both already summarized (possible only after the clock moved back across a summarized hour) | the count is dropped (an error is logged): the stored total is one short | the count goes to the hour after the last summarized one for its key, which no summary covers yet, so every committed count reaches exactly one summary; with a clock that does not move back nothing differs | `server/security` `TestCountsSurviveAClockMovedBack` | none |
 | `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | `server/values` `TestConcurrentExportsUnderReportCountExactly`: 24 concurrent named and all-authorized exports in one bucket all succeed and the counter is exact | none |
+
+The TypeScript admin CLI refuses an ordinary command during maintenance
+with `Installation is in maintenance; ordinary admin operations are
+blocked`, but that error reaches its generic handler, which prints
+`Operator command failed; check configuration and maintenance status.`
+(exit 1 either way). varlatchd prints the refusal itself.
 
 ## Before the first Go release
 

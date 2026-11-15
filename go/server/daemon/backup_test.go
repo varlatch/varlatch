@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/envelope"
@@ -105,5 +106,84 @@ func TestBackupAndMaintenanceCommands(t *testing.T) {
 	// An offline backup, under the lock.
 	if code, out, errOut := runAdmin(t, "backup", "run", "--json", "--config", in.conf); code != ExitOK || !strings.HasPrefix(out, `{"archiveId":"`) {
 		t.Errorf("offline backup run: %d %q %q", code, out, errOut)
+	}
+}
+
+// Every host command that writes is refused while a maintenance gate is
+// open, as the TypeScript admin CLI refuses its ordinary commands: through
+// the daemon's socket under a lease, and offline under a persisted lease,
+// before the database is opened. The maintenance and backup status
+// commands stay available.
+func TestWritingCommandsRefusedDuringMaintenance(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	r := start(t, in)
+	code, out, errOut := runAdmin(t, "bootstrap", "--cli-credential", "--config", in.conf)
+	m := bootstrapCLI.FindStringSubmatch(out)
+	if code != ExitOK || m == nil {
+		t.Fatalf("bootstrap: %d %q %q", code, out, errOut)
+	}
+	admin := m[1]
+	writing := [][]string{
+		{"bootstrap"},
+		{"bootstrap", "--cli-credential"},
+		{"recover", "--identity", admin},
+		{"recover", "--new-admin", "--cli-credential"},
+		{"security", "reset", "--org", "acme", "--all"},
+		{"unfreeze", "--org", "acme", "--confirm", "acme"},
+	}
+	refused := func(where string) {
+		t.Helper()
+		for _, args := range writing {
+			code, out, errOut := runAdmin(t, append(args, "--config", in.conf)...)
+			if want := "varlatchd admin " + args[0] + ": " + MaintenanceRefusal + "\n"; code != ExitFailure || out != "" || errOut != want {
+				t.Errorf("%s, %v: %d %q %q", where, args, code, out, errOut)
+			}
+		}
+		for _, args := range [][]string{{"maintenance", "status"}, {"backup", "status"}} {
+			if code, _, errOut := runAdmin(t, append(args, "--config", in.conf)...); code != ExitOK {
+				t.Errorf("%s, %v: %d %q", where, args, code, errOut)
+			}
+		}
+	}
+
+	code, out, _ = runAdmin(t, "maintenance", "begin", "--ttl", "10m", "--config", in.conf)
+	var gate backup.Gate
+	if code != ExitOK || json.Unmarshal([]byte(out), &gate) != nil {
+		t.Fatalf("maintenance begin: %d %q", code, out)
+	}
+	refused("through the daemon")
+	if code, _, errOut := runAdmin(t, "maintenance", "end", gate.ID, "--config", in.conf); code != ExitOK {
+		t.Fatalf("maintenance end: %d %q", code, errOut)
+	}
+	if code, out, errOut := runAdmin(t, "recover", "--identity", admin, "--config", in.conf); code != ExitOK || !recoveryURL.MatchString(out) {
+		t.Errorf("recover after the lease: %d %q %q", code, out, errOut)
+	}
+	r.stop(t)
+
+	// Offline, under a lease that outlived the daemon.
+	code, out, _ = runAdmin(t, "maintenance", "begin", "--ttl", "10m", "--config", in.conf)
+	if code != ExitOK || json.Unmarshal([]byte(out), &gate) != nil {
+		t.Fatalf("offline maintenance begin: %d %q", code, out)
+	}
+	refused("offline")
+	if code, _, errOut := runAdmin(t, "maintenance", "end", gate.ID, "--config", in.conf); code != ExitOK {
+		t.Fatalf("offline maintenance end: %d %q", code, errOut)
+	}
+	if code, out, errOut := runAdmin(t, "recover", "--identity", admin, "--config", in.conf); code != ExitOK || !recoveryURL.MatchString(out) {
+		t.Errorf("offline recover after the lease: %d %q %q", code, out, errOut)
+	}
+
+	// A fresh data directory under a lease: refused before the database
+	// (and with it the installation) is created.
+	fresh := newInstall(t, "")
+	expires := time.Now().Add(time.Hour).UnixMilli()
+	if err := backup.DurableJSON(filepath.Join(fresh.data, backup.GateFile), backup.Gate{ID: "lease", Kind: "capture", Phase: "draining", ExpiresAt: &expires}, true); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runAdmin(t, "bootstrap", "--config", fresh.conf); code != ExitFailure || !strings.Contains(errOut, MaintenanceRefusal) {
+		t.Errorf("bootstrap on a fresh directory under a lease: %d %q", code, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(fresh.data, "varlatch.db")); !os.IsNotExist(err) {
+		t.Errorf("the database was created under the lease: %v", err)
 	}
 }

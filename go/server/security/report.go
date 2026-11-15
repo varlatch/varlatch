@@ -401,17 +401,30 @@ func RunWorker(ctx context.Context, w *write.Writer, now func() time.Time) (emit
 	return emitted, deleted, nil
 }
 
+// pass is one admitted pass of the loop.
+func pass(ctx context.Context, w *write.Writer, now func() time.Time, log *slog.Logger, admit func() (func(), bool)) {
+	if admit != nil {
+		leave, ok := admit()
+		if !ok {
+			return
+		}
+		defer leave()
+	}
+	if _, _, err := RunWorker(ctx, w, now); err != nil && ctx.Err() == nil {
+		log.Error("security report loop error", "error", err)
+	}
+}
+
 // RunLoop is startSecurityReportLoop: a pass at once, then one every
 // interval, until ctx ends. A pass that fails is logged; the next one runs
-// as planned. (Installation maintenance, which pauses the TypeScript loop,
-// comes with backups in step 4.14.)
-func RunLoop(ctx context.Context, w *write.Writer, interval time.Duration, now func() time.Time, log *slog.Logger) {
+// as planned. Each pass enters the maintenance admission (admit, nil for
+// none): while a gate is open the pass is skipped, and one admitted is
+// counted until it ends, so a gate's drain waits for it.
+func RunLoop(ctx context.Context, w *write.Writer, interval time.Duration, now func() time.Time, log *slog.Logger, admit func() (leave func(), ok bool)) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
-		if _, _, err := RunWorker(ctx, w, now); err != nil && ctx.Err() == nil {
-			log.Error("security report loop error", "error", err)
-		}
+		pass(ctx, w, now, log, admit)
 		select {
 		case <-ctx.Done():
 			return

@@ -314,7 +314,7 @@ func serve(opts Options, h *hooks) int {
 	// after their responses: a stop waits for them before the database
 	// closes.
 	approvals := auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK, PersonGate: gates.PersonGate})
-	readPath := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: gates})
+	readPath := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: gates, Admit: admission.Enter})
 	defer readPath.Settled()
 	writer := &write.Writer{Store: store, Gates: gates}
 	if h.writer != nil {
@@ -327,7 +327,7 @@ func serve(opts Options, h *hooks) int {
 	reportDone := make(chan struct{})
 	go func() {
 		defer close(reportDone)
-		security.RunLoop(ctx, writer, security.SummaryInterval, time.Now, log)
+		security.RunLoop(ctx, writer, security.SummaryInterval, time.Now, log, admission.Enter)
 	}()
 	defer func() { cancel(); <-reportDone }()
 	// Scheduled backups (backup_interval). A stop ends a run in progress,

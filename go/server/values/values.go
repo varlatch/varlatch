@@ -67,6 +67,7 @@ type Service struct {
 
 	approvals *auth.Service
 	gates     *write.Gates
+	admit     func() (func(), bool)
 }
 
 // Options configures New.
@@ -80,6 +81,10 @@ type Options struct {
 	// them such an export is refused.
 	Approvals *auth.Service
 	Gates     *write.Gates
+	// Admit is the maintenance admission (nil for none). A report count
+	// runs after its response, so it enters on its own: it is dropped
+	// while a gate is open, and counted until its write ends.
+	Admit func() (leave func(), ok bool)
 }
 
 // maxQueuedCounts is ACCESS_COUNTS.maxQueued: counts beyond it are dropped.
@@ -94,7 +99,7 @@ func New(store *storage.DB, rootKEK []byte, opts Options) *Service {
 		opts.Now = time.Now
 	}
 	return &Service{store: store, rootKEK: rootKEK, log: opts.Log, now: opts.Now, pending: make(chan struct{}, maxQueuedCounts),
-		approvals: opts.Approvals, gates: opts.Gates}
+		approvals: opts.Approvals, gates: opts.Gates, admit: opts.Admit}
 }
 
 // Settled waits until every queued report count has run (tests, and a stop).

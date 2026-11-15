@@ -426,3 +426,42 @@ func TestSchedule(t *testing.T) {
 		t.Errorf("%d archives", len(st.Archives))
 	}
 }
+
+// A run is admitted as a request is, in one step: a gate that opens while
+// it runs sees it in Busy until it ends, and a run while the gate is open
+// is refused.
+func TestRunIsAdmitted(t *testing.T) {
+	f := newFixture(t)
+	f.exec(t, "CREATE TABLE filler (v BLOB) STRICT")
+	for i := 0; i < 4; i++ {
+		f.exec(t, "INSERT INTO filler VALUES (randomblob(1048576))")
+	}
+	a := maintenance.Open(f.dir, nil)
+	s := f.service(func(o *Options) { o.Admission = a; o.SealRate = 2 << 20 })
+	done := make(chan error, 1)
+	go func() { _, err := s.Run(context.Background()); done <- err }()
+	deadline := time.Now().Add(10 * time.Second)
+	for a.Busy() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the run was never admitted")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	g, err := a.Begin(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Busy() != 1 {
+		t.Errorf("busy %d while the run continues under the gate", a.Busy())
+	}
+	if _, err := f.service(func(o *Options) { o.Admission = a }).Run(context.Background()); !errors.Is(err, ErrMaintenance) {
+		t.Errorf("a run under the gate: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if a.Busy() != 0 {
+		t.Errorf("busy %d after the run", a.Busy())
+	}
+	a.End(g.ID)
+}
