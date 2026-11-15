@@ -422,6 +422,9 @@ func (f *failures) Errorf(format string, args ...any) {
 // rename that also removes an unrelated membership (a deleted side row),
 // or that changes another Organization (an updated one), fails it.
 func TestReplayNoticesUnintendedChanges(t *testing.T) {
+	if raceDetector {
+		t.Skip("checks the replay's checks, not concurrency: run without the race detector (a replay takes minutes under it)")
+	}
 	f, err := paritytest.Read(paritytest.Path("core-v0.22.0.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -461,6 +464,9 @@ func TestReplayNoticesUnintendedChanges(t *testing.T) {
 // (both read {time} there). The answer is changed on the wire; the audit
 // event, append-only, on its way to the check.
 func TestReplayNoticesWrongRotationDeadlines(t *testing.T) {
+	if raceDetector {
+		t.Skip("checks the replay's checks, not concurrency: run without the race detector (a replay takes minutes under it)")
+	}
 	f, err := paritytest.Read(paritytest.Path("core-v0.22.0.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -470,54 +476,54 @@ func TestReplayNoticesWrongRotationDeadlines(t *testing.T) {
 		at, _ := time.Parse(time.RFC3339Nano, iso)
 		return at.Add(time.Second).UTC().Format("2006-01-02T15:04:05.000Z")
 	}
-	for _, sabotage := range []string{"answer", "audit"} {
-		s := newServer(t, f)
-		target := s.target(t, f)
-		real := target.Handler
-		target.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/values/HINTED/rotations") {
-				real.ServeHTTP(w, r)
-				return
-			}
-			rec := httptest.NewRecorder()
-			real.ServeHTTP(rec, r)
-			body := rec.Body.Bytes()
-			if sabotage == "answer" {
-				body = shifted.ReplaceAllFunc(body, func(m []byte) []byte {
-					return []byte(`"rotationDeadline":"` + later(string(shifted.FindSubmatch(m)[1])) + `"`)
-				})
-			}
-			for k, v := range rec.Header() {
-				w.Header()[k] = v
-			}
-			w.WriteHeader(rec.Code)
-			_, _ = w.Write(body)
+	// One replay (a replay is minutes under the race detector): the
+	// answer changed on HINTED's begin, the audit event on GRACED's.
+	s := newServer(t, f)
+	target := s.target(t, f)
+	real := target.Handler
+	target.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/values/HINTED/rotations") {
+			real.ServeHTTP(w, r)
+			return
+		}
+		rec := httptest.NewRecorder()
+		real.ServeHTTP(rec, r)
+		body := shifted.ReplaceAllFunc(rec.Body.Bytes(), func(m []byte) []byte {
+			return []byte(`"rotationDeadline":"` + later(string(shifted.FindSubmatch(m)[1])) + `"`)
 		})
-		target.Check = nil
-		begins := 0
-		check := rotationDeadlines(&begins)
-		// Audit events are append-only: the audited deadline is changed on
-		// its way to the check, as a server that audited another would.
-		target.Inspect = func(t testing.TB, c paritytest.Recorded, raw paritytest.Raw) {
-			if sabotage == "audit" {
-				for _, e := range raw.Audit {
-					if m, ok := e["metadata"].(map[string]any); ok && e["event_type"] == "value.rotation_started" && strings.Contains(c.Path, "/HINTED/") {
-						m["deadline"] = later(m["deadline"].(string))
-					}
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(body)
+	})
+	target.Check = nil
+	begins := 0
+	check := rotationDeadlines(&begins)
+	// Audit events are append-only: the audited deadline is changed on
+	// its way to the check, as a server that audited another would.
+	target.Inspect = func(t testing.TB, c paritytest.Recorded, raw paritytest.Raw) {
+		if strings.Contains(c.Path, "/GRACED/rotations") {
+			for _, e := range raw.Audit {
+				if m, ok := e["metadata"].(map[string]any); ok && e["event_type"] == "value.rotation_started" {
+					m["deadline"] = later(m["deadline"].(string))
 				}
 			}
-			check(t, c, raw)
 		}
-		rec := &failures{TB: t}
-		paritytest.Replay(rec, target, f)
+		check(t, c, raw)
+	}
+	rec := &failures{TB: t}
+	paritytest.Replay(rec, target, f)
+	for _, want := range []string{
+		"begin a rotation, the Contract's grace: the answer's, the audit event's and the stored deadline differ",
+		"begin a rotation, its own grace: the answer's, the audit event's and the stored deadline differ",
+	} {
 		found := false
 		for _, e := range rec.errs {
-			if strings.Contains(e, "begin a rotation, the Contract's grace: the answer's, the audit event's and the stored deadline differ") {
-				found = true
-			}
+			found = found || strings.Contains(e, want)
 		}
 		if !found {
-			t.Errorf("a changed deadline in the %s: not noticed (%d other differences)", sabotage, len(rec.errs))
+			t.Errorf("not noticed: %s (%d other differences)", want, len(rec.errs))
 		}
 	}
 }
