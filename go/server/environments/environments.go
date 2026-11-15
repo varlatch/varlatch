@@ -230,17 +230,32 @@ func create(ctx context.Context, tx query.DBTX, p *auth.Principal, organizationI
 // "T", hours, minutes and seconds, an optional fraction, and "Z".
 var datetime = regexp.MustCompile(`^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(\.\d+)?Z$`)
 
-// ErrTimestamp is a datetime PostgreSQL's timestamptz refuses (year 0):
-// the insert fails, and the route answers 500 INTERNAL.
+// ErrTimestamp is a datetime zod accepts and PostgreSQL's timestamptz
+// refuses (22007, 22008): the insert fails, and the route answers 500
+// INTERNAL, having written nothing (go/README.md, Known TypeScript
+// defects).
 var ErrTimestamp = errors.New("environments: PostgreSQL refuses the timestamp (the TypeScript server answers 500 INTERNAL)")
 
+// maxFractionDigits is the longest fraction PostgreSQL 17 takes in zod's
+// datetime shape. timestamptz_in splits the text into a work buffer of
+// MAXDATELEN + MAXDATEFIELDS = 153 bytes (ParseDateTime, datetime.c),
+// each field followed by a NUL, and APPEND_CHAR refuses a character at an
+// index whose next one would reach the end (index + 1 >= 153): the date
+// "yyyy-mm-dd" and its NUL take 11 bytes, "t" and its NUL 2, the time
+// "hh:mm:ss.<n digits>" and its NUL 10 + n, so the final "z" lands at
+// index 23 + n, and n may be at most 128. The fraction's digits never fail
+// otherwise (strtod, then rint).
+const maxFractionDigits = 128
+
 // PostgresTimestamp is the microseconds PostgreSQL stores for a datetime
-// zod accepted: the fraction rounded to microseconds as its parser rounds
-// it (strtod of the fraction, then rint of the microseconds: half to
-// even on the double).
+// zod accepted, or ErrTimestamp where PostgreSQL refuses it: year 0, or a
+// fraction longer than maxFractionDigits. The fraction is rounded to
+// microseconds as its parser rounds it (strtod of the fraction, then rint
+// of the microseconds: half to even on the double), and may carry into
+// the next second.
 func PostgresTimestamp(s string) (int64, error) {
 	m := datetime.FindStringSubmatch(s)
-	if m == nil {
+	if m == nil || len(m[7]) > 1+maxFractionDigits {
 		return 0, ErrTimestamp
 	}
 	n := func(i int) int { v, _ := strconv.Atoi(m[i]); return v }

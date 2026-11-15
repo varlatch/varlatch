@@ -55,6 +55,19 @@ const INPUTS = [
   "9999-12-31T23:59:59.999999Z",
   "9999-12-31T23:59:59.9999995Z",
   "0099-06-01T00:00:00Z",
+  // The fraction's length: PostgreSQL's work buffer takes 128 digits in
+  // this shape, and refuses 129 (22007), whatever the digits.
+  "2099-01-01T00:00:00." + "9".repeat(128) + "Z",
+  "2099-01-01T00:00:00." + "9".repeat(129) + "Z",
+  "2099-01-01T00:00:00." + "0".repeat(128) + "Z",
+  "2099-01-01T00:00:00." + "0".repeat(129) + "Z",
+  "2099-01-01T00:00:00." + "1".repeat(129) + "Z",
+  "2099-01-01T00:00:00." + "9".repeat(200) + "Z",
+  "2099-01-01T00:00:00.0000005" + "0".repeat(121) + "Z",
+  "2099-01-01T00:00:00.0000005" + "0".repeat(120) + "1Z",
+  "2099-01-01T00:00:00.0000004" + "9".repeat(121) + "Z",
+  "2099-12-31T23:59:59." + "9".repeat(128) + "Z",
+  "9999-12-31T23:59:59." + "9".repeat(128) + "Z",
 ];
 
 it("go/server/environments/testdata/pg-timestamps.json is PostgreSQL's answers", async () => {
