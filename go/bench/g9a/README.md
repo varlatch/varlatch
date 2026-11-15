@@ -171,7 +171,10 @@ load test.
 - `cpu.pprof`, with `G9A_PROFILE=<seconds>` (`varlatchd g9a -profile`): a
   CPU profile of varlatchd from the load's start (`POST /run/start`, which
   k6 sends once it is initialized) for that long or until the run ends,
-  for `go tool pprof`. `GET /run/profile?seconds=N` takes one on demand.
+  for `go tool pprof`, with `cpu-window.json` saying when it ran; the
+  report sets that window against the load's requests and says whether
+  they overlap (`profile` in `verdict.json`). `GET /run/profile?seconds=N`
+  takes one on demand.
 
 ## What the report judges
 

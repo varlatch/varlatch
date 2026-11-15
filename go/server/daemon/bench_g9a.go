@@ -160,6 +160,7 @@ func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duratio
 		sync.Mutex
 		f       *os.File
 		started bool
+		start   time.Time
 	}
 	stopProfile := func() {
 		prof.Lock()
@@ -168,6 +169,11 @@ func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duratio
 			pprof.StopCPUProfile()
 			_ = prof.f.Close()
 			prof.f = nil
+			// When it ran, for the report to set against the load's requests.
+			b, _ := json.Marshal(g9a.ProfileSpan{StartUs: prof.start.UnixMicro(), EndUs: time.Now().UnixMicro()})
+			if err := os.WriteFile(filepath.Join(out, g9a.FileCPUWindow), append(b, '\n'), 0o644); err != nil {
+				log.Error("the CPU profile's window", "error", err)
+			}
 		}
 	}
 	startProfile := func() {
@@ -187,7 +193,7 @@ func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duratio
 			log.Error("the load's CPU profile", "error", err)
 			return
 		}
-		prof.f = f
+		prof.f, prof.start = f, time.Now()
 		time.AfterFunc(profile, stopProfile)
 		log.Info("CPU profile started", "seconds", profile.Seconds())
 	}

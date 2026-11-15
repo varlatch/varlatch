@@ -4,7 +4,10 @@
 
 package storage
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type timingKey struct{}
 
@@ -16,7 +19,31 @@ func WithTiming(ctx context.Context, fn func(JobTiming)) context.Context {
 	return context.WithValue(ctx, timingKey{}, fn)
 }
 
-func timingOf(ctx context.Context) func(JobTiming) {
-	fn, _ := ctx.Value(timingKey{}).(func(JobTiming))
-	return fn
+// jobTiming is a job's timing: when it was queued and started, and its
+// batch's COMMIT time. The writer writes started and commit before done;
+// report reads them after it.
+type jobTiming struct {
+	fn              func(JobTiming)
+	queued, started time.Time
+	commit          time.Duration
+}
+
+func (t *jobTiming) queue(ctx context.Context) {
+	if fn, _ := ctx.Value(timingKey{}).(func(JobTiming)); fn != nil {
+		t.fn, t.queued = fn, time.Now()
+	}
+}
+
+func (t *jobTiming) begin() {
+	if t.fn != nil {
+		t.started = time.Now()
+	}
+}
+
+func (t *jobTiming) committed(d time.Duration) { t.commit = d }
+
+func (t *jobTiming) report() {
+	if t.fn != nil && !t.started.IsZero() {
+		t.fn(JobTiming{QueueWait: t.started.Sub(t.queued), Commit: t.commit})
+	}
 }

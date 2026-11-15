@@ -228,9 +228,14 @@ func TestBenchRun(t *testing.T) {
 		resp.Body.Close()
 		time.Sleep(5 * time.Second) // stopping waits for the converge run
 	})
-	// The load's CPU profile, from POST /run/start to the run's end.
+	// The load's CPU profile, from POST /run/start to the run's end, and
+	// when it ran.
 	if b, err := os.ReadFile(filepath.Join(out, g9a.FileCPUProfile)); err != nil || len(b) < 2 || b[0] != 0x1f || b[1] != 0x8b {
 		t.Errorf("%s: %v, %d bytes", g9a.FileCPUProfile, err, len(b))
+	}
+	var window g9a.ProfileSpan
+	if b, err := os.ReadFile(filepath.Join(out, g9a.FileCPUWindow)); err != nil || json.Unmarshal(b, &window) != nil || window.StartUs <= 0 || window.EndUs <= window.StartUs {
+		t.Errorf("%s: %v %+v", g9a.FileCPUWindow, err, window)
 	}
 	var final []stages.Summary
 	if b, err := os.ReadFile(filepath.Join(out, g9a.FileStages)); err != nil || json.Unmarshal(b, &final) != nil || len(final) != len(stages.Names) {

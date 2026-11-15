@@ -390,7 +390,11 @@ The server's packages:
   profile from the load's start with `-profile` and on demand at `GET
   /run/profile?seconds=N` (`bench/g9a/README.md`). The storage engine
   reports a job's queue wait and commit through `storage.WithTiming`, also
-  in the `g9a` build only.
+  in the `g9a` build only: elsewhere a job carries no timing state (its
+  size is checked) and the writer does nothing for it. The script also
+  checks the storage engine's functions, follows a function the release
+  build inlines to its callers, fails on a listed function that is gone,
+  and requires the release binary to hold no symbol of the timing code.
 - `server/ids`, `server/domainerr`: domain IDs (`db/ids.ts`) and
   `DomainError`.
 

@@ -1028,3 +1028,43 @@ func TestReportStages(t *testing.T) {
 		t.Error("an unreadable stages.json was accepted")
 	}
 }
+
+// The CPU profile's window is set against the load's requests: shown, and
+// whether it overlaps them; it changes no verdict.
+func TestReportProfileWindow(t *testing.T) {
+	shortGate(t)
+	run := good()
+	dir := run.write(t)
+	reqs, err := ReadRequests(filepath.Join(dir, FileRequests))
+	if err != nil || len(reqs) == 0 {
+		t.Fatal(err)
+	}
+	first, last := reqs[0].SchedUs, reqs[0].SchedUs
+	for _, q := range reqs {
+		first, last = min(first, q.SchedUs), max(last, q.SchedUs+q.Lat.Microseconds())
+	}
+	for _, c := range []struct {
+		w    ProfileSpan
+		want bool
+	}{
+		{ProfileSpan{StartUs: first + 1, EndUs: first + 2}, true},
+		{ProfileSpan{StartUs: first - 2_000_000, EndUs: first - 1_000_000}, false},
+		{ProfileSpan{StartUs: last + 1, EndUs: last + 1_000_000}, false},
+	} {
+		b, _ := json.Marshal(c.w)
+		if err := os.WriteFile(filepath.Join(dir, FileCPUWindow), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rep, err := WriteReport(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.Verdict != Pass || rep.Profile == nil || rep.Profile.OverlapsLoad != c.want || rep.Profile.LoadStartUs != first || rep.Profile.LoadEndUs != last {
+			t.Errorf("%+v: %s %+v", c.w, rep.Verdict, rep.Profile)
+		}
+		md, _ := os.ReadFile(filepath.Join(dir, FileReport))
+		if !strings.Contains(string(md), fmt.Sprintf("overlaps the load: %t.", c.want)) {
+			t.Errorf("report.md:\n%s", md)
+		}
+	}
+}

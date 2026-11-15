@@ -248,8 +248,10 @@ jobs:
       # every stage present) and a 60 s CPU profile from the load's start
       # (POST /run/start, once k6 is initialized; step 4 decision 7: G9a's
       # slower baseline is diagnosed from them), kept with the report as an
-      # artifact. A profile that shows under 200 ms of CPU in the disclosure
-      # path did not see the load, and fails the step.
+      # artifact. The profile must have seen the load: its window (cpu-window.json,
+      # set against the requests' times in the report) overlaps the load, and
+      # it holds samples in the disclosure path. How much CPU went there is
+      # a diagnostic (profile-disclose.txt in the artifact), not a gate.
       - name: The G9a harness runs and judges a smoke run
         env:
           CGO_ENABLED: "0"
@@ -283,12 +285,14 @@ jobs:
                  ] == [])
             and ([.inconclusive[] | select(startswith("the plan differs from G9a") | not)] == [])
             and (.stages | length) == 8 and ([.stages[] | .count > 0] | all)
+            and .profile.overlapsLoad == true
           ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
           [ -s "$out/cpu.pprof" ] || { echo "no CPU profile"; exit 1; }
-          disclose=$(cd go && go tool pprof -top -cum -nodecount=100000 -unit=ms -focus='values\.\(\*Service\)\.Disclose' "$out/cpu.pprof" 2>/dev/null \
-            | awk '$NF == "github.com/varlatch/varlatch/go/server/values.(*Service).Disclose" { sub(/ms$/, "", $4); print int($4) }')
-          echo "CPU in the disclosure path: ${disclose:-0} ms"
-          [ "${disclose:-0}" -ge 200 ] || { echo "the CPU profile did not see the load"; exit 1; }
+          (cd go && go tool pprof -top -cum -nodecount=100000 -unit=ms -focus='values\.\(\*Service\)\.Disclose' "$out/cpu.pprof") > "$out/profile-disclose.txt"
+          head -n 60 "$out/profile-disclose.txt"
+          disclose=$(awk '$NF == "github.com/varlatch/varlatch/go/server/values.(*Service).Disclose" { sub(/ms$/, "", $4); print int($4) }' "$out/profile-disclose.txt")
+          echo "CPU in the disclosure path: ${disclose:-0} ms (a diagnostic)"
+          [ "${disclose:-0}" -gt 0 ] || { echo "the CPU profile holds no sample in the disclosure path"; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -297,6 +301,8 @@ jobs:
             ${{ runner.temp }}/g9a-smoke/report.md
             ${{ runner.temp }}/g9a-smoke/stages.json
             ${{ runner.temp }}/g9a-smoke/cpu.pprof
+            ${{ runner.temp }}/g9a-smoke/cpu-window.json
+            ${{ runner.temp }}/g9a-smoke/profile-disclose.txt
           retention-days: 30
           if-no-files-found: warn
 

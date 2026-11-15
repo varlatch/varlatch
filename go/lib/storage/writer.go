@@ -18,15 +18,16 @@ import (
 
 // A job is one Write call, queued for the writer.
 type job struct {
-	fn   func(*Tx) error
-	done chan error // buffered: the writer never blocks on it
+	// timing is the g9a build's per-job timing (timing_on.go); elsewhere an
+	// empty struct whose methods are empty (timing_off.go), so a release
+	// job is no larger and the writer does nothing for it. First, so that
+	// being empty it takes no space.
+	timing jobTiming
+	fn     func(*Tx) error
+	done   chan error // buffered: the writer never blocks on it
 	// state moves from queued to started (the writer took it) or to
 	// cancelled (the caller gave up first), never both.
 	state atomic.Int32
-	// When it was queued and started, and its batch's COMMIT time, for
-	// WithTiming: written by the writer before done, read after it.
-	queued, started time.Time
-	commit          time.Duration
 }
 
 const (
@@ -121,15 +122,14 @@ func jobOwnError(err error) bool {
 // started, Write waits for its outcome.
 func (db *DB) Write(ctx context.Context, fn func(tx *Tx) error) error {
 	j := &job{fn: fn, done: make(chan error, 1)}
-	timing := timingOf(ctx)
-	if timing != nil {
-		j.queued = time.Now()
-		defer func() {
-			if !j.started.IsZero() {
-				timing(JobTiming{QueueWait: j.started.Sub(j.queued), Commit: j.commit})
-			}
-		}()
-	}
+	j.timing.queue(ctx)
+	err := db.submit(ctx, j)
+	j.timing.report()
+	return err
+}
+
+// submit queues j and waits for its outcome (Write).
+func (db *DB) submit(ctx context.Context, j *job) error {
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
@@ -284,9 +284,7 @@ func (db *DB) runBatch(batch []*job) {
 			continue // the caller gave up before the job started
 		}
 		ran[i] = true
-		if !j.queued.IsZero() {
-			j.started = time.Now()
-		}
+		j.timing.begin()
 		sp := "job" + strconv.Itoa(i)
 		if _, err := db.wconn.ExecContext(bg, "SAVEPOINT "+sp); err != nil {
 			fail("savepoint", err)
@@ -346,7 +344,7 @@ func (db *DB) runBatch(batch []*job) {
 			if results[i] != nil {
 				ownErrors++
 			}
-			j.commit = commit
+			j.timing.committed(commit)
 			j.done <- results[i]
 		}
 	}
