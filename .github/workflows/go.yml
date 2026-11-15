@@ -48,6 +48,9 @@ on:
       # The read path's parity vectors and G3's reverse direction: the
       # TypeScript server's answers, and its read path on values Go sealed.
       - "services/varlatchd/test/go-values-fixture.test.ts"
+      # The BEK seal, escrow and Shamir in both directions (step 4.14).
+      - "services/varlatchd/test/go-backup-vectors.test.ts"
+      - "packages/backup/src/**"
   push:
     branches: [main, rewrite/go]
     # The same paths as pull_request's.
@@ -71,6 +74,8 @@ on:
       - "scripts/conformance/expect/go-binary.json"
       - "scripts/conformance/targets/capabilities.json"
       - "services/varlatchd/test/go-values-fixture.test.ts"
+      - "services/varlatchd/test/go-backup-vectors.test.ts"
+      - "packages/backup/src/**"
   workflow_dispatch:
 
 permissions:
@@ -424,6 +429,20 @@ jobs:
         run: |
           (cd go && go test -count=1 -run '^TestGoSealedFixture$' ./server/values -args -write-go-sealed="$RUNNER_TEMP/go-sealed-values.json")
           VARLATCH_GO_SEALED_VALUES="$RUNNER_TEMP/go-sealed-values.json" pnpm --filter @varlatch/varlatchd exec vitest run test/go-values-fixture.test.ts
+      # ADR-0059 step 4.14: the BEK seal, the passphrase escrow and the
+      # Shamir split cross between the servers in both directions. The Go
+      # tests open, restore and combine what the TypeScript code made
+      # (testdata/ts-vectors.json); here the TypeScript code opens,
+      # restores and combines what this commit's Go code made, and the
+      # committed vectors are still its own.
+      - name: The TypeScript server opens archives Go sealed, and escrows and splits Go made
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go test -count=1 -run '^TestGoVectors$' ./lib/backup -args -write-go-vectors="$RUNNER_TEMP/go-backup-vectors.json")
+          (cd go && go test -count=1 -run '^TestGoVectors$' ./server/custody -args -write-go-vectors="$RUNNER_TEMP/go-custody-vectors.json")
+          VARLATCH_GO_BACKUP_VECTORS="$RUNNER_TEMP/go-backup-vectors.json" VARLATCH_GO_CUSTODY_VECTORS="$RUNNER_TEMP/go-custody-vectors.json" \
+            pnpm --filter @varlatch/varlatchd exec vitest run test/go-backup-vectors.test.ts
       - name: The go-binary adapter and the stale-lacks probe against varlatchd
         env:
           VARLATCH_REQUIRE_GO_BINARY: "1"

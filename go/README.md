@@ -67,6 +67,31 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   open. A TypeScript release that adds a purpose gets a fixture of its own
   (`node tsfixtures.mjs generate --ref v<release> ts-v<release>.json`,
   listed in `tsFixtures` in `envelope_test.go`).
+- `lib/backup/` (step 4.14): the installation archive (ADR-0033 as
+  ADR-0036 and Decision 7 amend it), Apache-2.0 for the CLI's `admin
+  backup` in steps 5 and 6.
+  - **The seal** is `packages/backup`'s, byte for byte: `VLTBAK01`, a
+    salt and a nonce, then one AES-256-GCM message (the header as
+    additional data) over the manifest's length, the manifest and the
+    components, under scrypt(BEK, salt), whether the BEK is a 32-byte key
+    file or a passphrase. One GCM message over up to 60 GiB needs a
+    streaming GCM (`gcm.go`, CTR and a 4-bit-table GHASH); its output
+    equals `crypto/cipher`'s for every length, additional data and write
+    split tested.
+  - **Sealing and opening.** `Seal` writes to a temporary file and links
+    it into place: never a partial archive, never a replaced one. `Open`
+    authenticates the whole stream before it reads the manifest, then
+    checks each component's size and SHA-256.
+  - **Manifests:** formats 1 and 2 are the TypeScript server's (step 7's
+    converter reads them), checked as its zod schema checks them; format 3
+    is Go's (`varlatch.db`, `configuration.json`; the release, its API
+    major and the database's schema version).
+  - **The keys:** `CheckKeys` opens the canaries with the candidate Root
+    KEKs, and `DistinctKeys` refuses a BEK that is a Root KEK.
+  - **Vectors in both directions:** `testdata/ts-vectors.json` holds
+    archives the TypeScript code sealed and manifests with zod's verdicts
+    (`services/varlatchd/test/go-backup-vectors.test.ts`), and go.yml has
+    the TypeScript code open what `TestGoVectors` seals.
 - `lib/release/`: the embedded release verifier (Decision 8): a release's
   SHA256SUMS must be signed by the release workflow for its tag (Sigstore,
   pinned identity and issuer; cosign's earlier bundle format and the newer
@@ -360,7 +385,21 @@ The server's packages:
   ```
 - `server/jsvalue`: JSON as `JSON.parse` and `JSON.stringify` read and
   write it (member order, numbers, escapes, lone UTF-16 surrogates kept as
-  `\udxxx`), and jsonb's key order and refusals.
+  `\udxxx`), and jsonb's key order and refusals; `ToNumber` is
+  `Number(string)`.
+- `server/custody` (step 4.14): the Root KEK's recovery copies
+  (`crypto/escrow.ts`).
+  - **The passphrase escrow blob:** scrypt with N 2^17, the KDF's
+    parameters bound into the envelope. Weakened parameters are refused,
+    and so is any derivation Node's 256 MiB `maxmem` would refuse, with
+    OpenSSL's message.
+  - **Shamir shares** over GF(2^8) (`vlks1.<x>.<k>.<y>.<fingerprint>`):
+    any k of n reconstruct the key, and the fingerprint catches a wrong or
+    mixed set.
+  - **Vectors in both directions:** `testdata/ts-vectors.json` holds the
+    TypeScript code's blobs, splits and refusals (with its messages), and
+    go.yml has the TypeScript code restore and combine what
+    `TestGoVectors` makes.
 - `server/write` (step 4.1a): the write path without row locks (step 4
   decision 4). The TypeScript server orders every row lock by one order
   (`domain/liveness.ts`, ADR-0054 amendment E) and holds some across

@@ -477,7 +477,9 @@ func TestReplayNoticesWrongRotationDeadlines(t *testing.T) {
 		return at.Add(time.Second).UTC().Format("2006-01-02T15:04:05.000Z")
 	}
 	// One replay (a replay is minutes under the race detector): the
-	// answer changed on HINTED's begin, the audit event on GRACED's.
+	// answer changed on HINTED's begin, the audit event on GRACED's, and on
+	// DEFAULTED's all three (answer, audit event, stored row) moved by the
+	// same hour, so they agree but are not its grace.
 	s := newServer(t, f)
 	target := s.target(t, f)
 	real := target.Handler
@@ -502,11 +504,32 @@ func TestReplayNoticesWrongRotationDeadlines(t *testing.T) {
 	check := rotationDeadlines(&begins)
 	// Audit events are append-only: the audited deadline is changed on
 	// its way to the check, as a server that audited another would.
+	hourLater := func(iso string) string {
+		at, _ := time.Parse(time.RFC3339Nano, iso)
+		return at.Add(time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
+	}
 	target.Inspect = func(t testing.TB, c paritytest.Recorded, raw paritytest.Raw) {
 		if strings.Contains(c.Path, "/GRACED/rotations") {
 			for _, e := range raw.Audit {
 				if m, ok := e["metadata"].(map[string]any); ok && e["event_type"] == "value.rotation_started" {
 					m["deadline"] = later(m["deadline"].(string))
+				}
+			}
+		}
+		if strings.Contains(c.Path, "/DEFAULTED/rotations") {
+			for i := range raw.Bodies {
+				raw.Bodies[i] = shifted.ReplaceAllFunc(raw.Bodies[i], func(m []byte) []byte {
+					return []byte(`"rotationDeadline":"` + hourLater(string(shifted.FindSubmatch(m)[1])) + `"`)
+				})
+			}
+			for _, e := range raw.Audit {
+				if m, ok := e["metadata"].(map[string]any); ok && e["event_type"] == "value.rotation_started" {
+					m["deadline"] = hourLater(m["deadline"].(string))
+				}
+			}
+			for _, r := range raw.Side["env_values"] {
+				if d, ok := r["rotation_deadline"].(string); ok {
+					r["rotation_deadline"] = hourLater(d)
 				}
 			}
 		}
@@ -517,6 +540,7 @@ func TestReplayNoticesWrongRotationDeadlines(t *testing.T) {
 	for _, want := range []string{
 		"begin a rotation, the Contract's grace: the answer's, the audit event's and the stored deadline differ",
 		"begin a rotation, its own grace: the answer's, the audit event's and the stored deadline differ",
+		"begin a rotation, the default grace: deadline",
 	} {
 		found := false
 		for _, e := range rec.errs {

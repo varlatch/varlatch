@@ -50,8 +50,8 @@ GO='^go/|^\.github/workflows/go\.yml$'
 # Go test data that services/varlatchd's tests produce from the TypeScript
 # server or Node.js, or read (go-authz-vectors, go-audit-vectors, go-write-vectors, go-parity,
 # go-values-fixture, go-core-fixture through the parity kit, go-contract-vectors,
-# go-timestamp-vectors).
-SHARED='^go/server/(authz|audit|write)/testdata/ts-vectors\.json$|^go/lib/contract/testdata/ts-vectors\.json$|^go/server/environments/testdata/pg-timestamps\.json$|^go/server/paritytest/testdata/[a-z0-9.-]+\.json$|^go/server/httpserver/testdata/known-differences\.json$|^go/server/values/testdata/values-v[0-9.]+\.json$|^go/lib/whatwg/(nodeidna_table\.go|testdata/node-idna\.json|testdata/nodeidna\.mjs)$'
+# go-timestamp-vectors, go-backup-vectors).
+SHARED='^go/server/(authz|audit|write|custody)/testdata/ts-vectors\.json$|^go/lib/(contract|backup)/testdata/ts-vectors\.json$|^go/server/environments/testdata/pg-timestamps\.json$|^go/server/paritytest/testdata/[a-z0-9.-]+\.json$|^go/server/httpserver/testdata/known-differences\.json$|^go/server/values/testdata/values-v[0-9.]+\.json$|^go/lib/whatwg/(nodeidna_table\.go|testdata/node-idna\.json|testdata/nodeidna\.mjs)$'
 
 # True when a path lies inside a workspace package (pnpm-workspace.yaml).
 in_package() {
