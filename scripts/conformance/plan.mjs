@@ -60,6 +60,8 @@ export const PLAN = [
   // CLI under test (this checkout, or the pinned release's commit).
   { suite: "mcp", args: (ctx) => [ctx.origin, ctx.token, ctx.seededSecret] },
   { suite: "sdk", args: (ctx) => [ctx.origin, ctx.token, ctx.seededSecret] },
+  // Security Controls over the API, in an Organization of its own.
+  { suite: "security", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "doctor", args: () => [] },
   { suite: "convex-down", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "cli-download-off", args: (ctx) => [ctx.origin] },

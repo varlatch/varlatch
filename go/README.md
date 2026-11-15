@@ -438,6 +438,34 @@ The server's packages:
   reads them. Search keeps no derived state (no index or cache): every
   search reads the live rows, so the migration (step 7) has nothing of
   its own to copy.
+- `server/security` (step 4.3a): the Organization's Security Controls
+  (ADR-0054). A change (`ChangeControl`, `domain/securitycontrols.ts`)
+  takes the Organization's gate exclusive, so it waits for every external
+  effect of the Organization and every later one sees the new mode, and
+  the requester's gate (exclusive when the request carries an approval);
+  in its job, the writer's checks (a change is recovery while frozen), the
+  passkey-verification checkpoint, `organization.manage` rechecked (a
+  denial audited after the job only while a control is on), the expected
+  version, then a loosening change consumes the step-up approval bound to
+  exactly it (`auth.ConsumeApproval`), or answers `STEP_UP_REQUIRED` with
+  a new intent (`WithApproval`, `auth.StepUpRequired`). `Prepare` is the
+  protected-operation framework (`protected.ts`) the later slices' writes
+  run in their jobs: the controls read in the job, credential-lifetime's
+  refusals and default, the existence preflight, the checkpoint, the exact
+  binding, consumption, and the report counts (`Prepared.Count`). Report
+  counters (`securityreport.ts`) are counted in the counting operation's
+  own job, and the summary worker (`RunLoop`, every 60 seconds in the
+  daemon, under a singleton gate) turns each hour's rows into
+  `security_control.would_block` events once the hour has been over for 10
+  minutes, a batch per job, then deletes rows 35 days after their summary.
+  Served by `server/httpserver/security.go` (`listSecurityControls`,
+  `changeSecurityControl`, `securityControlReport`,
+  `securityApprovalKeys`). Counters, their summaries and open intents are
+  data the migration copies (step 7). The approval keys list admins by
+  name in byte order. This is an intentional wire difference, not a
+  defect: the TypeScript order follows the PostgreSQL database's
+  collation (the test databases' C collation is byte order, which the
+  security fixture records; a production cluster's may be a locale's).
 - `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
   decision 3). `services/varlatchd/test/go-fixture-kit.ts` has the
   TypeScript server build a database through its own `/v1`, run a table of
@@ -666,7 +694,8 @@ Not reproduced:
 | TypeScript | Effect | Go | Shown by | Conformance |
 | --- | --- | --- | --- | --- |
 | `mirror/publisher.ts:209` orders Convex mirror events by the text form of `event_order` | events after position 9 can be published out of order | nothing to port: there is no Convex in Go | | none |
-| `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | step 4.3's concurrent export test (pending) | none |
+| `domain/securityreport.ts` `countWouldBlock`, a count whose hour and the current hour are both already summarized (possible only after the clock moved back across a summarized hour) | the count is dropped (an error is logged): the stored total is one short | the count goes to the hour after the last summarized one for its key, which no summary covers yet, so every committed count reaches exactly one summary; with a clock that does not move back nothing differs | `server/security` `TestCountsSurviveAClockMovedBack` | none |
+| `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | `server/values` `TestConcurrentExportsUnderReportCountExactly`: 24 concurrent named and all-authorized exports in one bucket all succeed and the counter is exact | none |
 
 ## Before the first Go release
 

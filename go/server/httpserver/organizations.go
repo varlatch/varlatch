@@ -122,10 +122,12 @@ func (q *orgRequest) authorizeOn(ctx context.Context, action string, resource au
 }
 
 // refused audits a refusal the TypeScript server audits from app.onError,
-// once, after the job or read that refused it: the incident freeze
+// once, after the job or read that refused it: an authorization denial a
+// job rolled back (auditDeferredDenial), the incident freeze
 // (auditFrozenRefusal, with Retry-After) and passkey-verification
 // (auditPasskeyRefusal). Best effort, as there.
 func (q *orgRequest) refused(ctx context.Context, err error) error {
+	q.recordDeferredDenial(ctx, err)
 	var frozen *authz.FrozenError
 	var verification *auth.VerificationRefusal
 	var event *audit.Event

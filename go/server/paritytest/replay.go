@@ -768,3 +768,35 @@ func plainJSON(v any) any {
 	_ = dec.Decode(&out)
 	return out
 }
+
+// PGRows is a table's rows in PostgreSQL's form, as go-fixture-kit.ts's
+// exportRows reads them, in no particular order.
+func PGRows(t testing.TB, store *storage.DB, table string) []Row { return pgRows(t, store, table) }
+
+// PGAudit is the audit events (AuditColumns) of the given type, in
+// PostgreSQL's form, in their order.
+func PGAudit(t testing.TB, store *storage.DB, eventType string) []Row {
+	t.Helper()
+	s, err := readSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Row
+	for _, r := range Rows(t, store, "SELECT "+strings.Join(AuditColumns, ", ")+" FROM audit_events WHERE event_type = ? ORDER BY event_order", eventType) {
+		pr := Row{}
+		for _, col := range AuditColumns {
+			v, err := pgValue(s.types["audit_events"][col], r[col])
+			if err != nil {
+				t.Fatalf("audit_events.%s: %v", col, err)
+			}
+			pr[col] = v
+		}
+		out = append(out, pr)
+	}
+	return out
+}
+
+// Same reports whether two JSON values are equal, each compared in its
+// canonical text after a JSON round trip (the file's json.Number and
+// our own types alike).
+func Same(got, want any) bool { return Canonical(plainJSON(got)) == Canonical(plainJSON(want)) }

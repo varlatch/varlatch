@@ -50,15 +50,22 @@ type rawKey struct{}
 type keptRequest struct {
 	query url.Values
 	body  []byte
+	// approval is the Varlatch-Approval header as sent (every line,
+	// joined), present or not.
+	approval        string
+	approvalPresent bool
 }
 
 // keepRaw keeps the request's query and body for the operation, and hands
 // the generated wrapper an empty object and no approval header, which it
-// would otherwise bind (and could refuse) before the operation runs: the
-// TypeScript server reads Varlatch-Approval only for an export under
-// admin-step-up's enforce, which this build does not serve.
+// would otherwise bind (and could refuse) before the operation runs: an
+// operation reads Varlatch-Approval where the TypeScript route does
+// (approvalOf).
 func keepRaw(r *http.Request) *http.Request {
 	raw := keptRequest{query: parseQuery(r.URL.RawQuery)}
+	if _, present := r.Header["Varlatch-Approval"]; present {
+		raw.approval, raw.approvalPresent = headerValue(r, "Varlatch-Approval"), true
+	}
 	if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
 		b, err := io.ReadAll(r.Body)
 		_ = r.Body.Close()
