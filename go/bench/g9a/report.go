@@ -189,7 +189,25 @@ type Report struct {
 	FsyncUnderLoad []string        `json:"fsyncUnderLoad"`
 	Dropped        float64         `json:"droppedIterations"`
 	ServerBusy     int64           `json:"serverBusy"`
+	// Stages are the disclosures' per-stage timings (stages.json, which
+	// varlatchd's g9a build writes; step 4 decision 7), for diagnosis
+	// only: no criterion reads them.
+	Stages []StageTiming `json:"stages,omitempty"`
 }
+
+// StageTiming is one stage of the disclosures (go/server/stages Summary).
+type StageTiming struct {
+	Stage  string  `json:"stage"`
+	Count  uint64  `json:"count"`
+	MeanMs float64 `json:"meanMs"`
+	P50Ms  float64 `json:"p50Ms"`
+	P95Ms  float64 `json:"p95Ms"`
+	P99Ms  float64 `json:"p99Ms"`
+	MaxMs  float64 `json:"maxMs"`
+}
+
+// FileStages is the server's per-stage timings, when it wrote them.
+const FileStages = "stages.json"
 
 // varlatchd's request window (go/server/httpserver/window.go, as the
 // TypeScript server keeps it): WindowLimit requests per client address in
@@ -476,6 +494,13 @@ func Analyze(dir string) (*Report, error) {
 	// not shown.
 	access, err := ReadAccessLog(filepath.Join(dir, FileAccessLog))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, FileStages)); err == nil {
+		if err := json.Unmarshal(b, &r.Stages); err != nil {
+			return nil, fmt.Errorf("%s: %w", FileStages, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	r.analyze(events, reqs, sum)
@@ -1117,6 +1142,13 @@ func (r *Report) Markdown() string {
 	fmt.Fprintf(&b, "## Memory\n\nCgroup anon after %gs: max %.1f MiB (limit %.0f MiB). Reported only: RSS max %.1f MiB, memory.current max %.1f MiB. memory.events: high %d, max %d, oom %d, oom_kill %d. memory.max %q, memory.swap.max %q.\n\n",
 		r.Plan.Thresholds.MemoryAfterSeconds, r.MemoryMaxMiB, r.Plan.Thresholds.MemoryMiB, r.RSSMaxMiB, r.CurrentMaxMiB, me.High, me.Max, me.OOM, me.OOMKill, r.System.Cgroup.MemoryMax, r.System.Cgroup.SwapMax)
 
+	if len(r.Stages) > 0 {
+		b.WriteString("\n## Disclosure stages\n\nWhere a disclosure's time goes inside varlatchd (stages.json; for diagnosis, no criterion reads it). Percentiles are within 2 %.\n\n| stage | count | mean ms | p50 ms | p95 ms | p99 ms | max ms |\n|---|---:|---:|---:|---:|---:|---:|\n")
+		for _, st := range r.Stages {
+			fmt.Fprintf(&b, "| %s | %d | %.3f | %.3f | %.3f | %.3f | %.3f |\n", st.Stage, st.Count, st.MeanMs, st.P50Ms, st.P95Ms, st.P99Ms, st.MaxMs)
+		}
+		b.WriteString("\n")
+	}
 	d := r.System.Disk
 	fmt.Fprintf(&b, "## Disk\n\nThe verdict holds for this class of disk only.\n\n- directory %s on %s (%s, %s), mounted at %s\n- device %s %s %s, model %q, rotational %q, under %v\n- %d CPUs, %s\n",
 		d.Dir, d.Source, d.FSType, d.Options, d.MountPoint, d.Device, d.DevName, d.DMName, d.Model, d.Rotational, d.Slaves, r.System.CPUs, r.System.GoOS)

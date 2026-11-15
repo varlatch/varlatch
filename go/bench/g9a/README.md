@@ -158,6 +158,18 @@ load test.
   device, device mapper and the devices under it, model, rotational), the
   cgroup's limits (`memory.max`, `memory.swap.max`, and `cpu.max` read
   once), the idle fsync summary.
+- `stages.json` (step 4 decision 7, to diagnose G9a's slower baseline):
+  where each disclosure's time goes inside varlatchd, per stage, as count,
+  mean, p50, p95, p99 and maximum (log buckets, within 2 %): admission
+  (the body limit, the request window, routing), authentication, the read
+  snapshot (authorization's reads included), authorization, the audit
+  job's wait for the writer, the commit of its batch, decryption and
+  encoding (`go/server/stages`). varlatchd writes it when the run ends;
+  `GET /run/stages` shows it during the run. The report shows it as a
+  table; no criterion reads it.
+- `cpu.pprof`, with `G9A_PROFILE=<seconds>`: a CPU profile of varlatchd
+  from the load's start (`GET /run/profile?seconds=N`, 1 to 600, in
+  pprof's format), for `go tool pprof`.
 
 ## What the report judges
 

@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/stages"
 )
 
 // The /v1 bearer authentication (app.ts, app.use("/v1/*"); ADR-0018 §6):
@@ -114,10 +116,18 @@ func writeErrorDetails(w http.ResponseWriter, r *http.Request, status int, code,
 	writeJS(w, status, jsvalue.Object{{Key: "error", Value: e}})
 }
 
+// encoded is a body already written as JSON (an operation that times its
+// encoding, server/stages).
+type encoded []byte
+
 // writeJS writes a JSON value as JSON.stringify does.
 func writeJS(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	if b, ok := body.(encoded); ok {
+		_, _ = w.Write(b)
+		return
+	}
 	_, _ = w.Write(jsvalue.Stringify(body))
 }
 
@@ -252,8 +262,11 @@ func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.Handler
 			u.RawQuery = ""
 			r.URL = &u
 		}
+		stages.Admitted(r.Context())
 		if !open {
+			t := time.Now()
 			p, ok := s.authenticate(w, r)
+			stages.Since(r.Context(), "authentication", t)
 			if !ok {
 				return
 			}

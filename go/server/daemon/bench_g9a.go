@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime/pprof"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -34,6 +36,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/stages"
 	"github.com/varlatch/varlatch/go/server/values"
 )
 
@@ -143,6 +146,7 @@ func benchServe(opts Options, p g9a.Plan, data, out string) int {
 		fmt.Fprintf(opts.Stderr, "varlatchd g9a: %v\n", err)
 		return ExitFailure
 	}
+	hist := stages.NewHistogram()
 	h := &hooks{
 		storage: func(o *storage.Options) {
 			// The plan's bound: the shipped one for the gate, a small one for
@@ -170,8 +174,9 @@ func benchServe(opts Options, p g9a.Plan, data, out string) int {
 			return runner.Prepare(ctx, sys, seeded)
 		},
 		wrap: func(next http.Handler) http.Handler {
-			control := runner.Handler()
+			control := benchControl(runner.Handler(), hist)
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				arrived := time.Now()
 				if strings.HasPrefix(r.URL.Path, "/run/") {
 					control.ServeHTTP(w, r)
 					return
@@ -181,12 +186,18 @@ func benchServe(opts Options, p g9a.Plan, data, out string) int {
 					return
 				}
 				rec := &statusRecorder{ResponseWriter: w}
-				next.ServeHTTP(rec, r)
+				// The disclosure's stages (step 4 decision 7).
+				next.ServeHTTP(rec, r.WithContext(stages.With(r.Context(), hist, arrived)))
 				runner.Count(rec.status != http.StatusOK, false)
 			})
 		},
-		stop:    runner.Done(),
-		stopped: runner.Finish,
+		stop: runner.Done(),
+		stopped: func() {
+			runner.Finish()
+			if err := writeStages(out, hist); err != nil {
+				log.Error("the run's stage timings", "error", err)
+			}
+		},
 		closed: func() {
 			if err := runner.Close(); err != nil {
 				log.Error("the run's event log", "error", err)
@@ -738,4 +749,53 @@ func (t *benchTarget) reconcile(ctx context.Context, targetID string, run int) (
 		return 0, fmt.Errorf("run row: %w", err)
 	}
 	return k, nil
+}
+
+// writeStages writes the run's per-stage timings of its disclosures
+// (stages.Summary, one per stage) when the run ends.
+func writeStages(out string, h *stages.Histogram) error {
+	b, err := json.MarshalIndent(h.Summaries(), "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(out, g9a.FileStages), append(b, '\n'), 0o644)
+}
+
+// benchControl adds to the run's control routes (outside /v1, the request
+// window and the access log):
+//
+//	GET /run/stages              the disclosures' stage timings so far
+//	GET /run/profile?seconds=N   a CPU profile of the next N seconds (1 to
+//	                             600, default 30), in pprof's format, as
+//	                             net/http/pprof serves it
+func benchControl(runner http.Handler, h *stages.Histogram) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/run/", runner)
+	mux.HandleFunc("GET /run/stages", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(h.Summaries())
+	})
+	mux.HandleFunc("GET /run/profile", func(w http.ResponseWriter, r *http.Request) {
+		seconds := 30
+		if v := r.URL.Query().Get("seconds"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > 600 {
+				http.Error(w, "seconds: 1 to 600", http.StatusBadRequest)
+				return
+			}
+			seconds = n
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		if err := pprof.StartCPUProfile(w); err != nil {
+			// Another profile is running.
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		select {
+		case <-time.After(time.Duration(seconds) * time.Second):
+		case <-r.Context().Done():
+		}
+		pprof.StopCPUProfile()
+	})
+	return mux
 }

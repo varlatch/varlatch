@@ -21,6 +21,7 @@ import (
 	"github.com/varlatch/varlatch/go/bench/g9a"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/stages"
 )
 
 // settingsLog collects what serving reports as its effective settings.
@@ -201,6 +202,25 @@ func TestBenchRun(t *testing.T) {
 				t.Fatalf("disclosure for %s: %d %s", m.Address, resp.StatusCode, body)
 			}
 		}
+		// Each disclosure's stages (step 4 decision 7), and a CPU profile.
+		var sums []stages.Summary
+		if code := getJSON(t, base+"/run/stages", &sums); code != 200 || len(sums) != len(stages.Names) {
+			t.Fatalf("/run/stages: %d %+v", code, sums)
+		}
+		for i, sm := range sums {
+			if sm.Stage != stages.Names[i] || sm.Count < 20 || sm.P50Ms <= 0 || sm.P99Ms < sm.P50Ms {
+				t.Errorf("stage %+v", sm)
+			}
+		}
+		prof, err := http.Get(base + "/run/profile?seconds=1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pb, _ := io.ReadAll(prof.Body)
+		prof.Body.Close()
+		if prof.StatusCode != 200 || len(pb) < 2 || pb[0] != 0x1f || pb[1] != 0x8b {
+			t.Errorf("/run/profile: %d, %d bytes", prof.StatusCode, len(pb))
+		}
 		resp, err := http.Post(base+"/run/start", "", nil)
 		if err != nil || resp.StatusCode != 200 {
 			t.Fatalf("/run/start: %v %v", err, resp)
@@ -208,6 +228,10 @@ func TestBenchRun(t *testing.T) {
 		resp.Body.Close()
 		time.Sleep(5 * time.Second) // stopping waits for the converge run
 	})
+	var final []stages.Summary
+	if b, err := os.ReadFile(filepath.Join(out, g9a.FileStages)); err != nil || json.Unmarshal(b, &final) != nil || len(final) != len(stages.Names) {
+		t.Errorf("%s: %v %s", g9a.FileStages, err, b)
+	}
 	events, err := g9a.ReadEvents(filepath.Join(out, g9a.FileEvents))
 	if err != nil {
 		t.Fatal(err)

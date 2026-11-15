@@ -1000,3 +1000,31 @@ func TestReportCPU(t *testing.T) {
 		}
 	}
 }
+
+// The server's stage timings, when it wrote them, are shown and kept; they
+// change no verdict.
+func TestReportStages(t *testing.T) {
+	shortGate(t)
+	dir := good().write(t)
+	stages := `[{"stage":"admission","count":500,"meanMs":0.05,"p50Ms":0.04,"p95Ms":0.1,"p99Ms":0.2,"maxMs":1.5},{"stage":"snapshot","count":500,"meanMs":2,"p50Ms":1.9,"p95Ms":3,"p99Ms":4.5,"maxMs":9}]`
+	if err := os.WriteFile(filepath.Join(dir, FileStages), []byte(stages), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := WriteReport(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Verdict != Pass || len(rep.Stages) != 2 || rep.Stages[1].P99Ms != 4.5 {
+		t.Fatalf("%s %+v", rep.Verdict, rep.Stages)
+	}
+	md, _ := os.ReadFile(filepath.Join(dir, FileReport))
+	if !strings.Contains(string(md), "| snapshot | 500 | 2.000 | 1.900 | 3.000 | 4.500 | 9.000 |") {
+		t.Errorf("report.md:\n%s", md)
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileStages), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteReport(dir); err == nil {
+		t.Error("an unreadable stages.json was accepted")
+	}
+}

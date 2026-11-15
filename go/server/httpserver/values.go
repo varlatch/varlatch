@@ -9,9 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/authz"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/stages"
 	"github.com/varlatch/varlatch/go/server/values"
 )
 
@@ -157,7 +160,10 @@ func (o *operations) DiscloseSecrets(ctx context.Context, _ api.DiscloseSecretsR
 		return nil, valuesError(err)
 	}
 	writerOf(ctx).Header().Set("Cache-Control", "no-store")
-	return ok(body), nil
+	t := time.Now()
+	b := jsvalue.Stringify(body)
+	stages.Since(ctx, "encoding", t)
+	return ok(encoded(b)), nil
 }
 
 // notBuiltError answers 501 NOT_IMPLEMENTED_YET from inside an operation

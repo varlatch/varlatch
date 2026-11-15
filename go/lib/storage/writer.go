@@ -23,6 +23,10 @@ type job struct {
 	// state moves from queued to started (the writer took it) or to
 	// cancelled (the caller gave up first), never both.
 	state atomic.Int32
+	// When it was queued and started, and its batch's COMMIT time, for
+	// WithTiming: written by the writer before done, read after it.
+	queued, started time.Time
+	commit          time.Duration
 }
 
 const (
@@ -117,6 +121,15 @@ func jobOwnError(err error) bool {
 // started, Write waits for its outcome.
 func (db *DB) Write(ctx context.Context, fn func(tx *Tx) error) error {
 	j := &job{fn: fn, done: make(chan error, 1)}
+	timing := timingOf(ctx)
+	if timing != nil {
+		j.queued = time.Now()
+		defer func() {
+			if !j.started.IsZero() {
+				timing(JobTiming{QueueWait: j.started.Sub(j.queued), Commit: j.commit})
+			}
+		}()
+	}
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
@@ -271,6 +284,9 @@ func (db *DB) runBatch(batch []*job) {
 			continue // the caller gave up before the job started
 		}
 		ran[i] = true
+		if !j.queued.IsZero() {
+			j.started = time.Now()
+		}
 		sp := "job" + strconv.Itoa(i)
 		if _, err := db.wconn.ExecContext(bg, "SAVEPOINT "+sp); err != nil {
 			fail("savepoint", err)
@@ -330,6 +346,7 @@ func (db *DB) runBatch(batch []*job) {
 			if results[i] != nil {
 				ownErrors++
 			}
+			j.commit = commit
 			j.done <- results[i]
 		}
 	}

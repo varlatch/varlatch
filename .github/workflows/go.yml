@@ -232,6 +232,10 @@ jobs:
       # threshold, for a phase or for a window with no failed request, is
       # tolerated here; failed, dropped or busy requests are not, nor is any
       # other failure but the smoke bound's WAL peak.
+      # The run also records where each disclosure's time goes (stages.json,
+      # every stage present) and a 60 s CPU profile from the load's start
+      # (step 4 decision 7: G9a's slower baseline is diagnosed from them),
+      # kept with the report as an artifact.
       - name: The G9a harness runs and judges a smoke run
         env:
           CGO_ENABLED: "0"
@@ -240,7 +244,7 @@ jobs:
           (cd go && go build -o "$RUNNER_TEMP/g9a" ./bench/g9a/cmd/g9a && go build -tags g9a -o "$RUNNER_TEMP/varlatchd-g9a" ./cmd/varlatchd)
           "$RUNNER_TEMP/g9a" plan -scale 0.05 -wal-bound 524288 -backup-step-pages 256 > "$RUNNER_TEMP/smoke-plan.json"
           status=0
-          G9A_BIN="$RUNNER_TEMP/g9a" G9A_VARLATCHD="$RUNNER_TEMP/varlatchd-g9a" \
+          G9A_BIN="$RUNNER_TEMP/g9a" G9A_VARLATCHD="$RUNNER_TEMP/varlatchd-g9a" G9A_PROFILE=60 \
             G9A_SCOPE="sudo systemd-run --scope --quiet --uid=$(id -u) --gid=$(id -g) -p MemoryMax=1G -p MemorySwapMax=0" \
             go/bench/g9a/run.sh "$out" "$RUNNER_TEMP/smoke-plan.json" || status=$?
           [ "$status" -le 2 ] || { cat "$out/server.log" "$out/k6.log" || true; exit 1; }
@@ -264,7 +268,19 @@ jobs:
                   | select(test("^[a-z-]+ window at [-+0-9.]+s: p95 [0-9.]+ ms, 0 failed of [0-9]+$") | not)
                  ] == [])
             and ([.inconclusive[] | select(startswith("the plan differs from G9a") | not)] == [])
+            and (.stages | length) == 8 and ([.stages[] | .count > 0] | all)
           ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
+          [ -s "$out/cpu.pprof" ] || { echo "no CPU profile"; exit 1; }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: g9a-smoke-profile
+          path: |
+            ${{ runner.temp }}/g9a-smoke/report.md
+            ${{ runner.temp }}/g9a-smoke/stages.json
+            ${{ runner.temp }}/g9a-smoke/cpu.pprof
+          retention-days: 30
+          if-no-files-found: warn
 
       # The varlatchd unit: systemd accepts it, its exposure score stays at
       # or under 2.0 (1.6 when written), and the shipped sandbox lets

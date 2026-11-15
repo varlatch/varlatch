@@ -378,6 +378,14 @@ The server's packages:
   body too. The parity replays (`server/orgs`, `server/values`) check
   every response with it; their requests are outside the document on
   purpose in places, as the TypeScript fixtures run the unchecked app.
+- `server/stages` (step 4.1a, step 4 decision 7): per-stage timings of a
+  request (admission, authentication, the read snapshot, authorization,
+  the write job's wait for the writer and its batch's commit, decryption,
+  encoding), recorded only when a request carries a recorder: the `g9a`
+  build attaches one to every disclosure, writes `stages.json` with the
+  run and serves `GET /run/stages` and a CPU profile at `GET
+  /run/profile?seconds=N` (`bench/g9a/README.md`). The storage engine
+  reports a job's queue wait and commit through `storage.WithTiming`.
 - `server/ids`, `server/domainerr`: domain IDs (`db/ids.ts`) and
   `DomainError`.
 
