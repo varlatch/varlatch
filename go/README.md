@@ -381,11 +381,16 @@ The server's packages:
 - `server/stages` (step 4.1a, step 4 decision 7): per-stage timings of a
   request (admission, authentication, the read snapshot, authorization,
   the write job's wait for the writer and its batch's commit, decryption,
-  encoding), recorded only when a request carries a recorder: the `g9a`
-  build attaches one to every disclosure, writes `stages.json` with the
-  run and serves `GET /run/stages` and a CPU profile at `GET
+  encoding), summed per request and handed over once. They exist in the
+  `g9a` build only: elsewhere the marks are empty functions on an empty
+  type, and `server/stages/check-release.sh` (go.yml) checks in the
+  assembly that a release build's marked functions read no clock for them.
+  The `g9a` build attaches a recorder to every disclosure, writes
+  `stages.json` with the run, serves `GET /run/stages`, takes a CPU
+  profile from the load's start with `-profile` and on demand at `GET
   /run/profile?seconds=N` (`bench/g9a/README.md`). The storage engine
-  reports a job's queue wait and commit through `storage.WithTiming`.
+  reports a job's queue wait and commit through `storage.WithTiming`, also
+  in the `g9a` build only.
 - `server/ids`, `server/domainerr`: domain IDs (`db/ids.ts`) and
   `DomainError`.
 

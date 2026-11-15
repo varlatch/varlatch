@@ -20,9 +20,9 @@
 #   G9A_DATA       the data directory to measure (default OUT/data); its
 #                  disk is the one the verdict holds for
 #   G9A_LISTEN     the server's address (default 127.0.0.1:8080)
-#   G9A_PROFILE    seconds of CPU profile to take from the load's start
-#                  (the g9a build's GET /run/profile), written to
-#                  OUT/cpu.pprof; at most the load's length (none by default)
+#   G9A_PROFILE    seconds of CPU profile varlatchd takes from the load's
+#                  start (POST /run/start, once k6 is initialized), written
+#                  to OUT/cpu.pprof (none by default)
 #   G9A_SCOPE      a command the server runs under for G9's memory limits,
 #                  as root on the benchmark host:
 #                  systemd-run --scope --quiet -p MemoryMax=1G -p MemorySwapMax=0
@@ -63,7 +63,7 @@ fi
 
 # The server: seeds, probes the idle disk, then waits for the load.
 # shellcheck disable=SC2086 # G9A_SCOPE is a command line
-${G9A_SCOPE:-} "$VARLATCHD" g9a -plan "$OUT/plan.in.json" -data "$DATA" -out "$OUT" -listen "$LISTEN" 2> "$OUT/server.log" &
+${G9A_SCOPE:-} "$VARLATCHD" g9a -plan "$OUT/plan.in.json" -data "$DATA" -out "$OUT" -listen "$LISTEN" -profile "${G9A_PROFILE:-0}" 2> "$OUT/server.log" &
 SERVER=$!
 # shellcheck disable=SC2329 # called by the trap
 stop_server() { kill "$SERVER" 2>/dev/null || true; }
@@ -75,12 +75,6 @@ until curl -fsS "http://$LISTEN/healthz" > /dev/null 2>&1; do
   i=$((i + 1)); [ $i -le 1200 ] || die "the server was not ready after 10 minutes"
   sleep 0.5
 done
-
-PROFILER=
-if [ -n "${G9A_PROFILE:-}" ]; then
-  curl -fsS "http://$LISTEN/run/profile?seconds=$G9A_PROFILE" -o "$OUT/cpu.pprof" &
-  PROFILER=$!
-fi
 
 # The load. k6 prints one line per request on its console.
 set -- run -q --no-color --log-format raw --console-output "$OUT/requests.log" \
@@ -96,9 +90,6 @@ else
 fi
 [ "$k6_status" -eq 0 ] || echo "run.sh: k6 exited $k6_status (see $OUT/k6.log)" >&2
 
-if [ -n "$PROFILER" ]; then
-  wait "$PROFILER" || echo "run.sh: the CPU profile failed" >&2
-fi
 curl -fsS -X POST "http://$LISTEN/run/stop" > /dev/null || true
 wait "$SERVER" || { trap - EXIT; cat "$OUT/server.log" >&2; die "the server failed"; }
 trap - EXIT

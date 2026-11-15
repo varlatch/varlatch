@@ -3,66 +3,9 @@
 package stages
 
 import (
-	"context"
-	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/varlatch/varlatch/go/lib/storage"
 )
-
-// Without a Recorder the marks record nothing; with one, every stage and the
-// storage engine's queue wait and commit of a write made with the context.
-func TestStages(t *testing.T) {
-	ctx := context.Background()
-	Since(ctx, "snapshot", time.Now()) // no Recorder: nothing to record, no panic
-	Admitted(ctx)
-
-	h := NewHistogram()
-	rctx := With(ctx, h, time.Now().Add(-3*time.Millisecond))
-	Admitted(rctx)
-	Since(rctx, "authorization", time.Now().Add(-time.Millisecond))
-	Since(rctx, "authorization", time.Now().Add(-2*time.Millisecond))
-	store, err := storage.Open(ctx, storage.Options{Path: filepath.Join(t.TempDir(), "s.db")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if err := store.Write(rctx, func(tx *storage.Tx) error {
-		_, err := tx.ExecContext(rctx, "CREATE TABLE x (a INTEGER) STRICT")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// A write without the context reports nothing.
-	if err := store.Write(ctx, func(tx *storage.Tx) error { return nil }); err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]Summary{}
-	var order []string
-	for _, s := range h.Summaries() {
-		got[s.Stage] = s
-		order = append(order, s.Stage)
-	}
-	want := []string{"admission", "authorization", "queue", "commit"}
-	if len(order) != len(want) {
-		t.Fatalf("stages %v", order)
-	}
-	for i, s := range want {
-		if order[i] != s {
-			t.Fatalf("stages %v, want %v", order, want)
-		}
-	}
-	if a := got["admission"]; a.Count != 1 || a.P50Ms < 3 || a.P50Ms > 3.5 {
-		t.Errorf("admission %+v", a)
-	}
-	if a := got["authorization"]; a.Count != 2 || a.P50Ms < 1 || a.P50Ms > 1.1 || a.MaxMs < 2 || a.MaxMs > 2.1 {
-		t.Errorf("authorization %+v", a)
-	}
-	if c := got["commit"]; c.Count != 1 || c.MaxMs <= 0 {
-		t.Errorf("commit %+v", c)
-	}
-}
 
 // The buckets hold every time from under 100 ns to beyond 100 s, within 2 %.
 func TestBuckets(t *testing.T) {
@@ -76,5 +19,17 @@ func TestBuckets(t *testing.T) {
 				t.Errorf("%v: bucket %d up to %v", d, i, up)
 			}
 		}
+	}
+}
+
+// Summaries come in the stages' order, then others by name.
+func TestSummaries(t *testing.T) {
+	h := NewHistogram()
+	for _, s := range []string{"zeta", "commit", "admission", "commit"} {
+		h.Add(s, 2*time.Millisecond)
+	}
+	got := h.Summaries()
+	if len(got) != 3 || got[0].Stage != "admission" || got[1].Stage != "commit" || got[1].Count != 2 || got[2].Stage != "zeta" || got[1].P50Ms < 2 || got[1].P50Ms > 2.05 {
+		t.Errorf("%+v", got)
 	}
 }

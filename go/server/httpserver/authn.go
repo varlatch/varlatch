@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
@@ -264,9 +263,9 @@ func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.Handler
 		}
 		stages.Admitted(r.Context())
 		if !open {
-			t := time.Now()
+			m := stages.Start()
 			p, ok := s.authenticate(w, r)
-			stages.Since(r.Context(), "authentication", t)
+			stages.Since(r.Context(), "authentication", m)
 			if !ok {
 				return
 			}

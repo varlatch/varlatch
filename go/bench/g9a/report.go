@@ -206,8 +206,13 @@ type StageTiming struct {
 	MaxMs  float64 `json:"maxMs"`
 }
 
-// FileStages is the server's per-stage timings, when it wrote them.
-const FileStages = "stages.json"
+// FileStages is the server's per-stage timings, when it wrote them;
+// FileCPUProfile its CPU profile from the load's start (varlatchd g9a
+// -profile).
+const (
+	FileStages     = "stages.json"
+	FileCPUProfile = "cpu.pprof"
+)
 
 // varlatchd's request window (go/server/httpserver/window.go, as the
 // TypeScript server keeps it): WindowLimit requests per client address in

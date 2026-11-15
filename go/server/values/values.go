@@ -186,8 +186,9 @@ type tracker struct {
 }
 
 func (t *tracker) decide(ctx context.Context, db query.DBTX, req Request, action string, r authz.Resource, hide bool) (authz.Decision, error) {
-	defer stages.Since(ctx, "authorization", time.Now())
+	m := stages.Start()
 	d, err := authz.Decide(ctx, db, req.authzPrincipal(), action, r, authz.Options{HideExistence: hide, RequestID: req.RequestID})
+	stages.Since(ctx, "authorization", m)
 	if err != nil {
 		return d, err
 	}
@@ -222,7 +223,13 @@ func (t *tracker) requireAccess(ctx context.Context, db query.DBTX, req Request,
 
 // snapshot runs read in one read transaction of the read-only pool.
 func (s *Service) snapshot(ctx context.Context, read func(tx *sql.Tx, now int64) error) error {
-	defer stages.Since(ctx, "snapshot", time.Now())
+	m := stages.Start()
+	err := s.readSnapshot(ctx, read)
+	stages.Since(ctx, "snapshot", m)
+	return err
+}
+
+func (s *Service) readSnapshot(ctx context.Context, read func(tx *sql.Tx, now int64) error) error {
 	tx, err := s.store.Reader().BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -462,7 +469,14 @@ func (s *Service) auditThenDecrypt(ctx context.Context, st *State, events []audi
 			return nil, err
 		}
 	}
-	defer stages.Since(ctx, "decryption", time.Now())
+	m := stages.Start()
+	out, err := s.decrypt(st, versionIDs)
+	stages.Since(ctx, "decryption", m)
+	return out, err
+}
+
+// decrypt opens exactly versionIDs from the captured ciphertext.
+func (s *Service) decrypt(st *State, versionIDs []string) (map[string]string, error) {
 	kek, err := s.orgKEK(st)
 	if err != nil {
 		return nil, err

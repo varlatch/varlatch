@@ -2,9 +2,10 @@
 
 // Package stages times the stages of a request (step 4 decision 7: G9a's
 // slower baseline is diagnosed with per-stage timings for a disclosure).
-// A request carries a Recorder only in the g9a build, which attaches one
-// to the disclosures it serves (server/daemon/bench_g9a.go); everywhere
-// else the marks cost a context lookup and record nothing.
+// Only the g9a build records them: it attaches a Recorder to the
+// disclosures it serves (server/daemon/bench_g9a.go). In every other build
+// the marks are empty functions on an empty type, inlined away: no clock is
+// read and no context looked up for them (record_off.go).
 //
 // The stages, in a request's order:
 //
@@ -20,55 +21,25 @@
 package stages
 
 import (
-	"context"
 	"math"
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/varlatch/varlatch/go/lib/storage"
 )
 
 // Names are the stages, in a request's order.
 var Names = []string{"admission", "authentication", "snapshot", "authorization", "queue", "commit", "decryption", "encoding"}
 
-// Recorder receives each stage's time.
+// Recorder receives each stage's time, once per request: a stage met
+// several times in one request (authorization) is summed first.
 type Recorder interface {
 	Add(stage string, d time.Duration)
 }
 
-type key struct{}
-
-type request struct {
-	r       Recorder
-	arrived time.Time
-}
-
-// With attaches r to a request that arrived at arrived; the storage
-// engine's job timings (queue wait and commit) of writes made with ctx go
-// to it too.
-func With(ctx context.Context, r Recorder, arrived time.Time) context.Context {
-	ctx = context.WithValue(ctx, key{}, &request{r: r, arrived: arrived})
-	return storage.WithTiming(ctx, func(t storage.JobTiming) {
-		r.Add("queue", t.QueueWait)
-		r.Add("commit", t.Commit)
-	})
-}
-
-// Since records the time since start as stage, if ctx has a Recorder.
-func Since(ctx context.Context, stage string, start time.Time) {
-	if q, _ := ctx.Value(key{}).(*request); q != nil {
-		q.r.Add(stage, time.Since(start))
-	}
-}
-
-// Admitted records admission: from the request's arrival to now, when its
-// operation's handler starts.
-func Admitted(ctx context.Context) {
-	if q, _ := ctx.Value(key{}).(*request); q != nil {
-		q.r.Add("admission", time.Since(q.arrived))
-	}
-}
+// Marks: Start takes a stage's start, Since records the time from it. In a
+// build without the g9a tag both are empty (record_off.go: Mark holds
+// nothing, Start reads no clock), so the request path pays nothing for
+// them; with it (record_on.go) they read the clock and record.
 
 // Histogram is a Recorder that keeps each stage's times in logarithmic
 // buckets (2 % wide, from 100 ns to 100 s), so its memory stays bounded

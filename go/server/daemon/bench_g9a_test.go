@@ -63,7 +63,7 @@ func benchRun(t *testing.T, p g9a.Plan, fn func(base string, manifest []g9a.Mani
 	done := make(chan int, 1)
 	var stderr syncBuffer
 	go func() {
-		done <- benchServe(Options{ConfigPath: conf, Stderr: &stderr, Signals: make(chan os.Signal), Ready: func(a net.Addr) { ready <- a.String() }}, p, data, out)
+		done <- benchServe(Options{ConfigPath: conf, Stderr: &stderr, Signals: make(chan os.Signal), Ready: func(a net.Addr) { ready <- a.String() }}, p, data, out, 30*time.Second)
 	}()
 	var base string
 	select {
@@ -228,6 +228,10 @@ func TestBenchRun(t *testing.T) {
 		resp.Body.Close()
 		time.Sleep(5 * time.Second) // stopping waits for the converge run
 	})
+	// The load's CPU profile, from POST /run/start to the run's end.
+	if b, err := os.ReadFile(filepath.Join(out, g9a.FileCPUProfile)); err != nil || len(b) < 2 || b[0] != 0x1f || b[1] != 0x8b {
+		t.Errorf("%s: %v, %d bytes", g9a.FileCPUProfile, err, len(b))
+	}
 	var final []stages.Summary
 	if b, err := os.ReadFile(filepath.Join(out, g9a.FileStages)); err != nil || json.Unmarshal(b, &final) != nil || len(final) != len(stages.Names) {
 		t.Errorf("%s: %v %s", g9a.FileStages, err, b)

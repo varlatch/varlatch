@@ -202,6 +202,18 @@ jobs:
           CGO_ENABLED: "0"
         run: go test -count=1 -tags g9a -run '^TestBench' ./server/daemon
 
+      # Per-stage timings (step 4 decision 7) exist in the g9a build only:
+      # its recording and the storage engine's job timings are tested with
+      # the tag, and a release build's request path reads no clock for them
+      # (the functions holding the marks, checked in the assembly).
+      - name: Stage timings only in the g9a build
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go test -count=1 -tags g9a ./server/stages ./lib/storage
+          sh server/stages/check-release.sh
+
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
       - name: install.sh and the G9a runner pass shellcheck
@@ -234,8 +246,10 @@ jobs:
       # other failure but the smoke bound's WAL peak.
       # The run also records where each disclosure's time goes (stages.json,
       # every stage present) and a 60 s CPU profile from the load's start
-      # (step 4 decision 7: G9a's slower baseline is diagnosed from them),
-      # kept with the report as an artifact.
+      # (POST /run/start, once k6 is initialized; step 4 decision 7: G9a's
+      # slower baseline is diagnosed from them), kept with the report as an
+      # artifact. A profile that shows under 200 ms of CPU in the disclosure
+      # path did not see the load, and fails the step.
       - name: The G9a harness runs and judges a smoke run
         env:
           CGO_ENABLED: "0"
@@ -271,6 +285,10 @@ jobs:
             and (.stages | length) == 8 and ([.stages[] | .count > 0] | all)
           ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
           [ -s "$out/cpu.pprof" ] || { echo "no CPU profile"; exit 1; }
+          disclose=$(cd go && go tool pprof -top -cum -nodecount=100000 -unit=ms -focus='values\.\(\*Service\)\.Disclose' "$out/cpu.pprof" 2>/dev/null \
+            | awk '$NF == "github.com/varlatch/varlatch/go/server/values.(*Service).Disclose" { sub(/ms$/, "", $4); print int($4) }')
+          echo "CPU in the disclosure path: ${disclose:-0} ms"
+          [ "${disclose:-0}" -ge 200 ] || { echo "the CPU profile did not see the load"; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
