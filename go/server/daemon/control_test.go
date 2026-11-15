@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -460,5 +462,98 @@ func TestDataDirectoryPath(t *testing.T) {
 	// The client accepts the directory's owner or root on the socket.
 	if !serverPeerAllowed(1000, 1000) || !serverPeerAllowed(0, 1000) || serverPeerAllowed(1001, 1000) {
 		t.Error("serverPeerAllowed")
+	}
+}
+
+// The resolution checks every link it follows and every directory it
+// passes through, at every hop. A test cannot create another user's files,
+// so ownerOf stands in: entries named here belong to uid 4242, "attacker".
+//   - an attacker's link in a sticky directory, pointing at a trusted
+//     directory, is refused (its owner could replace it later);
+//   - a trusted alias whose target passes through a directory the attacker
+//     owns (the jump in it could be replaced) is refused;
+//   - a chain of trusted links, relative and absolute, passes.
+func TestDataDirectoryLinkHops(t *testing.T) {
+	base := t.TempDir()
+	mkdir := func(p string, mode os.FileMode) string {
+		t.Helper()
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	link := func(target, at string) string {
+		t.Helper()
+		if err := os.Symlink(target, at); err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	trusted := mkdir(filepath.Join(base, "trusted"), 0o755)
+	mkdir(filepath.Join(trusted, "data"), 0o700)
+	sticky := mkdir(filepath.Join(base, "sticky"), os.ModeSticky|0o777)
+	attacker := mkdir(filepath.Join(base, "attacker"), 0o755)
+	attackerLink := link(trusted, filepath.Join(sticky, "link"))
+	jump := link(trusted, filepath.Join(attacker, "jump"))
+	alias := link(jump, filepath.Join(base, "alias"))
+
+	owned := map[string]bool{attackerLink: true, attacker: true, jump: true}
+	defer func(f func(string, fs.FileInfo) uint32) { ownerOf = f }(ownerOf)
+	ownerOf = func(p string, fi fs.FileInfo) uint32 {
+		if owned[p] {
+			return 4242
+		}
+		return fi.Sys().(*syscall.Stat_t).Uid
+	}
+	uid := os.Getuid()
+	for _, c := range []struct{ path, want string }{
+		{filepath.Join(attackerLink, "data"), "the link " + attackerLink + ", on its path, is owned by uid 4242"},
+		{filepath.Join(alias, "data"), attacker + ", on its path, is owned by uid 4242"},
+	} {
+		if _, err := checkServeDir(c.path, uid); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("serve, %s: %v", c.path, err)
+		}
+		if _, _, err := checkClientDir(c.path, uid); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("admin, %s: %v", c.path, err)
+		}
+	}
+
+	// Trusted links, a relative one through "..", then an absolute one.
+	hops := mkdir(filepath.Join(base, "hops"), 0o755)
+	rel := link("../trusted", filepath.Join(hops, "rel"))
+	abs := link(rel, filepath.Join(base, "abs"))
+	for _, p := range []string{filepath.Join(rel, "data"), filepath.Join(abs, "data"), filepath.Join(trusted, "data")} {
+		if _, err := checkServeDir(p, uid); err != nil {
+			t.Errorf("a trusted chain, %s: %v", p, err)
+		}
+	}
+	// A loop is refused, not followed for ever (by the kernel or by the
+	// resolution's own bound).
+	loop := link(filepath.Join(base, "loop"), filepath.Join(base, "loop"))
+	if _, err := checkServeDir(filepath.Join(loop, "data"), uid); err == nil || !strings.Contains(err.Error(), "symbolic links") {
+		t.Errorf("a loop: %v", err)
+	}
+}
+
+// The resolution's own bound, for a chain the kernel would also refuse
+// once it reaches the last component: 41 trusted links in a row.
+func TestDataDirectoryLinkBound(t *testing.T) {
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, "d"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prev := filepath.Join(base, "d")
+	for i := range maxLinks + 1 {
+		at := filepath.Join(base, fmt.Sprintf("l%d", i))
+		if err := os.Symlink(prev, at); err != nil {
+			t.Fatal(err)
+		}
+		prev = at
+	}
+	if _, err := resolveTrusted(prev, func(uint32) bool { return true }); err == nil || !strings.Contains(err.Error(), "more than 40 symbolic links") {
+		t.Errorf("%v", err)
 	}
 }

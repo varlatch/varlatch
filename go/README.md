@@ -125,11 +125,14 @@ memory (`server/write`):
   come back as if it ran in the caller.
 - The data directory holds both, and the database, each opened by path,
   so the path itself must be trusted (`datadir_unix.go`): its last
-  component is the directory, never a symbolic link; every directory on
-  the way to it, as configured and as resolved, is owned by root or a
+  component is the directory, never a symbolic link; the path is resolved
+  one component at a time, following each symbolic link by hand (at most
+  40), and every directory it passes through is owned by root or a
   trusted user and is not writable by its group or others unless its
-  sticky bit is set (as `/tmp`'s); and the directory is owned by the user
-  varlatchd runs as and writable by no one else. `serve` refuses to start
+  sticky bit is set (as `/tmp`'s), and every link it follows, at any hop,
+  is owned by root or a trusted user (macOS's `/var` and `/tmp` pass);
+  and the directory is owned by the user varlatchd runs as and writable by
+  no one else. `serve` refuses to start
   (78) otherwise, and checks after taking the lock and after binding the
   socket that the path still leads to the same directory (device and
   inode). `varlatchd admin` makes the same checks (trusting root, itself
