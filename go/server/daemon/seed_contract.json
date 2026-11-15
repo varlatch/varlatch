@@ -1,5 +1,0 @@
-{
-  "comment": "Written by services/varlatchd/test/go-values-fixture.test.ts: the conformance runner's seed Contract as this server stores it; do not edit.",
-  "contract": "{\"items\":[{\"name\":\"API_KEY\",\"type\":\"string\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"tier\",\"tier\":\"production\"}},\"sensitive\":true},{\"name\":\"DATABASE_URL\",\"type\":\"url\",\"required\":{\"kind\":\"always\"},\"sensitive\":true},{\"name\":\"PORT\",\"type\":\"number\",\"required\":{\"kind\":\"always\"},\"sensitive\":false,\"defaultValue\":\"3000\"},{\"name\":\"PUBLIC_URL\",\"type\":\"string\",\"required\":{\"kind\":\"never\"},\"sensitive\":false}],\"schemaVersion\":1,\"semanticsVersion\":3}",
-  "contentHash": "sha256:29765d5fc7e7bf14e5655044d9478720c15ac56e2303e760dca30baf7a80ceac"
-}

@@ -41,9 +41,15 @@
  *     fills with a new time or envelope must be listed;
  *   - the request id becomes `{requestId}`.
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { canonicalJson } from "@varlatch/contract";
 import { expect } from "vitest";
+import type { Envelope } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { accessCountsSettled } from "../src/domain/securityreport.js";
 import { migratedTestDb } from "./helpers/pglite.js";
@@ -118,7 +124,10 @@ export interface Recorded extends RequestCase {
 
 export interface Fixture {
   comment: string;
+  /** The release whose code sealed the rows' envelopes. */
   ref: string;
+  /** The SERVER_VERSION of the server that answered (the installation release read reports it); ref when absent. */
+  serverVersion?: string;
   rootKek: string;
   tokens: Record<string, string>;
   rows: Record<string, Row[]>;
@@ -482,4 +491,65 @@ export function relabel(tables: readonly Table[], rows: Record<string, Row[]>): 
     out.set(t.name, keyed.map(({ text }) => label(text, true)).sort());
   }
   return out;
+}
+
+const REPO_ROOT = new URL("../../../", import.meta.url);
+
+/**
+ * A v0.21.0 installation's data after its upgrade to 0.22.0 (no migration
+ * between the two touches a ciphertext): the rows with every envelope the
+ * read path opens sealed again by that release's code, in place. The
+ * installation's canary; each live Organization's KEK (a new one, wrapped
+ * by the Root KEK; a destroyed one stays destroyed); and each value
+ * version, with plaintextOf(version) under its Organization's new KEK.
+ */
+export async function resealWith(ref: string, rootKek: Buffer, rows: Record<string, Row[]>, plaintextOf: (version: Row) => string): Promise<void> {
+  const crypto = await loadHierarchy(ref);
+  for (const inst of rows.installation!) inst.kek_canary = crypto.createCanary(rootKek, inst.id as string) as Envelope;
+  const kekOf = new Map<string, Buffer>();
+  for (const org of rows.organizations!) {
+    if (org.wrapped_org_kek === null) continue;
+    const { orgKek, wrapped } = crypto.createWrappedOrgKek(rootKek, org.id as string) as { orgKek: Buffer; wrapped: Envelope };
+    kekOf.set(org.id as string, orgKek);
+    org.wrapped_org_kek = wrapped;
+  }
+  const envOf = new Map(rows.environments!.map((e) => [e.id, e]));
+  const projectOf = new Map(rows.projects!.map((p) => [p.id, p]));
+  const valueOf = new Map(rows.env_values!.map((v) => [v.id, v]));
+  for (const version of rows.value_versions ?? []) {
+    const value = valueOf.get(version.value_id)!;
+    const orgId = projectOf.get(envOf.get(value.environment_id)!.project_id)!.organization_id as string;
+    const orgKek = kekOf.get(orgId);
+    if (!orgKek) throw new Error(`value version ${String(version.id)}: its Organization has no KEK to seal it under`);
+    const sealed = crypto.encryptValue(orgKek, orgId, value.id as string, version.id as string, Buffer.from(plaintextOf(version), "utf8")) as {
+      payload: Envelope;
+      wrappedDek: Envelope;
+    };
+    version.payload = sealed.payload;
+    version.wrapped_dek = sealed.wrappedDek;
+  }
+}
+
+/** A release's hierarchy.ts and canary.ts with their aead.ts and canonical JSON, from git (as go/lib/envelope/testdata/tsfixtures.mjs loads them). */
+async function loadHierarchy(ref: string): Promise<Record<string, (...args: unknown[]) => unknown>> {
+  const show = (path: string) => execFileSync("git", ["-C", REPO_ROOT.pathname, "show", `${ref}:${path}`], { encoding: "utf8" });
+  const dir = mkdtempSync(join(tmpdir(), "varlatch-values-"));
+  try {
+    writeFileSync(join(dir, "package.json"), '{"type":"module"}\n');
+    for (const [name, path] of [
+      ["aead.ts", "services/varlatchd/src/crypto/aead.ts"],
+      ["hierarchy.ts", "services/varlatchd/src/crypto/hierarchy.ts"],
+      ["canary.ts", "services/varlatchd/src/crypto/canary.ts"],
+      ["canonical.ts", "packages/contract/src/canonical.ts"],
+    ]) {
+      writeFileSync(
+        join(dir, name!),
+        show(path!).replaceAll('from "@varlatch/contract"', 'from "./canonical.ts"').replace(/from "\.\/(aead|hierarchy|canary)\.js"/g, 'from "./$1.ts"'),
+      );
+    }
+    const load = (name: string) => import(/* @vite-ignore */ pathToFileURL(join(dir, name)).href);
+    return { ...(await load("hierarchy.ts")), ...(await load("canary.ts")) } as Record<string, (...args: unknown[]) => unknown>;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }

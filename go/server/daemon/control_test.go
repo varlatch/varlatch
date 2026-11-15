@@ -30,7 +30,7 @@ import (
 func runAdmin(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := admin(args, strings.NewReader(""), &stdout, &stderr)
+	code := admin(args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -308,7 +308,7 @@ func TestRecoverTakesItsSubjectsGate(t *testing.T) {
 	ctx := context.Background()
 	host := func(args ...string) (int, string) {
 		var out, errOut bytes.Buffer
-		code := runHost(ctx, env, args, nil, &out, &errOut)
+		code := runHost(ctx, env, args, &out, &errOut)
 		return code, out.String() + errOut.String()
 	}
 	code, out := host("bootstrap", "--cli-credential")

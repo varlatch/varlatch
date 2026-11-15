@@ -5,8 +5,8 @@
   "lacks": {
     "go-binary": {
       "serve-cli": {
-        "reason": "the Go server cannot serve the CLI and install scripts yet (ADR-0058 Decision 3)",
-        "step": "ADR-0059 step 4"
+        "reason": "the Go server cannot serve the CLI and install scripts yet (ADR-0058 Decision 3): in Go they are the Go CLI's binaries and installers, which steps 5 and 6 build",
+        "step": "ADR-0059 step 6"
       },
       "addGroupMember": {
         "reason": "not ported to the Go server yet",

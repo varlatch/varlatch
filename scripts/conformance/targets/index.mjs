@@ -25,7 +25,7 @@ const REQUIRED = ["up", "down", "origin", "bootstrap", "recover", "restart", "lo
  * The operation each optional capability promises (scripts/conformance
  * README.md, The target contract): `probe:<name>` is the probe operation.
  */
-const CAPABILITY_OPERATIONS = { maintenance: "maintenance", "serve-cli": "serveCli", "ts-stack": "tsStack", "go-server": "goServer", seed: "seed" };
+const CAPABILITY_OPERATIONS = { maintenance: "maintenance", "serve-cli": "serveCli", "ts-stack": "tsStack", "go-server": "goServer" };
 
 export function capabilityOperation(capability) {
   return String(capability).startsWith("probe:") ? "probe" : CAPABILITY_OPERATIONS[capability];

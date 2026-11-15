@@ -142,8 +142,8 @@ recover --identity <id> [--enable] | --new-admin [--cli-credential]`
 (with `--config <file>`) print exactly what the TypeScript admin CLI
 prints: a one-time enrollment URL, or a CLI credential on the last line.
 A build with the `conformance` tag also has `varlatchd admin
-conformance-probe`, `conformance-fixture` and `conformance-seed`, the
-conformance harness's probes and fixtures; a release has none.
+conformance-probe` and `conformance-fixture`, the conformance harness's
+probes and fixtures; a release has none. The harness seeds through `/v1`.
 
 Host commands write through the daemon (step 4 decision 11,
 `server/daemon/control.go`), because the write path's gates live in its
@@ -334,8 +334,7 @@ The server's packages:
   a grant revocation, change sets committed mid-retrieval in every round,
   and a strict retrieval's values, manifest, digest and verdicts), each
   asserting its hook ran.
-  `services/varlatchd/test/go-values-fixture.test.ts` writes them (and
-  `server/daemon/seed_contract.json`, the conformance seed's Contract) and
+  `services/varlatchd/test/go-values-fixture.test.ts` writes them and
   checks the committed files are still that server's answers:
 
   ```sh
@@ -371,10 +370,15 @@ The server's packages:
     made while the write transaction is held (ADR-0059 Decision 2);
   - `Idempotent`: an Idempotency-Key's claim, the domain write and the
     stored response are one job (ADR-0018 section 8). The stored response
-    is jsonb's form, so a replay's body has jsonb's member order, as the
-    TypeScript server's replay has; `testdata/ts-vectors.json` holds that
-    server's digests (`bodyHash`) and replays
-    (`services/varlatchd/test/go-write-vectors.test.ts`).
+    is jsonb's form, and a replay puts its members in jsonb's order on
+    reading, whatever order the stored text has, so a replay's body has
+    jsonb's member order, as the TypeScript server's replay has;
+    `testdata/ts-vectors.json` holds that server's digests (`bodyHash`)
+    and replays (`services/varlatchd/test/go-write-vectors.test.ts`).
+    Claims are data the migration copies (step 7): a claim the
+    TypeScript server stored replays from its copied row, with the same
+    answer, and its digest refuses another body (the core fixture's
+    "stored" requests).
 - `server/orgs` (step 4.1a): creating an Organization (its KEK wrapped
   under the Root KEK, its first admin, `organization.created`) and renaming
   it (the writer's checks and the passkey-verification checkpoint inside
@@ -431,7 +435,9 @@ The server's packages:
   an effective name (`toLowerCase` on both sides, `lib/whatwg.ToLower`),
   ordered by project slug, name and project id as JavaScript compares
   strings, with `Number(limit)` and the base64url JSON cursor read as Node
-  reads them.
+  reads them. Search keeps no derived state (no index or cache): every
+  search reads the live rows, so the migration (step 7) has nothing of
+  its own to copy.
 - `server/paritytest` (step 4.1a): the Go side of the parity kit (step 4
   decision 3). `services/varlatchd/test/go-fixture-kit.ts` has the
   TypeScript server build a database through its own `/v1`, run a table of
@@ -467,7 +473,13 @@ The server's packages:
   masked digest cannot diverge unseen. A domain ID's prefix has two to
   four letters (a change set's `cs_`).
   `testdata/core-v0.22.0.json` is step 4.1's file (`go-core-fixture.test.ts`,
-  regenerated with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors);
+  regenerated with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors),
+  and `core-v0.21.0.json` the same rows and requests with the canary,
+  every Organization KEK and every value version sealed again by
+  v0.21.0's code (`resealWith` in the kit, as `values-v0.21.0.json`); the
+  Go test replays both. `serverVersion` is the answering server's
+  version, which the installation release read reports, and `ref` the
+  release that sealed the rows;
   4.1a records the Organization operations in it, 4.1b the Contract
   operations (request paths name rows by placeholders: `{project:SLUG}`,
   and `{rev:KEY}` for the revision holding an item named KEY), 4.1c the
