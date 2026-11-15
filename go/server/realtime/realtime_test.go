@@ -491,6 +491,29 @@ func TestRunPublishesAfterCommits(t *testing.T) {
 	}
 }
 
+// A stream that subscribes before Run has read its starting point (Run
+// starts in a goroutine, the listener may already serve) still receives
+// what commits after it opened: the starting point is fixed at the first
+// of the two. Here the event commits, and only then does Run start.
+func TestSubscribeBeforeRunMissesNothing(t *testing.T) {
+	w := newWorld(t, Options{Poll: 20 * time.Millisecond})
+	w.event("project.created", "org_a", "idn_alice", nil, "") // before the stream: never sent
+	st := w.subscribe("alice", w.session("alice"))
+	w.event("grant.created", "org_a", "idn_alice", nil, "")
+	ctx, cancel := context.WithCancel(bg)
+	done := make(chan error, 1)
+	go func() { done <- w.hub.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case batch := <-st.Messages():
+		if len(batch) != 1 || !strings.Contains(string(batch[0].Data), `"domains":["grant"]`) {
+			t.Fatalf("got %v", batch)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an event committed after the stream opened, before Run started, was never sent")
+	}
+}
+
 func TestChangedDomain(t *testing.T) {
 	for typ, want := range map[string]string{"grant.created": "grant", "value.disclosed": "", "capability.denied": "", "x": "x", "a.b.c": "a"} {
 		if got := ChangedDomain(typ); got != want {

@@ -78,6 +78,13 @@ type Hub struct {
 	streams map[*Stream]struct{}
 	closed  bool
 	seq     uint64
+
+	// start is the position Run publishes after: the last event committed
+	// when Run started or the first stream subscribed, whichever came
+	// first (startCursor).
+	startMu  sync.Mutex
+	start    int64
+	startSet bool
 }
 
 // New makes a hub; Run starts it.
@@ -113,11 +120,14 @@ func (h *Hub) Notify() {
 }
 
 // Run publishes until ctx ends. It starts after the last event committed
-// before it: a stream receives the signals published after it opened, and
-// nothing earlier is replayed.
+// before it or before the first stream subscribed, whichever came first: a
+// stream receives the signals of everything committed after it opened, and
+// nothing earlier is replayed. (Run starts in a goroutine, so a stream may
+// subscribe before Run reads its starting point: reading it then would
+// skip what was committed in between, a membership removal that must
+// close the stream included.)
 func (h *Hub) Run(ctx context.Context) error {
-	q := query.New(h.opts.Store.Reader())
-	cursor, err := q.LastAuditPosition(ctx)
+	cursor, err := h.startCursor(ctx)
 	if err != nil {
 		return err
 	}
@@ -380,9 +390,25 @@ func (h *Hub) validateAll(ctx context.Context) {
 	}
 }
 
+// startCursor is the position Run publishes after, read once: at Run's
+// start or the first Subscribe, whichever comes first.
+func (h *Hub) startCursor(ctx context.Context) (int64, error) {
+	h.startMu.Lock()
+	defer h.startMu.Unlock()
+	if !h.startSet {
+		last, err := query.New(h.opts.Store.Reader()).LastAuditPosition(ctx)
+		if err != nil {
+			return 0, err
+		}
+		h.start, h.startSet = last, true
+	}
+	return h.start, nil
+}
+
 // Subscribe opens a stream for a browser session of identity, after
 // checking the session is live. The caller must Unsubscribe it when the
-// response ends.
+// response ends. The hub's starting point is fixed before the stream
+// exists, so whatever commits after Subscribe returns reaches it.
 func (h *Hub) Subscribe(ctx context.Context, session, identity string) (*Stream, error) {
 	ok, err := h.live(ctx, query.New(h.opts.Store.Reader()), session, identity)
 	if err != nil {
@@ -390,6 +416,9 @@ func (h *Hub) Subscribe(ctx context.Context, session, identity string) (*Stream,
 	}
 	if !ok {
 		return nil, ErrNotLive
+	}
+	if _, err := h.startCursor(ctx); err != nil {
+		return nil, err
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
