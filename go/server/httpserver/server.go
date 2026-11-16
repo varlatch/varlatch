@@ -232,6 +232,8 @@ var BuiltOperations = []string{
 	reviewMemberPattern, removeMemberPattern, changeMemberRolePattern, updateMyProfilePattern,
 	// Step 4.5b: the exposure report and confirmations (people.go).
 	memberExposurePattern, confirmExposureRevocationPattern,
+	// Step 4.6: broker Capabilities (capabilities.go).
+	listCapabilitiesPattern, issueCapabilityPattern, revokeCapabilityPattern, exerciseCapabilityPattern,
 }
 
 // Server is the handler.

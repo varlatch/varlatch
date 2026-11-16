@@ -47,6 +47,8 @@ const (
 	AuditExportStream = "aes"
 	// Step 4.5.
 	MembershipRemoval = "mrm"
+	// Step 4.6: broker Capabilities.
+	Capability = "cap"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"

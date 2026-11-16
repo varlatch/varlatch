@@ -160,7 +160,9 @@ type ExposedVersionRow struct {
 }
 
 // exposedVersion: the value owning an exposed version, and whether it,
-// its environment and its Project are live.
+// its environment and its Project are live. No ORDER BY, as there: the
+// rows of one version differ only in their environment and way, which are
+// not selected, so any row gives the same answer.
 func (q *Queries) ExposedVersion(ctx context.Context, arg ExposedVersionParams) (ExposedVersionRow, error) {
 	row := q.db.QueryRowContext(ctx, exposedVersion, arg.OrganizationID, arg.IdentityID, arg.VersionID)
 	var i ExposedVersionRow

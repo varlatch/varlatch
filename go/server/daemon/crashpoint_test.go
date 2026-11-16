@@ -7,6 +7,7 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,7 +20,10 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/ids"
+	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/values/valuestest"
 )
 
@@ -35,9 +39,13 @@ import (
 //     into the database file (its size seen growing, the checkpoint not
 //     returned).
 //
+// Other clients exercise a Capability of a Broker the run adds (step 4.6):
+// its answer carries the Secret, so its capability.exercised event had
+// committed.
+//
 // After each kill, every disclosure a client received has its
-// secret.disclosed event, audit positions have no gap and the database is
-// consistent; the large batch has none of its rows after the kill in its
+// secret.disclosed event, every exercise its capability.exercised event,
+// audit positions have no gap and the database is consistent; the large batch has none of its rows after the kill in its
 // WAL write, and all of them after the kill in a checkpoint.
 
 const ballastBytes = 48 << 20
@@ -51,10 +59,11 @@ type crashRun struct {
 	log, arm string
 	base     string
 
-	mu       sync.Mutex
-	answered []string
-	stop     chan struct{}
-	wg       sync.WaitGroup
+	mu        sync.Mutex
+	answered  []string
+	exercised []string
+	stop      chan struct{}
+	wg        sync.WaitGroup
 }
 
 func (c *crashRun) path(name string) string { return filepath.Join(c.in.data, name) }
@@ -62,6 +71,7 @@ func (c *crashRun) path(name string) string { return filepath.Join(c.in.data, na
 func startCrashRun(t *testing.T, env ...string) *crashRun {
 	t.Helper()
 	in, f := g7Install(t, t.TempDir())
+	broker := addBroker(t, in, f)
 	c := &crashRun{t: t, in: in, f: f, log: filepath.Join(in.dir, "crashpoints.log"), arm: filepath.Join(in.dir, "arm"), stop: make(chan struct{})}
 	c.cmd = exec.Command(os.Args[0], "-test.run=^TestKillDuringDisclosuresLosesNoAuditRow$")
 	c.cmd.Env = append(os.Environ(), append([]string{"G7_SERVE_CONF=" + in.conf, "VARLATCH_CRASHPOINT_LOG=" + c.log, "VARLATCH_CRASHPOINT_ARM=" + c.arm}, env...)...)
@@ -92,9 +102,10 @@ func startCrashRun(t *testing.T, env ...string) *crashRun {
 	case <-time.After(30 * time.Second):
 		t.Fatalf("varlatchd did not serve: %s", c.stderr.String())
 	}
-	// Clients ask for disclosures until the process is gone.
+	// Clients ask for disclosures, and exercise the Capability, until the
+	// process is gone.
 	client := &http.Client{Timeout: 30 * time.Second}
-	for range 6 {
+	for i := range 8 {
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
@@ -104,19 +115,27 @@ func startCrashRun(t *testing.T, env ...string) *crashRun {
 					return
 				default:
 				}
-				status, id, body, err := disclose(client, c.base, f.Tokens["alice"])
+				ask, into := func() (int, string, string, error) { return disclose(client, c.base, f.Tokens["alice"]) }, &c.answered
+				if i%4 == 3 {
+					ask, into = func() (int, string, string, error) { return exercise(client, c.base, broker) }, &c.exercised
+				}
+				status, id, body, err := ask()
 				if err != nil {
 					return
 				}
 				if status == 200 && strings.Contains(body, "hunter2-hunter2") {
 					c.mu.Lock()
-					c.answered = append(c.answered, id)
+					*into = append(*into, id)
 					c.mu.Unlock()
 				}
 			}
 		}()
 	}
-	c.waitFor("50 disclosures answered", func() bool { c.mu.Lock(); defer c.mu.Unlock(); return len(c.answered) >= 50 })
+	c.waitFor("50 disclosures and 10 exercises answered", func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.answered) >= 50 && len(c.exercised) >= 10
+	})
 	return c
 }
 
@@ -193,13 +212,15 @@ func (c *crashRun) verify(ballastRows int) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, id := range c.answered {
-		var n int
-		if err := r.QueryRow(`SELECT count(*) FROM audit_events WHERE request_id = ? AND event_type = 'secret.disclosed'`, id).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		if n != 1 {
-			t.Fatalf("request %s received its values, but its secret.disclosed event is missing after the kill", id)
+	for event, ids := range map[string][]string{"secret.disclosed": c.answered, "capability.exercised": c.exercised} {
+		for _, id := range ids {
+			var n int
+			if err := r.QueryRow(`SELECT count(*) FROM audit_events WHERE request_id = ? AND event_type = ?`, id, event).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			if n != 1 {
+				t.Fatalf("request %s received its values, but its %s event is missing after the kill", id, event)
+			}
 		}
 	}
 	if ballastRows >= 0 {
@@ -212,7 +233,77 @@ func (c *crashRun) verify(ballastRows int) {
 		}
 		t.Logf("the large batch: %d rows after recovery, as required", rows)
 	}
-	t.Logf("%d disclosures answered before the kill, each with its audit event; %d events", len(c.answered), events)
+	t.Logf("%d disclosures and %d exercises answered before the kill, each with its audit event; %d events", len(c.answered), len(c.exercised), events)
+}
+
+// The Broker addBroker adds: its token and the Capability's path.
+type g7Broker struct{ token, path string }
+
+const g7CapabilitySecret = "vlt_cap_g7"
+
+// addBroker adds to the install's database a Broker with a credential, an
+// Agent with secret.use in acme, and a Capability of DB_PASS in acme/api's
+// development (hunter2-hunter2).
+func addBroker(t *testing.T, in install, f valuestest.Fixture) g7Broker {
+	t.Helper()
+	store, err := storage.Open(context.Background(), storage.Options{Path: filepath.Join(in.data, config.DatabaseFile)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	org := f.Slugged("organizations", "acme", "")
+	project := f.Slugged("projects", "api", org)
+	var env string
+	for _, e := range f.Rows["environments"] {
+		if e["project_id"] == project && e["name"] == "development" {
+			env, _ = e["id"].(string)
+		}
+	}
+	broker, agent, capability := ids.New(ids.Identity), ids.New(ids.Identity), ids.New(ids.Capability)
+	var token string
+	err = store.Write(context.Background(), func(tx *storage.Tx) error {
+		for _, x := range []struct{ id, kind string }{{broker, "broker"}, {agent, "agent"}} {
+			if _, err := tx.ExecContext(context.Background(), `INSERT INTO identities (id, kind, name, organization_id) VALUES (?, ?, ?, ?)`, x.id, x.kind, "g7-"+x.kind, org); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(context.Background(), `INSERT INTO grants (id, organization_id, subject_identity_id, scope, actions) VALUES (?, ?, ?, '{"kind":"organization"}', '["secret.use"]')`,
+			ids.New(ids.Grant), org, agent); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(context.Background(), `INSERT INTO capabilities (id, organization_id, broker_identity_id, agent_identity_id, project_id, environment_id,
+			items, destinations, targets, secret_hash, expires_at, created_by) VALUES (?, ?, ?, ?, ?, ?, '["DB_PASS"]', '["api.example.com:443"]',
+			'{"DB_PASS":["header:authorization"]}', ?, ?, ?)`,
+			capability, org, broker, agent, project, env, values.HashSecret(g7CapabilitySecret), time.Now().Add(24*time.Hour).UnixMicro(), broker); err != nil {
+			return err
+		}
+		issued, err := auth.IssueCredential(context.Background(), tx, time.Now().UnixMicro(), auth.Issue{IdentityID: broker, Kind: "service"})
+		token = issued.Token
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g7Broker{token: token, path: "/v1/organizations/acme/projects/api/environments/development/capabilities/" + capability + "/exercises"}
+}
+
+// exercise exercises the Broker's Capability: the status, the request's id
+// and the body.
+func exercise(client *http.Client, base string, b g7Broker) (int, string, string, error) {
+	req, _ := http.NewRequest("POST", base+b.path, strings.NewReader(
+		`{"capabilitySecret":"`+g7CapabilitySecret+`","destination":{"host":"api.example.com","port":443},"placements":[{"item":"DB_PASS","target":"header:authorization"}]}`))
+	req.Header.Set("Authorization", "Bearer "+b.token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return 0, "", "", err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return 0, "", "", err
+	}
+	return res.StatusCode, res.Header.Get("X-Request-Id"), string(body), nil
 }
 
 func TestKillAtCrashPoints(t *testing.T) {

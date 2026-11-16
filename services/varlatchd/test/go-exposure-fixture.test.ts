@@ -104,6 +104,7 @@ function requestTable(): RequestCase[] {
     get("as an outsider", "exp/members/{idn:bob}/exposure", "erin"),
     get("in a frozen Organization", "frozen/members/{idn:bob}/exposure"),
     get("in an unknown Organization", "nope/members/{idn:bob}/exposure"),
+    get("bob's exposure asked in another Organization", "other/members/{idn:bob}/exposure"),
 
     // Confirmations.
     confirm("confirm the current version", "{idn:bob}", { versionId: "{ver:development/API_KEY/2}" }),
@@ -127,6 +128,7 @@ function requestTable(): RequestCase[] {
     { name: "confirm, a body that is not JSON", method: "POST", path: `${ORG}/exp/members/{idn:bob}/exposure/confirmations`, credential: "alice", rawBody: "{" },
     confirm("confirm in a frozen Organization", "{idn:bob}", { versionId: "x" }, "alice", "frozen"),
     confirm("confirm as an outsider", "{idn:bob}", { versionId: "{ver:development/API_KEY/2}" }, "erin"),
+    confirm("confirm exp's version in another Organization", "{idn:bob}", { versionId: "{ver:development/API_KEY/2}" }, "alice", "other"),
     get("bob's exposure after the confirmations", "exp/members/{idn:bob}/exposure"),
   ]);
 }

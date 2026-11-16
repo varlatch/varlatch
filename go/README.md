@@ -36,6 +36,13 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   Contracts, valid and invalid, and what `JSON.parse` makes of 46 JSON
   texts (`services/varlatchd/test/go-contract-vectors.test.ts`,
   regenerated with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors).
+- `lib/targets/` (step 4.6): substitution targets (ADR-0039 Decisions 1
+  and 2), a port of `packages/protocol`'s `targets.ts` that the server and
+  (in step 5) the CLI's Broker share: `header:` (lower-cased, never a
+  transport-owned header), `query:` and `form:` (1 to 256 UTF-16 units, no
+  control characters), `json:` (an RFC 6901 pointer); a Capability's
+  targets canonical (at most 4 per item, none repeated, every item covered,
+  items and targets in JavaScript's UTF-16 order) and their audit form.
 - `lib/whatwg/`: what the TypeScript code gets from Node.js's URL
   parser, `url.domainToASCII`, `net.isIP` and string functions, as far as
   audit redaction, Destination Selectors and url Config Items use them. Domain to ASCII is
@@ -555,6 +562,63 @@ its first stream's manifest planned, and nothing uploads it.
   directions. The `audit-export` conformance suite runs against MinIO on
   every target (the `object-store` capability).
 
+### Broker Capabilities (step 4.6)
+
+`server/capabilities` (issue, list, revoke) and `server/values`'
+`capabilities.go` (exercise, and an issuance's precondition) are
+`domain/capabilities.ts` (ADR-0022, ADR-0026, ADR-0038 Decision 7,
+ADR-0039): a Broker of an Organization issues, for one of its Agents, a
+Capability naming explicit Config Items, destinations and, per item, the
+targets its Placeholder may be substituted at. It narrows what the Agent
+may use; it never adds to the Agent's Grants.
+
+- **Who.** Only a Broker of the Organization issues and exercises; anyone
+  else is told `Not found`, before the body is read. A Broker lists and
+  revokes its own; anyone else needs `policy.read` to list an
+  environment's and `policy.manage` to revoke one (existence hidden).
+  Listing is inspection while frozen, revoking recovery.
+- **Issuance.** The items' names, the destination selectors (stored
+  canonical), the targets (required; `lib/targets`), the lifetime (1 second
+  to a day), then, in a job holding the Organization's, the Broker's and
+  the Agent's gates shared: the Agent (an enabled Agent of the
+  Organization), the advisory preflight (the Agent's `secret.use` without
+  Requirements), the writer's checks, the row and `capability.issued`. The
+  secret (`vlt_cap_` and 32 random bytes) is answered once; its SHA-256 is
+  stored. With a precondition, its own snapshot first: the state digest
+  the operator's preflight saw must still be the state's, else
+  `STATE_CHANGED` names the categories that changed; on a match, each
+  item's presence as a Secret and the Agent's authorization
+  (`preflightItems`).
+- **Exercise** is a retrieval. One snapshot: the environment, the Broker,
+  the body (read first, parsed once the Broker is known), the Capability,
+  the Agent's `secret.use` and `config.value.read` with the
+  Organization's Requirements, and the values. Then, in TypeScript's
+  order, each refusal recorded as `capability.denied`: unknown, another
+  Broker's or a wrong secret (all `Capability not found`), revoked,
+  expired, a destination no selector matches, no targets, a placement the
+  Capability does not hold, the Agent's authorization. Then
+  `capability.exercised` is committed before the placed Secrets are
+  decrypted (G7, `TestKillAtCrashPoints` exercises alongside its
+  disclosures), and references are resolved or the exercise denied, one
+  audited level at a time (`secret.disclosed` and `value.disclosed`, mode
+  `reference-expansion`). A rotation's retiring value is returned beside
+  the current one, unexpanded. The Go server has no tailnet listener yet
+  (step 4.13): an exercise a Requirement covers is
+  `TAILNET_CONTEXT_REQUIRED`.
+- **Parity.** `capabilities-v0.22.0.json`
+  (go-capabilities-fixture.test.ts) replays 154 requests: issuance in
+  every form and refusal (every target rule, every zod issue, the
+  precondition's outcomes), listing by each caller, exercise of
+  Capabilities live, revoked, expired, without targets and for Agents
+  without each permission, references bound, unbound, unknown, cyclic and
+  not readable, and revocation, with their audit events and rows. The
+  JavaScript behaviour it keeps: a placement named after a member of
+  `Object.prototype` (`constructor`) is a 500, as is a refusal whose audit
+  event jsonb refuses (U+0000 in the host); a `__proto__` member of
+  `targets` is dropped before its value is checked, and one of
+  `stateDigests` (enum keys) is an unrecognized key, as zod 4.6.7 does
+  each.
+
 The server's packages:
 
 - `server/config`: `varlatchd.conf`.
@@ -1024,6 +1088,10 @@ The server's packages:
   covers each version state and way, a former member's report and every
   kind of confirmation; `TestCoverageWhileTheBackfillRuns` the coverage
   of an unfinished backfill.
+
+- `server/capabilities` (step 4.6): broker Capabilities' issuance, list
+  and revocation; their exercise is `server/values`' (see "Broker
+  Capabilities").
 - `server/identities` (step 4.4a): an Organization's machine identities
   and their credentials (`domain/identities.ts`, `identitystepup.ts`, the
   issuing side of `auth/credentials.ts`; ADR-0015, ADR-0023, ADR-0034),

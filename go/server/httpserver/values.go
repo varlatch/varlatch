@@ -108,8 +108,9 @@ func rawOf(ctx context.Context) keptRequest {
 func (o *operations) valuesRequest(ctx context.Context, route string) (values.Request, error) {
 	r := httpRequestOf(ctx)
 	segs := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
-	// v1 organizations {org} projects {project} environments {environment} <op>
-	if len(segs) != 8 {
+	// v1 organizations {org} projects {project} environments {environment}
+	// <op>, or capabilities {capability} exercises.
+	if len(segs) != 8 && len(segs) != 10 {
 		return values.Request{}, errors.New("values: unexpected route " + r.URL.Path)
 	}
 	env, ok := decodeURIComponent(tryDecodeURIComponent(segs[6]))
