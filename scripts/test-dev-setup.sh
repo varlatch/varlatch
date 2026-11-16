@@ -59,7 +59,11 @@ ORGS=$(VARLATCH_SERVER=$URL VARLATCH_TOKEN=$(cat "$VARLATCH_DEV_DIR/admin-token"
 grep -q acme <<< "$ORGS" || fail "the CLI reaches the instance with the printed credential"
 pass "the printed CLI credential works"
 
-node "$REPO_ROOT/apps/web/scripts/e2e-web.mjs" "$LINK" || fail "the sign-in link enrolls a passkey in the dashboard"
+# e2e-web.mjs is the conformance harness's dashboard suite; its operation
+# groups need the suite's name, which scripts/conformance/run.mjs sets when
+# it runs the suite. The dev stack is the TypeScript server, which lacks no
+# operation, so every group runs.
+CONFORMANCE_SUITE=dashboard node "$REPO_ROOT/apps/web/scripts/e2e-web.mjs" "$LINK" || fail "the sign-in link enrolls a passkey in the dashboard"
 pass "the sign-in link enrolls a passkey and the dashboard shows the data"
 
 echo "--- second start"
