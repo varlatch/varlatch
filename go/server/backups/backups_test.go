@@ -632,3 +632,20 @@ func TestBucketTestBesideARun(t *testing.T) {
 	}
 	a.End(g.ID)
 }
+
+// An archive keeps the tailnet listener's settings, never the auth key's
+// file: the node enrols again where it is restored.
+func TestConfigurationKeepsTheTailnetSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "configuration.json")
+	cfg := &config.Config{Listen: "127.0.0.1:8686", AccessLog: "stdout", BackupKeep: 7, BackupDestination: "offsite",
+		Tailnet: &config.Tailnet{Hostname: "varlatch", Tags: []string{"tag:varlatch", "tag:prod"}, Port: 8687, AuthKeyFile: "/etc/varlatch/tailnet-auth-key"}}
+	if err := writeConfiguration(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	var conf Configuration
+	if err := json.Unmarshal(raw, &conf); err != nil || conf.Settings["tailnet"] != "on" || conf.Settings["tailnet_hostname"] != "varlatch" ||
+		conf.Settings["tailnet_tags"] != "tag:varlatch,tag:prod" || conf.Settings["tailnet_port"] != "8687" || bytes.Contains(raw, []byte("tailnet-auth-key")) {
+		t.Errorf("configuration %s", raw)
+	}
+}

@@ -92,7 +92,34 @@ type Config struct {
 	BackupDestinationsFile string
 	// BackupDestination names the destination archives are uploaded to.
 	BackupDestination string
+	// Tailnet is the tailnet listener (ADR-0059 Decision 5); nil when off.
+	Tailnet *Tailnet
 }
+
+// Tailnet is varlatchd's own tailnet node and its listener.
+type Tailnet struct {
+	// Hostname is the node's, fixed at enrolment.
+	Hostname string
+	// Tags the node advertises; it is always tagged.
+	Tags []string
+	// Port is the tailnet listener's, on the node's addresses only.
+	Port int
+	// ControlURL is the coordination server; "" is Tailscale's.
+	ControlURL string
+	// AuthKeyFile holds the auth key that enrols the node the first time
+	// (tailnet_auth_key_file, or the unit's tailnet-auth-key credential);
+	// "" when there is none.
+	AuthKeyFile string
+}
+
+// TailscaleControlURL is Tailscale's coordination server, the default.
+const TailscaleControlURL = "https://controlplane.tailscale.com"
+
+var (
+	tailnetHostname = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	// Tailscale's own rule for a tag (tailcfg.CheckTag).
+	tailnetTag = regexp.MustCompile(`^tag:[A-Za-z][A-Za-z0-9-]*$`)
+)
 
 // LoopbackHost reports whether a URL's host name (URL.Hostname: an IPv6
 // address without its brackets) is one a plain-http public URL may name:
@@ -125,7 +152,8 @@ func (e *Error) Error() string {
 type Env func(string) string
 
 var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "outbound_allow", "access_log", "sync", "sync_adapters", "audit_export",
-	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination"}
+	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination",
+	"tailnet", "tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file"}
 
 // Backup defaults: a day between backups, seven archives kept (the
 // TypeScript host backup's LOCAL_KEEP), the destination named offsite
@@ -318,7 +346,76 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		}
 		c.BackupDestination = v
 	}
+	t, err := parseTailnet(values, at, c, env)
+	if err != nil {
+		return nil, err
+	}
+	c.Tailnet = t
 	return c, nil
+}
+
+// parseTailnet reads the tailnet_* settings: with tailnet = on, a hostname,
+// at least one tag and a port are required.
+func parseTailnet(values map[string]string, at func(string, string, ...any) error, c *Config, env Env) (*Tailnet, error) {
+	switch v := values["tailnet"]; v {
+	case "", "off":
+		for _, name := range []string{"tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file"} {
+			if values[name] != "" {
+				return nil, at(name, "is set, but tailnet is off; set tailnet = on to start the tailnet listener")
+			}
+		}
+		return nil, nil
+	case "on":
+	default:
+		return nil, at("tailnet", "%q must be on or off", v)
+	}
+	t := &Tailnet{}
+	switch v := values["tailnet_hostname"]; {
+	case v == "":
+		return nil, at("tailnet", "on needs tailnet_hostname, the node's name, fixed at enrolment")
+	case !tailnetHostname.MatchString(v):
+		return nil, at("tailnet_hostname", "%q is not a host name (lower-case letters, digits and -, at most 63)", v)
+	default:
+		t.Hostname = v
+	}
+	for _, tag := range strings.Split(values["tailnet_tags"], ",") {
+		if tag = strings.TrimSpace(tag); tag == "" {
+			continue
+		}
+		if !tailnetTag.MatchString(tag) {
+			return nil, at("tailnet_tags", "%q is not a tag such as tag:varlatch", tag)
+		}
+		t.Tags = append(t.Tags, tag)
+	}
+	if len(t.Tags) == 0 {
+		return nil, at("tailnet", "on needs tailnet_tags: the node is always tagged (the tags its auth key grants, such as tag:varlatch)")
+	}
+	p, err := strconv.Atoi(values["tailnet_port"])
+	if err != nil || p < 1 || p > 65535 {
+		return nil, at("tailnet", "on needs tailnet_port, the tailnet listener's port (1 to 65535)")
+	}
+	t.Port = p
+	switch v := values["tailnet_control_url"]; v {
+	case "", TailscaleControlURL:
+		// Tailscale's, given or not: the pin records it as "".
+	default:
+		// ADR-0059 Decision 5: a self-hosted control server (Headscale)
+		// needs https and tsnet's bootstrap DNS fallback off, so that its
+		// host name never goes to Tailscale while it is down; the tsnet
+		// release in use has no way to turn that fallback off.
+		return nil, at("tailnet_control_url", "%q: this release joins Tailscale's coordination server only; a self-hosted one "+
+			"(Headscale) is not supported yet. Leave tailnet_control_url unset.", v)
+	}
+	switch v := values["tailnet_auth_key_file"]; {
+	case v != "":
+		if !filepath.IsAbs(v) {
+			return nil, at("tailnet_auth_key_file", "%q is not an absolute path", v)
+		}
+		t.AuthKeyFile = filepath.Clean(v)
+	case env("CREDENTIALS_DIRECTORY") != "":
+		t.AuthKeyFile = filepath.Join(env("CREDENTIALS_DIRECTORY"), "tailnet-auth-key")
+	}
+	return t, nil
 }
 
 // backupDestinationName is a destinations file's key (destinationsSchema).

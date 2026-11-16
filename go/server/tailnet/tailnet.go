@@ -131,8 +131,13 @@ func tags(t []string) []any {
 // known by their tags only.
 type Resolver struct {
 	node Node
-	// suffix is the pinned tailnet: every peer's name must end in it.
-	suffix string
+	// pinned is the pinned tailnet, every peer's name must end in it, and
+	// whether tailnet access is open.
+	pinned func() (string, bool)
+	// closed says why access is closed: a pin change refuses every peer as
+	// of another tailnet; anything else (not enrolled yet, the tailnet not
+	// known) as resolver-unavailable.
+	closed func() string
 	self   *selfReader
 }
 
@@ -142,7 +147,15 @@ func NewResolver(node Node, suffix string, log *slog.Logger) *Resolver {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Resolver{node: node, suffix: suffix, self: &selfReader{node: node, log: log}}
+	return &Resolver{node: node, pinned: func() (string, bool) { return suffix, true }, self: &selfReader{node: node, log: log}}
+}
+
+// NewPinnedResolver returns a resolver over node whose pin is m's: while
+// m has tailnet access closed, every peer is refused before WhoIs.
+func NewPinnedResolver(node Node, m *Manager, log *slog.Logger) *Resolver {
+	r := NewResolver(node, "", log)
+	r.pinned, r.closed = m.Pinned, m.Closed
+	return r
 }
 
 // lookupTimeout bounds one question to the node (the local API's).
@@ -151,6 +164,14 @@ const lookupTimeout = 3 * time.Second
 // Resolve is resolveWhois: the peer behind remote ("ip:port", the
 // accepted socket's own), or why it has none.
 func (r *Resolver) Resolve(ctx context.Context, remote string) Resolution {
+	suffix, open := r.pinned()
+	if !open {
+		switch r.closed() {
+		case PinControlURL, PinTailnet, PinSuffix:
+			return Refusal(OtherTailnet)
+		}
+		return Refusal(ResolverUnavailable)
+	}
 	lctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	peer, err := r.node.WhoIs(lctx, remote)
 	cancel()
@@ -170,7 +191,7 @@ func (r *Resolver) Resolve(ctx context.Context, remote string) Resolution {
 	// and a device of another one never qualifies.
 	name := strings.TrimSuffix(peer.Name, ".")
 	host, tailnet, _ := strings.Cut(name, ".")
-	if tailnet != r.suffix {
+	if tailnet != suffix {
 		return Refusal(OtherTailnet)
 	}
 	// The node's own identity, as of now: unknown means refuse.

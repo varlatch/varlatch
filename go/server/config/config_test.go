@@ -97,6 +97,16 @@ func TestParseErrors(t *testing.T) {
 		"backup_keep zero":                 kek + "backup_keep = 0\n",
 		"backup_keep too many":             kek + "backup_keep = 1001\n",
 		"backup_destination with a dot":    kek + "backup_destination = b2.eu\n",
+		"tailnet neither on nor off":       kek + "tailnet = yes\n",
+		"tailnet setting with tailnet off": kek + "tailnet_hostname = varlatch\n",
+		"tailnet on without a hostname":    kek + "tailnet = on\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n",
+		"tailnet hostname with a dot":      kek + "tailnet = on\ntailnet_hostname = varlatch.corp\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n",
+		"tailnet on without tags":          kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_port = 8687\n",
+		"tailnet tag without tag:":         kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = varlatch\ntailnet_port = 8687\n",
+		"tailnet on without a port":        kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\n",
+		"tailnet port too large":           kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 65536\n",
+		"self-hosted control server":       kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://hs.example.com\n",
+		"relative tailnet auth key file":   kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_auth_key_file = key\n",
 	} {
 		_, err := Parse(strings.NewReader(file), env(nil))
 		var cerr *Error
@@ -107,6 +117,39 @@ func TestParseErrors(t *testing.T) {
 	_, err := Parse(strings.NewReader("root_kek_file = /k\n\nsync = maybe\n"), env(nil))
 	if err == nil || err.Error() != `configuration line 3: sync: "maybe" must be on or off` {
 		t.Errorf("message: %v", err)
+	}
+}
+
+// tailnet = on starts varlatchd's tailnet node (ADR-0059 Decision 5); off,
+// the default, leaves every tailnet setting unset. Tailscale's control
+// server is the only one this release joins, given or not.
+func TestParseTailnet(t *testing.T) {
+	c, err := Parse(strings.NewReader("root_kek_file = /k\n"), env(nil))
+	if err != nil || c.Tailnet != nil {
+		t.Fatalf("off by default: %+v, %v", c.Tailnet, err)
+	}
+	if c, err = Parse(strings.NewReader("root_kek_file = /k\ntailnet = off\n"), env(nil)); err != nil || c.Tailnet != nil {
+		t.Fatalf("off: %+v, %v", c.Tailnet, err)
+	}
+	on := "root_kek_file = /k\ntailnet = on\ntailnet_hostname = varlatch-prod\ntailnet_tags = tag:varlatch, tag:prod\ntailnet_port = 8687\n"
+	c, err = Parse(strings.NewReader(on), env(map[string]string{"CREDENTIALS_DIRECTORY": "/run/credentials/varlatchd.service"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tn := c.Tailnet; tn == nil || tn.Hostname != "varlatch-prod" || !slices.Equal(tn.Tags, []string{"tag:varlatch", "tag:prod"}) || tn.Port != 8687 ||
+		tn.ControlURL != "" || tn.AuthKeyFile != "/run/credentials/varlatchd.service/tailnet-auth-key" {
+		t.Errorf("on: %+v", c.Tailnet)
+	}
+	c, err = Parse(strings.NewReader(on+"tailnet_control_url = "+TailscaleControlURL+"\ntailnet_auth_key_file = /etc/varlatch/tailnet-auth-key\n"), env(nil))
+	if err != nil || c.Tailnet.ControlURL != "" || c.Tailnet.AuthKeyFile != "/etc/varlatch/tailnet-auth-key" {
+		t.Errorf("Tailscale's control URL given, and a key file: %+v, %v", c.Tailnet, err)
+	}
+	if c, err = Parse(strings.NewReader(on), env(nil)); err != nil || c.Tailnet.AuthKeyFile != "" {
+		t.Errorf("no key file and no credentials directory: %+v, %v", c.Tailnet, err)
+	}
+	_, err = Parse(strings.NewReader(on+"tailnet_control_url = https://hs.example.com\n"), env(nil))
+	if err == nil || !strings.Contains(err.Error(), "a self-hosted one (Headscale) is not supported yet") {
+		t.Errorf("a self-hosted control server: %v", err)
 	}
 }
 
