@@ -224,12 +224,18 @@ func ValidateURL(raw string) error {
 }
 
 // refuseOutbound is refuseOutboundWebhook: a URL the outbound policy
-// refuses is refused (ADR-0057 Decision 6), and its refusal recorded in a
-// job of its own, with wording that names the class, never the address.
-func (s *Service) refuseOutbound(ctx context.Context, organizationID, url, webhookID, actor string) error {
+// refuses is refused (ADR-0057 Decision 6), with wording that names the
+// class, never the address, and its refusal recorded in a job of its own
+// when record is set (the TypeScript server records it on the request's
+// connection: kept, except inside withIdempotency's transaction, which the
+// refusal rolls back).
+func (s *Service) refuseOutbound(ctx context.Context, organizationID, url, webhookID, actor string, record bool) error {
 	refusal, err := s.Policy.RefusalFor(ctx, url, outbound.Webhook)
 	if err != nil || refusal == nil {
 		return err
+	}
+	if !record {
+		return refused(refusal)
 	}
 	resource := jsvalue.Object{}
 	if webhookID != "" {
@@ -241,7 +247,11 @@ func (s *Service) refuseOutbound(ctx context.Context, organizationID, url, webho
 	}); err != nil {
 		return err
 	}
-	return &domainerr.Error{Code: "VALIDATION_FAILED", Message: refusal.Error(), Details: jsvalue.Object{{Key: "outbound", Value: string(refusal.Reason)}}}
+	return refused(refusal)
+}
+
+func refused(r *outbound.RefusedError) error {
+	return &domainerr.Error{Code: "VALIDATION_FAILED", Message: r.Error(), Details: jsvalue.Object{{Key: "outbound", Value: string(r.Reason)}}}
 }
 
 // Request is who asks, with what Varlatch-Approval header (nil for none),
@@ -334,7 +344,7 @@ func (s *Service) Create(ctx context.Context, req Request, org authz.Organizatio
 	if err := ValidateURL(url); err != nil {
 		return Created{}, nil, err
 	}
-	if err := s.refuseOutbound(ctx, org.ID, url, "", actor); err != nil {
+	if err := s.refuseOutbound(ctx, org.ID, url, "", actor, true); err != nil {
 		return Created{}, nil, err
 	}
 	id := ids.New(ids.Webhook)
@@ -434,7 +444,19 @@ type Patch struct {
 // yet is written; one that changes nothing answers the current row.
 func (s *Service) Update(ctx context.Context, req Request, organizationID, webhookID string, patch Patch) (write.Response, []auth.PendingReport, error) {
 	actor := req.Principal.Identity.ID
-	if patch.URL != nil {
+	claim := write.Claim{IdentityID: actor, Endpoint: "PATCH webhooks " + webhookID, Key: req.IdempotencyKey, Digest: write.BodyHash(patch.Body, s.RootKEK)}
+	// The TypeScript route runs updateWebhook inside withIdempotency: a
+	// key's length first, then its claim, whose INSERT fails on U+0000 in
+	// the key or the endpoint's webhook id (a replay answers its stored
+	// response, another body IDEMPOTENCY_CONFLICT), and only then the URL's
+	// checks, whose refusal record that transaction rolls back. The checks
+	// run before the job here, so the policy's DNS lookups never hold the
+	// writer; a claim made in between is still answered by the job.
+	claimed, err := write.Claimed(ctx, s.store().Reader(), claim)
+	if err != nil {
+		return write.Response{}, nil, err
+	}
+	if patch.URL != nil && !claimed {
 		if err := ValidateURL(*patch.URL); err != nil {
 			return write.Response{}, nil, err
 		}
@@ -443,7 +465,7 @@ func (s *Service) Update(ctx context.Context, req Request, organizationID, webho
 			return write.Response{}, nil, err
 		}
 		if err != nil || stored != *patch.URL {
-			if err := s.refuseOutbound(ctx, organizationID, *patch.URL, webhookID, actor); err != nil {
+			if err := s.refuseOutbound(ctx, organizationID, *patch.URL, webhookID, actor, req.IdempotencyKey == ""); err != nil {
 				return write.Response{}, nil, err
 			}
 		}
@@ -459,7 +481,6 @@ func (s *Service) Update(ctx context.Context, req Request, organizationID, webho
 		return url, types
 	}
 	r := req.security(s.Approvals)
-	claim := write.Claim{IdentityID: actor, Endpoint: "PATCH webhooks " + webhookID, Key: req.IdempotencyKey, Digest: write.BodyHash(patch.Body, s.RootKEK)}
 	return security.IdempotentProtected(ctx, s.Writer, r, organizationID, claim, func(ctx context.Context, tx *storage.Tx, reports *[]auth.PendingReport) (write.Response, error) {
 		p, err := security.Prepare(ctx, tx, r, security.Protected{
 			Scope:  write.Scope{OrganizationID: organizationID},

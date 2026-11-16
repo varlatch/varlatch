@@ -29,7 +29,10 @@ import (
 //     DialHTTP and DialHTTPPath, net/textproto.Dial;
 //   - DNS lookups, a channel out of their own (a name under a domain
 //     someone else serves carries data to its servers): every net.Lookup*,
+//     net.ResolveTCPAddr, ResolveUDPAddr and ResolveIPAddr,
 //     net.DefaultResolver and the net.Resolver type;
+//   - httputil's ReverseProxy and NewSingleHostReverseProxy (a nil
+//     Transport sends through the default transport);
 //   - http.DefaultClient, http.DefaultTransport, http.Get, Head, Post,
 //     PostForm and ProxyFromEnvironment;
 //   - an http.Client or http.Transport value made outside: a composite
@@ -89,6 +92,8 @@ var rules = []rule{
 	{path: "net/rpc", name: "Dial"}, {path: "net/rpc", name: "DialHTTP"}, {path: "net/rpc", name: "DialHTTPPath"},
 	{path: "net/rpc/jsonrpc", name: "Dial"}, {path: "net/textproto", name: "Dial"},
 	{path: "net", name: "Lookup*"}, {path: "net", name: "DefaultResolver"}, {path: "net", name: "Resolver"},
+	{path: "net", name: "ResolveTCPAddr"}, {path: "net", name: "ResolveUDPAddr"}, {path: "net", name: "ResolveIPAddr"},
+	{path: "net/http/httputil", name: "ReverseProxy"}, {path: "net/http/httputil", name: "NewSingleHostReverseProxy"},
 	{path: "net/http", name: "DefaultClient"}, {path: "net/http", name: "DefaultTransport"},
 	{path: "net/http", name: "Get"}, {path: "net/http", name: "Head"}, {path: "net/http", name: "Post"}, {path: "net/http", name: "PostForm"},
 	{path: "net/http", name: "ProxyFromEnvironment"},
@@ -98,7 +103,7 @@ var rules = []rule{
 }
 
 // guarded are the packages a dot-import of is refused.
-var guarded = []string{"net", "net/http", "crypto/tls", "net/smtp", "net/rpc", "net/rpc/jsonrpc", "net/textproto"}
+var guarded = []string{"net", "net/http", "crypto/tls", "net/smtp", "net/rpc", "net/rpc/jsonrpc", "net/textproto", "net/http/httputil"}
 
 // use is one forbidden use found: file, the use as package.Name, line.
 type use struct {
@@ -294,6 +299,7 @@ import (
 	"crypto/tls"
 	"net"
 	h "net/http"
+	"net/http/httputil"
 	"net/rpc"
 	"net/rpc/jsonrpc"
 	"net/smtp"
@@ -347,6 +353,8 @@ func g() {
 	_ = make(chan *h.Client)
 	net.LookupHost("x")
 	net.LookupTXT("x")
+	net.ResolveTCPAddr("tcp", "x:1")
+	_ = &httputil.ReverseProxy{}
 	_ = net.DefaultResolver
 	_ = &net.Resolver{}
 	rpc.Dial("tcp", "x")
@@ -363,15 +371,16 @@ func g() {
 	}
 	want := []string{
 		"dot.go:3 dot-import of net/http",
-		"x.go:15 http.Client", "x.go:17 http.Transport", "x.go:20 http.Client",
-		"x.go:23 net.Dial", "x.go:24 net.Dialer", "x.go:25 net.ListenPacket", "x.go:26 http.DefaultClient", "x.go:27 http.Get",
-		"x.go:28 http.Transport", "x.go:29 http.Client", "x.go:30 http.Client", "x.go:31 http.Transport", "x.go:32 http.Client",
-		"x.go:34 http.ProxyFromEnvironment", "x.go:35 tls.Dial", "x.go:36 smtp.SendMail", "x.go:37 s3.New",
-		"x.go:40 http.Client", "x.go:41 http.Transport",
-		"x.go:45 http.Client", "x.go:46 http.Transport", "x.go:47 http.Client", "x.go:49 http.Client",
-		"x.go:53 http.Client", "x.go:54 http.Client", "x.go:55 http.Transport", "x.go:56 http.Client",
-		"x.go:58 net.LookupHost", "x.go:59 net.LookupTXT", "x.go:60 net.DefaultResolver", "x.go:61 net.Resolver",
-		"x.go:62 rpc.Dial", "x.go:63 jsonrpc.Dial", "x.go:64 textproto.Dial",
+		"x.go:16 http.Client", "x.go:18 http.Transport", "x.go:21 http.Client",
+		"x.go:24 net.Dial", "x.go:25 net.Dialer", "x.go:26 net.ListenPacket", "x.go:27 http.DefaultClient", "x.go:28 http.Get",
+		"x.go:29 http.Transport", "x.go:30 http.Client", "x.go:31 http.Client", "x.go:32 http.Transport", "x.go:33 http.Client",
+		"x.go:35 http.ProxyFromEnvironment", "x.go:36 tls.Dial", "x.go:37 smtp.SendMail", "x.go:38 s3.New",
+		"x.go:41 http.Client", "x.go:42 http.Transport",
+		"x.go:46 http.Client", "x.go:47 http.Transport", "x.go:48 http.Client", "x.go:50 http.Client",
+		"x.go:54 http.Client", "x.go:55 http.Client", "x.go:56 http.Transport", "x.go:57 http.Client",
+		"x.go:59 net.LookupHost", "x.go:60 net.LookupTXT", "x.go:61 net.ResolveTCPAddr", "x.go:62 httputil.ReverseProxy",
+		"x.go:63 net.DefaultResolver", "x.go:64 net.Resolver",
+		"x.go:65 rpc.Dial", "x.go:66 jsonrpc.Dial", "x.go:67 textproto.Dial",
 	}
 	sort.Strings(uses)
 	sort.Strings(want)

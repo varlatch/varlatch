@@ -65,6 +65,23 @@ func slowBackups(o *backups.Options) {
 	o.Snapshot = storage.SnapshotOptions{StepPages: 64, Pause: 50 * time.Millisecond}
 }
 
+// stalledIn paces a backup as slowBackups does, except its phase (snapshot
+// or sealing), which it slows so much (a page every 200 ms; sealing at
+// 32 KiB/s) that it does not end within a test's minutes: a kill made once
+// the phase is reached lands in it, however small the database or fast the
+// machine.
+func stalledIn(phase string) func(*backups.Options) {
+	return func(o *backups.Options) {
+		slowBackups(o)
+		switch phase {
+		case "snapshot":
+			o.Snapshot = storage.SnapshotOptions{StepPages: 1, Pause: 200 * time.Millisecond}
+		case "sealing":
+			o.SealRate = 32 << 10
+		}
+	}
+}
+
 // damaged is the archive at good with the same identity, whose database
 // has no installation: it opens and passes every check before the
 // database is replaced, and fails after.
@@ -238,7 +255,7 @@ func TestKillDuringBackup(t *testing.T) {
 	if conf := os.Getenv("G7_BACKUP_SERVE_CONF"); conf != "" {
 		os.Exit(serve(Options{ConfigPath: conf, Stderr: os.Stderr, Ready: func(a net.Addr) {
 			fmt.Println("ready", a.String())
-		}}, &hooks{backups: slowBackups}))
+		}}, &hooks{backups: stalledIn(os.Getenv("G7_BACKUP_PHASE"))}))
 	}
 	for _, phase := range []string{"snapshot", "sealing"} {
 		t.Run(phase, func(t *testing.T) { killDuringBackup(t, phase) })
@@ -248,7 +265,7 @@ func TestKillDuringBackup(t *testing.T) {
 func killDuringBackup(t *testing.T, phase string) {
 	in, _, token := backupInstall(t, t.TempDir(), 16)
 	cmd := exec.Command(os.Args[0], "-test.run=^TestKillDuringBackup$")
-	cmd.Env = append(os.Environ(), "G7_BACKUP_SERVE_CONF="+in.conf)
+	cmd.Env = append(os.Environ(), "G7_BACKUP_SERVE_CONF="+in.conf, "G7_BACKUP_PHASE="+phase)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -284,6 +301,7 @@ func killDuringBackup(t *testing.T, phase string) {
 
 	var mu sync.Mutex
 	var disclosed []string
+	var lastErr error
 	var answered atomic.Int64
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -300,7 +318,13 @@ func killDuringBackup(t *testing.T, phase string) {
 				}
 				s, id, body, err := disclose(client, base, token)
 				if err != nil {
-					return
+					// A transient failure under load (a client timeout) is
+					// tried again; after the kill, stop ends the loop.
+					mu.Lock()
+					lastErr = err
+					mu.Unlock()
+					time.Sleep(100 * time.Millisecond)
+					continue
 				}
 				if s == 200 && strings.Contains(body, "hunter2-hunter2") {
 					mu.Lock()
@@ -319,7 +343,10 @@ func killDuringBackup(t *testing.T, phase string) {
 	// detector everything is slower).
 	for deadline := time.Now().Add(60 * time.Second); answered.Load() < 5; time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(deadline) || t.Failed() {
-			t.Fatalf("no disclosure answered before the backup: %s", stderr.String())
+			mu.Lock()
+			err := lastErr
+			mu.Unlock()
+			t.Fatalf("%d disclosures answered before the backup (the last client error: %v): %s", answered.Load(), err, stderr.String())
 		}
 	}
 	backupDone := make(chan struct{})
@@ -343,7 +370,9 @@ func killDuringBackup(t *testing.T, phase string) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	time.Sleep(300 * time.Millisecond)
+	// The phase has just begun, and stalledIn keeps it going for minutes:
+	// the kill lands in it.
+	time.Sleep(100 * time.Millisecond)
 	if !inPhase() {
 		t.Fatalf("the backup left its %s before the kill", phase)
 	}

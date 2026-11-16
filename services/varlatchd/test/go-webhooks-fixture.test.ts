@@ -197,6 +197,15 @@ function requestTable(): RequestCase[] {
     update("update the filter with a key", "acme", "{updId}", { expectedVersion: 4, eventTypes: ["project.created"] }, { headers: { "Idempotency-Key": "k-upd-1" } }),
     update("update the filter with a key again", "acme", "{updId}", { expectedVersion: 4, eventTypes: ["project.created"] }, { headers: { "Idempotency-Key": "k-upd-1" } }),
     update("update with the key and another body", "acme", "{updId}", { expectedVersion: 5, eventTypes: null }, { headers: { "Idempotency-Key": "k-upd-1" } }),
+    // With a key, the claim answers before the URL's checks (they run inside withIdempotency).
+    update("update with the key and a refused URL", "acme", "{updId}", { expectedVersion: 5, url: "https://intranet.example/k" }, { headers: { "Idempotency-Key": "k-upd-1" } }),
+    update("update with the key and userinfo", "acme", "{updId}", { expectedVersion: 5, url: "https://u:p@hooks.public.example/k" }, { headers: { "Idempotency-Key": "k-upd-1" } }),
+    // A refusal under a new key: refused, its record rolled back with the claim.
+    update("update to a refused URL with a new key", "acme", "{updId}", { expectedVersion: 5, url: "https://intranet.example/k2" }, { headers: { "Idempotency-Key": "k-upd-2" } }),
+    update("update with a key too long and an invalid URL", "acme", "{updId}", { expectedVersion: 5, url: "ftp://x" }, { headers: { "Idempotency-Key": "k".repeat(201) } }),
+    // U+0000 in the endpoint's webhook id fails the claim's INSERT, before the URL's checks; with no key there is no claim.
+    update("update a webhook id with NUL, a key and an invalid URL", "acme", "whk%00x", { expectedVersion: 1, url: "ftp://x" }, { headers: { "Idempotency-Key": "k-nul" } }),
+    update("update a webhook id with NUL and an invalid URL", "acme", "whk%00x", { expectedVersion: 1, url: "ftp://x" }),
     update("update, version 0", "acme", "{updId}", { expectedVersion: 0 }),
     update("update, no version", "acme", "{updId}", { url: `${pub}/x` }),
     update("update, a version as a string", "acme", "{updId}", { expectedVersion: "5" }),
@@ -304,6 +313,8 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   await hook("acme", "http://127.0.0.1:9/loopback");
   await hook("acme", "https://missing.example/fail");
   await hook("acme", `${pub}/nothing`, ["value.disclosed"]);
+  // A path that starts with "//": sent as a path, never as an absolute URL.
+  await hook("acme", `${pub}//double/slash?x=1`);
   // A webhook to a URL the policy refuses, its URL changed directly
   // (createWebhook refuses it): delivery to it is refused at connection in
   // the server, and the recording fetch here sends it as any other.

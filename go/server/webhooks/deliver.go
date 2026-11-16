@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
@@ -160,13 +161,30 @@ func withoutDeletedProjects(ctx context.Context, db query.DBTX, batch []query.Au
 // `new URL` does (the host the outbound check decided, not one Go's parser
 // reads differently), the path and query exactly as fetch writes them,
 // no fragment.
+//
+// The path goes out as written through Opaque, except one that starts with
+// "//": net/url sends an Opaque of that form as an absolute URL
+// ("http://x/y" for the path //x/y). That one goes through Path and
+// RawPath, which net/url sends as written when it can; a path it would
+// write otherwise (a "|", which it escapes, or a stray "%") then differs
+// from fetch's in those characters only.
 func requestURL(raw string) (*url.URL, bool) {
 	u, ok := whatwg.ParseURL(raw)
 	if !ok || u.Username != "" || u.Password != "" {
 		return nil, false
 	}
 	path, q := u.RequestTarget()
-	return &url.URL{Scheme: u.Protocol[:len(u.Protocol)-1], Host: u.Host, Opaque: path, RawQuery: q}, true
+	out := &url.URL{Scheme: u.Protocol[:len(u.Protocol)-1], Host: u.Host, RawQuery: q}
+	if !strings.HasPrefix(path, "//") {
+		out.Opaque = path
+		return out, true
+	}
+	if decoded, err := url.PathUnescape(path); err == nil {
+		out.Path, out.RawPath = decoded, path
+	} else {
+		out.Path = path
+	}
+	return out, true
 }
 
 // deliverOne is deliverOne: the next batch after the cursor, filtered;
@@ -251,8 +269,10 @@ func (s *Service) deliverOne(ctx context.Context, h query.DeliverableWebhooksRow
 // status to store and whether it was a 2xx. As the TypeScript server
 // stores them: the status code; a refusal by the outbound policy as
 // outbound_refused (recorded within the rate bound; the cursor stays, and
-// the events go out once the host allows the destination); a timeout as
-// TimeoutError; any other failure as TypeError (fetch's network error).
+// the events go out once the host allows the destination); the
+// delivery's own deadline as TimeoutError (fetch's AbortSignal.timeout);
+// any other failure as TypeError (fetch's network error), the dialer's
+// connect timeout included, as undici reports it.
 func (s *Service) post(ctx context.Context, h query.DeliverableWebhooksRow, body []byte, signature string) (string, bool) {
 	target, valid := requestURL(h.Url)
 	if !valid {
@@ -283,7 +303,9 @@ func (s *Service) post(ctx context.Context, h query.DeliverableWebhooksRow, body
 			}
 			return outbound.LastStatusRefused, false
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		// The delivery's own deadline is fetch's AbortSignal.timeout; the
+		// dialer's connect timeout (undici's) is a network error.
+		if errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "TimeoutError", false
 		}
 		return "TypeError", false

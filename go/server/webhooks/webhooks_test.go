@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -459,12 +460,59 @@ func TestLoopPausesUnderMaintenance(t *testing.T) {
 func TestRequestFromTheWHATWGURL(t *testing.T) {
 	rc := newReceiver(t)
 	wd := newWorld(t, "127.0.0.1/32:*")
-	hook := wd.create("http://0x7f.1:" + rc.port() + "/a b/é?x y=\"1\"#frag")
+	origin := "http://0x7f.1:" + rc.port()
+	// A path that starts with "//" goes out as a path, never as an
+	// absolute URL (net/url's Opaque form would send "http://x/y").
+	cases := map[string]string{
+		"/a b/é?x y=\"1\"#frag": "/a%20b/%C3%A9?x%20y=%221%22",
+		"//x/y?z=1":             "//x/y?z=1",
+		"//hooks/a b/%41?q=%2F": "//hooks/a%20b/%41?q=%2F",
+		"///triple":             "///triple",
+	}
+	for path := range cases {
+		wd.create(origin + path)
+	}
 	wd.event("project.created", nil)
 	wd.deliver()
-	got := rc.requests()
-	if len(got) != 1 || got[0].target != "/a%20b/%C3%A9?x%20y=%221%22" {
-		t.Fatalf("%+v (row %+v)", got, wd.row(hook.Webhook.ID))
+	var got []string
+	for _, r := range rc.requests() {
+		got = append(got, r.target)
+	}
+	slices.Sort(got)
+	var want []string
+	for _, target := range cases {
+		want = append(want, target)
+	}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("targets %q, want %q", got, want)
+	}
+	for _, target := range want {
+		u, ok := requestURL(origin + target)
+		if !ok || u.Host != "127.0.0.1:"+rc.port() || u.RequestURI() != target {
+			t.Errorf("%s: %v %q", target, ok, u.RequestURI())
+		}
+	}
+}
+
+// A connection that never completes ends at the dialer's connect timeout,
+// a network error (undici's ConnectTimeoutError in fetch's TypeError), not
+// the delivery's own deadline (fetch's TimeoutError).
+func TestConnectTimeoutIsTypeError(t *testing.T) {
+	wd := newWorld(t, "127.0.0.1/32:*")
+	hook := wd.create("http://127.0.0.1:9/blackhole")
+	wd.event("project.created", nil)
+	blackhole := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		// The dialer's own deadline, shorter than the delivery's.
+		ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	wd.s.client = &http.Client{Transport: &http.Transport{DialContext: blackhole}}
+	wd.deliver()
+	if r := wd.row(hook.Webhook.ID); r.status == nil || *r.status != "TypeError" || r.failures != 1 {
+		t.Errorf("connect timeout: %+v", r)
 	}
 }
 

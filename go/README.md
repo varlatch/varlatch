@@ -435,14 +435,16 @@ can choose or influence goes through it, and only it.
   of `net/rpc`, `net/rpc/jsonrpc` and `net/textproto`,
   `http.DefaultClient`, `http.DefaultTransport`, `http.Get`, `Head`,
   `Post`, `PostForm` and `http.ProxyFromEnvironment`; DNS lookups, a
-  channel out of their own (`net.Lookup*`, `net.DefaultResolver`,
-  `net.Resolver`); an `http.Client` or `http.Transport` value (a literal,
+  channel out of their own (`net.Lookup*`, `net.ResolveTCPAddr`,
+  `ResolveUDPAddr`, `ResolveIPAddr`, `net.DefaultResolver`,
+  `net.Resolver`); httputil's `ReverseProxy` and
+  `NewSingleHostReverseProxy` (a nil Transport is the default one); an `http.Client` or `http.Transport` value (a literal,
   `new` or `make`, a variable, a struct field or a declared type, alias or
   defined, of it or of an array, slice, map or channel of it, and a
   pointer element in a composite literal, whose elided `{}` makes one: a
   zero client sends through the default transport); a dot-import of
-  `net`, `net/http`, `crypto/tls`, `net/smtp`, `net/rpc`,
-  `net/rpc/jsonrpc` or `net/textproto`; or an S3 client. Imports are
+  `net`, `net/http`, `net/http/httputil`, `crypto/tls`, `net/smtp`,
+  `net/rpc`, `net/rpc/jsonrpc` or `net/textproto`; or an S3 client. Imports are
   matched by path. Each reviewed exception names its file, its use and
   how many times: in go/server the daemon's Unix control socket (twice),
   the host's trusted_proxies names and the host's backup destination
