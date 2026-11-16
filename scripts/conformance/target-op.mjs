@@ -18,6 +18,7 @@
  *   target-op.mjs webhook-receiver url|requests      JSON
  *   target-op.mjs object-store start                 JSON
  *   target-op.mjs host-admin audit-export <args...>  JSON { status, stdout, stderr }
+ *   target-op.mjs oidc-issuer start|keys <json>|counts  JSON
  *
  * An optional operation the target does not have exits 3.
  */
@@ -92,6 +93,11 @@ switch (operation) {
     needs("host-admin");
     if (args[0] !== "audit-export") throw new Error("host-admin audit-export <args...>");
     print(JSON.stringify(await target.hostAdmin(state, ...args)));
+    break;
+  case "oidc-issuer":
+    needs("oidc-issuer");
+    if (!["start", "keys", "counts"].includes(args[0])) throw new Error("oidc-issuer start|keys <json>|counts");
+    print(JSON.stringify(await target.oidcIssuer(state, ...args)));
     break;
   case "ts-stack": {
     needs("ts-stack");

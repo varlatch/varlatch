@@ -49,6 +49,8 @@ const (
 	MembershipRemoval = "mrm"
 	// Step 4.6: broker Capabilities.
 	Capability = "cap"
+	// Step 4.8: OIDC bindings.
+	OIDCBinding = "oib"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"

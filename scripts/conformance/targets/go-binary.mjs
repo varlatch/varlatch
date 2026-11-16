@@ -47,9 +47,13 @@
  *             outbound_allow opens: `start` runs it; `down` removes it
  *   hostAdmin `audit-export ...` through the daemon's control socket: its
  *             exit status and output
+ *   oidcIssuer
+ *             the oidc suite's issuer (lib/oidc-issuer.cjs) over https on a
+ *             free loopback port that outbound_allow opens, its
+ *             self-signed certificate among varlatchd's roots (SSL_CERT_FILE)
  *
  * Optional capabilities (targets/capabilities.json, their only source): the
- * device sign-in probes, go-server, webhook-receiver, object-store and host-admin. Maintenance and
+ * device sign-in probes, go-server, webhook-receiver, object-store, host-admin and oidc-issuer. Maintenance and
  * serve-cli come with the operations that need them (expect/go-binary.json
  * lists them).
  * The only processes it signals are the ones it started, by the PID it
@@ -70,7 +74,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
-import { OBJECT_STORE_IMAGE, objectStoreKeys, objectStoreReady } from "./compose-stack.mjs";
+import { issuerCertificate, ISSUER_SOURCE, OBJECT_STORE_IMAGE, objectStoreKeys, objectStoreReady } from "./compose-stack.mjs";
 
 export const name = "go-binary";
 
@@ -116,7 +120,7 @@ function config(state, extra = "") {
     `access_log = ${state.accessLog}`,
     // The webhooks suite's receiver: the one private destination allowed.
     // and the audit-export suite's object store.
-    ...(state.receiverPort ? [`outbound_allow = ${[state.receiverPort, state.objectStorePort].filter(Boolean).map((p) => `127.0.0.1/32:${p}`).join(",")}`] : []),
+    ...(state.receiverPort ? [`outbound_allow = ${[state.receiverPort, state.objectStorePort, state.oidcPort].filter(Boolean).map((p) => `127.0.0.1/32:${p}`).join(",")}`] : []),
     extra,
   ].join("\n") + "\n";
 }
@@ -139,6 +143,7 @@ export async function up({ argument, onState = () => {} }) {
   const port = await freePort();
   const receiverPort = await freePort();
   const objectStorePort = await freePort();
+  const oidcPort = await freePort();
   const state = {
     target: `go-binary:${argument}`,
     binary,
@@ -154,6 +159,9 @@ export async function up({ argument, onState = () => {} }) {
     receiverPort,
     receiverPidFile: join(dir, "receiver.pid"),
     objectStorePort,
+    oidcPort,
+    oidcDir: join(dir, "oidc"),
+    oidcPidFile: join(dir, "oidc-issuer.pid"),
   };
   onState(state);
   try {
@@ -167,6 +175,10 @@ export async function up({ argument, onState = () => {} }) {
       writeFileSync(state.kekFile, `${randomBytes(32).toString("hex")}\n`, { mode: 0o600 });
     }
     chmodSync(state.kekFile, 0o600);
+    issuerCertificate(state.oidcDir);
+    // varlatchd's roots: the system's and the issuer's certificate.
+    const system = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"].find((f) => existsSync(f));
+    writeFileSync(join(state.oidcDir, "roots.pem"), `${system ? readFileSync(system, "utf8") : ""}\n${readFileSync(join(state.oidcDir, "cert.pem"), "utf8")}`);
     writeFileSync(state.conf, config(state));
     await start(state);
   } catch (err) {
@@ -180,6 +192,7 @@ export async function up({ argument, onState = () => {} }) {
 export async function down(state) {
   await stop(state).catch(() => {});
   stopReceiver(state);
+  stopIssuer(state);
   // The object store, by the name only this installation's has.
   if (state?.dir) spawnSync("docker", ["rm", "-fv", objectStoreName(state)], { stdio: "ignore" });
   if (state?.dir && state.dir.startsWith(join(tmpdir(), "conformance-go-"))) rmSync(state.dir, { recursive: true, force: true });
@@ -221,6 +234,8 @@ async function start(state) {
   try {
     child = spawn(process.execPath, [SUPERVISOR, state.dir, state.pidFile, state.serverLog, state.binary, "serve", "--config", state.conf], {
       stdio: ["pipe", log, log],
+      // The system's roots and the oidc suite's issuer certificate.
+      env: { ...process.env, ...(state.oidcDir ? { SSL_CERT_FILE: join(state.oidcDir, "roots.pem") } : {}) },
     });
   } finally {
     closeSync(log);
@@ -461,6 +476,50 @@ export async function webhookReceiver(state, action) {
     if (!(await receiverRequests(state))) throw new Error("the webhook receiver did not start");
   }
   return { url: `http://127.0.0.1:${state.receiverPort}` };
+}
+
+const ISSUER = fileURLToPath(ISSUER_SOURCE);
+
+function issuerControl(state, method, path, body) {
+  return spawnSync(process.execPath, [ISSUER, "control", join(state.oidcDir, "cert.pem"), String(state.oidcPort), method, path, ...(body ? [body] : [])],
+    { encoding: "utf8", timeout: 20_000 });
+}
+
+function stopIssuer(state) {
+  if (!state?.oidcPidFile || !existsSync(state.oidcPidFile)) return;
+  const pid = Number(readFileSync(state.oidcPidFile, "utf8").trim());
+  if (pid > 0) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+/**
+ * The oidc-issuer capability: `start` runs the issuer
+ * (lib/oidc-issuer.cjs) on the loopback port varlatchd.conf allows, a
+ * process of its own, when it is not running, and answers its URL; `keys
+ * <json>` sets its JWKS; `counts` what it was fetched. `down` stops it by
+ * its recorded PID; it is gone by itself once the installation is.
+ */
+export async function oidcIssuer(state, action, ...args) {
+  const running = () => issuerControl(state, "GET", "/_conformance/counts").status === 0;
+  if (action === "start") {
+    if (!running()) {
+      const child = spawn(process.execPath, [ISSUER, "serve", state.dir, state.oidcDir, String(state.oidcPort)], { stdio: "ignore", detached: true });
+      writeFileSync(state.oidcPidFile, `${child.pid}\n`);
+      child.unref();
+      for (let i = 0; i < 50 && !running(); i++) await sleep(100);
+      if (!running()) throw new Error("the oidc issuer did not start");
+    }
+    return { issuer: `https://127.0.0.1:${state.oidcPort}` };
+  }
+  const r = action === "keys" ? issuerControl(state, "PUT", "/_conformance/jwks", args[0]) : action === "counts" ? issuerControl(state, "GET", "/_conformance/counts") : null;
+  if (!r) throw new Error(`unknown oidc-issuer action ${action}`);
+  if (r.status !== 0) throw new Error(`oidc-issuer ${action}: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+  return JSON.parse(r.stdout);
 }
 
 const objectStoreName = (state) => `conformance-go-object-store-${state.dir.split("-").pop().toLowerCase().replace(/[^a-z0-9]/g, "")}`;

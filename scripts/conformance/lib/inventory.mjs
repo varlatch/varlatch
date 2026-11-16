@@ -74,6 +74,7 @@ export const CAPABILITIES = [
   "webhook-receiver",
   "object-store",
   "host-admin",
+  "oidc-issuer",
 ];
 
 /**

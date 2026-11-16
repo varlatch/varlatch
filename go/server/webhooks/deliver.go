@@ -16,12 +16,10 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
-	"github.com/varlatch/varlatch/go/lib/whatwg"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
@@ -157,36 +155,6 @@ func withoutDeletedProjects(ctx context.Context, db query.DBTX, batch []query.Au
 	return out, nil
 }
 
-// requestURL is the URL as fetch sends it: parsed and serialized as
-// `new URL` does (the host the outbound check decided, not one Go's parser
-// reads differently), the path and query exactly as fetch writes them,
-// no fragment.
-//
-// The path goes out as written through Opaque, except one that starts with
-// "//": net/url sends an Opaque of that form as an absolute URL
-// ("http://x/y" for the path //x/y). That one goes through Path and
-// RawPath, which net/url sends as written when it can; a path it would
-// write otherwise (a "|", which it escapes, or a stray "%") then differs
-// from fetch's in those characters only.
-func requestURL(raw string) (*url.URL, bool) {
-	u, ok := whatwg.ParseURL(raw)
-	if !ok || u.Username != "" || u.Password != "" {
-		return nil, false
-	}
-	path, q := u.RequestTarget()
-	out := &url.URL{Scheme: u.Protocol[:len(u.Protocol)-1], Host: u.Host, RawQuery: q}
-	if !strings.HasPrefix(path, "//") {
-		out.Opaque = path
-		return out, true
-	}
-	if decoded, err := url.PathUnescape(path); err == nil {
-		out.Path, out.RawPath = decoded, path
-	} else {
-		out.Path = path
-	}
-	return out, true
-}
-
 // deliverOne is deliverOne: the next batch after the cursor, filtered;
 // eligibility again right before sending; then one signed POST through
 // the outbound policy, and its outcome on the row.
@@ -274,7 +242,7 @@ func (s *Service) deliverOne(ctx context.Context, h query.DeliverableWebhooksRow
 // any other failure as TypeError (fetch's network error), the dialer's
 // connect timeout included, as undici reports it.
 func (s *Service) post(ctx context.Context, h query.DeliverableWebhooksRow, body []byte, signature string) (string, bool) {
-	target, valid := requestURL(h.Url)
+	target, valid := outbound.RequestURL(h.Url)
 	if !valid {
 		return "TypeError", false
 	}

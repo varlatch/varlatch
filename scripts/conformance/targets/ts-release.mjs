@@ -189,4 +189,5 @@ export const {
   webhookReceiver,
   objectStore,
   hostAdmin,
+  oidcIssuer,
 } = stack;

@@ -41,6 +41,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/oidc"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/pgtime"
 	"github.com/varlatch/varlatch/go/server/realtime"
@@ -118,6 +119,9 @@ type Options struct {
 	// AuditExportVerifiedProvider treats an endpoint as a verified Object
 	// Lock provider (tests: a local S3 server); nil for none.
 	AuditExportVerifiedProvider func(endpoint string) bool
+	// OIDCFetch replaces the OIDC exchange's fetch of issuer documents
+	// (tests); nil is the outbound policy's oidc client.
+	OIDCFetch oidc.Fetcher
 	// Built adds operations, by route pattern ("GET /v1/organizations"), to
 	// the ones this build has, for tests of the stub's wiring. Each is
 	// served by the generated strict handler: a pattern whose operation
@@ -234,6 +238,8 @@ var BuiltOperations = []string{
 	memberExposurePattern, confirmExposureRevocationPattern,
 	// Step 4.6: broker Capabilities (capabilities.go).
 	listCapabilitiesPattern, issueCapabilityPattern, revokeCapabilityPattern, exerciseCapabilityPattern,
+	// Step 4.8: OIDC workload identity (oidc.go).
+	listOidcBindingsPattern, createOidcBindingPattern, revokeOidcBindingPattern, exchangeOidcTokenPattern,
 }
 
 // Server is the handler.
@@ -246,6 +252,9 @@ type Server struct {
 	webIndex  []byte
 	webExists bool
 	browser   http.Handler
+	// oidc is the OIDC exchange, with its bounded issuer caches (one per
+	// process).
+	oidc *oidc.Service
 }
 
 // New builds the handler.
@@ -263,6 +272,13 @@ func New(opts Options) (*Server, error) {
 		return nil, errors.New("httpserver: no backend")
 	}
 	s := &Server{opts: opts, window: newRequestWindow(opts.Now)}
+	if opts.Writer != nil && (opts.Outbound != nil || opts.OIDCFetch != nil) {
+		fetch := opts.OIDCFetch
+		if fetch == nil {
+			fetch = oidc.PolicyFetcher(opts.Outbound)
+		}
+		s.oidc = &oidc.Service{Writer: opts.Writer, Policy: opts.Outbound, Verifier: &oidc.Verifier{Fetch: fetch, Now: opts.Now}, Now: opts.Now, Log: opts.Log}
+	}
 	built := map[string]bool{}
 	for _, p := range append(append([]string{}, BuiltOperations...), opts.Built...) {
 		built[p] = true

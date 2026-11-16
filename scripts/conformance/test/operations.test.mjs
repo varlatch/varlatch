@@ -203,6 +203,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "memberExposure", "confirmExposureRevocation",
     // Step 4.6: broker Capabilities.
     "listCapabilities", "issueCapability", "revokeCapability", "exerciseCapability",
+    // Step 4.8: OIDC workload identity.
+    "listOidcBindings", "createOidcBinding", "revokeOidcBinding", "exchangeOidcToken",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is
@@ -239,8 +241,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // and the webhooks suite but for its deletion group. (4.11a) the
   // audit-export suite, with (4.11b) its stream and host-command checks.
   // (4.5a) access's invites group. (4.6) the broker suite, strict-run's
-  // agent-safe group and access's capabilities group. Every other one
-  // lacks something.
+  // agent-safe group and access's capabilities group. (4.8) access's oidc
+  // group and the oidc suite. Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
@@ -251,16 +253,16 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   const notYet = {
     dashboard: [], values: [], p4: [], onboarding: [], webhooks: ["deletion"],
     "client-runtime": [], "strict-run": [], broker: [],
-    access: ["oidc"],
+    access: [],
   };
   const ownLacking = [];
   const expected = Object.entries(inventory.checks).filter(([id, c]) =>
-    /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs|sdk|security|maintenance|audit-export)\./.test(id) ||
+    /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs|sdk|security|maintenance|audit-export|oidc)\./.test(id) ||
     ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format",
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
     (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
-  assert.equal(runs.length, 433);
+  assert.equal(runs.length, 443);
   // The groups still lacking lack exactly their own operations.
   for (const [suite, groups] of Object.entries(notYet)) {
     for (const g of groups) {
