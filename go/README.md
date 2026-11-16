@@ -824,9 +824,16 @@ serves the tailnet listener on the node's own addresses
   Decision 5 requires a self-hosted (Headscale) control server's host name
   never to reach Tailscale, and the tsnet release in use always keeps its
   bootstrap DNS fallback (Tailscale's DERP servers resolve the control
-  host when the system resolver fails), with no way to turn it off. The
-  pin's Headscale rules are in place and tested
-  (`TestHeadscalePin`), for when that changes.
+  host when the system resolver fails), with no way to turn it off. ADR-0059
+  lists a Headscale version as supported only once G10 shows no such
+  query, so none is yet. The plan's Headscale end-to-end tests (G10's step
+  4 cases against a Headscale 0.29.7 container: WhoIs, tagged peers, a
+  changed `base_domain`, a different control URL, and no bootstrap DNS
+  query while the control server is down) are deferred until a tsnet
+  release can turn the fallback off: the last of them cannot pass before
+  then, and the others would test a configuration varlatchd refuses. The
+  pin's Headscale rules are in place and unit-tested
+  (`TestHeadscalePin`) for that day.
 - **The pin** (`<data_dir>/tailnet-pin.json`, `server/tailnet/pin.go`)
   is recorded at enrolment, the first time the node runs on a tailnet: the
   control URL, the tailnet's StableID (Tailscale) and its MagicDNS suffix
