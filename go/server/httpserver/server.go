@@ -230,6 +230,8 @@ var BuiltOperations = []string{
 	// Step 4.5a: invitations, members and the profile (people.go).
 	listInvitationsPattern, createInvitationPattern, revokeInvitationPattern,
 	reviewMemberPattern, removeMemberPattern, changeMemberRolePattern, updateMyProfilePattern,
+	// Step 4.5b: the exposure report and confirmations (people.go).
+	memberExposurePattern, confirmExposureRevocationPattern,
 }
 
 // Server is the handler.

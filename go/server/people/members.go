@@ -5,11 +5,10 @@ package people
 import (
 	"context"
 	"database/sql"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
@@ -25,10 +24,15 @@ import (
 // changes (ADR-0052 Decisions 1 to 5; domain/members.ts). The TypeScript
 // code runs each as one SERIALIZABLE transaction; here each is one job on
 // the single writer, so its checks, the last-admin rule and the authority
-// snapshot read one state. A removal holds the removed person's gate
-// exclusive: a Grant or a group membership naming them (4.4b) holds it
-// shared, so it comes before the removal (and is revoked by it) or after
-// (and finds them gone).
+// snapshot read one state. As there, a removal takes the removed person
+// shared (key share) and a role change nothing of the target: a reader
+// with organization.read must not hold an admin's gate exclusive before
+// the admin check. Writers relying on the membership (a Grant naming the
+// person, a group they join, an invitation they issue) read it in their
+// own job and pin it (its version moved on), so on the single writer they
+// come before the removal or role change (which revokes, or whose bound
+// version no longer holds) or after it (and find the membership gone or
+// changed).
 
 // snapshotActions are SNAPSHOT_ACTIONS: the value actions the authority
 // snapshot records, per environment.
@@ -249,23 +253,15 @@ func changesOf(created bool, indexed sql.NullString) ([]any, error) {
 	return out, nil
 }
 
-// urlHost is new URL(url).host: the host as WHATWG URL parsing gives it,
-// lower case, with the port unless it is the scheme's default; "" when
-// the URL does not parse.
+// urlHost is new URL(url).host: the host as the WHATWG URL parser gives
+// it, with the port unless it is the scheme's default; "" when new URL
+// throws.
 func urlHost(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
+	u, ok := whatwg.ParseURL(raw)
+	if !ok {
 		return ""
 	}
-	host, port := strings.ToLower(u.Hostname()), u.Port()
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
-	defaults := map[string]string{"http": "80", "https": "443", "ws": "80", "wss": "443", "ftp": "21"}
-	if port == "" || defaults[strings.ToLower(u.Scheme)] == port {
-		return host
-	}
-	return host + ":" + port
+	return u.Host
 }
 
 // MemberReview is memberReview: what the person created or changed that
@@ -407,7 +403,7 @@ func RemoveMember(ctx context.Context, w *write.Writer, approvals *auth.Service,
 	}
 	var out jsvalue.Object
 	var reports []auth.PendingReport
-	err := w.Job(ctx, r.Gates(organizationID, write.Person(identityID, write.Exclusive)), func(ctx context.Context, tx *storage.Tx) error {
+	err := w.Job(ctx, r.Gates(organizationID, write.Person(identityID, write.Shared)), func(ctx context.Context, tx *storage.Tx) error {
 		at := now().UnixMicro()
 		p, err := security.Prepare(ctx, tx, r, security.Protected{
 			Scope:  write.Scope{OrganizationID: organizationID, DuringFreeze: authz.DuringFreezeRecovery},
@@ -529,7 +525,7 @@ func ChangeMemberRole(ctx context.Context, w *write.Writer, approvals *auth.Serv
 	}
 	var out jsvalue.Object
 	var reports []auth.PendingReport
-	err := w.Job(ctx, r.Gates(organizationID, write.Person(identityID, write.Exclusive)), func(ctx context.Context, tx *storage.Tx) error {
+	err := w.Job(ctx, r.Gates(organizationID), func(ctx context.Context, tx *storage.Tx) error {
 		p, err := security.Prepare(ctx, tx, r, security.Protected{
 			Scope:  write.Scope{OrganizationID: organizationID, DuringFreeze: freeze},
 			Checks: []security.Check{{Control: security.AdminStepUp, Operation: op}},

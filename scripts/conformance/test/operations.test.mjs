@@ -199,6 +199,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "getAuditExport", "createAuditExport", "checkAuditExport", "changeAuditExport", "replaceAuditExportCredential", "removeAuditExport",
     // Step 4.5a: invitations, members and the profile.
     "listInvitations", "createInvitation", "revokeInvitation", "reviewMember", "removeMember", "changeMemberRole", "updateMyProfile",
+    // Step 4.5b: the exposure report and confirmations.
+    "memberExposure", "confirmExposureRevocation",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is

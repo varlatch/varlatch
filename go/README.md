@@ -990,18 +990,40 @@ The server's packages:
   `removal_requirements`, `removal_conditions`), then ends the membership,
   the person's direct Grants, group links and pending invitations
   (`endMembership`, which Organization deletion's finalization will
-  call). It holds the person's gate exclusive; a Grant naming them, a
-  group they join and an invitation they issue hold it shared and pin
-  their live membership, its version moved on, so an approval bound to
-  the earlier version no longer holds (`access.PinLiveMembership`). An
-  admin check's refusal is audited after the job, as a denial. The
-  profile: a person's name (in `identities` and their account) and image
-  (a `data:image` or `https` URL, 100KB at most). The fixture
+  call). As in TypeScript, a removal takes the person's gate shared and a
+  role change nothing of the target, so a reader with organization.read
+  never holds an admin's gate exclusive before the admin check. A Grant
+  naming the person, a group they join and an invitation they issue read
+  their live membership in their own job and pin it, its version moved on
+  (`access.PinLiveMembership`): on the single writer each comes before a
+  removal or role change, which revokes it or whose bound version no
+  longer holds, or after, and finds the membership gone or changed. An
+  admin check's refusal is audited after the job, as a denial. An issued
+  invitation's answer, which carries its token, is `Cache-Control:
+  no-store`, where the TypeScript route sets none (a deliberate
+  difference; the people replay expects it). The review shows a webhook's
+  host as `new URL` gives it (`go/lib/whatwg`). The profile: a person's
+  name (in `identities` and their account) and image (a `data:image` or
+  `https` URL, 100KB at most, matched with JavaScript's ASCII-only case
+  folding, so U+017F never stands for `s`). The fixture
   `people-v0.22.0.json` (`go-people-fixture.test.ts`) covers invitations
   in every state (times pinned so a later replay reads them the same),
   every list parameter, members changed and removed with snapshot and
   review, each control mode, the profile, and U+0000 where it reaches a
-  query.
+  query. Step 4.5b adds the exposure report (ADR-0052 Decision 6;
+  `domain/exposure.ts`): what a person received, read from the exposure
+  index `server/audit` writes (each version's state: current, retiring
+  until its deadline, replaced, its value or environment deleted, or
+  unknown here; its confirmation and rotation hint), the authority their
+  removal recorded, the review, and the coverage of the TypeScript
+  backfill, which is not ported (feature-parity decision 10: a Go
+  installation starts finished, and step 7's preflight requires it
+  finished); and confirmations (Decision 7: `config.value.write` where the
+  value lives, a live built-in admin once it is gone; once per version).
+  The fixture `exposure-v0.22.0.json` (`go-exposure-fixture.test.ts`)
+  covers each version state and way, a former member's report and every
+  kind of confirmation; `TestCoverageWhileTheBackfillRuns` the coverage
+  of an unfinished backfill.
 - `server/identities` (step 4.4a): an Organization's machine identities
   and their credentials (`domain/identities.ts`, `identitystepup.ts`, the
   issuing side of `auth/credentials.ts`; ADR-0015, ADR-0023, ADR-0034),

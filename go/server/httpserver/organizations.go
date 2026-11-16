@@ -100,10 +100,16 @@ func (q *orgRequest) authorize(ctx context.Context, action string) error {
 	return q.authorizeOn(ctx, action, authz.Resource{OrganizationID: q.org.ID})
 }
 
-// authorizeOn is authorize on a resource inside the Organization.
+// authorizeOn is authorize on a resource inside the Organization, with
+// hideExistence.
 func (q *orgRequest) authorizeOn(ctx context.Context, action string, resource authz.Resource) error {
+	return q.authorizeWith(ctx, action, resource, true)
+}
+
+// authorizeWith is authorize with or without hideExistence.
+func (q *orgRequest) authorizeWith(ctx context.Context, action string, resource authz.Resource, hide bool) error {
 	d, err := authz.Decide(ctx, q.o.s.opts.Auth.Store().Reader(), authzPrincipal(q.p), action, resource,
-		authz.Options{HideExistence: true, RequestID: requestIDOf(q.r)})
+		authz.Options{HideExistence: hide, RequestID: requestIDOf(q.r)})
 	if err != nil {
 		return err
 	}
