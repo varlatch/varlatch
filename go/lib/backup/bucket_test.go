@@ -14,7 +14,8 @@ import (
 )
 
 // lockedFake is a versioned S3 bucket with a retention on every version,
-// whose delete answers as deleteMode says: "refused" (AccessDenied),
+// whose delete answers as deleteMode says: "refused" (403 AccessDenied),
+// "worm" (MinIO's 400 InvalidRequest), "missing" (404), "throttled" (429),
 // "unavailable" (503 on every attempt) or "drop" (the connection closes).
 type lockedFake struct {
 	mu         sync.Mutex
@@ -43,6 +44,16 @@ func (f *lockedFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "refused":
 			w.WriteHeader(403)
 			io.WriteString(w, `<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>locked</Message></Error>`)
+		case "worm":
+			// MinIO's refusal of a locked version.
+			w.WriteHeader(400)
+			io.WriteString(w, `<?xml version="1.0"?><Error><Code>InvalidRequest</Code><Message>Object is WORM protected and cannot be overwritten</Message></Error>`)
+		case "missing":
+			w.WriteHeader(404)
+			io.WriteString(w, `<?xml version="1.0"?><Error><Code>NoSuchVersion</Code><Message>gone</Message></Error>`)
+		case "throttled":
+			w.WriteHeader(429)
+			io.WriteString(w, `<?xml version="1.0"?><Error><Code>SlowDown</Code><Message>later</Message></Error>`)
 		case "unavailable":
 			w.WriteHeader(503)
 			io.WriteString(w, `<?xml version="1.0"?><Error><Code>ServiceUnavailable</Code><Message>later</Message></Error>`)
@@ -66,7 +77,7 @@ func TestBucketDeleteRefusalOnly(t *testing.T) {
 	if err := Seal(path, goManifest(t, make([]byte, 32), files), paths, bek, SealOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	for mode, protected := range map[string]bool{"refused": true, "unavailable": false, "drop": false} {
+	for mode, protected := range map[string]bool{"refused": true, "worm": true, "unavailable": false, "drop": false, "missing": false, "throttled": false} {
 		fake := &lockedFake{objects: map[string][]byte{}, deleteMode: mode}
 		srv := httptest.NewServer(fake)
 		d := Destination{Endpoint: srv.URL, Region: "us-east-1", Bucket: "b", Prefix: "p/", ForcePathStyle: true}

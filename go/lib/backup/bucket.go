@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 )
@@ -164,18 +165,22 @@ func join(a, b string) string {
 	return a + "; " + b
 }
 
-// refusedDelete is a delete the bucket refused: access denied, or the
-// version locked.
+// refusedDelete is a delete the bucket answered with a refusal: a client
+// error (4xx), whatever the code it names (AWS and B2 answer AccessDenied,
+// MinIO InvalidRequest "Object is WORM protected"), except 404 (nothing
+// there to protect), 408 and 429 (not an answer about the object). A
+// network error or a server error (5xx) says nothing about the retention.
 func refusedDelete(err error) bool {
-	var api smithy.APIError
-	if !errors.As(err, &api) {
+	var re *awshttp.ResponseError
+	if !errors.As(err, &re) {
 		return false
 	}
-	switch api.ErrorCode() {
-	case "AccessDenied", "ObjectLocked":
-		return true
+	switch s := re.HTTPStatusCode(); {
+	case s == 404, s == 408, s == 429:
+		return false
+	default:
+		return s >= 400 && s < 500
 	}
-	return false
 }
 
 // noLock is a retention read refused because the object has none.

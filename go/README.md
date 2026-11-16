@@ -287,9 +287,9 @@ daemon's maintenance admission and its one backup at a time.
   retention and recoverability are reported separately; it passes (exit 0)
   only with all three, and a bucket without versions, without a retention
   or that lets the version be deleted is reported unprotected. Only a
-  refused delete (access denied, or the version locked) counts: a delete
-  that failed otherwise (a network error) leaves the retention
-  inconclusive. A test is admitted as a run is (refused during
+  refused delete counts: a client error (4xx) whatever its code (AWS and
+  B2 answer AccessDenied, MinIO InvalidRequest), except 404, 408 and 429;
+  a network or server error leaves the retention inconclusive. A test is admitted as a run is (refused during
   maintenance) and works in `backups/.bucket-test-<id>/`, which a run
   removes only when no test is running. Every
   upload sends `Content-MD5`, which B2 requires with Object Lock
@@ -300,7 +300,10 @@ daemon's maintenance admission and its one backup at a time.
   back, `kek split` prints Shamir shares and `kek combine` joins them;
   restore and combine check the key against the installation's canary
   when there is a database (read-only), and warn on a fresh host. `kek
-  verify` checks a key file (or the configured key). The passphrase comes
+  verify` checks a key file (or the configured key). Every file they
+  write (`--out`) is written as a temporary file of mode 0600 beside it,
+  synced and renamed over it, so an existing file never holds the key with
+  its old mode and a crash never leaves it truncated. The passphrase comes
   from `--passphrase-file`, `VARLATCH_KEK_PASSPHRASE`, or the terminal
   without echo. `custody attest` records an
   `installation.custody_attested` audit event (the Root KEK's with its

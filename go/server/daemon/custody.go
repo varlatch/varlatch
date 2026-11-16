@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -139,22 +140,8 @@ func runKek(cfg *config.Config, rest []string, stdin io.Reader, stdout, stderr i
 		}
 		return first, nil
 	}
-	// writeKey writes the key file with mode 0600, an existing file too:
-	// its mode is set before the key is written into it.
 	writeKey := func(path string, key []byte) error {
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-		if err != nil {
-			return err
-		}
-		if err := f.Chmod(0o600); err != nil {
-			f.Close()
-			return err
-		}
-		if _, err := f.WriteString(hex.EncodeToString(key) + "\n"); err != nil {
-			f.Close()
-			return err
-		}
-		return f.Close()
+		return writePrivate(path, []byte(hex.EncodeToString(key)+"\n"))
 	}
 	// verifyRecovered checks a recovered key against the installation's
 	// canary when there is a database; a fresh host gets a warning.
@@ -206,7 +193,7 @@ func runKek(cfg *config.Config, rest []string, stdin io.Reader, stdout, stderr i
 		}
 		b = append(b, '\n')
 		if out := a.values["--out"]; out != "" {
-			if err := os.WriteFile(out, b, 0o600); err != nil {
+			if err := writePrivate(out, b); err != nil {
 				return fail(err.Error())
 			}
 			fmt.Fprintf(stdout, "Escrow blob written to %s.\n", out)
@@ -295,6 +282,55 @@ func runKek(cfg *config.Config, rest []string, stdin io.Reader, stdout, stderr i
 		return fail(kekUsage)
 	}
 	return ExitOK
+}
+
+// writePrivate writes a key file or an escrow blob: a temporary file of
+// mode 0600 in the same directory, synced, renamed over path, and the
+// directory synced. An existing file is replaced, never rewritten in
+// place: it never holds the key with its old mode, and a crash leaves
+// either the old file or the new one, never a truncated one.
+func writePrivate(path string, data []byte) (err error) {
+	dir, base := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	}
+	f, err := os.CreateTemp(dir, "."+base+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err = f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp, path); err != nil {
+		return err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err = d.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
+		return err
+	}
+	return nil
 }
 
 // custodyArgs checks `admin custody`'s arguments: the key and method of an

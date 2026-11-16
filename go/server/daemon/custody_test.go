@@ -54,9 +54,24 @@ func TestKeyCustodyCommands(t *testing.T) {
 	}
 
 	// A fresh host: no database yet. The key is written with a warning.
+	// Existing output files are replaced with mode 0600.
+	for _, name := range []string{"blob.json", "restored2", "combined"} {
+		os.WriteFile(filepath.Join(dir, name), []byte("old"), 0o644)
+	}
+	mode := func(name string) os.FileMode {
+		t.Helper()
+		st, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.Mode().Perm()
+	}
 	code, out, errOut := run("kek", "export", "--out", filepath.Join(dir, "blob.json"), "--passphrase-file", pass)
 	if code != ExitOK || out != "Escrow blob written to "+filepath.Join(dir, "blob.json")+".\n" || !strings.Contains(errOut, "only the passphrase must be custodied separately") {
 		t.Fatalf("export: %d %q %q", code, out, errOut)
+	}
+	if mode("blob.json") != 0o600 {
+		t.Errorf("the escrow blob's mode is %v", mode("blob.json"))
 	}
 	code, out, errOut = run("kek", "restore", "--in", filepath.Join(dir, "blob.json"), "--out", filepath.Join(dir, "restored"), "--passphrase-file", pass)
 	if code != ExitOK || !strings.HasPrefix(errOut, "WARNING: could not reach the database to verify the restored KEK") || keyHex(filepath.Join(dir, "restored")) != hex.EncodeToString(rootKEK) {
@@ -77,7 +92,8 @@ func TestKeyCustodyCommands(t *testing.T) {
 		t.Errorf("verify a wrong key: %d %q", code, errOut)
 	}
 	code, out, errOut = run("kek", "restore", "--in", filepath.Join(dir, "blob.json"), "--out", filepath.Join(dir, "restored2"), "--passphrase-file", pass)
-	if code != ExitOK || out != "restored KEK verified against the installation canary.\nKEK written to "+filepath.Join(dir, "restored2")+" (mode 0600).\n" {
+	if code != ExitOK || out != "restored KEK verified against the installation canary.\nKEK written to "+filepath.Join(dir, "restored2")+" (mode 0600).\n" ||
+		keyHex(filepath.Join(dir, "restored2")) != hex.EncodeToString(rootKEK) {
 		t.Errorf("restore: %d %q %q", code, out, errOut)
 	}
 	bad := filepath.Join(dir, "badpass")
@@ -91,8 +107,6 @@ func TestKeyCustodyCommands(t *testing.T) {
 	if code != ExitOK || len(shares) != 5 || !regexp.MustCompile(`^Any 3 of these 5 shares reconstruct the KEK; fewer reveal nothing\.\nGive each share to a different custodian; never store two together\.\nSplit fingerprint: [0-9a-f]{8}\n\n$`).MatchString(errOut) {
 		t.Fatalf("split: %d %q %q", code, out, errOut)
 	}
-	// An existing file is overwritten with mode 0600.
-	os.WriteFile(filepath.Join(dir, "combined"), []byte("old"), 0o644)
 	code, out, errOut = run("kek", "combine", "--out", filepath.Join(dir, "combined"), "--share", shares[4], "--share", shares[0], "--share", shares[2])
 	if code != ExitOK || !strings.HasPrefix(out, "combined KEK verified against the installation canary.\n") || keyHex(filepath.Join(dir, "combined")) != hex.EncodeToString(rootKEK) {
 		t.Errorf("combine: %d %q %q", code, out, errOut)
@@ -102,6 +116,10 @@ func TestKeyCustodyCommands(t *testing.T) {
 	}
 	if code, _, errOut := run("kek", "split", "--shares", "five", "--threshold", "3"); code != ExitFailure || !strings.HasPrefix(errOut, "Usage: admin kek split") {
 		t.Errorf("split usage: %d %q", code, errOut)
+	}
+
+	if left, _ := filepath.Glob(filepath.Join(dir, ".*.tmp")); len(left) != 0 {
+		t.Errorf("temporary files left: %v", left)
 	}
 
 	// Attestations, through the daemon.
