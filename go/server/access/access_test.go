@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -333,5 +334,88 @@ func TestCredentialReviewTimeEdges(t *testing.T) {
 	}
 	if g, _ := out.Get("generatedAt"); g != "2030-06-01T12:00:00.000Z" {
 		t.Errorf("generatedAt %v", g)
+	}
+}
+
+// loadTailnetRequirements reads without an ORDER BY: the TypeScript
+// server's order is unspecified, in a small table PostgreSQL's heap order,
+// where an updated row goes last. Go emulates it: of three Requirements,
+// the first, once changed, is read last. (Once the TypeScript line is
+// retired, a step 7/8 follow-up, the read can take ORDER BY created_at,
+// id instead.)
+func TestUpdatedRequirementMovesToTheEnd(t *testing.T) {
+	wd := newWorld(t)
+	ctx := context.Background()
+	tier := jsvalue.Object{{Key: "kind", Value: "tier"}, {Key: "tier", Value: "production"}}
+	selector := func(tailnet string) jsvalue.Object {
+		return jsvalue.Object{{Key: "tailnet", Value: tailnet}, {Key: "tags", Value: []any{"tag:ci"}}}
+	}
+	var ids []string
+	for _, tn := range []string{"one.ts.net", "two.ts.net", "three.ts.net"} {
+		out, _, err := access.CreateRequirement(ctx, wd.w, alice(), wd.org, tier, selector(tn), time.Now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := out.Get("id")
+		ids = append(ids, id.(string))
+	}
+	order := func() []string {
+		t.Helper()
+		reqs, err := authz.LoadRequirements(ctx, wd.store.Reader(), wd.org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range reqs {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	if got := order(); fmt.Sprint(got) != fmt.Sprint(ids) {
+		t.Fatalf("before the change: %v, want %v", got, ids)
+	}
+	edited := selector("one.ts.net")
+	edited[1].Value = []any{"tag:edited"}
+	if _, _, err := access.UpdateRequirement(ctx, wd.w, wd.approvals, wd.rootKEK, access.Request{Principal: alice()}, wd.org, ids[0],
+		access.RequirementPatch{ExpectedVersion: 1, Selector: edited, Body: jsvalue.Object{{Key: "expectedVersion", Value: float64(1)}, {Key: "selector", Value: edited}}}, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := order(), []string{ids[1], ids[2], ids[0]}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("after changing the first: %v, want %v", got, want)
+	}
+}
+
+// The credential review and machine reach name nothing of another
+// Organization: its machine and credentials are not reviewed here, and
+// its machine has no reach here (not found, as an unknown one).
+func TestReportsKeepToTheirOrganization(t *testing.T) {
+	wd := newWorld(t)
+	ctx := context.Background()
+	other, err := orgs.Create(ctx, wd.w, wd.rootKEK, "idn_a", "other", "Other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd.exec(`INSERT INTO identities (id, kind, name, organization_id) VALUES ('idn_here', 'service', 'here', ?), ('idn_there', 'service', 'there', ?)`, wd.org, other.ID)
+	wd.exec(`INSERT INTO credentials (id, identity_id, kind, token_hash, expires_at) VALUES
+		('crd_here', 'idn_here', 'service', 'h_here', NULL), ('crd_there', 'idn_there', 'service', 'h_there', NULL),
+		('crd_theresoon', 'idn_there', 'service', 'h_theresoon', ?)`, time.Now().Add(time.Hour).UnixMicro())
+	review, err := access.CredentialReview(ctx, wd.store.Reader(), wd.org, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(jsvalue.Stringify(review))
+	if !strings.Contains(text, "crd_here") || strings.Contains(text, "there") {
+		t.Errorf("the review: %s", text)
+	}
+	var de *domainerr.Error
+	if _, err := access.MachineReach(ctx, wd.store.Reader(), wd.org, "idn_there", time.Now()); !errors.As(err, &de) || de.Code != "RESOURCE_NOT_FOUND" {
+		t.Errorf("reach of another Organization's machine: %v", err)
+	}
+	reach, err := access.MachineReach(ctx, wd.store.Reader(), wd.org, "idn_here", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(jsvalue.Stringify(reach)); strings.Contains(text, other.ID) || strings.Contains(text, "there") {
+		t.Errorf("reach names the other Organization: %s", text)
 	}
 }

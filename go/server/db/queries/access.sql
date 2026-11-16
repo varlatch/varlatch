@@ -128,9 +128,12 @@ WHERE i.id = sqlc.arg(id) AND NOT i.disabled
 SELECT kind FROM identities
 WHERE id = sqlc.arg(id) AND NOT disabled AND (organization_id = sqlc.arg(organization_id) OR kind = 'human');
 
--- name: LiveMembershipOf :one
--- pinLiveMembership's row, read under the person's gate.
-SELECT count(*) FROM org_memberships WHERE organization_id = ? AND identity_id = ? AND removed_at IS NULL;
+-- name: PinLiveMembership :many
+-- pinLiveMembership: the person's live membership, its version moved on,
+-- so an approval bound to the earlier version (a removal, a role change)
+-- no longer holds. No row: no live membership.
+UPDATE org_memberships SET version = version + 1
+WHERE organization_id = ? AND identity_id = ? AND removed_at IS NULL RETURNING role;
 
 -- name: IdentityRef :one
 -- readPerson: an identity's name, whatever its state.

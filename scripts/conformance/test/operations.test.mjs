@@ -197,6 +197,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "listWebhooks", "createWebhook", "updateWebhook", "revokeWebhook",
     // Step 4.11a: the audit export's configuration.
     "getAuditExport", "createAuditExport", "checkAuditExport", "changeAuditExport", "replaceAuditExportCredential", "removeAuditExport",
+    // Step 4.5a: invitations, members and the profile.
+    "listInvitations", "createInvitation", "revokeInvitation", "reviewMember", "removeMember", "changeMemberRole", "updateMyProfile",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is
@@ -231,7 +233,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // Sync Target lists are background reads). (4.4c) values's tailnet
   // group and access's requirements group. (4.7b) p4's webhooks group
   // and the webhooks suite but for its deletion group. (4.11a) the
-  // audit-export suite. Every other one lacks something.
+  // audit-export suite. (4.5a) access's invites group. Every other one
+  // lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
@@ -242,7 +245,7 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   const notYet = {
     dashboard: [], values: [], p4: [], onboarding: [], webhooks: ["deletion"],
     "client-runtime": [], "strict-run": ["agent-safe"],
-    access: ["invites", "oidc", "capabilities"],
+    access: ["oidc", "capabilities"],
   };
   const ownLacking = [];
   const expected = Object.entries(inventory.checks).filter(([id, c]) =>
@@ -251,7 +254,7 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
     (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
-  assert.equal(runs.length, 367);
+  assert.equal(runs.length, 369);
   // The groups still lacking lack exactly their own operations.
   for (const [suite, groups] of Object.entries(notYet)) {
     for (const g of groups) {

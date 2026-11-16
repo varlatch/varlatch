@@ -89,6 +89,9 @@ const SIDE: SideTable[] = [
   { name: "groups", key: ["id"], sortBy: ["organization_id", "name", "revoked_at"], volatile: ["created_at", "updated_at", "revoked_at"] },
   { name: "group_members", key: ["group_id", "identity_id"], sortBy: ["group_id", "identity_id"], volatile: ["created_at"] },
   { name: "team_projects", key: ["team_id", "project_id"], sortBy: ["team_id", "project_id"], volatile: ["created_at"] },
+  // A Grant naming a person and a person joining a group pin the person's
+  // membership: its version moves on.
+  { name: "org_memberships", key: ["organization_id", "identity_id"], sortBy: ["organization_id", "identity_id"], volatile: ["created_at", "removed_at"] },
   {
     name: "security_control_counters",
     key: ["organization_id", "control", "config_version", "operation", "actor_identity_id", "reason", "bucket_hour"],

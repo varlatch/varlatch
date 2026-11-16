@@ -227,6 +227,9 @@ var BuiltOperations = []string{
 	// Step 4.11a: the audit export's configuration (auditexport.go).
 	getAuditExportPattern, createAuditExportPattern, checkAuditExportPattern, changeAuditExportPattern,
 	replaceAuditExportPattern, removeAuditExportPattern,
+	// Step 4.5a: invitations, members and the profile (people.go).
+	listInvitationsPattern, createInvitationPattern, revokeInvitationPattern,
+	reviewMemberPattern, removeMemberPattern, changeMemberRolePattern, updateMyProfilePattern,
 }
 
 // Server is the handler.

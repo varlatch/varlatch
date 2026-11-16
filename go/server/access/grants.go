@@ -121,10 +121,31 @@ func Grants(ctx context.Context, db query.DBTX, organizationID string) ([]any, e
 }
 
 // requireGrantSubject is requireGrantSubject: the subject can act in the
-// Organization, read under its person gate (the TypeScript code pins its
-// membership).
+// Organization, read under its person gate; a person's live membership is
+// pinned (PinLiveMembership).
 func requireGrantSubject(ctx context.Context, tx query.DBTX, organizationID, identityID string) error {
-	return CheckGrantSubject(ctx, tx, organizationID, identityID)
+	if err := CheckGrantSubject(ctx, tx, organizationID, identityID); err != nil {
+		return err
+	}
+	kind, err := query.New(tx).IdentityKindOf(ctx, identityID)
+	if err != nil || kind != "human" {
+		return err
+	}
+	pinned, err := PinLiveMembership(ctx, tx, organizationID, identityID)
+	if err == nil && !pinned {
+		err = notInOrganization()
+	}
+	return err
+}
+
+// PinLiveMembership is pinLiveMembership: a person's live membership with
+// its version moved on, as every writer that relies on it does (a Grant
+// naming them, a group they join, an invitation they issue), so an
+// approval bound to the earlier version no longer holds; false when there
+// is no live membership.
+func PinLiveMembership(ctx context.Context, tx query.DBTX, organizationID, identityID string) (bool, error) {
+	roles, err := query.New(tx).PinLiveMembership(ctx, query.PinLiveMembershipParams{OrganizationID: organizationID, IdentityID: identityID})
+	return len(roles) > 0, err
 }
 
 // Input is a Grant declaration as the route parsed it, with zod's output
