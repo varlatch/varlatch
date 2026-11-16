@@ -95,9 +95,10 @@ jobs:
     # Drafts run nothing, as in ci.yml.
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    # About 15 minutes on a typical runner and over 20 on a slow one (the build
-    # cache is off, so every run compiles every target from scratch).
-    timeout-minutes: 30
+    # About 20 minutes on a typical runner and close to 30 on a slow one (the
+    # build cache is off, so every run compiles every target from scratch);
+    # the cross-platform builds run in go-platforms, beside this job.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -367,26 +368,6 @@ jobs:
           (cd go && go build -o "$RUNNER_TEMP/unitprobe" ./install/unitprobe)
           sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 go/install/test-unit.sh "$RUNNER_TEMP/unitprobe"
 
-      # ADR-0059 Decision 1: varlatchd for Linux, varlatch for Linux, macOS
-      # and Windows, each on amd64 and arm64; static, no cgo. Every package
-      # builds and vets on every platform, since the CLI may use any of the
-      # shared ones.
-      - name: Both binaries build for every platform
-        working-directory: go
-        env:
-          CGO_ENABLED: "0"
-        run: |
-          build() {
-            GOOS=${2%/*} GOARCH=${2#*/} go build -trimpath -o /dev/null "./cmd/$1"
-            echo "built $1 for $2"
-          }
-          for p in linux/amd64 linux/arm64; do build varlatchd "$p"; done
-          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
-            build varlatch "$p"
-            GOOS=${p%/*} GOARCH=${p#*/} go vet ./...
-            GOOS=${p%/*} GOARCH=${p#*/} go build ./...
-          done
-
       # ADR-0059 Order step 3: envelopes cross between the servers in both
       # directions. The Go tests open what TypeScript releases sealed
       # (ts-v0.21.0.json, ts-v0.22.0.json); here the TypeScript server's own
@@ -411,6 +392,41 @@ jobs:
       # too. The script uses Node's standard library only.
       - name: Every file matches the license map
         run: node scripts/check-licenses.mjs
+
+  # The cross-platform builds, in their own job so that they run beside the
+  # tests instead of after them. They need no dashboard: go:embed takes the
+  # committed dist/.gitkeep and the placeholder.
+  go-platforms:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+
+      # ADR-0059 Decision 1: varlatchd for Linux, varlatch for Linux, macOS
+      # and Windows, each on amd64 and arm64; static, no cgo. Every package
+      # builds and vets on every platform, since the CLI may use any of the
+      # shared ones.
+      - name: Both binaries build for every platform
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          build() {
+            GOOS=${2%/*} GOARCH=${2#*/} go build -trimpath -o /dev/null "./cmd/$1"
+            echo "built $1 for $2"
+          }
+          for p in linux/amd64 linux/arm64; do build varlatchd "$p"; done
+          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            build varlatch "$p"
+            GOOS=${p%/*} GOARCH=${p#*/} go vet ./...
+            GOOS=${p%/*} GOARCH=${p#*/} go build ./...
+          done
 
   # The conformance harness's go-binary target (ADR-0059 step 3,
   # varlatchd-core decision 5) against this commit's varlatchd: the adapter
