@@ -338,3 +338,59 @@ func TestAttribution(t *testing.T) {
 		t.Fatalf("attributed outside a request: %+v", got)
 	}
 }
+
+// Record reads the events' time, and the exposure rows', from the clock
+// its context carries (varlatchd's, WithClock), the same for every event
+// of one call; a context without one reads the real clock.
+func TestRecordReadsTheContextsClock(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	if err := s.Write(ctx, func(tx *storage.Tx) error {
+		for _, q := range []string{
+			`INSERT INTO identities (id, kind, name) VALUES ('idn_a', 'human', 'Alice')`,
+			`INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'acme', 'Acme', '{}')`,
+		} {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	actor, org := "idn_a", "org_a"
+	written := func(version string) Event {
+		return Event{Type: "value.written", Decision: Info, ActorIdentityID: &actor, OrganizationID: &org,
+			Resource: jsvalue.Object{{Key: "environmentId", Value: "env_a"}, {Key: "versionId", Value: version}, {Key: "itemName", Value: "S"}}}
+	}
+	fixed := time.Date(2026, 3, 1, 10, 0, 0, 123456000, time.UTC)
+	record := func(ctx context.Context, e ...Event) []Recorded {
+		var out []Recorded
+		if err := s.Write(ctx, func(tx *storage.Tx) error {
+			var err error
+			out, err = Record(ctx, tx, e...)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	got := record(WithClock(ctx, func() time.Time { return fixed }), written("ver_1"), written("ver_2"))
+	for _, r := range got {
+		if r.OccurredAt != fixed.UnixMicro() {
+			t.Errorf("an event at %d, the clock %d", r.OccurredAt, fixed.UnixMicro())
+		}
+	}
+	var first, last int64
+	if err := s.Reader().QueryRowContext(ctx, `SELECT min(first_at), max(last_at) FROM member_exposure`).Scan(&first, &last); err != nil {
+		t.Fatal(err)
+	}
+	if first != fixed.UnixMicro() || last != fixed.UnixMicro() {
+		t.Errorf("exposure %d to %d, the clock %d", first, last, fixed.UnixMicro())
+	}
+	before := time.Now().UnixMicro()
+	got = record(ctx, written("ver_3"))
+	if at := got[0].OccurredAt; at < before || at > time.Now().UnixMicro() {
+		t.Errorf("without a clock, an event at %d, not now (%d)", at, before)
+	}
+}

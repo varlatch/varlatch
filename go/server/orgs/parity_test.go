@@ -43,6 +43,8 @@ type server struct {
 	store   *storage.DB
 	values  *values.Service
 	rootKEK []byte
+	// now is the clock the server runs on (paritytest.HourClock).
+	now func() time.Time
 }
 
 // current is the server answering now.
@@ -79,13 +81,14 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	vs := values.New(store, rootKEK, values.Options{Log: log})
+	now := paritytest.HourClock()
+	vs := values.New(store, rootKEK, values.Options{Log: log, Now: now})
 	opts := httpserver.Options{
 		// The TypeScript server's SERVER_VERSION, which the installation
 		// release read reports.
 		Version: f.Version(), Backend: daemon.NewBackend(store, rootKEK), Log: log,
-		Auth: auth.New(store, auth.Options{Log: log, RootKEK: rootKEK}), Values: vs,
-		Writer: &write.Writer{Store: store, Gates: write.NewGates()}, RootKEK: rootKEK,
+		Auth: auth.New(store, auth.Options{Log: log, RootKEK: rootKEK, Now: now}), Values: vs,
+		Writer: &write.Writer{Store: store, Gates: write.NewGates()}, RootKEK: rootKEK, Now: now,
 	}
 	h, err := httpserver.New(opts)
 	if err != nil {
@@ -95,7 +98,7 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 		vs.Settled()
 		_ = store.Close()
 	})
-	return &server{opts: opts, handler: h, store: store, values: vs, rootKEK: rootKEK}
+	return &server{opts: opts, handler: h, store: store, values: vs, rootKEK: rootKEK, now: now}
 }
 
 // The core fixture's operations give the TypeScript server's answers: the
@@ -395,7 +398,7 @@ func fillPath(t testing.TB, f paritytest.Fixture) func(string) string {
 func (s *server) target(t testing.TB, f paritytest.Fixture) paritytest.Target {
 	return paritytest.Target{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.current().ServeHTTP(w, r) }),
-		Store:   s.store, Settled: s.values.Settled, Restart: func() { s.restart(t) },
+		Store:   s.store, Settled: s.values.Settled, Restart: func() { s.restart(t) }, Now: s.now,
 		Path: fillPath(t, f),
 		// Responses only: some requests are outside the document on
 		// purpose, as the TypeScript fixture runs the unchecked app.

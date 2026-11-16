@@ -74,6 +74,8 @@ type server struct {
 	store   *storage.DB
 	values  *values.Service
 	writer  *write.Writer
+	// now is the clock the server runs on (paritytest.HourClock).
+	now func() time.Time
 }
 
 func newServer(t *testing.T, f paritytest.Fixture) *server {
@@ -93,11 +95,12 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 	public, _ := url.Parse(publicURL)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	w := &write.Writer{Store: store, Gates: write.NewGates()}
-	approvals := auth.New(store, auth.Options{Log: log, RootKEK: rootKEK, PublicURL: public, PersonGate: w.Gates.PersonGate})
-	vs := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: w.Gates})
+	now := paritytest.HourClock()
+	approvals := auth.New(store, auth.Options{Log: log, RootKEK: rootKEK, PublicURL: public, PersonGate: w.Gates.PersonGate, Now: now})
+	vs := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: w.Gates, Now: now})
 	h, err := httpserver.New(httpserver.Options{
 		Version: f.Version(), Backend: daemon.NewBackend(store, rootKEK), Log: log, PublicURL: public,
-		Auth: approvals, Values: vs, Writer: w, RootKEK: rootKEK,
+		Auth: approvals, Values: vs, Writer: w, RootKEK: rootKEK, Now: now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +109,7 @@ func newServer(t *testing.T, f paritytest.Fixture) *server {
 		vs.Settled()
 		_ = store.Close()
 	})
-	return &server{handler: h, store: store, values: vs, writer: w}
+	return &server{handler: h, store: store, values: vs, writer: w, now: now}
 }
 
 // fillPath is go-security-fixture.test.ts's: {secId}, {bobId}, enf's
@@ -167,7 +170,7 @@ func TestTypeScriptFixture(t *testing.T) {
 	}
 	s := newServer(t, f)
 	paritytest.Replay(t, paritytest.Target{
-		Handler: s.handler, Store: s.store, Settled: s.values.Settled, Path: fillPath(f),
+		Handler: s.handler, Store: s.store, Settled: s.values.Settled, Path: fillPath(f), Now: s.now,
 		Check: func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder) {
 			openapicheck.Recorder{T: t}.Exchange(req, body, rec)
 		},

@@ -388,6 +388,50 @@ type Target struct {
 	// rows before any normalization, with when it was sent and answered:
 	// for checks the normalized comparison cannot make (a new time's value).
 	Inspect func(t testing.TB, c Recorded, raw Raw)
+	// Now is the clock the server runs on, which Raw's Sent and Done read
+	// too (HourClock); nil is time.Now.
+	Now func() time.Time
+}
+
+// hourOverrun is the replay's failure when its clock has left the hour
+// it began in: past it, report counts would be kept in two hours.
+func hourOverrun(began, done time.Time) error {
+	if done.Truncate(time.Hour).Equal(began.Truncate(time.Hour)) {
+		return nil
+	}
+	return fmt.Errorf("the replay began at %s and ran into the next hour (%s): report counts are kept per hour, so a replay must take less than an hour on HourClock",
+		began.UTC().Format(time.RFC3339Nano), done.UTC().Format(time.RFC3339Nano))
+}
+
+// checkTimes checks the raw times a request wrote: each audit event after
+// event_order before, and each exposure row last seen from sent on, between
+// sent and done (microseconds, as stored).
+func checkTimes(t testing.TB, name string, store *storage.DB, before int64, sent, done time.Time) {
+	t.Helper()
+	low, high := sent.UnixMicro(), done.UnixMicro()
+	for _, r := range Rows(t, store, "SELECT event_type, occurred_at FROM audit_events WHERE event_order > ? ORDER BY event_order", before) {
+		if at := r["occurred_at"].(int64); at < low || at > high {
+			t.Errorf("%s: %s at %d, outside the request (%d to %d)", name, r["event_type"], at, low, high)
+		}
+	}
+	for _, r := range Rows(t, store, "SELECT first_at, last_at FROM member_exposure WHERE last_at >= ?", low) {
+		if last := r["last_at"].(int64); last > high {
+			t.Errorf("%s: an exposure last at %d, after the request (%d to %d)", name, last, low, high)
+		}
+	}
+}
+
+// HourClock is the clock a replay runs its server on: the real clock moved
+// back to the start of the hour the replay begins in. Report counts are
+// kept per hour (security_control_counters.bucket_hour), and the
+// recording's requests counted within one hour; on this clock a replay,
+// shorter than an hour, counts within one too, whenever it runs.
+func HourClock() func() time.Time { return hourClock(time.Now) }
+
+func hourClock(real func() time.Time) func() time.Time {
+	start := real()
+	offset := start.Sub(start.Truncate(time.Hour))
+	return func() time.Time { return real().Add(-offset) }
 }
 
 // Raw is what one request of a replay produced, before normalization.
@@ -604,6 +648,11 @@ var keptHeaders = []string{"Cache-Control", "Retry-After", "Content-Type", "Varl
 // TypeScript server's answers.
 func Replay(t testing.TB, target Target, f Fixture) {
 	t.Helper()
+	now := target.Now
+	if now == nil {
+		now = time.Now
+	}
+	began := now()
 	norm := NewNormalizer(f.Rows)
 	for index, c := range f.Requests {
 		name := c.ID
@@ -638,7 +687,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		}
 		n := max(c.Concurrent, 1)
 		recs := make([]*httptest.ResponseRecorder, n)
-		sent := time.Now()
+		sent := now()
 		var wg sync.WaitGroup
 		for i := range n {
 			req := httptest.NewRequest(c.Method, path, bytes.NewReader(body))
@@ -665,7 +714,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			}()
 		}
 		wg.Wait()
-		done := time.Now()
+		done := now()
 		if target.Settled != nil {
 			target.Settled()
 		}
@@ -751,6 +800,14 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			}
 			raw.Audit = append(raw.Audit, pr)
 			audit = append(audit, norm.Value(pr, ""))
+		}
+		// The raw times: every event, and every exposure row it wrote, on
+		// the server's clock while the request was being answered.
+		checkTimes(t, name, target.Store, before.Int64, sent, done)
+		if target.Now != nil {
+			if err := hourOverrun(began, done); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
 		}
 		wantAudit := []any{}
 		for _, r := range c.Audit {

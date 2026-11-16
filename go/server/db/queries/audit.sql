@@ -28,13 +28,12 @@ SELECT * FROM audit_events WHERE id = ?;
 
 -- name: IndexExposure :exec
 -- One member_exposure row (ADR-0052 Decision 6, audit/exposure.ts
--- indexExposures); the caller indexes people only. A null time is now; the
--- first and last times only ever widen.
+-- indexExposures); the caller indexes people only, and gives the times
+-- (varlatchd's clock, as the events'). The first and last times only ever
+-- widen.
 INSERT INTO member_exposure (organization_id, identity_id, version_id, item_name, environment_id, way, first_at, last_at)
 VALUES (sqlc.arg(organization_id), sqlc.arg(identity_id), sqlc.arg(version_id), sqlc.arg(item_name),
-        sqlc.arg(environment_id), sqlc.arg(way),
-        coalesce(sqlc.narg(first_at), CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000),
-        coalesce(sqlc.narg(last_at), CAST(round(unixepoch('subsec') * 1000) AS INTEGER) * 1000))
+        sqlc.arg(environment_id), sqlc.arg(way), sqlc.arg(first_at), sqlc.arg(last_at))
 ON CONFLICT (organization_id, identity_id, version_id, environment_id, way) DO UPDATE SET
   first_at = min(member_exposure.first_at, excluded.first_at),
   last_at = max(member_exposure.last_at, excluded.last_at);
