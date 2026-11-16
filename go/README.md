@@ -211,6 +211,104 @@ memory (`server/write`):
   would); if a daemon holds the lock but its socket does not answer, it
   refuses and writes nothing.
 
+### Backups and maintenance (step 4.14)
+
+`server/backups` takes the installation's backups inside varlatchd
+(Decision 7). The TypeScript server's backup socket is not ported: its
+commands are host commands on the control socket, so they take the
+daemon's maintenance admission and its one backup at a time.
+
+    varlatchd admin backup run [--json]
+    varlatchd admin backup status
+    varlatchd admin maintenance begin --ttl <duration>
+    varlatchd admin maintenance end <lease id>
+    varlatchd admin maintenance status
+
+- **Settings** (`install/varlatchd.conf.example`): `backup_key_file` (the
+  Backup Encryption Key, 32 bytes in hex or base64; without it no
+  scheduled backup runs), `backup_interval` (24h by default, `off`, or 1h
+  to 744h), `backup_keep` (7 archives on this host), and
+  `backup_destinations_file` and `backup_destination` (the bucket, in
+  `packages/backup`'s destinations format; without a file, archives stay
+  on this host).
+- **A run** refuses while a maintenance gate is open, without a BEK, with
+  a BEK that is the Root KEK, and when the data directory has less free
+  space than `RequiredSpace`: three times the database and its WAL (the
+  snapshot, then the archive and its unpacked copy while it is checked)
+  plus 64 MiB. It then takes the paced snapshot on the writer's
+  connection (`lib/storage` `Snapshot`, with the `TRUNCATE` after it),
+  reads the archive's metadata from the snapshot itself (the
+  installation, its Root KEK version and canary, the schema version),
+  refusing an incomplete Root KEK rotation as `archiveMetadata` does and
+  a canary the loaded Root KEK does not open, seals the snapshot and
+  `configuration.json` at 32 MiB/s, opens the archive again to record its
+  check, uploads it, records the delivery, and removes the archives
+  beyond `backup_keep` from this host. A stop ends a run at its next
+  snapshot step or sealed MiB, and leaves no archive.
+- **The schedule** first looks a minute after start, then takes a backup
+  whenever the newest archive is `backup_interval` old (at that first look
+  when there is none), retries an hour after a run that made no archive,
+  and a minute after maintenance held one back.
+- **The state** is the TypeScript server's, in the data directory, so
+  step 7's migration and the Go CLI's `admin backup` (steps 5 and 6) read
+  it as they are:
+  - `backups/<archive id>.vltbak`, the archives (mode 0600);
+  - `backups/<archive id>.json`, each archive's status record
+    (`statusSchema`: identity, `verification`, `delivery`, `capture`),
+    kept after local retention removes its archive, since the copy in the
+    bucket and its Root KEK version remain. `getInstallationBackups`
+    answers them, newest first, with `backupStatus`'s warnings;
+  - `backups/.work-<archive id>/`, a run's temporary files, and
+    `backups/<archive id>.vltbak.<hex>.partial`, a sealing in progress;
+    both are removed by the next run if a run was killed;
+  - `maintenance.json`, the maintenance gate (`maintenance.ts`'s `Gate`:
+    `id`, `kind` capture or restore, `phase`, `expiresAt` in Unix
+    milliseconds for a lease, `archiveId`). A lease is a `capture` gate
+    with an expiry; a restore's gate (4.14c) has none. A gate holds across
+    a restart, and one that cannot be read keeps the installation
+    isolated.
+- **Maintenance** answers every API route `503 MAINTENANCE` with
+  `Retry-After: 5`, as `app.ts` does, before the body limit; `/healthz`
+  answers, `/readyz` is not ready, and the dashboard's files are served so
+  it shows its maintenance screen. The TypeScript exemption of
+  `/.well-known/jwks.json` (the Convex mirror's key fetch) has no Go
+  counterpart.
+- **Everything else that writes** enters the same admission, and an
+  admitted piece of work is counted (`Admission.Busy`) until it ends, so a
+  gate can tell when the work it waits for has finished:
+  - host commands that write (`bootstrap`, `recover`, `security reset`,
+    `unfreeze`, and the conformance build's probes and fixtures), through
+    the socket or offline, enter before they take a gate or queue a job;
+    under a gate they are refused with the TypeScript admin CLI's
+    message, `Installation is in maintenance; ordinary admin operations
+    are blocked`, and exit 1. `maintenance begin|end|status` and `backup
+    status` stay available;
+  - offline, nothing opens the database before a command needs it (its
+    first use creates the schema and the installation): the maintenance
+    commands and `backup status` work on the data directory's files only
+    (`maintenance.json`, `backups/*.json`), and under a gate a command
+    that writes, or `backup run`, is refused before the database is
+    opened. The data directory's lock is taken first, as the TypeScript
+    CLI takes its operator lease before it reads the gate: `flock` needs
+    `varlatchd.lock` (an empty file), and a gate read before the lock
+    could change before the command runs;
+  - a backup run is admitted for its whole length, in one step with the
+    check (`Enter`);
+  - the Security Control report loop enters for each pass and skips the
+    pass under a gate, as `startSecurityReportLoop` does;
+  - a passkey-verification report count, which runs after its response,
+    enters on its own and is dropped under a gate. The TypeScript server
+    runs those counts outside admission;
+  - the other loops write nothing: the realtime publisher reads the audit
+    log, the trusted-proxy refresh resolves names, and the storage
+    engine's checkpoints move no data in or out of the database.
+- **An archive** is format 3 (`lib/backup`): `varlatch.db`, the snapshot,
+  and `configuration.json`, `{"formatVersion":1,"settings":{...}}` with
+  the non-key settings by their `varlatchd.conf` names (paths on this
+  host, the data directory and the key files, are left out). Its status
+  record's `capture` holds the snapshot's duration (`snapshotHeldMs`),
+  the sealing's (`dumpMs`) and the snapshot's size (`dumpBytes`).
+
 The server's packages:
 
 - `server/config`: `varlatchd.conf`.
@@ -482,9 +580,9 @@ The server's packages:
   `environmentsOut`'s tailnet fields (`tailnetRequired`, and the covering
   Requirements' IDs for a caller holding `policy.read`, decided without a
   record). `server/httpserver/installation.go` answers the two
-  installation reads as the TypeScript server does without a maintenance
-  directory: no release check recorded yet (`varlatch upgrade --check`
-  arrives in step 6) and no backup supervisor (step 4.14).
+  installation reads: no release check recorded yet (`varlatch upgrade
+  --check` arrives in step 6), and the backup status (`server/backups`,
+  step 4.14).
 - `server/httpserver/search.go` (step 4.1d): `searchConfigItems`
   (ADR-0030), names only: the candidate environments are those the caller
   may read metadata of (the evaluator with its grants and Organization
@@ -824,6 +922,12 @@ Not reproduced:
 | `mirror/publisher.ts:209` orders Convex mirror events by the text form of `event_order` | events after position 9 can be published out of order | nothing to port: there is no Convex in Go | | none |
 | `domain/securityreport.ts` `countWouldBlock`, a count whose hour and the current hour are both already summarized (possible only after the clock moved back across a summarized hour) | the count is dropped (an error is logged): the stored total is one short | the count goes to the hour after the last summarized one for its key, which no summary covers yet, so every committed count reaches exactly one summary; with a clock that does not move back nothing differs | `server/security` `TestCountsSurviveAClockMovedBack` | none |
 | `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | `server/values` `TestConcurrentExportsUnderReportCountExactly`: 24 concurrent named and all-authorized exports in one bucket all succeed and the counter is exact | none |
+
+The TypeScript admin CLI refuses an ordinary command during maintenance
+with `Installation is in maintenance; ordinary admin operations are
+blocked`, but that error reaches its generic handler, which prints
+`Operator command failed; check configuration and maintenance status.`
+(exit 1 either way). varlatchd prints the refusal itself.
 
 ## Before the first Go release
 

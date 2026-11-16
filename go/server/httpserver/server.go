@@ -40,6 +40,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/pgtime"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/values"
@@ -62,6 +63,12 @@ type Backend interface {
 
 // Options configures the handler.
 type Options struct {
+	// Maintenance, when set, is the maintenance admission (ADR-0036 D6):
+	// while it admits nothing, the API answers 503 MAINTENANCE.
+	Maintenance Admission
+	// Backups, when set, is the backup status getInstallationBackups
+	// answers (ADR-0059 step 4.14).
+	Backups BackupStatus
 	// Version is the server version /v1/meta reports.
 	Version string
 	// PublicURL is the configured public URL; nil when not set.
@@ -318,6 +325,20 @@ var (
 )
 
 // ServeHTTP answers a request.
+// Admission is the maintenance admission (server/maintenance).
+type Admission interface {
+	// Enter admits one request, false while a gate is open; leave ends it.
+	Enter() (leave func(), ok bool)
+}
+
+// BackupStatus is the backup status (server/backups), as JSON.
+type BackupStatus interface {
+	StatusJSON() ([]byte, error)
+}
+
+// MaintenanceMessage is the 503's message (http/app.ts).
+const MaintenanceMessage = "Installation maintenance; retry later"
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	arrived := s.opts.Now()
 	id := newRequestID()
@@ -366,6 +387,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	if isAPI {
 		rec.Header().Set("X-Request-Id", id)
+		// The maintenance admission, first (http/app.ts): /healthz always
+		// answers, /readyz says the server is not ready, and every other
+		// route answers 503 MAINTENANCE with Retry-After. The dashboard's
+		// own files are served regardless, so it can show the
+		// maintenance screen.
+		if s.opts.Maintenance != nil && p != "/healthz" {
+			leave, ok := s.opts.Maintenance.Enter()
+			if !ok {
+				if p == "/readyz" {
+					writeJS(rec, http.StatusServiceUnavailable, jsvalue.Object{
+						{Key: "ready", Value: false}, {Key: "checks", Value: jsvalue.Object{{Key: "maintenance", Value: false}}},
+					})
+					return
+				}
+				rec.Header().Set("Retry-After", "5")
+				writeError(rec, r, http.StatusServiceUnavailable, "MAINTENANCE", MaintenanceMessage)
+				return
+			}
+			defer leave()
+		}
 		// Hono's bodyLimit, on every route, before the request window,
 		// authentication and any handler: a declared length is judged by
 		// the header; a body without one (chunked) is read up to the limit

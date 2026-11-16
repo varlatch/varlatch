@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/freeze"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/security"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -48,7 +50,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	conformance := sub == "conformance-probe" && conformanceProbe != nil ||
 		sub == "conformance-fixture" && conformanceFixture != nil
 	operator := sub == "security" || sub == "unfreeze"
-	if sub != "bootstrap" && sub != "recover" && !conformance && !operator {
+	backup := sub == "backup" || sub == "maintenance"
+	if sub != "bootstrap" && sub != "recover" && !conformance && !operator && !backup {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -68,6 +71,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		rest = append(rest, args[i])
 	}
 	switch {
+	case backup:
+		if _, msg := backupArgs(sub, rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
 	case operator:
 		// Checked here, so a usage error never reaches the daemon.
 		if msg := operatorUsage(sub, rest); msg != "" {
@@ -95,7 +103,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 func adminUsage(stderr io.Writer, msg string) int {
 	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] | "+
 		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] | "+
-		"varlatchd admin security reset ... | varlatchd admin unfreeze ...  (each with [--config <file>])\n", msg)
+		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status | varlatchd admin maintenance begin|end|status  (each with [--config <file>])\n", msg)
 	return 64
 }
 
@@ -229,12 +237,35 @@ func openOffline(cfg *config.Config, what string, stderr io.Writer) (*hostEnv, i
 	if !verify(rootKEK, inst) {
 		return fail(ExitConfig, "the configured Root KEK does not open this installation's canary")
 	}
-	return &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: write.NewGates()}, ExitOK
+	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: write.NewGates(), admission: maintenance.Open(cfg.DataDir, nil), log: slog.New(slog.NewTextHandler(stderr, nil))}
+	env.backups = newBackups(env)
+	return env, ExitOK
 }
 
-// runHost runs one host command, in the daemon or offline, with env.
+// MaintenanceRefusal is the TypeScript admin CLI's refusal of an ordinary
+// command during installation maintenance (cli.ts).
+const MaintenanceRefusal = "Installation is in maintenance; ordinary admin operations are blocked"
+
+// writes reports whether a host command may write the installation: all
+// but the backup and maintenance commands, which take the admission their
+// own way (backup run enters it; maintenance manages it; backup status
+// only reads).
+func writes(sub string) bool { return sub != "backup" && sub != "maintenance" }
+
+// runHost runs one host command, in the daemon or offline, with env. A
+// command that writes enters the maintenance admission first, before any
+// gate or job, and is counted until it ends; while a gate is open it is
+// refused, as the TypeScript admin CLI refuses it.
 func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int {
 	sub, rest := args[0], args[1:]
+	if writes(sub) && env.admission != nil {
+		leave, ok := env.admission.Enter()
+		if !ok {
+			fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, MaintenanceRefusal)
+			return ExitFailure
+		}
+		defer leave()
+	}
 	switch {
 	case sub == "conformance-probe" && conformanceProbe != nil:
 		return conformanceProbe(ctx, env, rest, stdout, stderr)
@@ -242,6 +273,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return conformanceFixture(ctx, env, rest, stdout, stderr)
 	case sub == "security" || sub == "unfreeze":
 		return runOperator(ctx, env, sub, rest, stdout, stderr)
+	case sub == "backup" || sub == "maintenance":
+		return runBackupCommand(ctx, env, sub, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":
 		return adminUsage(stderr, "unknown command "+sub)
 	}

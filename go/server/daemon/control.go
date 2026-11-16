@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -60,6 +62,11 @@ type hostEnv struct {
 	store   *storage.DB
 	rootKEK []byte
 	gates   *write.Gates
+	// admission is the maintenance gate, backups the backup service
+	// (backup.go).
+	admission *maintenance.Admission
+	backups   *backups.Service
+	log       *slog.Logger
 }
 
 type controlRequest struct {
@@ -152,6 +159,7 @@ func (c *controlServer) handle(ctx context.Context, conn *net.UnixConn) {
 	if err := json.NewDecoder(io.LimitReader(conn, 2<<20)).Decode(&req); err != nil || len(req.Args) == 0 {
 		return
 	}
+	_ = conn.SetDeadline(time.Now().Add(commandTimeout(req.Args)))
 	var stdout, stderr bytes.Buffer
 	status := runHost(ctx, c.env, req.Args, &stdout, &stderr)
 	_ = json.NewEncoder(conn).Encode(controlResponse{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), Status: status})
@@ -178,6 +186,10 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 		}
 		return viaSocket(uc, what, args, stdout, stderr)
 	}
+	// The lock comes first, as the TypeScript admin CLI takes its operator
+	// lease before it reads the gate: flock needs varlatchd.lock to exist
+	// (an empty file, no state), and a gate read before the lock could
+	// change before the command runs (a daemon starting meanwhile).
 	unlock, err := lockDataDir(cfg.DataDir)
 	if errors.Is(err, errLocked) {
 		fmt.Fprintf(stderr, "%s: a varlatchd holds the data directory %s, but its control socket does not answer; nothing was written. "+
@@ -195,6 +207,27 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 			return ExitFailure
 		}
 	}
+	// Offline, nothing opens the database before it is needed: its first
+	// use creates the schema and the installation.
+	//   - The maintenance commands and backup status work on the data
+	//     directory's files only (maintenance.json, backups/*.json).
+	//   - Under a gate, a command that writes and a backup run are refused
+	//     before the database is opened, as in the daemon.
+	if fileOnly(args) {
+		env := &hostEnv{cfg: cfg, admission: maintenance.Open(cfg.DataDir, nil), log: slog.New(slog.NewTextHandler(stderr, nil))}
+		env.backups = newBackups(env)
+		return runHost(context.Background(), env, args, stdout, stderr)
+	}
+	if maintenance.Open(cfg.DataDir, nil).Isolated() {
+		switch {
+		case writes(args[0]):
+			fmt.Fprintf(stderr, "%s: %s\n", what, MaintenanceRefusal)
+			return ExitFailure
+		case args[0] == "backup":
+			fmt.Fprintf(stderr, "%s %s: %s\n", what, args[1], backups.ErrMaintenance.Error())
+			return ExitFailure
+		}
+	}
 	env, status := openOffline(cfg, what, stderr)
 	if env == nil {
 		return status
@@ -203,9 +236,16 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 	return runHost(context.Background(), env, args, stdout, stderr)
 }
 
+// fileOnly reports whether a host command reads and writes only the data
+// directory's files, never the database: the maintenance commands and
+// backup status.
+func fileOnly(args []string) bool {
+	return args[0] == "maintenance" || args[0] == "backup" && len(args) > 1 && args[1] == "status"
+}
+
 func viaSocket(conn *net.UnixConn, what string, args []string, stdout, stderr io.Writer) int {
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(controlTimeout))
+	_ = conn.SetDeadline(time.Now().Add(commandTimeout(args)))
 	if err := json.NewEncoder(conn).Encode(controlRequest{Args: args}); err != nil {
 		fmt.Fprintf(stderr, "%s: the control socket: %v\n", what, err)
 		return ExitFailure

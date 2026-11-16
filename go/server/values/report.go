@@ -32,15 +32,27 @@ func countWouldBlockInLiveOrganization(ctx context.Context, db query.DBTX, organ
 // the Organization is live and the person still a member; dropped when too
 // many wait, and its errors logged, never answered.
 func (s *Service) queueCount(r auth.PendingReport, operation string, at int64) {
+	// Admitted while its request still is: a gate opened since drops it.
+	leave := func() {}
+	if s.admit != nil {
+		l, ok := s.admit()
+		if !ok {
+			s.log.Warn("security report: installation maintenance began; a passkey-verification count was dropped")
+			return
+		}
+		leave = l
+	}
 	select {
 	case s.pending <- struct{}{}:
 	default:
+		leave()
 		s.log.Error("security report: the access count queue is full; a count was dropped")
 		return
 	}
 	s.counts.Add(1)
 	go func() {
 		defer s.counts.Done()
+		defer leave()
 		defer func() { <-s.pending }()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

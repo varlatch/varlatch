@@ -21,9 +21,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 )
@@ -66,6 +68,20 @@ type Config struct {
 	// SyncAdapters narrows the adapters (VARLATCH_SYNC_ADAPTERS); nil means
 	// all of SyncPlatforms.
 	SyncAdapters []string
+
+	// Backups (ADR-0059 Decision 7). BackupKeyFile is the Backup Encryption
+	// Key's file (32 bytes, hex or base64); without one, varlatchd makes no
+	// scheduled backup.
+	BackupKeyFile string
+	// BackupInterval is how often a scheduled backup runs; 0 is off.
+	BackupInterval time.Duration
+	// BackupKeep is how many archives stay in the data directory.
+	BackupKeep int
+	// BackupDestinationsFile is the destinations file (packages/backup's
+	// format); empty keeps archives on this host only.
+	BackupDestinationsFile string
+	// BackupDestination names the destination archives are uploaded to.
+	BackupDestination string
 }
 
 // LoopbackHost reports whether a URL's host name (URL.Hostname: an IPv6
@@ -98,7 +114,17 @@ func (e *Error) Error() string {
 // Env is how Parse reads the environment (os.Getenv in production).
 type Env func(string) string
 
-var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "access_log", "sync", "sync_adapters"}
+var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "access_log", "sync", "sync_adapters",
+	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination"}
+
+// Backup defaults: a day between backups, seven archives kept (the
+// TypeScript host backup's LOCAL_KEEP), the destination named offsite
+// (its DESTINATION).
+const (
+	DefaultBackupInterval    = 24 * time.Hour
+	DefaultBackupKeep        = 7
+	DefaultBackupDestination = "offsite"
+)
 
 // Parse reads the configuration from r.
 //
@@ -231,8 +257,49 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		}
 		c.SyncAdapters = adapters
 	}
+	for _, name := range []string{"backup_key_file", "backup_destinations_file"} {
+		if v := values[name]; v != "" && !filepath.IsAbs(v) {
+			return nil, at(name, "%q is not an absolute path", v)
+		}
+	}
+	if v := values["backup_key_file"]; v != "" {
+		c.BackupKeyFile = filepath.Clean(v)
+	}
+	c.BackupInterval = DefaultBackupInterval
+	switch v := values["backup_interval"]; v {
+	case "":
+	case "off":
+		c.BackupInterval = 0
+	default:
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Hour || d > 31*24*time.Hour {
+			return nil, at("backup_interval", "%q must be a duration from 1h to 744h (such as 24h or 12h), or off", v)
+		}
+		c.BackupInterval = d
+	}
+	c.BackupKeep = DefaultBackupKeep
+	if v := values["backup_keep"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 1000 {
+			return nil, at("backup_keep", "%q must be a number of archives from 1 to 1000", v)
+		}
+		c.BackupKeep = n
+	}
+	if v := values["backup_destinations_file"]; v != "" {
+		c.BackupDestinationsFile = filepath.Clean(v)
+	}
+	c.BackupDestination = DefaultBackupDestination
+	if v := values["backup_destination"]; v != "" {
+		if !backupDestinationName.MatchString(v) {
+			return nil, at("backup_destination", "%q is not a destination name (letters, digits, - and _)", v)
+		}
+		c.BackupDestination = v
+	}
 	return c, nil
 }
+
+// backupDestinationName is a destinations file's key (destinationsSchema).
+var backupDestinationName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // Load reads and parses the file at path. A file that cannot be read is
 // returned as the read error (not an *Error): it touches the disk.

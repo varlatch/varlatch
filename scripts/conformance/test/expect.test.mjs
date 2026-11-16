@@ -427,7 +427,7 @@ test("newlyNotApplicable: reclassified, moved and capability-dropped checks, eac
   moved.checks[id] = { ...moved.checks[id], suite: "realtime-events" };
   assert.deepEqual(newlyNotApplicable(base, { inventory: moved, capabilities: caps }), [`ts-release|${id}`, `ts-source|${id}`]);
   const needier = structuredClone(inventory);
-  needier.suites["cli-core"].needs = ["maintenance"];
+  needier.suites["cli-core"].needs = ["ts-stack"];
   assert.ok(newlyNotApplicable(base, { inventory: needier, capabilities: caps }).includes(`go-binary|${id}`));
   const dropped = structuredClone(caps);
   dropped["go-binary"] = dropped["go-binary"].filter((c) => c !== "go-server");

@@ -18,10 +18,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -34,6 +36,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/httpserver"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/security"
 	"github.com/varlatch/varlatch/go/server/values"
@@ -253,7 +256,18 @@ func serve(opts Options, h *hooks) int {
 	// (go/server/write); host commands arrive on the control socket, open
 	// before the listener so a command run once /readyz answers finds it.
 	gates := write.NewGates()
-	control, err := listenControl(&hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates}, log)
+	// The maintenance admission (a gate left open holds across a restart)
+	// and the backup service, shared by requests, host commands and the
+	// schedule.
+	admission := maintenance.Open(cfg.DataDir, nil)
+	if g, err := admission.Gate(); err != nil {
+		log.Error("the maintenance gate cannot be read; varlatchd answers 503 MAINTENANCE until it is repaired", "file", filepath.Join(cfg.DataDir, backup.GateFile), "error", err)
+	} else if g != nil {
+		log.Warn("installation maintenance is active; varlatchd answers 503 MAINTENANCE until it ends", "kind", g.Kind, "lease", g.ID)
+	}
+	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log}
+	env.backups = newBackups(env)
+	control, err := listenControl(env, log)
 	if err != nil {
 		return fail(ExitFailure, "cannot open the control socket in the data directory", "socket", ControlSocket, "error", err)
 	}
@@ -300,7 +314,7 @@ func serve(opts Options, h *hooks) int {
 	// after their responses: a stop waits for them before the database
 	// closes.
 	approvals := auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK, PersonGate: gates.PersonGate})
-	readPath := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: gates})
+	readPath := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: gates, Admit: admission.Enter})
 	defer readPath.Settled()
 	writer := &write.Writer{Store: store, Gates: gates}
 	if h.writer != nil {
@@ -313,9 +327,17 @@ func serve(opts Options, h *hooks) int {
 	reportDone := make(chan struct{})
 	go func() {
 		defer close(reportDone)
-		security.RunLoop(ctx, writer, security.SummaryInterval, time.Now, log)
+		security.RunLoop(ctx, writer, security.SummaryInterval, time.Now, log, admission.Enter)
 	}()
 	defer func() { cancel(); <-reportDone }()
+	// Scheduled backups (backup_interval). A stop ends a run in progress,
+	// which removes its temporary files, before the database closes.
+	backupDone := make(chan struct{})
+	go func() {
+		defer close(backupDone)
+		env.backups.Loop(ctx)
+	}()
+	defer func() { cancel(); <-backupDone }()
 	handler, err := httpserver.New(httpserver.Options{
 		Version:        buildinfo.Version,
 		PublicURL:      cfg.PublicURL,
@@ -330,6 +352,8 @@ func serve(opts Options, h *hooks) int {
 		Values:         readPath,
 		Writer:         writer,
 		RootKEK:        rootKEK,
+		Maintenance:    admission,
+		Backups:        env.backups,
 		Log:            log,
 	})
 	if err != nil {

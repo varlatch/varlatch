@@ -159,7 +159,14 @@ func TestGoVectors(t *testing.T) {
 		out.EscrowRefusals = append(out.EscrowRefusals, refusal{Name: r.Name, Passphrase: passphrase, Blob: raw, Message: restoreMessage(raw, passphrase)})
 	}
 	for _, s := range ts.Shamir {
+		// A key whose fingerprint has a letter, so that "an upper-case
+		// fingerprint" below changes it: one of digits only ((10/16)^8 of
+		// keys, about 2 %) has no upper-case form, and the share would stay
+		// valid.
 		kek := randomKey(t)
+		for !strings.ContainsAny(Fingerprint(kek), "abcdef") {
+			kek = randomKey(t)
+		}
 		split, fp, err := Split(kek, s.Shares, s.Threshold)
 		if err != nil {
 			t.Fatal(err)
@@ -185,7 +192,11 @@ func TestGoVectors(t *testing.T) {
 	}
 	upper := func(share string) string {
 		i := strings.LastIndex(share, ".")
-		return share[:i] + strings.ToUpper(share[i:])
+		changed := share[:i] + strings.ToUpper(share[i:])
+		if changed == share {
+			t.Fatalf("the fingerprint of %s has no upper-case form", share)
+		}
+		return changed
 	}
 	for _, r := range []struct {
 		name   string

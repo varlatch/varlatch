@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func env(vars map[string]string) Env { return func(k string) string { return vars[k] } }
@@ -19,12 +20,16 @@ func TestParseDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Listen != DefaultListen || c.DataDir != DefaultDataDir || c.RootKEKFile != "/run/credentials/varlatchd.service/root-kek" ||
-		c.AccessLog != "stdout" || !c.Sync || c.SyncAdapters != nil || c.PublicURL != nil || c.TrustedProxies != "" {
+		c.AccessLog != "stdout" || !c.Sync || c.SyncAdapters != nil || c.PublicURL != nil || c.TrustedProxies != "" ||
+		c.BackupKeyFile != "" || c.BackupInterval != 24*time.Hour || c.BackupKeep != 7 || c.BackupDestinationsFile != "" || c.BackupDestination != "offsite" {
 		t.Errorf("defaults: %+v", c)
 	}
 	c, err = Parse(strings.NewReader(""), env(map[string]string{"CREDENTIALS_DIRECTORY": "/c", "STATE_DIRECTORY": "/var/lib/varlatch-x:/other"}))
 	if err != nil || c.DataDir != "/var/lib/varlatch-x" || c.DatabasePath() != "/var/lib/varlatch-x/varlatch.db" {
 		t.Errorf("STATE_DIRECTORY: %+v, %v", c, err)
+	}
+	if c, err := Parse(strings.NewReader("root_kek_file = /k\nbackup_interval = off\n"), env(nil)); err != nil || c.BackupInterval != 0 {
+		t.Errorf("backup_interval off: %+v, %v", c, err)
 	}
 }
 
@@ -38,6 +43,11 @@ func TestParseEverySetting(t *testing.T) {
 		"access_log = /var/log/varlatch/access.log\n" +
 		"sync = off\n" +
 		"sync_adapters = coolify, convex\n" +
+		"backup_key_file = /etc/varlatch/bek\n" +
+		"backup_interval = 12h\n" +
+		"backup_keep = 30\n" +
+		"backup_destinations_file = /etc/varlatch/destinations.json\n" +
+		"backup_destination = b2-eu\n" +
 		"   # an indented comment\n"
 	c, err := Parse(strings.NewReader(file), env(nil))
 	if err != nil {
@@ -45,7 +55,9 @@ func TestParseEverySetting(t *testing.T) {
 	}
 	if c.Listen != "0.0.0.0:443" || c.PublicURL.String() != "https://varlatch.example.com" || c.DataDir != "/srv/varlatch" ||
 		c.RootKEKFile != "/etc/varlatch/root-kek" || c.TrustedProxies != "10.0.0.0/8, caddy" ||
-		c.AccessLog != "/var/log/varlatch/access.log" || c.Sync || !slices.Equal(c.SyncAdapters, []string{"coolify", "convex"}) {
+		c.AccessLog != "/var/log/varlatch/access.log" || c.Sync || !slices.Equal(c.SyncAdapters, []string{"coolify", "convex"}) ||
+		c.BackupKeyFile != "/etc/varlatch/bek" || c.BackupInterval != 12*time.Hour || c.BackupKeep != 30 ||
+		c.BackupDestinationsFile != "/etc/varlatch/destinations.json" || c.BackupDestination != "b2-eu" {
 		t.Errorf("%+v", c)
 	}
 }
@@ -73,6 +85,14 @@ func TestParseErrors(t *testing.T) {
 		"bad sync":                         kek + "sync = yes\n",
 		"unknown sync adapter":             kek + "sync_adapters = heroku\n",
 		"overlong line":                    kek + "public_url = https://" + strings.Repeat("a", 70*1024) + "\n",
+		"relative backup_key_file":         kek + "backup_key_file = bek\n",
+		"relative destinations file":       kek + "backup_destinations_file = d.json\n",
+		"backup_interval too short":        kek + "backup_interval = 59m\n",
+		"backup_interval too long":         kek + "backup_interval = 745h\n",
+		"backup_interval not a duration":   kek + "backup_interval = daily\n",
+		"backup_keep zero":                 kek + "backup_keep = 0\n",
+		"backup_keep too many":             kek + "backup_keep = 1001\n",
+		"backup_destination with a dot":    kek + "backup_destination = b2.eu\n",
 	} {
 		_, err := Parse(strings.NewReader(file), env(nil))
 		var cerr *Error
