@@ -52,10 +52,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "getInstallationListeners": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "getOrganizationDeletion": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -65,14 +61,6 @@
         "step": "ADR-0059 step 4"
       },
       "getSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "getTailnetContext": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "getTailnetEndpoint": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

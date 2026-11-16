@@ -122,6 +122,18 @@ type Options struct {
 	// OIDCFetch replaces the OIDC exchange's fetch of issuer documents
 	// (tests); nil is the outbound policy's oidc client.
 	OIDCFetch oidc.Fetcher
+	// Tailnet, when set, makes this server a tailnet listener (tailnet.go):
+	// no dashboard, browser session, enrollment page or public URL, every
+	// request resolved to its peer's Tailnet Context first.
+	Tailnet *TailnetListener
+	// BrowserEndpoint is the tailnet browser endpoint's URL when this
+	// installation serves one, "" for none, on every listener: GET
+	// /v1/tailnet/endpoint answers it and /v1/meta lists
+	// tailnet.browser-reads.
+	BrowserEndpoint string
+	// TailnetListeners is what varlatchd last observed of its tailnet
+	// listeners (GET /v1/installation/listeners); nil without one.
+	TailnetListeners func() any
 	// Built adds operations, by route pattern ("GET /v1/organizations"), to
 	// the ones this build has, for tests of the stub's wiring. Each is
 	// served by the generated strict handler: a pattern whose operation
@@ -240,6 +252,8 @@ var BuiltOperations = []string{
 	listCapabilitiesPattern, issueCapabilityPattern, revokeCapabilityPattern, exerciseCapabilityPattern,
 	// Step 4.8: OIDC workload identity (oidc.go).
 	listOidcBindingsPattern, createOidcBindingPattern, revokeOidcBindingPattern, exchangeOidcTokenPattern,
+	// Step 4.13a: the tailnet listeners (tailnet.go).
+	tailnetEndpointPattern, tailnetContextPattern, listenersPattern,
 }
 
 // Server is the handler.
@@ -310,7 +324,7 @@ func New(opts Options) (*Server, error) {
 	s.apiMux = mux.ServeMux
 	s.patterns = mux.patterns
 	s.stubbed = mux.stubbed
-	if opts.Auth != nil {
+	if opts.Auth != nil && opts.Tailnet == nil {
 		s.browser = s.newBrowserHandler()
 	}
 	if opts.Web != nil {
@@ -419,6 +433,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	front := nginxPath(target)
 	isAPI := apiPrefix.MatchString(front) || cliPaths[front]
 	p := front
+	if s.opts.Tailnet != nil {
+		// A tailnet listener is the API alone: no nginx in front of it.
+		isAPI = true
+	}
 	if isAPI {
 		p = honoPath(normalized)
 	}
@@ -435,6 +453,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// from the right like any other (the caller's forged line stays left).
 	client := clientaddr.Of(r.RemoteAddr, headerValue(r, "X-Forwarded-For"), s.opts.TrustedProxies)
 	r = r.WithContext(context.WithValue(r.Context(), clientKey{}, client))
+	windowKey := client
 	defer func() {
 		if v := recover(); v != nil {
 			if v == http.ErrAbortHandler {
@@ -449,6 +468,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	if isAPI {
 		rec.Header().Set("X-Request-Id", id)
+		if t := s.opts.Tailnet; t != nil {
+			// The browser endpoint's gate, then the device check, before
+			// anything costs a lookup or authentication (app.ts's order).
+			if t.Browser != nil && !t.Browser.gate(rec, r, p) {
+				return
+			}
+			res := t.Resolve(r.Context(), r.RemoteAddr)
+			r = withResolution(r, res)
+			if res.Context != nil {
+				// Every peer on a tailnet listener comes from the node:
+				// a recognized device gets a request window of its own.
+				windowKey = "node:" + res.Context.NodeID
+			}
+		}
 		// The maintenance admission, first (http/app.ts): /healthz always
 		// answers, /readyz says the server is not ready, and every other
 		// route answers 503 MAINTENANCE with Retry-After. The dashboard's
@@ -499,7 +532,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if counted {
 		windowed = true
-		ok, retry, opened := s.window.admit(client)
+		ok, retry, opened := s.window.admit(windowKey)
 		windowOpened = opened
 		if !ok {
 			rec.Header().Set("Retry-After", retry)
@@ -568,7 +601,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.browser.ServeHTTP(w, r)
-	case (p == "/enroll" || p == "/enroll.js") && isGet(r):
+	case (p == "/enroll" || p == "/enroll.js") && isGet(r) && s.opts.Tailnet == nil:
 		// The enrollment page (enroll.go).
 		serveEnroll(w, r)
 	case p == "/v1" || strings.HasPrefix(p, "/v1/"):

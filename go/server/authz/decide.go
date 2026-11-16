@@ -32,7 +32,7 @@ type Options struct {
 	// RESOURCE_NOT_FOUND.
 	HideExistence bool
 	// TailnetContext is the request's verified Tailnet Context, nil when it
-	// has none.
+	// has none: then the one ctx carries (WithTailnet), if any.
 	TailnetContext *TailnetContext
 	// RequestID names the request in the denial's audit event.
 	RequestID string
@@ -74,7 +74,11 @@ func Decide(ctx context.Context, db query.DBTX, p Principal, action string, r Re
 	if err != nil {
 		return Decision{}, err
 	}
-	e := Evaluate(Input{Action: action, Resource: r, OrgRole: role, Grants: grants, Requirements: reqs, TailnetContext: opts.TailnetContext})
+	tc := opts.TailnetContext
+	if tc == nil {
+		tc = TailnetFrom(ctx)
+	}
+	e := Evaluate(Input{Action: action, Resource: r, OrgRole: role, Grants: grants, Requirements: reqs, TailnetContext: tc})
 	if e.Allowed {
 		return Decision{Allowed: true, Evaluation: e}, nil
 	}
@@ -285,4 +289,21 @@ func FrozenRefusalEvent(principal *Principal, err *FrozenError, method, route, r
 		e.CredentialID = audit.Value(principal.CredentialID)
 	}
 	return e
+}
+
+type tailnetKey struct{}
+
+// WithTailnet returns ctx carrying the request's verified Tailnet Context:
+// only a tailnet listener sets it, from the connection's own peer
+// (ADR-0014 §7). Every authorization decision made under ctx evaluates
+// Requirements against it, as the TypeScript server's decide reads the
+// request's.
+func WithTailnet(ctx context.Context, c *TailnetContext) context.Context {
+	return context.WithValue(ctx, tailnetKey{}, c)
+}
+
+// TailnetFrom is the Tailnet Context ctx carries, nil for none.
+func TailnetFrom(ctx context.Context) *TailnetContext {
+	c, _ := ctx.Value(tailnetKey{}).(*TailnetContext)
+	return c
 }

@@ -1,0 +1,2398 @@
+{
+  "comment": "Written by services/varlatchd/test/go-tailnet-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+  "ref": "v0.22.0",
+  "serverVersion": "0.22.0",
+  "rootKek": "1e08106c8090f4a5ffa01e9f21198ff897fdd753f75718100bb40997890f6b7a",
+  "tokens": {
+    "alice": "vlt_cli_-IgcbzV3Jbdi3-yFtaDSLBb14HJfzAituWg12nvbLBQ",
+    "bob": "vlt_cli_wZRu61Y4UnaFPSZ5QCu97kPtv1MdwDHKQW1Tk0vhEPo",
+    "broker": "vlt_svc_B5ynCNyLjGWDgsxGO4bn_eZG19MjQ4xCZ2ZZcckS46s"
+  },
+  "rows": {
+    "installation": [
+      {
+        "id": "inst_yxtj3shc373ujnnspadx3pytfi",
+        "kek_canary": {
+          "nonce": "aYx4B3Nrkd4YGW6e",
+          "authTag": "bmJC5RdvsfxhLkqREhRiPA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "oEO0waUguj5OcomsBz8nkbJlyFOKuOrGuaNjcmENmgA=",
+          "formatVersion": 1
+        },
+        "bootstrapped_at": "2026-11-16T22:23:09.324Z",
+        "created_at": "2026-11-16T22:23:09.248Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "public_url": null
+      }
+    ],
+    "identities": [
+      {
+        "id": "idn_ez7ioh6dn2xtbpa2zeyem2phee",
+        "kind": "human",
+        "name": "bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_k3ivdcpvxoi3isfc4v4vfe7v34",
+        "kind": "broker",
+        "name": "broker",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T22:23:09.980Z",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-11-16T22:23:09.324Z",
+        "organization_id": null,
+        "last_seen_at": "2026-11-16T22:23:09.446Z",
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_xjgxmk25bfvjuhb47ww7jjkwgy",
+        "kind": "agent",
+        "name": "agent",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T22:23:10.019Z",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      }
+    ],
+    "credentials": [
+      {
+        "id": "crd_7otzxar6nmvfeqxula55qc7cni",
+        "identity_id": "idn_ez7ioh6dn2xtbpa2zeyem2phee",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "dc84e7f8b2c3928e2f0f6fb09ece1932a52fcacf2a69afa1cf727d89cb1e374f",
+        "created_at": "2026-11-16T22:23:09.493Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_ez7ioh6dn2xtbpa2zeyem2phee",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_aejdovck5pw2kedwcuibggvy4a",
+        "identity_id": "idn_k3ivdcpvxoi3isfc4v4vfe7v34",
+        "kind": "service",
+        "name": "broker credential",
+        "token_hash": "bad008137ecc8bff10e3028641f5aa81e5c4f8e0cbf09ce3d11efeecaf632497",
+        "created_at": "2026-11-16T22:23:09.980Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "8ea6a172e986165e12293832052878be93bf00c2f88b29032dfb3f2645d3d9b2",
+        "created_at": "2026-11-16T22:23:09.358Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-11-16T22:23:09.428Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ],
+    "organizations": [
+      {
+        "id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "slug": "tn",
+        "name": "Tailnet",
+        "wrapped_org_kek": {
+          "nonce": "A6p/4HI4OIa4deSM",
+          "authTag": "m7VtowkmFIP4VblkNfhhzA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "bA9ntfU4r8ks1oWAsYa/weI6y1wiW2OWlLEDz4NLEqo=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T22:23:09.458Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      }
+    ],
+    "org_memberships": [
+      {
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "identity_id": "idn_ez7ioh6dn2xtbpa2zeyem2phee",
+        "role": "member",
+        "created_at": "2026-11-16T22:23:09.488Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "role": "admin",
+        "created_at": "2026-11-16T22:23:09.458Z",
+        "removed_at": null,
+        "version": 0
+      }
+    ],
+    "grants": [
+      {
+        "id": "grt_jlqyn4w4w3rw54kululnq4tklm",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "subject_identity_id": "idn_xjgxmk25bfvjuhb47ww7jjkwgy",
+        "scope": {
+          "kind": "project",
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+        },
+        "actions": [
+          "secret.use"
+        ],
+        "created_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "created_at": "2026-11-16T22:23:10.046Z",
+        "revoked_at": null,
+        "subject_group_id": null,
+        "role_id": null
+      }
+    ],
+    "requirements": [
+      {
+        "id": "req_ntgoerdpspsejqmz7p63frmeoq",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "kind": "tailnet",
+        "target": {
+          "kind": "environments",
+          "environmentIds": [
+            "env_svnucnykghwpqwu7bi2r6ppgta"
+          ]
+        },
+        "config": {
+          "users": [
+            "alice@example.com"
+          ],
+          "tailnet": "corp.ts.net"
+        },
+        "created_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "created_at": "2026-11-16T22:23:09.949Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null
+      },
+      {
+        "id": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "kind": "tailnet",
+        "target": {
+          "kind": "tier",
+          "tier": "production"
+        },
+        "config": {
+          "tags": [
+            "tag:prod"
+          ],
+          "tailnet": "corp.ts.net"
+        },
+        "created_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "created_at": "2026-11-16T22:23:09.922Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null
+      }
+    ],
+    "projects": [
+      {
+        "id": "prj_f5qlxdknza73lci7rg6xfzbwie",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "slug": "api",
+        "name": "API",
+        "contract_authority": "git",
+        "active_contract_revision_id": "rev_fqzdndana6kzdekus5r5f4f2uq",
+        "created_at": "2026-11-16T22:23:09.533Z",
+        "deleted_at": null
+      }
+    ],
+    "contract_revisions": [
+      {
+        "id": "rev_fqzdndana6kzdekus5r5f4f2uq",
+        "project_id": "prj_f5qlxdknza73lci7rg6xfzbwie",
+        "content_hash": "sha256:0da8a3f7cd46c9dd9b288f6d7782f71acc7d1212334480aeae4ff8ce21d6d87a",
+        "contract": {
+          "items": [
+            {
+              "name": "PLAIN",
+              "type": "string",
+              "required": {
+                "kind": "never"
+              },
+              "sensitive": false
+            },
+            {
+              "name": "SECRET",
+              "type": "string",
+              "required": {
+                "kind": "never"
+              },
+              "sensitive": true
+            }
+          ],
+          "schemaVersion": 1,
+          "semanticsVersion": 3
+        },
+        "provenance": null,
+        "created_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "created_at": "2026-11-16T22:23:09.661Z"
+      }
+    ],
+    "environments": [
+      {
+        "id": "env_nclkqwrvtqaxby2mthp6no3mfe",
+        "project_id": "prj_f5qlxdknza73lci7rg6xfzbwie",
+        "name": "production",
+        "kind": "shared",
+        "tier": "production",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-16T22:23:09.621Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_svnucnykghwpqwu7bi2r6ppgta",
+        "project_id": "prj_f5qlxdknza73lci7rg6xfzbwie",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-16T22:23:09.580Z",
+        "deleted_at": null
+      }
+    ],
+    "env_values": [
+      {
+        "id": "val_6qyq6yijogdj4nurb3rgbv66di",
+        "environment_id": "env_svnucnykghwpqwu7bi2r6ppgta",
+        "item_name": "PLAIN",
+        "current_version_id": "ver_l4bsijuvxnismo6otppeyqbqke",
+        "deleted_at": null,
+        "created_at": "2026-11-16T22:23:09.805Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_jwbk7pus7utbijtxzdmgu7ahim",
+        "environment_id": "env_svnucnykghwpqwu7bi2r6ppgta",
+        "item_name": "SECRET",
+        "current_version_id": "ver_fbwlsbyux2o4jrt5bgh2fxmzyi",
+        "deleted_at": null,
+        "created_at": "2026-11-16T22:23:09.760Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_m2wxe5wkqycmyravupbcsvwtmi",
+        "environment_id": "env_nclkqwrvtqaxby2mthp6no3mfe",
+        "item_name": "SECRET",
+        "current_version_id": "ver_2suoqmrezz4rvpjfof2o4xlzvu",
+        "deleted_at": null,
+        "created_at": "2026-11-16T22:23:09.840Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_xbmkifdxa45ifzmrrfmzjtnp7q",
+        "environment_id": "env_nclkqwrvtqaxby2mthp6no3mfe",
+        "item_name": "PLAIN",
+        "current_version_id": "ver_iubcpiydwp2t5zspk6k7kyqa64",
+        "deleted_at": null,
+        "created_at": "2026-11-16T22:23:09.883Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      }
+    ],
+    "value_versions": [
+      {
+        "id": "ver_2suoqmrezz4rvpjfof2o4xlzvu",
+        "value_id": "val_m2wxe5wkqycmyravupbcsvwtmi",
+        "payload": {
+          "nonce": "Kd6TL43ao9DPYp7u",
+          "authTag": "XSdkagg1Gmb5LY1l9XxkIg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "xk7pDpme2rpDXpuCUTWyrMo=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "FqDzeA3bk7DCJNQO",
+          "authTag": "Sa7Y7ZBHxFx26QDjtK5m2w==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "7eqkoolIO87URNnoCazyVj8pM4AU/e8D693Qc8OdHVI=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "created_at": "2026-11-16T22:23:09.840Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_fbwlsbyux2o4jrt5bgh2fxmzyi",
+        "value_id": "val_jwbk7pus7utbijtxzdmgu7ahim",
+        "payload": {
+          "nonce": "pOPUQcaaEYvEQyoL",
+          "authTag": "vim3bMyLzkXXqG9VZCPsmQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "In+/pYUosI4vQ4LjzBfQgOm1",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "JAgvKwKNYwELImkm",
+          "authTag": "2nt3w3Z1Utpo5vMb1eOvvQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "H6advfGNtPbTikhh27pX9v0lPoyWRkUBiuv1H/wxgDw=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "created_at": "2026-11-16T22:23:09.760Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_iubcpiydwp2t5zspk6k7kyqa64",
+        "value_id": "val_xbmkifdxa45ifzmrrfmzjtnp7q",
+        "payload": {
+          "nonce": "ZinvkOHY+pSLyy7f",
+          "authTag": "VlqmS7MAfPMgtnYjLNyLUg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "47XeP+mGX9IgthqBrVPosA==",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "XYDGfTzsX67+t1q7",
+          "authTag": "gA0R90e1ERuABdlIkLBu5Q==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "siw2c7xXEAZgnDQPEvpsoI/H85SLG0257uaQ8tlIo8s=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "created_at": "2026-11-16T22:23:09.883Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_l4bsijuvxnismo6otppeyqbqke",
+        "value_id": "val_6qyq6yijogdj4nurb3rgbv66di",
+        "payload": {
+          "nonce": "XFgcF+Vsb53BPefd",
+          "authTag": "e+NyG37WM0gBkffUYYklDw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "i9Lf72WaA0jix7LNo23Wyug=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "gfNa4IA+A2n3dc+8",
+          "authTag": "kmVOgjnuUcD+Tu8xgN9pEg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "rZLtxKCIRp+mIQn0JtTIKWjXSGQ4vH5DTntbtzPazrw=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "created_at": "2026-11-16T22:23:09.805Z",
+        "erased_at": null
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "cap_d7ncfwyg3ukpo5knioukn6k254",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "broker_identity_id": "idn_k3ivdcpvxoi3isfc4v4vfe7v34",
+        "agent_identity_id": "idn_xjgxmk25bfvjuhb47ww7jjkwgy",
+        "project_id": "prj_f5qlxdknza73lci7rg6xfzbwie",
+        "environment_id": "env_nclkqwrvtqaxby2mthp6no3mfe",
+        "items": [
+          "SECRET"
+        ],
+        "destinations": [
+          "api.example.com:443"
+        ],
+        "secret_hash": "866b99a71baaafb53fd2f0487c3ac78c59d42051ae5035ab1f51cfe4e58cfd60",
+        "run_id": "known-tailnet",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": null,
+        "created_by": "idn_k3ivdcpvxoi3isfc4v4vfe7v34",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "targets": {
+          "SECRET": [
+            "header:authorization"
+          ]
+        }
+      }
+    ],
+    "audit_events": [
+      {
+        "id": "evt_syqanooywyu5qlig52d5ra4kzu",
+        "schema_version": 1,
+        "event_type": "installation.initialized",
+        "occurred_at": "2026-11-16T22:23:09.248Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": null,
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "installationId": "inst_yxtj3shc373ujnnspadx3pytfi"
+        },
+        "event_order": 1,
+        "client": null
+      },
+      {
+        "id": "evt_ti4rhmmcucytdr6osjxrenltf4",
+        "schema_version": 1,
+        "event_type": "bootstrap.grant_issued",
+        "occurred_at": "2026-11-16T22:23:09.304Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": null,
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "expiresAt": "2026-11-16T22:38:09.305Z"
+        },
+        "event_order": 2,
+        "client": null
+      },
+      {
+        "id": "evt_xviza6mcvqlbqhy4aap53k4ys4",
+        "schema_version": 1,
+        "event_type": "bootstrap.completed",
+        "occurred_at": "2026-11-16T22:23:09.324Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_u4oodgbrmxma6ifrektishzy7i"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": null,
+        "event_order": 3,
+        "client": null
+      },
+      {
+        "id": "evt_sjzezgiby2nknzy24tsbehpkni",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-16T22:23:09.358Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_u4oodgbrmxma6ifrektishzy7i"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 4,
+        "client": null
+      },
+      {
+        "id": "evt_uitix2ajlsnjdmib5zkoyc5axe",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-16T22:23:09.458Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": null,
+        "resource": {
+          "organizationSlug": "tn"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 5,
+        "client": null
+      },
+      {
+        "id": "evt_k5kumctoknw3zlbi775vqc6x34",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-16T22:23:09.493Z",
+        "actor_identity_id": "idn_ez7ioh6dn2xtbpa2zeyem2phee",
+        "authentication_method_id": null,
+        "credential_id": "crd_7otzxar6nmvfeqxula55qc7cni",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_ez7ioh6dn2xtbpa2zeyem2phee"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 6,
+        "client": null
+      },
+      {
+        "id": "evt_ccle2ilpmksszgq75kccciikzm",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-16T22:23:09.533Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": null,
+        "resource": {
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie",
+          "projectSlug": "api"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 7,
+        "client": null
+      },
+      {
+        "id": "evt_inhtsby47zmaxolkeqvl5hijce",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-16T22:23:09.580Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": null,
+        "resource": {
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie",
+          "environmentId": "env_svnucnykghwpqwu7bi2r6ppgta",
+          "environmentName": "development"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 8,
+        "client": null
+      },
+      {
+        "id": "evt_kzee3ehgqsjetjuqeclofha3dm",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-16T22:23:09.621Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": null,
+        "resource": {
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie",
+          "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+          "environmentName": "production"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "production",
+          "derived": false
+        },
+        "event_order": 9,
+        "client": null
+      },
+      {
+        "id": "evt_jonbqje5wjh7vs36hrr3gmhzly",
+        "schema_version": 1,
+        "event_type": "contract.revision_pushed",
+        "occurred_at": "2026-11-16T22:23:09.661Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "contract.submit",
+        "resource": {
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie",
+          "contractRevisionId": "rev_fqzdndana6kzdekus5r5f4f2uq"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "itemCount": 2,
+          "contentHash": "sha256:0da8a3f7cd46c9dd9b288f6d7782f71acc7d1212334480aeae4ff8ce21d6d87a",
+          "semanticsVersion": 3
+        },
+        "event_order": 10,
+        "client": null
+      },
+      {
+        "id": "evt_resqr35kvzdsbsovfw5zbovcs4",
+        "schema_version": 1,
+        "event_type": "contract.activated",
+        "occurred_at": "2026-11-16T22:23:09.710Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "contract.activate",
+        "resource": {
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie",
+          "contractRevisionId": "rev_fqzdndana6kzdekus5r5f4f2uq"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "initial": true
+        },
+        "event_order": 11,
+        "client": null
+      },
+      {
+        "id": "evt_rarswpjh4qfjhnyaolbib3rqqy",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-16T22:23:09.760Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "SECRET",
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie",
+          "versionId": "ver_fbwlsbyux2o4jrt5bgh2fxmzyi",
+          "environmentId": "env_svnucnykghwpqwu7bi2r6ppgta",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": true
+        },
+        "event_order": 12,
+        "client": null
+      },
+      {
+        "id": "evt_mkn2qrcttfol5lzvad4guxo4yu",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-16T22:23:09.805Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "PLAIN",
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie",
+          "versionId": "ver_l4bsijuvxnismo6otppeyqbqke",
+          "environmentId": "env_svnucnykghwpqwu7bi2r6ppgta",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": false
+        },
+        "event_order": 13,
+        "client": null
+      },
+      {
+        "id": "evt_4hxk4pec5xalpsj2hckrry4idu",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-16T22:23:09.840Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "SECRET",
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie",
+          "versionId": "ver_2suoqmrezz4rvpjfof2o4xlzvu",
+          "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": true
+        },
+        "event_order": 14,
+        "client": null
+      },
+      {
+        "id": "evt_xll6o5yh7ac5q7q2ujttw7h26m",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-16T22:23:09.883Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "PLAIN",
+          "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie",
+          "versionId": "ver_iubcpiydwp2t5zspk6k7kyqa64",
+          "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": false
+        },
+        "event_order": 15,
+        "client": null
+      },
+      {
+        "id": "evt_6y4mq6yrz2lri4jjte2okhgnry",
+        "schema_version": 1,
+        "event_type": "requirement.created",
+        "occurred_at": "2026-11-16T22:23:09.922Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "policy.manage",
+        "resource": {
+          "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "tailnet",
+          "tailnet": "corp.ts.net"
+        },
+        "event_order": 16,
+        "client": null
+      },
+      {
+        "id": "evt_vcuo4vftqutgte4usri5wz3w2q",
+        "schema_version": 1,
+        "event_type": "requirement.created",
+        "occurred_at": "2026-11-16T22:23:09.949Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "policy.manage",
+        "resource": {
+          "requirementId": "req_ntgoerdpspsejqmz7p63frmeoq"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "tailnet",
+          "tailnet": "corp.ts.net"
+        },
+        "event_order": 17,
+        "client": null
+      },
+      {
+        "id": "evt_ytha5umyiaufzn43rizwxtbqfe",
+        "schema_version": 1,
+        "event_type": "identity.created",
+        "occurred_at": "2026-11-16T22:23:09.980Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "identity.manage",
+        "resource": {
+          "identityId": "idn_k3ivdcpvxoi3isfc4v4vfe7v34"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "broker"
+        },
+        "event_order": 18,
+        "client": null
+      },
+      {
+        "id": "evt_i7qsdrlw6xglr4bzwg7xubdbwq",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-16T22:23:09.980Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_aejdovck5pw2kedwcuibggvy4a",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": null,
+        "resource": {
+          "identityId": "idn_k3ivdcpvxoi3isfc4v4vfe7v34"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "service"
+        },
+        "event_order": 19,
+        "client": null
+      },
+      {
+        "id": "evt_m643cw7tei3fvlclagy3w7hy44",
+        "schema_version": 1,
+        "event_type": "identity.created",
+        "occurred_at": "2026-11-16T22:23:10.019Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "identity.manage",
+        "resource": {
+          "identityId": "idn_xjgxmk25bfvjuhb47ww7jjkwgy"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "agent"
+        },
+        "event_order": 20,
+        "client": null
+      },
+      {
+        "id": "evt_qvi3agklxf6eh2s5upjzqaxsga",
+        "schema_version": 1,
+        "event_type": "grant.created",
+        "occurred_at": "2026-11-16T22:23:10.046Z",
+        "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+        "authentication_method_id": null,
+        "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+        "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+        "action": "policy.manage",
+        "resource": {
+          "grantId": "grt_jlqyn4w4w3rw54kululnq4tklm",
+          "subjectIdentityId": "idn_xjgxmk25bfvjuhb47ww7jjkwgy"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "actions": "secret.use"
+        },
+        "event_order": 21,
+        "client": null
+      }
+    ]
+  },
+  "sideTables": [],
+  "requests": [
+    {
+      "id": "GET the browser endpoint's URL",
+      "name": "the browser endpoint's URL",
+      "method": "GET",
+      "path": "/v1/tailnet/endpoint",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"browserEndpoint\":\"https://varlatch.corp.ts.net:8443\"}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the browser endpoint's URL on a tailnet listener",
+      "name": "the browser endpoint's URL on a tailnet listener",
+      "method": "GET",
+      "path": "/v1/tailnet/endpoint",
+      "credential": "alice",
+      "listener": "tn-prod",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"browserEndpoint\":\"https://varlatch.corp.ts.net:8443\"}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the listeners report",
+      "name": "the listeners report",
+      "method": "GET",
+      "path": "/v1/installation/listeners",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"tailnet\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the listeners report as a member",
+      "name": "the listeners report as a member",
+      "method": "GET",
+      "path": "/v1/installation/listeners",
+      "credential": "bob",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Installation Admin required\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the listeners report on a tailnet listener",
+      "name": "the listeners report on a tailnet listener",
+      "method": "GET",
+      "path": "/v1/installation/listeners",
+      "credential": "alice",
+      "listener": "tn-prod",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"tailnet\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET me",
+      "name": "me",
+      "method": "GET",
+      "path": "/v1/me",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"identity\":{\"id\":\"idn_u4oodgbrmxma6ifrektishzy7i\",\"name\":\"Alice\",\"kind\":\"human\",\"email\":null},\"organization\":null,\"credential\":{\"id\":\"crd_otqa4hucdkqyn3j3dqld7whlm4\",\"name\":null,\"kind\":\"cli\",\"expiresAt\":null},\"listener\":\"ordinary\"}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET me on a tagged device",
+      "name": "me on a tagged device",
+      "method": "GET",
+      "path": "/v1/me",
+      "credential": "alice",
+      "listener": "tn-prod",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"identity\":{\"id\":\"idn_u4oodgbrmxma6ifrektishzy7i\",\"name\":\"Alice\",\"kind\":\"human\",\"email\":null},\"organization\":null,\"credential\":{\"id\":\"crd_otqa4hucdkqyn3j3dqld7whlm4\",\"name\":null,\"kind\":\"cli\",\"expiresAt\":null},\"listener\":\"tailnet\",\"tailnet\":{\"recognized\":true,\"tailnet\":\"corp.ts.net\",\"nodeId\":\"nProd1CNTRL\",\"nodeName\":\"build-1\",\"tags\":[\"tag:prod\"]}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET me on a person's device",
+      "name": "me on a person's device",
+      "method": "GET",
+      "path": "/v1/me",
+      "credential": "alice",
+      "listener": "tn-user",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"identity\":{\"id\":\"idn_u4oodgbrmxma6ifrektishzy7i\",\"name\":\"Alice\",\"kind\":\"human\",\"email\":null},\"organization\":null,\"credential\":{\"id\":\"crd_otqa4hucdkqyn3j3dqld7whlm4\",\"name\":null,\"kind\":\"cli\",\"expiresAt\":null},\"listener\":\"tailnet\",\"tailnet\":{\"recognized\":true,\"tailnet\":\"corp.ts.net\",\"nodeId\":\"nLaptopCNTRL\",\"nodeName\":\"laptop\",\"tags\":[],\"userLogin\":\"alice@example.com\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET me from a shared device",
+      "name": "me from a shared device",
+      "method": "GET",
+      "path": "/v1/me",
+      "credential": "alice",
+      "listener": "tn-shared",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"identity\":{\"id\":\"idn_u4oodgbrmxma6ifrektishzy7i\",\"name\":\"Alice\",\"kind\":\"human\",\"email\":null},\"organization\":null,\"credential\":{\"id\":\"crd_otqa4hucdkqyn3j3dqld7whlm4\",\"name\":null,\"kind\":\"cli\",\"expiresAt\":null},\"listener\":\"tailnet\",\"tailnet\":{\"recognized\":false,\"reason\":\"shared\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET me when the node cannot say",
+      "name": "me when the node cannot say",
+      "method": "GET",
+      "path": "/v1/me",
+      "credential": "alice",
+      "listener": "tn-unavailable",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"identity\":{\"id\":\"idn_u4oodgbrmxma6ifrektishzy7i\",\"name\":\"Alice\",\"kind\":\"human\",\"email\":null},\"organization\":null,\"credential\":{\"id\":\"crd_otqa4hucdkqyn3j3dqld7whlm4\",\"name\":null,\"kind\":\"cli\",\"expiresAt\":null},\"listener\":\"tailnet\",\"tailnet\":{\"recognized\":false,\"reason\":\"resolver-unavailable\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the device",
+      "name": "the device",
+      "method": "GET",
+      "path": "/v1/tailnet/context",
+      "credential": "alice",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net:8443"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"recognized\":true,\"tailnet\":\"corp.ts.net\",\"nodeId\":\"nProd1CNTRL\",\"nodeName\":\"build-1\",\"tags\":[\"tag:prod\"]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET no device",
+      "name": "no device",
+      "method": "GET",
+      "path": "/v1/tailnet/context",
+      "credential": "alice",
+      "listener": "browser-refused",
+      "headers": {
+        "Host": "varlatch.corp.ts.net:8443"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"recognized\":false,\"reason\":\"unrecognized\"}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the device on the plain tailnet listener",
+      "name": "the device on the plain tailnet listener",
+      "method": "GET",
+      "path": "/v1/tailnet/context",
+      "credential": "alice",
+      "listener": "tn-prod",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "text/plain; charset=UTF-8"
+        },
+        "body": "404 Not Found"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the device on the ordinary listener",
+      "name": "the device on the ordinary listener",
+      "method": "GET",
+      "path": "/v1/tailnet/context",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "text/plain; charset=UTF-8"
+        },
+        "body": "404 Not Found"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET production on the ordinary listener",
+      "name": "production on the ordinary listener",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"TAILNET_CONTEXT_REQUIRED\",\"message\":\"This operation requires trusted Tailnet Context\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "denial": "requirement-failed",
+            "requirements": [
+              {
+                "reason": "no-tailnet-context",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": false
+              }
+            ]
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET production from a tag:prod device",
+      "name": "production from a tag:prod device",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "tn-prod",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"environmentId\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"items\":[{\"name\":\"PLAIN\",\"sensitive\":false,\"source\":\"self\",\"versionId\":\"ver_iubcpiydwp2t5zspk6k7kyqa64\",\"value\":\"production-plain\"},{\"name\":\"SECRET\",\"sensitive\":true,\"source\":\"self\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\",\"value\":null}],\"manifest\":{\"manifestVersion\":1,\"projectId\":\"prj_f5qlxdknza73lci7rg6xfzbwie\",\"environment\":{\"id\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"rootId\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"parentId\":null,\"tier\":\"production\",\"expiresAt\":null},\"contract\":{\"revisionId\":\"rev_fqzdndana6kzdekus5r5f4f2uq\",\"contentHash\":\"sha256:0da8a3f7cd46c9dd9b288f6d7782f71acc7d1212334480aeae4ff8ce21d6d87a\",\"semanticsVersion\":3},\"items\":[{\"name\":\"PLAIN\",\"source\":\"self\",\"valueRowId\":\"val_xbmkifdxa45ifzmrrfmzjtnp7q\",\"versionId\":\"ver_iubcpiydwp2t5zspk6k7kyqa64\"},{\"name\":\"SECRET\",\"source\":\"self\",\"valueRowId\":\"val_m2wxe5wkqycmyravupbcsvwtmi\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\"}]},\"stateDigest\":\"sha256:2b93bc82696d57dae22f28c68f0d70cc59b5c7444efcb57e07f6785fa2999810\",\"callerView\":{\"withheld\":[],\"unexpanded\":[]}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "grantIds": [],
+            "requirements": [
+              {
+                "by": "tag:prod",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": true
+              }
+            ],
+            "role": "admin"
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "allow",
+          "event_type": "value.disclosed",
+          "listener": "tailnet",
+          "metadata": {
+            "items": "PLAIN@ver_iubcpiydwp2t5zspk6k7kyqa64",
+            "withheld": 1
+          },
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nProd1CNTRL",
+            "nodeName": "build-1",
+            "tags": [
+              "tag:prod"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET production from a tag:ci device",
+      "name": "production from a tag:ci device",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "tn-ci",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"TAILNET_CONTEXT_UNAVAILABLE\",\"message\":\"Tailnet Context does not satisfy the required selector\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "denial": "requirement-failed",
+            "requirements": [
+              {
+                "reason": "selector-mismatch",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": false
+              }
+            ]
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "tailnet",
+          "metadata": null,
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nCi1CNTRL",
+            "nodeName": "ci-1",
+            "tags": [
+              "tag:ci"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET production from a shared device",
+      "name": "production from a shared device",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "tn-shared",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"TAILNET_CONTEXT_REQUIRED\",\"message\":\"This operation requires trusted Tailnet Context\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "denial": "requirement-failed",
+            "requirements": [
+              {
+                "reason": "no-tailnet-context",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": false
+              }
+            ]
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "tailnet",
+          "metadata": null,
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "refused": "shared"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET production when the node cannot say",
+      "name": "production when the node cannot say",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "tn-unavailable",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"TAILNET_CONTEXT_REQUIRED\",\"message\":\"This operation requires trusted Tailnet Context\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "denial": "requirement-failed",
+            "requirements": [
+              {
+                "reason": "no-tailnet-context",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": false
+              }
+            ]
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "tailnet",
+          "metadata": null,
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "refused": "resolver-unavailable"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET development from alice's device",
+      "name": "development from alice's device",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/development/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "tn-user",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"environmentId\":\"env_svnucnykghwpqwu7bi2r6ppgta\",\"items\":[{\"name\":\"PLAIN\",\"sensitive\":false,\"source\":\"self\",\"versionId\":\"ver_l4bsijuvxnismo6otppeyqbqke\",\"value\":\"development-plain\"},{\"name\":\"SECRET\",\"sensitive\":true,\"source\":\"self\",\"versionId\":\"ver_fbwlsbyux2o4jrt5bgh2fxmzyi\",\"value\":null}],\"manifest\":{\"manifestVersion\":1,\"projectId\":\"prj_f5qlxdknza73lci7rg6xfzbwie\",\"environment\":{\"id\":\"env_svnucnykghwpqwu7bi2r6ppgta\",\"rootId\":\"env_svnucnykghwpqwu7bi2r6ppgta\",\"parentId\":null,\"tier\":\"development\",\"expiresAt\":null},\"contract\":{\"revisionId\":\"rev_fqzdndana6kzdekus5r5f4f2uq\",\"contentHash\":\"sha256:0da8a3f7cd46c9dd9b288f6d7782f71acc7d1212334480aeae4ff8ce21d6d87a\",\"semanticsVersion\":3},\"items\":[{\"name\":\"PLAIN\",\"source\":\"self\",\"valueRowId\":\"val_6qyq6yijogdj4nurb3rgbv66di\",\"versionId\":\"ver_l4bsijuvxnismo6otppeyqbqke\"},{\"name\":\"SECRET\",\"source\":\"self\",\"valueRowId\":\"val_jwbk7pus7utbijtxzdmgu7ahim\",\"versionId\":\"ver_fbwlsbyux2o4jrt5bgh2fxmzyi\"}]},\"stateDigest\":\"sha256:e2613879855aeaedd72f9ae41d5fc35c7861ed3bc4b387682e01c65b1cece1b3\",\"callerView\":{\"withheld\":[],\"unexpanded\":[]}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "grantIds": [],
+            "requirements": [
+              {
+                "by": "user:alice@example.com",
+                "requirementId": "req_ntgoerdpspsejqmz7p63frmeoq",
+                "requirementVersion": 1,
+                "satisfied": true
+              }
+            ],
+            "role": "admin"
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "allow",
+          "event_type": "value.disclosed",
+          "listener": "tailnet",
+          "metadata": {
+            "items": "PLAIN@ver_l4bsijuvxnismo6otppeyqbqke",
+            "withheld": 1
+          },
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_svnucnykghwpqwu7bi2r6ppgta",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nLaptopCNTRL",
+            "nodeName": "laptop",
+            "tags": [],
+            "tailnet": "corp.ts.net",
+            "userLogin": "alice@example.com"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET development from a tag:prod device",
+      "name": "development from a tag:prod device",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/development/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "tn-prod",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"TAILNET_CONTEXT_UNAVAILABLE\",\"message\":\"Tailnet Context does not satisfy the required selector\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "denial": "requirement-failed",
+            "requirements": [
+              {
+                "reason": "selector-mismatch",
+                "requirementId": "req_ntgoerdpspsejqmz7p63frmeoq",
+                "requirementVersion": 1,
+                "satisfied": false
+              }
+            ]
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "tailnet",
+          "metadata": null,
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_svnucnykghwpqwu7bi2r6ppgta",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nProd1CNTRL",
+            "nodeName": "build-1",
+            "tags": [
+              "tag:prod"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST disclose production from a tag:prod device",
+      "name": "disclose production from a tag:prod device",
+      "method": "POST",
+      "path": "/v1/organizations/tn/projects/api/environments/production/disclosures",
+      "credential": "alice",
+      "body": {
+        "items": [
+          "SECRET"
+        ]
+      },
+      "listener": "tn-prod",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"name\":\"SECRET\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\",\"value\":\"production-secret\"}],\"withheld\":[],\"manifest\":{\"manifestVersion\":1,\"projectId\":\"prj_f5qlxdknza73lci7rg6xfzbwie\",\"environment\":{\"id\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"rootId\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"parentId\":null,\"tier\":\"production\",\"expiresAt\":null},\"contract\":{\"revisionId\":\"rev_fqzdndana6kzdekus5r5f4f2uq\",\"contentHash\":\"sha256:0da8a3f7cd46c9dd9b288f6d7782f71acc7d1212334480aeae4ff8ce21d6d87a\",\"semanticsVersion\":3},\"items\":[{\"name\":\"PLAIN\",\"source\":\"self\",\"valueRowId\":\"val_xbmkifdxa45ifzmrrfmzjtnp7q\",\"versionId\":\"ver_iubcpiydwp2t5zspk6k7kyqa64\"},{\"name\":\"SECRET\",\"source\":\"self\",\"valueRowId\":\"val_m2wxe5wkqycmyravupbcsvwtmi\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\"}]},\"stateDigest\":\"sha256:2b93bc82696d57dae22f28c68f0d70cc59b5c7444efcb57e07f6785fa2999810\",\"callerView\":{\"withheld\":[],\"unexpanded\":[]}}"
+      },
+      "audit": [
+        {
+          "action": "secret.reveal",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "grantIds": [],
+            "requirements": [
+              {
+                "by": "tag:prod",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": true
+              }
+            ],
+            "role": "admin"
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "allow",
+          "event_type": "secret.disclosed",
+          "listener": "tailnet",
+          "metadata": {
+            "items": "SECRET@ver_2suoqmrezz4rvpjfof2o4xlzvu",
+            "mode": "requested",
+            "withheld": 0
+          },
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nProd1CNTRL",
+            "nodeName": "build-1",
+            "tags": [
+              "tag:prod"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST disclose production from a tag:ci device",
+      "name": "disclose production from a tag:ci device",
+      "method": "POST",
+      "path": "/v1/organizations/tn/projects/api/environments/production/disclosures",
+      "credential": "alice",
+      "body": {
+        "items": [
+          "SECRET"
+        ]
+      },
+      "listener": "tn-ci",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"TAILNET_CONTEXT_UNAVAILABLE\",\"message\":\"Tailnet Context does not satisfy the required selector\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "secret.reveal",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "denial": "requirement-failed",
+            "requirements": [
+              {
+                "reason": "selector-mismatch",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": false
+              }
+            ]
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "tailnet",
+          "metadata": null,
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nCi1CNTRL",
+            "nodeName": "ci-1",
+            "tags": [
+              "tag:ci"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST disclose production on the ordinary listener",
+      "name": "disclose production on the ordinary listener",
+      "method": "POST",
+      "path": "/v1/organizations/tn/projects/api/environments/production/disclosures",
+      "credential": "alice",
+      "body": {
+        "items": [
+          "SECRET"
+        ]
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"TAILNET_CONTEXT_REQUIRED\",\"message\":\"This operation requires trusted Tailnet Context\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "secret.reveal",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "denial": "requirement-failed",
+            "requirements": [
+              {
+                "reason": "no-tailnet-context",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": false
+              }
+            ]
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exercise in production on the ordinary listener",
+      "name": "exercise in production on the ordinary listener",
+      "method": "POST",
+      "path": "/v1/organizations/tn/projects/api/environments/production/capabilities/{cap}/exercises",
+      "credential": "broker",
+      "body": {
+        "capabilitySecret": "vlt_cap_known_tailnet",
+        "destination": {
+          "host": "api.example.com",
+          "port": 443
+        },
+        "placements": [
+          {
+            "item": "SECRET",
+            "target": "header:authorization"
+          }
+        ]
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"TAILNET_CONTEXT_REQUIRED\",\"message\":\"This exercise requires trusted Tailnet Context\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "secret.use",
+          "actor_identity_id": "idn_k3ivdcpvxoi3isfc4v4vfe7v34",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_aejdovck5pw2kedwcuibggvy4a",
+          "decision": "deny",
+          "event_type": "capability.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "destination": "api.example.com:443",
+            "reason": "requirement-failed"
+          },
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "agentIdentityId": "idn_xjgxmk25bfvjuhb47ww7jjkwgy",
+            "capabilityId": "cap_d7ncfwyg3ukpo5knioukn6k254",
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exercise in production from a tag:ci device",
+      "name": "exercise in production from a tag:ci device",
+      "method": "POST",
+      "path": "/v1/organizations/tn/projects/api/environments/production/capabilities/{cap}/exercises",
+      "credential": "broker",
+      "body": {
+        "capabilitySecret": "vlt_cap_known_tailnet",
+        "destination": {
+          "host": "api.example.com",
+          "port": 443
+        },
+        "placements": [
+          {
+            "item": "SECRET",
+            "target": "header:authorization"
+          }
+        ]
+      },
+      "listener": "tn-ci",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"TAILNET_CONTEXT_UNAVAILABLE\",\"message\":\"Tailnet Context does not satisfy the required selector\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "secret.use",
+          "actor_identity_id": "idn_k3ivdcpvxoi3isfc4v4vfe7v34",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_aejdovck5pw2kedwcuibggvy4a",
+          "decision": "deny",
+          "event_type": "capability.denied",
+          "listener": "tailnet",
+          "metadata": {
+            "destination": "api.example.com:443",
+            "reason": "requirement-failed"
+          },
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "agentIdentityId": "idn_xjgxmk25bfvjuhb47ww7jjkwgy",
+            "capabilityId": "cap_d7ncfwyg3ukpo5knioukn6k254",
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nCi1CNTRL",
+            "nodeName": "ci-1",
+            "tags": [
+              "tag:ci"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exercise in production from a tag:prod device",
+      "name": "exercise in production from a tag:prod device",
+      "method": "POST",
+      "path": "/v1/organizations/tn/projects/api/environments/production/capabilities/{cap}/exercises",
+      "credential": "broker",
+      "body": {
+        "capabilitySecret": "vlt_cap_known_tailnet",
+        "destination": {
+          "host": "api.example.com",
+          "port": 443
+        },
+        "placements": [
+          {
+            "item": "SECRET",
+            "target": "header:authorization"
+          }
+        ]
+      },
+      "listener": "tn-prod",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"name\":\"SECRET\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\",\"value\":\"production-secret\"}],\"withheld\":[],\"targets\":{\"SECRET\":[\"header:authorization\"]}}"
+      },
+      "audit": [
+        {
+          "action": "secret.use",
+          "actor_identity_id": "idn_k3ivdcpvxoi3isfc4v4vfe7v34",
+          "authz": {
+            "applied": [
+              {
+                "actions": [
+                  "secret.use"
+                ],
+                "grantId": "grt_jlqyn4w4w3rw54kululnq4tklm"
+              }
+            ],
+            "grantIds": [
+              "grt_jlqyn4w4w3rw54kululnq4tklm"
+            ],
+            "requirements": [
+              {
+                "by": "tag:prod",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": true
+              }
+            ]
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_aejdovck5pw2kedwcuibggvy4a",
+          "decision": "allow",
+          "event_type": "capability.exercised",
+          "listener": "tailnet",
+          "metadata": {
+            "destination": "api.example.com:443",
+            "items": "SECRET@ver_2suoqmrezz4rvpjfof2o4xlzvu",
+            "placements": "SECRET=header:authorization",
+            "runId": "known-tailnet",
+            "withheld": 0
+          },
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "agentIdentityId": "idn_xjgxmk25bfvjuhb47ww7jjkwgy",
+            "capabilityId": "cap_d7ncfwyg3ukpo5knioukn6k254",
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nProd1CNTRL",
+            "nodeName": "build-1",
+            "tags": [
+              "tag:prod"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET production through the browser endpoint",
+      "name": "production through the browser endpoint",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net:8443"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"environmentId\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"items\":[{\"name\":\"PLAIN\",\"sensitive\":false,\"source\":\"self\",\"versionId\":\"ver_iubcpiydwp2t5zspk6k7kyqa64\",\"value\":\"production-plain\"},{\"name\":\"SECRET\",\"sensitive\":true,\"source\":\"self\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\",\"value\":null}],\"manifest\":{\"manifestVersion\":1,\"projectId\":\"prj_f5qlxdknza73lci7rg6xfzbwie\",\"environment\":{\"id\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"rootId\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"parentId\":null,\"tier\":\"production\",\"expiresAt\":null},\"contract\":{\"revisionId\":\"rev_fqzdndana6kzdekus5r5f4f2uq\",\"contentHash\":\"sha256:0da8a3f7cd46c9dd9b288f6d7782f71acc7d1212334480aeae4ff8ce21d6d87a\",\"semanticsVersion\":3},\"items\":[{\"name\":\"PLAIN\",\"source\":\"self\",\"valueRowId\":\"val_xbmkifdxa45ifzmrrfmzjtnp7q\",\"versionId\":\"ver_iubcpiydwp2t5zspk6k7kyqa64\"},{\"name\":\"SECRET\",\"source\":\"self\",\"valueRowId\":\"val_m2wxe5wkqycmyravupbcsvwtmi\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\"}]},\"stateDigest\":\"sha256:2b93bc82696d57dae22f28c68f0d70cc59b5c7444efcb57e07f6785fa2999810\",\"callerView\":{\"withheld\":[],\"unexpanded\":[]}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "grantIds": [],
+            "requirements": [
+              {
+                "by": "tag:prod",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": true
+              }
+            ],
+            "role": "admin"
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "allow",
+          "event_type": "value.disclosed",
+          "listener": "tailnet",
+          "metadata": {
+            "items": "PLAIN@ver_iubcpiydwp2t5zspk6k7kyqa64",
+            "withheld": 1
+          },
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nProd1CNTRL",
+            "nodeName": "build-1",
+            "tags": [
+              "tag:prod"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET production from the dashboard's origin",
+      "name": "production from the dashboard's origin",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net:8443",
+        "Origin": "https://dash.example.com"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "https://dash.example.com",
+          "Access-Control-Expose-Headers": "Retry-After, X-Request-Id, Varlatch-Credential-Expires",
+          "Vary": "Origin"
+        },
+        "body": "{\"environmentId\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"items\":[{\"name\":\"PLAIN\",\"sensitive\":false,\"source\":\"self\",\"versionId\":\"ver_iubcpiydwp2t5zspk6k7kyqa64\",\"value\":\"production-plain\"},{\"name\":\"SECRET\",\"sensitive\":true,\"source\":\"self\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\",\"value\":null}],\"manifest\":{\"manifestVersion\":1,\"projectId\":\"prj_f5qlxdknza73lci7rg6xfzbwie\",\"environment\":{\"id\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"rootId\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"parentId\":null,\"tier\":\"production\",\"expiresAt\":null},\"contract\":{\"revisionId\":\"rev_fqzdndana6kzdekus5r5f4f2uq\",\"contentHash\":\"sha256:0da8a3f7cd46c9dd9b288f6d7782f71acc7d1212334480aeae4ff8ce21d6d87a\",\"semanticsVersion\":3},\"items\":[{\"name\":\"PLAIN\",\"source\":\"self\",\"valueRowId\":\"val_xbmkifdxa45ifzmrrfmzjtnp7q\",\"versionId\":\"ver_iubcpiydwp2t5zspk6k7kyqa64\"},{\"name\":\"SECRET\",\"source\":\"self\",\"valueRowId\":\"val_m2wxe5wkqycmyravupbcsvwtmi\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\"}]},\"stateDigest\":\"sha256:2b93bc82696d57dae22f28c68f0d70cc59b5c7444efcb57e07f6785fa2999810\",\"callerView\":{\"withheld\":[],\"unexpanded\":[]}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "grantIds": [],
+            "requirements": [
+              {
+                "by": "tag:prod",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": true
+              }
+            ],
+            "role": "admin"
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "allow",
+          "event_type": "value.disclosed",
+          "listener": "tailnet",
+          "metadata": {
+            "items": "PLAIN@ver_iubcpiydwp2t5zspk6k7kyqa64",
+            "withheld": 1
+          },
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nProd1CNTRL",
+            "nodeName": "build-1",
+            "tags": [
+              "tag:prod"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET production from another origin",
+      "name": "production from another origin",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net:8443",
+        "Origin": "https://evil.example.com"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json",
+          "Vary": "Origin"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"This origin may not make this request here\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET a route pages may not call, from the dashboard's origin",
+      "name": "a route pages may not call, from the dashboard's origin",
+      "method": "GET",
+      "path": "/v1/me",
+      "credential": "alice",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net:8443",
+        "Origin": "https://dash.example.com"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json",
+          "Vary": "Origin"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"This origin may not make this request here\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the device from the dashboard's origin",
+      "name": "the device from the dashboard's origin",
+      "method": "GET",
+      "path": "/v1/tailnet/context",
+      "credential": "alice",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net:8443",
+        "Origin": "https://dash.example.com"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "https://dash.example.com",
+          "Access-Control-Expose-Headers": "Retry-After, X-Request-Id, Varlatch-Credential-Expires",
+          "Vary": "Origin"
+        },
+        "body": "{\"recognized\":true,\"tailnet\":\"corp.ts.net\",\"nodeId\":\"nProd1CNTRL\",\"nodeName\":\"build-1\",\"tags\":[\"tag:prod\"]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET another host name",
+      "name": "another host name",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "browser",
+      "headers": {
+        "Host": "elsewhere.corp.ts.net"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"This endpoint answers only as varlatch.corp.ts.net\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET no host name",
+      "name": "no host name",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "browser",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"This endpoint answers only as varlatch.corp.ts.net\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the host name in capitals",
+      "name": "the host name in capitals",
+      "method": "GET",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "alice",
+      "listener": "browser",
+      "headers": {
+        "Host": "VARLATCH.CORP.TS.NET"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"environmentId\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"items\":[{\"name\":\"PLAIN\",\"sensitive\":false,\"source\":\"self\",\"versionId\":\"ver_iubcpiydwp2t5zspk6k7kyqa64\",\"value\":\"production-plain\"},{\"name\":\"SECRET\",\"sensitive\":true,\"source\":\"self\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\",\"value\":null}],\"manifest\":{\"manifestVersion\":1,\"projectId\":\"prj_f5qlxdknza73lci7rg6xfzbwie\",\"environment\":{\"id\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"rootId\":\"env_nclkqwrvtqaxby2mthp6no3mfe\",\"parentId\":null,\"tier\":\"production\",\"expiresAt\":null},\"contract\":{\"revisionId\":\"rev_fqzdndana6kzdekus5r5f4f2uq\",\"contentHash\":\"sha256:0da8a3f7cd46c9dd9b288f6d7782f71acc7d1212334480aeae4ff8ce21d6d87a\",\"semanticsVersion\":3},\"items\":[{\"name\":\"PLAIN\",\"source\":\"self\",\"valueRowId\":\"val_xbmkifdxa45ifzmrrfmzjtnp7q\",\"versionId\":\"ver_iubcpiydwp2t5zspk6k7kyqa64\"},{\"name\":\"SECRET\",\"source\":\"self\",\"valueRowId\":\"val_m2wxe5wkqycmyravupbcsvwtmi\",\"versionId\":\"ver_2suoqmrezz4rvpjfof2o4xlzvu\"}]},\"stateDigest\":\"sha256:2b93bc82696d57dae22f28c68f0d70cc59b5c7444efcb57e07f6785fa2999810\",\"callerView\":{\"withheld\":[],\"unexpanded\":[]}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.read",
+          "actor_identity_id": "idn_u4oodgbrmxma6ifrektishzy7i",
+          "authz": {
+            "grantIds": [],
+            "requirements": [
+              {
+                "by": "tag:prod",
+                "requirementId": "req_w2cqtzrrulpnrhx5v2wufrp56q",
+                "requirementVersion": 1,
+                "satisfied": true
+              }
+            ],
+            "role": "admin"
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_otqa4hucdkqyn3j3dqld7whlm4",
+          "decision": "allow",
+          "event_type": "value.disclosed",
+          "listener": "tailnet",
+          "metadata": {
+            "items": "PLAIN@ver_iubcpiydwp2t5zspk6k7kyqa64",
+            "withheld": 1
+          },
+          "organization_id": "org_ax7qecvd7khfhry4h2x7xdvwym",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_nclkqwrvtqaxby2mthp6no3mfe",
+            "projectId": "prj_f5qlxdknza73lci7rg6xfzbwie"
+          },
+          "schema_version": 1,
+          "tailnet": {
+            "nodeId": "nProd1CNTRL",
+            "nodeName": "build-1",
+            "tags": [
+              "tag:prod"
+            ],
+            "tailnet": "corp.ts.net"
+          }
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "OPTIONS a preflight from the dashboard's origin",
+      "name": "a preflight from the dashboard's origin",
+      "method": "OPTIONS",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "none",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net",
+        "Origin": "https://dash.example.com",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization"
+      },
+      "expect": {
+        "status": 204,
+        "headers": {
+          "Access-Control-Allow-Origin": "https://dash.example.com",
+          "Access-Control-Allow-Methods": "GET, POST",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type",
+          "Access-Control-Max-Age": "300",
+          "Vary": "Origin"
+        },
+        "body": ""
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "OPTIONS a preflight asking for Varlatch-Approval",
+      "name": "a preflight asking for Varlatch-Approval",
+      "method": "OPTIONS",
+      "path": "/v1/organizations/tn/projects/api/environments/production/disclosures",
+      "credential": "none",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net",
+        "Origin": "https://dash.example.com",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "Authorization, Content-Type, Varlatch-Approval"
+      },
+      "expect": {
+        "status": 204,
+        "headers": {
+          "Access-Control-Allow-Origin": "https://dash.example.com",
+          "Access-Control-Allow-Methods": "GET, POST",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type, Varlatch-Approval",
+          "Access-Control-Max-Age": "300",
+          "Vary": "Origin"
+        },
+        "body": ""
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "OPTIONS a preflight for a POST to a read route",
+      "name": "a preflight for a POST to a read route",
+      "method": "OPTIONS",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "none",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net",
+        "Origin": "https://dash.example.com",
+        "Access-Control-Request-Method": "POST"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json",
+          "Vary": "Origin"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"This origin may not make this request here\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "OPTIONS a preflight from another origin",
+      "name": "a preflight from another origin",
+      "method": "OPTIONS",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "none",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net",
+        "Origin": "https://evil.example.com",
+        "Access-Control-Request-Method": "GET"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json",
+          "Vary": "Origin"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"This origin may not make this request here\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "OPTIONS a preflight for a method pages may not use",
+      "name": "a preflight for a method pages may not use",
+      "method": "OPTIONS",
+      "path": "/v1/organizations/tn/projects/api/environments/production/effective-configuration?include=values",
+      "credential": "none",
+      "listener": "browser",
+      "headers": {
+        "Host": "varlatch.corp.ts.net",
+        "Origin": "https://dash.example.com",
+        "Access-Control-Request-Method": "DELETE"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json",
+          "Vary": "Origin"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"This origin may not make this request here\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    }
+  ],
+  "counters": []
+}

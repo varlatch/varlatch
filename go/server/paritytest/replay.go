@@ -373,7 +373,10 @@ func Mask(text string, members []string) string {
 // Target is the server a fixture is replayed against.
 type Target struct {
 	Handler http.Handler
-	Store   *storage.DB
+	// Listeners are the handlers of the listeners a request may name
+	// (Recorded.Listener), as the fixture defines them.
+	Listeners map[string]http.Handler
+	Store     *storage.DB
 	// Settled waits for the work a response leaves behind (report counts).
 	Settled func()
 	// Path fills a request's placeholders ({orgId} and the like) in its
@@ -679,7 +682,12 @@ type answer struct {
 	Body    string            `json:"body"`
 }
 
-var keptHeaders = []string{"Cache-Control", "Retry-After", "Content-Type", "Varlatch-Credential-Expires", "Location"}
+var keptHeaders = []string{
+	"Cache-Control", "Retry-After", "Content-Type", "Varlatch-Credential-Expires", "Location",
+	// The tailnet browser endpoint's CORS answers (ADR-0046 Decision 4).
+	"Access-Control-Allow-Origin", "Access-Control-Allow-Methods", "Access-Control-Allow-Headers", "Access-Control-Max-Age",
+	"Access-Control-Expose-Headers", "Vary",
+}
 
 // Replay runs every request of f against target and requires the
 // TypeScript server's answers.
@@ -740,6 +748,10 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			req.Header.Set("User-Agent", ua)
 			for k, v := range c.Headers {
 				req.Header.Set(k, v)
+				if http.CanonicalHeaderKey(k) == "Host" {
+					// Go's server reads the request's Host from here.
+					req.Host = v
+				}
 			}
 			if c.Credential != "none" {
 				req.Header.Set("Authorization", "Bearer "+f.Tokens[c.Credential])
@@ -748,7 +760,11 @@ func Replay(t testing.TB, target Target, f Fixture) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				target.Handler.ServeHTTP(recs[i], req)
+				handler := target.Handler
+				if c.Listener != "" {
+					handler = target.Listeners[c.Listener]
+				}
+				handler.ServeHTTP(recs[i], req)
 			}()
 		}
 		wg.Wait()
@@ -787,7 +803,8 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		for i, p := range pres {
 			a := answer{Status: p.rec.Code, Headers: map[string]string{}, Body: norm.Text(Mask(p.text, c.Masked), "")}
 			for _, h := range keptHeaders {
-				if v := p.rec.Header().Get(h); v != "" {
+				// Every line, joined as the Fetch Headers' get joins them.
+				if v := strings.Join(p.rec.Header().Values(h), ", "); v != "" {
 					a.Headers[h] = norm.Text(v, p.id)
 				}
 			}

@@ -107,13 +107,13 @@ var loopbackHosts = map[string]bool{"127.0.0.1": true, "[::1]": true, "localhost
 // GetMeta is /v1/meta, unauthenticated, as the TypeScript server answers
 // it: the capabilities less the ones this installation does not offer
 // (sync.targets with sync off; auth.device without an https public URL, or
-// plain http on loopback; tailnet.browser-reads without a browser endpoint
-// and cli.download without serving the CLI, neither of which this build
-// has), the sync adapters while sync is on, and the installation's ID once
+// plain http on loopback; tailnet.browser-reads without a browser
+// endpoint; cli.download without serving the CLI, which this build does
+// not), the sync adapters while sync is on, and the installation's ID once
 // it exists.
 func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (api.GetMetaResponseObject, error) {
 	s := o.s
-	hidden := map[string]bool{"tailnet.browser-reads": true, "cli.download": true}
+	hidden := map[string]bool{"tailnet.browser-reads": s.opts.BrowserEndpoint == "", "cli.download": true}
 	if !s.opts.Sync {
 		hidden["sync.targets"] = true
 	}
@@ -121,7 +121,7 @@ func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (a
 		hidden["auth.device"] = true
 	}
 	caps := slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return hidden[c] })
-	if s.opts.Auth != nil {
+	if s.browser != nil {
 		caps = append(caps, "auth.session")
 		if s.opts.Realtime != nil {
 			caps = append(caps, "realtime.sse")
