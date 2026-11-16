@@ -1321,6 +1321,7 @@ describe("under enforce, across all 40 operations", () => {
     // except where the operation is an Organization Admin's alone and its
     // own check refuses any machine first, as it did before the control.
     const ADMIN_ONLY: Partial<Record<AdminStepUpOperation, string>> = {
+      "member.invite_admin": "403 PERMISSION_DENIED",
       "member.promote": "403 PERMISSION_DENIED",
       "member.demote": "403 PERMISSION_DENIED",
       "member.remove": "403 PERMISSION_DENIED",

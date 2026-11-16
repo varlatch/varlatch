@@ -525,6 +525,40 @@ export async function requireGrantSubject(db: Querier, organizationId: string, i
   if (!ok) throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
 }
 
+/**
+ * Refuses a Grant naming a group or role of another Organization. It is
+ * answered as a group or role that does not exist is, whose insert fails on
+ * its foreign key: an internal error, so the answer does not tell the two
+ * apart.
+ */
+export class ForeignGrantReference extends Error {
+  constructor() {
+    super("A Grant names a group or role of another Organization");
+    this.name = "ForeignGrantReference";
+  }
+}
+
+/**
+ * A Grant names only its Organization's groups and roles (live or not, as
+ * the foreign keys allow); one that does not exist is left to the insert.
+ * Called right before the Grant's insert, where an unknown one fails.
+ */
+export async function requireOwnGrantReferences(
+  db: Querier,
+  organizationId: string,
+  d: { subjectGroupId?: string | null | undefined; roleId?: string | null | undefined },
+): Promise<void> {
+  const check = async (table: "groups" | "roles", id: string | null | undefined) => {
+    if (!id) return;
+    const row = (await db.query(`SELECT organization_id FROM ${table} WHERE id = $1`, [id])).rows[0] as
+      | { organization_id: string }
+      | undefined;
+    if (row && row.organization_id !== organizationId) throw new ForeignGrantReference();
+  };
+  await check("groups", d.subjectGroupId);
+  await check("roles", d.roleId);
+}
+
 /** Verify the group exists in the org (and, when required, is a Team). */
 async function requireGroup(
   ctx: AppCtx,

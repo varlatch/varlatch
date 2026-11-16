@@ -23,7 +23,7 @@ import { serializeAuditEvent } from "../audit/serialize.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { DomainError, notFound } from "../domain/errors.js";
 import { schemaIsCurrent } from "../db/migrate.js";
-import { getInstallation, issueInviteGrant, verifyLoadedKek } from "../domain/bootstrap.js";
+import { AdminInvitationRefused, getInstallation, issueInviteGrant, verifyLoadedKek } from "../domain/bootstrap.js";
 import {
   createOrganization,
   getOrgRole,
@@ -239,7 +239,7 @@ import {
 import { installationOutbound, organizationRefusedDestinations } from "../domain/refuseddestinations.js";
 import { exportControl, exportGuard } from "../domain/exportstepup.js";
 
-export const SERVER_VERSION = "0.22.0";
+export const SERVER_VERSION = "0.22.1";
 
 import { auditAuthz, evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
 
@@ -276,6 +276,7 @@ import {
   removeGroupMember,
   removeTeamProject,
   requireGrantSubject,
+  requireOwnGrantReferences,
   updateGroup,
   updateRole,
 } from "../domain/policy.js";
@@ -3320,15 +3321,36 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     );
     // A protected operation (ADR-0054) for an admin: admin-step-up at
     // enforce asks for the requester's approval (member.invite_admin), and
-    // identity.manage is rechecked once it is consumed.
-    const invite = await withApproval(
-      ctx,
-      { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl },
-      (gate) =>
-        issueInviteGrant(ctx, { organizationId: org.id, role: body.role, name: body.name }, gate, {
-          authorizeIn: identityManageIn(c, principal, org.id),
-        }),
-    );
+    // identity.manage is rechecked once it is consumed. Only a live
+    // built-in admin invites an admin, checked inside the transaction like
+    // a role change; the refusal is audited after it, like any other denial.
+    let invite: Awaited<ReturnType<typeof issueInviteGrant>>;
+    try {
+      invite = await withApproval(
+        ctx,
+        { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl },
+        (gate) =>
+          issueInviteGrant(ctx, { organizationId: org.id, role: body.role, name: body.name }, gate, {
+            authorizeIn: identityManageIn(c, principal, org.id),
+          }),
+      );
+    } catch (err) {
+      if (err instanceof AdminInvitationRefused) {
+        await recordAuditEvent(ctx.db, {
+          eventType: "authorization.denied",
+          decision: "deny",
+          actorIdentityId: principal.identity.id,
+          credentialId: principal.credentialId,
+          organizationId: org.id,
+          action: "identity.manage",
+          resource: { projectId: null, environmentId: null },
+          authz: { denial: "no-grant", requirements: [] },
+          metadata: { operation: "POST invitations", reason: "not-admin" },
+          requestId: c.get("requestId"),
+        });
+      }
+      throw err;
+    }
     // The caller composes the browser URL: <dashboard-origin>/enroll#<token>.
     return c.json({ id: invite.id, token: invite.token, expiresAt: invite.expiresAt }, 201);
   });
@@ -3465,6 +3487,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         authorizeIn: policyManageIn(c, principal, org.id),
       });
       if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
+      // Only the Organization's own groups and roles, refused as an unknown one is.
+      await requireOwnGrantReferences(db, org.id, body);
       await db.query(
         `INSERT INTO grants (id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -3625,6 +3649,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         }
         const same = sameGrant(storedGrant(row), body);
         await db.query("UPDATE grants SET revoked_at = now() WHERE id = $1", [grantId]);
+        // Only the Organization's own groups and roles, refused as an unknown one is.
+        await requireOwnGrantReferences(db, org.id, body);
         await db.query(
           `INSERT INTO grants (id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_by)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
