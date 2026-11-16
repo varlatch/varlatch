@@ -429,7 +429,14 @@ if (kit.group("requirements")) {
   const asHuman = (method, path, body) =>
     page.evaluate(
       async ({ method, path, body }) => {
-        const { token } = await (await fetch("/auth/varlatch-token", { method: "POST", credentials: "include" })).json();
+        // varlatchd's own browser session checks a CSRF token on every POST
+        // under /auth, as the dashboard sends it (lib/varlatchdSession.ts):
+        // read from /auth/session when the server offers one.
+        const session = await fetch("/auth/session", { credentials: "include", headers: { Accept: "application/json" } })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null);
+        const csrf = session && typeof session.csrfToken === "string" ? { "Varlatch-CSRF": session.csrfToken } : {};
+        const { token } = await (await fetch("/auth/varlatch-token", { method: "POST", credentials: "include", headers: csrf })).json();
         const res = await fetch(`/v1${path}`, {
           method,
           headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },

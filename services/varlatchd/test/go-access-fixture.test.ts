@@ -217,6 +217,17 @@ function requestTable(): RequestCase[] {
     grant("U+0000 in the group", "acc", { subjectGroupId: "a\u0000b", scope: orgScope, actions: ["project.read"] }),
     grant("U+0000 in the role", "acc", { subjectIdentityId: svc("acc"), scope: orgScope, roleId: "a\u0000b" }),
     send("revoke, U+0000 in the id", "DELETE", "acc/grants/a%00b"),
+    // Under an Idempotency-Key the claim, which holds the path id, is the
+    // first statement to take it: U+0000 there fails before the write.
+    send("replace, U+0000 in the id, no key", "POST", "acc/grants/a%00b/replace", { subjectIdentityId: "idn_nobodyaaaaaaaaaaaaaaaaaaa", scope: orgScope, actions: ["project.read"] }),
+    send("replace, U+0000 in the id, a key", "POST", "acc/grants/a%00b/replace", { subjectIdentityId: "idn_nobodyaaaaaaaaaaaaaaaaaaa", scope: orgScope, actions: ["project.read"] }, "alice", undefined, "nul-replace"),
+    send("change a role, U+0000 in the id, a key", "PATCH", "acc/roles/a%00b", { expectedVersion: 1, name: "x" }, "alice", undefined, "nul-role"),
+    send("rename a group, U+0000 in the id, a key", "PATCH", "acc/groups/a%00b", { expectedVersion: 1, name: "x" }, "alice", undefined, "nul-group"),
+    send("rename a team, U+0000 in the id, a key", "PATCH", "acc/teams/a%00b", { expectedVersion: 1, name: "x" }, "alice", undefined, "nul-team"),
+    send("change a role in a frozen Organization, U+0000 in the id, a key", "PATCH", "frozen/roles/a%00b", { expectedVersion: 1, name: "x" }, "alice", undefined, "nul-frozen"),
+    // A value write's claim: the same check (setValue under withIdempotency).
+    send("set a value, U+0000 in the item, no key", "PUT", "acc/projects/api/environments/development/values/A%00B", { value: "x" }),
+    send("set a value, U+0000 in the item, a key", "PUT", "acc/projects/api/environments/development/values/A%00B", { value: "x" }, "alice", undefined, "nul-value"),
     grant("as a member", "acc", { subjectIdentityId: "{idn:bob}", scope: orgScope, actions: ["project.read"] }, "bob"),
     grant("in a frozen Organization", "frozen", { subjectIdentityId: svc("frozen"), scope: orgScope, actions: ["project.read"] }),
     grant("in an Organization being deleted", "deleting", { subjectIdentityId: svc("deleting"), scope: orgScope, actions: ["project.read"] }),
@@ -356,10 +367,15 @@ function requestTable(): RequestCase[] {
     grant("enforce: U+0000 in the subject", "enf", { subjectIdentityId: "a\u0000b", scope: orgScope, actions: ["project.read"] }, "dave"),
     send("enforce: revoke, no approval", "DELETE", "enf/grants/{grant:enf:fx.revokeme}", undefined, "dave"),
     send("enforce: replace, no approval", "POST", "enf/grants/{grant:enf:fx.replaceme}/replace", { subjectIdentityId: svc("enf"), scope: orgScope, actions: ["fx.replaced"] }, "dave"),
+    // Its summary names two roles and two groups (the old and the new).
+    send("enforce: replace, a group's role for another, no approval", "POST", "enf/grants/{grant:enf:reader}/replace", { subjectGroupId: "{group:enf:devs}", scope: { kind: "team", teamId: "{group:enf:backend}" }, roleId: "{role:enf:writer}" }, "dave"),
     send("enforce: replace with the same declaration", "POST", "enf/grants/{grant:enf:fx.same}/replace", { subjectIdentityId: svc("enf"), scope: { kind: "project", projectId: "{prj:enf:api}" }, actions: ["config.metadata.read", "fx.same"] }, "dave"),
     send("enforce: a role, no approval", "POST", "enf/roles", { name: "asked", actions: ["audit.read"] }, "dave"),
     send("enforce: a role, U+0000 in the name", "POST", "enf/roles", { name: "a\u0000b", actions: ["audit.read"] }, "dave"),
     send("enforce: a role, U+0000 in an action", "POST", "enf/roles", { name: "nulasked", actions: ["a\u0000b"] }, "dave"),
+    // A lone surrogate reaches the name lookup as U+FFFD, a name taken here.
+    send("enforce: a role, a lone surrogate where a name has U+FFFD", "POST", "enf/roles", { name: "lone\ud800", actions: ["audit.read"] }, "dave"),
+    send("enforce: a group, a lone surrogate where a name has U+FFFD", "POST", "enf/groups", { name: "lone\ud800" }, "dave"),
     send("enforce: a role, a name taken", "POST", "enf/roles", { name: "reader", actions: ["audit.read"] }, "ask1"),
     send("enforce: rename a role, no approval", "PATCH", "enf/roles/{role:enf:renameme}", { expectedVersion: 1, name: "asked" }, "ask1"),
     send("enforce: reorder a role's actions", "PATCH", "enf/roles/{role:enf:reader}", { expectedVersion: 1, actions: ["project.read", "organization.read"] }, "ask1"),
@@ -518,6 +534,9 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
     await call("POST", `${ORG}/${org}/identities`, { name: `${slug}-ci`, kind: "ci" });
   };
   for (const slug of ["acc", "rep", "enf"]) await structure(slug);
+  // enf: a role and a group whose names hold U+FFFD.
+  await call("POST", `${ORG}/enf/roles`, { name: "lone\ufffd", actions: ["project.read"] });
+  await call("POST", `${ORG}/enf/groups`, { name: "lone\ufffd" });
   // acc's own: Grants the table revokes and replaces.
   // other: a machine, a group, a Project and a Grant.
   const osvc = await call("POST", `${ORG}/other/identities`, { name: "other-svc", kind: "service" });

@@ -5,6 +5,7 @@ package access_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"path/filepath"
 	"testing"
@@ -213,5 +214,124 @@ func TestGrantNamesOnlyItsOrganizationsGroupsAndRoles(t *testing.T) {
 	wd.exec(`INSERT INTO grants (id, organization_id, subject_group_id, scope, actions) VALUES ('grt_owngroup', ?, ?, '{"kind":"organization"}', '["project.read"]')`, wd.org, ownGroup)
 	if grants, err = authz.LoadGrants(ctx, wd.store.Reader(), wd.org, "idn_b"); err != nil || len(grants) != 1 || grants[0].ID != "grt_owngroup" {
 		t.Errorf("the Organization's own group: %+v, %v", grants, err)
+	}
+}
+
+// A member or a Project added to a group or team deleted after the route
+// read it, while the job waited, is refused: the job reads the group
+// again, so no row and no event follow the deletion.
+func TestMemberAndProjectWritesRecheckTheGroup(t *testing.T) {
+	wd := newWorld(t)
+	ctx := context.Background()
+	req := access.Request{Principal: alice()}
+	create := func(name, kind string) string {
+		out, _, err := access.CreateGroup(ctx, wd.w, wd.approvals, req, wd.org, name, kind, time.Now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := out.Get("id")
+		return id.(string)
+	}
+	group, team := create("devs", "group"), create("backend", "team")
+	wd.exec(`INSERT INTO projects (id, organization_id, slug, name, contract_authority) VALUES ('prj_api', ?, 'api', 'API', 'managed')`, wd.org)
+	for name, add := range map[string]func() error{
+		"a member": func() error {
+			_, err := access.AddMember(ctx, wd.w, wd.approvals, req, wd.org, group, "idn_b", time.Now)
+			return err
+		},
+		"a Project": func() error {
+			_, err := access.AddTeamProject(ctx, wd.w, wd.approvals, req, wd.org, team, "prj_api", time.Now)
+			return err
+		},
+	} {
+		_, release, err := wd.w.Gates.Acquire(ctx, write.Organization(wd.org, write.Exclusive))
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- add() }()
+		waitingFor(wd, write.Organization(wd.org, write.Shared))
+		wd.exec(`UPDATE groups SET revoked_at = 1 WHERE id IN (?, ?)`, group, team)
+		release()
+		var de *domainerr.Error
+		if err := <-done; !errors.As(err, &de) || de.Code != "RESOURCE_NOT_FOUND" {
+			t.Errorf("%s for a group deleted meanwhile: %v", name, err)
+		}
+		wd.exec(`UPDATE groups SET revoked_at = NULL WHERE id IN (?, ?)`, group, team)
+	}
+	var rows int
+	if err := wd.store.Reader().QueryRow(`SELECT (SELECT count(*) FROM group_members) + (SELECT count(*) FROM team_projects) +
+		(SELECT count(*) FROM audit_events WHERE event_type IN ('group.member_added', 'team.project_added'))`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Errorf("%d member, Project or event rows after the refusals", rows)
+	}
+}
+
+// The credential review's time edges, which a fixture replayed on later
+// dates cannot pin: a service credential expiring within the warning
+// window is "soon" up to its last microsecond, an expired one "expired"
+// from its expiry on (and out of the review); idleness starts strictly
+// after IdleDays.
+func TestCredentialReviewTimeEdges(t *testing.T) {
+	wd := newWorld(t)
+	ctx := context.Background()
+	now := time.Date(2030, 6, 1, 12, 0, 0, 0, time.UTC)
+	us := now.UnixMicro()
+	day := int64(24 * time.Hour / time.Microsecond)
+	wd.exec(`INSERT INTO identities (id, kind, name, organization_id) VALUES ('idn_m', 'service', 'm', ?)`, wd.org)
+	creds := []struct {
+		id      string
+		expires any
+		used    any
+	}{
+		{"crd_soonedge", us + access.ExpiryWarningDays*day, nil},
+		{"crd_later", us + access.ExpiryWarningDays*day + 1, nil},
+		{"crd_expiredge", us, nil},
+		{"crd_idleedge", nil, us - access.IdleDays*day},
+		{"crd_idle", nil, us - access.IdleDays*day - 1},
+	}
+	for _, c := range creds {
+		wd.exec(`INSERT INTO credentials (id, identity_id, kind, token_hash, expires_at, last_used_at) VALUES (?, 'idn_m', 'service', ?, ?, ?)`, c.id, "h_"+c.id, c.expires, c.used)
+	}
+	out, err := access.CredentialReview(ctx, wd.store.Reader(), wd.org, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := map[string]string{}
+	items, _ := out.Get("items")
+	for _, it := range items.([]any) {
+		o := it.(jsvalue.Object)
+		id, _ := o.Get("id")
+		r, _ := o.Get("reasons")
+		reasons[id.(string)] = string(jsvalue.Stringify(r))
+	}
+	want := map[string]string{
+		"crd_soonedge": `["never-used"]`, "crd_later": `["never-used"]`,
+		"crd_idleedge": `["no-expiry"]`, "crd_idle": `["idle","no-expiry"]`,
+	}
+	for id, w := range want {
+		if reasons[id] != w {
+			t.Errorf("%s: reasons %s, want %s", id, reasons[id], w)
+		}
+	}
+	if _, listed := reasons["crd_expiredge"]; listed {
+		t.Error("a credential expiring now is still reviewed")
+	}
+	expiry, _ := out.Get("expiry")
+	states := map[string]string{}
+	expiring, _ := expiry.(jsvalue.Object).Get("items")
+	for _, it := range expiring.([]any) {
+		o := it.(jsvalue.Object)
+		id, _ := o.Get("id")
+		st, _ := o.Get("state")
+		states[id.(string)] = st.(string)
+	}
+	if fmt.Sprint(states) != fmt.Sprint(map[string]string{"crd_soonedge": "soon", "crd_expiredge": "expired"}) {
+		t.Errorf("expiry warnings %v", states)
+	}
+	if g, _ := out.Get("generatedAt"); g != "2030-06-01T12:00:00.000Z" {
+		t.Errorf("generatedAt %v", g)
 	}
 }

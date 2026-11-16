@@ -31,22 +31,26 @@ FROM identities i WHERE i.id = sqlc.arg(id);
 
 -- name: NamedIdentities :many
 -- namesFor: identities of the Organization, machines or (past) members.
-SELECT i.id, i.name FROM identities i WHERE i.id IN (sqlc.slice(ids))
-  AND (i.organization_id = sqlc.arg(organization_id)
-    OR EXISTS (SELECT 1 FROM org_memberships m WHERE m.organization_id = sqlc.arg(organization_id) AND m.identity_id = i.id));
+-- In every Named query the Organization comes before the list: sqlc
+-- numbers it (?1), and a numbered parameter after sqlc.slice would take
+-- the list's second element once the list has two.
+SELECT i.id, i.name FROM identities i
+WHERE (i.organization_id = sqlc.arg(organization_id)
+    OR EXISTS (SELECT 1 FROM org_memberships m WHERE m.organization_id = sqlc.arg(organization_id) AND m.identity_id = i.id))
+  AND i.id IN (sqlc.slice(ids));
 
 -- name: NamedGroups :many
-SELECT id, name, kind FROM groups WHERE id IN (sqlc.slice(ids)) AND organization_id = sqlc.arg(organization_id);
+SELECT id, name, kind FROM groups WHERE organization_id = sqlc.arg(organization_id) AND id IN (sqlc.slice(ids));
 
 -- name: NamedRoles :many
-SELECT id, name FROM roles WHERE id IN (sqlc.slice(ids)) AND organization_id = sqlc.arg(organization_id);
+SELECT id, name FROM roles WHERE organization_id = sqlc.arg(organization_id) AND id IN (sqlc.slice(ids));
 
 -- name: NamedProjects :many
-SELECT id, slug FROM projects WHERE id IN (sqlc.slice(ids)) AND organization_id = sqlc.arg(organization_id);
+SELECT id, slug FROM projects WHERE organization_id = sqlc.arg(organization_id) AND id IN (sqlc.slice(ids));
 
 -- name: NamedEnvironments :many
 SELECT e.id, p.slug || '/' || e.name AS name FROM environments e JOIN projects p ON p.id = e.project_id
-WHERE e.id IN (sqlc.slice(ids)) AND p.organization_id = sqlc.arg(organization_id);
+WHERE p.organization_id = sqlc.arg(organization_id) AND e.id IN (sqlc.slice(ids));
 
 -- name: OrganizationRoles :many
 -- listRoles: by name (byte order).

@@ -95,6 +95,9 @@ func refuseTakenRole(ctx context.Context, db query.DBTX, organizationID, name, e
 	if err := pgText(name, except); err != nil {
 		return err
 	}
+	// The name as the driver sends it: a lone surrogate as U+FFFD, as
+	// write.Text stores it.
+	name, _ = write.Text(name)
 	n, err := query.New(db).RoleNameTaken(ctx, query.RoleNameTakenParams{OrganizationID: organizationID, Name: name, ExceptID: except})
 	if err != nil {
 		return err

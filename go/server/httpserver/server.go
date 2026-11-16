@@ -212,6 +212,10 @@ var BuiltOperations = []string{
 	// Step 4.7a: the outbound policy's refused destinations (outbound.go).
 	getInstallationOutboundPattern,
 	refusedDestinationsPattern,
+	// Step 4.4c: Tailnet Requirements and the access reports
+	// (requirements.go).
+	listRequirementsPattern, createRequirementPattern, updateRequirementPattern, deleteRequirementPattern,
+	credentialReviewPattern, machineReachPattern, myPermissionsPattern,
 }
 
 // Server is the handler.

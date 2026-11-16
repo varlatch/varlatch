@@ -514,12 +514,12 @@ func (q *Queries) LiveRole(ctx context.Context, arg LiveRoleParams) (LiveRoleRow
 
 const namedEnvironments = `-- name: NamedEnvironments :many
 SELECT e.id, p.slug || '/' || e.name AS name FROM environments e JOIN projects p ON p.id = e.project_id
-WHERE e.id IN (/*SLICE:ids*/?) AND p.organization_id = ?2
+WHERE p.organization_id = ?1 AND e.id IN (/*SLICE:ids*/?)
 `
 
 type NamedEnvironmentsParams struct {
-	Ids            []string
 	OrganizationID string
+	Ids            []string
 }
 
 type NamedEnvironmentsRow struct {
@@ -530,6 +530,7 @@ type NamedEnvironmentsRow struct {
 func (q *Queries) NamedEnvironments(ctx context.Context, arg NamedEnvironmentsParams) ([]NamedEnvironmentsRow, error) {
 	query := namedEnvironments
 	var queryParams []interface{}
+	queryParams = append(queryParams, arg.OrganizationID)
 	if len(arg.Ids) > 0 {
 		for _, v := range arg.Ids {
 			queryParams = append(queryParams, v)
@@ -538,7 +539,6 @@ func (q *Queries) NamedEnvironments(ctx context.Context, arg NamedEnvironmentsPa
 	} else {
 		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
 	}
-	queryParams = append(queryParams, arg.OrganizationID)
 	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
@@ -562,12 +562,12 @@ func (q *Queries) NamedEnvironments(ctx context.Context, arg NamedEnvironmentsPa
 }
 
 const namedGroups = `-- name: NamedGroups :many
-SELECT id, name, kind FROM groups WHERE id IN (/*SLICE:ids*/?) AND organization_id = ?2
+SELECT id, name, kind FROM groups WHERE organization_id = ?1 AND id IN (/*SLICE:ids*/?)
 `
 
 type NamedGroupsParams struct {
-	Ids            []string
 	OrganizationID string
+	Ids            []string
 }
 
 type NamedGroupsRow struct {
@@ -579,6 +579,7 @@ type NamedGroupsRow struct {
 func (q *Queries) NamedGroups(ctx context.Context, arg NamedGroupsParams) ([]NamedGroupsRow, error) {
 	query := namedGroups
 	var queryParams []interface{}
+	queryParams = append(queryParams, arg.OrganizationID)
 	if len(arg.Ids) > 0 {
 		for _, v := range arg.Ids {
 			queryParams = append(queryParams, v)
@@ -587,7 +588,6 @@ func (q *Queries) NamedGroups(ctx context.Context, arg NamedGroupsParams) ([]Nam
 	} else {
 		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
 	}
-	queryParams = append(queryParams, arg.OrganizationID)
 	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
@@ -611,14 +611,15 @@ func (q *Queries) NamedGroups(ctx context.Context, arg NamedGroupsParams) ([]Nam
 }
 
 const namedIdentities = `-- name: NamedIdentities :many
-SELECT i.id, i.name FROM identities i WHERE i.id IN (/*SLICE:ids*/?)
-  AND (i.organization_id = ?2
-    OR EXISTS (SELECT 1 FROM org_memberships m WHERE m.organization_id = ?2 AND m.identity_id = i.id))
+SELECT i.id, i.name FROM identities i
+WHERE (i.organization_id = ?1
+    OR EXISTS (SELECT 1 FROM org_memberships m WHERE m.organization_id = ?1 AND m.identity_id = i.id))
+  AND i.id IN (/*SLICE:ids*/?)
 `
 
 type NamedIdentitiesParams struct {
-	Ids            []string
 	OrganizationID sql.NullString
+	Ids            []string
 }
 
 type NamedIdentitiesRow struct {
@@ -627,9 +628,13 @@ type NamedIdentitiesRow struct {
 }
 
 // namesFor: identities of the Organization, machines or (past) members.
+// In every Named query the Organization comes before the list: sqlc
+// numbers it (?1), and a numbered parameter after sqlc.slice would take
+// the list's second element once the list has two.
 func (q *Queries) NamedIdentities(ctx context.Context, arg NamedIdentitiesParams) ([]NamedIdentitiesRow, error) {
 	query := namedIdentities
 	var queryParams []interface{}
+	queryParams = append(queryParams, arg.OrganizationID)
 	if len(arg.Ids) > 0 {
 		for _, v := range arg.Ids {
 			queryParams = append(queryParams, v)
@@ -638,7 +643,6 @@ func (q *Queries) NamedIdentities(ctx context.Context, arg NamedIdentitiesParams
 	} else {
 		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
 	}
-	queryParams = append(queryParams, arg.OrganizationID)
 	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
@@ -662,12 +666,12 @@ func (q *Queries) NamedIdentities(ctx context.Context, arg NamedIdentitiesParams
 }
 
 const namedProjects = `-- name: NamedProjects :many
-SELECT id, slug FROM projects WHERE id IN (/*SLICE:ids*/?) AND organization_id = ?2
+SELECT id, slug FROM projects WHERE organization_id = ?1 AND id IN (/*SLICE:ids*/?)
 `
 
 type NamedProjectsParams struct {
-	Ids            []string
 	OrganizationID string
+	Ids            []string
 }
 
 type NamedProjectsRow struct {
@@ -678,6 +682,7 @@ type NamedProjectsRow struct {
 func (q *Queries) NamedProjects(ctx context.Context, arg NamedProjectsParams) ([]NamedProjectsRow, error) {
 	query := namedProjects
 	var queryParams []interface{}
+	queryParams = append(queryParams, arg.OrganizationID)
 	if len(arg.Ids) > 0 {
 		for _, v := range arg.Ids {
 			queryParams = append(queryParams, v)
@@ -686,7 +691,6 @@ func (q *Queries) NamedProjects(ctx context.Context, arg NamedProjectsParams) ([
 	} else {
 		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
 	}
-	queryParams = append(queryParams, arg.OrganizationID)
 	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
@@ -710,12 +714,12 @@ func (q *Queries) NamedProjects(ctx context.Context, arg NamedProjectsParams) ([
 }
 
 const namedRoles = `-- name: NamedRoles :many
-SELECT id, name FROM roles WHERE id IN (/*SLICE:ids*/?) AND organization_id = ?2
+SELECT id, name FROM roles WHERE organization_id = ?1 AND id IN (/*SLICE:ids*/?)
 `
 
 type NamedRolesParams struct {
-	Ids            []string
 	OrganizationID string
+	Ids            []string
 }
 
 type NamedRolesRow struct {
@@ -726,6 +730,7 @@ type NamedRolesRow struct {
 func (q *Queries) NamedRoles(ctx context.Context, arg NamedRolesParams) ([]NamedRolesRow, error) {
 	query := namedRoles
 	var queryParams []interface{}
+	queryParams = append(queryParams, arg.OrganizationID)
 	if len(arg.Ids) > 0 {
 		for _, v := range arg.Ids {
 			queryParams = append(queryParams, v)
@@ -734,7 +739,6 @@ func (q *Queries) NamedRoles(ctx context.Context, arg NamedRolesParams) ([]Named
 	} else {
 		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
 	}
-	queryParams = append(queryParams, arg.OrganizationID)
 	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err

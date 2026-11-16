@@ -90,6 +90,9 @@ func refuseTakenGroup(ctx context.Context, db query.DBTX, organizationID, name, 
 	if err := pgText(name, except); err != nil {
 		return err
 	}
+	// The name as the driver sends it: a lone surrogate as U+FFFD, as
+	// write.Text stores it.
+	name, _ = write.Text(name)
 	n, err := query.New(db).GroupNameTaken(ctx, query.GroupNameTakenParams{OrganizationID: organizationID, Name: name, ExceptID: except})
 	if err != nil {
 		return err
@@ -435,6 +438,9 @@ func AddMember(ctx context.Context, w *write.Writer, approvals *auth.Service, re
 			return err
 		}
 		reports = p.Access
+		if err := groupStillLive(ctx, tx, organizationID, groupID); err != nil {
+			return err
+		}
 		q := query.New(tx)
 		kind, err := q.EnabledMemberKind(ctx, query.EnabledMemberKindParams{ID: identityID, OrganizationID: sql.NullString{String: organizationID, Valid: true}})
 		if errors.Is(err, sql.ErrNoRows) {
@@ -468,6 +474,14 @@ func AddMember(ctx context.Context, w *write.Writer, approvals *auth.Service, re
 		return err
 	})
 	return reports, err
+}
+
+// groupStillLive re-reads the group (or team) in the job: one deleted
+// since the route read it takes no member and no Project. Hardening: the
+// TypeScript code reads it once, outside its transaction.
+func groupStillLive(ctx context.Context, tx query.DBTX, organizationID, groupID string) error {
+	_, err := RequireGroup(ctx, tx, organizationID, groupID, "")
+	return err
 }
 
 func membershipNotFound() error { return domainerr.New("RESOURCE_NOT_FOUND", "Membership not found") }
@@ -517,6 +531,9 @@ func RemoveMember(ctx context.Context, w *write.Writer, approvals *auth.Service,
 			return err
 		}
 		reports = p.Access
+		if err := groupStillLive(ctx, tx, organizationID, groupID); err != nil {
+			return err
+		}
 		removed, err := query.New(tx).RemoveGroupMember(ctx, query.RemoveGroupMemberParams{GroupID: groupID, IdentityID: identityID})
 		if err != nil {
 			return err
@@ -625,6 +642,9 @@ func AddTeamProject(ctx context.Context, w *write.Writer, approvals *auth.Servic
 			return err
 		}
 		reports = p.Access
+		if err := groupStillLive(ctx, tx, organizationID, teamID); err != nil {
+			return err
+		}
 		added, err := query.New(tx).AddTeamProject(ctx, query.AddTeamProjectParams{TeamID: teamID, ProjectID: projectID, CreatedAt: now().UnixMicro()})
 		if err != nil {
 			return err
@@ -689,6 +709,9 @@ func RemoveTeamProject(ctx context.Context, w *write.Writer, approvals *auth.Ser
 			return err
 		}
 		reports = p.Access
+		if err := groupStillLive(ctx, tx, organizationID, teamID); err != nil {
+			return err
+		}
 		removed, err := query.New(tx).RemoveTeamProject(ctx, query.RemoveTeamProjectParams{TeamID: teamID, ProjectID: projectID})
 		if err != nil {
 			return err
