@@ -194,4 +194,5 @@ export const {
   serveCli,
   tsStack,
   webhookReceiver,
+  objectStore,
 } = stack;

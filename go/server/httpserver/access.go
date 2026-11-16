@@ -92,7 +92,8 @@ func (r reply) VisitAddTeamProjectResponse(w http.ResponseWriter) error    { ret
 func (r reply) VisitRemoveTeamProjectResponse(w http.ResponseWriter) error { return r.visit(w) }
 
 // zInt is z.number().int().min(min).
-type zInt struct{ min float64 }
+// zInt is z.number().int().min(min), with .max(max) when max is set.
+type zInt struct{ min, max float64 }
 
 func (z zInt) parse(v any, present bool, path []string) (any, []zIssue) {
 	x, ok := v.(float64)
@@ -111,6 +112,9 @@ func (z zInt) parse(v any, present bool, path []string) (any, []zIssue) {
 	}
 	if x < z.min {
 		issues = append(issues, zIssue{path, "Too small: expected number to be >=" + jsvalue.Number(z.min), false})
+	}
+	if z.max != 0 && x > z.max {
+		issues = append(issues, zIssue{path, "Too big: expected number to be <=" + jsvalue.Number(z.max), false})
 	}
 	return x, issues
 }

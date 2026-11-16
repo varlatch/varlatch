@@ -20,7 +20,7 @@
  * back for the suites.
  */
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -110,7 +110,8 @@ export async function configure(state) {
     VARLATCH_KEK_HOST_PATH: join(state.dir, "secrets", "varlatch-kek"),
     // The webhooks suite's receiver, on varlatchd's own loopback inside its
     // container: the one private destination the outbound policy allows.
-    VARLATCH_OUTBOUND_ALLOW: `127.0.0.1/32:${WEBHOOK_RECEIVER_PORT}`,
+    // and the audit-export suite's object store, on the project's network.
+    VARLATCH_OUTBOUND_ALLOW: `127.0.0.1/32:${WEBHOOK_RECEIVER_PORT},${OBJECT_STORE_ALIAS}:9000`,
   };
   const hex = (bytes) => randomBytes(bytes).toString("hex");
   writeFileSync(join(state.dir, ".env"), [
@@ -142,6 +143,8 @@ export async function start(state, upArgs) {
 
 /** Removes the installation: containers, volumes, networks and the project directory. */
 export async function down(state) {
+  // The object store sits on the project's network: removed first, by its name.
+  if (state.project) spawnSync("docker", ["rm", "-fv", objectStoreName(state)], { stdio: "ignore" });
   if (state.composeFiles?.length) compose(state, ["down", "-v", "--remove-orphans"]);
   rmSync(state.root ?? state.dir, { recursive: true, force: true });
 }
@@ -309,4 +312,51 @@ export async function webhookReceiver(state, action) {
     if (!receiverRequests(state)) throw new Error("the webhook receiver did not start in varlatchd's container");
   }
   return { url: `http://127.0.0.1:${WEBHOOK_RECEIVER_PORT}` };
+}
+
+/** The object store's network alias, and the image the tests pin (MinIO withdrew its own images). */
+export const OBJECT_STORE_ALIAS = "conformance-s3";
+export const OBJECT_STORE_IMAGE = "cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b";
+
+const objectStoreName = (state) => `${state.project}-object-store`;
+
+/** The object store's keys: derived from the installation, so every operation names the same ones. */
+export function objectStoreKeys(seed) {
+  const h = createHash("sha256").update(`object-store:${seed}`).digest("hex");
+  return { accessKeyId: `conformance${h.slice(0, 8)}`, secretAccessKey: h.slice(8, 48) };
+}
+
+/** Waits until MinIO at hostEndpoint answers ready. */
+export async function objectStoreReady(hostEndpoint) {
+  for (let i = 0; i < 100; i++) {
+    const ok = await fetch(`${hostEndpoint}/minio/health/ready`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false);
+    if (ok) return;
+    await sleep(300);
+  }
+  throw new Error("the object store did not become ready");
+}
+
+/**
+ * The object-store capability: `start` runs MinIO (pinned by digest) on
+ * the project's network, under an alias the outbound allow list opens,
+ * with its port published on loopback for the suite; again, it answers
+ * the running one. JSON: the endpoint varlatchd reaches it at, the one
+ * the suite reaches it at, the region and the keys. `down` removes it.
+ */
+export async function objectStore(state, action) {
+  if (action !== "start") throw new Error(`unknown object-store action ${action}`);
+  const name = objectStoreName(state);
+  const keys = objectStoreKeys(state.dir);
+  const running = spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", name], { encoding: "utf8" });
+  if (running.status !== 0 || running.stdout.trim() !== "true") {
+    spawnSync("docker", ["rm", "-fv", name], { stdio: "ignore" });
+    const r = spawnSync("docker", ["run", "-d", "--name", name, "--network", `${state.project}_default`, "--network-alias", OBJECT_STORE_ALIAS,
+      "-p", "127.0.0.1::9000", "-e", `MINIO_ROOT_USER=${keys.accessKeyId}`, "-e", `MINIO_ROOT_PASSWORD=${keys.secretAccessKey}`,
+      OBJECT_STORE_IMAGE, "server", "/data"], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`docker run ${name} failed: ${r.stderr.trim().slice(-300)}`);
+  }
+  const port = spawnSync("docker", ["port", name, "9000/tcp"], { encoding: "utf8" }).stdout.trim().split("\n")[0].split(":").pop();
+  const hostEndpoint = `http://127.0.0.1:${port}`;
+  await objectStoreReady(hostEndpoint);
+  return { endpoint: `http://${OBJECT_STORE_ALIAS}:9000`, hostEndpoint, region: "us-east-1", ...keys };
 }

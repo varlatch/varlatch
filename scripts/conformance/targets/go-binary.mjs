@@ -42,9 +42,12 @@
  *             free loopback port that varlatchd.conf's outbound_allow
  *             opens, a process of its own: `url` starts it, `requests`
  *             reads what it recorded; `down` stops it by its recorded PID
+ *   objectStore
+ *             MinIO, pinned by digest, on a free loopback port that
+ *             outbound_allow opens: `start` runs it; `down` removes it
  *
  * Optional capabilities (targets/capabilities.json, their only source): the
- * device sign-in probes, go-server and webhook-receiver. Maintenance and
+ * device sign-in probes, go-server, webhook-receiver and object-store. Maintenance and
  * serve-cli come with the operations that need them (expect/go-binary.json
  * lists them).
  * The only processes it signals are the ones it started, by the PID it
@@ -65,6 +68,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
+import { OBJECT_STORE_IMAGE, objectStoreKeys, objectStoreReady } from "./compose-stack.mjs";
 
 export const name = "go-binary";
 
@@ -109,7 +113,8 @@ function config(state, extra = "") {
     `root_kek_file = ${state.kekFile}`,
     `access_log = ${state.accessLog}`,
     // The webhooks suite's receiver: the one private destination allowed.
-    ...(state.receiverPort ? [`outbound_allow = 127.0.0.1/32:${state.receiverPort}`] : []),
+    // and the audit-export suite's object store.
+    ...(state.receiverPort ? [`outbound_allow = ${[state.receiverPort, state.objectStorePort].filter(Boolean).map((p) => `127.0.0.1/32:${p}`).join(",")}`] : []),
     extra,
   ].join("\n") + "\n";
 }
@@ -131,6 +136,7 @@ export async function up({ argument, onState = () => {} }) {
   const dir = mkdtempSync(join(tmpdir(), "conformance-go-"));
   const port = await freePort();
   const receiverPort = await freePort();
+  const objectStorePort = await freePort();
   const state = {
     target: `go-binary:${argument}`,
     binary,
@@ -145,6 +151,7 @@ export async function up({ argument, onState = () => {} }) {
     pidFile: join(dir, "varlatchd.pid"),
     receiverPort,
     receiverPidFile: join(dir, "receiver.pid"),
+    objectStorePort,
   };
   onState(state);
   try {
@@ -171,6 +178,8 @@ export async function up({ argument, onState = () => {} }) {
 export async function down(state) {
   await stop(state).catch(() => {});
   stopReceiver(state);
+  // The object store, by the name only this installation's has.
+  if (state?.dir) spawnSync("docker", ["rm", "-fv", objectStoreName(state)], { stdio: "ignore" });
   if (state?.dir && state.dir.startsWith(join(tmpdir(), "conformance-go-"))) rmSync(state.dir, { recursive: true, force: true });
 }
 
@@ -439,6 +448,30 @@ export async function webhookReceiver(state, action) {
     if (!(await receiverRequests(state))) throw new Error("the webhook receiver did not start");
   }
   return { url: `http://127.0.0.1:${state.receiverPort}` };
+}
+
+const objectStoreName = (state) => `conformance-go-object-store-${state.dir.split("-").pop().toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+
+/**
+ * The object-store capability: `start` runs MinIO (pinned by digest) on
+ * the loopback port varlatchd.conf's outbound_allow opens; again, it
+ * answers the running one. `down` removes it, by its name.
+ */
+export async function objectStore(state, action) {
+  if (action !== "start") throw new Error(`unknown object-store action ${action}`);
+  const name = objectStoreName(state);
+  const keys = objectStoreKeys(state.dir);
+  const running = spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", name], { encoding: "utf8" });
+  if (running.status !== 0 || running.stdout.trim() !== "true") {
+    spawnSync("docker", ["rm", "-fv", name], { stdio: "ignore" });
+    const r = spawnSync("docker", ["run", "-d", "--name", name, "-p", `127.0.0.1:${state.objectStorePort}:9000`,
+      "-e", `MINIO_ROOT_USER=${keys.accessKeyId}`, "-e", `MINIO_ROOT_PASSWORD=${keys.secretAccessKey}`,
+      OBJECT_STORE_IMAGE, "server", "/data"], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`docker run ${name} failed: ${r.stderr.trim().slice(-300)}`);
+  }
+  const endpoint = `http://127.0.0.1:${state.objectStorePort}`;
+  await objectStoreReady(endpoint);
+  return { endpoint, hostEndpoint: endpoint, region: "us-east-1", ...keys };
 }
 
 export function describe(state) {

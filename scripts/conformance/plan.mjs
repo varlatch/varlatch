@@ -64,6 +64,8 @@ export const PLAN = [
   { suite: "security", args: (ctx) => [ctx.origin, ctx.token] },
   // Audit webhook delivery against the target's local receiver.
   { suite: "webhooks", args: (ctx) => [ctx.origin, ctx.token] },
+  // The audit export to object storage, against the target's local S3 server.
+  { suite: "audit-export", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "doctor", args: () => [] },
   { suite: "convex-down", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "cli-download-off", args: (ctx) => [ctx.origin] },

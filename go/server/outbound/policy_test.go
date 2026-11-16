@@ -339,7 +339,7 @@ func TestConnectDeadline(t *testing.T) {
 	dns.set("dual.test", v6("2001:db8::1"), v6("2001:db8::2"), v4("192.0.2.1"), v4("192.0.2.2"))
 	entries, _ := ParseAllow("192.0.2.0/24:*,[2001:db8::/32]:*")
 	const timeout = 500 * time.Millisecond
-	p := New(entries, Options{Resolve: dns.resolve, ConnectTimeout: timeout, dial: blackhole})
+	p := New(entries, Options{Resolve: dns.resolve, ConnectTimeout: timeout, Dial: blackhole})
 	t.Cleanup(p.Close)
 	for _, host := range []string{"black.test", "dual.test"} {
 		attempts.Store(0)
@@ -432,7 +432,7 @@ func TestAttemptContextsReleased(t *testing.T) {
 	dns := &fakeDNS{answers: map[string][]Answer{}, asked: map[string]int{}}
 	dns.set("refused.test", v4("192.0.2.1"), v4("192.0.2.2"), v4("192.0.2.3"))
 	entries, _ := ParseAllow("192.0.2.0/24:*")
-	p := New(entries, Options{Resolve: dns.resolve, ConnectTimeout: 5 * time.Second, dial: refuse})
+	p := New(entries, Options{Resolve: dns.resolve, ConnectTimeout: 5 * time.Second, Dial: refuse})
 	t.Cleanup(p.Close)
 	if _, err := p.dialer("https:")(context.Background(), "tcp", "refused.test:443"); err == nil {
 		t.Fatal("connected")

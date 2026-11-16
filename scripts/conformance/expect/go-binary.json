@@ -20,15 +20,7 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "changeAuditExport": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "changeMemberRole": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "checkAuditExport": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -41,10 +33,6 @@
         "step": "ADR-0059 step 4"
       },
       "confirmExposureRevocation": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "createAuditExport": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -81,10 +69,6 @@
         "step": "ADR-0059 step 4"
       },
       "exportDeletedOrganizationAuditEvents": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "getAuditExport": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -176,10 +160,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "removeAuditExport": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "removeDeletedOrganizationReader": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -189,10 +169,6 @@
         "step": "ADR-0059 step 4"
       },
       "removeMember": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "replaceAuditExportCredential": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

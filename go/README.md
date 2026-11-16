@@ -512,6 +512,49 @@ of `<seconds>.<body>` with the webhook's secret).
   deliver with them (the reverse direction). The `webhooks` conformance
   suite runs against a local receiver on every target.
 
+### The audit export's configuration (step 4.11a)
+
+`server/auditexport` is the configuration side of `domain/auditexport.ts`
+(ADR-0056): an Organization's whole audit log copied to its own
+S3-compatible bucket with Object Lock. The worker, its drains and
+`admin audit-export` come in 4.11b; until then an export is configured and
+its first stream's manifest planned, and nothing uploads it.
+
+- **Operations.** `getAuditExport` (organization.manage, inspection while
+  frozen), `createAuditExport`, `checkAuditExport`, `changeAuditExport`,
+  `replaceAuditExportCredential` and `removeAuditExport`, each refused to
+  a machine credential, while frozen or being deleted, and (all but
+  reading and removal) when the host turned the export off
+  (`audit_export = off` in `varlatchd.conf`, the TypeScript
+  `VARLATCH_AUDIT_EXPORT`). Creating and checking need no approval;
+  another destination, a shorter or removed retention, compliance to
+  governance, a new key and removal always need the requester's step-up
+  approval (`audit_export.change`, `audit_export.remove`), whatever the
+  Security Controls' modes.
+- **The probe** (Decision 6) writes a test object conditionally, writes it
+  again (which must answer 412), reads it back (HEAD: the SHA-256
+  metadata the worker's 412 check compares) and, with retention, reads the
+  retention back; reading content and retention are recorded separately.
+  It goes through `lib/backup`'s S3 client on the outbound policy's
+  `audit_export` client, one attempt per request, 30 seconds each; the
+  client is a reviewed exception of the structural test.
+- **Effects** (decision 4). Creating, checking and a destination change
+  run as external effects: the Organization's gate shared and the
+  requester's, the checks in one snapshot (the effect's `Checked` part,
+  new here, runs after the passkey-verification checkpoint, as the
+  TypeScript callbacks do), then the probe, then the final job. A
+  destination change also holds the export's gate across its probe, so a
+  key replacement or a removal waits for it
+  (`TestChangeHoldsTheExportAcrossItsProbe`). A refused endpoint is
+  recorded once, whatever the operation answers.
+- **Parity.** `audit-export-v0.22.0.json` (go-audit-export-fixture.test.ts)
+  replays every operation's answers, audit events and side rows against a
+  local S3 server (`auditexport/s3fake`, and its TypeScript twin) reached
+  under one fixed endpoint, and each request's exchange with it must be
+  the same: G3 for audit export credentials at the database level, both
+  directions. The `audit-export` conformance suite runs against MinIO on
+  every target (the `object-store` capability).
+
 The server's packages:
 
 - `server/config`: `varlatchd.conf`.

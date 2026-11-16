@@ -78,9 +78,11 @@ type Options struct {
 	ConnectTimeout time.Duration
 	// LookupTimeout bounds one name's resolution (10 s).
 	LookupTimeout time.Duration
-	// dial replaces the connection attempt to one checked address (tests:
-	// a blackhole).
-	dial func(ctx context.Context, network, address string) (net.Conn, error)
+	// Dial replaces the connection attempt to one checked address (tests:
+	// a blackhole, or a local server standing in for a fixture's name).
+	// The policy has decided the address first, as for every connection;
+	// nil is a net.Dialer with the Control check.
+	Dial func(ctx context.Context, network, address string) (net.Conn, error)
 }
 
 // Policy is OutboundPolicy: the allow list, the resolver, the refusal
@@ -121,7 +123,7 @@ func New(entries []Entry, o Options) *Policy {
 		o.LookupTimeout = 10 * time.Second
 	}
 	return &Policy{Entries: entries, Limiter: NewLimiter(o.Now), resolve: o.Resolve, log: o.Log, tls: o.TLS,
-		connectTimeout: o.ConnectTimeout, lookupTimeout: o.LookupTimeout, dial: o.dial}
+		connectTimeout: o.ConnectTimeout, lookupTimeout: o.LookupTimeout, dial: o.Dial}
 }
 
 // Lookup resolves a name with the policy's resolver, within LookupTimeout
