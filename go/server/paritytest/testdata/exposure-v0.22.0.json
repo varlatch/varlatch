@@ -1,0 +1,1917 @@
+{
+  "comment": "Written by services/varlatchd/test/go-exposure-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+  "ref": "v0.22.0",
+  "serverVersion": "0.22.0",
+  "rootKek": "6767f5b0140b3c171eb3732af7aa36f801489eb2d4d45b1384a17262ba5b795b",
+  "tokens": {
+    "alice": "vlt_cli_OWZikSkjIOJVnCa4_E-m19HFBFeoeqna3-SFE6goroY",
+    "bob": "vlt_cli_tngNijEL22rbsnriEppNwM8Apm8H3viIxGBDcygZl8o",
+    "carol": "vlt_cli_XA-CVlNlXOuI3ExwD5w4OVgo15P1yVxMpeIPBdabJAo",
+    "dave": "vlt_cli_nYSlBKkxl_k4dKIlb68RxW_oqMrUriSs54UjftCdMdo",
+    "erin": "vlt_cli_uXqzjcV0H94yQEl7RBTB2VYSKVU5BcvbwhHto5QeDdw"
+  },
+  "rows": {
+    "installation": [
+      {
+        "id": "inst_v4uohey7bmo74sf3yvec6pa2om",
+        "kek_canary": {
+          "nonce": "n44cF+vN2gzgf7ro",
+          "authTag": "m0f4gYX+MwqVCLsGxx4eYw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "NaXpiWiQJrDW+OkCVb5R+Apn1GrEE+AJAcholDERO7w=",
+          "formatVersion": 1
+        },
+        "bootstrapped_at": "2026-11-16T06:24:26.915Z",
+        "created_at": "2026-11-16T06:24:26.871Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "public_url": null
+      }
+    ],
+    "identities": [
+      {
+        "id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-11-16T06:24:26.915Z",
+        "organization_id": null,
+        "last_seen_at": "2026-01-15T00:00:00.000Z",
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_bto7ugeih2h7wpef3oyljtv22y",
+        "kind": "human",
+        "name": "erin",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_joesul2lgsf3tpat2xbkerakwe",
+        "kind": "human",
+        "name": "dave",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "kind": "human",
+        "name": "bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_wovbiyngnqtuxka2ufpfrjecva",
+        "kind": "human",
+        "name": "carol",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      }
+    ],
+    "user": [],
+    "auth_user_links": [],
+    "credentials": [
+      {
+        "id": "crd_4rivczfi6v5gjqdp3uj7tuulki",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "45a526d032ea672de39008d8162ab6b84d98664d2235fe5ff386d445abfa21f5",
+        "created_at": "2026-11-16T06:24:27.027Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_osdiycd3f2te4pvrqr3z4gbsi4",
+        "identity_id": "idn_joesul2lgsf3tpat2xbkerakwe",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "a4ee685be8bc8aa0b7f924b49c1932432e076b41c98446baf096063b9d0f3bbc",
+        "created_at": "2026-11-16T06:24:27.046Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_joesul2lgsf3tpat2xbkerakwe",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_q6rygtuj4wzoyaaxgarewxyxsa",
+        "identity_id": "idn_wovbiyngnqtuxka2ufpfrjecva",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "312da17c0f278ba4373fe5d0d9c008983c23098dc4a72e9bbd712de617ed9e3a",
+        "created_at": "2026-11-16T06:24:27.036Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_wovbiyngnqtuxka2ufpfrjecva",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_vzx6ulijjgriq2y45sp4quofhi",
+        "identity_id": "idn_bto7ugeih2h7wpef3oyljtv22y",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "fd3f82fdaf7f20d8873c409eaf9dea86482c8fbaf008b079065a3e13627e67a0",
+        "created_at": "2026-11-16T06:24:27.053Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_bto7ugeih2h7wpef3oyljtv22y",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_yhqthb75obod4rac533xpqujtm",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "0f94aed0f44e2c23836b2fdfe8935af40a01c4447fc7b047a49fc9adeb95fae4",
+        "created_at": "2026-11-16T06:24:26.930Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-01-15T00:00:00.000Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ],
+    "organizations": [
+      {
+        "id": "org_i3decvhuu2lshbnt5qshb3g4wa",
+        "slug": "frozen",
+        "name": "Frozen",
+        "wrapped_org_kek": {
+          "nonce": "2rYGQdweO09VAHMV",
+          "authTag": "T7//hU10eBKTyxusbdjcMA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "S8lBFlGJEG9q6Sp0WUcetZ8zYPxuFBcjVi68UpzkKJs=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T06:24:27.000Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "slug": "exp",
+        "name": "Exp",
+        "wrapped_org_kek": {
+          "nonce": "zDkL7hJWqfTFmIWB",
+          "authTag": "UOL5U6zgWHXqrP0OB8w9+g==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "RJgC+Py+ETfn2LwuROE9p6c6uzzhwG4gEf2qiAegZp8=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T06:24:26.982Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_nfsrshm3cgcbr25hpldbfcogoq",
+        "slug": "other",
+        "name": "Other",
+        "wrapped_org_kek": {
+          "nonce": "iTLhAW9UpY+NYcd8",
+          "authTag": "4xjTxPZFi05ER6pyl4YbyQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "E0JdOFc4llf2P2BalPCf7rB4DMt+Fh8KVxZUwQK2LZs=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T06:24:27.013Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      }
+    ],
+    "org_memberships": [
+      {
+        "organization_id": "org_i3decvhuu2lshbnt5qshb3g4wa",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "role": "admin",
+        "created_at": "2026-11-16T06:24:27.000Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_i3decvhuu2lshbnt5qshb3g4wa",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "role": "member",
+        "created_at": "2026-11-16T06:24:27.025Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "role": "admin",
+        "created_at": "2026-11-16T06:24:26.982Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_joesul2lgsf3tpat2xbkerakwe",
+        "role": "member",
+        "created_at": "2026-11-16T06:24:27.043Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "role": "member",
+        "created_at": "2026-11-16T06:24:27.022Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_wovbiyngnqtuxka2ufpfrjecva",
+        "role": "member",
+        "created_at": "2026-11-16T06:24:27.034Z",
+        "removed_at": "2026-11-16T06:24:27.559Z",
+        "version": 2
+      },
+      {
+        "organization_id": "org_nfsrshm3cgcbr25hpldbfcogoq",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "role": "admin",
+        "created_at": "2026-11-16T06:24:27.013Z",
+        "removed_at": null,
+        "version": 0
+      }
+    ],
+    "projects": [
+      {
+        "id": "prj_32vnqh5dv54dpixlih2yjjq324",
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "slug": "api",
+        "name": "API",
+        "contract_authority": "managed",
+        "active_contract_revision_id": "rev_vg73rbzzcnouro232r4z2dmp2m",
+        "created_at": "2026-11-16T06:24:27.072Z",
+        "deleted_at": null
+      }
+    ],
+    "environments": [
+      {
+        "id": "env_6t5el2ls3qckfhuvmuydsud5rm",
+        "project_id": "prj_32vnqh5dv54dpixlih2yjjq324",
+        "name": "production",
+        "kind": "shared",
+        "tier": "production",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-16T06:24:27.145Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "project_id": "prj_32vnqh5dv54dpixlih2yjjq324",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-16T06:24:27.098Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_rsgwgjfyb53boq7xl3m5hazwie",
+        "project_id": "prj_32vnqh5dv54dpixlih2yjjq324",
+        "name": "temp",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-16T06:24:27.166Z",
+        "deleted_at": "2026-11-16T06:24:27.482Z"
+      },
+      {
+        "id": "env_sbe6te5p42h74uir2twsgnkezq",
+        "project_id": "prj_32vnqh5dv54dpixlih2yjjq324",
+        "name": "staging",
+        "kind": "shared",
+        "tier": "staging",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-16T06:24:27.122Z",
+        "deleted_at": null
+      }
+    ],
+    "contract_revisions": [
+      {
+        "id": "rev_vg73rbzzcnouro232r4z2dmp2m",
+        "project_id": "prj_32vnqh5dv54dpixlih2yjjq324",
+        "content_hash": "sha256:725e8a4ef6424eb44d693323fc53d100ae365310fa62ce3539acdd6ce237a3b1",
+        "contract": {
+          "items": [
+            {
+              "name": "API_KEY",
+              "type": "string",
+              "required": {
+                "kind": "never"
+              },
+              "sensitive": true,
+              "rotationHint": "Rotate it in the provider's console"
+            },
+            {
+              "name": "DB_URL",
+              "type": "string",
+              "required": {
+                "kind": "never"
+              },
+              "sensitive": false
+            },
+            {
+              "name": "OLD",
+              "type": "string",
+              "required": {
+                "kind": "never"
+              },
+              "sensitive": false
+            },
+            {
+              "name": "TEMP",
+              "type": "string",
+              "required": {
+                "kind": "never"
+              },
+              "sensitive": false
+            }
+          ],
+          "schemaVersion": 1,
+          "semanticsVersion": 3
+        },
+        "provenance": null,
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.192Z"
+      }
+    ],
+    "env_values": [
+      {
+        "id": "val_5s7m2sd6yxhyqunzyfipkujlh4",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "item_name": "OLD",
+        "current_version_id": null,
+        "deleted_at": "2026-11-16T06:24:27.426Z",
+        "created_at": "2026-11-16T06:24:27.396Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_7bnyhzut74e2sm7xpkwl4xxb2e",
+        "environment_id": "env_rsgwgjfyb53boq7xl3m5hazwie",
+        "item_name": "TEMP",
+        "current_version_id": null,
+        "deleted_at": "2026-11-16T06:24:27.482Z",
+        "created_at": "2026-11-16T06:24:27.452Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_e3r2n5yqwy4monbkcnhrhluejq",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "item_name": "API_KEY",
+        "current_version_id": "ver_bvvwmxt7z4kln674vmd63xjkgi",
+        "deleted_at": null,
+        "created_at": "2026-11-16T06:24:27.242Z",
+        "retiring_version_id": "ver_nxph62xsiezgyytsvnefweay5a",
+        "rotation_deadline": "2026-01-02T00:00:00.000Z",
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_ne4tvrz4vy4btxcjdxagn4invu",
+        "environment_id": "env_6t5el2ls3qckfhuvmuydsud5rm",
+        "item_name": "DB_URL",
+        "current_version_id": "ver_dr5l6v5a7n5cvullvkabvbp2zi",
+        "deleted_at": null,
+        "created_at": "2026-11-16T06:24:27.368Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_xe6rqvrvxiyiqmmgkuqvvx4cum",
+        "environment_id": "env_sbe6te5p42h74uir2twsgnkezq",
+        "item_name": "API_KEY",
+        "current_version_id": "ver_p3goumhabj5mnwih3gzamsnf5q",
+        "deleted_at": null,
+        "created_at": "2026-11-16T06:24:27.310Z",
+        "retiring_version_id": "ver_6fiu5spmp7q52woylrhddc7pje",
+        "rotation_deadline": "2099-01-01T00:00:00.000Z",
+        "rotation_started_at": null
+      }
+    ],
+    "value_versions": [
+      {
+        "id": "ver_6fiu5spmp7q52woylrhddc7pje",
+        "value_id": "val_xe6rqvrvxiyiqmmgkuqvvx4cum",
+        "payload": {
+          "nonce": "UUmfUqtXNZhA8FlH",
+          "authTag": "8Bqp3/eDxF4snoyPMvrGJQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "S3Y=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "+2QA9PhWt2nq5l0r",
+          "authTag": "jmCWce4keDefAxwbOtVpXw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "V8LPsIwFaljGOD640CcLNPDWA7jj17nqSPcCJt+lYdI=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.310Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_bvvwmxt7z4kln674vmd63xjkgi",
+        "value_id": "val_e3r2n5yqwy4monbkcnhrhluejq",
+        "payload": {
+          "nonce": "c5/KcuU1I4fdNouk",
+          "authTag": "MIB68AAgZbLMMOPqVRS/8Q==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "c8k=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "OlRxkkua6JWXHA1W",
+          "authTag": "BIwlYHDD0h8qm9a67uCRyQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "NYyFsHW268KfzatCexk4J20MEaOl+M8ATlK5qCWYoNk=",
+          "formatVersion": 1
+        },
+        "previous_version_id": "ver_nxph62xsiezgyytsvnefweay5a",
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.281Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_dr5l6v5a7n5cvullvkabvbp2zi",
+        "value_id": "val_ne4tvrz4vy4btxcjdxagn4invu",
+        "payload": {
+          "nonce": "9oUTL07aRGawLgUm",
+          "authTag": "eUpwvXHPcpqNaCh+sr5jww==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "SbI=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "cQbmch0Ki16Qx0gT",
+          "authTag": "V6YFZrTssXVGk0glbu6DVw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "vYa1pFaii1s2nhRw5dm0V4CCxgaD8HI4ZOOkGx5sdnc=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.368Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_nxph62xsiezgyytsvnefweay5a",
+        "value_id": "val_e3r2n5yqwy4monbkcnhrhluejq",
+        "payload": {
+          "nonce": "QDOnpfSh/mkNcaPI",
+          "authTag": "IUU+duyqPcxIq+wfIV7WwA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "wM8=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "HBRdqX46arr+lgyj",
+          "authTag": "xlcLsE5ksKajX7UyBIh20w==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "oUvGPUnsYktopzt4pawS4KG3O5sB6FV37WV7FpHjodg=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.242Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_p3goumhabj5mnwih3gzamsnf5q",
+        "value_id": "val_xe6rqvrvxiyiqmmgkuqvvx4cum",
+        "payload": {
+          "nonce": "vTUcmILD9VJXKSxu",
+          "authTag": "bFDCIPCbosdhv9mJ7BQNgA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "DZc=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "VdMQWP1iTXZe2+ud",
+          "authTag": "IKuLWZ7aAuSYeUkxDpUZMQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "ohFeXoGJ0nPzubgJIIaa6g+sGfRNslf/Ieu05g+RKk4=",
+          "formatVersion": 1
+        },
+        "previous_version_id": "ver_6fiu5spmp7q52woylrhddc7pje",
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.340Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_x347hy7api5nqc5kiiniyzu2x4",
+        "value_id": "val_5s7m2sd6yxhyqunzyfipkujlh4",
+        "payload": {
+          "nonce": "I+OyIj8EvH7wZQ4b",
+          "authTag": "JNbK8Wju4fe/PN5gFnB0KA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "CBc=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "NXUw+ErhW9FOMQO3",
+          "authTag": "BYGJ7YVSZI/Qyqel+h/brQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "0WpI/4fYwqta7w9TxVWiaMKvC4cMH8eJEs/9vIMdNZs=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.396Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_znrvmjggryvmks4re4viwrdcnu",
+        "value_id": "val_7bnyhzut74e2sm7xpkwl4xxb2e",
+        "payload": {
+          "nonce": "Qswhx0XJcnp56uvt",
+          "authTag": "pqtcA0CxhjXWnL2HVUx4jg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "erM=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "Y9PJg9CNzrvPp77t",
+          "authTag": "mAHL60H3H1U+udfKE1Bveg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "JIY5kIF18cJ52tJ2bWhDjhsGoeZUdIBvDEk2QI5sFkA=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.452Z",
+        "erased_at": null
+      }
+    ],
+    "grants": [
+      {
+        "id": "grt_te7oyp7g4f3iehr6i5d5vog4jq",
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "subject_identity_id": "idn_wovbiyngnqtuxka2ufpfrjecva",
+        "scope": {
+          "kind": "environments",
+          "selector": {
+            "kind": "tier",
+            "tier": "production"
+          },
+          "projectId": "prj_32vnqh5dv54dpixlih2yjjq324"
+        },
+        "actions": [
+          "config.value.read"
+        ],
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.519Z",
+        "revoked_at": "2026-11-16T06:24:27.559Z",
+        "subject_group_id": null,
+        "role_id": null
+      }
+    ],
+    "requirements": [
+      {
+        "id": "req_xbyipuffdjo6pnpwhgybxxrxte",
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "kind": "tailnet",
+        "target": {
+          "kind": "tier",
+          "tier": "production"
+        },
+        "config": {
+          "tags": [
+            "tag:prod"
+          ],
+          "tailnet": "example.ts.net"
+        },
+        "created_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "created_at": "2026-11-16T06:24:27.542Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null
+      }
+    ],
+    "membership_removals": [
+      {
+        "id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_wovbiyngnqtuxka2ufpfrjecva",
+        "role": "member",
+        "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "removed_at": "2026-11-16T06:24:27.559Z"
+      }
+    ],
+    "removal_authority": [
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "environment_id": "env_6t5el2ls3qckfhuvmuydsud5rm",
+        "action": "config.metadata.read",
+        "source": "role:member",
+        "role": "member",
+        "grant_id": null,
+        "via_group_id": null,
+        "role_id": null
+      },
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "environment_id": "env_6t5el2ls3qckfhuvmuydsud5rm",
+        "action": "config.value.read",
+        "source": "grant:grt_te7oyp7g4f3iehr6i5d5vog4jq",
+        "role": null,
+        "grant_id": "grt_te7oyp7g4f3iehr6i5d5vog4jq",
+        "via_group_id": null,
+        "role_id": null
+      },
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "action": "config.metadata.read",
+        "source": "role:member",
+        "role": "member",
+        "grant_id": null,
+        "via_group_id": null,
+        "role_id": null
+      },
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "action": "config.value.read",
+        "source": "role:member",
+        "role": "member",
+        "grant_id": null,
+        "via_group_id": null,
+        "role_id": null
+      },
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "action": "secret.reveal",
+        "source": "role:member",
+        "role": "member",
+        "grant_id": null,
+        "via_group_id": null,
+        "role_id": null
+      },
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "environment_id": "env_sbe6te5p42h74uir2twsgnkezq",
+        "action": "config.metadata.read",
+        "source": "role:member",
+        "role": "member",
+        "grant_id": null,
+        "via_group_id": null,
+        "role_id": null
+      },
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "environment_id": "env_sbe6te5p42h74uir2twsgnkezq",
+        "action": "config.value.read",
+        "source": "role:member",
+        "role": "member",
+        "grant_id": null,
+        "via_group_id": null,
+        "role_id": null
+      },
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "environment_id": "env_sbe6te5p42h74uir2twsgnkezq",
+        "action": "secret.reveal",
+        "source": "role:member",
+        "role": "member",
+        "grant_id": null,
+        "via_group_id": null,
+        "role_id": null
+      }
+    ],
+    "removal_requirements": [
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "requirement_id": "req_xbyipuffdjo6pnpwhgybxxrxte",
+        "requirement_version": 1,
+        "target": {
+          "kind": "tier",
+          "tier": "production"
+        },
+        "selector": {
+          "tags": [
+            "tag:prod"
+          ],
+          "tailnet": "example.ts.net"
+        }
+      }
+    ],
+    "removal_conditions": [
+      {
+        "removal_id": "mrm_woos2jqft4sa2lo6linw4hswee",
+        "environment_id": "env_6t5el2ls3qckfhuvmuydsud5rm",
+        "requirement_id": "req_xbyipuffdjo6pnpwhgybxxrxte"
+      }
+    ],
+    "member_exposure": [
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "version_id": "ver_6fiu5spmp7q52woylrhddc7pje",
+        "item_name": "API_KEY",
+        "environment_id": "env_sbe6te5p42h74uir2twsgnkezq",
+        "way": "written",
+        "first_at": "2026-11-16T06:24:27.310Z",
+        "last_at": "2026-11-16T06:24:27.310Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "version_id": "ver_bvvwmxt7z4kln674vmd63xjkgi",
+        "item_name": "API_KEY",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "way": "written",
+        "first_at": "2026-11-16T06:24:27.281Z",
+        "last_at": "2026-11-16T06:24:27.281Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "version_id": "ver_dr5l6v5a7n5cvullvkabvbp2zi",
+        "item_name": "DB_URL",
+        "environment_id": "env_6t5el2ls3qckfhuvmuydsud5rm",
+        "way": "written",
+        "first_at": "2026-11-16T06:24:27.368Z",
+        "last_at": "2026-11-16T06:24:27.368Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "version_id": "ver_nxph62xsiezgyytsvnefweay5a",
+        "item_name": "API_KEY",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "way": "written",
+        "first_at": "2026-11-16T06:24:27.242Z",
+        "last_at": "2026-11-16T06:24:27.242Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "version_id": "ver_p3goumhabj5mnwih3gzamsnf5q",
+        "item_name": "API_KEY",
+        "environment_id": "env_sbe6te5p42h74uir2twsgnkezq",
+        "way": "written",
+        "first_at": "2026-11-16T06:24:27.340Z",
+        "last_at": "2026-11-16T06:24:27.340Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "version_id": "ver_x347hy7api5nqc5kiiniyzu2x4",
+        "item_name": "OLD",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "way": "written",
+        "first_at": "2026-11-16T06:24:27.396Z",
+        "last_at": "2026-11-16T06:24:27.396Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "version_id": "ver_znrvmjggryvmks4re4viwrdcnu",
+        "item_name": "TEMP",
+        "environment_id": "env_rsgwgjfyb53boq7xl3m5hazwie",
+        "way": "written",
+        "first_at": "2026-11-16T06:24:27.452Z",
+        "last_at": "2026-11-16T06:24:27.452Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "version_id": "ver_6fiu5spmp7q52woylrhddc7pje",
+        "item_name": "API_KEY",
+        "environment_id": "env_sbe6te5p42h74uir2twsgnkezq",
+        "way": "export",
+        "first_at": "2026-01-05T00:00:00.000Z",
+        "last_at": "2026-01-06T00:00:00.000Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "version_id": "ver_bvvwmxt7z4kln674vmd63xjkgi",
+        "item_name": "API_KEY",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "way": "export",
+        "first_at": "2026-01-12T00:00:00.000Z",
+        "last_at": "2026-01-13T00:00:00.000Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "version_id": "ver_bvvwmxt7z4kln674vmd63xjkgi",
+        "item_name": "API_KEY",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "way": "revealed",
+        "first_at": "2026-01-10T00:00:00.000Z",
+        "last_at": "2026-01-11T00:00:00.000Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "version_id": "ver_dr5l6v5a7n5cvullvkabvbp2zi",
+        "item_name": "DB_URL",
+        "environment_id": "env_6t5el2ls3qckfhuvmuydsud5rm",
+        "way": "revealed",
+        "first_at": "2026-01-06T00:00:00.000Z",
+        "last_at": "2026-01-07T00:00:00.000Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "version_id": "ver_nxph62xsiezgyytsvnefweay5a",
+        "item_name": "API_KEY",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "way": "delivered",
+        "first_at": "2026-01-03T00:00:00.000Z",
+        "last_at": "2026-01-04T00:00:00.000Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "version_id": "ver_x347hy7api5nqc5kiiniyzu2x4",
+        "item_name": "OLD",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "way": "written",
+        "first_at": "2026-01-07T00:00:00.000Z",
+        "last_at": "2026-01-08T00:00:00.000Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "version_id": "ver_znrvmjggryvmks4re4viwrdcnu",
+        "item_name": "TEMP",
+        "environment_id": "env_rsgwgjfyb53boq7xl3m5hazwie",
+        "way": "revealed",
+        "first_at": "2026-01-08T00:00:00.000Z",
+        "last_at": "2026-01-09T00:00:00.000Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "version_id": "vv_unknownaaaaaaaaaaaaaaaaaaaaa",
+        "item_name": "GONE",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "way": "revealed",
+        "first_at": "2026-01-09T00:00:00.000Z",
+        "last_at": "2026-01-10T00:00:00.000Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_wovbiyngnqtuxka2ufpfrjecva",
+        "version_id": "ver_bvvwmxt7z4kln674vmd63xjkgi",
+        "item_name": "API_KEY",
+        "environment_id": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+        "way": "written",
+        "first_at": "2026-01-11T00:00:00.000Z",
+        "last_at": "2026-01-12T00:00:00.000Z"
+      },
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "identity_id": "idn_wovbiyngnqtuxka2ufpfrjecva",
+        "version_id": "ver_dr5l6v5a7n5cvullvkabvbp2zi",
+        "item_name": "DB_URL",
+        "environment_id": "env_6t5el2ls3qckfhuvmuydsud5rm",
+        "way": "revealed",
+        "first_at": "2026-01-04T00:00:00.000Z",
+        "last_at": "2026-01-05T00:00:00.000Z"
+      }
+    ],
+    "exposure_confirmations": [
+      {
+        "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+        "version_id": "ver_nxph62xsiezgyytsvnefweay5a",
+        "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+        "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "confirmed_at": "2026-01-20T00:00:00.000Z"
+      }
+    ],
+    "organization_freezes": [
+      {
+        "id": "ofz_z6nh73iyrha75ilp7dxo5sf3eq",
+        "organization_id": "org_i3decvhuu2lshbnt5qshb3g4wa",
+        "frozen_by": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+        "frozen_at": "2026-03-01T00:00:00.000Z",
+        "reason": "incident drill",
+        "lifted_at": null,
+        "lifted_by": null,
+        "lift_method": null
+      }
+    ]
+  },
+  "sideTables": [
+    {
+      "name": "exposure_confirmations",
+      "key": [
+        "organization_id",
+        "version_id"
+      ],
+      "sortBy": [
+        "version_id"
+      ],
+      "volatile": [
+        "confirmed_at"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "id": "GET bob's exposure",
+      "name": "bob's exposure",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"member\":{\"identityId\":\"idn_nw2pdd23r5xsd743cdn7brmxqe\",\"name\":\"bob\",\"role\":\"member\",\"removedAt\":null},\"coverage\":{\"complete\":true},\"received\":[{\"itemName\":\"API_KEY\",\"versionId\":\"ver_6fiu5spmp7q52woylrhddc7pje\",\"owningEnvironmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"retiring\",\"retiringUntil\":\"2099-01-01T00:00:00.000Z\",\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"way\":\"export\",\"firstAt\":\"2026-01-05T00:00:00.000Z\",\"lastAt\":\"2026-01-06T00:00:00.000Z\"}]},{\"itemName\":\"API_KEY\",\"versionId\":\"ver_bvvwmxt7z4kln674vmd63xjkgi\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"export\",\"firstAt\":\"2026-01-12T00:00:00.000Z\",\"lastAt\":\"2026-01-13T00:00:00.000Z\"},{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"revealed\",\"firstAt\":\"2026-01-10T00:00:00.000Z\",\"lastAt\":\"2026-01-11T00:00:00.000Z\"}]},{\"itemName\":\"API_KEY\",\"versionId\":\"ver_nxph62xsiezgyytsvnefweay5a\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"revocation-confirmed\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"replaced\",\"served\":false,\"confirmation\":{\"confirmedAt\":\"2026-01-20T00:00:00.000Z\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"},\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"delivered\",\"firstAt\":\"2026-01-03T00:00:00.000Z\",\"lastAt\":\"2026-01-04T00:00:00.000Z\"}]},{\"itemName\":\"DB_URL\",\"versionId\":\"ver_dr5l6v5a7n5cvullvkabvbp2zi\",\"owningEnvironmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"way\":\"revealed\",\"firstAt\":\"2026-01-06T00:00:00.000Z\",\"lastAt\":\"2026-01-07T00:00:00.000Z\"}]},{\"itemName\":\"GONE\",\"versionId\":\"vv_unknownaaaaaaaaaaaaaaaaaaaaa\",\"owningEnvironmentId\":null,\"projectId\":null,\"state\":\"not-served\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"unknown\",\"served\":false,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"revealed\",\"firstAt\":\"2026-01-09T00:00:00.000Z\",\"lastAt\":\"2026-01-10T00:00:00.000Z\"}]},{\"itemName\":\"OLD\",\"versionId\":\"ver_x347hy7api5nqc5kiiniyzu2x4\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"not-served\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"value-deleted\",\"served\":false,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"written\",\"firstAt\":\"2026-01-07T00:00:00.000Z\",\"lastAt\":\"2026-01-08T00:00:00.000Z\"}]},{\"itemName\":\"TEMP\",\"versionId\":\"ver_znrvmjggryvmks4re4viwrdcnu\",\"owningEnvironmentId\":\"env_rsgwgjfyb53boq7xl3m5hazwie\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"not-served\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"environment-deleted\",\"served\":false,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_rsgwgjfyb53boq7xl3m5hazwie\",\"way\":\"revealed\",\"firstAt\":\"2026-01-08T00:00:00.000Z\",\"lastAt\":\"2026-01-09T00:00:00.000Z\"}]}],\"authorityAtRemoval\":null,\"indirect\":{\"syncTargets\":[],\"connections\":[],\"webhooks\":[],\"oidcBindings\":[],\"credentials\":[],\"personalEnvironments\":[]}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET bob's exposure by the Organization's id",
+      "name": "bob's exposure by the Organization's id",
+      "method": "GET",
+      "path": "/v1/organizations/{org:exp}/members/{idn:bob}/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"member\":{\"identityId\":\"idn_nw2pdd23r5xsd743cdn7brmxqe\",\"name\":\"bob\",\"role\":\"member\",\"removedAt\":null},\"coverage\":{\"complete\":true},\"received\":[{\"itemName\":\"API_KEY\",\"versionId\":\"ver_6fiu5spmp7q52woylrhddc7pje\",\"owningEnvironmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"retiring\",\"retiringUntil\":\"2099-01-01T00:00:00.000Z\",\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"way\":\"export\",\"firstAt\":\"2026-01-05T00:00:00.000Z\",\"lastAt\":\"2026-01-06T00:00:00.000Z\"}]},{\"itemName\":\"API_KEY\",\"versionId\":\"ver_bvvwmxt7z4kln674vmd63xjkgi\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"export\",\"firstAt\":\"2026-01-12T00:00:00.000Z\",\"lastAt\":\"2026-01-13T00:00:00.000Z\"},{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"revealed\",\"firstAt\":\"2026-01-10T00:00:00.000Z\",\"lastAt\":\"2026-01-11T00:00:00.000Z\"}]},{\"itemName\":\"API_KEY\",\"versionId\":\"ver_nxph62xsiezgyytsvnefweay5a\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"revocation-confirmed\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"replaced\",\"served\":false,\"confirmation\":{\"confirmedAt\":\"2026-01-20T00:00:00.000Z\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"},\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"delivered\",\"firstAt\":\"2026-01-03T00:00:00.000Z\",\"lastAt\":\"2026-01-04T00:00:00.000Z\"}]},{\"itemName\":\"DB_URL\",\"versionId\":\"ver_dr5l6v5a7n5cvullvkabvbp2zi\",\"owningEnvironmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"way\":\"revealed\",\"firstAt\":\"2026-01-06T00:00:00.000Z\",\"lastAt\":\"2026-01-07T00:00:00.000Z\"}]},{\"itemName\":\"GONE\",\"versionId\":\"vv_unknownaaaaaaaaaaaaaaaaaaaaa\",\"owningEnvironmentId\":null,\"projectId\":null,\"state\":\"not-served\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"unknown\",\"served\":false,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"revealed\",\"firstAt\":\"2026-01-09T00:00:00.000Z\",\"lastAt\":\"2026-01-10T00:00:00.000Z\"}]},{\"itemName\":\"OLD\",\"versionId\":\"ver_x347hy7api5nqc5kiiniyzu2x4\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"not-served\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"value-deleted\",\"served\":false,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"written\",\"firstAt\":\"2026-01-07T00:00:00.000Z\",\"lastAt\":\"2026-01-08T00:00:00.000Z\"}]},{\"itemName\":\"TEMP\",\"versionId\":\"ver_znrvmjggryvmks4re4viwrdcnu\",\"owningEnvironmentId\":\"env_rsgwgjfyb53boq7xl3m5hazwie\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"not-served\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"environment-deleted\",\"served\":false,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_rsgwgjfyb53boq7xl3m5hazwie\",\"way\":\"revealed\",\"firstAt\":\"2026-01-08T00:00:00.000Z\",\"lastAt\":\"2026-01-09T00:00:00.000Z\"}]}],\"authorityAtRemoval\":null,\"indirect\":{\"syncTargets\":[],\"connections\":[],\"webhooks\":[],\"oidcBindings\":[],\"credentials\":[],\"personalEnvironments\":[]}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET a former member's exposure",
+      "name": "a former member's exposure",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/{idn:carol}/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"member\":{\"identityId\":\"idn_wovbiyngnqtuxka2ufpfrjecva\",\"name\":\"carol\",\"role\":null,\"removedAt\":\"2026-11-16T06:24:27.559Z\"},\"coverage\":{\"complete\":true},\"received\":[{\"itemName\":\"API_KEY\",\"versionId\":\"ver_bvvwmxt7z4kln674vmd63xjkgi\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"written\",\"firstAt\":\"2026-01-11T00:00:00.000Z\",\"lastAt\":\"2026-01-12T00:00:00.000Z\"}]},{\"itemName\":\"DB_URL\",\"versionId\":\"ver_dr5l6v5a7n5cvullvkabvbp2zi\",\"owningEnvironmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"way\":\"revealed\",\"firstAt\":\"2026-01-04T00:00:00.000Z\",\"lastAt\":\"2026-01-05T00:00:00.000Z\"}]}],\"authorityAtRemoval\":{\"removalId\":\"mrm_woos2jqft4sa2lo6linw4hswee\",\"removedAt\":\"2026-11-16T06:24:27.559Z\",\"role\":\"member\",\"left\":false,\"environments\":[{\"environmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"actions\":[{\"action\":\"config.metadata.read\",\"sources\":[{\"source\":\"role:member\",\"role\":\"member\",\"grantId\":null,\"viaGroupId\":null,\"roleId\":null}]},{\"action\":\"config.value.read\",\"sources\":[{\"source\":\"grant:grt_te7oyp7g4f3iehr6i5d5vog4jq\",\"role\":null,\"grantId\":\"grt_te7oyp7g4f3iehr6i5d5vog4jq\",\"viaGroupId\":null,\"roleId\":null}]}],\"conditionalOn\":[\"req_xbyipuffdjo6pnpwhgybxxrxte\"]},{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"actions\":[{\"action\":\"config.metadata.read\",\"sources\":[{\"source\":\"role:member\",\"role\":\"member\",\"grantId\":null,\"viaGroupId\":null,\"roleId\":null}]},{\"action\":\"config.value.read\",\"sources\":[{\"source\":\"role:member\",\"role\":\"member\",\"grantId\":null,\"viaGroupId\":null,\"roleId\":null}]},{\"action\":\"secret.reveal\",\"sources\":[{\"source\":\"role:member\",\"role\":\"member\",\"grantId\":null,\"viaGroupId\":null,\"roleId\":null}]}],\"conditionalOn\":[]},{\"environmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"actions\":[{\"action\":\"config.metadata.read\",\"sources\":[{\"source\":\"role:member\",\"role\":\"member\",\"grantId\":null,\"viaGroupId\":null,\"roleId\":null}]},{\"action\":\"config.value.read\",\"sources\":[{\"source\":\"role:member\",\"role\":\"member\",\"grantId\":null,\"viaGroupId\":null,\"roleId\":null}]},{\"action\":\"secret.reveal\",\"sources\":[{\"source\":\"role:member\",\"role\":\"member\",\"grantId\":null,\"viaGroupId\":null,\"roleId\":null}]}],\"conditionalOn\":[]}],\"requirements\":[{\"requirementId\":\"req_xbyipuffdjo6pnpwhgybxxrxte\",\"requirementVersion\":1,\"target\":{\"kind\":\"tier\",\"tier\":\"production\"},\"selector\":{\"tags\":[\"tag:prod\"],\"tailnet\":\"example.ts.net\"}}]},\"indirect\":{\"syncTargets\":[],\"connections\":[],\"webhooks\":[],\"oidcBindings\":[],\"credentials\":[],\"personalEnvironments\":[]}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET your own exposure",
+      "name": "your own exposure",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/me/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"member\":{\"identityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\",\"name\":\"Alice\",\"role\":\"admin\",\"removedAt\":null},\"coverage\":{\"complete\":true},\"received\":[{\"itemName\":\"API_KEY\",\"versionId\":\"ver_6fiu5spmp7q52woylrhddc7pje\",\"owningEnvironmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"retiring\",\"retiringUntil\":\"2099-01-01T00:00:00.000Z\",\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"way\":\"written\",\"firstAt\":\"2026-11-16T06:24:27.310Z\",\"lastAt\":\"2026-11-16T06:24:27.310Z\"}]},{\"itemName\":\"API_KEY\",\"versionId\":\"ver_bvvwmxt7z4kln674vmd63xjkgi\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"written\",\"firstAt\":\"2026-11-16T06:24:27.281Z\",\"lastAt\":\"2026-11-16T06:24:27.281Z\"}]},{\"itemName\":\"API_KEY\",\"versionId\":\"ver_nxph62xsiezgyytsvnefweay5a\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"revocation-confirmed\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"replaced\",\"served\":false,\"confirmation\":{\"confirmedAt\":\"2026-01-20T00:00:00.000Z\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"},\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"written\",\"firstAt\":\"2026-11-16T06:24:27.242Z\",\"lastAt\":\"2026-11-16T06:24:27.242Z\"}]},{\"itemName\":\"API_KEY\",\"versionId\":\"ver_p3goumhabj5mnwih3gzamsnf5q\",\"owningEnvironmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"way\":\"written\",\"firstAt\":\"2026-11-16T06:24:27.340Z\",\"lastAt\":\"2026-11-16T06:24:27.340Z\"}]},{\"itemName\":\"DB_URL\",\"versionId\":\"ver_dr5l6v5a7n5cvullvkabvbp2zi\",\"owningEnvironmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"way\":\"written\",\"firstAt\":\"2026-11-16T06:24:27.368Z\",\"lastAt\":\"2026-11-16T06:24:27.368Z\"}]},{\"itemName\":\"OLD\",\"versionId\":\"ver_x347hy7api5nqc5kiiniyzu2x4\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"not-served\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"value-deleted\",\"served\":false,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"written\",\"firstAt\":\"2026-11-16T06:24:27.396Z\",\"lastAt\":\"2026-11-16T06:24:27.396Z\"}]},{\"itemName\":\"TEMP\",\"versionId\":\"ver_znrvmjggryvmks4re4viwrdcnu\",\"owningEnvironmentId\":\"env_rsgwgjfyb53boq7xl3m5hazwie\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"not-served\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"environment-deleted\",\"served\":false,\"confirmation\":null,\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_rsgwgjfyb53boq7xl3m5hazwie\",\"way\":\"written\",\"firstAt\":\"2026-11-16T06:24:27.452Z\",\"lastAt\":\"2026-11-16T06:24:27.452Z\"}]}],\"authorityAtRemoval\":null,\"indirect\":{\"syncTargets\":[],\"connections\":[],\"webhooks\":[],\"oidcBindings\":[],\"credentials\":[],\"personalEnvironments\":[]}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET a member with nothing received",
+      "name": "a member with nothing received",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/{idn:dave}/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"member\":{\"identityId\":\"idn_joesul2lgsf3tpat2xbkerakwe\",\"name\":\"dave\",\"role\":\"member\",\"removedAt\":null},\"coverage\":{\"complete\":true},\"received\":[],\"authorityAtRemoval\":null,\"indirect\":{\"syncTargets\":[],\"connections\":[],\"webhooks\":[],\"oidcBindings\":[],\"credentials\":[],\"personalEnvironments\":[]}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET a person never a member",
+      "name": "a person never a member",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/{idn:erin}/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Member not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET an unknown person",
+      "name": "an unknown person",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/idn_unknownaaaaaaaaaaaaaaaaaaa/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Member not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET U+0000 in the id",
+      "name": "U+0000 in the id",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/a%00b/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET as a member",
+      "name": "as a member",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure",
+      "credential": "dave",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "audit.read",
+          "actor_identity_id": "idn_joesul2lgsf3tpat2xbkerakwe",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_osdiycd3f2te4pvrqr3z4gbsi4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET as an outsider",
+      "name": "as an outsider",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure",
+      "credential": "erin",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "audit.read",
+          "actor_identity_id": "idn_bto7ugeih2h7wpef3oyljtv22y",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_vzx6ulijjgriq2y45sp4quofhi",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET in a frozen Organization",
+      "name": "in a frozen Organization",
+      "method": "GET",
+      "path": "/v1/organizations/frozen/members/{idn:bob}/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"member\":{\"identityId\":\"idn_nw2pdd23r5xsd743cdn7brmxqe\",\"name\":\"bob\",\"role\":\"member\",\"removedAt\":null},\"coverage\":{\"complete\":true},\"received\":[],\"authorityAtRemoval\":null,\"indirect\":{\"syncTargets\":[],\"connections\":[],\"webhooks\":[],\"oidcBindings\":[],\"credentials\":[],\"personalEnvironments\":[]}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET in an unknown Organization",
+      "name": "in an unknown Organization",
+      "method": "GET",
+      "path": "/v1/organizations/nope/members/{idn:bob}/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm the current version",
+      "name": "confirm the current version",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "{ver:development/API_KEY/2}"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"versionId\":\"ver_bvvwmxt7z4kln674vmd63xjkgi\",\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_yhqthb75obod4rac533xpqujtm",
+          "decision": "info",
+          "event_type": "exposure.revocation_confirmed",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": null,
+          "resource": {
+            "environmentId": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+            "identityId": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+            "itemName": "API_KEY",
+            "versionId": "ver_bvvwmxt7z4kln674vmd63xjkgi"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "exposure_confirmations": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+              "confirmed_at": "{fresh}",
+              "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+              "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+              "version_id": "ver_bvvwmxt7z4kln674vmd63xjkgi"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST confirm it again",
+      "name": "confirm it again",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "{ver:development/API_KEY/2}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"versionId\":\"ver_bvvwmxt7z4kln674vmd63xjkgi\",\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm one confirmed before, as a member who can write there",
+      "name": "confirm one confirmed before, as a member who can write there",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "dave",
+      "body": {
+        "versionId": "{ver:development/API_KEY/1}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"versionId\":\"ver_nxph62xsiezgyytsvnefweay5a\",\"confirmedAt\":\"2026-01-20T00:00:00.000Z\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm in production as a member",
+      "name": "confirm in production as a member",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "bob",
+      "body": {
+        "versionId": "{ver:production/DB_URL/1}"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.write",
+          "actor_identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_4rivczfi6v5gjqdp3uj7tuulki",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_6t5el2ls3qckfhuvmuydsud5rm",
+            "projectId": "prj_32vnqh5dv54dpixlih2yjjq324"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST confirm your own, in production",
+      "name": "confirm your own, in production",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/me/exposure/confirmations",
+      "credential": "bob",
+      "body": {
+        "versionId": "{ver:production/DB_URL/1}"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.value.write",
+          "actor_identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_4rivczfi6v5gjqdp3uj7tuulki",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": "env_6t5el2ls3qckfhuvmuydsud5rm",
+            "projectId": "prj_32vnqh5dv54dpixlih2yjjq324"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST confirm a deleted value's version",
+      "name": "confirm a deleted value's version",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "{ver:development/OLD/1}"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"versionId\":\"ver_x347hy7api5nqc5kiiniyzu2x4\",\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_yhqthb75obod4rac533xpqujtm",
+          "decision": "info",
+          "event_type": "exposure.revocation_confirmed",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": null,
+          "resource": {
+            "environmentId": "env_mz2g4tmh7aqrefjct3tzxerp4i",
+            "identityId": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+            "itemName": "OLD",
+            "versionId": "ver_x347hy7api5nqc5kiiniyzu2x4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "exposure_confirmations": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+              "confirmed_at": "{fresh}",
+              "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+              "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+              "version_id": "ver_x347hy7api5nqc5kiiniyzu2x4"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST confirm a deleted environment's version as a member",
+      "name": "confirm a deleted environment's version as a member",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "dave",
+      "body": {
+        "versionId": "{ver:temp/TEMP/1}"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"The value or its environment was deleted: only an Organization Admin can confirm its revocation\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm a deleted environment's version",
+      "name": "confirm a deleted environment's version",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "{ver:temp/TEMP/1}"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"versionId\":\"ver_znrvmjggryvmks4re4viwrdcnu\",\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_yhqthb75obod4rac533xpqujtm",
+          "decision": "info",
+          "event_type": "exposure.revocation_confirmed",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": null,
+          "resource": {
+            "environmentId": "env_rsgwgjfyb53boq7xl3m5hazwie",
+            "identityId": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+            "itemName": "TEMP",
+            "versionId": "ver_znrvmjggryvmks4re4viwrdcnu"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "exposure_confirmations": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+              "confirmed_at": "{fresh}",
+              "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+              "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+              "version_id": "ver_znrvmjggryvmks4re4viwrdcnu"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST confirm a version unknown here",
+      "name": "confirm a version unknown here",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "vv_unknownaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"versionId\":\"vv_unknownaaaaaaaaaaaaaaaaaaaaa\",\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_yhqthb75obod4rac533xpqujtm",
+          "decision": "info",
+          "event_type": "exposure.revocation_confirmed",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": null,
+          "resource": {
+            "environmentId": null,
+            "identityId": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+            "itemName": "GONE",
+            "versionId": "vv_unknownaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "exposure_confirmations": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+              "confirmed_at": "{fresh}",
+              "identity_id": "idn_nw2pdd23r5xsd743cdn7brmxqe",
+              "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+              "version_id": "vv_unknownaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST confirm a former member's version",
+      "name": "confirm a former member's version",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:carol}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "{ver:production/DB_URL/1}"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"versionId\":\"ver_dr5l6v5a7n5cvullvkabvbp2zi\",\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_yhqthb75obod4rac533xpqujtm",
+          "decision": "info",
+          "event_type": "exposure.revocation_confirmed",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": null,
+          "resource": {
+            "environmentId": "env_6t5el2ls3qckfhuvmuydsud5rm",
+            "identityId": "idn_wovbiyngnqtuxka2ufpfrjecva",
+            "itemName": "DB_URL",
+            "versionId": "ver_dr5l6v5a7n5cvullvkabvbp2zi"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "exposure_confirmations": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+              "confirmed_at": "{fresh}",
+              "identity_id": "idn_wovbiyngnqtuxka2ufpfrjecva",
+              "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+              "version_id": "ver_dr5l6v5a7n5cvullvkabvbp2zi"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST confirm a version not received",
+      "name": "confirm a version not received",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "{ver:staging/API_KEY/2}"
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"That version is not in this member's exposure\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm for a person never a member",
+      "name": "confirm for a person never a member",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:erin}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "{ver:development/API_KEY/2}"
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"That version is not in this member's exposure\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm, an empty version",
+      "name": "confirm, an empty version",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": ""
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"versionId: Too small: expected string to have >=1 characters\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm, a version of 201 characters",
+      "name": "confirm, a version of 201 characters",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"versionId: Too big: expected string to have <=200 characters\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm, an extra member",
+      "name": "confirm, an extra member",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "{ver:development/API_KEY/2}",
+        "note": "x"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Unrecognized key: \\\"note\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm, no version",
+      "name": "confirm, no version",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {},
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"versionId: Invalid input: expected string, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm, U+0000 in the version",
+      "name": "confirm, U+0000 in the version",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "a\u0000b"
+      },
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm, U+0000 in the member",
+      "name": "confirm, U+0000 in the member",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/a%00b/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "{ver:development/API_KEY/2}"
+      },
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm, a body that is not JSON",
+      "name": "confirm, a body that is not JSON",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "rawBody": "{",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST confirm in a frozen Organization",
+      "name": "confirm in a frozen Organization",
+      "method": "POST",
+      "path": "/v1/organizations/frozen/members/{idn:bob}/exposure/confirmations",
+      "credential": "alice",
+      "body": {
+        "versionId": "x"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_z6nh73iyrha75ilp7dxo5sf3eq\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_5bkplnjc6hvqtax6mdvfgu7e7i",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_yhqthb75obod4rac533xpqujtm",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_z6nh73iyrha75ilp7dxo5sf3eq",
+            "method": "POST",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org/members/:member/exposure/confirmations"
+          },
+          "organization_id": "org_i3decvhuu2lshbnt5qshb3g4wa",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_z6nh73iyrha75ilp7dxo5sf3eq"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST confirm as an outsider",
+      "name": "confirm as an outsider",
+      "method": "POST",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure/confirmations",
+      "credential": "erin",
+      "body": {
+        "versionId": "{ver:development/API_KEY/2}"
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.read",
+          "actor_identity_id": "idn_bto7ugeih2h7wpef3oyljtv22y",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_vzx6ulijjgriq2y45sp4quofhi",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_lmmssymvwmfbflddtbrkgnmbce",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET bob's exposure after the confirmations",
+      "name": "bob's exposure after the confirmations",
+      "method": "GET",
+      "path": "/v1/organizations/exp/members/{idn:bob}/exposure",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"member\":{\"identityId\":\"idn_nw2pdd23r5xsd743cdn7brmxqe\",\"name\":\"bob\",\"role\":\"member\",\"removedAt\":null},\"coverage\":{\"complete\":true},\"received\":[{\"itemName\":\"API_KEY\",\"versionId\":\"ver_6fiu5spmp7q52woylrhddc7pje\",\"owningEnvironmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"served\",\"servedAs\":\"retiring\",\"retiringUntil\":\"2099-01-01T00:00:00.000Z\",\"notServedBecause\":null,\"served\":true,\"confirmation\":null,\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_sbe6te5p42h74uir2twsgnkezq\",\"way\":\"export\",\"firstAt\":\"2026-01-05T00:00:00.000Z\",\"lastAt\":\"2026-01-06T00:00:00.000Z\"}]},{\"itemName\":\"API_KEY\",\"versionId\":\"ver_bvvwmxt7z4kln674vmd63xjkgi\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"revocation-confirmed\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":{\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"},\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"export\",\"firstAt\":\"2026-01-12T00:00:00.000Z\",\"lastAt\":\"2026-01-13T00:00:00.000Z\"},{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"revealed\",\"firstAt\":\"2026-01-10T00:00:00.000Z\",\"lastAt\":\"2026-01-11T00:00:00.000Z\"}]},{\"itemName\":\"API_KEY\",\"versionId\":\"ver_nxph62xsiezgyytsvnefweay5a\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"revocation-confirmed\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"replaced\",\"served\":false,\"confirmation\":{\"confirmedAt\":\"2026-01-20T00:00:00.000Z\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"},\"rotationHint\":\"Rotate it in the provider's console\",\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"delivered\",\"firstAt\":\"2026-01-03T00:00:00.000Z\",\"lastAt\":\"2026-01-04T00:00:00.000Z\"}]},{\"itemName\":\"DB_URL\",\"versionId\":\"ver_dr5l6v5a7n5cvullvkabvbp2zi\",\"owningEnvironmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"revocation-confirmed\",\"servedAs\":\"current\",\"retiringUntil\":null,\"notServedBecause\":null,\"served\":true,\"confirmation\":{\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"},\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_6t5el2ls3qckfhuvmuydsud5rm\",\"way\":\"revealed\",\"firstAt\":\"2026-01-06T00:00:00.000Z\",\"lastAt\":\"2026-01-07T00:00:00.000Z\"}]},{\"itemName\":\"GONE\",\"versionId\":\"vv_unknownaaaaaaaaaaaaaaaaaaaaa\",\"owningEnvironmentId\":null,\"projectId\":null,\"state\":\"revocation-confirmed\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"unknown\",\"served\":false,\"confirmation\":{\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"},\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"revealed\",\"firstAt\":\"2026-01-09T00:00:00.000Z\",\"lastAt\":\"2026-01-10T00:00:00.000Z\"}]},{\"itemName\":\"OLD\",\"versionId\":\"ver_x347hy7api5nqc5kiiniyzu2x4\",\"owningEnvironmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"revocation-confirmed\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"value-deleted\",\"served\":false,\"confirmation\":{\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"},\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_mz2g4tmh7aqrefjct3tzxerp4i\",\"way\":\"written\",\"firstAt\":\"2026-01-07T00:00:00.000Z\",\"lastAt\":\"2026-01-08T00:00:00.000Z\"}]},{\"itemName\":\"TEMP\",\"versionId\":\"ver_znrvmjggryvmks4re4viwrdcnu\",\"owningEnvironmentId\":\"env_rsgwgjfyb53boq7xl3m5hazwie\",\"projectId\":\"prj_32vnqh5dv54dpixlih2yjjq324\",\"state\":\"revocation-confirmed\",\"servedAs\":null,\"retiringUntil\":null,\"notServedBecause\":\"environment-deleted\",\"served\":false,\"confirmation\":{\"confirmedAt\":\"{time}\",\"actorIdentityId\":\"idn_5bkplnjc6hvqtax6mdvfgu7e7i\"},\"rotationHint\":null,\"receipts\":[{\"environmentId\":\"env_rsgwgjfyb53boq7xl3m5hazwie\",\"way\":\"revealed\",\"firstAt\":\"2026-01-08T00:00:00.000Z\",\"lastAt\":\"2026-01-09T00:00:00.000Z\"}]}],\"authorityAtRemoval\":null,\"indirect\":{\"syncTargets\":[],\"connections\":[],\"webhooks\":[],\"oidcBindings\":[],\"credentials\":[],\"personalEnvironments\":[]}}"
+      },
+      "audit": [],
+      "side": {}
+    }
+  ],
+  "counters": []
+}

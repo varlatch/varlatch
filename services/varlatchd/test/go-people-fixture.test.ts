@@ -272,6 +272,10 @@ function requestTable(): RequestCase[] {
     profile("change nothing", {}, "bob"),
     profile("an image of another scheme", { image: "http://img.example/a.png" }, "bob"),
     profile("an image that is not one", { image: "data:text/plain;base64,aGk=" }, "bob"),
+    // /i without the u flag folds case within ASCII only.
+    profile("an image, U+017F for s", { image: "http\u017f://img.example/a.png" }, "bob"),
+    profile("an image, the Kelvin sign in its type", { image: "data:image/\u212a;base64,aGk=" }, "bob"),
+    profile("an image in capitals", { image: "DATA:IMAGE/PNG;base64,iVBORw0KGgo=" }, "bob"),
     profile("an image over 100KB", { image: `data:image/png;${"é".repeat(52_000)}` }, "bob"),
     profile("an image over 102,400 characters", { image: `https://${"a".repeat(102_400)}` }, "bob"),
     profile("an image that is a number", { image: 7 }, "bob"),

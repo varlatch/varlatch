@@ -14,6 +14,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
+	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/people"
@@ -33,12 +34,16 @@ const (
 	removeMemberPattern     = "DELETE /v1/organizations/{org}/members/{member}"
 	changeMemberRolePattern = "PATCH /v1/organizations/{org}/members/{member}"
 	updateMyProfilePattern  = "PATCH /v1/me/profile"
+	// Step 4.5b.
+	memberExposurePattern            = "GET /v1/organizations/{org}/members/{member}/exposure"
+	confirmExposureRevocationPattern = "POST /v1/organizations/{org}/members/{member}/exposure/confirmations"
 )
 
 func init() {
 	for _, p := range []string{
 		listInvitationsPattern, createInvitationPattern, revokeInvitationPattern,
 		reviewMemberPattern, removeMemberPattern, changeMemberRolePattern, updateMyProfilePattern,
+		memberExposurePattern, confirmExposureRevocationPattern,
 	} {
 		readsItself[p] = true
 	}
@@ -51,6 +56,10 @@ func (r reply) VisitReviewMemberResponse(w http.ResponseWriter) error     { retu
 func (r reply) VisitRemoveMemberResponse(w http.ResponseWriter) error     { return r.visit(w) }
 func (r reply) VisitChangeMemberRoleResponse(w http.ResponseWriter) error { return r.visit(w) }
 func (r reply) VisitUpdateMyProfileResponse(w http.ResponseWriter) error  { return r.visit(w) }
+func (r reply) VisitMemberExposureResponse(w http.ResponseWriter) error   { return r.visit(w) }
+func (r reply) VisitConfirmExposureRevocationResponse(w http.ResponseWriter) error {
+	return r.visit(w)
+}
 
 const (
 	invitationsRoute = "/v1/organizations/:org/invitations"
@@ -213,6 +222,9 @@ func (o *operations) CreateInvitation(ctx context.Context, _ api.CreateInvitatio
 	if err := q.written(ctx, res.reports); err != nil {
 		return nil, err
 	}
+	// The answer carries the invitation's token, shown once: never cached.
+	// An intended difference: the TypeScript route sets no Cache-Control.
+	writerOf(ctx).Header().Set("Cache-Control", "no-store")
 	return reply{status: http.StatusCreated, body: res.out}, nil
 }
 
@@ -365,9 +377,12 @@ func (o *operations) ChangeMemberRole(ctx context.Context, _ api.ChangeMemberRol
 	return ok(res.out), nil
 }
 
+// The image checks are JavaScript's /i without the u flag, which folds
+// case within ASCII only: explicit classes, so U+017F (long s) or U+212A
+// (Kelvin sign) never stand for s or k, as Go's (?i) would let them.
 var (
-	dataImage  = regexp.MustCompile(`(?i)^data:image/[a-z0-9.+-]+;`)
-	httpsImage = regexp.MustCompile(`(?i)^https://`)
+	dataImage  = regexp.MustCompile(`^[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/[a-zA-Z0-9.+-]+;`)
+	httpsImage = regexp.MustCompile(`^[hH][tT][tT][pP][sS]://`)
 )
 
 // UpdateMyProfile is PATCH /v1/me/profile: a person's display name and
@@ -409,4 +424,110 @@ func (o *operations) UpdateMyProfile(ctx context.Context, _ api.UpdateMyProfileR
 		return nil, err
 	}
 	return ok(out), nil
+}
+
+// MemberExposure is GET …/members/{member}/exposure (ADR-0052 Decision
+// 6): inspection while frozen, audit.read; the exposure report for a
+// current or former member, from one read snapshot, Cache-Control:
+// no-store.
+func (o *operations) MemberExposure(ctx context.Context, _ api.MemberExposureRequestObject) (api.MemberExposureResponseObject, error) {
+	q, err := o.enterRoute(ctx, membersRoute+"/exposure", authz.DuringFreezeInspection)
+	if err != nil {
+		return nil, err
+	}
+	if err := q.authorize(ctx, "audit.read"); err != nil {
+		return nil, err
+	}
+	writerOf(ctx).Header().Set("Cache-Control", "no-store")
+	member := pathSegment(q.r, 4)
+	if member == "me" {
+		member = q.p.Identity.ID
+	}
+	tx, err := o.s.opts.Auth.Store().Reader().BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	report, err := people.MemberExposure(ctx, tx, q.org.ID, member, o.s.opts.Now().UnixMicro())
+	if err != nil {
+		return nil, err
+	}
+	if err := q.settle(ctx); err != nil {
+		return nil, err
+	}
+	return ok(report), nil
+}
+
+var confirmationBody = zStrict{{name: "versionId", schema: zString{min: 1, max: 200}}}
+
+// ConfirmExposureRevocation is POST …/members/{member}/exposure/
+// confirmations (ADR-0052 Decision 7): an operator's confirmation that an
+// exposed version was revoked at its provider. config.value.write where
+// the value lives, or, once the value or its environment is gone, a live
+// built-in admin. 201, or 200 for a version already confirmed.
+func (o *operations) ConfirmExposureRevocation(ctx context.Context, _ api.ConfirmExposureRevocationRequestObject) (api.ConfirmExposureRevocationResponseObject, error) {
+	q, err := o.enterRoute(ctx, membersRoute+"/exposure/confirmations", "")
+	if err != nil {
+		return nil, err
+	}
+	if err := q.authorize(ctx, "organization.read"); err != nil {
+		return nil, err
+	}
+	body, err := jsonBody(ctx)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := zParse(confirmationBody, body)
+	if err != nil {
+		return nil, err
+	}
+	versionID, _ := parsed.(jsvalue.Object).Get("versionId")
+	member := pathSegment(q.r, 4)
+	if member == "me" {
+		member = q.p.Identity.ID
+	}
+	reader := o.s.opts.Auth.Store().Reader()
+	version, err := people.ReadExposedVersion(ctx, reader, q.org.ID, member, versionID.(string))
+	if err != nil {
+		return nil, err
+	}
+	if version == nil {
+		return nil, people.NotExposed()
+	}
+	if version.Live && version.EnvironmentID.Valid && version.ProjectID.Valid {
+		env, err := query.New(reader).EnvironmentForAuthorization(ctx, version.EnvironmentID.String)
+		if err != nil {
+			return nil, err
+		}
+		root := env.ID
+		if env.ParentEnvironmentID.Valid {
+			root = env.ParentEnvironmentID.String
+		}
+		if err := q.authorizeWith(ctx, "config.value.write", authz.Resource{OrganizationID: q.org.ID, ProjectID: version.ProjectID.String,
+			Environment: &authz.Environment{ID: env.ID, RootID: root, Tier: env.Tier}}, false); err != nil {
+			return nil, err
+		}
+	} else {
+		role := ""
+		if q.p.Identity.Kind == "human" {
+			if role, err = authz.OrgRole(ctx, reader, q.org.ID, q.p.Identity.ID); err != nil {
+				return nil, err
+			}
+		}
+		if role != "admin" {
+			return nil, domainerr.New("PERMISSION_DENIED", "The value or its environment was deleted: only an Organization Admin can confirm its revocation")
+		}
+	}
+	out, created, reports, err := people.ConfirmRevocation(ctx, o.s.opts.Writer, q.p, q.org.ID, member, versionID.(string), *version, o.s.opts.Now)
+	if err != nil {
+		return nil, q.refused(ctx, err)
+	}
+	if err := q.written(ctx, reports); err != nil {
+		return nil, err
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	return reply{status: status, body: out}, nil
 }

@@ -117,9 +117,10 @@ func TestInvitationWaitsForTheIssuersRemoval(t *testing.T) {
 	}
 }
 
-// A removal and a role change of the same person serialize on their gate:
-// the second finds the first's outcome (promoting someone removed is not
-// found), and the removal is recorded once.
+// A removal takes the person's gate shared, as the TypeScript removal takes
+// them key share; a writer holding it exclusive goes first. A role change
+// after the removal finds the person gone (the single writer orders the
+// two jobs), and the removal is recorded once.
 func TestRemovalAndRoleChangeSerialize(t *testing.T) {
 	wd := newWorld(t)
 	ctx := context.Background()
@@ -134,7 +135,7 @@ func TestRemovalAndRoleChangeSerialize(t *testing.T) {
 		_, _, err := people.RemoveMember(ctx, wd.w, wd.approvals, people.Request{Principal: person("idn_a")}, wd.org, "idn_c", time.Now)
 		removed <- err
 	}()
-	waitingFor(wd, write.Person("idn_c", write.Exclusive))
+	waitingFor(wd, write.Person("idn_c", write.Shared))
 	release()
 	if err := <-removed; err != nil {
 		t.Fatal(err)
@@ -145,5 +146,29 @@ func TestRemovalAndRoleChangeSerialize(t *testing.T) {
 	}
 	if n := wd.count(`SELECT count(*) FROM membership_removals WHERE identity_id = 'idn_c'`); n != 1 {
 		t.Errorf("%d removal records", n)
+	}
+}
+
+// A reader without the admin role asking to remove or change an admin
+// never holds that admin's gate exclusive: with another writer holding it
+// shared, the request is refused at once (the admin check), not queued.
+func TestNonAdminDoesNotHoldTheTargetsGate(t *testing.T) {
+	wd := newWorld(t)
+	ctx := context.Background()
+	wd.exec(`INSERT INTO identities (id, kind, name) VALUES ('idn_m', 'human', 'Mia')`)
+	wd.exec(`INSERT INTO org_memberships (organization_id, identity_id, role) VALUES (?, 'idn_m', 'member')`, wd.org)
+	_, release, err := wd.w.Gates.Acquire(ctx, write.Person("idn_b", write.Shared))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	deadline, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var de *domainerr.Error
+	if _, _, err := people.RemoveMember(deadline, wd.w, wd.approvals, people.Request{Principal: person("idn_m")}, wd.org, "idn_b", time.Now); !errors.As(err, &de) || de.Code != "PERMISSION_DENIED" {
+		t.Errorf("a member removing an admin: %v", err)
+	}
+	if _, _, err := people.ChangeMemberRole(deadline, wd.w, wd.approvals, people.Request{Principal: person("idn_m")}, wd.org, "idn_b", "member", time.Now); !errors.As(err, &de) || de.Code != "PERMISSION_DENIED" {
+		t.Errorf("a member demoting an admin: %v", err)
 	}
 }

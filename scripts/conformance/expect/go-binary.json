@@ -28,10 +28,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "confirmExposureRevocation": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "createOidcBinding": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -133,10 +129,6 @@
         "step": "ADR-0059 step 4"
       },
       "listSyncTargets": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "memberExposure": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

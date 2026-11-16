@@ -5,6 +5,7 @@ package people_test
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -32,7 +35,13 @@ var peopleTables = []string{"installation", "identities", "user", "auth_user_lin
 	"sync_targets", "member_integrations", "webhooks", "oidc_bindings", "membership_removals", "removal_authority", "removal_requirements",
 	"removal_conditions", "security_controls", "security_control_counters", "approval_intents", "organization_freezes", "organization_deletions"}
 
-var placeholder = regexp.MustCompile(`\{(org|idn|inv):([^}]+)\}`)
+// exposureTables are the tables of exposure-v0.22.0.json
+// (go-exposure-fixture.test.ts).
+var exposureTables = []string{"installation", "identities", "user", "auth_user_links", "credentials", "organizations", "org_memberships",
+	"projects", "environments", "contract_revisions", "env_values", "value_versions", "grants", "requirements", "membership_removals",
+	"removal_authority", "removal_requirements", "removal_conditions", "member_exposure", "exposure_confirmations", "organization_freezes"}
+
+var placeholder = regexp.MustCompile(`\{(org|idn|inv|ver):([^}]+)\}`)
 
 // fillPath is go-people-fixture.test.ts's: rows named by what they are.
 func fillPath(t *testing.T, f paritytest.Fixture) func(string) string {
@@ -57,6 +66,8 @@ func fillPath(t *testing.T, f paritytest.Fixture) func(string) string {
 				return org(a)
 			case "idn":
 				return find("identities", func(r paritytest.Row) bool { return r["name"] == a })
+			case "ver":
+				return version(t, f, org("exp"), sub[2])
 			}
 			return find("setup_grants", func(r paritytest.Row) bool { return r["invite_organization_id"] == org(a) && r["invite_name"] == b })
 		})
@@ -79,8 +90,42 @@ func TestTypeScriptFixture(t *testing.T) {
 	if len(f.Requests) < 100 {
 		t.Fatalf("%d requests: the fixture is incomplete", len(f.Requests))
 	}
+	replay(t, f, peopleTables)
+}
+
+// The exposure fixture's operations give the TypeScript server's answers
+// (step 4.5b): the report for current, former and other members, with
+// versions current, replaced, retiring, past their deadline, of a deleted
+// value or environment, and unknown here, the authority at a removal, and
+// a confirmation; confirmations of every kind (where the value lives, by
+// an admin once it is gone, again, refused).
+func TestExposureFixture(t *testing.T) {
+	f, err := paritytest.Read(paritytest.Path("exposure-v0.22.0.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Requests) < 30 {
+		t.Fatalf("%d requests: the fixture is incomplete", len(f.Requests))
+	}
+	replay(t, f, exposureTables)
+}
+
+// replay runs a fixture's requests against varlatchd on its rows.
+func replay(t *testing.T, f paritytest.Fixture, tables []string) {
+	t.Helper()
+	// An intended difference: an issued invitation's answer, which carries
+	// its token, is Cache-Control: no-store here; the TypeScript route sets
+	// none.
+	for i, c := range f.Requests {
+		if c.Method == http.MethodPost && strings.HasSuffix(c.Path, "/invitations") && c.Expect.Status == http.StatusCreated {
+			if f.Requests[i].Expect.Headers == nil {
+				f.Requests[i].Expect.Headers = map[string]string{}
+			}
+			f.Requests[i].Expect.Headers["Cache-Control"] = "no-store"
+		}
+	}
 	path := filepath.Join(t.TempDir(), "varlatch.db")
-	if err := paritytest.Prepare(path, f.Rows, peopleTables); err != nil {
+	if err := paritytest.Prepare(path, f.Rows, tables); err != nil {
 		t.Fatal(err)
 	}
 	store, err := storage.Open(context.Background(), storage.Options{Path: path})
@@ -115,4 +160,42 @@ func TestTypeScriptFixture(t *testing.T) {
 			openapicheck.Recorder{T: t}.Exchange(req, body, rec)
 		},
 	}, f)
+}
+
+// version is {ver:ENV/ITEM/N}: the N-th version, oldest first, of the
+// exp Organization's api value at ENV/ITEM.
+func version(t *testing.T, f paritytest.Fixture, org, arg string) string {
+	parts := strings.Split(arg, "/")
+	env, item, n := parts[0], parts[1], parts[2]
+	var project, environment, value string
+	for _, r := range f.Rows["projects"] {
+		if r["organization_id"] == org && r["slug"] == "api" {
+			project, _ = r["id"].(string)
+		}
+	}
+	for _, r := range f.Rows["environments"] {
+		if r["project_id"] == project && r["name"] == env {
+			environment, _ = r["id"].(string)
+		}
+	}
+	for _, r := range f.Rows["env_values"] {
+		if r["environment_id"] == environment && r["item_name"] == item {
+			value, _ = r["id"].(string)
+		}
+	}
+	var versions []paritytest.Row
+	for _, r := range f.Rows["value_versions"] {
+		if r["value_id"] == value {
+			versions = append(versions, r)
+		}
+	}
+	sort.SliceStable(versions, func(i, j int) bool {
+		return fmt.Sprint(versions[i]["created_at"]) < fmt.Sprint(versions[j]["created_at"])
+	})
+	i, err := strconv.Atoi(n)
+	if err != nil || i < 1 || i > len(versions) {
+		t.Fatalf("no version %s", arg)
+	}
+	id, _ := versions[i-1]["id"].(string)
+	return id
 }
