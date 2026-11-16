@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 )
@@ -142,6 +143,10 @@ func (c *Client) tryDelete(ctx context.Context, key string, r RetentionCheck) Re
 	switch {
 	case delErr == nil:
 		r.Detail = join(r.Detail, "deleting the uploaded version succeeded: the bucket does not protect archives")
+	case !refusedDelete(delErr):
+		// A network error, or an answer that is not a refusal, says nothing
+		// about the retention: inconclusive, never protected.
+		r.Detail = join(r.Detail, "deleting the uploaded version failed without a refusal"+StorageErrorDetail(delErr)+", so whether the bucket protects it is not known; run the test again")
 	case headErr != nil:
 		r.Detail = join(r.Detail, "deleting the uploaded version was refused, but it could not be read back"+StorageErrorDetail(headErr))
 	case r.Mode == "":
@@ -158,6 +163,24 @@ func join(a, b string) string {
 		return b
 	}
 	return a + "; " + b
+}
+
+// refusedDelete is a delete the bucket answered with a refusal: a client
+// error (4xx), whatever the code it names (AWS and B2 answer AccessDenied,
+// MinIO InvalidRequest "Object is WORM protected"), except 404 (nothing
+// there to protect), 408 and 429 (not an answer about the object). A
+// network error or a server error (5xx) says nothing about the retention.
+func refusedDelete(err error) bool {
+	var re *awshttp.ResponseError
+	if !errors.As(err, &re) {
+		return false
+	}
+	switch s := re.HTTPStatusCode(); {
+	case s == 404, s == 408, s == 429:
+		return false
+	default:
+		return s >= 400 && s < 500
+	}
 }
 
 // noLock is a retention read refused because the object has none.

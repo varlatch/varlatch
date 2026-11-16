@@ -20,8 +20,19 @@ import (
 // marker in place of the database, so nothing of the installation's data
 // leaves) is sealed with the BEK, uploaded as <prefix>bucket-test/<id>.vltbak,
 // and checked as lib/backup's TestBucket checks it. The object stays in
-// the bucket for its retention.
+// the bucket for its retention. It is admitted as a run is (no test while
+// a maintenance gate is open), and works in a directory of its own
+// (bucketTestPrefix), which a run's clean-up leaves alone while it runs.
 func (s *Service) TestBucket(ctx context.Context) (backup.BucketReport, error) {
+	if s.o.Admission != nil {
+		leave, ok := s.o.Admission.Enter()
+		if !ok {
+			return backup.BucketReport{}, ErrMaintenance
+		}
+		defer leave()
+	}
+	s.bucketTests.RLock()
+	defer s.bucketTests.RUnlock()
 	cfg := s.o.Config
 	if cfg.BackupDestinationsFile == "" {
 		return backup.BucketReport{}, errors.New("no destination is configured (backup_destinations_file)")
@@ -36,7 +47,7 @@ func (s *Service) TestBucket(ctx context.Context) (backup.BucketReport, error) {
 		return backup.BucketReport{}, err
 	}
 	id := ids.UUID()
-	work := filepath.Join(s.dir, Dir, ".work-"+id)
+	work := filepath.Join(s.dir, Dir, bucketTestPrefix+id)
 	if err := os.MkdirAll(work, 0o700); err != nil {
 		return backup.BucketReport{}, err
 	}
@@ -82,6 +93,9 @@ func (s *Service) TestBucket(ctx context.Context) (backup.BucketReport, error) {
 	}
 	return client.TestBucket(ctx, backup.BucketTestKey(d, id), archive, work, verify), nil
 }
+
+// bucketTestPrefix names a bucket test's directory in backups/.
+const bucketTestPrefix = ".bucket-test-"
 
 // liveMetadata is the installation's metadata from the live database, for
 // the bucket test's archive.

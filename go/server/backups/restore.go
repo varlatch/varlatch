@@ -103,7 +103,7 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 		if existing, err := installationOf(ctx, dbPath); err != nil {
 			return RestoreResult{}, err
 		} else if existing != "" && existing != m.InstallationID {
-			return RestoreResult{}, fmt.Errorf("refusing to replace the installation %s with %s, another installation", existing, m.InstallationID)
+			return RestoreResult{}, fmt.Errorf("refusing to replace the installation %s with %s, another installation; to restore into this data directory anyway, move varlatch.db (with varlatch.db-wal and varlatch.db-shm) out of it first", existing, m.InstallationID)
 		}
 	}
 	if _, err := openRestoreGate(cfg.DataDir, m.ArchiveID, now); err != nil {
@@ -167,6 +167,12 @@ func openRestoreGate(dir, archiveID string, now func() time.Time) (backup.Gate, 
 		case g.Kind == "restore" && g.ArchiveID != nil && *g.ArchiveID == archiveID:
 			g.Phase = "paused"
 			return *g, backup.DurableJSON(path, g, false)
+		case g.Kind == "restore":
+			other := "another archive"
+			if g.ArchiveID != nil {
+				other = "archive " + *g.ArchiveID
+			}
+			return backup.Gate{}, fmt.Errorf("a restore of %s has not completed: run the restore again with that archive to complete it, or, to restore a different archive instead, remove %s from the data directory (varlatchd stopped; maintenance end does not end a restore)", other, backup.GateFile)
 		case g.Active(now()):
 			return backup.Gate{}, errors.New("another maintenance operation owns this installation (maintenance.json); end it before a restore")
 		}
