@@ -79,6 +79,8 @@ export interface Principal {
  *    (group fan-out; the Group id is recorded as provenance),
  *  - each Grant's Role reference expanded to the Role's current Actions
  *    (empty on a revoked/missing Role — default-deny preserved),
+ *  - only the Organization's own Groups and Roles: a Grant naming another
+ *    Organization's grants nothing through it,
  *  - team-scoped Grants expanded to one project-scoped record per owned
  *    Project, so grantApplies never sees a raw team scope.
  * Everything is additive; an identity in no Group with no Roles behaves
@@ -95,7 +97,8 @@ export async function loadGrants(
             g.actions, g.role_id, r.actions AS role_actions, r.revoked_at AS role_revoked,
             r.version AS role_version
      FROM grants g
-     LEFT JOIN roles r ON r.id = g.role_id
+     -- Grants join only this Organization's Groups and Roles.
+     LEFT JOIN roles r ON r.id = g.role_id AND r.organization_id = g.organization_id
      WHERE g.organization_id = $1 AND g.revoked_at IS NULL
        -- A person's Grants count only through a live membership; a machine's
        -- are unchanged (ADR-0052 Decision 1).
@@ -111,6 +114,7 @@ export async function loadGrants(
            SELECT gm.group_id FROM group_members gm
            JOIN groups grp ON grp.id = gm.group_id
            WHERE gm.identity_id = $2 AND grp.revoked_at IS NULL
+             AND grp.organization_id = $1
          )
        )`,
     [organizationId, subjectIdentityId],
