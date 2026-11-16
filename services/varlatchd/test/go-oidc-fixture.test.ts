@@ -133,6 +133,11 @@ function requestTable(): RequestCase[] {
     create("create, an issuer at a private address", { ...good, issuer: "https://10.0.0.5" }),
     create("create", { ...good, claims: { ref: "refs/heads/main", "1": "one", env: "prod" }, extra: true }),
     create("create, no claims", { ...good, subject: "plain" }),
+    // zod's record skips an own __proto__ key unchecked; constructor is an ordinary key.
+    create("create, a __proto__ claim", undefined, { rawBody: `{"issuer":"${ISSUER}","audience":"varlatch","subject":"proto:*","claims":{"__proto__":"x"}}` }),
+    create("create, a constructor claim and a __proto__ that is a number", undefined, {
+      rawBody: `{"issuer":"${ISSUER}","audience":"varlatch","subject":"ctor:*","claims":{"constructor":"c","__proto__":1}}`,
+    }),
     create("create as a member", good, { credential: "bob" }),
     { ...create("create for a person", good), path: bindings("{alice}") },
     { ...create("create in a frozen Organization", good), path: bindings("{fci}", "frozen") },
@@ -172,6 +177,10 @@ function requestTable(): RequestCase[] {
     exchange("exchange, an issuer that is down", token("down")),
     exchange("exchange, an issuer the policy refuses", token("refused")),
     exchange("exchange in a frozen Organization", token("frozen", "frozen")),
+    exchange("exchange, a binding whose __proto__ claim was dropped", token("proto")),
+    exchange("exchange, a constructor claim missing", token("ctorMissing")),
+    exchange("exchange, a constructor claim", token("ctor")),
+    exchange("exchange, U+013D in the signature", token("unicodeSignature")),
     exchange("exchange, a null payload", token("nullPayload")),
     exchange("exchange again: the keys are cached", token("good", "acme", { ttlSeconds: 1 })),
   ]);
@@ -212,6 +221,11 @@ function mint() {
     refused: sign(c("x", {}, REFUSED)),
     frozen: sign(c("frozen:1")),
     nullPayload: sign(null, "k1", key.privateKey, b64("null")),
+    proto: sign(c("proto:1")),
+    ctorMissing: sign(c("ctor:1")),
+    ctor: sign(c("ctor:2", { constructor: "c" })),
+    // Buffer decodes base64 from UTF-16 code units: U+013D's low byte is "=".
+    unicodeSignature: good.split(".").map((seg, i) => (i === 2 ? `${seg.slice(0, 4)}\u013d${seg.slice(4)}` : seg)).join("."),
   };
   return { jwks, tokens };
 }

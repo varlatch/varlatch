@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -190,15 +191,46 @@ func (v *Verifier) Clear() {
 	v.jwks, v.failures, v.lastRefresh = ordered[cachedJWKS]{}, ordered[failure]{}, ordered[int64]{}
 }
 
-// base64url is Buffer.from(s, "base64url"): either alphabet, characters
-// outside both skipped, decoding stops at the first "=", and a last lone
-// character is dropped.
+// codeUnits is s as JavaScript holds it: UTF-16 code units, from UTF-8 or
+// from WTF-8 (a lone surrogate jsvalue keeps as its three bytes).
+func codeUnits(s string) []uint16 {
+	out := make([]uint16, 0, len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1 && i+2 < len(s) && s[i] == 0xed && s[i+1] >= 0xa0 && s[i+1] <= 0xbf:
+			out = append(out, 0xd000|uint16(s[i+1]&0x3f)<<6|uint16(s[i+2]&0x3f))
+			size = 3
+		case r >= 0x10000:
+			hi, lo := utf16.EncodeRune(r)
+			out = append(out, uint16(hi), uint16(lo))
+		default:
+			out = append(out, uint16(r))
+		}
+		i += size
+	}
+	return out
+}
+
+// nodeUTF8 is Buffer.from(s, "utf8"): s's UTF-8, a lone surrogate written
+// as U+FFFD.
+func nodeUTF8(s string) []byte {
+	if utf8.ValidString(s) {
+		return []byte(s)
+	}
+	return []byte(string(utf16.Decode(codeUnits(s))))
+}
+
+// base64url is Buffer.from(s, "base64url"), which decodes the string's
+// UTF-16 code units by their low byte: either alphabet, any other byte
+// skipped, decoding stops at the first "=" (so U+013D, whose low byte is
+// "=", stops it too), and a last lone character is dropped.
 func base64url(s string) []byte {
 	out := make([]byte, 0, len(s)*3/4)
 	var acc uint32
 	n := 0
-	for i := 0; i < len(s); i++ {
-		c := s[i]
+	for _, u := range codeUnits(s) {
+		c := byte(u)
 		var d byte
 		switch {
 		case c >= 'A' && c <= 'Z':
@@ -212,8 +244,7 @@ func base64url(s string) []byte {
 		case c == '/' || c == '_':
 			d = 63
 		case c == '=':
-			i = len(s)
-			continue
+			return finish(out, acc, n)
 		default:
 			continue
 		}
@@ -224,6 +255,11 @@ func base64url(s string) []byte {
 			acc, n = 0, 0
 		}
 	}
+	return finish(out, acc, n)
+}
+
+// finish adds what the last incomplete group holds.
+func finish(out []byte, acc uint32, n int) []byte {
 	switch n {
 	case 2:
 		out = append(out, byte(acc>>4))
@@ -669,7 +705,7 @@ func (v *Verifier) Verify(token, expectedIssuer string) (jsvalue.Object, error) 
 		}
 	}
 	v.mu.Unlock()
-	if !verifySignature(alg, found, []byte(parts[0]+"."+parts[1]), base64url(parts[2])) {
+	if !verifySignature(alg, found, nodeUTF8(parts[0]+"."+parts[1]), base64url(parts[2])) {
 		return nil, fail("Signature verification failed")
 	}
 	return claims, nil

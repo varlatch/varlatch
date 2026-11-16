@@ -2,25 +2,25 @@
   "comment": "Written by services/varlatchd/test/go-oidc-fixture.test.ts from the TypeScript server's own answers; do not edit.",
   "ref": "v0.22.0",
   "serverVersion": "0.22.0",
-  "rootKek": "fc4e59d98fbd2ded6e95e7d7f370cac9e44699212db203a23c1b728d57ac966f",
+  "rootKek": "6a6d2a5f313187ff278dea8d0d03c2eae9b47e1c494a53afbfb191d32e5a451b",
   "tokens": {
-    "alice": "vlt_cli_UF2R0Gsl94QSQFfhZx6cRwCp8OPHPGH0jCVXS2jwEuE",
-    "alice2": "vlt_cli__0Jd-we1q6Jds8OJ2nCh4pb9ZivLixuk8JQHlFTydmU",
-    "bob": "vlt_cli_ZXRnqHFTuwmstw4gPOORmFISXRUaxll86glyqJuAGMM"
+    "alice": "vlt_cli_EkddfcIcDrD5z-kOIj_0NuGcISYYo1CfzNJYH_DzCUc",
+    "alice2": "vlt_cli_VGjiBtDQAn6GikkDrvfKqo0GxtE1d7Z6SN4WR9i-QuA",
+    "bob": "vlt_cli_--Yw0gnBeQFy-2j5k1ESl3lTfbugzC8ozSE_oNqfprA"
   },
   "rows": {
     "installation": [
       {
-        "id": "inst_ekp7ejnknchgicb3sbvl2wr2hy",
+        "id": "inst_7qi5omlh52jggsqbmnycrgpxjy",
         "kek_canary": {
-          "nonce": "J61FWzFPXumgJq0Y",
-          "authTag": "+bONP19YQhcJsDe0Fl1v/w==",
+          "nonce": "QuV1Qx9tBhZ4Keww",
+          "authTag": "6eC6SY6ncoAqzgA+kKwaGg==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "A/Si1YPkuAfxN9+PbpsEkff69N7cpEhwclLhSvqBPkc=",
+          "ciphertext": "V/YV0pv/i4R27QGy8lNEoXpAt2LNAEoqKaTuixMzhnE=",
           "formatVersion": 1
         },
-        "bootstrapped_at": "2026-11-16T11:31:36.714Z",
-        "created_at": "2026-11-16T11:31:36.637Z",
+        "bootstrapped_at": "2026-11-16T12:24:15.615Z",
+        "created_at": "2026-11-16T12:24:15.568Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "public_url": null
@@ -28,62 +28,62 @@
     ],
     "identities": [
       {
-        "id": "idn_2ihyipdqh5b7hlsashsubyq3pi",
-        "kind": "service",
-        "name": "worker",
-        "disabled": false,
-        "installation_admin": false,
-        "created_at": "2026-11-16T11:31:36.972Z",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "last_seen_at": null,
-        "suspended_by_deletion": null
-      },
-      {
-        "id": "idn_c373a6fcwcolek726itjzyr4n4",
-        "kind": "human",
-        "name": "Alice",
-        "disabled": false,
-        "installation_admin": true,
-        "created_at": "2026-11-16T11:31:36.714Z",
-        "organization_id": null,
-        "last_seen_at": "2026-01-15T00:00:00.000Z",
-        "suspended_by_deletion": null
-      },
-      {
-        "id": "idn_egvsvshsxkljepk7g4tkm5pqty",
-        "kind": "ci",
-        "name": "retired",
-        "disabled": true,
-        "installation_admin": false,
-        "created_at": "2026-11-16T11:31:37.042Z",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "last_seen_at": null,
-        "suspended_by_deletion": null
-      },
-      {
-        "id": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa",
+        "id": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
         "kind": "ci",
         "name": "eci",
         "disabled": false,
         "installation_admin": false,
-        "created_at": "2026-11-16T11:31:37.508Z",
-        "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+        "created_at": "2026-11-16T12:24:16.088Z",
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
         "last_seen_at": null,
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+        "id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+        "kind": "service",
+        "name": "worker",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T12:24:15.776Z",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_5shpyoim2tr4p3mr7pputweuaq",
+        "kind": "ci",
+        "name": "other",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T12:24:15.803Z",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
         "kind": "ci",
         "name": "deployer",
         "disabled": false,
         "installation_admin": false,
-        "created_at": "2026-11-16T11:31:36.935Z",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+        "created_at": "2026-11-16T12:24:15.751Z",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
         "last_seen_at": null,
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_jqhvklqgw5oqlxhgn3jxq7trza",
+        "id": "idn_bpjnxuqtrjii43sl46couofgxq",
+        "kind": "ci",
+        "name": "fci",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T12:24:16.023Z",
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
         "kind": "human",
         "name": "Bob",
         "disabled": false,
@@ -94,36 +94,36 @@
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_juvgc6btcpitpweah4jtd2dosa",
+        "id": "idn_v5h53ogaq532wplzu2m4m6llgm",
         "kind": "ci",
-        "name": "other",
-        "disabled": false,
+        "name": "retired",
+        "disabled": true,
         "installation_admin": false,
-        "created_at": "2026-11-16T11:31:37.011Z",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+        "created_at": "2026-11-16T12:24:15.821Z",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
         "last_seen_at": null,
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_sfiw7knvf3vwhx4c54m344a3ia",
-        "kind": "ci",
-        "name": "fci",
+        "id": "idn_zemodxhfeomtnf6enha747g6by",
+        "kind": "human",
+        "name": "Alice",
         "disabled": false,
-        "installation_admin": false,
-        "created_at": "2026-11-16T11:31:37.360Z",
-        "organization_id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
-        "last_seen_at": null,
+        "installation_admin": true,
+        "created_at": "2026-11-16T12:24:15.615Z",
+        "organization_id": null,
+        "last_seen_at": "2026-01-15T00:00:00.000Z",
         "suspended_by_deletion": null
       }
     ],
     "credentials": [
       {
-        "id": "crd_4ivvpj6p7d7t5fagjzeaxiloeq",
-        "identity_id": "idn_jqhvklqgw5oqlxhgn3jxq7trza",
+        "id": "crd_3sjasvalhbvk7nzcwvs2phfnz4",
+        "identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
         "kind": "cli",
         "name": null,
-        "token_hash": "20c53feaf7e169376db8a16a21725db6ee34d1839d796bffb7dca529fa263bc0",
-        "created_at": "2026-11-16T11:31:37.330Z",
+        "token_hash": "0fcff46eea44bc7716c9d7e7fb600f5966ea413c3041ec531ee0b3dc93deb9a6",
+        "created_at": "2026-11-16T12:24:16.009Z",
         "expires_at": null,
         "revoked_at": null,
         "max_uses": null,
@@ -131,17 +131,17 @@
         "last_used_at": null,
         "client": null,
         "auth_session_id": null,
-        "issued_by": "idn_jqhvklqgw5oqlxhgn3jxq7trza",
+        "issued_by": "idn_ppf5pru7f42cjnrehv6yvpazjq",
         "evidence_user_verified": null,
         "evidence_passkey_id": null
       },
       {
-        "id": "crd_ibfd6lnlgivjj7mfuxd7wjpkou",
-        "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
-        "kind": "cli",
-        "name": null,
-        "token_hash": "759b3078cad5b38b010b2678954f601865798a77981640f9c0d6bcb5fc9c5579",
-        "created_at": "2026-11-16T11:31:36.764Z",
+        "id": "crd_df3qotz4tj3nyxpjlg3k62zdse",
+        "identity_id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+        "kind": "service",
+        "name": "worker credential",
+        "token_hash": "3469665f57616d2db7ae1a43b4c8ff17949f53cb29839aad971681845c4b9dd4",
+        "created_at": "2026-11-16T12:24:15.776Z",
         "expires_at": null,
         "revoked_at": null,
         "max_uses": null,
@@ -149,17 +149,17 @@
         "last_used_at": null,
         "client": null,
         "auth_session_id": null,
-        "issued_by": "idn_c373a6fcwcolek726itjzyr4n4",
+        "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
         "evidence_user_verified": null,
         "evidence_passkey_id": null
       },
       {
-        "id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
-        "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+        "id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
         "kind": "cli",
         "name": null,
-        "token_hash": "c470f2fbe3341a942197d9f9315299b9a2026f9cf69ca1f0e4f250788a9fb69d",
-        "created_at": "2026-11-16T11:31:36.745Z",
+        "token_hash": "19941bc759109a45253c0df715ab1d801f0d16ddeb3b03172f1b2a09c95cea46",
+        "created_at": "2026-11-16T12:24:15.630Z",
         "expires_at": null,
         "revoked_at": null,
         "max_uses": null,
@@ -167,17 +167,17 @@
         "last_used_at": "2026-01-15T00:00:00.000Z",
         "client": null,
         "auth_session_id": null,
-        "issued_by": "idn_c373a6fcwcolek726itjzyr4n4",
+        "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
         "evidence_user_verified": null,
         "evidence_passkey_id": null
       },
       {
-        "id": "crd_n5lm5qemlv3jo5i4bdfb64zlvy",
-        "identity_id": "idn_2ihyipdqh5b7hlsashsubyq3pi",
-        "kind": "service",
-        "name": "worker credential",
-        "token_hash": "0081c0f8e7cbd7135085e001c10a66357a32b22d60acb5f6b2626cd9ed999049",
-        "created_at": "2026-11-16T11:31:36.972Z",
+        "id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "7cbf7562af0607ad7d074048168ba0cce46141103e4b43689dd3afd0c346c1db",
+        "created_at": "2026-11-16T12:24:15.642Z",
         "expires_at": null,
         "revoked_at": null,
         "max_uses": null,
@@ -185,61 +185,61 @@
         "last_used_at": null,
         "client": null,
         "auth_session_id": null,
-        "issued_by": "idn_c373a6fcwcolek726itjzyr4n4",
+        "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
         "evidence_user_verified": null,
         "evidence_passkey_id": null
       }
     ],
     "organizations": [
       {
-        "id": "org_7na633n77c2q5wsihuctcvvhvi",
+        "id": "org_3titu3iv6mhvmit5raij65wmu4",
         "slug": "enf",
         "name": "enf",
         "wrapped_org_kek": {
-          "nonce": "h6CAfYpHyJkIOstU",
-          "authTag": "6ga46Umi8bsVE5WjueqQzA==",
+          "nonce": "iOxyuVlio8VtAz5V",
+          "authTag": "8IM30GByEkKi/Q0g6pog2Q==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "r3fBZ/SXXYxGIcv/z9340Cr7MsgAJz+ew6I0VHaEbDw=",
+          "ciphertext": "sAIZzT/bC0nVS8+h2ubKGbg+w3OC0BpImfEwe85PBbE=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-16T11:31:36.872Z",
+        "created_at": "2026-11-16T12:24:15.711Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
         "security_epoch": 2
       },
       {
-        "id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
-        "slug": "frozen",
-        "name": "frozen",
+        "id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "slug": "acme",
+        "name": "acme",
         "wrapped_org_kek": {
-          "nonce": "quxtNwNmuLRvVsbh",
-          "authTag": "rE/J8iOLlbcmNrmZXxleGQ==",
+          "nonce": "v4jh+9zcwIS6BrFE",
+          "authTag": "6WxezSuHRKP/p2Yg1lCrTA==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "n38Z4eFf20P3U1f/gSNjctv8IS7hvAeWMjfqwNB+7es=",
+          "ciphertext": "x56DyrbT7I8URpm52q0EfXZ/caDiA6ELfuUEm/RiSu0=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-16T11:31:36.898Z",
+        "created_at": "2026-11-16T12:24:15.693Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
         "security_epoch": 0
       },
       {
-        "id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "slug": "acme",
-        "name": "acme",
+        "id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "slug": "frozen",
+        "name": "frozen",
         "wrapped_org_kek": {
-          "nonce": "auM8qw8ZLcNtbV0A",
-          "authTag": "MeXrbRU2NFjetjXgPsqMLg==",
+          "nonce": "e09L9nhwJaBeKTOa",
+          "authTag": "omZGSacniRnIriH1k5G0/Q==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "GaX3h+D0yZu+zvJ6/ogA7G3O6TD9H3RKX+7RukbDZz8=",
+          "ciphertext": "mQRZgj+doW1eT6fcTt21i+fHUBs1hvbxk9SpnImAGAE=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-16T11:31:36.838Z",
+        "created_at": "2026-11-16T12:24:15.725Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
@@ -248,66 +248,66 @@
     ],
     "org_memberships": [
       {
-        "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
-        "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
         "role": "admin",
-        "created_at": "2026-11-16T11:31:36.872Z",
+        "created_at": "2026-11-16T12:24:15.711Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
-        "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
-        "role": "admin",
-        "created_at": "2026-11-16T11:31:36.898Z",
-        "removed_at": null,
-        "version": 0
-      },
-      {
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
-        "role": "admin",
-        "created_at": "2026-11-16T11:31:36.838Z",
-        "removed_at": null,
-        "version": 0
-      },
-      {
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "identity_id": "idn_jqhvklqgw5oqlxhgn3jxq7trza",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
         "role": "member",
-        "created_at": "2026-11-16T11:31:37.324Z",
+        "created_at": "2026-11-16T12:24:16.007Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "role": "admin",
+        "created_at": "2026-11-16T12:24:15.693Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "role": "admin",
+        "created_at": "2026-11-16T12:24:15.725Z",
         "removed_at": null,
         "version": 0
       }
     ],
     "security_controls": [
       {
-        "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
         "control": "admin-step-up",
         "mode": "enforce",
         "config": null,
         "version": 2,
-        "changed_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "changed_at": "2026-11-16T11:31:37.645Z"
+        "changed_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "changed_at": "2026-11-16T12:24:16.151Z"
       }
     ],
     "security_control_counters": [],
     "approval_intents": [
       {
         "id": "apr_oidccreateaaaaaaaaaaaaaaaa",
-        "credential_id": "crd_ibfd6lnlgivjj7mfuxd7wjpkou",
-        "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+        "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
         "auth_session_id": null,
-        "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
         "operation": "oidc_binding.create",
         "target": {
-          "identityId": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa"
+          "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm"
         },
-        "body_hash": "hmac-v1:806a0253569b87a5fb394b8591219f323a7b7b3ac5002ef7366ce5e32b7855df",
-        "query_hash": "hmac-v1:14d4d61988565a2bae1df9e64032671c892adad0b39623bac6dbd73553bd03ad",
+        "body_hash": "hmac-v1:11609a21f491fa3a32955352a3264cf2a272748ed3f7732286a0d0f2ce758f84",
+        "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
         "expected_version": null,
         "summary": {
-          "title": "Let tokens from \"https://issuer.example\" with subject \"enf:*\" act as \"eci\" (idn_fgtilyl4jtj2ak2bc4ahuf2cwa)",
+          "title": "Let tokens from \"https://issuer.example\" with subject \"enf:*\" act as \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)",
           "changes": [
             {
               "to": "\"https://issuer.example\"",
@@ -343,20 +343,20 @@
       },
       {
         "id": "apr_oidcrevokeaaaaaaaaaaaaaaaa",
-        "credential_id": "crd_ibfd6lnlgivjj7mfuxd7wjpkou",
-        "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+        "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
         "auth_session_id": null,
-        "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
         "operation": "oidc_binding.delete",
         "target": {
-          "identityId": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa",
-          "oidcBindingId": "oib_h3utspt24p4bz4peegqy4lzkji"
+          "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+          "oidcBindingId": "oib_37zm5xjfwozt3kkdikxxi2qlca"
         },
-        "body_hash": "hmac-v1:e104cc493ec91ed758cd80fbdcc5bc5598b175d4d790a134cbf603058669f950",
-        "query_hash": "hmac-v1:14d4d61988565a2bae1df9e64032671c892adad0b39623bac6dbd73553bd03ad",
+        "body_hash": "hmac-v1:1ef8024b6ac1d2c7c7f5611afa109812323b3fbe215437268b7ba235e22ff9c5",
+        "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
         "expected_version": null,
         "summary": {
-          "title": "Remove the OIDC binding oib_h3utspt24p4bz4peegqy4lzkji (issuer \"https://issuer.example\", subject \"enf-old:*\", audience \"varlatch\") from \"eci\" (idn_fgtilyl4jtj2ak2bc4ahuf2cwa)",
+          "title": "Remove the OIDC binding oib_37zm5xjfwozt3kkdikxxi2qlca (issuer \"https://issuer.example\", subject \"enf-old:*\", audience \"varlatch\") from \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)",
           "changes": []
         },
         "origin": "cli",
@@ -374,9 +374,9 @@
     ],
     "organization_freezes": [
       {
-        "id": "ofz_ydfxxxmzxhavg5hcwnsthacnpm",
-        "organization_id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
-        "frozen_by": "idn_c373a6fcwcolek726itjzyr4n4",
+        "id": "ofz_sicpxtd7j2wjr3v775nvbi7jja",
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "frozen_by": "idn_zemodxhfeomtnf6enha747g6by",
         "frozen_at": "2026-03-01T00:00:00.000Z",
         "reason": "incident drill",
         "lifted_at": null,
@@ -386,57 +386,129 @@
     ],
     "oidc_bindings": [
       {
-        "id": "oib_3aqpkwpxn6iigdfhila6z2vklm",
-        "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "issuer": "https://refused.example",
+        "id": "oib_37zm5xjfwozt3kkdikxxi2qlca",
+        "identity_id": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+        "issuer": "https://issuer.example",
         "audience": "varlatch",
-        "subject": "x",
+        "subject": "enf-old:*",
         "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-03-01T00:00:00.000Z",
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:16.105Z",
         "revoked_at": null
       },
       {
-        "id": "oib_5xozfa5l2msbek4xjglytzfajq",
-        "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "issuer": "https://down.example",
+        "id": "oib_6eux6b5iadldonaqwiemdcl7mi",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
         "audience": "varlatch",
-        "subject": "x",
+        "subject": "revoked:*",
         "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.302Z",
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.971Z",
         "revoked_at": null
       },
       {
-        "id": "oib_7m2abijbvsryiggwtv4dfrvesa",
-        "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+        "id": "oib_6ixbu5yv62l2ldohi2ha7cmju4",
+        "identity_id": "idn_v5h53ogaq532wplzu2m4m6llgm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "retired:*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.931Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "repo:acme/api:*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.845Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_7r6j4ctxfl2mleiy52u64ojaqu",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
         "issuer": "https://issuer.example",
         "audience": "varlatch",
         "subject": "repo:acme/*",
         "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.178Z",
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.910Z",
         "revoked_at": null
       },
       {
-        "id": "oib_aanezm4t62gisvg45ey5p3vxo4",
-        "identity_id": "idn_sfiw7knvf3vwhx4c54m344a3ia",
-        "organization_id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
+        "id": "oib_guybzlzt3v7qbg4hn5iririwfy",
+        "identity_id": "idn_bpjnxuqtrjii43sl46couofgxq",
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
         "issuer": "https://issuer.example",
         "audience": "varlatch",
         "subject": "frozen-revoke:*",
         "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.457Z",
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:16.065Z",
         "revoked_at": null
       },
       {
-        "id": "oib_gfqjvqmaubjqgs4yrhxtqllrgq",
-        "identity_id": "idn_2ihyipdqh5b7hlsashsubyq3pi",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+        "id": "oib_lwor23v4nhushdgitmisvlhsmq",
+        "identity_id": "idn_bpjnxuqtrjii43sl46couofgxq",
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "frozen:*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:16.042Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_pcbplbtsnhef4bpm4wzi676rgq",
+        "identity_id": "idn_5shpyoim2tr4p3mr7pputweuaq",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "repo:acme/shared",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.888Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_qyzykwll6f6agvk2ehotkwojby",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://down.example",
+        "audience": "varlatch",
+        "subject": "x",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.992Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_s3yfy2cvhzkecwc7bqcdhofrpa",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://refused.example",
+        "audience": "varlatch",
+        "subject": "x",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-03-01T00:00:00.000Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_wnbhlrweeqnavncyorlfymh7bi",
+        "identity_id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
         "issuer": "https://issuer.example",
         "audience": "worker-aud",
         "subject": "svc:worker",
@@ -444,80 +516,8 @@
           "env": "prod",
           "ref": "refs/heads/main"
         },
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.116Z",
-        "revoked_at": null
-      },
-      {
-        "id": "oib_h3utspt24p4bz4peegqy4lzkji",
-        "identity_id": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa",
-        "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
-        "issuer": "https://issuer.example",
-        "audience": "varlatch",
-        "subject": "enf-old:*",
-        "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.550Z",
-        "revoked_at": null
-      },
-      {
-        "id": "oib_macffo6rvttjl4f4f7bvoinls4",
-        "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "issuer": "https://issuer.example",
-        "audience": "varlatch",
-        "subject": "revoked:*",
-        "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.273Z",
-        "revoked_at": null
-      },
-      {
-        "id": "oib_ndvjcs6zw7e2zx6hn7xpluukiq",
-        "identity_id": "idn_egvsvshsxkljepk7g4tkm5pqty",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "issuer": "https://issuer.example",
-        "audience": "varlatch",
-        "subject": "retired:*",
-        "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.210Z",
-        "revoked_at": null
-      },
-      {
-        "id": "oib_ubnjy2odcvt4u6bif2b7su3zj4",
-        "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "issuer": "https://issuer.example",
-        "audience": "varlatch",
-        "subject": "repo:acme/api:*",
-        "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.080Z",
-        "revoked_at": null
-      },
-      {
-        "id": "oib_ww5o5tcrlzewr7sfmedet4odeu",
-        "identity_id": "idn_juvgc6btcpitpweah4jtd2dosa",
-        "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
-        "issuer": "https://issuer.example",
-        "audience": "varlatch",
-        "subject": "repo:acme/shared",
-        "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.144Z",
-        "revoked_at": null
-      },
-      {
-        "id": "oib_zv3l5i4w75ogj7u7v7gdtxhrby",
-        "identity_id": "idn_sfiw7knvf3vwhx4c54m344a3ia",
-        "organization_id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
-        "issuer": "https://issuer.example",
-        "audience": "varlatch",
-        "subject": "frozen:*",
-        "claims": null,
-        "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-        "created_at": "2026-11-16T11:31:37.410Z",
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.867Z",
         "revoked_at": null
       }
     ]
@@ -614,7 +614,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"items\":[{\"id\":\"oib_3aqpkwpxn6iigdfhila6z2vklm\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\",\"issuer\":\"https://refused.example\",\"audience\":\"varlatch\",\"subject\":\"x\",\"claims\":null,\"createdAt\":\"2026-03-01T00:00:00.000Z\"},{\"id\":\"oib_ubnjy2odcvt4u6bif2b7su3zj4\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"repo:acme/api:*\",\"claims\":null,\"createdAt\":\"2026-11-16T11:31:37.080Z\"},{\"id\":\"oib_7m2abijbvsryiggwtv4dfrvesa\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"repo:acme/*\",\"claims\":null,\"createdAt\":\"2026-11-16T11:31:37.178Z\"},{\"id\":\"oib_macffo6rvttjl4f4f7bvoinls4\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"revoked:*\",\"claims\":null,\"createdAt\":\"2026-11-16T11:31:37.273Z\"},{\"id\":\"oib_5xozfa5l2msbek4xjglytzfajq\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\",\"issuer\":\"https://down.example\",\"audience\":\"varlatch\",\"subject\":\"x\",\"claims\":null,\"createdAt\":\"2026-11-16T11:31:37.302Z\"}],\"nextCursor\":null}"
+        "body": "{\"items\":[{\"id\":\"oib_s3yfy2cvhzkecwc7bqcdhofrpa\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://refused.example\",\"audience\":\"varlatch\",\"subject\":\"x\",\"claims\":null,\"createdAt\":\"2026-03-01T00:00:00.000Z\"},{\"id\":\"oib_7mvpkjaecrsvvsdgf5axg4rgom\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"repo:acme/api:*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:15.845Z\"},{\"id\":\"oib_7r6j4ctxfl2mleiy52u64ojaqu\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"repo:acme/*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:15.910Z\"},{\"id\":\"oib_6eux6b5iadldonaqwiemdcl7mi\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"revoked:*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:15.971Z\"},{\"id\":\"oib_qyzykwll6f6agvk2ehotkwojby\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://down.example\",\"audience\":\"varlatch\",\"subject\":\"x\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:15.992Z\"}],\"nextCursor\":null}"
       },
       "audit": [],
       "side": {
@@ -623,19 +623,19 @@
             {
               "auth_session_id": null,
               "client": null,
-              "created_at": "2026-11-16T11:31:36.745Z",
+              "created_at": "2026-11-16T12:24:15.630Z",
               "evidence_passkey_id": null,
               "evidence_user_verified": null,
               "expires_at": null,
-              "id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
-              "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
-              "issued_by": "idn_c373a6fcwcolek726itjzyr4n4",
+              "id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+              "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
               "kind": "cli",
               "last_used_at": "{fresh}",
               "max_uses": null,
               "name": null,
               "revoked_at": null,
-              "token_hash": "c470f2fbe3341a942197d9f9315299b9a2026f9cf69ca1f0e4f250788a9fb69d",
+              "token_hash": "19941bc759109a45253c0df715ab1d801f0d16ddeb3b03172f1b2a09c95cea46",
               "use_count": 0
             }
           ]
@@ -658,18 +658,18 @@
       "audit": [
         {
           "action": "identity.manage",
-          "actor_identity_id": "idn_jqhvklqgw5oqlxhgn3jxq7trza",
+          "actor_identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_4ivvpj6p7d7t5fagjzeaxiloeq",
+          "credential_id": "crd_3sjasvalhbvk7nzcwvs2phfnz4",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -685,19 +685,19 @@
             {
               "auth_session_id": null,
               "client": null,
-              "created_at": "2026-11-16T11:31:37.330Z",
+              "created_at": "2026-11-16T12:24:16.009Z",
               "evidence_passkey_id": null,
               "evidence_user_verified": null,
               "expires_at": null,
-              "id": "crd_4ivvpj6p7d7t5fagjzeaxiloeq",
-              "identity_id": "idn_jqhvklqgw5oqlxhgn3jxq7trza",
-              "issued_by": "idn_jqhvklqgw5oqlxhgn3jxq7trza",
+              "id": "crd_3sjasvalhbvk7nzcwvs2phfnz4",
+              "identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
+              "issued_by": "idn_ppf5pru7f42cjnrehv6yvpazjq",
               "kind": "cli",
               "last_used_at": "{fresh}",
               "max_uses": null,
               "name": null,
               "revoked_at": null,
-              "token_hash": "20c53feaf7e169376db8a16a21725db6ee34d1839d796bffb7dca529fa263bc0",
+              "token_hash": "0fcff46eea44bc7716c9d7e7fb600f5966ea413c3041ec531ee0b3dc93deb9a6",
               "use_count": 0
             }
           ]
@@ -747,7 +747,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"items\":[{\"id\":\"oib_zv3l5i4w75ogj7u7v7gdtxhrby\",\"identityId\":\"idn_sfiw7knvf3vwhx4c54m344a3ia\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"frozen:*\",\"claims\":null,\"createdAt\":\"2026-11-16T11:31:37.410Z\"},{\"id\":\"oib_aanezm4t62gisvg45ey5p3vxo4\",\"identityId\":\"idn_sfiw7knvf3vwhx4c54m344a3ia\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"frozen-revoke:*\",\"claims\":null,\"createdAt\":\"2026-11-16T11:31:37.457Z\"}],\"nextCursor\":null}"
+        "body": "{\"items\":[{\"id\":\"oib_lwor23v4nhushdgitmisvlhsmq\",\"identityId\":\"idn_bpjnxuqtrjii43sl46couofgxq\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"frozen:*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:16.042Z\"},{\"id\":\"oib_guybzlzt3v7qbg4hn5iririwfy\",\"identityId\":\"idn_bpjnxuqtrjii43sl46couofgxq\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"frozen-revoke:*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:16.065Z\"}],\"nextCursor\":null}"
       },
       "audit": [],
       "side": {}
@@ -938,10 +938,10 @@
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
           "decision": "deny",
           "event_type": "outbound.refused",
           "listener": "ordinary",
@@ -953,10 +953,10 @@
             "reason": "private_address",
             "scheme": "https"
           },
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": null,
           "resource": {
-            "identityId": "idn_ig42os2jaaptpw2ieeuhcdi4rq"
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
           },
           "schema_version": 1,
           "tailnet": null
@@ -986,15 +986,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{oib#1}\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\",\"issuer\":\"https://issuer.example\",\"audience\":\"aud-new\",\"subject\":\"new:*\",\"claims\":{\"1\":\"one\",\"env\":\"prod\",\"ref\":\"refs/heads/main\"},\"createdAt\":\"{time}\"}"
+        "body": "{\"id\":\"{oib#1}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"aud-new\",\"subject\":\"new:*\",\"claims\":{\"1\":\"one\",\"env\":\"prod\",\"ref\":\"refs/heads/main\"},\"createdAt\":\"{time}\"}"
       },
       "audit": [
         {
           "action": "identity.manage",
-          "actor_identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
           "decision": "info",
           "event_type": "oidc_binding.created",
           "listener": "ordinary",
@@ -1003,10 +1003,10 @@
             "issuer": "https://issuer.example",
             "subject": "new:*"
           },
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": null,
           "resource": {
-            "identityId": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
             "oidcBindingId": "{oib#1}"
           },
           "schema_version": 1,
@@ -1024,11 +1024,11 @@
                 "ref": "refs/heads/main"
               },
               "created_at": "{fresh}",
-              "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
               "id": "{oib#1}",
-              "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
               "issuer": "https://issuer.example",
-              "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
               "revoked_at": null,
               "subject": "new:*"
             }
@@ -1052,15 +1052,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{oib#2}\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\",\"issuer\":\"https://issuer.example\",\"audience\":\"aud-new\",\"subject\":\"plain\",\"claims\":null,\"createdAt\":\"{time}\"}"
+        "body": "{\"id\":\"{oib#2}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"aud-new\",\"subject\":\"plain\",\"claims\":null,\"createdAt\":\"{time}\"}"
       },
       "audit": [
         {
           "action": "identity.manage",
-          "actor_identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
           "decision": "info",
           "event_type": "oidc_binding.created",
           "listener": "ordinary",
@@ -1069,10 +1069,10 @@
             "issuer": "https://issuer.example",
             "subject": "plain"
           },
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": null,
           "resource": {
-            "identityId": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
             "oidcBindingId": "{oib#2}"
           },
           "schema_version": 1,
@@ -1086,13 +1086,131 @@
               "audience": "aud-new",
               "claims": null,
               "created_at": "{fresh}",
-              "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
               "id": "{oib#2}",
-              "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
               "issuer": "https://issuer.example",
-              "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
               "revoked_at": null,
               "subject": "plain"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create, a __proto__ claim",
+      "name": "create, a __proto__ claim",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "rawBody": "{\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"proto:*\",\"claims\":{\"__proto__\":\"x\"}}",
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{oib#3}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"proto:*\",\"claims\":{},\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "info",
+          "event_type": "oidc_binding.created",
+          "listener": "ordinary",
+          "metadata": {
+            "audience": "varlatch",
+            "issuer": "https://issuer.example",
+            "subject": "proto:*"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+            "oidcBindingId": "{oib#3}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "inserted": [
+            {
+              "audience": "varlatch",
+              "claims": {},
+              "created_at": "{fresh}",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "{oib#3}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+              "revoked_at": null,
+              "subject": "proto:*"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create, a constructor claim and a __proto__ that is a number",
+      "name": "create, a constructor claim and a __proto__ that is a number",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "rawBody": "{\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"ctor:*\",\"claims\":{\"constructor\":\"c\",\"__proto__\":1}}",
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{oib#4}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"ctor:*\",\"claims\":{\"constructor\":\"c\"},\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "info",
+          "event_type": "oidc_binding.created",
+          "listener": "ordinary",
+          "metadata": {
+            "audience": "varlatch",
+            "issuer": "https://issuer.example",
+            "subject": "ctor:*"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+            "oidcBindingId": "{oib#4}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "inserted": [
+            {
+              "audience": "varlatch",
+              "claims": {
+                "constructor": "c"
+              },
+              "created_at": "{fresh}",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "{oib#4}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+              "revoked_at": null,
+              "subject": "ctor:*"
             }
           ]
         }
@@ -1119,18 +1237,18 @@
       "audit": [
         {
           "action": "identity.manage",
-          "actor_identity_id": "idn_jqhvklqgw5oqlxhgn3jxq7trza",
+          "actor_identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_4ivvpj6p7d7t5fagjzeaxiloeq",
+          "credential_id": "crd_3sjasvalhbvk7nzcwvs2phfnz4",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
@@ -1180,28 +1298,28 @@
           "Retry-After": "300",
           "Content-Type": "application/json"
         },
-        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_ydfxxxmzxhavg5hcwnsthacnpm\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_sicpxtd7j2wjr3v775nvbi7jja\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": {
-            "freezeId": "ofz_ydfxxxmzxhavg5hcwnsthacnpm",
+            "freezeId": "ofz_sicpxtd7j2wjr3v775nvbi7jja",
             "method": "POST",
             "reason": "organization_frozen",
             "route": "/v1/organizations/:org/identities/:identity/oidc-bindings"
           },
-          "organization_id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
+          "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
           "request_id": "{requestId}",
           "resource": {
-            "freezeId": "ofz_ydfxxxmzxhavg5hcwnsthacnpm"
+            "freezeId": "ofz_sicpxtd7j2wjr3v775nvbi7jja"
           },
           "schema_version": 1,
           "tailnet": null
@@ -1225,7 +1343,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#1} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#1}\",\"operation\":\"oidc_binding.create\",\"organization\":{\"id\":\"org_7na633n77c2q5wsihuctcvvhvi\",\"slug\":\"enf\",\"name\":\"enf\"},\"summary\":{\"title\":\"Let tokens from \\\"https://issuer.example\\\" with subject \\\"enf:*\\\" act as \\\"eci\\\" (idn_fgtilyl4jtj2ak2bc4ahuf2cwa)\",\"changes\":[{\"to\":\"\\\"https://issuer.example\\\"\",\"from\":null,\"field\":\"issuer\",\"loosens\":false},{\"to\":\"\\\"varlatch\\\"\",\"from\":null,\"field\":\"audience\",\"loosens\":false},{\"to\":\"\\\"enf:*\\\"\",\"from\":null,\"field\":\"subject\",\"loosens\":false}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#1}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#1} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#1}\",\"operation\":\"oidc_binding.create\",\"organization\":{\"id\":\"org_3titu3iv6mhvmit5raij65wmu4\",\"slug\":\"enf\",\"name\":\"enf\"},\"summary\":{\"title\":\"Let tokens from \\\"https://issuer.example\\\" with subject \\\"enf:*\\\" act as \\\"eci\\\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)\",\"changes\":[{\"to\":\"\\\"https://issuer.example\\\"\",\"from\":null,\"field\":\"issuer\",\"loosens\":false},{\"to\":\"\\\"varlatch\\\"\",\"from\":null,\"field\":\"audience\",\"loosens\":false},{\"to\":\"\\\"enf:*\\\"\",\"from\":null,\"field\":\"subject\",\"loosens\":false}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#1}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
       },
       "audit": [],
       "side": {
@@ -1236,22 +1354,22 @@
               "approved_at": null,
               "approved_with_passkey_id": null,
               "auth_session_id": null,
-              "body_hash": "hmac-v1:806a0253569b87a5fb394b8591219f323a7b7b3ac5002ef7366ce5e32b7855df",
+              "body_hash": "hmac-v1:11609a21f491fa3a32955352a3264cf2a272748ed3f7732286a0d0f2ce758f84",
               "close_reason": null,
               "closed_at": null,
               "consumed_at": null,
               "created_at": "{fresh}",
-              "credential_id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
+              "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
               "expected_version": null,
               "expires_at": "{fresh}",
               "id": "{apr#1}",
-              "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
               "last_polled_at": null,
               "operation": "oidc_binding.create",
-              "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
               "origin": "cli",
               "poll_interval": 5,
-              "query_hash": "hmac-v1:14d4d61988565a2bae1df9e64032671c892adad0b39623bac6dbd73553bd03ad",
+              "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
               "summary": {
                 "changes": [
                   {
@@ -1273,10 +1391,10 @@
                     "to": "\"enf:*\""
                   }
                 ],
-                "title": "Let tokens from \"https://issuer.example\" with subject \"enf:*\" act as \"eci\" (idn_fgtilyl4jtj2ak2bc4ahuf2cwa)"
+                "title": "Let tokens from \"https://issuer.example\" with subject \"enf:*\" act as \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)"
               },
               "target": {
-                "identityId": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa"
+                "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm"
               }
             }
           ]
@@ -1302,15 +1420,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{oib#3}\",\"identityId\":\"idn_fgtilyl4jtj2ak2bc4ahuf2cwa\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"enf:*\",\"claims\":null,\"createdAt\":\"{time}\"}"
+        "body": "{\"id\":\"{oib#5}\",\"identityId\":\"idn_3ewxwqy5s3fdicnklvm3tpngfm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"enf:*\",\"claims\":null,\"createdAt\":\"{time}\"}"
       },
       "audit": [
         {
           "action": "identity.manage",
-          "actor_identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_ibfd6lnlgivjj7mfuxd7wjpkou",
+          "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
           "decision": "info",
           "event_type": "oidc_binding.created",
           "listener": "ordinary",
@@ -1322,11 +1440,11 @@
             "issuer": "https://issuer.example",
             "subject": "enf:*"
           },
-          "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+          "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
           "request_id": null,
           "resource": {
-            "identityId": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa",
-            "oidcBindingId": "{oib#3}"
+            "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+            "oidcBindingId": "{oib#5}"
           },
           "schema_version": 1,
           "tailnet": null
@@ -1339,11 +1457,11 @@
               "audience": "varlatch",
               "claims": null,
               "created_at": "{fresh}",
-              "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-              "id": "{oib#3}",
-              "identity_id": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "{oib#5}",
+              "identity_id": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
               "issuer": "https://issuer.example",
-              "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
               "revoked_at": null,
               "subject": "enf:*"
             }
@@ -1354,19 +1472,19 @@
             {
               "auth_session_id": null,
               "client": null,
-              "created_at": "2026-11-16T11:31:36.764Z",
+              "created_at": "2026-11-16T12:24:15.642Z",
               "evidence_passkey_id": null,
               "evidence_user_verified": null,
               "expires_at": null,
-              "id": "crd_ibfd6lnlgivjj7mfuxd7wjpkou",
-              "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
-              "issued_by": "idn_c373a6fcwcolek726itjzyr4n4",
+              "id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+              "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
               "kind": "cli",
               "last_used_at": "{fresh}",
               "max_uses": null,
               "name": null,
               "revoked_at": null,
-              "token_hash": "759b3078cad5b38b010b2678954f601865798a77981640f9c0d6bcb5fc9c5579",
+              "token_hash": "7cbf7562af0607ad7d074048168ba0cce46141103e4b43689dd3afd0c346c1db",
               "use_count": 0
             }
           ]
@@ -1378,22 +1496,22 @@
               "approved_at": "2026-01-10T00:01:00.000Z",
               "approved_with_passkey_id": "PasskeyConf001",
               "auth_session_id": null,
-              "body_hash": "hmac-v1:806a0253569b87a5fb394b8591219f323a7b7b3ac5002ef7366ce5e32b7855df",
+              "body_hash": "hmac-v1:11609a21f491fa3a32955352a3264cf2a272748ed3f7732286a0d0f2ce758f84",
               "close_reason": null,
               "closed_at": null,
               "consumed_at": "{fresh}",
               "created_at": "2026-01-10T00:00:00.000Z",
-              "credential_id": "crd_ibfd6lnlgivjj7mfuxd7wjpkou",
+              "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
               "expected_version": null,
               "expires_at": "2099-01-01T00:00:00.000Z",
               "id": "apr_oidccreateaaaaaaaaaaaaaaaa",
-              "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
               "last_polled_at": null,
               "operation": "oidc_binding.create",
-              "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
               "origin": "cli",
               "poll_interval": 5,
-              "query_hash": "hmac-v1:14d4d61988565a2bae1df9e64032671c892adad0b39623bac6dbd73553bd03ad",
+              "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
               "summary": {
                 "changes": [
                   {
@@ -1415,10 +1533,10 @@
                     "to": "\"enf:*\""
                   }
                 ],
-                "title": "Let tokens from \"https://issuer.example\" with subject \"enf:*\" act as \"eci\" (idn_fgtilyl4jtj2ak2bc4ahuf2cwa)"
+                "title": "Let tokens from \"https://issuer.example\" with subject \"enf:*\" act as \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)"
               },
               "target": {
-                "identityId": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa"
+                "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm"
               }
             }
           ]
@@ -1439,19 +1557,19 @@
       "audit": [
         {
           "action": "identity.manage",
-          "actor_identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
           "decision": "info",
           "event_type": "oidc_binding.revoked",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": null,
           "resource": {
-            "identityId": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-            "oidcBindingId": "oib_macffo6rvttjl4f4f7bvoinls4"
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+            "oidcBindingId": "oib_6eux6b5iadldonaqwiemdcl7mi"
           },
           "schema_version": 1,
           "tailnet": null
@@ -1463,12 +1581,12 @@
             {
               "audience": "varlatch",
               "claims": null,
-              "created_at": "2026-11-16T11:31:37.273Z",
-              "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-              "id": "oib_macffo6rvttjl4f4f7bvoinls4",
-              "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+              "created_at": "2026-11-16T12:24:15.971Z",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "oib_6eux6b5iadldonaqwiemdcl7mi",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
               "issuer": "https://issuer.example",
-              "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
               "revoked_at": "{fresh}",
               "subject": "revoked:*"
             }
@@ -1538,19 +1656,19 @@
       "audit": [
         {
           "action": "identity.manage",
-          "actor_identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
           "decision": "info",
           "event_type": "oidc_binding.revoked",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
+          "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
           "request_id": null,
           "resource": {
-            "identityId": "idn_sfiw7knvf3vwhx4c54m344a3ia",
-            "oidcBindingId": "oib_aanezm4t62gisvg45ey5p3vxo4"
+            "identityId": "idn_bpjnxuqtrjii43sl46couofgxq",
+            "oidcBindingId": "oib_guybzlzt3v7qbg4hn5iririwfy"
           },
           "schema_version": 1,
           "tailnet": null
@@ -1562,12 +1680,12 @@
             {
               "audience": "varlatch",
               "claims": null,
-              "created_at": "2026-11-16T11:31:37.457Z",
-              "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-              "id": "oib_aanezm4t62gisvg45ey5p3vxo4",
-              "identity_id": "idn_sfiw7knvf3vwhx4c54m344a3ia",
+              "created_at": "2026-11-16T12:24:16.065Z",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "oib_guybzlzt3v7qbg4hn5iririwfy",
+              "identity_id": "idn_bpjnxuqtrjii43sl46couofgxq",
               "issuer": "https://issuer.example",
-              "organization_id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
+              "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
               "revoked_at": "{fresh}",
               "subject": "frozen-revoke:*"
             }
@@ -1586,7 +1704,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#2} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#2}\",\"operation\":\"oidc_binding.delete\",\"organization\":{\"id\":\"org_7na633n77c2q5wsihuctcvvhvi\",\"slug\":\"enf\",\"name\":\"enf\"},\"summary\":{\"title\":\"Remove the OIDC binding oib_h3utspt24p4bz4peegqy4lzkji (issuer \\\"https://issuer.example\\\", subject \\\"enf-old:*\\\", audience \\\"varlatch\\\") from \\\"eci\\\" (idn_fgtilyl4jtj2ak2bc4ahuf2cwa)\",\"changes\":[]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#2}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#2} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#2}\",\"operation\":\"oidc_binding.delete\",\"organization\":{\"id\":\"org_3titu3iv6mhvmit5raij65wmu4\",\"slug\":\"enf\",\"name\":\"enf\"},\"summary\":{\"title\":\"Remove the OIDC binding oib_37zm5xjfwozt3kkdikxxi2qlca (issuer \\\"https://issuer.example\\\", subject \\\"enf-old:*\\\", audience \\\"varlatch\\\") from \\\"eci\\\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)\",\"changes\":[]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#2}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
       },
       "audit": [],
       "side": {
@@ -1597,29 +1715,29 @@
               "approved_at": null,
               "approved_with_passkey_id": null,
               "auth_session_id": null,
-              "body_hash": "hmac-v1:e104cc493ec91ed758cd80fbdcc5bc5598b175d4d790a134cbf603058669f950",
+              "body_hash": "hmac-v1:1ef8024b6ac1d2c7c7f5611afa109812323b3fbe215437268b7ba235e22ff9c5",
               "close_reason": null,
               "closed_at": null,
               "consumed_at": null,
               "created_at": "{fresh}",
-              "credential_id": "crd_jcdopkekoivhf7yw5ygqzyjp3u",
+              "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
               "expected_version": null,
               "expires_at": "{fresh}",
               "id": "{apr#2}",
-              "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
               "last_polled_at": null,
               "operation": "oidc_binding.delete",
-              "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
               "origin": "cli",
               "poll_interval": 5,
-              "query_hash": "hmac-v1:14d4d61988565a2bae1df9e64032671c892adad0b39623bac6dbd73553bd03ad",
+              "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
               "summary": {
                 "changes": [],
-                "title": "Remove the OIDC binding oib_h3utspt24p4bz4peegqy4lzkji (issuer \"https://issuer.example\", subject \"enf-old:*\", audience \"varlatch\") from \"eci\" (idn_fgtilyl4jtj2ak2bc4ahuf2cwa)"
+                "title": "Remove the OIDC binding oib_37zm5xjfwozt3kkdikxxi2qlca (issuer \"https://issuer.example\", subject \"enf-old:*\", audience \"varlatch\") from \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)"
               },
               "target": {
-                "identityId": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa",
-                "oidcBindingId": "oib_h3utspt24p4bz4peegqy4lzkji"
+                "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+                "oidcBindingId": "oib_37zm5xjfwozt3kkdikxxi2qlca"
               }
             }
           ]
@@ -1643,10 +1761,10 @@
       "audit": [
         {
           "action": "identity.manage",
-          "actor_identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_ibfd6lnlgivjj7mfuxd7wjpkou",
+          "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
           "decision": "info",
           "event_type": "oidc_binding.revoked",
           "listener": "ordinary",
@@ -1655,11 +1773,11 @@
             "approvalPasskeyId": "PasskeyConf001",
             "approvalUserVerified": true
           },
-          "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+          "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
           "request_id": null,
           "resource": {
-            "identityId": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa",
-            "oidcBindingId": "oib_h3utspt24p4bz4peegqy4lzkji"
+            "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+            "oidcBindingId": "oib_37zm5xjfwozt3kkdikxxi2qlca"
           },
           "schema_version": 1,
           "tailnet": null
@@ -1671,12 +1789,12 @@
             {
               "audience": "varlatch",
               "claims": null,
-              "created_at": "2026-11-16T11:31:37.550Z",
-              "created_by": "idn_c373a6fcwcolek726itjzyr4n4",
-              "id": "oib_h3utspt24p4bz4peegqy4lzkji",
-              "identity_id": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa",
+              "created_at": "2026-11-16T12:24:16.105Z",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "oib_37zm5xjfwozt3kkdikxxi2qlca",
+              "identity_id": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
               "issuer": "https://issuer.example",
-              "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
               "revoked_at": "{fresh}",
               "subject": "enf-old:*"
             }
@@ -1689,29 +1807,29 @@
               "approved_at": "2026-01-10T00:01:00.000Z",
               "approved_with_passkey_id": "PasskeyConf001",
               "auth_session_id": null,
-              "body_hash": "hmac-v1:e104cc493ec91ed758cd80fbdcc5bc5598b175d4d790a134cbf603058669f950",
+              "body_hash": "hmac-v1:1ef8024b6ac1d2c7c7f5611afa109812323b3fbe215437268b7ba235e22ff9c5",
               "close_reason": null,
               "closed_at": null,
               "consumed_at": "{fresh}",
               "created_at": "2026-01-10T00:00:00.000Z",
-              "credential_id": "crd_ibfd6lnlgivjj7mfuxd7wjpkou",
+              "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
               "expected_version": null,
               "expires_at": "2099-01-01T00:00:00.000Z",
               "id": "apr_oidcrevokeaaaaaaaaaaaaaaaa",
-              "identity_id": "idn_c373a6fcwcolek726itjzyr4n4",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
               "last_polled_at": null,
               "operation": "oidc_binding.delete",
-              "organization_id": "org_7na633n77c2q5wsihuctcvvhvi",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
               "origin": "cli",
               "poll_interval": 5,
-              "query_hash": "hmac-v1:14d4d61988565a2bae1df9e64032671c892adad0b39623bac6dbd73553bd03ad",
+              "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
               "summary": {
                 "changes": [],
-                "title": "Remove the OIDC binding oib_h3utspt24p4bz4peegqy4lzkji (issuer \"https://issuer.example\", subject \"enf-old:*\", audience \"varlatch\") from \"eci\" (idn_fgtilyl4jtj2ak2bc4ahuf2cwa)"
+                "title": "Remove the OIDC binding oib_37zm5xjfwozt3kkdikxxi2qlca (issuer \"https://issuer.example\", subject \"enf-old:*\", audience \"varlatch\") from \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)"
               },
               "target": {
-                "identityId": "idn_fgtilyl4jtj2ak2bc4ahuf2cwa",
-                "oidcBindingId": "oib_h3utspt24p4bz4peegqy4lzkji"
+                "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+                "oidcBindingId": "oib_37zm5xjfwozt3kkdikxxi2qlca"
               }
             }
           ]
@@ -1978,12 +2096,12 @@
           "Cache-Control": "no-store",
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{crd#1}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\"}"
+        "body": "{\"id\":\"{crd#1}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
           "authz": null,
           "client": null,
           "credential_id": "{crd#1}",
@@ -1995,13 +2113,13 @@
             "issuer": "https://issuer.example",
             "kind": "oidc",
             "method": "oidc",
-            "oidcBindingId": "oib_7m2abijbvsryiggwtv4dfrvesa",
+            "oidcBindingId": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
             "subject": "repo:acme/api:ref:refs/heads/main"
           },
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": null,
           "resource": {
-            "identityId": "idn_ig42os2jaaptpw2ieeuhcdi4rq"
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
           },
           "schema_version": 1,
           "tailnet": null
@@ -2018,8 +2136,8 @@
               "evidence_user_verified": null,
               "expires_at": "{fresh}",
               "id": "{crd#1}",
-              "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-              "issued_by": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
               "kind": "oidc",
               "last_used_at": null,
               "max_uses": null,
@@ -2052,12 +2170,12 @@
           "Cache-Control": "no-store",
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{crd#2}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\"}"
+        "body": "{\"id\":\"{crd#2}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
           "authz": null,
           "client": null,
           "credential_id": "{crd#2}",
@@ -2069,13 +2187,13 @@
             "issuer": "https://issuer.example",
             "kind": "oidc",
             "method": "oidc",
-            "oidcBindingId": "oib_7m2abijbvsryiggwtv4dfrvesa",
+            "oidcBindingId": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
             "subject": "repo:acme/api:ref:refs/heads/main"
           },
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": null,
           "resource": {
-            "identityId": "idn_ig42os2jaaptpw2ieeuhcdi4rq"
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
           },
           "schema_version": 1,
           "tailnet": null
@@ -2092,8 +2210,8 @@
               "evidence_user_verified": null,
               "expires_at": "{fresh}",
               "id": "{crd#2}",
-              "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-              "issued_by": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
               "kind": "oidc",
               "last_used_at": null,
               "max_uses": null,
@@ -2126,12 +2244,12 @@
           "Cache-Control": "no-store",
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{crd#3}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\"}"
+        "body": "{\"id\":\"{crd#3}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
           "authz": null,
           "client": null,
           "credential_id": "{crd#3}",
@@ -2143,13 +2261,13 @@
             "issuer": "https://issuer.example",
             "kind": "oidc",
             "method": "oidc",
-            "oidcBindingId": "oib_7m2abijbvsryiggwtv4dfrvesa",
+            "oidcBindingId": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
             "subject": "repo:acme/api:pull/7"
           },
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": null,
           "resource": {
-            "identityId": "idn_ig42os2jaaptpw2ieeuhcdi4rq"
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
           },
           "schema_version": 1,
           "tailnet": null
@@ -2166,8 +2284,8 @@
               "evidence_user_verified": null,
               "expires_at": "{fresh}",
               "id": "{crd#3}",
-              "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-              "issued_by": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
               "kind": "oidc",
               "last_used_at": null,
               "max_uses": null,
@@ -2242,12 +2360,12 @@
           "Cache-Control": "no-store",
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{crd#4}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_2ihyipdqh5b7hlsashsubyq3pi\"}"
+        "body": "{\"id\":\"{crd#4}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_4cho6seojkmqaoe3yw2pqcthpm\"}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_2ihyipdqh5b7hlsashsubyq3pi",
+          "actor_identity_id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
           "authz": null,
           "client": null,
           "credential_id": "{crd#4}",
@@ -2259,13 +2377,13 @@
             "issuer": "https://issuer.example",
             "kind": "oidc",
             "method": "oidc",
-            "oidcBindingId": "oib_gfqjvqmaubjqgs4yrhxtqllrgq",
+            "oidcBindingId": "oib_wnbhlrweeqnavncyorlfymh7bi",
             "subject": "svc:worker"
           },
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": null,
           "resource": {
-            "identityId": "idn_2ihyipdqh5b7hlsashsubyq3pi"
+            "identityId": "idn_4cho6seojkmqaoe3yw2pqcthpm"
           },
           "schema_version": 1,
           "tailnet": null
@@ -2282,8 +2400,8 @@
               "evidence_user_verified": null,
               "expires_at": "{fresh}",
               "id": "{crd#4}",
-              "identity_id": "idn_2ihyipdqh5b7hlsashsubyq3pi",
-              "issued_by": "idn_2ihyipdqh5b7hlsashsubyq3pi",
+              "identity_id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+              "issued_by": "idn_4cho6seojkmqaoe3yw2pqcthpm",
               "kind": "oidc",
               "last_used_at": null,
               "max_uses": null,
@@ -2678,10 +2796,10 @@
             "reason": "private_address",
             "scheme": "https"
           },
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": "{requestId}",
           "resource": {
-            "oidcBindingId": "oib_3aqpkwpxn6iigdfhila6z2vklm"
+            "oidcBindingId": "oib_s3yfy2cvhzkecwc7bqcdhofrpa"
           },
           "schema_version": 1,
           "tailnet": null
@@ -2727,7 +2845,7 @@
           "Retry-After": "300",
           "Content-Type": "application/json"
         },
-        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_ydfxxxmzxhavg5hcwnsthacnpm\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_sicpxtd7j2wjr3v775nvbi7jja\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
       },
       "audit": [
         {
@@ -2740,16 +2858,248 @@
           "event_type": "authorization.denied",
           "listener": null,
           "metadata": {
-            "freezeId": "ofz_ydfxxxmzxhavg5hcwnsthacnpm",
+            "freezeId": "ofz_sicpxtd7j2wjr3v775nvbi7jja",
             "method": "POST",
             "reason": "organization_frozen",
             "route": "/v1/oidc/token"
           },
-          "organization_id": "org_ijdwb2eo6fnzc7ynzklhakn22u",
+          "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
           "request_id": "{requestId}",
           "resource": {
-            "freezeId": "ofz_ydfxxxmzxhavg5hcwnsthacnpm"
+            "freezeId": "ofz_sicpxtd7j2wjr3v775nvbi7jja"
           },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a binding whose __proto__ claim was dropped",
+      "name": "exchange, a binding whose __proto__ claim was dropped",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:proto}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{crd#5}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+          "authz": null,
+          "client": null,
+          "credential_id": "{crd#5}",
+          "decision": "info",
+          "event_type": "credential.issued",
+          "listener": null,
+          "metadata": {
+            "expiresAt": "{time}",
+            "issuer": "https://issuer.example",
+            "kind": "oidc",
+            "method": "oidc",
+            "oidcBindingId": "{oib#3}",
+            "subject": "proto:1"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "inserted": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "{fresh}",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": "{fresh}",
+              "id": "{crd#5}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "kind": "oidc",
+              "last_used_at": null,
+              "max_uses": null,
+              "name": "oidc:proto:1",
+              "revoked_at": null,
+              "token_hash": "{fresh}",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST exchange, a constructor claim missing",
+      "name": "exchange, a constructor claim missing",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:ctorMissing}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "no-matching-binding"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a constructor claim",
+      "name": "exchange, a constructor claim",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:ctor}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{crd#6}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+          "authz": null,
+          "client": null,
+          "credential_id": "{crd#6}",
+          "decision": "info",
+          "event_type": "credential.issued",
+          "listener": null,
+          "metadata": {
+            "expiresAt": "{time}",
+            "issuer": "https://issuer.example",
+            "kind": "oidc",
+            "method": "oidc",
+            "oidcBindingId": "{oib#4}",
+            "subject": "ctor:2"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "inserted": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "{fresh}",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": "{fresh}",
+              "id": "{crd#6}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "kind": "oidc",
+              "last_used_at": null,
+              "max_uses": null,
+              "name": "oidc:ctor:2",
+              "revoked_at": null,
+              "token_hash": "{fresh}",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST exchange, U+013D in the signature",
+      "name": "exchange, U+013D in the signature",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:unicodeSignature}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "Signature verification failed"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
           "schema_version": 1,
           "tailnet": null
         }
@@ -2799,15 +3149,15 @@
           "Cache-Control": "no-store",
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{crd#5}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_ig42os2jaaptpw2ieeuhcdi4rq\"}"
+        "body": "{\"id\":\"{crd#7}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
           "authz": null,
           "client": null,
-          "credential_id": "{crd#5}",
+          "credential_id": "{crd#7}",
           "decision": "info",
           "event_type": "credential.issued",
           "listener": null,
@@ -2816,13 +3166,13 @@
             "issuer": "https://issuer.example",
             "kind": "oidc",
             "method": "oidc",
-            "oidcBindingId": "oib_7m2abijbvsryiggwtv4dfrvesa",
+            "oidcBindingId": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
             "subject": "repo:acme/api:ref:refs/heads/main"
           },
-          "organization_id": "org_wi7znvtyovyduuguqdafvw47ai",
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
           "request_id": null,
           "resource": {
-            "identityId": "idn_ig42os2jaaptpw2ieeuhcdi4rq"
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
           },
           "schema_version": 1,
           "tailnet": null
@@ -2838,9 +3188,9 @@
               "evidence_passkey_id": null,
               "evidence_user_verified": null,
               "expires_at": "{fresh}",
-              "id": "{crd#5}",
-              "identity_id": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
-              "issued_by": "idn_ig42os2jaaptpw2ieeuhcdi4rq",
+              "id": "{crd#7}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
               "kind": "oidc",
               "last_used_at": null,
               "max_uses": null,
@@ -2859,7 +3209,7 @@
     "jwks": [
       {
         "kty": "RSA",
-        "n": "uN6e_Y0pzMuIFH3cfuuoKo6kFGqTisbdgrC-RQHd7DaUIu47Gi7sFg8NxndSwk27cfriQdP79nexxMV1owtu0ppBb1mD5tAvfBsiLYk0F_oKZmVBIcW7BfkTSY_L7RanqbJZd8mnGN0hOI7aRO4TCIS6Nr3AA_0Ttt1xFOpeaJdxb-AjEqcfVeAJnUteMYvD5lNwFzYqjoRQyxSvtZZOL6XE_ck66KXUXVjN-tRsP3QEPjD8uG9gRUTDdJhZDnHCiLkhB_h3ZRjUm8Rv8j3KDwjjN7cvJn6fl688xSS3Txili-MTu7lwe3t20vhIrrjCHrRgMlCZLQL-NZUlP1qu9w",
+        "n": "wTCgY3BOJasDjN5SjeI_J1UDh-7ESS9jeJvdITC7_QlHMzLjzLi66ZC-74RIMDqKtWCmk9bnODlRWGuexC4I42--j_0-WEZR8KSDTQjLktxK4T9jbZ1Aj4MCrWIKkEBDJE1-YZyoh7iXi9OlYFevO-2Q5NJvfLB5feXjT0jdKK_zDUM1MkQ1jd56W9rWLM8kF1W2dmx_Ib10OTP9TxjzZNkSFxyxbpgEXPORlw4psAz08dROWyt6zTr0QFfaHM7MbN_ykqujnFTNgKPqFyDJ7I43-pphhUtJ3zlRQq1M4x0oK2eRAPi8x02WAlSs-JH2Q9sTKHxpdh9M-Sl6SnnF1Q",
         "e": "AQAB",
         "kid": "k1",
         "alg": "RS256",
@@ -2867,22 +3217,26 @@
       }
     ],
     "tokens": {
-      "good": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.DRe1t98qZWgMVHxFyugzm3agVHkoGB3nkz-4cIAQh22Tmhh_oRcEUSCg6-UUYup-UnSkFhtykbjc5iL1to8uACAKqyE9Ky8he_FjTFUU36XI9bEn5XQSX33o50wiAv8qsf9N-UdhRbQeYTwr9UdjT9kum-b9_i_KHyJO1kHQOVapdu8kNr20cxU-GsgmvmS4Sjj2zGkPsHeRRv-HMuH5Ox4yWjgkhTOfTYfzcgu4oXVe9sNZT13drYrdoGbQP_Fo-fR52OiCt71-ah-k-y7ClP0xbKMh00vl2rWAiqJ3co-NlQSnjChwloJUHishfUnp2qNcYViRCmyDNtruW1Gnkg",
-      "unknownIssuer": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL25vYm9keS5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJ4IiwiaWF0IjoxNzYzMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.NI4BNehhU173J3oEiSCvMZnB3QzFwgXuJikG_Bfe9PdmEE4QjPi_Isv479WDIoC8XYjkXcHFlElBuvxaec1lkNXAZQdclmLJDIBNGemnOWDHFWkwjOqEmKsHOGRsKhX1u-C93Q-P3xt-2N8BAFKOJ4zvhlwjUGaCtky-o1pxxUakbfx0P2ZM4sp8R5T0MffIAFyDlXjMsXcGIt2BfroPCSzg50QHANMR0p6J1IAUyqhhrzEDuuGbJyXeGy0UkR4ziM_74vQaSJpflMPvH-EuIf3VXnqW0sr2-im04igVmCke9gM9bEwgdmjuwZ-EuJMJ4tmP8uZGn4gfqkvnFbF_vQ",
-      "audArray": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjpbIm90aGVyIiwidmFybGF0Y2giXSwic3ViIjoicmVwbzphY21lL2FwaTpwdWxsLzciLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.RyqU-zdGOvHVpbizUmiz-l6AQimg_bkgjjHzlslQDVM1GPcKQwl6I4Kx7q3dyu7xy__bY4obVSw_M8JtBTAJpTuaWNmcN7u0MQECfh3GuqaTrXPWX5o5BpvkRnusTWh19czSgLjcl4C3DUgBpDBCqJ_bjsQsd_Eg-VK6D8o8ChJrhKecLv59QnLRKK97YP4VQt5FlRnfQu3U2NzZv2E1D0ZC1iaOHBixbANPZ8G_pBS-OK7bNRQF9ljJXyLKPRMNA3os84M8z3CiQoMjnrCprnuLrhIRdbDUogce3-daWgr_7KQJxVDcfUtLGCmnSRE_sUXAiRwfJDrvjaqGGIRTxw",
-      "wrongAudience": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoibm9wZSIsInN1YiI6InJlcG86YWNtZS9hcGk6eCIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.nj-DTdv707KLwZ_xlKfKwjpAKKBj8wRQkWXJH0KNRvY9Yy9kfnb4Y5uCq8XTfiONTHYUZC188MzT762-B6KqSqTCudHzqRaArwfW2V61Mvyn1EyRlFrMb8NsIE0Kc8FR6fO984WUT8nbN8nCZAqfxiSCNv59pdViadlFmN04qpx5wza4xdkpwpRCGhGXfWSwf7cpnvEbi8bNa4kf2e-y8EWDZm1Nfh94xeItwEg7SvvZAz0ZfYLXv2aJTE_8gsrq-e2enkr2UVNhobegVbgohvGvPcaYz9pHUUZ4Hg5oQliXesdFqHYj60hGGgvrKDhFvPizma_duVvoiS3DMg7RHg",
-      "worker": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoid29ya2VyLWF1ZCIsInN1YiI6InN2Yzp3b3JrZXIiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMCwicmVmIjoicmVmcy9oZWFkcy9tYWluIiwiZW52IjoicHJvZCJ9.CV2nKOS6hGOCmWivgBJwa7RWmgz4T1GWWMkhalCz4THdzHPkBY5hfMhsg4ifh4pDZv_uPLsbuu5D2G61Az2KzFtT9uMt4TeoYFJPxk1eA5F8wA7Lk6on2Sw1E8-m-_4ugm1aF6zAyWP-EZ2HFG46tgMIj3Q0lrZR-W_iEuY_fY_1NYQwFW06rC9VvE4MEVKdzLYVw-89UQHwtMc5wZPbkHMLfCm5cogvQIQEzynwL4N3emvmX2mqWM1WWf2ViRWqpyZ0UBbphl2O_votxhn8SzErKL1LwgkP5QX373llSusy6VfC_WJrDh_BnSMiuPLdF-qVYkViarnYvSfjqYjW5Q",
-      "workerOtherEnv": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoid29ya2VyLWF1ZCIsInN1YiI6InN2Yzp3b3JrZXIiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMCwicmVmIjoicmVmcy9oZWFkcy9tYWluIiwiZW52IjoiZGV2In0.SZGuUEIGi9dO47yrRBI8830gYQFeDS4Z8Y5osY0aVj11cVe5zR8yZHgEf5Bj9bNQafpiyo8XoAwmXtBvmvmoCrC1usVL5F-CljS_jeRyzkSRz0BYERD2h5RM2Tc5zi-O7fUIBdEA2UtVN_pbgXcNjj2aL9X18rb7UBTbxfefnm7zHTxa_3DE0PBdvbz17HGxxFwigElo1lFGXfnk7eFR_iPZrL9EEjbKVQIUecxwIY5e7fWKwc4fWWulnVb95FB34Z8GNPDU9G_-pLWYEcQJPlXxzrP-wkgKIfQ1jdo_quwhLfOBS_4_ml6mbp2ghr0MAcoSLPQ8x-jZnFfFCqOHBQ",
-      "shared": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvc2hhcmVkIiwiaWF0IjoxNzYzMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.FF1mYxCuyupP2-StKHnw50tdt_QeNMhQD42UGeXghTGxhbl5Jwr7vcoDt19rcy7K_IN-lqzzUqPPg2HIHJH7Nzls8IIn7EY2JU_c6A_1STd5GAGE12b_671etWjTsXuA3Yf3py-8qZbDNVXo1z77J3cSLj_3rqpJstzo7ZOvh3vfZxpVCn_GUpViwfAq4e_u8fuFf8YqtoAtWncYSebqaPC7gCvbixkHQwdPcQe7cqXWe5mhgDwWR6BbasqbEBjcDIEUzYRLndWVZHkel0YeDf5UHtJq0tvNT9ksO-YHXV3jCOR5y4nKtSvulaeYOu0l_P5JX4BHXIseavd5CShzOA",
-      "expired": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOngiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6MTYwMDAwMDAwMH0.KdoktQnZGFp2nF3v1ki9NRA1qUEqp_Hc6IImua62G97PWmhC5L3Pd4Ytb8WpEp6kH8CZGPG2WejJLPHYIDkdU7FwwO0DXxO_cUvsCFjshp55GlrDOPL1pB7APPj5Ha6nr0tHDs5NUqYtDfvBsUPMPYb9x7NAiCk9PeISN9F7tzcAUth_IsI1jkKTjLxXi4oN1KywfXrnUo1ZPK5My10rosultWe_L0LF9-U-PnL7rR9oTStz7mnQ56zcMAzsRwDs_sePgKopvPodvmuyaZ37YlPZAsS1-G0nxX0czDKUkAFTakWWyZjI11pmT32-Q8lI0gaaxhwYsY5qDksQqxHOfQ",
-      "badSignature": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.DRe1t98qZWgMVHxFyugzm3agVHkoGB3nkz-4cIAQh22Tmhh_oRcEUSCg6-UUYup-UnSkFhtykbjc5iL1to8uACAKqyE9Ky8he_FjTFUU36XI9bEn5XQSX33o50wiAv8qsf9N-UdhRbQeYTwr9UdjT9kum-b9_i_KHyJO1kHQOVapdu8kNr20cxU-GsgmvmS4Sjj2zGkPsHeRRv-HMuH5Ox4yWjgkhTOfTYfzcgu4oXVe9sNZT13drYrdoGbQP_Fo-fR52OiCt71-ah-k-y7ClP0xbKMh00vl2rWAiqJ3co-NlQSnjChwloJUHishfUnp2qNcYViRCmyDNtruAAAAAA",
-      "unknownKey": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ims5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOngiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.l-0339La8jlv20xW9Z49pF8j_mvb9Ieu3b_6JdPdKv17q6SZcB4X5ftn6kCxl0JYton7Z2Pka-0lqlja_Jauvr0ycmqRWksAbe1eg9pojGNSd7FZMA2aCXmrNA9GbO4mQzMjQ4iUQ2YMHYmc0ILBwZGpWvZXjEnrK-NdevBFhbky7h0jZzcgCZcFNB5N1gV-O3LXjMNdazQVXHYiy8vsh_hwrNFTpwmYEspXrPgUgGTrqaq6l1uGig5VijOS8gxyUmpCcXAwTHPiHvBsGwKXRWmVkFtJTw9MPOdmWQe1e8GIIkcQqbGRWpTHxcqbfHLqfZB2P-ckM3bo_tomHAgSMg",
-      "retired": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXRpcmVkOjEiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.dUK-XH0fiI__zNj8i5SQrcAVVD1Fuv8c-hQBQDRkVSRFg8JbVFN7bUmL7drNmRspH7z4kcjB6QbKptNGKleHZ7FM2DDgpaMKd8S9aClSlm5auXvMsfJXVDj5mMUq84zDfM0CvcSQzCChD2dP9sQTjM8swwVrX_1zCptEsa9kqM-QRZKopiKaDnfKOZccE0gmYTbrT6pl2F4jc5tjFBswFYxFoIKMKCvpBDlhMnVQ0ndFBrpdl1TazSB2suJ-hAdJEXGx-2gf_pda0vKmTanI-vVgyda7nJEUjiRH4Ou7VuUS1G-pstQM373xOqasqYPyzIlx09HcueiubxNsvCBY1Q",
-      "revoked": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXZva2VkOjEiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.l_doO4iAqpS-5u10Gvbh9BQbXKlwmU4kEDy_yg5ea_7ndfHX89thBdzJTxsYgwz1RvZtqf8gB6UetwpO-BJhwxsRGdpw5QXgWc4x8v7Zpj1rAAA5V1Ka5AC7SL94VrQUMB0cqq-RW5lgO3gnzt-wTOdNub1vFWo3EY567hmRQCX7zC0TIKXTRkzqpNIh7dPhIu_Z-hC0FSs8cfiaruxd_8CDJo3ko4SpZ5MQ7jOjyfc7c1v2PTwynau6-DncJM8cxBnTL7KV-A24UwL5CkEqy-XCwlHYEScKOApgEYZxBAyVw7dUSZzZdVqQIRWalNYaCDDSt0WlhjgPfu-qxu8bdQ",
-      "down": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2Rvd24uZXhhbXBsZSIsImF1ZCI6InZhcmxhdGNoIiwic3ViIjoieCIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.oNlQuhw0vEEyYV-VJt7pii8dGlZ30tRK4uYrJDl8-ADp056j2tlqINuCcV6BZ6OsmekoI-LcminimjADrhj-zBHk2e2y5vKI_msSaTw65kG1DTIJkrt-r18TfsPGNsxu1I8Hk2CJ222CG4Oq9xXquc2_RAKp9FB7jl_tqtcFPJz6lQF9F6mMAKmZlYtipzirRvQTbjrR7Wj9QHAtcPYyV_XcIPy1tpyJQCtqO_u9219WKKatyeOfowICOHsYJe5FHZ8chnfUOgzphBSj_dqOWOAhnTNbF7GJhAn6fgGXacKBC3zxplWzVoHhppLdVZGf65DGWrzmh9qad0dY9JzZQg",
-      "refused": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL3JlZnVzZWQuZXhhbXBsZSIsImF1ZCI6InZhcmxhdGNoIiwic3ViIjoieCIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.nZ8XpD8HkUBA3Bk7KkAouMoJKJ7BIQFm2Tehcfs0oAJBUhj0xgQk43Huol9Eyt6DtrnLQqaKYAPZ6ELiLo6nwQXyURXnQFkvN-eR9AEIS1wr6oMJctE1zGs8XZl7Bn7SUcazMjd4oYJqkQW9q79FAKxr2nu3_ytZJjb9biA-PZ3H8SfwQQqgRXWPMnoHSTxcu3fWtdmhp1uX7CkY1EU8-b9VPhSRpoU4pgjmqxKPdBmRMMD0rwf5UWoxeMlbSCC9G-b9V6Y2ZvkIYHOM1SVXx1gdXkLx9F0dJdmiL2Sr92x2aYPWX4PjuVavbXUNcp7_y5bwi9-NPIOqWyBPoWqm1w",
-      "frozen": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJmcm96ZW46MSIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.obtkAKmW6E02p8oSfrxrnNjPufXB3UfesRi3Bf-MR05U-V-Gk5KAAUSPVjNQIkN2OM9lEjBLNpvkwi2bg2nTMccuafkNBFLnPZJHxMMtkd_rS45BBBNr91CICiIcty07HI1c9Ys46b0xRmPxZgAjzcpx6z0bZ057yIt8lhAqZElcXKiIWZw-qKM140lew9iNgx6VDC-fp1s50Hmg9NtPtIgwKSBn6T5fmh0YBKYfesTO29O48GgXaUx-qTmwEG1lLUHU3Z7cc6uDWvdEFiE0XfA7-z17g599uYZpNQ9zpOc9Gl75qEH_40gv6mox3DWsKK5mHImcFYV8sKS8f0LjAw",
-      "nullPayload": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.bnVsbA.QQX3vCTbBqwOaGRxUTkIgI62Z6cQYonO4o7-sG8-5zpr1yifXgUoSHdNW2jo0le_rw6XIOGzg4kUuYVwzM36kOlcW3ATjTIcLwwuRQC1t4ex_DDQy-3pEgw70r7WysQL9EuWcrV1y2p2dB7S1liizRm9tmAo8GZtFs55ZS3JzNxkab5oo6iwEPGclfw7GlJV0S6otvgHIXQjDldOAuTi2-bN7J7lDcSw8YnvB_x7jwMR5hWg83HSyLU1nuvG6SCdfdLgb_p2E6s8VZ8BxwRWZh0CXkGLk-1ac1CPuXqJ7TIs0KQO75-ClLBga5W4p4zB1CDFLszOy6VrzOqnmPBo6Q"
+      "good": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.BbApIwcVGCtbkKGP7k_XxD4fghND-lhv5khdnAqRnCZj3SwEHpjBa3hqvTRDyRkK-9zZuSiDI6xiV2fQ3Was2oPVXZ6jFTqqD7-FsRI-ycv4ul4EUYtbe1CXzebNVI8S1mtWP7JeUnaQ6624pmOgJq9KnamIWMcyURt8z657imwuKxWlv1Bf3FHN7dfERz5OayXkdbdvKOcCymKXi6crgJtm0NiGufHS6YdqPSwaqTAHOGS3VdFyB7cD065C1_HjhQVsb8w4dY-1CSQHumAsb1LDUywe1N7k9uR_Zk9gVMLFgfK6RMCkZFOOX3DhLUO6WSt7IQpRjttQqICnODhYSA",
+      "unknownIssuer": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL25vYm9keS5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJ4IiwiaWF0IjoxNzYzMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.QiXcBtoccs-JHJVIriGoH7xgUi5zJaeq8cJr5ggbNKIbPYDffIZwpmhxAHlVhlEXANaCVfEHQybEtBva8C4V_K8kycCj1r6S1V70DgyGLs6AWTOeHgWEo1edpmww5mpOWpxEeUvLYjoOnOVeMFjktNWdjB5mQmcXc2VtiVE54Rv6R_uOe_Hx6goGKs84p9r-6p2wnYHEAMbPlkoSfpcff2D75_8sh-hrASrZU9So8xsCmoM0yXUTLtRHjR7qc4bTWUu_yUoGAu4QyCo-lDc2S-sQ853Oc5d_IhiWBexvQkJgO5x_Lz-FoWXUkPHMWB7nlcQRM21JzzUclEJFzC7rSA",
+      "audArray": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjpbIm90aGVyIiwidmFybGF0Y2giXSwic3ViIjoicmVwbzphY21lL2FwaTpwdWxsLzciLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.QPWOP4f84U8Zt40BIzpbeQY1YRTtz24cJx250vjZAtgXcque7S2tdmW_CjkIxUClFTE4SV5HKY_uN_1Pwc1w77tP0AQ3DOYXe-HKWMp9z1GtcIg_37zX4Ok7Bro3X7GlWZW7kOE5R3V3QHd1GLMw_7sCP8q4SxGDhOjWyRCpQbXRo7zr_HxApseAH8C_paxYTBeEL_JA2K-ilLyA8duaMxmXSAJnxAfDPc4oV7zIew7hHlyYAMhZzp3ga13FYq7Pb4t8gaZBtamrDasFl0kNs1bKI6B9Y_y9xD0QI7wgYlWDxva3lc0bfcWvro21IHLg_ZWGhKr4AH03bh0UUG4Adw",
+      "wrongAudience": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoibm9wZSIsInN1YiI6InJlcG86YWNtZS9hcGk6eCIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.V4wBfbqr0MGRgYYOgco3tlUEtglsRT2MPsZy1mfCG0mhaSle5djNrwOaQtrfJnzqJjYIQsm8DA9TwnvMEQlvXoaYdJXp9BCXtSWriMszXa4AWn1yBr2LvrIS5NtEElX3TiYr_UilUlxs0bo8eXFnWOkzevTOxBO-eAUTpbcQtc25XJhRvB5IBKyvF7r1j5P6uP68eUzxnIXByzMFrlSqyZpSv7I_x1SY0OSjZXlH5jjNGizQ5AAjCqIaRzHvULPtRSe8xd5VzLQzwwh-nqTchLYJyypkPTqNp_vUggKWGG1vth6YJo2SRcwVdAYfTxtIoni96VFPBv1Cg7xWemF4KQ",
+      "worker": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoid29ya2VyLWF1ZCIsInN1YiI6InN2Yzp3b3JrZXIiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMCwicmVmIjoicmVmcy9oZWFkcy9tYWluIiwiZW52IjoicHJvZCJ9.suMsTRoihKUPVrdLZr-FciKOr8qzHjlUKn0RRq7wUwpevbHDWp0H7fbaBvaFfp0S7ut7_4js06b3ENjsjZIPUupXOqd9HPLLhIa3Rx6t8UuRj6v890_v_pjbosVcVHXl4FWfkcs8UmFwlcnX5SS0JWJAEYfuXsVwz6mY4FGLfzZmfIBJ2zKmHXp-Jv20dag6WXZOWbYwkskHmq2woMMrTav9YBoq40rG3gXm0C5p2s8yzZ7aodL6SWVB1-1-a3MgepjoOuCW-KJlcV6W_O0r5WELEEpBg1dxbnd3qCeZa8HzsNdbwGpx3U0mDT0HoQ9L9zhdtMaQyfdKNxy63Zd05Q",
+      "workerOtherEnv": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoid29ya2VyLWF1ZCIsInN1YiI6InN2Yzp3b3JrZXIiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMCwicmVmIjoicmVmcy9oZWFkcy9tYWluIiwiZW52IjoiZGV2In0.pPqlFRpNWCH5MLgpEENUw1bymDWd0gqLuGangiGu_q7y1B73KYHY8uHOOwmMLhodbbDoEpvMiIATwdhLbKwH214KACt2LIeoVtrVYplKSky3XYc8l0_ZpfTgkBTIB7LPEozDnQfbbVCbc2WNFOQ9n4GDEgOmj0fso1hq0wYvSYPClkfqVjAw7x7GlUEGu_cpN4IjQsTPeS8E6CWWiOwtwW_LVpg2fxXmuEavkzDcdN2PZXUcJy9k0NlHRsUhGjRINMeE92zO96KRq2LRqBuwxiAEPHqWSFOe-TQjMBs4SFgdiwBq1nphnkh4FEE_ML8IDBoliDJnx9D0M0ES71xJlw",
+      "shared": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvc2hhcmVkIiwiaWF0IjoxNzYzMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.HxR_Sw40pA82vIVSOEprJWxNBBT7YY1rc2rnbT2mA2_UbsbX2uzNgeoPgJbp9e2jltaiPx9WLV7w4ITunFaTGTfyFAGS3XZZfmD2MppuxcB8wY9nSNkyPtF-FL8Vm5HHRuiayff7SoXg_BrYzBPFv9yTuWRTcjWWINFZUMj5mVTQN3ZaReQzrqfWz7zEy7ybQj5lA3xuDlx42-Du2bnrxo4_-gziO_YXM8rqf7uzIbz8pA0RB1VofeK1QRMHdvmZTalVEMkZyhQKGodShmvoWJ7L9x5qySqwnBY-ckm4INjpkCQZ1iOZ93aknIhj3CAiLmE3cBH21ZNUjhEJ3wgILg",
+      "expired": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOngiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6MTYwMDAwMDAwMH0.ROxalsMpq8AM6L3VjEDBu361AoD5yO_EN0_DZp2wBh9OdG4lJ1AQP6E1uWjKEhu1C8-uJC_agB2xX9no90IaK5OLnj8ASjNT6oBf9Rx-G_Q6ZFvRn0Tcb7TWMAKTp2pVgSExcZghmRSo9U-TsBzXmtnEIcZvbVjSbaHkT8YSCzdLkuJmmwJSUoNVjPhvJAxpda5UT9mD2bAeVKqIVrW4sN-i7Q6Cm3gRQyPkYe1tp_wRyvvgQxYu9MKFTH5WGmOFZBz4OIqD7uNTsSw2YS6byUke_7iQuz4xkBE14eclfkPuKF_eem2xRgKNFKntstyiPqAeiPxcbBu5iNZLcTcplg",
+      "badSignature": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.BbApIwcVGCtbkKGP7k_XxD4fghND-lhv5khdnAqRnCZj3SwEHpjBa3hqvTRDyRkK-9zZuSiDI6xiV2fQ3Was2oPVXZ6jFTqqD7-FsRI-ycv4ul4EUYtbe1CXzebNVI8S1mtWP7JeUnaQ6624pmOgJq9KnamIWMcyURt8z657imwuKxWlv1Bf3FHN7dfERz5OayXkdbdvKOcCymKXi6crgJtm0NiGufHS6YdqPSwaqTAHOGS3VdFyB7cD065C1_HjhQVsb8w4dY-1CSQHumAsb1LDUywe1N7k9uR_Zk9gVMLFgfK6RMCkZFOOX3DhLUO6WSt7IQpRjttQqICnAAAAAA",
+      "unknownKey": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ims5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOngiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.dRDdMxJprwNPIMEqPJKxC8aRY_kCdPCF40F531E9McqQmGbEWBFLWcXX0hP6Bk_vjnRhsP85gS3xQgkEMO7AbzNXSf-jfm5ArNYYj8Iw7evyeasbGjXkzp3PltxoY9vHIsXUIY0ctZiThFLc0GJA0mQJEUuY0D2OGOwIwIO0Djb4dLPodOKFc2P2h5XEvNVS3NqSyRhPBrz2J7u7d2Xw_014uocaIQ__q_ECO_2q1NvzjwjpA1iGo9cNAZS9p8xnIk-CFx2kyJaC-NnpDDshSNuRQlUfkEeVT0Ab6bpBYhaVbF7geW_hZZzAIJViDp5Euu4s0urxJPoW6r87R5myDw",
+      "retired": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXRpcmVkOjEiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.sHjVswnywgzNbfwn0xcMW9OVRW7wJgPs_GcxsKfPSE1a8Zu9s1psa9IuE_iL2QO1idpMl2H1WuQJjyk_Wy-sm7u7JR9z84y3XCeL_R8KVi2Kwl-Umt2li5YUpUQZRAzfOvewTkWWS6Gi0xsn_4uLvREEO45Uv0oafDjR4-6zn-owg4tLOSV_ieR64n9n3KDstiUmuLI6hWLLiR56DUygt35vadpcnpxm8eiesKYHAiiYWsSR3HAQXgFuF49y_euLfzC7c-2_6l2kz5xdocFkgA1npenMsStNsA_P_hz507uX51WKZyFbBAuqbXcXJ_Vlj3myqN4IfLvCk4lZUJd5VQ",
+      "revoked": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXZva2VkOjEiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.ZvgJrYBhCnd6rzjVC7oN400uZIuRGWidafRraiqZ3-drYMkolKuOU5bnL0wC9VgpuFKeR7rJKxBTf-ydO-TryUlMNef-W19KxNMh7RyewQrLBT1OQoGbjOaPTVGiUdUQYwLOZlUBpxO8z8X0UqilQ7sc_XNLyX7Qoj4LSIWvi3wJnhZ_UVO2Q4JVSP6gB0-PerCP2WFXaFkLmQTbGTJDStHZ1yOn3LmkhyCYEoJ7MWFAMkMH5qHxiiefpWeF9WrD3rl8DQ_KRL_jhwVV2lcQRsSpmklsfBgaruj1w_bPo1qDsvXpsjXJYjkWVyRxLilETfhvG7yUY-ImJksq2DcYkg",
+      "down": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2Rvd24uZXhhbXBsZSIsImF1ZCI6InZhcmxhdGNoIiwic3ViIjoieCIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.AtYEDqyxb69cpGF6ytSXgwsvVZncdONcy-AY04n2PH3pG9QxSA4Uzr6dqxGLSALVRoj8DsQDy3HsW9YsKUoYyVQh5Mt3lFYiq6hwKFEzezKo21IPia1XcpEOmSWnI8ehS6c1f8_p8ZdfRZqTfQCE-62EoCOH1M3kAn72b46WCiw_o2Tmv0FzlL7vKJsp6aeAdIjF-JG5IWbdUubaFb-6UglVjTo2t7akpppGkWMrzTrXAp_0pT83E-GXKgTk9aE14QXW0blzAHKMfEiWRKfqu-zQFXCa2iJCzVkDzVQ2p_3_i-QIUfobj7_zTHU3Ikxn5ZUVeePiRKeYZ3ZKSIdA0g",
+      "refused": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL3JlZnVzZWQuZXhhbXBsZSIsImF1ZCI6InZhcmxhdGNoIiwic3ViIjoieCIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.roaqhdwmSYfhsYwsE7Z_6KoQP7mim0wkCL1OFBGcV3kHWzKBA0FrccOCMj05mwqCA1UGruYZQSbSZ_Ay73tuFkC4odapLv6JdHgc5JvrsalFb2u3yhLIN8nAakQj-fSvT60k8-kpgYZAQyEqSkG2ZrbA0uUFtTGHljhFx22Rmw_b5F1jZDKfzx79rrRl6VX7w38HxKh2AQa3hpzwXEt1KzOfvdmZ2ZMffcR5S-f3kP-pqwk_arNA2h4ZXiZar7U0nct18PRc5MNHnxyLI_UT1R67O9vBc25mIa-4UBNGu35UtnhNd8Twr8b5ds9czVmVgcoRb8seW8ccZjMcGcRoLA",
+      "frozen": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJmcm96ZW46MSIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.A_zYiErlrz-9GssRaPSdiC_CU4rYgyoN17NE9s_YJaayylhLOz_mdQ0wRoNWDgs5tuL_YBdNneAHKxJm0-JrwsZEU1uQJF1dn2pbclnDWyMOsg02MKTYSob_VF7KEvKcCgeuJgkqxocnOYurMb5M4QHCw5Mx85ZSo3WuWFJP5leQwHC02IWcUCnVvD3OHNvX9qOMMasY2sTnJPdTgx0VzPu7vCOtx4M4bykpAAbW3UwfgEsPpB_4EAdhPguDJ5usn1XImRaBgxEiAS4qTuJytefr9eX2jz_nQCuh1fPQurz4ZzPuzfaSxWv5f0BCHCjXdjDnniz3uQD_9mRoho4HoA",
+      "nullPayload": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.bnVsbA.JuLpCzcl6kKBfod-SiALxl8-9m5s564cKwEih0HjZc-r0CDp4l_dXZiFdPKRGtjuR3TylySMkOD99E1Cg5wkYH5pXmuABvIYcgQ4J0gwMFZ2eTyaeB0B-v10ABDxMH00JUFpmKiwFYoUlScLQRdmqZTMsXFuXem-Y2VLnf-Q0U4yU24Kf6Pg2hVXC4mFp8TMWXnXrWU-kAn2QAi_Dx0X5lvl06agytBjKAwQRIcJ2wrq6mjgItwiRFwKrad8JQJzBeTLFcxl2EeFmtxba5H-aOXUmIyaz8EaaA3ngzGy2X-ybeXqAw7Sy_on9tL3eJCup6wpyUcZOuKM5rluy3zMXQ",
+      "proto": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJwcm90bzoxIiwiaWF0IjoxNzYzMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.Fo91sFiAh-tmBCZtj42WqtAouJwO6AzwGKolBkd6bFKN3hiIDFE2WuPwL2-blq-DUA78p6BIwKzHHA5XLVdSDkxwv3ZqwF6-i1mRrAn1gOJfOneG8FYllCsT-0GK_3wmHhenWi6306wHE5LVEp-jZATEXIbHK5ZAzrGZ5LP9sau8Jg5ulGb_t9evIA6mjiQEcRXdN40GtA4pvUxWzXuc7_XKjKXqnmG-7ZNHqGPacGv8II5lZujbkIxVfVVfUdnZk4rIILCG1qTeY0xZ4Y43jGuZMg5grpI8HFGZ74hE1wxZeTCxX2AGzhJuQpg0o5AncymcdA23AhD-7VDip86lPg",
+      "ctorMissing": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJjdG9yOjEiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.uyLd0aV2fA0p_9BmXmFDlHoEm-OAlAiKZRwAvnshRC8VDUzj1r0FE9FeyErrjGJpTzo3QIeWYKd2xzWYlTXvHYZsm55ySLze1JufG9JLbN4RyBrUtiRxHdzb_IKM83qYamgi95NPA4XKaX4y4P-sFWSyJXTiMwsxY9ylrAEhGVw-nj-Ue8PIjt887QKia0AaeUC81lF1DsCHBXN3HrwC1QFf8GL3ee-CSiycSFJmjhzx5Cg0GJDjD0YuS_lHjOE43iSn14IT_brexdSm-NAqu3G1XG0OAE_fVEdWJKEJwdz6qj8bomkIAeOubyDTzX-PvjxAIRfT8NQKoVuqvtReCA",
+      "ctor": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJjdG9yOjIiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMCwiY29uc3RydWN0b3IiOiJjIn0.E4wcZO625IWUpeSbUSHGdxjr7pO3FsSw38vrbA5Ivwk6ba3lIRwylVulCzsmXTtYLeyoQUpeYpNGn24O92f9j8iuE_1Ng2fMt_s5F4_6Qw1ZcIuc2FQqsztmfif9dLUp7OzshZmNR_EHswEIkuTw9CWJH7eg66ZZqgZ6L9bHPm5CDTAQowXtE2c84-sdbO6CpEitWeTfoZ-IUspMrLq4HmusOSHUEcRWs29-Sw82KBlpdJ8RWeFBw4zt9lLxnFpFsBVASikbaprNc3iqAgJgkQbBVPhbOpVa1fGY6FEI07jl7q3TBKoGwbswZ2VJxtzYG21s6zOlVCy4xhdv1tByOQ",
+      "unicodeSignature": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.BbApĽIwcVGCtbkKGP7k_XxD4fghND-lhv5khdnAqRnCZj3SwEHpjBa3hqvTRDyRkK-9zZuSiDI6xiV2fQ3Was2oPVXZ6jFTqqD7-FsRI-ycv4ul4EUYtbe1CXzebNVI8S1mtWP7JeUnaQ6624pmOgJq9KnamIWMcyURt8z657imwuKxWlv1Bf3FHN7dfERz5OayXkdbdvKOcCymKXi6crgJtm0NiGufHS6YdqPSwaqTAHOGS3VdFyB7cD065C1_HjhQVsb8w4dY-1CSQHumAsb1LDUywe1N7k9uR_Zk9gVMLFgfK6RMCkZFOOX3DhLUO6WSt7IQpRjttQqICnODhYSA"
     }
   },
   "fetched": {

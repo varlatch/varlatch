@@ -92,6 +92,24 @@ function build(): Vectors {
   const ok = docs([rsaJwk, ecJwk]);
   const c = (name: string, tok: string, documents: Documents = ok, issuer = ISSUER, now = NOW): VerifyCase => ({ name, issuer, now, token: tok, documents });
   const config = `${ISSUER}/.well-known/openid-configuration`;
+  /**
+   * A valid token with text inserted after the fourth character of one
+   * part (0 header, 1 payload, 2 signature): Buffer decodes base64 from the
+   * string's UTF-16 code units, by their low byte.
+   */
+  const inserted = (part: number, text: string, base = token()) =>
+    base.split(".").map((seg, i) => (i === part ? `${seg.slice(0, 4)}${text}${seg.slice(4)}` : seg)).join(".");
+  const units: [string, string][] = [
+    ["U+013D (low byte =)", "\u013d"],
+    ["U+0141 (low byte A)", "\u0141"],
+    ["U+00E9 (low byte outside base64)", "\u00e9"],
+    ["U+012E (low byte .)", "\u012e"],
+    ["a surrogate pair whose high unit's low byte is =", "\u{1F600}"],
+    ["a surrogate pair whose low unit's low byte is A", "\u{1F041}"],
+    ["a lone surrogate (low byte A)", "\ud841"],
+  ];
+  const unicode = (["header", "payload", "signature"] as const).flatMap((part, i) =>
+    units.map(([what, text]) => c(`${what} in the ${part}`, inserted(i, text))));
   const verify: VerifyCase[] = [
     c("RS256", token()),
     c("ES256", token({ alg: "ES256" })),
@@ -161,6 +179,7 @@ function build(): Vectors {
     c("an empty JWKS", token(), docs([])),
     c("keys that are not an array", token(), { ...ok, [`${ISSUER}/jwks`]: { status: 200, body: JSON.stringify({ keys: { a: 1 } }) } }),
     c("a null JWKS", token(), { ...ok, [`${ISSUER}/jwks`]: { status: 200, body: "null" } }),
+    ...unicode,
     c("an issuer with a trailing slash", token({ payload: { ...claims, iss: `${ISSUER}/` } }), {
       [config]: { status: 200, body: configOf(`${ISSUER}/`, `${ISSUER}/jwks`) },
       [`${ISSUER}/jwks`]: { status: 200, body: JSON.stringify({ keys: [rsaJwk] }) },

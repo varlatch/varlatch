@@ -18,10 +18,12 @@ import (
 // go-oidc-vectors.test.ts).
 type vectors struct {
 	Verify []struct {
-		Name      string `json:"name"`
-		Issuer    string `json:"issuer"`
-		Now       int64  `json:"now"`
-		Token     string `json:"token"`
+		Name   string `json:"name"`
+		Issuer string `json:"issuer"`
+		Now    int64  `json:"now"`
+		// Token is read with jsvalue.Parse, which keeps a lone surrogate as
+		// JavaScript does (encoding/json makes it U+FFFD).
+		Token     json.RawMessage `json:"token"`
 		Documents map[string]struct {
 			Status int    `json:"status"`
 			Body   string `json:"body"`
@@ -107,7 +109,11 @@ func TestTypeScriptVerifyVectors(t *testing.T) {
 				return &Response{Status: d.Status, Body: []byte(d.Body)}, nil
 			},
 		}
-		claims, err := v.Verify(c.Token, c.Issuer)
+		tok, err := jsvalue.Parse(c.Token)
+		if err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		claims, err := v.Verify(tok.(string), c.Issuer)
 		if err != nil {
 			if got := reasonOf(err); got != c.Expect.Reason {
 				t.Errorf("%s: reason %q, want %q", c.Name, got, c.Expect.Reason)
