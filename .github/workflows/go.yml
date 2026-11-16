@@ -51,8 +51,11 @@ on:
       # Webhook secrets' G3 reverse direction (step 4.7b).
       - "services/varlatchd/test/go-webhooks-fixture.test.ts"
       - "services/varlatchd/test/go-fixture-kit.ts"
-      # Audit export credentials' G3 reverse direction (step 4.11a).
+      # Audit export credentials' and drain copies' G3 reverse direction
+      # (steps 4.11a and 4.11b), and their shared fake destination.
       - "services/varlatchd/test/go-audit-export-fixture.test.ts"
+      - "services/varlatchd/test/go-audit-export-worker-fixture.test.ts"
+      - "services/varlatchd/test/helpers/audit-export-fake.ts"
       # The BEK seal, escrow and Shamir in both directions (step 4.14).
       - "services/varlatchd/test/go-backup-vectors.test.ts"
       - "packages/backup/src/**"
@@ -82,6 +85,8 @@ on:
       - "services/varlatchd/test/go-webhooks-fixture.test.ts"
       - "services/varlatchd/test/go-fixture-kit.ts"
       - "services/varlatchd/test/go-audit-export-fixture.test.ts"
+      - "services/varlatchd/test/go-audit-export-worker-fixture.test.ts"
+      - "services/varlatchd/test/helpers/audit-export-fake.ts"
       - "services/varlatchd/test/go-backup-vectors.test.ts"
       - "packages/backup/src/**"
   workflow_dispatch:
@@ -508,6 +513,18 @@ jobs:
         run: |
           (cd go && go test -count=1 -run '^TestGoSealedFixture$' ./server/auditexport -args -write-go-sealed="$RUNNER_TEMP/go-sealed-audit-export.json")
           VARLATCH_GO_SEALED_AUDIT_EXPORT="$RUNNER_TEMP/go-sealed-audit-export.json" pnpm --filter @varlatch/varlatchd exec vitest run test/go-audit-export-fixture.test.ts
+      # G3 for audit export drain copies (step 4.11b), the reverse
+      # direction: the TypeScript worker runs the worker fixture's steps on
+      # rows whose export credentials and drain copy this commit's Go code
+      # sealed, sends those keys and must do what the fixture records. The
+      # same run checks that audit-export-worker-v0.22.0.json is still its
+      # own worker's.
+      - name: The TypeScript worker drains with keys Go sealed
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go test -count=1 -run '^TestGoSealedWorkerFixture$' ./server/auditexport -args -write-go-sealed-worker="$RUNNER_TEMP/go-sealed-audit-export-worker.json")
+          VARLATCH_GO_SEALED_AUDIT_EXPORT_WORKER="$RUNNER_TEMP/go-sealed-audit-export-worker.json" pnpm --filter @varlatch/varlatchd exec vitest run test/go-audit-export-worker-fixture.test.ts
       # ADR-0059 step 4.14: the BEK seal, the passphrase escrow and the
       # Shamir split cross between the servers in both directions. The Go
       # tests open, restore and combine what the TypeScript code made

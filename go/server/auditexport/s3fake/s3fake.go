@@ -17,7 +17,10 @@
 //     whatever mode was asked; any other bucket does not exist.
 //
 // It records each request's access key, which the G3 checks compare: a
-// key read from a sealed envelope is the one the fixture sealed.
+// key read from a sealed envelope is the one the fixture sealed. It keeps
+// what it is given (Object), can be taken down (SetDown: every request
+// answers 503) and can hold an object nobody uploaded (Plant), for the
+// worker's tests.
 package s3fake
 
 import (
@@ -44,9 +47,10 @@ const (
 	BucketWeak         = "weak-bucket"
 )
 
-type object struct {
-	sha256, mode string
-	until        string
+// Object is what the server keeps of an upload.
+type Object struct {
+	Body                             []byte
+	SHA256, ContentType, Mode, Until string
 }
 
 // Request is one request the server answered.
@@ -66,13 +70,14 @@ type Server struct {
 	Held chan struct{}
 
 	mu       sync.Mutex
-	objects  map[string]object
+	objects  map[string]Object
 	requests []Request
+	down     bool
 }
 
 // New starts a server; Close stops it.
 func New() *Server {
-	s := &Server{objects: map[string]object{}}
+	s := &Server{objects: map[string]Object{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -82,6 +87,41 @@ func (s *Server) Requests() []Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]Request(nil), s.requests...)
+}
+
+// Object is the object kept under bucket/key, if any.
+func (s *Server) Object(bucket, key string) (Object, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o, ok := s.objects[bucket+"/"+key]
+	return o, ok
+}
+
+// Keys are the names kept in bucket, in no order.
+func (s *Server) Keys(bucket string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for name := range s.objects {
+		if b, k, _ := strings.Cut(name, "/"); b == bucket {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// Plant keeps an object under bucket/key as if it had been uploaded.
+func (s *Server) Plant(bucket, key string, o Object) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.objects[bucket+"/"+key] = o
+}
+
+// SetDown makes every request answer 503 ServiceUnavailable while down.
+func (s *Server) SetDown(down bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.down = down
 }
 
 var credential = regexp.MustCompile(`Credential=([^/]+)/`)
@@ -105,7 +145,7 @@ func fail(w http.ResponseWriter, r *http.Request, status int, code string) int {
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
-	_, _ = io.Copy(io.Discard, r.Body)
+	body, _ := io.ReadAll(r.Body)
 	if s.Hold != nil {
 		if s.Held != nil {
 			s.Held <- struct{}{}
@@ -121,11 +161,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	_, retention := r.URL.Query()["retention"]
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	status := s.answer(w, r, bucket, key, access, retention)
+	status := s.answer(w, r, bucket, key, access, retention, body)
 	s.requests = append(s.requests, Request{Method: r.Method, Bucket: bucket, Key: key, AccessKey: access, Retention: retention, Status: status})
 }
 
-func (s *Server) answer(w http.ResponseWriter, r *http.Request, bucket, key, access string, retention bool) int {
+func (s *Server) answer(w http.ResponseWriter, r *http.Request, bucket, key, access string, retention bool, body []byte) int {
+	if s.down {
+		return fail(w, r, http.StatusServiceUnavailable, "ServiceUnavailable")
+	}
 	switch access {
 	case KeyGood, KeyNoRead, KeyNoRetentionRead:
 	default:
@@ -142,15 +185,16 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request, bucket, key, acc
 		if _, taken := s.objects[name]; taken && r.Header.Get("If-None-Match") == "*" && bucket != BucketOverwrite {
 			return fail(w, r, http.StatusPreconditionFailed, "PreconditionFailed")
 		}
-		o := object{sha256: r.Header.Get("X-Amz-Meta-Sha256"), mode: r.Header.Get("X-Amz-Object-Lock-Mode"), until: r.Header.Get("X-Amz-Object-Lock-Retain-Until-Date")}
+		o := Object{Body: body, SHA256: r.Header.Get("X-Amz-Meta-Sha256"), ContentType: r.Header.Get("Content-Type"),
+			Mode: r.Header.Get("X-Amz-Object-Lock-Mode"), Until: r.Header.Get("X-Amz-Object-Lock-Retain-Until-Date")}
 		switch bucket {
 		case BucketNoMetadata:
-			o.sha256 = ""
+			o.SHA256 = ""
 		case BucketNoLock:
-			o.mode, o.until = "", ""
+			o.Mode, o.Until = "", ""
 		case BucketWeak:
-			if o.mode != "" {
-				o.mode = "GOVERNANCE"
+			if o.Mode != "" {
+				o.Mode = "GOVERNANCE"
 			}
 		}
 		s.objects[name] = o
@@ -165,8 +209,8 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request, bucket, key, acc
 		if !ok {
 			return fail(w, r, http.StatusNotFound, "NotFound")
 		}
-		if o.sha256 != "" {
-			w.Header().Set("X-Amz-Meta-Sha256", o.sha256)
+		if o.SHA256 != "" {
+			w.Header().Set("X-Amz-Meta-Sha256", o.SHA256)
 		}
 		w.Header().Set("Content-Length", "0")
 		w.Header().Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
@@ -180,13 +224,13 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request, bucket, key, acc
 		if !ok {
 			return fail(w, r, http.StatusNotFound, "NoSuchKey")
 		}
-		if o.mode == "" {
+		if o.Mode == "" {
 			return fail(w, r, http.StatusNotFound, "NoSuchObjectLockConfiguration")
 		}
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `%s<Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Mode>%s</Mode><RetainUntilDate>%s</RetainUntilDate></Retention>`,
-			xml.Header, o.mode, o.until)
+			xml.Header, o.Mode, o.Until)
 		return http.StatusOK
 	}
 	return fail(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")

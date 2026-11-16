@@ -64,6 +64,16 @@ export function mustCompose(state, args, options) {
 /** The varlatchd admin CLI inside the container, as an operator runs it. */
 const admin = (state, args, input = "") => mustCompose(state, ["exec", "-T", "varlatchd", "node", "dist/cli.js", "admin", ...args], { input });
 
+/**
+ * The host-admin capability: one `varlatchd admin` host command whose
+ * refusal a suite checks (`audit-export ...` only), inside the container.
+ * Its exit status and output, whatever the status.
+ */
+export async function hostAdmin(state, ...args) {
+  if (args[0] !== "audit-export") throw new Error(`host-admin: unknown command ${args[0]}`);
+  return compose(state, ["exec", "-T", "varlatchd", "node", "dist/cli.js", "admin", ...args]);
+}
+
 const psql = (state, sql) => mustCompose(state, ["exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "varlatch", "-Atqc", sql]).trim();
 
 /** Ask the kernel for `count` unused loopback ports. */

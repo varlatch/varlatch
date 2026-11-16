@@ -73,6 +73,7 @@ export const CAPABILITIES = [
   "go-server",
   "webhook-receiver",
   "object-store",
+  "host-admin",
 ];
 
 /**

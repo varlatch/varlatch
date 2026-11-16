@@ -28,6 +28,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/auditexport"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
@@ -373,6 +374,20 @@ func serve(opts Options, h *hooks) int {
 		hooks.RunLoop(ctx, webhooks.Interval, admission.Enter)
 	}()
 	defer func() { cancel(); <-webhookDone }()
+	// The audit export worker (ADR-0056 Decisions 2 and 3), when the host
+	// left the export on: a pass at once, then every minute, each export
+	// under its lease and its gate, through the outbound policy. A stop
+	// ends it before the policy and the database close; an upload cut
+	// short is not recorded, and its plan is sent again.
+	if cfg.AuditExport {
+		exportDone := make(chan struct{})
+		go func() {
+			defer close(exportDone)
+			worker := &auditexport.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Now: time.Now, Enabled: true, Log: log}
+			worker.RunLoop(ctx, auditexport.Interval, admission.Enter)
+		}()
+		defer func() { cancel(); <-exportDone }()
+	}
 	handler, err := httpserver.New(httpserver.Options{
 		Outbound:       policy,
 		Version:        buildinfo.Version,

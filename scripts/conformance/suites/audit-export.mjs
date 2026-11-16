@@ -8,14 +8,21 @@ import "../../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in out
  * outbound allow list opens and nothing else private). Its configuration
  * (ADR-0059 step 4.11a): the probe, creation, the retention tightened
  * without an approval, the changes that always ask for one, and a private
- * destination refused. The suite's own Organizations; it cancels the
+ * destination refused. Its worker (4.11b): the stream the server writes on
+ * its own (the manifest, the hour's heartbeat, the log in gzipped NDJSON
+ * batches under Object Lock), within its one-minute loop, and the host's
+ * `admin audit-export discard-plan` refusing a plan that can still be
+ * uploaded (host-admin). The suite's own Organizations; it cancels the
  * approvals it asks for.
  *
  *   audit-export.mjs <origin> <api token>   (run by scripts/conformance/run.mjs)
  */
 import { randomBytes } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 import { listedKeys, s3Request } from "../lib/s3.mjs";
 import { reporter, targetOp } from "../suite-kit.mjs";
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const [origin, token] = process.argv.slice(2);
 if (!origin || !token) {
@@ -101,6 +108,53 @@ try {
     listed.status === 200 && probes.length >= 2 && probes.every((k) => /\/probe\/[0-9a-f]{32}\.json$/.test(k)),
     JSON.stringify(probes),
   );
+  // The worker (4.11b): within its one-minute loop, the stream's manifest,
+  // the hour's heartbeat and the log from the beginning, each under the
+  // export's retention.
+  const streamBase = `varlatch/varlatch-audit/${org.id}/${view.streamId}/`;
+  let keys = [];
+  for (const until = Date.now() + 150_000; Date.now() < until; await sleep(3_000)) {
+    keys = listedKeys((await s3Request(s3, "GET", `/${bucket}`, { query: { "list-type": "2", prefix: streamBase } })).text);
+    if (keys.some((k) => k.endsWith(".ndjson.gz")) && keys.some((k) => k.includes("/heartbeat/"))) break;
+  }
+  const read = async (key) => s3Request(s3, "GET", `/${bucket}/${key}`);
+  const batchKey = keys.find((k) => /\/\d{20}-\d{20}\.ndjson\.gz$/.test(k));
+  const manifest = keys.includes(`${streamBase}stream.json`) ? JSON.parse((await read(`${streamBase}stream.json`)).text) : null;
+  let lines = [];
+  let held = null;
+  if (batchKey) {
+    const got = await read(batchKey);
+    lines = gunzipSync(got.body).toString("utf8").trimEnd().split("\n").map((l) => JSON.parse(l));
+    held = got.headers.get("x-amz-object-lock-mode");
+  }
+  const [header, ...events] = lines;
+  const status = ok(await api("GET", base), "reading the status").export;
+  check(
+    "audit-export.stream",
+    "the worker writes the stream on its own: its manifest, the hour's heartbeat, then the log from its beginning as gzipped NDJSON, each event with its position, under the export's retention",
+    manifest?.kind === "stream" && manifest.reason === "created" && manifest.startOrder === "0" && manifest.streamId === view.streamId &&
+      keys.some((k) => /\/heartbeat\/\d{4}-\d\d-\d\dT\d\d\.json$/.test(k)) &&
+      header?.kind === "batch" && header.previousLastOrder === "0" && header.count === events.length && events.length > 0 &&
+      events.every((e, i) => typeof e.position === "string" && (i === 0 || BigInt(e.position) > BigInt(events[i - 1].position)) && e.organizationId === org.id) &&
+      events.some((e) => e.eventType === "audit_export.created") && held === "GOVERNANCE" &&
+      status?.lastSuccessAt !== null && BigInt(status?.cursor ?? "0") >= BigInt(header?.lastOrder ?? "1"),
+    JSON.stringify({ keys, manifest, header, events: events.length, held, cursor: status?.cursor }),
+  );
+
+  // The host's escape hatch refuses a plan that can still be uploaded (or
+  // finds none pending), and changes nothing.
+  const host = (reason) => JSON.parse(targetOp("host-admin", ["audit-export", "discard-plan", "--export", view.id, "--reason", reason]));
+  const expired = host("expired");
+  const format = host("unsupported-format");
+  const unchanged = ok(await api("GET", base), "reading after discard-plan").export;
+  check(
+    "audit-export.host-discard-refused",
+    "admin audit-export discard-plan refuses a pending plan that can still be uploaded, or finds none, and the stream goes on",
+    expired.status === 1 && /has no pending plan|has not expired/.test(expired.stderr) &&
+      format.status === 1 && /has no pending plan|which this release uploads/.test(format.stderr) && unchanged?.streamId === view.streamId,
+    JSON.stringify({ expired, format, stream: unchanged?.streamId }),
+  );
+
   const again = await api("POST", base, { body: { destination, credential } });
   check(
     "audit-export.one-per-organization",

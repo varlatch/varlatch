@@ -16,6 +16,8 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/maintenance"
+	"github.com/varlatch/varlatch/go/server/orgs"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 // target is a fresh data directory with the source's settings.
@@ -101,6 +103,47 @@ func TestRestore(t *testing.T) {
 	}
 	if _, err := Restore(ctx, cfg, res.Path, f.bekOf(t), f.rootKEK, nil); err != nil {
 		t.Errorf("restoring again over the same installation: %v", err)
+	}
+}
+
+// A restore of an archive with a live audit export (ADR-0056 Decision 5):
+// the export continues in a new stream at its restored cursor, its
+// pending plan replaced by that stream's manifest, and
+// audit_export.stream_started (reason restored) follows
+// installation.restored.
+func TestRestoreRestartsAuditExportStreams(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.exec(t, `INSERT INTO identities (id, kind, name) VALUES ('idn_a', 'human', 'Alice')`)
+	org, err := orgs.Create(ctx, &write.Writer{Store: f.store, Gates: write.NewGates()}, f.rootKEK, "idn_a", "acme", "Acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id, stream = "aex_aaaaaaaaaaaaaaaaaaaaaaaaaa", "aes_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	now := time.Now().UnixMicro()
+	f.exec(t, `INSERT INTO audit_exports (id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope, stream_id, stream_started_at,
+		cursor_order, state, created_by) VALUES (?, ?, 'https://s3.example.test', 'us-east-1', 'bucket', 'p/', 1, '{}', ?, ?, 3, 'active', 'idn_a')`, id, org.ID, stream, now)
+	f.exec(t, `INSERT INTO audit_export_plans (id, export_id, export_version, stream_id, generation, kind, object_name, body, sha256, md5, content_type, format_version, planned_at)
+		VALUES ('aep_aaaaaaaaaaaaaaaaaaaaaaaaaa', ?, 1, ?, 0, 'manifest', 'p/x/stream.json', X'7B7D', ?, ?, 'application/json', 1, ?)`,
+		id, stream, strings.Repeat("a", 64), strings.Repeat("b", 32), now)
+	res, err := f.service(nil).Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := f.target(t)
+	if _, err := Restore(ctx, cfg, res.Path, f.bekOf(t), f.rootKEK, nil); err != nil {
+		t.Fatal(err)
+	}
+	db := cfg.DatabasePath()
+	current := queryOne(t, db, "SELECT stream_id FROM audit_exports WHERE id = ?", id)
+	manifest := queryOne(t, db, "SELECT CAST(body AS TEXT) FROM audit_export_plans WHERE export_id = ?", id)
+	var m map[string]any
+	if err := json.Unmarshal([]byte(manifest), &m); err != nil || current == stream || m["reason"] != "restored" || m["previousStreamId"] != stream ||
+		m["startOrder"] != "3" || m["streamId"] != current || queryOne(t, db, "SELECT generation FROM audit_exports WHERE id = ?", id) != "1" {
+		t.Errorf("stream %s, manifest %s: %v", current, manifest, err)
+	}
+	if got := queryOne(t, db, "SELECT group_concat(event_type, ' ') FROM (SELECT event_type FROM audit_events ORDER BY event_order DESC LIMIT 2)"); got != "audit_export.stream_started installation.restored" {
+		t.Errorf("the last events: %q", got)
 	}
 }
 

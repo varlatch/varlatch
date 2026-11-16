@@ -513,15 +513,13 @@
       "release": "v0.22.0",
       "envelopeVersion": 1,
       "direction": "ts-to-go",
-      "level": "envelope",
-      "fixtureKey": "auditExports",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestTypeScriptFixtures"
+          "go": "server/auditexport/worker_parity_test.go",
+          "test": "TestTypeScriptWorkerFixture"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "audit-export-drain",
@@ -529,18 +527,21 @@
       "release": "v0.22.0",
       "envelopeVersion": 1,
       "direction": "go-to-ts",
-      "level": "envelope",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestGoFixtures"
+          "go": "server/auditexport/worker_parity_test.go",
+          "test": "TestGoSealedWorkerFixture"
+        },
+        {
+          "vitest": "services/varlatchd/test/go-audit-export-worker-fixture.test.ts",
+          "test": "export credentials and drain copies the Go server sealed open here with the same steps"
         },
         {
           "ci": ".github/workflows/go.yml",
-          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+          "run": "VARLATCH_GO_SEALED_AUDIT_EXPORT_WORKER=\"$RUNNER_TEMP/go-sealed-audit-export-worker.json\" pnpm --filter @varlatch/varlatchd exec vitest run test/go-audit-export-worker-fixture.test.ts"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "jwt-signing-key",

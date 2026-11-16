@@ -1,6 +1,6 @@
--- Audit export to object storage, its configuration (domain/auditexport.ts;
--- ADR-0056; ADR-0059 step 4.11a). Every time written is varlatchd's clock,
--- passed in.
+-- Audit export to object storage: its configuration and its worker
+-- (domain/auditexport.ts; ADR-0056; ADR-0059 step 4.11). Every time written
+-- or compared is varlatchd's clock, passed in.
 
 -- name: LiveAuditExport :one
 -- liveExport: the Organization's active or draining export.
@@ -63,3 +63,88 @@ WHERE id = sqlc.arg(id) RETURNING *;
 UPDATE audit_exports SET state = 'removed', removed_at = sqlc.arg(at), credential_envelope = NULL, generation = generation + 1,
   lease_expires_at = NULL, version = version + 1, updated_at = sqlc.arg(at)
 WHERE id = sqlc.arg(id) RETURNING *;
+
+-- The worker (Decisions 2, 3 and 10; ADR-0059 step 4.11b).
+
+-- name: AuditExportByID :one
+SELECT * FROM audit_exports WHERE id = ?;
+
+-- name: DueAuditExports :many
+-- runAuditExportsOnce: every live export whose lease is free.
+SELECT id FROM audit_exports WHERE state IN ('active', 'draining') AND stopped_reason IS NULL
+  AND (lease_expires_at IS NULL OR lease_expires_at < sqlc.arg(now)) ORDER BY id;
+
+-- name: TakeAuditExportLease :one
+-- takeLease: never on a drain past its deadline (Decision 10).
+UPDATE audit_exports SET generation = generation + 1, lease_expires_at = sqlc.arg(lease_until)
+WHERE id = sqlc.arg(id) AND state IN ('active', 'draining') AND stopped_reason IS NULL
+  AND (lease_expires_at IS NULL OR lease_expires_at < sqlc.arg(now))
+  AND (state <> 'draining' OR drain_deadline > sqlc.arg(now))
+RETURNING *;
+
+-- name: ReleaseAuditExportLease :exec
+UPDATE audit_exports SET lease_expires_at = NULL WHERE id = ? AND generation = ?;
+
+-- name: LatestAuditEventOrder :one
+SELECT CAST(coalesce(max(event_order), 0) AS INTEGER) AS m FROM audit_events WHERE organization_id = ?;
+
+-- name: AuditEventsToExport :many
+-- planNext: the next events after the cursor, in position order.
+SELECT * FROM audit_events WHERE organization_id = ? AND event_order > ? ORDER BY event_order LIMIT ?;
+
+-- name: OrganizationDeletedBy :one
+-- commitPlan: a drain completes once its batches reach organization.deleted.
+SELECT count(*) FROM audit_events WHERE organization_id = ? AND event_type = 'organization.deleted' AND event_order <= ?;
+
+-- name: CommitAuditExportPlan :exec
+UPDATE audit_exports SET cursor_order = sqlc.arg(cursor_order),
+  last_heartbeat_hour = coalesce(sqlc.narg(heartbeat_hour), last_heartbeat_hour),
+  last_success_at = sqlc.arg(at), last_attempt_at = sqlc.arg(at), last_error = NULL,
+  failing_since = NULL, failing_recorded = 0, key_can_read = coalesce(sqlc.narg(key_can_read), key_can_read),
+  state = CASE WHEN CAST(sqlc.arg(completes) AS INTEGER) = 1 THEN 'completed' ELSE state END,
+  credential_envelope = CASE WHEN CAST(sqlc.arg(completes) AS INTEGER) = 1 THEN NULL ELSE credential_envelope END,
+  lease_expires_at = CASE WHEN CAST(sqlc.arg(completes) AS INTEGER) = 1 THEN NULL ELSE lease_expires_at END
+WHERE id = sqlc.arg(id);
+
+-- name: RecordAuditExportFailure :one
+UPDATE audit_exports SET last_attempt_at = sqlc.arg(at), last_error = sqlc.arg(last_error),
+  failing_since = coalesce(failing_since, sqlc.arg(at))
+WHERE id = sqlc.arg(id) RETURNING failing_since, failing_recorded;
+
+-- name: MarkAuditExportFailingRecorded :exec
+UPDATE audit_exports SET failing_recorded = 1 WHERE id = ?;
+
+-- name: StopAuditExport :exec
+-- stopExport: an object conflict, or a plan this release cannot upload.
+UPDATE audit_exports SET stopped_reason = sqlc.arg(stopped_reason), last_error = sqlc.arg(last_error), last_attempt_at = sqlc.arg(at),
+  failing_since = coalesce(failing_since, sqlc.arg(at)), lease_expires_at = NULL
+WHERE id = sqlc.arg(id);
+
+-- name: RestartAuditExportStream :one
+-- restartStream and recordRestore: a new stream at the committed cursor.
+UPDATE audit_exports SET stream_id = sqlc.arg(stream_id), stream_started_at = sqlc.arg(at), stopped_reason = NULL,
+  generation = generation + 1, lease_expires_at = NULL
+WHERE id = sqlc.arg(id) RETURNING *;
+
+-- name: LiveAuditExports :many
+-- recordRestore: every live export.
+SELECT * FROM audit_exports WHERE state IN ('active', 'draining') ORDER BY id;
+
+-- name: DeleteAuditExportPlanOf :exec
+DELETE FROM audit_export_plans WHERE export_id = ?;
+
+-- name: DrainAuditExport :exec
+-- rewrapForDrain: the key under the Root KEK, a fixed deadline.
+UPDATE audit_exports SET state = 'draining', credential_envelope = sqlc.arg(credential_envelope), drain_deadline = sqlc.arg(drain_deadline),
+  generation = generation + 1, lease_expires_at = NULL, updated_at = sqlc.arg(at)
+WHERE id = sqlc.arg(id);
+
+-- name: AbandonAuditExport :exec
+-- abandonLocked: no state guard; every caller has just checked, in its
+-- job, that the export is a drain past its deadline.
+UPDATE audit_exports SET state = 'abandoned', credential_envelope = NULL, generation = generation + 1, lease_expires_at = NULL,
+  updated_at = sqlc.arg(at)
+WHERE id = sqlc.arg(id);
+
+-- name: ExpiredAuditExportDrains :many
+SELECT * FROM audit_exports WHERE state = 'draining' AND drain_deadline <= ? ORDER BY id;

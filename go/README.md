@@ -523,9 +523,8 @@ of `<seconds>.<body>` with the webhook's secret).
 
 `server/auditexport` is the configuration side of `domain/auditexport.ts`
 (ADR-0056): an Organization's whole audit log copied to its own
-S3-compatible bucket with Object Lock. The worker, its drains and
-`admin audit-export` come in 4.11b; until then an export is configured and
-its first stream's manifest planned, and nothing uploads it.
+S3-compatible bucket with Object Lock. Its worker, drains and host command
+are the next section (4.11b).
 
 - **Operations.** `getAuditExport` (organization.manage, inspection while
   frozen), `createAuditExport`, `checkAuditExport`, `changeAuditExport`,
@@ -618,6 +617,69 @@ may use; it never adds to the Agent's Grants.
   `targets` is dropped before its value is checked, and one of
   `stateDigests` (enum keys) is an unrecognized key, as zod 4.6.7 does
   each.
+
+### The audit export's worker, drains and host command (step 4.11b)
+
+`server/auditexport/worker.go` and `streams.go` port the rest of
+`domain/auditexport.ts`: the worker, stream restarts, the restore step,
+the drains and `admin audit-export discard-plan`.
+
+- **The worker** (Decisions 2 to 4). It runs in `serve` while the host
+  leaves `audit_export` on: a pass at once, then every minute, paused by
+  the maintenance admission. Each pass leases every live export that is
+  due, one at a time, for 300 seconds. The lease moves the export's
+  generation, so a holder that lost its binding (a change, a new key, a
+  removal, a restart) never commits. One lease writes up to 20 objects:
+  - **the plan:** a pending plan first, else the next object. That is the
+    hour's heartbeat when the hour has none yet; otherwise the next batch
+    after the cursor (at most 1,000 events or 8 MiB of NDJSON, gzipped).
+    The plan is built outside any job, then stored in one job that checks
+    the binding, the cursor and that nothing is pending;
+  - **the upload:** exactly the stored bytes, conditionally. A 412 is
+    checked with a HEAD: the same SHA-256 means an earlier attempt landed
+    (delivered); other content stops the export (`object_conflict`). A key
+    that cannot read counts the 412 as delivered;
+  - **the commit:** one job that moves the cursor or records the hour, and
+    records `audit_export.recovered` after a failing episode;
+  - **failures:** a failed upload keeps the plan and records the fixed
+    words. Fifteen minutes of failures record `audit_export.failing`,
+    once per episode. A plan this release cannot upload stops the export
+    (`unsupported_format`).
+- **Restarts.** A plan whose retention would end within the hour starts a
+  new stream at the committed cursor; its manifest names the dropped batch
+  as a possible overlap. `varlatchd admin audit-export discard-plan
+  --export <id> --reason <expired|unsupported-format> [--json]` is the
+  host's way past a stopped export: the same restart, refused for a plan
+  that can still be uploaded. It runs through the daemon's control socket,
+  else offline under the lock.
+- **Gates** (decision 4). Every job of the worker, the restarts and the
+  host command takes the export's gate, as a change, a new key and a
+  removal do, so they wait for a destination change's probe
+  (`TestWorkerAndHostWaitForAChangesProbe`, `TestAuditExportCommand`).
+- **Restore** (Decision 5). `admin backup restore` no longer refuses an
+  archive with a live export. In the job that records
+  `installation.restored`, every live export continues in a new stream at
+  its restored cursor (`audit_export.stream_started`, reason `restored`).
+- **Drains** (Decision 10). `RewrapForDrain` seals a deleted
+  Organization's export key again under the Root KEK, and the worker reads
+  it from there. The batch that holds `organization.deleted` completes the
+  drain. A drain still running at its 30-day deadline is abandoned: its key
+  and plan are dropped and `audit_export.abandoned` is recorded, by the
+  worker or by `AbandonExpiredDrains`. Organization deletion (4.12) calls
+  `RewrapForDrain` and runs `AbandonExpiredDrains` in its loop.
+- **Parity.** `audit-export-worker-v0.22.0.json`
+  (`go-audit-export-worker-fixture.test.ts`) runs 52 steps against the
+  TypeScript worker and the Go worker. Each step must give the same
+  objects, exchanges with the destination, exports, plans and audit
+  events. Batches are compared decompressed: their gzip bytes are zlib's,
+  and differ between zlib builds (Node ships Chromium's), so Go's differ
+  too. Only the stored bytes are ever uploaded, and a plan keeps them
+  across a restart. The fixture's draining export carries a drain copy
+  the TypeScript code sealed, and go.yml has the TypeScript worker run the
+  steps on Go-sealed rows: G3 for drain copies at the database level, both
+  directions. The `audit-export` conformance suite checks the stream the
+  worker writes and the host command's refusals on every target (the
+  `host-admin` capability).
 
 The server's packages:
 
