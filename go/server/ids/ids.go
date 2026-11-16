@@ -41,6 +41,10 @@ const (
 	Requirement = "req"
 	// Step 4.7b: audit webhooks.
 	Webhook = "whk"
+	// Step 4.11: the audit export, its plans and its streams.
+	AuditExport       = "aex"
+	AuditExportPlan   = "aep"
+	AuditExportStream = "aes"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"

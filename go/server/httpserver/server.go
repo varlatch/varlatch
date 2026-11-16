@@ -112,6 +112,12 @@ type Options struct {
 	// Zones is the tz database a cursor's time names zones from, as
 	// PostgreSQL reads its host's (pgtime); nil is pgtime.System.
 	Zones *pgtime.Zones
+	// AuditExportOff is the host's audit_export = off (VARLATCH_AUDIT_EXPORT):
+	// the audit export's writes are refused, but for its removal.
+	AuditExportOff bool
+	// AuditExportVerifiedProvider treats an endpoint as a verified Object
+	// Lock provider (tests: a local S3 server); nil for none.
+	AuditExportVerifiedProvider func(endpoint string) bool
 	// Built adds operations, by route pattern ("GET /v1/organizations"), to
 	// the ones this build has, for tests of the stub's wiring. Each is
 	// served by the generated strict handler: a pattern whose operation
@@ -218,6 +224,9 @@ var BuiltOperations = []string{
 	credentialReviewPattern, machineReachPattern, myPermissionsPattern,
 	// Step 4.7b: audit webhooks (webhooks.go).
 	listWebhooksPattern, createWebhookPattern, updateWebhookPattern, revokeWebhookPattern,
+	// Step 4.11a: the audit export's configuration (auditexport.go).
+	getAuditExportPattern, createAuditExportPattern, checkAuditExportPattern, changeAuditExportPattern,
+	replaceAuditExportPattern, removeAuditExportPattern,
 }
 
 // Server is the handler.

@@ -63,6 +63,11 @@ sync = on
 # coolify and convex. Default: all.
 sync_adapters =
 
+# The audit export to object storage (ADR-0056): on lets an
+# Organization's admins copy its audit log to their own S3-compatible
+# bucket; off refuses creating or changing one (removing one still works).
+audit_export = on
+
 # Backups (ADR-0059 Decision 7): an encrypted archive of the database and
 # this configuration's non-key settings, made while varlatchd serves. The
 # Backup Encryption Key's file (32 bytes, hex or base64), kept apart from

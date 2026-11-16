@@ -774,6 +774,25 @@
           ]
         }
       }
+    },
+    "audit-export": {
+      "title": "the audit export to object storage against a local S3 server with Object Lock: the probe, creation, changes with and without an approval, a refused endpoint",
+      "script": "scripts/conformance/suites/audit-export.mjs",
+      "needs": [
+        "object-store"
+      ],
+      "operations": [
+        "admin-recover",
+        "whoami",
+        "createOrganization",
+        "getAuditExport",
+        "createAuditExport",
+        "checkAuditExport",
+        "changeAuditExport",
+        "replaceAuditExportCredential",
+        "removeAuditExport",
+        "cancelApproval"
+      ]
     }
   },
   "checks": {
@@ -3530,6 +3549,41 @@
       "kind": "conformance",
       "group": "deletion",
       "title": "nothing is delivered while the Organization's deletion is scheduled; once it is cancelled, what waited is delivered, without the deletion's own events"
+    },
+    "audit-export.check-probes": {
+      "suite": "audit-export",
+      "kind": "conformance",
+      "title": "checking a destination writes conditionally, reads the object and its retention back, and saves nothing"
+    },
+    "audit-export.create": {
+      "suite": "audit-export",
+      "kind": "conformance",
+      "title": "creating the export probes it and answers it active from the beginning of the log, Object Lock verified, never the key"
+    },
+    "audit-export.probe-objects-stay": {
+      "suite": "audit-export",
+      "kind": "conformance",
+      "title": "the probe's test objects stay in the bucket under the Organization's probe prefix"
+    },
+    "audit-export.one-per-organization": {
+      "suite": "audit-export",
+      "kind": "conformance",
+      "title": "a second export is refused while one is live"
+    },
+    "audit-export.tighten-without-approval": {
+      "suite": "audit-export",
+      "kind": "conformance",
+      "title": "a longer or stronger retention changes at once, without an approval"
+    },
+    "audit-export.loosening-needs-approval": {
+      "suite": "audit-export",
+      "kind": "conformance",
+      "title": "removing the retention, another destination, a new key and removal each ask for the requester's approval, and change nothing meanwhile"
+    },
+    "audit-export.private-endpoint-refused": {
+      "suite": "audit-export",
+      "kind": "conformance",
+      "title": "an endpoint at a private address is refused with the outbound policy's reason, before the key goes anywhere"
     }
   },
   "goServerChecks": {

@@ -134,12 +134,21 @@ type Client struct {
 	bucket string
 }
 
+// ClientOption adjusts a client NewClient makes.
+type ClientOption func(*s3.Options)
+
+// WithMaxAttempts sets the attempts per request, retries included (the
+// audit export's client makes one: its worker retries a whole plan).
+func WithMaxAttempts(n int) ClientOption {
+	return func(o *s3.Options) { o.RetryMaxAttempts = n }
+}
+
 // NewClient makes the client: the destination's region, endpoint and
 // addressing, the key, three attempts per request, and checksums only
 // where the protocol requires them (B2 and other S3-compatible stores do
 // not take every flexible checksum). client is the HTTP client; nil is a
 // default one.
-func NewClient(d Destination, c Credentials, client *http.Client) *Client {
+func NewClient(d Destination, c Credentials, client *http.Client, opts ...ClientOption) *Client {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Minute}
 	}
@@ -154,6 +163,9 @@ func NewClient(d Destination, c Credentials, client *http.Client) *Client {
 	}
 	if d.Endpoint != "" {
 		o.BaseEndpoint = aws.String(d.Endpoint)
+	}
+	for _, opt := range opts {
+		opt(&o)
 	}
 	return &Client{s3: s3.New(o), bucket: d.Bucket}
 }

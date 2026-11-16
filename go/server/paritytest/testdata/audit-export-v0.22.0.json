@@ -1,0 +1,3095 @@
+{
+  "comment": "Written by services/varlatchd/test/go-audit-export-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+  "ref": "v0.22.0",
+  "serverVersion": "0.22.0",
+  "rootKek": "0949e6b97d1f09ecbea6f520fcdd052ebe1c2ed0e8fa7ce40490919327243b79",
+  "tokens": {
+    "alice": "vlt_cli_oNxVzuL8vy8H5un8Z-cFt6V0reEYK0FeaOmls1p1YmA",
+    "alice2": "vlt_cli_QbrDe-3i9HHCt-bbXScy9Zbpl6NBXU1_6HgtzXNXUVA",
+    "bob": "vlt_cli_S6OG9Pfga_ngQmlYYASj7sAkC0oUJ-r-gX3YT5VuRww",
+    "carol": "vlt_cli_LcsUqQFszwGqI8z0EuHj-xaNX9f0q3riWla9rBP2bek"
+  },
+  "credentials": {
+    "aex_l5nqpje6qx7aq4i6viwnp4djcy": {
+      "accessKeyId": "AKIAFIXTUREGOOD",
+      "secretAccessKey": "fixture-secret"
+    },
+    "aex_wiz5nkql74mdtgb74io53dpvqy": {
+      "accessKeyId": "AKIAFIXTUREGOOD",
+      "secretAccessKey": "fixture-secret"
+    },
+    "aex_enlc4g6q5kaiqy3c7ml47optom": {
+      "accessKeyId": "AKIAFIXTUREGOOD",
+      "secretAccessKey": "fixture-secret"
+    }
+  },
+  "rows": {
+    "installation": [
+      {
+        "id": "inst_o2cb3l2546b2c47ctddeibk4ga",
+        "kek_canary": {
+          "nonce": "YEmPktjt1CD1WBkE",
+          "authTag": "eE+6Odbb0/sqs4TSgPYA1w==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "yFZBKlI8duGSHFI7AqqwT7xd51fyq8B8/eK6OwykxJI=",
+          "formatVersion": 1
+        },
+        "bootstrapped_at": "2026-11-16T08:42:08.211Z",
+        "created_at": "2026-11-16T08:42:08.165Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "public_url": null
+      }
+    ],
+    "identities": [
+      {
+        "id": "idn_67h2jl2grioa67eq7dsejv4jqu",
+        "kind": "human",
+        "name": "bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_sgqttyvszn2jfpou3zpqxsvisa",
+        "kind": "human",
+        "name": "carol",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-11-16T08:42:08.211Z",
+        "organization_id": null,
+        "last_seen_at": "2026-11-16T08:42:08.277Z",
+        "suspended_by_deletion": null
+      }
+    ],
+    "credentials": [
+      {
+        "id": "crd_6phtznniaoxrgbovvum6brj26i",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "c358f6cbdbddcd8843339b4030b37d505de98f558e23fcc964a334bf7d6534a9",
+        "created_at": "2026-11-16T08:42:08.236Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "df45c7352b0e835a0a7bd796b9b4f7d83e1e03ff71c87870ae730d1d2991bd38",
+        "created_at": "2026-11-16T08:42:08.226Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-11-16T08:42:08.267Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_t35r7w7z5tfemrp5clfehkwu2e",
+        "identity_id": "idn_67h2jl2grioa67eq7dsejv4jqu",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "ac77ce74683d74dfe776d2ee89629ba1c9575e640b677771ea3ec3ebcdcedae3",
+        "created_at": "2026-11-16T08:42:08.566Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_67h2jl2grioa67eq7dsejv4jqu",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_zvlgq6xrnqzub2wselbncvb7oi",
+        "identity_id": "idn_sgqttyvszn2jfpou3zpqxsvisa",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "2bf00be1ba185a0c767ed12e41c732ee10db768c4fa8c8525e983d3f61050c59",
+        "created_at": "2026-11-16T08:42:08.577Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_sgqttyvszn2jfpou3zpqxsvisa",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ],
+    "organizations": [
+      {
+        "id": "org_bch32fjvyd7nj5b5k7gtumcsme",
+        "slug": "frozen",
+        "name": "Frozen",
+        "wrapped_org_kek": {
+          "nonce": "lfG0FijqBfEjwU1m",
+          "authTag": "mPaV1BD7smpTtqOX1NTT2A==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "UQYp2ZDnXu4kb+iV65Mpq8BOpnZOkw7iV3H288sSSbk=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T08:42:08.328Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_jiyajyqt63iwrpz6ekusgrfdqm",
+        "slug": "beta",
+        "name": "Beta",
+        "wrapped_org_kek": {
+          "nonce": "t5/jjj49JwHPImRJ",
+          "authTag": "6PJyI/qLHL3GC6ZCClcjVQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "002CacHUkwcqSc+hEfKUU/3NVvsUFODD5qOF033H7aQ=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T08:42:08.302Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_jkfjdyynzlwspst5bgjgljluze",
+        "slug": "acme",
+        "name": "Acme",
+        "wrapped_org_kek": {
+          "nonce": "WOExNsLJSYiCfJxq",
+          "authTag": "JwposSQuNslqku77G7QiVg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "1lKMGDGjsR4YUE9JQqQSKn2ogEveA7uolJS76anzDWA=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T08:42:08.283Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_ktl4c7dkmtq6bjnm3t3mmufh3q",
+        "slug": "gamma",
+        "name": "Gamma",
+        "wrapped_org_kek": {
+          "nonce": "S/eyh+AFsFVpHLNx",
+          "authTag": "IZGr/vycB4EhbHhJ4JFNJQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "eH0q50spYL2WpefG+DprCgrhlXbHlnKCsrnQC81Nnio=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T08:42:08.317Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_xrwg7j6nu35q347jmemckufnui",
+        "slug": "deleting",
+        "name": "Deleting",
+        "wrapped_org_kek": {
+          "nonce": "tfqM7lhBbAvBX093",
+          "authTag": "IsR3OS/e//Rt0wKITovYXA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "cBZLX3jaxVFzzaBOosL/Dovp9XbCKu6aH85q92GG0Q8=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T08:42:08.342Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      }
+    ],
+    "org_memberships": [
+      {
+        "organization_id": "org_bch32fjvyd7nj5b5k7gtumcsme",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "role": "admin",
+        "created_at": "2026-11-16T08:42:08.328Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_jiyajyqt63iwrpz6ekusgrfdqm",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "role": "admin",
+        "created_at": "2026-11-16T08:42:08.302Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+        "identity_id": "idn_67h2jl2grioa67eq7dsejv4jqu",
+        "role": "member",
+        "created_at": "2026-11-16T08:42:08.564Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "role": "admin",
+        "created_at": "2026-11-16T08:42:08.283Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_ktl4c7dkmtq6bjnm3t3mmufh3q",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "role": "admin",
+        "created_at": "2026-11-16T08:42:08.317Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_xrwg7j6nu35q347jmemckufnui",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "role": "admin",
+        "created_at": "2026-11-16T08:42:08.342Z",
+        "removed_at": null,
+        "version": 0
+      }
+    ],
+    "approval_intents": [
+      {
+        "id": "apr_changeaaaaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "auth_session_id": null,
+        "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+        "operation": "audit_export.change",
+        "target": {
+          "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+        },
+        "body_hash": "hmac-v1:c003b9060b85b93b45ee1d92148d3ff1633873743c7e8b28f95cd78c58f19013",
+        "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+        "expected_version": 2,
+        "summary": {
+          "title": "Change the audit export of Acme",
+          "changes": [
+            {
+              "to": "moved/",
+              "from": "logs/",
+              "field": "prefix",
+              "loosens": true
+            }
+          ]
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      },
+      {
+        "id": "apr_removeaaaaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "auth_session_id": null,
+        "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+        "operation": "audit_export.remove",
+        "target": {
+          "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+        },
+        "body_hash": "hmac-v1:1fa4e49fee220e1c616a6d6a6162e0d379a08e7568222868946c4bfaa6c70613",
+        "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+        "expected_version": 4,
+        "summary": {
+          "title": "Remove the audit export of Acme",
+          "changes": [
+            {
+              "to": null,
+              "from": "s3.fixture.test/export-bucket/moved/",
+              "field": "destination",
+              "loosens": true
+            }
+          ]
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      },
+      {
+        "id": "apr_replaceaaaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+        "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "auth_session_id": null,
+        "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+        "operation": "audit_export.change",
+        "target": {
+          "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+        },
+        "body_hash": "hmac-v1:9a5527a232bae45356774750ff126fd37996beb5eb76ee4f5c69262474c572ee",
+        "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+        "expected_version": 3,
+        "summary": {
+          "title": "Replace the key of the audit export of Acme",
+          "changes": [
+            {
+              "to": null,
+              "from": null,
+              "field": "credential",
+              "loosens": true
+            }
+          ]
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      }
+    ],
+    "organization_freezes": [
+      {
+        "id": "ofz_w7mjklpvtktf7xgm7qideuuqle",
+        "organization_id": "org_bch32fjvyd7nj5b5k7gtumcsme",
+        "frozen_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "frozen_at": "2026-03-01T00:00:00.000Z",
+        "reason": "incident drill",
+        "lifted_at": null,
+        "lifted_by": null,
+        "lift_method": null
+      }
+    ],
+    "organization_deletions": [
+      {
+        "id": "odl_2nw577veyvyduzhkmqms6vz42q",
+        "organization_id": "org_xrwg7j6nu35q347jmemckufnui",
+        "requested_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "scheduled_at": "2026-03-01T00:00:00.000Z",
+        "run_after": "2099-03-01T00:00:00.000Z",
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "cancelled_at": null,
+        "completed_at": null
+      }
+    ],
+    "audit_exports": [
+      {
+        "id": "aex_enlc4g6q5kaiqy3c7ml47optom",
+        "organization_id": "org_xrwg7j6nu35q347jmemckufnui",
+        "endpoint": "http://s3.fixture.test",
+        "region": "us-east-1",
+        "bucket": "export-bucket",
+        "prefix": "logs/",
+        "path_style": true,
+        "credential_envelope": {
+          "nonce": "WjL4k+nP1+rCuz+I",
+          "authTag": "PGMSlhjtmeKxgN0RQQTP5Q==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "D0pbWn1D6ZQbWSnstRW1ufODlw88w28YcCjeFaLMYxp/PAzkspGt2JE4x4XwIEB/GXOXc52pQ9mU6gJ+hKVfCJXY+qA=",
+          "formatVersion": 1
+        },
+        "retention_mode": null,
+        "retention_days": null,
+        "stream_id": "aes_vyywseuoqeq22d6aoqsq2laexm",
+        "stream_started_at": "2026-11-16T08:42:08.543Z",
+        "cursor_order": 0,
+        "generation": 0,
+        "lease_expires_at": null,
+        "state": "active",
+        "drain_deadline": null,
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_error": null,
+        "failing_since": null,
+        "failing_recorded": false,
+        "key_can_read": true,
+        "retention_readable": null,
+        "stopped_reason": null,
+        "conditional_checked_at": "2026-11-16T08:42:08.543Z",
+        "lock_verified": null,
+        "last_heartbeat_hour": null,
+        "created_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "created_at": "2026-11-16T08:42:08.516Z",
+        "updated_at": "2026-11-16T08:42:08.516Z",
+        "removed_at": null,
+        "version": 1
+      },
+      {
+        "id": "aex_l5nqpje6qx7aq4i6viwnp4djcy",
+        "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+        "endpoint": "http://s3.fixture.test",
+        "region": "us-east-1",
+        "bucket": "export-bucket",
+        "prefix": "logs/",
+        "path_style": true,
+        "credential_envelope": {
+          "nonce": "nPP9QF+OvY4vFoFw",
+          "authTag": "Qtd6S0MyxsII4AZEIS8Q+A==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "79ZydJTNvI77AH8ubpV9tdF6ddLXsYpb5puY9K5oCL0t07cPwpjoYoniuGpHFNSLxQD8psEWBF3OwDkPDBZulkIbYjk=",
+          "formatVersion": 1
+        },
+        "retention_mode": "governance",
+        "retention_days": 7,
+        "stream_id": "aes_473ceuhlkbbxz46kjc4mt3bxgm",
+        "stream_started_at": "2026-11-16T08:42:08.433Z",
+        "cursor_order": 0,
+        "generation": 0,
+        "lease_expires_at": null,
+        "state": "active",
+        "drain_deadline": null,
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_error": null,
+        "failing_since": null,
+        "failing_recorded": false,
+        "key_can_read": true,
+        "retention_readable": true,
+        "stopped_reason": null,
+        "conditional_checked_at": "2026-11-16T08:42:08.433Z",
+        "lock_verified": true,
+        "last_heartbeat_hour": null,
+        "created_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "created_at": "2026-11-16T08:42:08.373Z",
+        "updated_at": "2026-11-16T08:42:08.373Z",
+        "removed_at": null,
+        "version": 1
+      },
+      {
+        "id": "aex_wiz5nkql74mdtgb74io53dpvqy",
+        "organization_id": "org_bch32fjvyd7nj5b5k7gtumcsme",
+        "endpoint": "http://s3.fixture.test",
+        "region": "us-east-1",
+        "bucket": "export-bucket",
+        "prefix": "logs/",
+        "path_style": true,
+        "credential_envelope": {
+          "nonce": "2pK3RTcm7wTYuaw1",
+          "authTag": "AchKkQngGgvpOtTxMWgoTw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "N4dxgH5P3NRWzEOBkKma/2H6BTp/u7Kg0K7kBLb/lW4ylR/HQ6BCxn1fpUNypCM8UUkBetAufLRc9C5e+X3UW0NFGXg=",
+          "formatVersion": 1
+        },
+        "retention_mode": null,
+        "retention_days": null,
+        "stream_id": "aes_csozbjgrlaee2jv6vuntaflcx4",
+        "stream_started_at": "2026-11-16T08:42:08.491Z",
+        "cursor_order": 0,
+        "generation": 0,
+        "lease_expires_at": null,
+        "state": "active",
+        "drain_deadline": null,
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_error": null,
+        "failing_since": null,
+        "failing_recorded": false,
+        "key_can_read": true,
+        "retention_readable": null,
+        "stopped_reason": null,
+        "conditional_checked_at": "2026-11-16T08:42:08.491Z",
+        "lock_verified": null,
+        "last_heartbeat_hour": null,
+        "created_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+        "created_at": "2026-11-16T08:42:08.465Z",
+        "updated_at": "2026-11-16T08:42:08.465Z",
+        "removed_at": null,
+        "version": 1
+      }
+    ],
+    "audit_export_plans": [
+      {
+        "id": "aep_byofviiytxzaet3tkuhhj533lu",
+        "export_id": "aex_wiz5nkql74mdtgb74io53dpvqy",
+        "export_version": 1,
+        "stream_id": "aes_csozbjgrlaee2jv6vuntaflcx4",
+        "generation": 0,
+        "kind": "manifest",
+        "object_name": "logs/varlatch-audit/org_bch32fjvyd7nj5b5k7gtumcsme/aes_csozbjgrlaee2jv6vuntaflcx4/stream.json",
+        "body": "\\x7b22666f726d6174223a227661726c617463682d61756469742d6578706f7274222c2276657273696f6e223a312c226b696e64223a2273747265616d222c226f7267616e697a6174696f6e4964223a226f72675f6263683332666a767964376e6a3562356b376774756d63736d65222c2273747265616d4964223a226165735f63736f7a626a67726c616565326a763676756e7461666c637834222c2273746172744f72646572223a2230222c2270726576696f757353747265616d4964223a6e756c6c2c22726561736f6e223a2263726561746564222c22706f737369626c654f7665726c6170223a6e756c6c2c22706c616e6e65644174223a22323032362d31312d31365430383a34323a30382e3437395a227d0a",
+        "sha256": "42cc149fd74fa140f04208a717fa58d9718f98aedd911139fc3279f26835fa78",
+        "md5": "b13094efa310ff6de767bf6ac64022fd",
+        "content_type": "application/json",
+        "content_encoding": null,
+        "format_version": 1,
+        "retention_mode": null,
+        "retain_until": null,
+        "first_order": null,
+        "last_order": null,
+        "event_count": null,
+        "heartbeat_hour": null,
+        "planned_at": "2026-11-16T08:42:08.479Z"
+      },
+      {
+        "id": "aep_gcve65xxuhvtujxea5akiwuwjm",
+        "export_id": "aex_l5nqpje6qx7aq4i6viwnp4djcy",
+        "export_version": 1,
+        "stream_id": "aes_473ceuhlkbbxz46kjc4mt3bxgm",
+        "generation": 0,
+        "kind": "manifest",
+        "object_name": "logs/varlatch-audit/org_jkfjdyynzlwspst5bgjgljluze/aes_473ceuhlkbbxz46kjc4mt3bxgm/stream.json",
+        "body": "\\x7b22666f726d6174223a227661726c617463682d61756469742d6578706f7274222c2276657273696f6e223a312c226b696e64223a2273747265616d222c226f7267616e697a6174696f6e4964223a226f72675f6a6b666a6479796e7a6c77737073743562676a676c6a6c757a65222c2273747265616d4964223a226165735f343733636575686c6b6262787a34366b6a63346d74336278676d222c2273746172744f72646572223a2230222c2270726576696f757353747265616d4964223a6e756c6c2c22726561736f6e223a2263726561746564222c22706f737369626c654f7665726c6170223a6e756c6c2c22706c616e6e65644174223a22323032362d31312d31365430383a34323a30382e3338355a227d0a",
+        "sha256": "7510390d364a262dacac50de9a03a97c260902e38536be551cd6939e15f5f1e7",
+        "md5": "69a48174b5ea715cb66a0e566cc5d855",
+        "content_type": "application/json",
+        "content_encoding": null,
+        "format_version": 1,
+        "retention_mode": "governance",
+        "retain_until": "2026-11-23T08:42:08.385Z",
+        "first_order": null,
+        "last_order": null,
+        "event_count": null,
+        "heartbeat_hour": null,
+        "planned_at": "2026-11-16T08:42:08.385Z"
+      },
+      {
+        "id": "aep_qpjmqjs65rk76pz7vv27ldpbqu",
+        "export_id": "aex_enlc4g6q5kaiqy3c7ml47optom",
+        "export_version": 1,
+        "stream_id": "aes_vyywseuoqeq22d6aoqsq2laexm",
+        "generation": 0,
+        "kind": "manifest",
+        "object_name": "logs/varlatch-audit/org_xrwg7j6nu35q347jmemckufnui/aes_vyywseuoqeq22d6aoqsq2laexm/stream.json",
+        "body": "\\x7b22666f726d6174223a227661726c617463682d61756469742d6578706f7274222c2276657273696f6e223a312c226b696e64223a2273747265616d222c226f7267616e697a6174696f6e4964223a226f72675f78727767376a366e753335713334376a6d656d636b75666e7569222c2273747265616d4964223a226165735f767979777365756f71657132326436616f717371326c6165786d222c2273746172744f72646572223a2230222c2270726576696f757353747265616d4964223a6e756c6c2c22726561736f6e223a2263726561746564222c22706f737369626c654f7665726c6170223a6e756c6c2c22706c616e6e65644174223a22323032362d31312d31365430383a34323a30382e3533315a227d0a",
+        "sha256": "9003eb7c489c88482f958e2730bb334a6e9a4d8fa41d22acc57936c80c241f4b",
+        "md5": "2e73d136b940c048a700aacf48054ed0",
+        "content_type": "application/json",
+        "content_encoding": null,
+        "format_version": 1,
+        "retention_mode": null,
+        "retain_until": null,
+        "first_order": null,
+        "last_order": null,
+        "event_count": null,
+        "heartbeat_hour": null,
+        "planned_at": "2026-11-16T08:42:08.531Z"
+      }
+    ]
+  },
+  "sideTables": [
+    {
+      "name": "audit_exports",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "state"
+      ],
+      "volatile": [
+        "credential_envelope",
+        "stream_started_at",
+        "conditional_checked_at",
+        "created_at",
+        "updated_at",
+        "removed_at"
+      ]
+    },
+    {
+      "name": "audit_export_plans",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "export_id",
+        "kind"
+      ],
+      "volatile": [
+        "body",
+        "sha256",
+        "md5",
+        "planned_at",
+        "retain_until"
+      ]
+    },
+    {
+      "name": "approval_intents",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "operation",
+        "target",
+        "body_hash"
+      ],
+      "volatile": [
+        "created_at",
+        "expires_at",
+        "consumed_at",
+        "closed_at"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "id": "GET get",
+      "name": "get",
+      "method": "GET",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"enabled\":true,\"export\":{\"id\":\"aex_l5nqpje6qx7aq4i6viwnp4djcy\",\"organizationId\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"logs/\",\"pathStyle\":true},\"retention\":{\"mode\":\"governance\",\"days\":7},\"state\":\"active\",\"streamId\":\"aes_473ceuhlkbbxz46kjc4mt3bxgm\",\"cursor\":\"0\",\"version\":1,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":true,\"retentionReadable\":true,\"stoppedReason\":null,\"conditionalCheckedAt\":\"2026-11-16T08:42:08.433Z\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.373Z\",\"removedAt\":null,\"lag\":{\"pending\":0,\"oldestPendingAt\":null},\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get by id",
+      "name": "get by id",
+      "method": "GET",
+      "path": "/v1/organizations/{acmeId}/audit-export",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"enabled\":true,\"export\":{\"id\":\"aex_l5nqpje6qx7aq4i6viwnp4djcy\",\"organizationId\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"logs/\",\"pathStyle\":true},\"retention\":{\"mode\":\"governance\",\"days\":7},\"state\":\"active\",\"streamId\":\"aes_473ceuhlkbbxz46kjc4mt3bxgm\",\"cursor\":\"0\",\"version\":1,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":true,\"retentionReadable\":true,\"stoppedReason\":null,\"conditionalCheckedAt\":\"2026-11-16T08:42:08.433Z\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.373Z\",\"removedAt\":null,\"lag\":{\"pending\":0,\"oldestPendingAt\":null},\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get, none yet",
+      "name": "get, none yet",
+      "method": "GET",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"enabled\":true,\"export\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get as a member",
+      "name": "get as a member",
+      "method": "GET",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "bob",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_67h2jl2grioa67eq7dsejv4jqu",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_t35r7w7z5tfemrp5clfehkwu2e",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET get as an outsider",
+      "name": "get as an outsider",
+      "method": "GET",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "carol",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_sgqttyvszn2jfpou3zpqxsvisa",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_zvlgq6xrnqzub2wselbncvb7oi",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET get a frozen Organization's",
+      "name": "get a frozen Organization's",
+      "method": "GET",
+      "path": "/v1/organizations/frozen/audit-export",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"enabled\":true,\"export\":{\"id\":\"aex_wiz5nkql74mdtgb74io53dpvqy\",\"organizationId\":\"org_bch32fjvyd7nj5b5k7gtumcsme\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"logs/\",\"pathStyle\":true},\"retention\":null,\"state\":\"active\",\"streamId\":\"aes_csozbjgrlaee2jv6vuntaflcx4\",\"cursor\":\"0\",\"version\":1,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":true,\"retentionReadable\":null,\"stoppedReason\":null,\"conditionalCheckedAt\":\"2026-11-16T08:42:08.491Z\",\"lockVerified\":null,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.465Z\",\"removedAt\":null,\"lag\":{\"pending\":0,\"oldestPendingAt\":null},\"objectLock\":\"not-set\",\"unsupportedPlanFormat\":null}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get an Organization's being deleted",
+      "name": "get an Organization's being deleted",
+      "method": "GET",
+      "path": "/v1/organizations/deleting/audit-export",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"enabled\":true,\"export\":{\"id\":\"aex_enlc4g6q5kaiqy3c7ml47optom\",\"organizationId\":\"org_xrwg7j6nu35q347jmemckufnui\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"logs/\",\"pathStyle\":true},\"retention\":null,\"state\":\"active\",\"streamId\":\"aes_vyywseuoqeq22d6aoqsq2laexm\",\"cursor\":\"0\",\"version\":1,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":true,\"retentionReadable\":null,\"stoppedReason\":null,\"conditionalCheckedAt\":\"2026-11-16T08:42:08.543Z\",\"lockVerified\":null,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.516Z\",\"removedAt\":null,\"lag\":{\"pending\":0,\"oldestPendingAt\":null},\"objectLock\":\"not-set\",\"unsupportedPlanFormat\":null}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get in an unknown Organization",
+      "name": "get in an unknown Organization",
+      "method": "GET",
+      "path": "/v1/organizations/nope/audit-export",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an empty body",
+      "name": "create, an empty body",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "rawBody": "",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Invalid input: expected object, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a body that is not JSON",
+      "name": "create, a body that is not JSON",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "rawBody": "{nope",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Invalid input: expected object, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an extra member",
+      "name": "create, an extra member",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        },
+        "extra": 1
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Unrecognized key: \\\"extra\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, no destination",
+      "name": "create, no destination",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"destination: Invalid input: expected object, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an extra destination member",
+      "name": "create, an extra destination member",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true,
+          "extra": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"destination: Unrecognized key: \\\"extra\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a retention of 0 days",
+      "name": "create, a retention of 0 days",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        },
+        "retention": {
+          "mode": "compliance",
+          "days": 0
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"retention.days: Too small: expected number to be >=1\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, from somewhere else",
+      "name": "create, from somewhere else",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        },
+        "from": "yesterday"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"from: Invalid option: expected one of \\\"beginning\\\"|\\\"now\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an endpoint with a path",
+      "name": "create, an endpoint with a path",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test/s3",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"endpoint: must be a scheme, host and optional port, without a path or query\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a bucket in capitals",
+      "name": "create, a bucket in capitals",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "Export-Bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"bucket: 3 to 63 lowercase letters, digits, dots and hyphens, starting and ending with a letter or digit\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a key with a space",
+      "name": "create, a key with a space",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIA X",
+          "secretAccessKey": "s"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"credential: an access key ID and a secret, without spaces\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create to a private address",
+      "name": "create to a private address",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "https://10.0.0.7",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"This address is on a private network, which this installation does not let Organizations reach. The host operator can allow it with VARLATCH_OUTBOUND_ALLOW. See https://docs.varlatch.com/reference/outbound-policy/\",\"requestId\":\"{requestId}\",\"details\":{\"outbound\":\"private_address\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+          "decision": "deny",
+          "event_type": "outbound.refused",
+          "listener": "ordinary",
+          "metadata": {
+            "host": "10.0.0.7",
+            "phase": "configuration",
+            "port": 443,
+            "purpose": "audit_export",
+            "reason": "private_address",
+            "scheme": "https"
+          },
+          "organization_id": "org_jiyajyqt63iwrpz6ekusgrfdqm",
+          "request_id": null,
+          "resource": {},
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST create, a destination that overwrites",
+      "name": "create, a destination that overwrites",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "overwrite-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"This destination overwrote an existing object; audit export needs conditional writes (If-None-Match)\",\"requestId\":\"{requestId}\",\"details\":{\"check\":{\"ok\":false,\"message\":\"This destination overwrote an existing object; audit export needs conditional writes (If-None-Match)\",\"conditionalCreation\":false,\"objectLock\":null,\"keyCanRead\":null,\"retentionReadable\":null}}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a wrong key",
+      "name": "create, a wrong key",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAWRONG",
+          "secretAccessKey": "s"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"The test write failed (S3 error InvalidAccessKeyId, HTTP 403): the destination rejected the key; check its ID and secret, and that it is not deleted or expired\",\"requestId\":\"{requestId}\",\"details\":{\"check\":{\"ok\":false,\"message\":\"The test write failed (S3 error InvalidAccessKeyId, HTTP 403): the destination rejected the key; check its ID and secret, and that it is not deleted or expired\",\"conditionalCreation\":null,\"objectLock\":null,\"keyCanRead\":null,\"retentionReadable\":null}}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, no such bucket",
+      "name": "create, no such bucket",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "missing-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"The test write failed (S3 error NoSuchBucket, HTTP 404): the bucket does not exist at the destination\",\"requestId\":\"{requestId}\",\"details\":{\"check\":{\"ok\":false,\"message\":\"The test write failed (S3 error NoSuchBucket, HTTP 404): the bucket does not exist at the destination\",\"conditionalCreation\":null,\"objectLock\":null,\"keyCanRead\":null,\"retentionReadable\":null}}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create as a member",
+      "name": "create as a member",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "bob",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_67h2jl2grioa67eq7dsejv4jqu",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_t35r7w7z5tfemrp5clfehkwu2e",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_jiyajyqt63iwrpz6ekusgrfdqm",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST create",
+      "name": "create",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        },
+        "retention": {
+          "mode": "compliance",
+          "days": 1
+        },
+        "from": "now"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{aex#1}\",\"organizationId\":\"org_jiyajyqt63iwrpz6ekusgrfdqm\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"\",\"pathStyle\":true},\"retention\":{\"mode\":\"compliance\",\"days\":1},\"state\":\"active\",\"streamId\":\"{aes#1}\",\"cursor\":\"5\",\"version\":1,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":true,\"retentionReadable\":true,\"stoppedReason\":null,\"conditionalCheckedAt\":\"{time}\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"{time}\",\"removedAt\":null,\"lag\":{\"pending\":1,\"oldestPendingAt\":\"{time}\"},\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+          "decision": "info",
+          "event_type": "audit_export.created",
+          "listener": "ordinary",
+          "metadata": {
+            "bucket": "export-bucket",
+            "from": "now",
+            "host": "s3.fixture.test",
+            "prefix": "",
+            "retentionDays": 1,
+            "retentionMode": "compliance"
+          },
+          "organization_id": "org_jiyajyqt63iwrpz6ekusgrfdqm",
+          "request_id": "{requestId}",
+          "resource": {
+            "exportId": "{aex#1}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        },
+        {
+          "action": null,
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+          "decision": "info",
+          "event_type": "audit_export.stream_started",
+          "listener": "ordinary",
+          "metadata": {
+            "previousStreamId": null,
+            "reason": "created",
+            "streamId": "{aes#1}"
+          },
+          "organization_id": "org_jiyajyqt63iwrpz6ekusgrfdqm",
+          "request_id": "{requestId}",
+          "resource": {
+            "exportId": "{aex#1}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "audit_exports": {
+          "inserted": [
+            {
+              "bucket": "export-bucket",
+              "conditional_checked_at": "{fresh}",
+              "created_at": "{fresh}",
+              "created_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "credential_envelope": "{fresh}",
+              "cursor_order": 5,
+              "drain_deadline": null,
+              "endpoint": "http://s3.fixture.test",
+              "failing_recorded": false,
+              "failing_since": null,
+              "generation": 0,
+              "id": "{aex#1}",
+              "key_can_read": true,
+              "last_attempt_at": null,
+              "last_error": null,
+              "last_heartbeat_hour": null,
+              "last_success_at": null,
+              "lease_expires_at": null,
+              "lock_verified": true,
+              "organization_id": "org_jiyajyqt63iwrpz6ekusgrfdqm",
+              "path_style": true,
+              "prefix": "",
+              "region": "us-east-1",
+              "removed_at": null,
+              "retention_days": 1,
+              "retention_mode": "compliance",
+              "retention_readable": true,
+              "state": "active",
+              "stopped_reason": null,
+              "stream_id": "{aes#1}",
+              "stream_started_at": "{fresh}",
+              "updated_at": "{fresh}",
+              "version": 1
+            }
+          ]
+        },
+        "audit_export_plans": {
+          "inserted": [
+            {
+              "body": "{fresh}",
+              "content_encoding": null,
+              "content_type": "application/json",
+              "event_count": null,
+              "export_id": "{aex#1}",
+              "export_version": 1,
+              "first_order": null,
+              "format_version": 1,
+              "generation": 0,
+              "heartbeat_hour": null,
+              "id": "{aep#1}",
+              "kind": "manifest",
+              "last_order": null,
+              "md5": "{fresh}",
+              "object_name": "varlatch-audit/org_jiyajyqt63iwrpz6ekusgrfdqm/{aes#1}/stream.json",
+              "planned_at": "{fresh}",
+              "retain_until": "{fresh}",
+              "retention_mode": "compliance",
+              "sha256": "{fresh}",
+              "stream_id": "{aes#1}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create again",
+      "name": "create again",
+      "method": "POST",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"This Organization already has an audit export; change or remove it instead\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"export-exists\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create in a frozen Organization",
+      "name": "create in a frozen Organization",
+      "method": "POST",
+      "path": "/v1/organizations/frozen/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_w7mjklpvtktf7xgm7qideuuqle\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_w7mjklpvtktf7xgm7qideuuqle",
+            "method": "POST",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org/audit-export"
+          },
+          "organization_id": "org_bch32fjvyd7nj5b5k7gtumcsme",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_w7mjklpvtktf7xgm7qideuuqle"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST create in an Organization being deleted",
+      "name": "create in an Organization being deleted",
+      "method": "POST",
+      "path": "/v1/organizations/deleting/audit-export",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_2nw577veyvyduzhkmqms6vz42q\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST check, a bucket without Object Lock",
+      "name": "check, a bucket without Object Lock",
+      "method": "POST",
+      "path": "/v1/organizations/gamma/audit-export/check",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "nolock-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        },
+        "retention": {
+          "mode": "compliance",
+          "days": 1
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"ok\":false,\"message\":\"This destination accepted the retention headers but kept no retention on the test object; check that the bucket has Object Lock enabled\",\"conditionalCreation\":true,\"objectLock\":null,\"keyCanRead\":true,\"retentionReadable\":true}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST check, a weaker retention",
+      "name": "check, a weaker retention",
+      "method": "POST",
+      "path": "/v1/organizations/gamma/audit-export/check",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "weak-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        },
+        "retention": {
+          "mode": "compliance",
+          "days": 1
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"ok\":false,\"message\":\"This destination kept the test object with a weaker retention than requested (another mode, or an earlier date)\",\"conditionalCreation\":true,\"objectLock\":null,\"keyCanRead\":true,\"retentionReadable\":true}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST check, a key that cannot read",
+      "name": "check, a key that cannot read",
+      "method": "POST",
+      "path": "/v1/organizations/gamma/audit-export/check",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTURENOREAD",
+          "secretAccessKey": "s"
+        },
+        "retention": {
+          "mode": "compliance",
+          "days": 1
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"ok\":true,\"message\":null,\"conditionalCreation\":true,\"objectLock\":\"accepted\",\"keyCanRead\":false,\"retentionReadable\":false}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST check, a private address",
+      "name": "check, a private address",
+      "method": "POST",
+      "path": "/v1/organizations/gamma/audit-export/check",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "https://10.0.0.8",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        },
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "fixture-secret"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"ok\":false,\"message\":\"This address is on a private network, which this installation does not let Organizations reach. The host operator can allow it with VARLATCH_OUTBOUND_ALLOW. See https://docs.varlatch.com/reference/outbound-policy/\",\"conditionalCreation\":null,\"objectLock\":null,\"keyCanRead\":null,\"retentionReadable\":null}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+          "decision": "deny",
+          "event_type": "outbound.refused",
+          "listener": "ordinary",
+          "metadata": {
+            "host": "10.0.0.8",
+            "phase": "configuration",
+            "port": 443,
+            "purpose": "audit_export",
+            "reason": "private_address",
+            "scheme": "https"
+          },
+          "organization_id": "org_ktl4c7dkmtq6bjnm3t3mmufh3q",
+          "request_id": null,
+          "resource": {},
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check, the stored key and no export",
+      "name": "check, the stored key and no export",
+      "method": "POST",
+      "path": "/v1/organizations/gamma/audit-export/check",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        }
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Audit export not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST check, the stored key",
+      "name": "check, the stored key",
+      "method": "POST",
+      "path": "/v1/organizations/acme/audit-export/check",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "logs",
+          "pathStyle": true
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"ok\":true,\"message\":null,\"conditionalCreation\":true,\"objectLock\":\"not-set\",\"keyCanRead\":true,\"retentionReadable\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST check, the stored key elsewhere",
+      "name": "check, the stored key elsewhere",
+      "method": "POST",
+      "path": "/v1/organizations/acme/audit-export/check",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "elsewhere",
+          "pathStyle": true
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"The stored key is only checked against the export's own destination; give a key to check another one\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"stored-key-other-destination\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH change, tighten the retention",
+      "name": "change, tighten the retention",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 1,
+        "retention": {
+          "mode": "compliance",
+          "days": 30
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"export\":{\"id\":\"aex_l5nqpje6qx7aq4i6viwnp4djcy\",\"organizationId\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"logs/\",\"pathStyle\":true},\"retention\":{\"mode\":\"compliance\",\"days\":30},\"state\":\"active\",\"streamId\":\"aes_473ceuhlkbbxz46kjc4mt3bxgm\",\"cursor\":\"0\",\"version\":2,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":true,\"retentionReadable\":true,\"stoppedReason\":null,\"conditionalCheckedAt\":\"2026-11-16T08:42:08.433Z\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.373Z\",\"removedAt\":null,\"lag\":{\"pending\":3,\"oldestPendingAt\":\"{time}\"},\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null},\"changed\":true,\"loosened\":false}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+          "decision": "info",
+          "event_type": "audit_export.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "from_retention": "governance, 7 days",
+            "loosened": false,
+            "loosenedFields": "",
+            "to_retention": "compliance, 30 days"
+          },
+          "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+          "request_id": "{requestId}",
+          "resource": {
+            "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "audit_exports": {
+          "updated": [
+            {
+              "bucket": "export-bucket",
+              "conditional_checked_at": "2026-11-16T08:42:08.433Z",
+              "created_at": "2026-11-16T08:42:08.373Z",
+              "created_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "credential_envelope": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "Qtd6S0MyxsII4AZEIS8Q+A==",
+                "ciphertext": "79ZydJTNvI77AH8ubpV9tdF6ddLXsYpb5puY9K5oCL0t07cPwpjoYoniuGpHFNSLxQD8psEWBF3OwDkPDBZulkIbYjk=",
+                "formatVersion": 1,
+                "nonce": "nPP9QF+OvY4vFoFw"
+              },
+              "cursor_order": 0,
+              "drain_deadline": null,
+              "endpoint": "http://s3.fixture.test",
+              "failing_recorded": false,
+              "failing_since": null,
+              "generation": 1,
+              "id": "aex_l5nqpje6qx7aq4i6viwnp4djcy",
+              "key_can_read": true,
+              "last_attempt_at": null,
+              "last_error": null,
+              "last_heartbeat_hour": null,
+              "last_success_at": null,
+              "lease_expires_at": null,
+              "lock_verified": true,
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "path_style": true,
+              "prefix": "logs/",
+              "region": "us-east-1",
+              "removed_at": null,
+              "retention_days": 30,
+              "retention_mode": "compliance",
+              "retention_readable": true,
+              "state": "active",
+              "stopped_reason": null,
+              "stream_id": "aes_473ceuhlkbbxz46kjc4mt3bxgm",
+              "stream_started_at": "2026-11-16T08:42:08.433Z",
+              "updated_at": "{fresh}",
+              "version": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH change, nothing",
+      "name": "change, nothing",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 2,
+        "retention": {
+          "mode": "compliance",
+          "days": 30
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"export\":{\"id\":\"aex_l5nqpje6qx7aq4i6viwnp4djcy\",\"organizationId\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"logs/\",\"pathStyle\":true},\"retention\":{\"mode\":\"compliance\",\"days\":30},\"state\":\"active\",\"streamId\":\"aes_473ceuhlkbbxz46kjc4mt3bxgm\",\"cursor\":\"0\",\"version\":2,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":true,\"retentionReadable\":true,\"stoppedReason\":null,\"conditionalCheckedAt\":\"2026-11-16T08:42:08.433Z\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.373Z\",\"removedAt\":null,\"lag\":{\"pending\":3,\"oldestPendingAt\":\"{time}\"},\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null},\"changed\":false,\"loosened\":false}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH change, remove the retention",
+      "name": "change, remove the retention",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 2,
+        "retention": null
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#1} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#1}\",\"operation\":\"audit_export.change\",\"organization\":{\"id\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"slug\":\"acme\",\"name\":\"Acme\"},\"summary\":{\"title\":\"Change the audit export of Acme\",\"changes\":[{\"to\":\"none\",\"from\":\"compliance, 30 days\",\"field\":\"retention\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#1}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:944f8fb1d178e43480f114cdedc574377f7fb643fb54254fbdcd042e275aa3a9",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+              "expected_version": 2,
+              "expires_at": "{fresh}",
+              "id": "{apr#1}",
+              "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "last_polled_at": null,
+              "operation": "audit_export.change",
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "retention",
+                    "from": "compliance, 30 days",
+                    "loosens": true,
+                    "to": "none"
+                  }
+                ],
+                "title": "Change the audit export of Acme"
+              },
+              "target": {
+                "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH change the destination",
+      "name": "change the destination",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 2,
+        "destination": {
+          "prefix": "moved"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#2} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#2}\",\"operation\":\"audit_export.change\",\"organization\":{\"id\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"slug\":\"acme\",\"name\":\"Acme\"},\"summary\":{\"title\":\"Change the audit export of Acme\",\"changes\":[{\"to\":\"moved/\",\"from\":\"logs/\",\"field\":\"prefix\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#2}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:c003b9060b85b93b45ee1d92148d3ff1633873743c7e8b28f95cd78c58f19013",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+              "expected_version": 2,
+              "expires_at": "{fresh}",
+              "id": "{apr#2}",
+              "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "last_polled_at": null,
+              "operation": "audit_export.change",
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "prefix",
+                    "from": "logs/",
+                    "loosens": true,
+                    "to": "moved/"
+                  }
+                ],
+                "title": "Change the audit export of Acme"
+              },
+              "target": {
+                "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH change the destination, its approval",
+      "name": "change the destination, its approval",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice2",
+      "body": {
+        "expectedVersion": 2,
+        "destination": {
+          "prefix": "moved"
+        }
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_changeaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"export\":{\"id\":\"aex_l5nqpje6qx7aq4i6viwnp4djcy\",\"organizationId\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"moved/\",\"pathStyle\":true},\"retention\":{\"mode\":\"compliance\",\"days\":30},\"state\":\"active\",\"streamId\":\"{aes#2}\",\"cursor\":\"0\",\"version\":3,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":true,\"retentionReadable\":true,\"stoppedReason\":null,\"conditionalCheckedAt\":\"{time}\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.373Z\",\"removedAt\":null,\"lag\":{\"pending\":5,\"oldestPendingAt\":\"{time}\"},\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null},\"changed\":true,\"loosened\":true}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+          "decision": "info",
+          "event_type": "audit_export.changed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": "apr_changeaaaaaaaaaaaaaaaaaaaa",
+            "approvalPasskeyId": "PasskeyConf001",
+            "approvalUserVerified": true,
+            "from_prefix": "logs/",
+            "loosened": true,
+            "loosenedFields": "prefix",
+            "to_prefix": "moved/"
+          },
+          "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+          "request_id": "{requestId}",
+          "resource": {
+            "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        },
+        {
+          "action": null,
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+          "decision": "info",
+          "event_type": "audit_export.stream_started",
+          "listener": "ordinary",
+          "metadata": {
+            "previousStreamId": "aes_473ceuhlkbbxz46kjc4mt3bxgm",
+            "reason": "destination_changed",
+            "streamId": "{aes#2}"
+          },
+          "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+          "request_id": "{requestId}",
+          "resource": {
+            "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "audit_exports": {
+          "updated": [
+            {
+              "bucket": "export-bucket",
+              "conditional_checked_at": "{fresh}",
+              "created_at": "2026-11-16T08:42:08.373Z",
+              "created_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "credential_envelope": {
+                "algorithm": "aes-256-gcm",
+                "authTag": "Qtd6S0MyxsII4AZEIS8Q+A==",
+                "ciphertext": "79ZydJTNvI77AH8ubpV9tdF6ddLXsYpb5puY9K5oCL0t07cPwpjoYoniuGpHFNSLxQD8psEWBF3OwDkPDBZulkIbYjk=",
+                "formatVersion": 1,
+                "nonce": "nPP9QF+OvY4vFoFw"
+              },
+              "cursor_order": 0,
+              "drain_deadline": null,
+              "endpoint": "http://s3.fixture.test",
+              "failing_recorded": false,
+              "failing_since": null,
+              "generation": 2,
+              "id": "aex_l5nqpje6qx7aq4i6viwnp4djcy",
+              "key_can_read": true,
+              "last_attempt_at": null,
+              "last_error": null,
+              "last_heartbeat_hour": null,
+              "last_success_at": null,
+              "lease_expires_at": null,
+              "lock_verified": true,
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "path_style": true,
+              "prefix": "moved/",
+              "region": "us-east-1",
+              "removed_at": null,
+              "retention_days": 30,
+              "retention_mode": "compliance",
+              "retention_readable": true,
+              "state": "active",
+              "stopped_reason": null,
+              "stream_id": "{aes#2}",
+              "stream_started_at": "{fresh}",
+              "updated_at": "{fresh}",
+              "version": 3
+            }
+          ]
+        },
+        "audit_export_plans": {
+          "inserted": [
+            {
+              "body": "{fresh}",
+              "content_encoding": null,
+              "content_type": "application/json",
+              "event_count": null,
+              "export_id": "aex_l5nqpje6qx7aq4i6viwnp4djcy",
+              "export_version": 3,
+              "first_order": null,
+              "format_version": 1,
+              "generation": 2,
+              "heartbeat_hour": null,
+              "id": "{aep#2}",
+              "kind": "manifest",
+              "last_order": null,
+              "md5": "{fresh}",
+              "object_name": "moved/varlatch-audit/org_jkfjdyynzlwspst5bgjgljluze/{aes#2}/stream.json",
+              "planned_at": "{fresh}",
+              "retain_until": "{fresh}",
+              "retention_mode": "compliance",
+              "sha256": "{fresh}",
+              "stream_id": "{aes#2}"
+            }
+          ],
+          "deleted": [
+            {
+              "body": "\\x7b22666f726d6174223a227661726c617463682d61756469742d6578706f7274222c2276657273696f6e223a312c226b696e64223a2273747265616d222c226f7267616e697a6174696f6e4964223a226f72675f6a6b666a6479796e7a6c77737073743562676a676c6a6c757a65222c2273747265616d4964223a226165735f343733636575686c6b6262787a34366b6a63346d74336278676d222c2273746172744f72646572223a2230222c2270726576696f757353747265616d4964223a6e756c6c2c22726561736f6e223a2263726561746564222c22706f737369626c654f7665726c6170223a6e756c6c2c22706c616e6e65644174223a22323032362d31312d31365430383a34323a30382e3338355a227d0a",
+              "content_encoding": null,
+              "content_type": "application/json",
+              "event_count": null,
+              "export_id": "aex_l5nqpje6qx7aq4i6viwnp4djcy",
+              "export_version": 1,
+              "first_order": null,
+              "format_version": 1,
+              "generation": 0,
+              "heartbeat_hour": null,
+              "id": "aep_gcve65xxuhvtujxea5akiwuwjm",
+              "kind": "manifest",
+              "last_order": null,
+              "md5": "69a48174b5ea715cb66a0e566cc5d855",
+              "object_name": "logs/varlatch-audit/org_jkfjdyynzlwspst5bgjgljluze/aes_473ceuhlkbbxz46kjc4mt3bxgm/stream.json",
+              "planned_at": "2026-11-16T08:42:08.385Z",
+              "retain_until": "2026-11-23T08:42:08.385Z",
+              "retention_mode": "governance",
+              "sha256": "7510390d364a262dacac50de9a03a97c260902e38536be551cd6939e15f5f1e7",
+              "stream_id": "aes_473ceuhlkbbxz46kjc4mt3bxgm"
+            }
+          ]
+        },
+        "approval_intents": {
+          "updated": [
+            {
+              "approval_user_verified": true,
+              "approved_at": "2026-01-10T00:01:00.000Z",
+              "approved_with_passkey_id": "PasskeyConf001",
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:c003b9060b85b93b45ee1d92148d3ff1633873743c7e8b28f95cd78c58f19013",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": "{fresh}",
+              "created_at": "2026-01-10T00:00:00.000Z",
+              "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+              "expected_version": 2,
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "apr_changeaaaaaaaaaaaaaaaaaaaa",
+              "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "last_polled_at": null,
+              "operation": "audit_export.change",
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "prefix",
+                    "from": "logs/",
+                    "loosens": true,
+                    "to": "moved/"
+                  }
+                ],
+                "title": "Change the audit export of Acme"
+              },
+              "target": {
+                "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PATCH change, a stale version",
+      "name": "change, a stale version",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 2,
+        "retention": {
+          "mode": "compliance",
+          "days": 60
+        }
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VERSION_CONFLICT\",\"message\":\"The audit export is at version 3, not 2: it changed meanwhile. Read it again\",\"requestId\":\"{requestId}\",\"details\":{\"currentVersion\":3}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH change, an extra member",
+      "name": "change, an extra member",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 3,
+        "extra": 1
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"(root): Unrecognized key: \\\"extra\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH change to a private address",
+      "name": "change to a private address",
+      "method": "PATCH",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 3,
+        "destination": {
+          "endpoint": "https://10.0.0.9"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"This address is on a private network, which this installation does not let Organizations reach. The host operator can allow it with VARLATCH_OUTBOUND_ALLOW. See https://docs.varlatch.com/reference/outbound-policy/\",\"requestId\":\"{requestId}\",\"details\":{\"outbound\":\"private_address\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+          "decision": "deny",
+          "event_type": "outbound.refused",
+          "listener": "ordinary",
+          "metadata": {
+            "host": "10.0.0.9",
+            "phase": "configuration",
+            "port": 443,
+            "purpose": "audit_export",
+            "reason": "private_address",
+            "scheme": "https"
+          },
+          "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+          "request_id": null,
+          "resource": {
+            "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH change in an Organization without one",
+      "name": "change in an Organization without one",
+      "method": "PATCH",
+      "path": "/v1/organizations/gamma/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 1,
+        "retention": null
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Audit export not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PATCH change in a frozen Organization",
+      "name": "change in a frozen Organization",
+      "method": "PATCH",
+      "path": "/v1/organizations/frozen/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 1,
+        "retention": null
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_w7mjklpvtktf7xgm7qideuuqle\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_w7mjklpvtktf7xgm7qideuuqle",
+            "method": "PATCH",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org/audit-export"
+          },
+          "organization_id": "org_bch32fjvyd7nj5b5k7gtumcsme",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_w7mjklpvtktf7xgm7qideuuqle"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "PATCH change in an Organization being deleted",
+      "name": "change in an Organization being deleted",
+      "method": "PATCH",
+      "path": "/v1/organizations/deleting/audit-export",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 1,
+        "retention": null
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_2nw577veyvyduzhkmqms6vz42q\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PUT replace the key",
+      "name": "replace the key",
+      "method": "PUT",
+      "path": "/v1/organizations/acme/audit-export/credential",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 3,
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "rotated-secret"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#3} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#3}\",\"operation\":\"audit_export.change\",\"organization\":{\"id\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"slug\":\"acme\",\"name\":\"Acme\"},\"summary\":{\"title\":\"Replace the key of the audit export of Acme\",\"changes\":[{\"to\":null,\"from\":null,\"field\":\"credential\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#3}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:9a5527a232bae45356774750ff126fd37996beb5eb76ee4f5c69262474c572ee",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+              "expected_version": 3,
+              "expires_at": "{fresh}",
+              "id": "{apr#3}",
+              "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "last_polled_at": null,
+              "operation": "audit_export.change",
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "credential",
+                    "from": null,
+                    "loosens": true,
+                    "to": null
+                  }
+                ],
+                "title": "Replace the key of the audit export of Acme"
+              },
+              "target": {
+                "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PUT replace the key, its approval",
+      "name": "replace the key, its approval",
+      "method": "PUT",
+      "path": "/v1/organizations/acme/audit-export/credential",
+      "credential": "alice2",
+      "body": {
+        "expectedVersion": 3,
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "rotated-secret"
+        }
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_replaceaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"aex_l5nqpje6qx7aq4i6viwnp4djcy\",\"organizationId\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"moved/\",\"pathStyle\":true},\"retention\":{\"mode\":\"compliance\",\"days\":30},\"state\":\"active\",\"streamId\":\"{aes#2}\",\"cursor\":\"0\",\"version\":4,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":null,\"retentionReadable\":null,\"stoppedReason\":null,\"conditionalCheckedAt\":\"{time}\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.373Z\",\"removedAt\":null,\"lag\":{\"pending\":7,\"oldestPendingAt\":\"{time}\"},\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+          "decision": "info",
+          "event_type": "audit_export.credential_replaced",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": "apr_replaceaaaaaaaaaaaaaaaaaaa",
+            "approvalPasskeyId": "PasskeyConf001",
+            "approvalUserVerified": true
+          },
+          "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+          "request_id": "{requestId}",
+          "resource": {
+            "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "audit_exports": {
+          "updated": [
+            {
+              "bucket": "export-bucket",
+              "conditional_checked_at": "{fresh}",
+              "created_at": "2026-11-16T08:42:08.373Z",
+              "created_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "credential_envelope": "{fresh}",
+              "cursor_order": 0,
+              "drain_deadline": null,
+              "endpoint": "http://s3.fixture.test",
+              "failing_recorded": false,
+              "failing_since": null,
+              "generation": 3,
+              "id": "aex_l5nqpje6qx7aq4i6viwnp4djcy",
+              "key_can_read": null,
+              "last_attempt_at": null,
+              "last_error": null,
+              "last_heartbeat_hour": null,
+              "last_success_at": null,
+              "lease_expires_at": null,
+              "lock_verified": true,
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "path_style": true,
+              "prefix": "moved/",
+              "region": "us-east-1",
+              "removed_at": null,
+              "retention_days": 30,
+              "retention_mode": "compliance",
+              "retention_readable": null,
+              "state": "active",
+              "stopped_reason": null,
+              "stream_id": "{aes#2}",
+              "stream_started_at": "{fresh}",
+              "updated_at": "{fresh}",
+              "version": 4
+            }
+          ]
+        },
+        "approval_intents": {
+          "updated": [
+            {
+              "approval_user_verified": true,
+              "approved_at": "2026-01-10T00:01:00.000Z",
+              "approved_with_passkey_id": "PasskeyConf001",
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:9a5527a232bae45356774750ff126fd37996beb5eb76ee4f5c69262474c572ee",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": "{fresh}",
+              "created_at": "2026-01-10T00:00:00.000Z",
+              "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+              "expected_version": 3,
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "apr_replaceaaaaaaaaaaaaaaaaaaa",
+              "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "last_polled_at": null,
+              "operation": "audit_export.change",
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "credential",
+                    "from": null,
+                    "loosens": true,
+                    "to": null
+                  }
+                ],
+                "title": "Replace the key of the audit export of Acme"
+              },
+              "target": {
+                "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "PUT replace the key, a stale version",
+      "name": "replace the key, a stale version",
+      "method": "PUT",
+      "path": "/v1/organizations/acme/audit-export/credential",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 3,
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "rotated-secret"
+        }
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VERSION_CONFLICT\",\"message\":\"The audit export is at version 4, not 3: it changed meanwhile. Read it again\",\"requestId\":\"{requestId}\",\"details\":{\"currentVersion\":4}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "PUT replace the key, an extra member",
+      "name": "replace the key, an extra member",
+      "method": "PUT",
+      "path": "/v1/organizations/acme/audit-export/credential",
+      "credential": "alice",
+      "body": {
+        "expectedVersion": 4,
+        "credential": {
+          "accessKeyId": "AKIAFIXTUREGOOD",
+          "secretAccessKey": "rotated-secret",
+          "sessionToken": "x"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"credential: Unrecognized key: \\\"sessionToken\\\"\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST check, the replaced key",
+      "name": "check, the replaced key",
+      "method": "POST",
+      "path": "/v1/organizations/acme/audit-export/check",
+      "credential": "alice",
+      "body": {
+        "destination": {
+          "endpoint": "http://s3.fixture.test",
+          "region": "us-east-1",
+          "bucket": "export-bucket",
+          "prefix": "moved",
+          "pathStyle": true
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"ok\":true,\"message\":null,\"conditionalCreation\":true,\"objectLock\":\"not-set\",\"keyCanRead\":true,\"retentionReadable\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE remove, no version",
+      "name": "remove, no version",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"expectedVersion: the export's current version, a whole number from 1, as a query parameter\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE remove, a version that is not a number",
+      "name": "remove, a version that is not a number",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/audit-export?expectedVersion=four",
+      "credential": "alice",
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"expectedVersion: the export's current version, a whole number from 1, as a query parameter\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE remove",
+      "name": "remove",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/audit-export?expectedVersion=4",
+      "credential": "alice",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#4} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#4}\",\"operation\":\"audit_export.remove\",\"organization\":{\"id\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"slug\":\"acme\",\"name\":\"Acme\"},\"summary\":{\"title\":\"Remove the audit export of Acme\",\"changes\":[{\"to\":null,\"from\":\"s3.fixture.test/export-bucket/moved/\",\"field\":\"destination\",\"loosens\":true}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#4}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:1fa4e49fee220e1c616a6d6a6162e0d379a08e7568222868946c4bfaa6c70613",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+              "expected_version": 4,
+              "expires_at": "{fresh}",
+              "id": "{apr#4}",
+              "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "last_polled_at": null,
+              "operation": "audit_export.remove",
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "destination",
+                    "from": "s3.fixture.test/export-bucket/moved/",
+                    "loosens": true,
+                    "to": null
+                  }
+                ],
+                "title": "Remove the audit export of Acme"
+              },
+              "target": {
+                "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE remove, its approval",
+      "name": "remove, its approval",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/audit-export?expectedVersion=4",
+      "credential": "alice2",
+      "headers": {
+        "Varlatch-Approval": "apr_removeaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"aex_l5nqpje6qx7aq4i6viwnp4djcy\",\"organizationId\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"moved/\",\"pathStyle\":true},\"retention\":{\"mode\":\"compliance\",\"days\":30},\"state\":\"removed\",\"streamId\":\"{aes#2}\",\"cursor\":\"0\",\"version\":5,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":null,\"retentionReadable\":null,\"stoppedReason\":null,\"conditionalCheckedAt\":\"{time}\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.373Z\",\"removedAt\":\"{time}\",\"lag\":null,\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+          "decision": "info",
+          "event_type": "audit_export.removed",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": "apr_removeaaaaaaaaaaaaaaaaaaaa",
+            "approvalPasskeyId": "PasskeyConf001",
+            "approvalUserVerified": true,
+            "pendingPlanDeleted": true,
+            "streamId": "{aes#2}"
+          },
+          "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+          "request_id": "{requestId}",
+          "resource": {
+            "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "audit_exports": {
+          "updated": [
+            {
+              "bucket": "export-bucket",
+              "conditional_checked_at": "{fresh}",
+              "created_at": "2026-11-16T08:42:08.373Z",
+              "created_by": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "credential_envelope": null,
+              "cursor_order": 0,
+              "drain_deadline": null,
+              "endpoint": "http://s3.fixture.test",
+              "failing_recorded": false,
+              "failing_since": null,
+              "generation": 4,
+              "id": "aex_l5nqpje6qx7aq4i6viwnp4djcy",
+              "key_can_read": null,
+              "last_attempt_at": null,
+              "last_error": null,
+              "last_heartbeat_hour": null,
+              "last_success_at": null,
+              "lease_expires_at": null,
+              "lock_verified": true,
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "path_style": true,
+              "prefix": "moved/",
+              "region": "us-east-1",
+              "removed_at": "{fresh}",
+              "retention_days": 30,
+              "retention_mode": "compliance",
+              "retention_readable": null,
+              "state": "removed",
+              "stopped_reason": null,
+              "stream_id": "{aes#2}",
+              "stream_started_at": "{fresh}",
+              "updated_at": "{fresh}",
+              "version": 5
+            }
+          ]
+        },
+        "audit_export_plans": {
+          "deleted": [
+            {
+              "body": "{fresh}",
+              "content_encoding": null,
+              "content_type": "application/json",
+              "event_count": null,
+              "export_id": "aex_l5nqpje6qx7aq4i6viwnp4djcy",
+              "export_version": 3,
+              "first_order": null,
+              "format_version": 1,
+              "generation": 2,
+              "heartbeat_hour": null,
+              "id": "{aep#2}",
+              "kind": "manifest",
+              "last_order": null,
+              "md5": "{fresh}",
+              "object_name": "moved/varlatch-audit/org_jkfjdyynzlwspst5bgjgljluze/{aes#2}/stream.json",
+              "planned_at": "{fresh}",
+              "retain_until": "{fresh}",
+              "retention_mode": "compliance",
+              "sha256": "{fresh}",
+              "stream_id": "{aes#2}"
+            }
+          ]
+        },
+        "approval_intents": {
+          "updated": [
+            {
+              "approval_user_verified": true,
+              "approved_at": "2026-01-10T00:01:00.000Z",
+              "approved_with_passkey_id": "PasskeyConf001",
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:1fa4e49fee220e1c616a6d6a6162e0d379a08e7568222868946c4bfaa6c70613",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": "{fresh}",
+              "created_at": "2026-01-10T00:00:00.000Z",
+              "credential_id": "crd_6phtznniaoxrgbovvum6brj26i",
+              "expected_version": 4,
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "apr_removeaaaaaaaaaaaaaaaaaaaa",
+              "identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+              "last_polled_at": null,
+              "operation": "audit_export.remove",
+              "organization_id": "org_jkfjdyynzlwspst5bgjgljluze",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:8b7b7288685261a24d123a29f8658292709a574dea7c00917ee793de010afb45",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "destination",
+                    "from": "s3.fixture.test/export-bucket/moved/",
+                    "loosens": true,
+                    "to": null
+                  }
+                ],
+                "title": "Remove the audit export of Acme"
+              },
+              "target": {
+                "exportId": "aex_l5nqpje6qx7aq4i6viwnp4djcy"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE remove again",
+      "name": "remove again",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/audit-export?expectedVersion=5",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Audit export not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE remove in a frozen Organization",
+      "name": "remove in a frozen Organization",
+      "method": "DELETE",
+      "path": "/v1/organizations/frozen/audit-export?expectedVersion=1",
+      "credential": "alice",
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_w7mjklpvtktf7xgm7qideuuqle\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_v3naygtvslsbsbddyh7w4xjoza",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ct5qkn6ywufw6ie3im2d5hp3iu",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_w7mjklpvtktf7xgm7qideuuqle",
+            "method": "DELETE",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org/audit-export"
+          },
+          "organization_id": "org_bch32fjvyd7nj5b5k7gtumcsme",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_w7mjklpvtktf7xgm7qideuuqle"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET get afterwards",
+      "name": "get afterwards",
+      "method": "GET",
+      "path": "/v1/organizations/acme/audit-export",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"enabled\":true,\"export\":{\"id\":\"aex_l5nqpje6qx7aq4i6viwnp4djcy\",\"organizationId\":\"org_jkfjdyynzlwspst5bgjgljluze\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"moved/\",\"pathStyle\":true},\"retention\":{\"mode\":\"compliance\",\"days\":30},\"state\":\"removed\",\"streamId\":\"{aes#2}\",\"cursor\":\"0\",\"version\":5,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":null,\"retentionReadable\":null,\"stoppedReason\":null,\"conditionalCheckedAt\":\"{time}\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"2026-11-16T08:42:08.373Z\",\"removedAt\":\"{time}\",\"lag\":null,\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get beta afterwards",
+      "name": "get beta afterwards",
+      "method": "GET",
+      "path": "/v1/organizations/beta/audit-export",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"enabled\":true,\"export\":{\"id\":\"{aex#1}\",\"organizationId\":\"org_jiyajyqt63iwrpz6ekusgrfdqm\",\"destination\":{\"endpoint\":\"http://s3.fixture.test\",\"region\":\"us-east-1\",\"bucket\":\"export-bucket\",\"prefix\":\"\",\"pathStyle\":true},\"retention\":{\"mode\":\"compliance\",\"days\":1},\"state\":\"active\",\"streamId\":\"{aes#1}\",\"cursor\":\"5\",\"version\":1,\"lastAttemptAt\":null,\"lastSuccessAt\":null,\"lastHeartbeatAt\":null,\"lastError\":null,\"failingSince\":null,\"keyCanRead\":true,\"retentionReadable\":true,\"stoppedReason\":null,\"conditionalCheckedAt\":\"{time}\",\"lockVerified\":true,\"drainDeadline\":null,\"createdBy\":\"idn_v3naygtvslsbsbddyh7w4xjoza\",\"createdAt\":\"{time}\",\"removedAt\":null,\"lag\":{\"pending\":1,\"oldestPendingAt\":\"{time}\"},\"objectLock\":\"verified\",\"unsupportedPlanFormat\":null}}"
+      },
+      "audit": [],
+      "side": {}
+    }
+  ],
+  "counters": [],
+  "exchanges": {
+    "POST create, a destination that overwrites": [
+      "PUT AKIAFIXTUREGOOD 200",
+      "PUT AKIAFIXTUREGOOD 200"
+    ],
+    "POST create, a wrong key": [
+      "PUT AKIAWRONG 403"
+    ],
+    "POST create, no such bucket": [
+      "PUT AKIAFIXTUREGOOD 404"
+    ],
+    "POST create": [
+      "PUT AKIAFIXTUREGOOD 200",
+      "PUT AKIAFIXTUREGOOD 412",
+      "HEAD AKIAFIXTUREGOOD 200",
+      "GET retention AKIAFIXTUREGOOD 200"
+    ],
+    "POST check, a bucket without Object Lock": [
+      "PUT AKIAFIXTUREGOOD 200",
+      "PUT AKIAFIXTUREGOOD 412",
+      "HEAD AKIAFIXTUREGOOD 200",
+      "GET retention AKIAFIXTUREGOOD 404"
+    ],
+    "POST check, a weaker retention": [
+      "PUT AKIAFIXTUREGOOD 200",
+      "PUT AKIAFIXTUREGOOD 412",
+      "HEAD AKIAFIXTUREGOOD 200",
+      "GET retention AKIAFIXTUREGOOD 200"
+    ],
+    "POST check, a key that cannot read": [
+      "PUT AKIAFIXTURENOREAD 200",
+      "PUT AKIAFIXTURENOREAD 412",
+      "HEAD AKIAFIXTURENOREAD 403",
+      "GET retention AKIAFIXTURENOREAD 403"
+    ],
+    "POST check, the stored key": [
+      "PUT AKIAFIXTUREGOOD 200",
+      "PUT AKIAFIXTUREGOOD 412",
+      "HEAD AKIAFIXTUREGOOD 200"
+    ],
+    "PATCH change the destination, its approval": [
+      "PUT AKIAFIXTUREGOOD 200",
+      "PUT AKIAFIXTUREGOOD 412",
+      "HEAD AKIAFIXTUREGOOD 200",
+      "GET retention AKIAFIXTUREGOOD 200"
+    ],
+    "POST check, the replaced key": [
+      "PUT AKIAFIXTUREGOOD 200",
+      "PUT AKIAFIXTUREGOOD 412",
+      "HEAD AKIAFIXTUREGOOD 200"
+    ]
+  }
+}

@@ -70,6 +70,11 @@ type Config struct {
 	AccessLog string
 	// Sync is false when the installation switch is off (VARLATCH_SYNC).
 	Sync bool
+	// AuditExport is false when the audit export is off on this
+	// installation (audit_export, VARLATCH_AUDIT_EXPORT; ADR-0056
+	// Decision 6): no export can be created or changed, only read and
+	// removed.
+	AuditExport bool
 	// SyncAdapters narrows the adapters (VARLATCH_SYNC_ADAPTERS); nil means
 	// all of SyncPlatforms.
 	SyncAdapters []string
@@ -119,7 +124,7 @@ func (e *Error) Error() string {
 // Env is how Parse reads the environment (os.Getenv in production).
 type Env func(string) string
 
-var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "outbound_allow", "access_log", "sync", "sync_adapters",
+var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "outbound_allow", "access_log", "sync", "sync_adapters", "audit_export",
 	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination"}
 
 // Backup defaults: a day between backups, seven archives kept (the
@@ -179,7 +184,7 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		return &Error{lines[name], fmt.Sprintf(name+": "+msg, args...)}
 	}
 
-	c := &Config{Listen: DefaultListen, DataDir: DefaultDataDir, AccessLog: "stdout", Sync: true}
+	c := &Config{Listen: DefaultListen, DataDir: DefaultDataDir, AccessLog: "stdout", Sync: true, AuditExport: true}
 	if dir := env("STATE_DIRECTORY"); dir != "" {
 		// The unit's StateDirectory; systemd may list several, separated by ':'.
 		c.DataDir, _, _ = strings.Cut(dir, ":")
@@ -254,6 +259,13 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		c.Sync = false
 	default:
 		return nil, at("sync", "%q must be on or off", v)
+	}
+	switch v := values["audit_export"]; v {
+	case "", "on":
+	case "off":
+		c.AuditExport = false
+	default:
+		return nil, at("audit_export", "%q must be on or off", v)
 	}
 	if v := values["sync_adapters"]; v != "" {
 		var adapters []string

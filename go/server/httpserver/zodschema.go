@@ -156,6 +156,59 @@ func (o zObject) parse(v any, present bool, path []string) (any, []zIssue) {
 	return out, issues
 }
 
+// zStrict is z.object(shape).strict(): its members, then one issue at its
+// own path naming every key the shape does not know.
+type zStrict zObject
+
+func (o zStrict) parse(v any, present bool, path []string) (any, []zIssue) {
+	out, issues := zObject(o).parse(v, present, path)
+	obj, ok := v.(jsvalue.Object)
+	if !present || !ok {
+		return out, issues
+	}
+	var extra []string
+	for _, m := range obj {
+		known := false
+		for _, f := range o {
+			known = known || f.name == m.Key
+		}
+		if !known {
+			extra = append(extra, `"`+m.Key+`"`)
+		}
+	}
+	switch len(extra) {
+	case 0:
+	case 1:
+		issues = append(issues, zIssue{path, "Unrecognized key: " + extra[0], false})
+	default:
+		issues = append(issues, zIssue{path, "Unrecognized keys: " + strings.Join(extra, ", "), false})
+	}
+	return out, issues
+}
+
+// zDefault is schema.default(value): undefined becomes value.
+type zDefault struct {
+	schema zSchema
+	value  any
+}
+
+func (d zDefault) parse(v any, present bool, path []string) (any, []zIssue) {
+	if !present {
+		return d.value, nil
+	}
+	return d.schema.parse(v, present, path)
+}
+
+// zBool is z.boolean().
+type zBool struct{}
+
+func (zBool) parse(v any, present bool, path []string) (any, []zIssue) {
+	if b, ok := v.(bool); present && ok {
+		return b, nil
+	}
+	return nil, []zIssue{{path, "Invalid input: expected boolean, received " + received(v, present), true}}
+}
+
 // zUnion is z.union(options).
 type zUnion []zSchema
 

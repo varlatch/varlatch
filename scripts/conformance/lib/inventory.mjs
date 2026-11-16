@@ -72,6 +72,7 @@ export const CAPABILITIES = [
   "ts-stack",
   "go-server",
   "webhook-receiver",
+  "object-store",
 ];
 
 /**

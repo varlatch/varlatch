@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -185,6 +186,11 @@ func Prepare(path string, rows map[string][]Row, tables []string) error {
 	if err != nil {
 		return err
 	}
+	sch, err := readSchema()
+	if err != nil {
+		return err
+	}
+	types := sch.types
 	conn, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(0)&_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)")
 	if err != nil {
 		return err
@@ -219,6 +225,12 @@ func Prepare(path string, rows map[string][]Row, tables []string) error {
 				v, err := SQLiteValue(r[pg])
 				if err != nil {
 					return fmt.Errorf("%s.%s: %w", table, pg, err)
+				}
+				// A bytea comes in PostgreSQL's text form (\x and hex).
+				if text, ok := v.(string); ok && types[table][pg] == "bytea" && strings.HasPrefix(text, `\x`) {
+					if v, err = hex.DecodeString(text[2:]); err != nil {
+						return fmt.Errorf("%s.%s: %w", table, pg, err)
+					}
 				}
 				cols, marks, args = append(cols, col), append(marks, "?"), append(args, v)
 			}

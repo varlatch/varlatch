@@ -457,15 +457,13 @@
       "release": "v0.22.0",
       "envelopeVersion": 1,
       "direction": "ts-to-go",
-      "level": "envelope",
-      "fixtureKey": "auditExports",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestTypeScriptFixtures"
+          "go": "server/auditexport/parity_test.go",
+          "test": "TestTypeScriptFixture"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "audit-export-credential",
@@ -473,18 +471,21 @@
       "release": "v0.22.0",
       "envelopeVersion": 1,
       "direction": "go-to-ts",
-      "level": "envelope",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestGoFixtures"
+          "go": "server/auditexport/parity_test.go",
+          "test": "TestGoSealedFixture"
+        },
+        {
+          "vitest": "services/varlatchd/test/go-audit-export-fixture.test.ts",
+          "test": "audit export credentials the Go server sealed open here with the same exchanges"
         },
         {
           "ci": ".github/workflows/go.yml",
-          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+          "run": "VARLATCH_GO_SEALED_AUDIT_EXPORT=\"$RUNNER_TEMP/go-sealed-audit-export.json\" pnpm --filter @varlatch/varlatchd exec vitest run test/go-audit-export-fixture.test.ts"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "audit-export-drain",

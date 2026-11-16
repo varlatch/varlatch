@@ -75,6 +75,13 @@ type Effect[C, R any] struct {
 	// and its time, part 3: the claim itself is written in Final). nil
 	// checks nothing more.
 	Check func(ctx context.Context, tx *sql.Tx) error
+	// Checked is part 2's checks that come after the requester's
+	// checkpoint, in the same snapshot, where the TypeScript effect makes
+	// them after requireOrganizationAccess (the audit export's: its
+	// organization.manage recheck, an existing export, a refused endpoint,
+	// the approval precheck). nil checks nothing more. A refusal it notes
+	// (NoteRefusal) is written alone when it fails.
+	Checked func(ctx context.Context, tx *sql.Tx) error
 	// Call is part 4, the outbound call. Its context ends at the deadline
 	// while passkey-verification is active; EffectAlive says whether
 	// another request may start.
@@ -125,8 +132,8 @@ func EffectAlive(ctx context.Context) error {
 //     shared, the people, the resources;
 //  2. the authoritative checks in one read snapshot taken while the gates
 //     are held: the Organization (CheckLive), Check, then the requester's
-//     passkey-verification checkpoint, and whether passkey-verification is
-//     active (which sets the deadline). Every mutation that could change
+//     passkey-verification checkpoint, Checked, and whether
+//     passkey-verification is active (which sets the deadline). Every mutation that could change
 //     what they read takes an exclusive gate this effect holds a share of,
 //     so they stay true until the gates are released;
 //  3. a claim (only completeRegistration's): held by its resource gate,
@@ -149,6 +156,10 @@ func RunEffect[C, R any](ctx context.Context, w *Writer, e Effect[C, R]) (R, []a
 	scope := Scope{OrganizationID: e.OrganizationID}
 	var reports []auth.PendingReport
 	active := false
+	// The effect's state from part 2 on: a refusal noted by a check is
+	// kept, and written alone when the effect stops there.
+	st := &effectState{}
+	ctx = context.WithValue(ctx, effectKey{}, st)
 	err = func() error {
 		tx, err := w.Store.Reader().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 		if err != nil {
@@ -166,15 +177,22 @@ func RunEffect[C, R any](ctx context.Context, w *Writer, e Effect[C, R]) (R, []a
 		if reports, err = Checkpoint(ctx, tx, e.Principal, e.OrganizationID); err != nil {
 			return err
 		}
+		if e.Checked != nil {
+			if err := e.Checked(ctx, tx); err != nil {
+				return err
+			}
+		}
 		active, err = passkeyVerificationActive(ctx, tx, e.OrganizationID)
 		return err
 	}()
 	if err != nil {
+		if werr := writeRefusals(ctx, w, st); werr != nil {
+			return zero, nil, errors.Join(err, werr)
+		}
 		return zero, nil, err
 	}
 
-	st := &effectState{}
-	callCtx := context.WithValue(ctx, effectKey{}, st)
+	callCtx := ctx
 	if active {
 		st.deadline = time.Now().Add(EffectDeadline)
 		var cancel context.CancelFunc

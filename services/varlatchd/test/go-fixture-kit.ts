@@ -162,7 +162,8 @@ export function withIds(cases: Omit<RequestCase, "id">[]): RequestCase[] {
   return out;
 }
 
-const json = (v: unknown): unknown => (v instanceof Date ? v.toISOString() : v);
+/** A column's value as JSON holds it: a time as its ISO text, a bytea as PostgreSQL's text form (\\x and hex). */
+const json = (v: unknown): unknown => (v instanceof Date ? v.toISOString() : Buffer.isBuffer(v) || v instanceof Uint8Array ? `\\x${Buffer.from(v).toString("hex")}` : v);
 
 /** The canonical text: object keys sorted, JSON.stringify's escaping and numbers. */
 export function canonical(v: unknown): string {
@@ -194,6 +195,8 @@ export async function loadRows(rows: Record<string, Row[]>, tables: readonly Tab
       const cols = Object.keys(row);
       const values = cols.map((c) => {
         const v = row[c];
+        // A bytea in PostgreSQL's text form (exportRows), as PGlite takes it.
+        if (typeof v === "string" && /^\\x(?:[0-9a-f]{2})*$/.test(v)) return Buffer.from(v.slice(2), "hex");
         return v !== null && typeof v === "object" && !Array.isArray(v) ? JSON.stringify(v) : v;
       });
       await db.query(`INSERT INTO "${t.name}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")})`, values);

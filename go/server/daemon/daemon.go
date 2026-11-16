@@ -378,6 +378,7 @@ func serve(opts Options, h *hooks) int {
 		Version:        buildinfo.Version,
 		PublicURL:      cfg.PublicURL,
 		Sync:           cfg.Sync,
+		AuditExportOff: !cfg.AuditExport,
 		SyncAdapters:   cfg.SyncAdapters,
 		TrustedProxies: trusts,
 		AccessLog:      httpserver.NewAccessLog(accessOut),

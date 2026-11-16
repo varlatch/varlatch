@@ -464,9 +464,10 @@ type Configuration struct {
 
 func writeConfiguration(path string, cfg *config.Config) error {
 	settings := map[string]string{
-		"listen":     cfg.Listen,
-		"access_log": cfg.AccessLog,
-		"sync":       map[bool]string{true: "on", false: "off"}[cfg.Sync],
+		"listen":       cfg.Listen,
+		"access_log":   cfg.AccessLog,
+		"sync":         map[bool]string{true: "on", false: "off"}[cfg.Sync],
+		"audit_export": map[bool]string{true: "on", false: "off"}[cfg.AuditExport],
 		"backup_interval": func() string {
 			if cfg.BackupInterval == 0 {
 				return "off"

@@ -34,7 +34,7 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
 | `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`), the registry, and each target's optional capabilities as data (`capabilities.json`). |
-| `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), the client suites (the CLI's compatibility core, `varlatch mcp`, and the sdk smoke), G11's checks on the Go server's server-sent events (`realtime-events`), and the suites where the e2e suites cover nothing (Security Controls over the API, audit webhook delivery). |
+| `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), the client suites (the CLI's compatibility core, `varlatch mcp`, and the sdk smoke), G11's checks on the Go server's server-sent events (`realtime-events`), and the suites where the e2e suites cover nothing (Security Controls over the API, audit webhook delivery, the audit export). |
 | `lib/` | The runner's pure logic: result lines, inventory rules, operations and declared gaps, the request-log check, the client pins, release verification, expected failures, gate mode. |
 | `test/` | Unit tests: `pnpm test:conformance`. |
 
@@ -149,6 +149,7 @@ of reaching into Compose or the database:
 | `serve-cli` | `serve-cli on\|off`: the server serves the CLI and install scripts, or not (ADR-0058 Decision 3) |
 | `ts-stack` | `ts-stack compose <args...>` and `ts-stack compose-env`: Compose control for the ts-stack checks |
 | `webhook-receiver` | `webhook-receiver url\|requests`: a local endpoint the server reaches on its own loopback (`url` starts it when it is not running and answers the URL to register; `requests` what it recorded: `[{ at, method, target, contentType, signature, body, status }]`); a path with a segment `fail-<n>` answers 500 to its first n requests. The target's outbound allow list opens that port and nothing else private (the TypeScript stacks run it inside varlatchd's container with `VARLATCH_OUTBOUND_ALLOW`; go-binary as a process of its own with `outbound_allow`) |
+| `object-store` | `object-store start`: a local S3 server with Object Lock (MinIO, pinned by digest), running until `down` removes it by its name. JSON: `{ endpoint, hostEndpoint, region, accessKeyId, secretAccessKey }`, the endpoint the server reaches it at and the one the suite does. The target's outbound allow list opens it and nothing else private (the TypeScript stacks: an alias on the Compose project's network; go-binary: a loopback port) |
 | `go-server` | `go-server fixture <name> [args...]`: the Go server's fixtures for its go-server checks (organizations, people, browser sessions, audit events, a removal), written while the `/v1` writes that would make them are not built (ADR-0059 step 4); JSON |
 
 `targets/capabilities.json` is the only source of a target's capabilities:

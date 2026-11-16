@@ -599,6 +599,13 @@ func pgValue(typ string, v any) (any, error) {
 	case "bigint":
 		// The kit's PGlite reads int8 as a number.
 		return v, nil
+	case "bytea":
+		// The kit writes a bytea in PostgreSQL's text form.
+		b, ok := v.([]byte)
+		if !ok {
+			return nil, fmt.Errorf("bytea %v", v)
+		}
+		return `\x` + hex.EncodeToString(b), nil
 	case "jsonb", "json", "text[]":
 		s, ok := v.(string)
 		if !ok {
