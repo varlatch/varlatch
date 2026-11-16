@@ -707,6 +707,60 @@ other machine identity step-up operations.
   - The `oidc` conformance suite runs against a local issuer over https on
     every target (the `oidc-issuer` capability).
 
+### Platform Connections (step 4.9b)
+
+`server/syncs` (AGPL) is the Connection part of `domain/sync.ts` and
+`integrationstepup.ts`, on the adapters of `lib/sync`; Sync Targets and
+the converge engine follow in 4.9c and 4.9d.
+
+- **The operations.** Each needs config.sync.manage, existence hidden.
+  - `listPlatformConnections` (inspection while frozen) and
+    `getPlatformConnection` (with every Sync Target the Connection feeds,
+    each drained or not by its live runs).
+  - `createPlatformConnection` (admin-step-up's `connection.create`).
+  - `replacePlatformCredential` (`connection.replace_credential`). Each
+    live Target's write-time disclosure gate must pass for the requester,
+    before an approval is asked for and again in the job. Targets the old
+    credential stopped resume, and every Target is queued.
+  - `revokePlatformConnection` (`connection.delete`, a recovery operation
+    while frozen). Every Target it feeds is disabled and fenced.
+  - `checkPlatformAccess` and `listPlatformDestinations`, external effects
+    (`write.RunEffect`) that send a credential only to the Connection's
+    base identity.
+
+  The writes, the check and the listing need `sync = on`, and an adapter
+  `sync_adapters` allows. The credential is sealed under the Organization
+  KEK (`platform-credential`).
+- **The outbound policy.** A base identity that is an address (Coolify,
+  Convex) is checked before anything is held (`sync_check` or
+  `sync_listing`, configuration phase, recorded). The platforms' requests
+  go through the policy's client for that purpose, and a refusal is noted
+  for the effect (connection phase).
+- **Expiry.** An expiry a platform reports for a stored credential is
+  recorded only while the Connection holds the credential version it was
+  read at. A stored credential's recorded expiry stands in when an answer
+  says nothing.
+- **GitHub App Connections** (ADR-0047) are listed, read and revoked here.
+  What mints a token from their App comes with step 4.10 (the owner,
+  2026-11-17), and answers 501 `NOT_IMPLEMENTED_YET` until then:
+  - creating one, after its body is validated;
+  - a check or a listing with one.
+
+  `TestAppMintingNotBuiltYet` pins those answers; 4.10 replaces it.
+- **Parity.**
+  - `connections-v0.22.0.json` and `connections-v0.21.0.json`
+    (`go-connections-fixture.test.ts`): 113 requests on fake GitHub,
+    Coolify and Convex servers, with every request each one sent them.
+    Those sent with a stored credential carry what its envelope opens to:
+    G3 at the database level for Platform Connection credentials, both
+    directions (`TestGoSealedFixture`, go.yml).
+  - One fixture answer is adjusted in Go: the re-authorization gate's
+    `authorization.denied`. The TypeScript server writes it through the
+    connection pool, where it commits on PostgreSQL; the fixture's
+    single-connection PGlite rolls it back (`gateDenialOnPostgres`).
+  - `effect_test.go` holds decision 4's tests for the check and the
+    listing.
+
 ### The audit export's configuration (step 4.11a)
 
 `server/auditexport` is the configuration side of `domain/auditexport.ts`

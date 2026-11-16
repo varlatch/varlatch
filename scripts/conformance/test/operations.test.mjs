@@ -207,6 +207,9 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "listOidcBindings", "createOidcBinding", "revokeOidcBinding", "exchangeOidcToken",
     // Step 4.13a: the tailnet listeners.
     "getTailnetEndpoint", "getTailnetContext", "getInstallationListeners",
+    // Step 4.9b: Platform Connections.
+    "listPlatformConnections", "createPlatformConnection", "checkPlatformAccess", "listPlatformDestinations",
+    "getPlatformConnection", "replacePlatformCredential", "revokePlatformConnection",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is

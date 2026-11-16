@@ -82,6 +82,9 @@ type Options struct {
 	// the adapters (nil: all).
 	Sync         bool
 	SyncAdapters []string
+	// SyncClient replaces the outbound policy's clients for the platforms'
+	// requests (tests: the fake platforms); nil in varlatchd.
+	SyncClient *http.Client
 	// TrustedProxies decides whose X-Forwarded-For is believed; nil trusts
 	// no proxy.
 	TrustedProxies func(address string) bool
@@ -254,6 +257,9 @@ var BuiltOperations = []string{
 	listOidcBindingsPattern, createOidcBindingPattern, revokeOidcBindingPattern, exchangeOidcTokenPattern,
 	// Step 4.13a: the tailnet listeners (tailnet.go).
 	tailnetEndpointPattern, tailnetContextPattern, listenersPattern,
+	// Step 4.9b: Platform Connections (connections.go).
+	listConnectionsPattern, createConnectionPattern, checkPlatformPattern, listDestinationsPattern,
+	getConnectionPattern, replaceCredentialPattern, revokeConnectionPattern,
 }
 
 // Server is the handler.

@@ -51,6 +51,8 @@ const (
 	Capability = "cap"
 	// Step 4.8: OIDC bindings.
 	OIDCBinding = "oib"
+	// Step 4.9b: Platform Connections.
+	PlatformConnection = "pcn"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"

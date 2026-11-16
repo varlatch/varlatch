@@ -56,6 +56,9 @@ var StatusByCode = map[string]int{
 	"CREDENTIAL_LIFETIME_EXCEEDED":  422,
 	"ORGANIZATION_FROZEN":           409,
 	"PASSKEY_VERIFICATION_REQUIRED": 403,
+	// Builds before the first Go release: an operation, or a path of one,
+	// this build does not have yet (NotImplementedYet).
+	"NOT_IMPLEMENTED_YET": 501,
 	// The browser session's (/auth, not /v1).
 	"PASSKEY_NOT_FOUND":          400,
 	"PASSKEY_ALREADY_REGISTERED": 400,

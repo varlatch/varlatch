@@ -20,15 +20,7 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "checkPlatformAccess": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "completeGitHubAppRegistration": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "createPlatformConnection": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -56,10 +48,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "getPlatformConnection": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "getSyncTarget": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -84,14 +72,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "listPlatformConnections": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "listPlatformDestinations": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "listSyncTargets": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -112,15 +92,7 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "replacePlatformCredential": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "resumeSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "revokePlatformConnection": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
