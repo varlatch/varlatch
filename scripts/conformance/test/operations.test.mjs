@@ -188,6 +188,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "listGroups", "createGroup", "updateGroup", "deleteGroup", "listGroupMembers", "addGroupMember", "removeGroupMember",
     "listTeams", "createTeam", "updateTeam", "deleteTeam", "listTeamMembers", "addTeamMember", "removeTeamMember",
     "listTeamProjects", "addTeamProject", "removeTeamProject",
+    // Step 4.7a: the outbound policy's refused destinations.
+    "getInstallationOutbound", "refusedDestinations",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is

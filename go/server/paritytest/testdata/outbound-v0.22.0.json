@@ -1,0 +1,1322 @@
+{
+  "comment": "Written by services/varlatchd/test/go-outbound-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+  "ref": "v0.22.0",
+  "serverVersion": "0.22.0",
+  "rootKek": "bdd279f689e1deb25d86511bcc4a65bd0499698016d234ce494f8f96a8294c8b",
+  "tokens": {
+    "alice": "vlt_cli_4WQkIl5FUqp8t1551lOTdVKVWWJmqLQxHoGAq3zFBh8",
+    "bob": "vlt_cli_FWPzoiM968v6we26Qbx1Bb1pmmEulbs9pfQ1eS37zKQ",
+    "carol": "vlt_cli_0g1kJNvgB4CPVXeYN9F4gXxdpcEdJbgny5pYzIPz6s8"
+  },
+  "rows": {
+    "installation": [
+      {
+        "id": "inst_mtcnavxlalvi5zny36kzgwuedi",
+        "kek_canary": {
+          "nonce": "GBWkCOJGVvpKiPsy",
+          "authTag": "xTxvQSFaYKl/Fppfv5JhWQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "lbUkZljqx1JjEDYmYQGkw+qNgbnoa4nnEI4THdEjj64=",
+          "formatVersion": 1
+        },
+        "bootstrapped_at": "2026-11-16T02:56:08.609Z",
+        "created_at": "2026-11-16T02:56:08.509Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "public_url": null
+      }
+    ],
+    "identities": [
+      {
+        "id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-11-16T02:56:08.609Z",
+        "organization_id": null,
+        "last_seen_at": "2026-11-16T02:56:08.734Z",
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_lmc2xcpunqm3bh5rssuhaibxvq",
+        "kind": "human",
+        "name": "carol",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_mpv5wdpkk5xvehimja6ooxyoyi",
+        "kind": "human",
+        "name": "bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_rd6ilsxzbw7mq5ce2iblrogy3i",
+        "kind": "workload",
+        "name": "deploy",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      }
+    ],
+    "credentials": [
+      {
+        "id": "crd_o6oiv4avxqijq42lkzvikshcjq",
+        "identity_id": "idn_mpv5wdpkk5xvehimja6ooxyoyi",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "b35b825a01021a5632617379611c047e58bb1601a40697933e58ed9c2b3b1ef9",
+        "created_at": "2026-11-16T02:56:08.970Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_mpv5wdpkk5xvehimja6ooxyoyi",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_s2gdu3gxxxfnaum5utm3xsdche",
+        "identity_id": "idn_lmc2xcpunqm3bh5rssuhaibxvq",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "bb89fba58b7c12df19348529e74a6c60f0efc46ce219f52327a79aeaeaaaf567",
+        "created_at": "2026-11-16T02:56:08.985Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_lmc2xcpunqm3bh5rssuhaibxvq",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_svssgc2jfg6o3ll6jmlu6n43w4",
+        "identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "d73d882e8ac5f7ff06f7e7c43675b25a68880c6e474a1a121d7098fae0af6de6",
+        "created_at": "2026-11-16T02:56:08.660Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-11-16T02:56:08.717Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ],
+    "organizations": [
+      {
+        "id": "org_6xxug5wssvtou6yhiddkb2enlu",
+        "slug": "gone",
+        "name": "Gone",
+        "wrapped_org_kek": null,
+        "deleted_at": "2026-03-02T00:00:00.000Z",
+        "created_at": "2026-11-16T02:56:08.939Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": "2026-03-02T00:00:00.000Z",
+        "security_epoch": 0
+      },
+      {
+        "id": "org_askojyn6qz6bxhluhn36ywxmne",
+        "slug": "beta",
+        "name": "Beta",
+        "wrapped_org_kek": {
+          "nonce": "WxJ2CdkxDm8dwg2G",
+          "authTag": "pPHIStQJxX8C3o5Df3V4OQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "Q4Wn83dnNu5z5bmCZ1a1cNdmtb7Sh8NBEQQdCW+O/8s=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T02:56:08.865Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_hzfh3a4buq6ytdqnorlnd4yb3u",
+        "slug": "frozen",
+        "name": "Frozen",
+        "wrapped_org_kek": {
+          "nonce": "gjmSBi8raCmfiAjb",
+          "authTag": "XcYw09Cp+ICAV67Txlm4Tg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "zqvVBnNdGrD0eyCiCS75mD57vEQq6jTM7trwdPQ0KGE=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T02:56:08.905Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "slug": "acme",
+        "name": "Acme",
+        "wrapped_org_kek": {
+          "nonce": "dhIkOvSHQtWwKLxt",
+          "authTag": "yeO7k4Uyis85HEcjU7kn4g==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "R/H88w3IN6qCDv92dYwcxX/D2pFnscOz+nqqHKQGvWs=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T02:56:08.751Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      }
+    ],
+    "org_memberships": [
+      {
+        "organization_id": "org_6xxug5wssvtou6yhiddkb2enlu",
+        "identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "role": "admin",
+        "created_at": "2026-11-16T02:56:08.939Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_askojyn6qz6bxhluhn36ywxmne",
+        "identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "role": "admin",
+        "created_at": "2026-11-16T02:56:08.865Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_hzfh3a4buq6ytdqnorlnd4yb3u",
+        "identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "role": "admin",
+        "created_at": "2026-11-16T02:56:08.905Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "role": "admin",
+        "created_at": "2026-11-16T02:56:08.751Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "identity_id": "idn_mpv5wdpkk5xvehimja6ooxyoyi",
+        "role": "member",
+        "created_at": "2026-11-16T02:56:08.965Z",
+        "removed_at": null,
+        "version": 0
+      }
+    ],
+    "organization_freezes": [
+      {
+        "id": "ofz_sgipoa6mlobmn6f5v4jwzdashe",
+        "organization_id": "org_hzfh3a4buq6ytdqnorlnd4yb3u",
+        "frozen_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "frozen_at": "2026-03-01T00:00:00.000Z",
+        "reason": "incident drill",
+        "lifted_at": null,
+        "lifted_by": null,
+        "lift_method": null
+      }
+    ],
+    "webhooks": [
+      {
+        "id": "whk_2abm56zlruhmn4fhpu2eiotcwq",
+        "organization_id": "org_hzfh3a4buq6ytdqnorlnd4yb3u",
+        "url": "https://intranet.example/frozen",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:15.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_csvcmoql6ivbfmb3ogcinq7bqu",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://10.0.0.7/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:06.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_dx6ju3jd3goev7xd4jyvjstlzm",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://missing.example/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:11.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_ewdh4ahheuvlf7jxnaxbqyqamy",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://169.254.169.254/latest",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:09.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_hhb5zpckcprrpa6hyr4s5au7pe",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://private.example/hook?secret=1",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:01.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_hswgxfyrvcpzsu5jn546ywdns4",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://hooks.public.example/x",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:00.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_jcdritozdbt5tcao62op4ljqcy",
+        "organization_id": "org_askojyn6qz6bxhluhn36ywxmne",
+        "url": "https://intranet.example:8080/beta",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:14.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_kueeclbw4hyhk2ia3s7ollt3ba",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "http://127.0.0.1:9000/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:08.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_nez2y2mpacqtcmm6n6mazhyu5u",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://intranet.example/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:04.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_njquy4c3pzcexs5vrbwzznaaqm",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://hooks.internal/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:02.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_pasuouia4ea25ktymvv4r7dnge",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://mixed.example/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:12.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_v3zk3r2thpjevescdczkiiauwe",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://hooks.internal:8443/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:03.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_vvy3vlqlnoep2sj5iu4mgnhfqy",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://intranet.example/old",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:13.000Z",
+        "revoked_at": "2026-01-03T00:00:00.000Z",
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_vyhhoy45ktkcqr7zaguuaqk3ja",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://meta.example/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:10.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_wornssrncxtoaw3djengszscmu",
+        "organization_id": "org_6xxug5wssvtou6yhiddkb2enlu",
+        "url": "https://intranet.example/gone",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:16.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_zmfarm64omxwzme6vz7ngfaqle",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "http://plain.example/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:05.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "whk_zqt37cwi26paclmz4ehmltiwzu",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "url": "https://[fd12::7]:9443/hook",
+        "event_types": null,
+        "secret_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:07.000Z",
+        "revoked_at": null,
+        "cursor_occurred_at": "2026-01-01T00:00:00.000Z",
+        "cursor_event_id": "",
+        "failure_count": 0,
+        "last_attempt_at": null,
+        "last_status": null,
+        "version": 1,
+        "updated_at": null,
+        "cursor_order": 0,
+        "suspended_by_deletion": null
+      }
+    ],
+    "platform_connections": [
+      {
+        "id": "pcn_jacvlv2jd6qoxlbvovztlqfsta",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "platform": "coolify",
+        "base_identity": "https://coolify.internal",
+        "name": "Coolify lab",
+        "credential_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:17.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "credential_expires_at": null,
+        "credential_expiry_seen_at": null,
+        "credential_kind": "token",
+        "github_app_id": null,
+        "github_installation_id": null
+      },
+      {
+        "id": "pcn_jnh5ve76skz3cqe5tokpnn7yu4",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "platform": "github-actions",
+        "base_identity": "acme/api",
+        "name": "GitHub",
+        "credential_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:19.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "credential_expires_at": null,
+        "credential_expiry_seen_at": null,
+        "credential_kind": "token",
+        "github_app_id": null,
+        "github_installation_id": null
+      },
+      {
+        "id": "pcn_ty5u5z72s6rnzx7ges2tiyi7aq",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "platform": "convex",
+        "base_identity": "https://convex.public.example",
+        "name": "Convex prod",
+        "credential_envelope": {
+          "formatVersion": 1
+        },
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:18.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "credential_expires_at": null,
+        "credential_expiry_seen_at": null,
+        "credential_kind": "token",
+        "github_app_id": null,
+        "github_installation_id": null
+      }
+    ],
+    "oidc_bindings": [
+      {
+        "id": "oib_2lhn5mp5edsgenv2472ekq7yka",
+        "identity_id": "idn_rd6ilsxzbw7mq5ce2iblrogy3i",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "issuer": "https://issuer.internal",
+        "audience": "varlatch",
+        "subject": "repo:acme/api",
+        "claims": null,
+        "created_by": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "created_at": "2026-01-02T00:00:20.000Z",
+        "revoked_at": null
+      }
+    ],
+    "audit_events": [
+      {
+        "id": "evt_vbq5gqahk3vsnshcaee32grsh4",
+        "schema_version": 1,
+        "event_type": "installation.initialized",
+        "occurred_at": "2026-11-16T02:56:08.509Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": null,
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "installationId": "inst_mtcnavxlalvi5zny36kzgwuedi"
+        },
+        "event_order": 1,
+        "client": null
+      },
+      {
+        "id": "evt_pvyazzzp5mb72xna556ayr4m6m",
+        "schema_version": 1,
+        "event_type": "bootstrap.grant_issued",
+        "occurred_at": "2026-11-16T02:56:08.585Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": null,
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "expiresAt": "2026-11-16T03:11:08.586Z"
+        },
+        "event_order": 2,
+        "client": null
+      },
+      {
+        "id": "evt_i4i2hpfw2mvoc2pdgargptktc4",
+        "schema_version": 1,
+        "event_type": "bootstrap.completed",
+        "occurred_at": "2026-11-16T02:56:08.609Z",
+        "actor_identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_anwxiulfaylxrwhokrkosib5fm"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": null,
+        "event_order": 3,
+        "client": null
+      },
+      {
+        "id": "evt_e43owvcks4qcwnw4h5rla5hc2q",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-16T02:56:08.660Z",
+        "actor_identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "authentication_method_id": null,
+        "credential_id": "crd_svssgc2jfg6o3ll6jmlu6n43w4",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_anwxiulfaylxrwhokrkosib5fm"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 4,
+        "client": null
+      },
+      {
+        "id": "evt_mwcb65j7hfdizwtcukqahnzpra",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-16T02:56:08.751Z",
+        "actor_identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "authentication_method_id": null,
+        "credential_id": "crd_svssgc2jfg6o3ll6jmlu6n43w4",
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "action": null,
+        "resource": {
+          "organizationSlug": "acme"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 5,
+        "client": null
+      },
+      {
+        "id": "evt_aknuvgs2cfk35vnncpc3533dhu",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-16T02:56:08.865Z",
+        "actor_identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "authentication_method_id": null,
+        "credential_id": "crd_svssgc2jfg6o3ll6jmlu6n43w4",
+        "organization_id": "org_askojyn6qz6bxhluhn36ywxmne",
+        "action": null,
+        "resource": {
+          "organizationSlug": "beta"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 6,
+        "client": null
+      },
+      {
+        "id": "evt_3l4s7di4j4dudn3qnj7z6gj4vy",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-16T02:56:08.905Z",
+        "actor_identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "authentication_method_id": null,
+        "credential_id": "crd_svssgc2jfg6o3ll6jmlu6n43w4",
+        "organization_id": "org_hzfh3a4buq6ytdqnorlnd4yb3u",
+        "action": null,
+        "resource": {
+          "organizationSlug": "frozen"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 7,
+        "client": null
+      },
+      {
+        "id": "evt_b7zcf3gvx5rctls2xpnr53o3lu",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-16T02:56:08.939Z",
+        "actor_identity_id": "idn_anwxiulfaylxrwhokrkosib5fm",
+        "authentication_method_id": null,
+        "credential_id": "crd_svssgc2jfg6o3ll6jmlu6n43w4",
+        "organization_id": "org_6xxug5wssvtou6yhiddkb2enlu",
+        "action": null,
+        "resource": {
+          "organizationSlug": "gone"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 8,
+        "client": null
+      },
+      {
+        "id": "evt_m5pcj73yzcpdyd7gcrbsoo4bjy",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-16T02:56:08.970Z",
+        "actor_identity_id": "idn_mpv5wdpkk5xvehimja6ooxyoyi",
+        "authentication_method_id": null,
+        "credential_id": "crd_o6oiv4avxqijq42lkzvikshcjq",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_mpv5wdpkk5xvehimja6ooxyoyi"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 9,
+        "client": null
+      },
+      {
+        "id": "evt_jg2xn7ebmhisvowd7wyyaucuhi",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-16T02:56:08.985Z",
+        "actor_identity_id": "idn_lmc2xcpunqm3bh5rssuhaibxvq",
+        "authentication_method_id": null,
+        "credential_id": "crd_s2gdu3gxxxfnaum5utm3xsdche",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_lmc2xcpunqm3bh5rssuhaibxvq"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 10,
+        "client": null
+      },
+      {
+        "id": "evt_hnanwf5xukzuetv5vg7dyif46q",
+        "schema_version": 1,
+        "event_type": "outbound.refused",
+        "occurred_at": "2099-01-02T00:00:00.000Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "action": null,
+        "resource": {
+          "webhookId": "whk_nez2y2mpacqtcmm6n6mazhyu5u"
+        },
+        "decision": "deny",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "host": "intranet.example",
+          "port": 443,
+          "phase": "connection",
+          "reason": "private_address",
+          "scheme": "https",
+          "purpose": "webhook"
+        },
+        "event_order": 11,
+        "client": null
+      },
+      {
+        "id": "evt_jce2ybzycdmayw4lvpj4q6yrta",
+        "schema_version": 1,
+        "event_type": "outbound.refused",
+        "occurred_at": "2099-01-01T00:00:00.000Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "action": null,
+        "resource": {
+          "webhookId": "whk_nez2y2mpacqtcmm6n6mazhyu5u"
+        },
+        "decision": "deny",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "host": "intranet.example",
+          "port": 443,
+          "phase": "connection",
+          "reason": "private_address",
+          "scheme": "https",
+          "purpose": "webhook"
+        },
+        "event_order": 12,
+        "client": null
+      },
+      {
+        "id": "evt_cksixgxuqdsph5n6ow2mludyla",
+        "schema_version": 1,
+        "event_type": "outbound.refused",
+        "occurred_at": "2099-01-01T00:00:00.000Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "action": null,
+        "resource": {
+          "webhookId": "whk_njquy4c3pzcexs5vrbwzznaaqm"
+        },
+        "decision": "deny",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "host": "hooks.internal",
+          "port": 8443,
+          "phase": "connection",
+          "reason": "port",
+          "scheme": "https",
+          "purpose": "webhook"
+        },
+        "event_order": 13,
+        "client": null
+      },
+      {
+        "id": "evt_rrfyk4l365us6zc26f54w6n6jy",
+        "schema_version": 1,
+        "event_type": "outbound.refused",
+        "occurred_at": "2099-01-03T00:00:00.000Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "action": null,
+        "resource": {
+          "connectionId": "pcn_jacvlv2jd6qoxlbvovztlqfsta"
+        },
+        "decision": "deny",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "host": "coolify.internal",
+          "port": 443,
+          "phase": "connection",
+          "reason": "private_address",
+          "scheme": "https",
+          "purpose": "webhook"
+        },
+        "event_order": 14,
+        "client": null
+      },
+      {
+        "id": "evt_zvxhcv24sfozjfk7eu6qmeqnla",
+        "schema_version": 1,
+        "event_type": "outbound.refused",
+        "occurred_at": "2020-01-01T00:00:00.000Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+        "action": null,
+        "resource": {
+          "oidcBindingId": "oib_2lhn5mp5edsgenv2472ekq7yka"
+        },
+        "decision": "deny",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "host": "issuer.internal",
+          "port": 443,
+          "phase": "connection",
+          "reason": "private_address",
+          "scheme": "https",
+          "purpose": "webhook"
+        },
+        "event_order": 15,
+        "client": null
+      },
+      {
+        "id": "evt_jembq55jyd5neh7nice5ak3h44",
+        "schema_version": 1,
+        "event_type": "outbound.refused",
+        "occurred_at": "2099-01-01T00:00:00.000Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": "org_askojyn6qz6bxhluhn36ywxmne",
+        "action": null,
+        "resource": {
+          "webhookId": "whk_jcdritozdbt5tcao62op4ljqcy"
+        },
+        "decision": "deny",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "host": "intranet.example",
+          "port": 8080,
+          "phase": "connection",
+          "reason": "private_address",
+          "scheme": "https",
+          "purpose": "webhook"
+        },
+        "event_order": 16,
+        "client": null
+      }
+    ]
+  },
+  "sideTables": [],
+  "requests": [
+    {
+      "id": "GET the installation's outbound policy",
+      "name": "the installation's outbound policy",
+      "method": "GET",
+      "path": "/v1/installation/outbound",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"generatedAt\":\"{time}\",\"allow\":[\"private.example\",\"hooks.internal:8443\",\"127.0.0.1/32:*\"],\"checked\":18,\"warnings\":[\"127.0.0.1/32:* opens a host-only range (loopback, link-local or metadata) to every Organization\"],\"refused\":[{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"webhook\",\"id\":\"whk_njquy4c3pzcexs5vrbwzznaaqm\",\"name\":null,\"scheme\":\"https\",\"host\":\"hooks.internal\",\"port\":443,\"reason\":\"port\",\"notSuggested\":null},{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"webhook\",\"id\":\"whk_nez2y2mpacqtcmm6n6mazhyu5u\",\"name\":null,\"scheme\":\"https\",\"host\":\"intranet.example\",\"port\":443,\"reason\":\"private_address\",\"notSuggested\":null},{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"webhook\",\"id\":\"whk_zmfarm64omxwzme6vz7ngfaqle\",\"name\":null,\"scheme\":\"http\",\"host\":\"plain.example\",\"port\":80,\"reason\":\"scheme\",\"notSuggested\":null},{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"webhook\",\"id\":\"whk_csvcmoql6ivbfmb3ogcinq7bqu\",\"name\":null,\"scheme\":\"https\",\"host\":\"10.0.0.7\",\"port\":443,\"reason\":\"private_address\",\"notSuggested\":\"a literal private address: only a CIDR entry opens it, such as 10.0.0.7/32; add one only if every Organization may reach it\"},{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"webhook\",\"id\":\"whk_zqt37cwi26paclmz4ehmltiwzu\",\"name\":null,\"scheme\":\"https\",\"host\":\"fd12::7\",\"port\":9443,\"reason\":\"private_address\",\"notSuggested\":\"a literal private address: only a CIDR entry opens it, such as [fd12::7/128]:9443; add one only if every Organization may reach it\"},{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"webhook\",\"id\":\"whk_ewdh4ahheuvlf7jxnaxbqyqamy\",\"name\":null,\"scheme\":\"https\",\"host\":\"169.254.169.254\",\"port\":443,\"reason\":\"host_only_address\",\"notSuggested\":\"a literal host-only address: only a CIDR entry opens it, such as 169.254.169.254/32; add one only if every Organization may reach it\"},{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"webhook\",\"id\":\"whk_vyhhoy45ktkcqr7zaguuaqk3ja\",\"name\":null,\"scheme\":\"https\",\"host\":\"meta.example\",\"port\":443,\"reason\":\"host_only_address\",\"notSuggested\":\"resolves to a loopback, link-local, metadata or reserved address, which a hostname entry never opens\"},{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"webhook\",\"id\":\"whk_pasuouia4ea25ktymvv4r7dnge\",\"name\":null,\"scheme\":\"https\",\"host\":\"mixed.example\",\"port\":443,\"reason\":\"mixed_answers\",\"notSuggested\":null},{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"coolify\",\"id\":\"pcn_jacvlv2jd6qoxlbvovztlqfsta\",\"name\":\"Coolify lab\",\"scheme\":\"https\",\"host\":\"coolify.internal\",\"port\":443,\"reason\":\"private_address\",\"notSuggested\":null},{\"organization\":{\"id\":\"org_on4pscqre3f6zuyon3cg4vj3dm\",\"slug\":\"acme\",\"name\":\"Acme\"},\"kind\":\"oidc-issuer\",\"id\":\"oib_2lhn5mp5edsgenv2472ekq7yka\",\"name\":null,\"scheme\":\"https\",\"host\":\"issuer.internal\",\"port\":443,\"reason\":\"private_address\",\"notSuggested\":null},{\"organization\":{\"id\":\"org_askojyn6qz6bxhluhn36ywxmne\",\"slug\":\"beta\",\"name\":\"Beta\"},\"kind\":\"webhook\",\"id\":\"whk_jcdritozdbt5tcao62op4ljqcy\",\"name\":null,\"scheme\":\"https\",\"host\":\"intranet.example\",\"port\":8080,\"reason\":\"private_address\",\"notSuggested\":null},{\"organization\":{\"id\":\"org_hzfh3a4buq6ytdqnorlnd4yb3u\",\"slug\":\"frozen\",\"name\":\"Frozen\"},\"kind\":\"webhook\",\"id\":\"whk_2abm56zlruhmn4fhpu2eiotcwq\",\"name\":null,\"scheme\":\"https\",\"host\":\"intranet.example\",\"port\":443,\"reason\":\"private_address\",\"notSuggested\":null}],\"suggested\":\"private.example,hooks.internal:8443,127.0.0.1/32:*,hooks.internal,intranet.example,plain.example,mixed.example,intranet.example:8080,coolify.internal,issuer.internal\",\"unresolved\":1}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the installation's outbound policy as a member",
+      "name": "the installation's outbound policy as a member",
+      "method": "GET",
+      "path": "/v1/installation/outbound",
+      "credential": "bob",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Installation Admin required\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET the installation's outbound policy as an outsider",
+      "name": "the installation's outbound policy as an outsider",
+      "method": "GET",
+      "path": "/v1/installation/outbound",
+      "credential": "carol",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Installation Admin required\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET acme's refused destinations",
+      "name": "acme's refused destinations",
+      "method": "GET",
+      "path": "/v1/organizations/acme/security/refused-destinations",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"generatedAt\":\"{time}\",\"sinceDays\":30,\"checked\":16,\"unresolved\":1,\"items\":[{\"kind\":\"webhook\",\"id\":\"whk_njquy4c3pzcexs5vrbwzznaaqm\",\"name\":null,\"scheme\":\"https\",\"host\":\"hooks.internal\",\"port\":443,\"reason\":\"port\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_nez2y2mpacqtcmm6n6mazhyu5u\",\"name\":null,\"scheme\":\"https\",\"host\":\"intranet.example\",\"port\":443,\"reason\":\"private_address\",\"since\":\"2099-01-01T00:00:00.000Z\"},{\"kind\":\"webhook\",\"id\":\"whk_zmfarm64omxwzme6vz7ngfaqle\",\"name\":null,\"scheme\":\"http\",\"host\":\"plain.example\",\"port\":80,\"reason\":\"scheme\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_csvcmoql6ivbfmb3ogcinq7bqu\",\"name\":null,\"scheme\":\"https\",\"host\":\"10.0.0.7\",\"port\":443,\"reason\":\"private_address\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_zqt37cwi26paclmz4ehmltiwzu\",\"name\":null,\"scheme\":\"https\",\"host\":\"fd12::7\",\"port\":9443,\"reason\":\"private_address\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_ewdh4ahheuvlf7jxnaxbqyqamy\",\"name\":null,\"scheme\":\"https\",\"host\":\"169.254.169.254\",\"port\":443,\"reason\":\"host_only_address\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_vyhhoy45ktkcqr7zaguuaqk3ja\",\"name\":null,\"scheme\":\"https\",\"host\":\"meta.example\",\"port\":443,\"reason\":\"host_only_address\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_pasuouia4ea25ktymvv4r7dnge\",\"name\":null,\"scheme\":\"https\",\"host\":\"mixed.example\",\"port\":443,\"reason\":\"mixed_answers\",\"since\":null},{\"kind\":\"coolify\",\"id\":\"pcn_jacvlv2jd6qoxlbvovztlqfsta\",\"name\":\"Coolify lab\",\"scheme\":\"https\",\"host\":\"coolify.internal\",\"port\":443,\"reason\":\"private_address\",\"since\":\"2099-01-03T00:00:00.000Z\"},{\"kind\":\"oidc-issuer\",\"id\":\"oib_2lhn5mp5edsgenv2472ekq7yka\",\"name\":null,\"scheme\":\"https\",\"host\":\"issuer.internal\",\"port\":443,\"reason\":\"private_address\",\"since\":null}]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET acme's refused destinations by id",
+      "name": "acme's refused destinations by id",
+      "method": "GET",
+      "path": "/v1/organizations/{acmeId}/security/refused-destinations",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"generatedAt\":\"{time}\",\"sinceDays\":30,\"checked\":16,\"unresolved\":1,\"items\":[{\"kind\":\"webhook\",\"id\":\"whk_njquy4c3pzcexs5vrbwzznaaqm\",\"name\":null,\"scheme\":\"https\",\"host\":\"hooks.internal\",\"port\":443,\"reason\":\"port\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_nez2y2mpacqtcmm6n6mazhyu5u\",\"name\":null,\"scheme\":\"https\",\"host\":\"intranet.example\",\"port\":443,\"reason\":\"private_address\",\"since\":\"2099-01-01T00:00:00.000Z\"},{\"kind\":\"webhook\",\"id\":\"whk_zmfarm64omxwzme6vz7ngfaqle\",\"name\":null,\"scheme\":\"http\",\"host\":\"plain.example\",\"port\":80,\"reason\":\"scheme\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_csvcmoql6ivbfmb3ogcinq7bqu\",\"name\":null,\"scheme\":\"https\",\"host\":\"10.0.0.7\",\"port\":443,\"reason\":\"private_address\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_zqt37cwi26paclmz4ehmltiwzu\",\"name\":null,\"scheme\":\"https\",\"host\":\"fd12::7\",\"port\":9443,\"reason\":\"private_address\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_ewdh4ahheuvlf7jxnaxbqyqamy\",\"name\":null,\"scheme\":\"https\",\"host\":\"169.254.169.254\",\"port\":443,\"reason\":\"host_only_address\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_vyhhoy45ktkcqr7zaguuaqk3ja\",\"name\":null,\"scheme\":\"https\",\"host\":\"meta.example\",\"port\":443,\"reason\":\"host_only_address\",\"since\":null},{\"kind\":\"webhook\",\"id\":\"whk_pasuouia4ea25ktymvv4r7dnge\",\"name\":null,\"scheme\":\"https\",\"host\":\"mixed.example\",\"port\":443,\"reason\":\"mixed_answers\",\"since\":null},{\"kind\":\"coolify\",\"id\":\"pcn_jacvlv2jd6qoxlbvovztlqfsta\",\"name\":\"Coolify lab\",\"scheme\":\"https\",\"host\":\"coolify.internal\",\"port\":443,\"reason\":\"private_address\",\"since\":\"2099-01-03T00:00:00.000Z\"},{\"kind\":\"oidc-issuer\",\"id\":\"oib_2lhn5mp5edsgenv2472ekq7yka\",\"name\":null,\"scheme\":\"https\",\"host\":\"issuer.internal\",\"port\":443,\"reason\":\"private_address\",\"since\":null}]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET beta's refused destinations",
+      "name": "beta's refused destinations",
+      "method": "GET",
+      "path": "/v1/organizations/beta/security/refused-destinations",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"generatedAt\":\"{time}\",\"sinceDays\":30,\"checked\":1,\"unresolved\":0,\"items\":[{\"kind\":\"webhook\",\"id\":\"whk_jcdritozdbt5tcao62op4ljqcy\",\"name\":null,\"scheme\":\"https\",\"host\":\"intranet.example\",\"port\":8080,\"reason\":\"private_address\",\"since\":\"2099-01-01T00:00:00.000Z\"}]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET a frozen Organization's refused destinations",
+      "name": "a frozen Organization's refused destinations",
+      "method": "GET",
+      "path": "/v1/organizations/frozen/security/refused-destinations",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"generatedAt\":\"{time}\",\"sinceDays\":30,\"checked\":1,\"unresolved\":0,\"items\":[{\"kind\":\"webhook\",\"id\":\"whk_2abm56zlruhmn4fhpu2eiotcwq\",\"name\":null,\"scheme\":\"https\",\"host\":\"intranet.example\",\"port\":443,\"reason\":\"private_address\",\"since\":null}]}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET a deleted Organization's refused destinations",
+      "name": "a deleted Organization's refused destinations",
+      "method": "GET",
+      "path": "/v1/organizations/gone/security/refused-destinations",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET an unknown Organization's refused destinations",
+      "name": "an unknown Organization's refused destinations",
+      "method": "GET",
+      "path": "/v1/organizations/nope/security/refused-destinations",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET acme's refused destinations as a member",
+      "name": "acme's refused destinations as a member",
+      "method": "GET",
+      "path": "/v1/organizations/acme/security/refused-destinations",
+      "credential": "bob",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_mpv5wdpkk5xvehimja6ooxyoyi",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_o6oiv4avxqijq42lkzvikshcjq",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET acme's refused destinations as an outsider",
+      "name": "acme's refused destinations as an outsider",
+      "method": "GET",
+      "path": "/v1/organizations/acme/security/refused-destinations",
+      "credential": "carol",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "organization.manage",
+          "actor_identity_id": "idn_lmc2xcpunqm3bh5rssuhaibxvq",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_s2gdu3gxxxfnaum5utm3xsdche",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_on4pscqre3f6zuyon3cg4vj3dm",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    }
+  ],
+  "counters": []
+}

@@ -482,6 +482,9 @@ func writeConfiguration(path string, cfg *config.Config) error {
 	if cfg.TrustedProxies != "" {
 		settings["trusted_proxies"] = cfg.TrustedProxies
 	}
+	if cfg.OutboundAllow != "" {
+		settings["outbound_allow"] = cfg.OutboundAllow
+	}
 	if cfg.SyncAdapters != nil {
 		settings["sync_adapters"] = strings.Join(cfg.SyncAdapters, ",")
 	}
