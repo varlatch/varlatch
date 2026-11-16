@@ -5,6 +5,39 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## 0.22.1 (2026-11-16)
+
+### Access control
+
+- **A Grant can name only its own Organization's groups and roles.**
+  Creating or replacing a Grant whose group or role belongs to another
+  Organization is refused, and the Grants an identity holds count only
+  through its own Organization's groups and roles.
+- **Only an Organization Admin can invite an admin.** Inviting someone with
+  the admin role needs a live admin of the Organization, as changing a
+  member's role already does. `identity.manage`, through a Grant, a custom
+  role or a machine identity, still invites members. A refused admin
+  invitation answers `403 PERMISSION_DENIED` and is recorded in the audit
+  log as `authorization.denied`.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- From 0.22.0: run `varlatch upgrade 0.22.1 --bek-file /secure/backup-key
+  --kek-file /secure/root-kek-copy` on the Compose host, as
+  [the Compose guide](infra/compose/README.md) describes, then replace the
+  host CLI with `varlatch-cli-0.22.1.cjs`, or run `varlatch self-update`.
+- From 0.21.0 or older: follow the 0.22.0 notes below with the 0.22.1 CLI
+  and version.
+- Scripts that invite admins with a machine credential, or as a member who
+  holds `identity.manage`, now get `403`: invite them as an Organization
+  Admin instead.
+
+Backups: archives of 0.22.0 and earlier still restore into this release.
+
 ## 0.22.0 (2026-11-13)
 
 ### Sign-in
