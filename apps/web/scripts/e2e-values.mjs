@@ -374,7 +374,13 @@ if (kit.group("tailnet")) {
   await page.waitForSelector('[data-testid="tailnet-only-production"]', { timeout: 20000 });
   await page.waitForSelector(cellSel("DATABASE_URL", "production", "set"), { timeout: 20000 });
   check("values.grid-column-has-no-reveal", "grid column has no Reveal", (await page.locator('[data-testid="reveal-column-production"]').count()) === 0);
-  if ((await page.locator('[data-testid="reveal-menu"]').count()) > 0) {
+  // The Reveal menu appears once an environment with secrets that need no
+  // tailnet (development) has loaded, which can be after production's cell:
+  // wait for it, so that the check always reports.
+  const revealMenu = await page.waitForSelector('[data-testid="reveal-menu"]', { timeout: 20000 }).then(() => true, () => false);
+  if (!revealMenu) {
+    check("values.bulk-reveal-leaves-production-out", "bulk Reveal leaves production out", false, "the Reveal menu did not appear");
+  } else {
     await page.click('[data-testid="reveal-menu"]');
     check("values.bulk-reveal-leaves-production-out", "bulk Reveal leaves production out", (await page.locator('[data-testid="reveal-in-production"]').count()) === 0);
     await page.keyboard.press("Escape");
