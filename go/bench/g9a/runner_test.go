@@ -25,14 +25,22 @@ import (
 // converge runs write blobs that grow the WAL.
 type fakeTarget struct {
 	db      *storage.DB
+	dir     string
 	targets int
 	running atomic.Bool
 }
 
 func (f *fakeTarget) WALSize() int64 { return f.db.Metrics().WALBytes }
 
-func (f *fakeTarget) Snapshot(ctx context.Context, dest string, o storage.SnapshotOptions) (storage.SnapshotStats, error) {
-	return f.db.Snapshot(ctx, dest, o)
+// Backup takes a bare snapshot (no sealing) and removes it.
+func (f *fakeTarget) Backup(ctx context.Context, n int, o storage.SnapshotOptions) (BackupStats, error) {
+	if err := os.MkdirAll(f.dir, 0o700); err != nil {
+		return BackupStats{}, err
+	}
+	dest := filepath.Join(f.dir, fmt.Sprintf("snapshot-%d.db", n))
+	st, err := f.db.Snapshot(ctx, dest, o)
+	_ = os.Remove(dest)
+	return BackupStats{Snapshot: st}, err
 }
 
 func (f *fakeTarget) Converge(ctx context.Context) ConvergeResult {
@@ -73,7 +81,7 @@ func TestRunner(t *testing.T) {
 	p.WALBound = 64 << 10
 	out, data := t.TempDir(), t.TempDir()
 
-	target := &fakeTarget{targets: p.Targets}
+	target := &fakeTarget{targets: p.Targets, dir: filepath.Join(data, "backups")}
 	r, err := NewRunner(RunnerOptions{DataDir: data, OutDir: out, Plan: p, Target: target, Tail: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -286,13 +294,11 @@ func newSlotRig(t *testing.T, snap map[int]slotSnap) *slotRig {
 	r.seen.Store(-1)
 	r.s = &Runner{opts: RunnerOptions{DataDir: t.TempDir(), OutDir: out, Plan: p}, ev: ev, slot: newBackupSlot()}
 	r.s.walSize = func() int64 { v := r.wal.Load(); r.seen.Store(v); return v }
-	r.s.snapshot = func(ctx context.Context, dest string) (storage.SnapshotStats, error) {
+	r.s.backupFn = func(ctx context.Context, id int) (BackupStats, error) {
 		n := r.running.Add(1)
 		defer r.running.Add(-1)
 		for m := r.most.Load(); n > m && !r.most.CompareAndSwap(m, n); m = r.most.Load() {
 		}
-		var id int
-		_, _ = fmt.Sscanf(filepath.Base(dest), "snapshot-%d.db", &id)
 		b := snap[id]
 		if b.defers {
 			r.s.OnCheckpoint(storage.CheckpointResult{Mode: "TRUNCATE", Trigger: storage.TriggerSize, Start: time.Now(), Deferred: true}, nil)
@@ -302,7 +308,7 @@ func newSlotRig(t *testing.T, snap map[int]slotSnap) *slotRig {
 		} else {
 			time.Sleep(b.d)
 		}
-		return storage.SnapshotStats{Pages: 1, Steps: 1, Duration: b.d}, nil
+		return BackupStats{Snapshot: storage.SnapshotStats{Pages: 1, Steps: 1, Duration: b.d}}, nil
 	}
 	return r
 }

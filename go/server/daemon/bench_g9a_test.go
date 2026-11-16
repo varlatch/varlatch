@@ -254,7 +254,8 @@ func TestBenchRun(t *testing.T) {
 			}
 			runs++
 		case g9a.EvBackupEnd:
-			if e.Err != "" || e.Pages == 0 {
+			// A real backup: its snapshot, and the archive it sealed.
+			if e.Err != "" || e.Pages == 0 || e.ArchiveBytes == 0 {
 				t.Fatalf("backup: %+v", e)
 			}
 		case g9a.EvError:

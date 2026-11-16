@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,7 +52,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		sub == "conformance-fixture" && conformanceFixture != nil
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
-	if sub != "bootstrap" && sub != "recover" && !conformance && !operator && !backup {
+	keys := sub == "kek" || sub == "custody"
+	if sub != "bootstrap" && sub != "recover" && !conformance && !operator && !backup && !keys {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -71,6 +73,16 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		rest = append(rest, args[i])
 	}
 	switch {
+	case sub == "kek":
+		if len(rest) == 0 || !slices.Contains([]string{"verify", "export", "restore", "split", "combine"}, rest[0]) {
+			fmt.Fprintln(stderr, kekUsage)
+			return 64
+		}
+	case sub == "custody":
+		if _, _, msg := custodyArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
 	case backup:
 		if _, msg := backupArgs(sub, rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
@@ -82,7 +94,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
-	case !conformance:
+	case !conformance && sub != "kek":
 		if _, msg := parseAdmin(sub, rest); msg != "" {
 			return adminUsage(stderr, msg)
 		}
@@ -97,13 +109,22 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, err.Error())
 		return ExitFailure
 	}
+	switch {
+	case sub == "kek":
+		return runKek(cfg, rest, os.Stdin, stdout, stderr)
+	case sub == "custody" && rest[0] == "status":
+		return runCustodyStatus(cfg, stdout, stderr)
+	case sub == "backup" && rest[0] == "restore":
+		return restoreOffline(cfg, rest[1:], stdout, stderr)
+	}
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
 
 func adminUsage(stderr io.Writer, msg string) int {
 	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] | "+
 		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] | "+
-		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status | varlatchd admin maintenance begin|end|status  (each with [--config <file>])\n", msg)
+		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
+		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status  (each with [--config <file>])\n", msg)
 	return 64
 }
 
@@ -275,6 +296,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runOperator(ctx, env, sub, rest, stdout, stderr)
 	case sub == "backup" || sub == "maintenance":
 		return runBackupCommand(ctx, env, sub, rest, stdout, stderr)
+	case sub == "custody":
+		return runCustodyAttest(ctx, env, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":
 		return adminUsage(stderr, "unknown command "+sub)
 	}

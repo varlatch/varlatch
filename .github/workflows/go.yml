@@ -192,6 +192,9 @@ jobs:
           sudo mount -t tmpfs -o size=32m,mode=1777 tmpfs "$dir"
           trap 'sudo umount "$dir"' EXIT
           VARLATCH_G7_SMALL_FS="$dir" VARLATCH_REQUIRE_G7_DISK=1 go test -count=1 -v -run '^(TestFullDiskRefusesWritesKeepsReads|TestDiskFullBatchAnswersEveryDisclosure)$' ./server/daemon
+          # A backup on a full disk (step 4.14): the snapshot fails, no
+          # archive or status record is left, nothing committed is lost.
+          VARLATCH_G7_SMALL_FS="$dir" VARLATCH_REQUIRE_G7_DISK=1 go test -count=1 -v -run '^TestFullDiskDuringSnapshot$' ./server/backups
 
       # G7 at controlled crash points: varlatchd, built with the storage
       # engine's crash points (the crashpoint tag, which no release has), is
@@ -229,8 +232,34 @@ jobs:
 
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
-      - name: install.sh and the G9a runner pass shellcheck
-        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh
+      - name: install.sh, the G9a runner and the restore drill pass shellcheck
+        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh
+
+      # G13 (ADR-0059 step 4.14), and the Go replacement of
+      # scripts/test-backup-s3.mjs: the S3 client against a local S3 server
+      # (the pinned MinIO image): uploads in one request and multipart,
+      # into a bucket with Object Lock and one without, byte for byte; a
+      # missing object; a multipart upload aborted on a refused part and
+      # one completed after a part was retried; and the bucket test, which
+      # reports delivery, retention and recoverability separately and
+      # passes only a bucket that holds the uploaded version against
+      # deletion. The root key goes through the environment by name only.
+      - name: G13, the S3 client and the bucket test against a local S3 with Object Lock
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          name="vlt-s3-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          secret=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+          echo "::add-mask::$secret"
+          MINIO_ROOT_PASSWORD="$secret" docker run -d --rm --name "$name" -p 127.0.0.1::9000 \
+            -e MINIO_ROOT_USER=vlts3test -e MINIO_ROOT_PASSWORD \
+            cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b server /data > /dev/null
+          trap 'docker rm -fv "$name" > /dev/null 2>&1 || true' EXIT
+          endpoint="http://$(docker port "$name" 9000/tcp | head -n 1)"
+          for _ in $(seq 1 100); do curl -fsS "$endpoint/minio/health/ready" > /dev/null 2>&1 && break; sleep 0.2; done
+          VARLATCH_TEST_S3_ENDPOINT="$endpoint" VARLATCH_TEST_S3_ACCESS_KEY=vlts3test VARLATCH_TEST_S3_SECRET_KEY="$secret" VARLATCH_REQUIRE_S3=1 \
+            go test -count=1 -v -run '^(TestS3UploadDownload|TestS3MultipartAbortAndRetry|TestBucketTest)$' ./lib/backup
 
       # G9a at smoke scale (ADR-0059 step 3.6): 5 % of the profile's
       # length against varlatchd built with the g9a tag (the production
@@ -300,6 +329,8 @@ jobs:
             and (.stages | length) == 8 and ([.stages[] | .count > 0] | all)
             and .profile.overlapsLoad == true
           ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
+          # The plan's backups are real ones (step 4.14): each sealed an archive.
+          jq -se '[.[] | select(.ev == "backup_end")] | length > 0 and all(.err == null and .archiveBytes > 0)' "$out/events.jsonl" || { echo "a backup sealed no archive"; exit 1; }
           [ -s "$out/cpu.pprof" ] || { echo "no CPU profile"; exit 1; }
           (cd go && go tool pprof -top -cum -nodecount=100000 -unit=ms -focus='values\.\(\*Service\)\.Disclose' "$out/cpu.pprof") > "$out/profile-disclose.txt"
           head -n 60 "$out/profile-disclose.txt"
@@ -449,7 +480,16 @@ jobs:
         run: VARLATCH_GO_BINARY="$RUNNER_TEMP/varlatchd" node --test scripts/conformance/test/go-binary.test.mjs
       - name: Install Chromium
         run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
-      - name: Run the conformance suites against varlatchd
+      # G13's restore drill (ADR-0059 step 4.14): a Go archive restored into
+      # a fresh container that holds only the archive and the two keys (a
+      # scratch image with varlatchd alone, no network), and the source's
+      # Root KEK opening the restored canary. The conformance run below then
+      # serves that restored installation, so the full run is against it.
+      - name: Restore a Go archive in a fresh container
+        run: sh go/bench/restore-drill.sh "$RUNNER_TEMP/varlatchd" "$RUNNER_TEMP/restore-drill"
+      - name: Run the conformance suites against the restored varlatchd
+        env:
+          VARLATCH_GO_BINARY_FROM: ${{ runner.temp }}/restore-drill/restored
         run: node scripts/conformance/run.mjs --target "go-binary:$RUNNER_TEMP/varlatchd" --cli source --report conformance-report.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

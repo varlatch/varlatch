@@ -96,11 +96,21 @@ type ManifestEntry struct {
 type Target interface {
 	// WALSize is the WAL file's size in bytes.
 	WALSize() int64
-	// Snapshot takes a paced snapshot to dest, as the backup job will.
-	Snapshot(ctx context.Context, dest string, o storage.SnapshotOptions) (storage.SnapshotStats, error)
+	// Backup takes backup number n with a snapshot paced by o: in
+	// varlatchd's g9a build, a real backup (the snapshot, the paced
+	// sealing, the archive's check and local retention).
+	Backup(ctx context.Context, n int, o storage.SnapshotOptions) (BackupStats, error)
 	// Converge runs one converge over every Sync Target; a run already in
 	// progress makes it return at once with ErrConvergeRunning.
 	Converge(ctx context.Context) ConvergeResult
+}
+
+// BackupStats is what a backup did: its snapshot, how long its sealing
+// and check took, and the archive's size (0 for a bare snapshot).
+type BackupStats struct {
+	Snapshot     storage.SnapshotStats
+	Seal         time.Duration
+	ArchiveBytes int64
 }
 
 // ConvergeResult summarizes one converge run.
@@ -148,9 +158,9 @@ type Runner struct {
 	backups  atomic.Int64
 	slot     backupSlot
 	deferred atomic.Int64
-	// walSize and snapshot are the target's, replaced in tests.
+	// walSize and backupFn are the target's, replaced in tests.
 	walSize  func() int64
-	snapshot func(ctx context.Context, dest string) (storage.SnapshotStats, error)
+	backupFn func(ctx context.Context, n int) (BackupStats, error)
 
 	startOnce sync.Once
 	started   atomic.Int64 // run start, µs
@@ -192,9 +202,9 @@ func NewRunner(opts RunnerOptions) (*Runner, error) {
 	}
 	r := &Runner{opts: opts, ev: ev, cg: ownCgroup(), slot: newBackupSlot(), stop: make(chan struct{}), done: make(chan struct{})}
 	r.walSize = opts.Target.WALSize
-	r.snapshot = func(ctx context.Context, dest string) (storage.SnapshotStats, error) {
+	r.backupFn = func(ctx context.Context, n int) (BackupStats, error) {
 		p := opts.Plan
-		return opts.Target.Snapshot(ctx, dest, storage.SnapshotOptions{StepPages: p.BackupStepPages, Pause: time.Duration(p.BackupPauseMs) * time.Millisecond})
+		return opts.Target.Backup(ctx, n, storage.SnapshotOptions{StepPages: p.BackupStepPages, Pause: time.Duration(p.BackupPauseMs) * time.Millisecond})
 	}
 	go r.watch()
 	return r, nil
@@ -553,30 +563,27 @@ func (r *Runner) timedBackup(ctx, work context.Context, phaseEnd time.Time, b Ba
 	r.backup(work, start)
 }
 
-// backup takes a paced snapshot, as the backup job will, and removes it;
-// the caller holds the slot. start is its backup_start event, numbered and
-// timed here and given the WAL size unless it has one; backup returns it.
+// backup takes a backup through the target; the caller holds the slot.
+// start is its backup_start event, numbered and timed here and given the
+// WAL size unless it has one; backup returns it. Its backup_end carries
+// the snapshot's pages, steps, restarts and duration, the sealing's
+// duration and the archive's size.
 func (r *Runner) backup(ctx context.Context, start Event) Event {
 	t := time.Now()
 	start.Ev, start.T, start.Backup = EvBackupStart, us(t), int(r.backups.Add(1))
 	if start.WALBefore == 0 {
 		start.WALBefore = r.walSize()
 	}
-	dir := filepath.Join(r.opts.DataDir, "backups")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		r.ev.emit(Event{Ev: EvError, Err: err.Error()})
-		return start
-	}
-	dest := filepath.Join(dir, fmt.Sprintf("snapshot-%d.db", start.Backup))
 	r.ev.emit(start)
-	st, err := r.snapshot(ctx, dest)
+	b, err := r.backupFn(ctx, start.Backup)
+	st := b.Snapshot
 	e := Event{Ev: EvBackupEnd, Backup: start.Backup, Phase: start.Phase, Attempt: start.Attempt,
-		Pages: st.Pages, Steps: st.Steps, Restarts: st.Restarts, DurUs: st.Duration.Microseconds()}
+		Pages: st.Pages, Steps: st.Steps, Restarts: st.Restarts, DurUs: st.Duration.Microseconds(),
+		SealUs: b.Seal.Microseconds(), ArchiveBytes: b.ArchiveBytes}
 	if err != nil {
 		e.Err = err.Error()
 	}
 	r.ev.emit(e)
-	_ = os.Remove(dest)
 	return start
 }
 

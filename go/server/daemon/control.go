@@ -67,6 +67,8 @@ type hostEnv struct {
 	admission *maintenance.Admission
 	backups   *backups.Service
 	log       *slog.Logger
+	// tune adjusts the backup service's options (tests).
+	tune func(*backups.Options)
 }
 
 type controlRequest struct {

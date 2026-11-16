@@ -33,6 +33,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
+	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/ids"
@@ -57,8 +58,10 @@ import (
 //     credential), 20 Sync Targets on 4 Platform Connections;
 //   - the converge simulation, reconcileTarget's successful path
 //     (converge), once a period for every Target;
-//   - the plan's paced backups (storage.Snapshot on this server's own
-//     storage instance) and the event log: every checkpoint, the WAL,
+//   - the plan's backups, real ones (server/backups: the paced snapshot
+//     on this server's own storage instance, the paced sealing, the
+//     archive's check and local retention), and the event log: every
+//     checkpoint, the WAL,
 //     memory and CPU samples, fsync under load;
 //   - /run/plan, /run/manifest, /run/start and /run/stop, outside /v1 and
 //     outside the request window and the access log.
@@ -136,16 +139,27 @@ func benchInstallation(data, out, listen string) (string, error) {
 	if err := os.WriteFile(kekFile, []byte(hex.EncodeToString(envelope.GenerateKey())+"\n"), 0o600); err != nil {
 		return "", err
 	}
+	// The plan's backups are real ones, sealed with a key of their own;
+	// the run drives them, so the schedule is off.
+	bekFile := filepath.Join(data, "backup-key")
+	if err := os.WriteFile(bekFile, []byte(hex.EncodeToString(envelope.GenerateKey())+"\n"), 0o600); err != nil {
+		return "", err
+	}
 	conf := filepath.Join(out, g9a.FileConfig)
-	text := fmt.Sprintf("# Written by varlatchd g9a for one run.\nlisten = %s\ndata_dir = %s\nroot_kek_file = %s\naccess_log = %s\n",
-		listen, data, kekFile, filepath.Join(out, g9a.FileAccessLog))
+	text := fmt.Sprintf("# Written by varlatchd g9a for one run.\nlisten = %s\ndata_dir = %s\nroot_kek_file = %s\naccess_log = %s\nbackup_key_file = %s\nbackup_interval = off\nbackup_keep = 2\n",
+		listen, data, kekFile, filepath.Join(out, g9a.FileAccessLog), bekFile)
 	return conf, os.WriteFile(conf, []byte(text), 0o644)
 }
 
 // benchServe serves the run: serve with the run's hooks.
 func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duration) int {
 	log := slog.New(slog.NewTextHandler(opts.Stderr, nil))
-	t := &benchTarget{plan: p, log: log}
+	cfg, err := config.Load(opts.ConfigPath)
+	if err != nil {
+		fmt.Fprintf(opts.Stderr, "varlatchd g9a: %v\n", err)
+		return ExitConfig
+	}
+	t := &benchTarget{plan: p, cfg: cfg, log: log}
 	runner, err := g9a.NewRunner(g9a.RunnerOptions{DataDir: data, OutDir: out, Plan: p, Target: t,
 		Logf: func(format string, args ...any) { log.Info(fmt.Sprintf(format, args...)) }})
 	if err != nil {
@@ -328,6 +342,7 @@ func compareProduction(ctx context.Context, dir string, got storage.Settings) (b
 // converge simulation.
 type benchTarget struct {
 	plan    g9a.Plan
+	cfg     *config.Config
 	log     *slog.Logger
 	store   *storage.DB
 	rootKEK []byte
@@ -337,8 +352,12 @@ type benchTarget struct {
 
 func (t *benchTarget) WALSize() int64 { return t.store.Metrics().WALBytes }
 
-func (t *benchTarget) Snapshot(ctx context.Context, dest string, o storage.SnapshotOptions) (storage.SnapshotStats, error) {
-	return t.store.Snapshot(ctx, dest, o)
+// Backup is a real backup (server/backups, as the schedule runs one): the
+// snapshot paced as the plan says, the paced sealing, the archive's check
+// and local retention, into the run's data directory.
+func (t *benchTarget) Backup(ctx context.Context, _ int, o storage.SnapshotOptions) (g9a.BackupStats, error) {
+	res, err := backups.New(backups.Options{Config: t.cfg, Store: t.store, RootKEK: t.rootKEK, Log: t.log, Snapshot: o}).Run(ctx)
+	return g9a.BackupStats{Snapshot: res.Snapshot, Seal: time.Duration(res.Capture.DumpMs) * time.Millisecond, ArchiveBytes: res.Bytes}, err
 }
 
 // seedW1 writes W1 in the production tables, in jobs of the size an

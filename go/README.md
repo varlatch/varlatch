@@ -220,9 +220,13 @@ daemon's maintenance admission and its one backup at a time.
 
     varlatchd admin backup run [--json]
     varlatchd admin backup status
+    varlatchd admin backup test-bucket [--json]
+    varlatchd admin backup restore --in <archive> [--backup-key-file <file>]
     varlatchd admin maintenance begin --ttl <duration>
     varlatchd admin maintenance end <lease id>
     varlatchd admin maintenance status
+    varlatchd admin kek verify|export|restore|split|combine ...
+    varlatchd admin custody attest --key <key> --method <method> | status
 
 - **Settings** (`install/varlatchd.conf.example`): `backup_key_file` (the
   Backup Encryption Key, 32 bytes in hex or base64; without it no
@@ -248,7 +252,57 @@ daemon's maintenance admission and its one backup at a time.
 - **The schedule** first looks a minute after start, then takes a backup
   whenever the newest archive is `backup_interval` old (at that first look
   when there is none), retries an hour after a run that made no archive,
-  and a minute after maintenance held one back.
+  and a minute after maintenance held one back. It goes by the archives'
+  age, where the TypeScript host backup's systemd timer runs at a calendar
+  time (03:30 UTC, `Persistent=true`), so the wall clock matters in two
+  ways: every wait is at most an hour, so a clock moved forward makes an
+  overdue backup within the hour; and after a clock moved back, archives
+  dated in the future are passed over, the newest one that is not decides,
+  and with none recent a backup is taken at once rather than when the
+  clock catches up (`TestScheduleUnderClockChanges`).
+- **Restore** (`admin backup restore`, offline only: it refuses while a
+  varlatchd runs, and takes the data directory's lock) puts an archive's
+  installation into a data directory, on a fresh host or over the same
+  installation, from the archive and the two keys held apart from it: the
+  Backup Encryption Key opens it, and the Root KEK must open its canaries.
+  It refuses a TypeScript archive (step 7's migration converts those), an
+  archive this release cannot open (another API major or schema), another
+  installation's data directory, an open maintenance lease, and an archive
+  with active audit exports (whose streams a restore restarts; that comes
+  with the audit export's port). It then opens a restore gate, copies the
+  snapshot beside the database, removes the old WAL, renames it into
+  place, opens it with this release, checks the installation and its
+  canary, records `installation.restored` (archive, manifest hash,
+  installation) and removes the gate. A restore that fails or is killed
+  leaves the gate: a varlatchd that starts then serves 503 MAINTENANCE and
+  leaves the database untouched (no schema, installation or canary
+  check), and running the restore again with the same archive completes
+  it. It prints the archive's settings to compare with `varlatchd.conf`.
+- **The bucket test** (`admin backup test-bucket`, G13) seals a test
+  archive of this installation (its canary and identity; a marker stands
+  in for the database, so no data leaves), uploads it as
+  `<prefix>bucket-test/<id>.vltbak`, reads that exact version's retention
+  mode and deadline, downloads that version and opens and checks it, then
+  tries to delete that version and checks it is still there. Delivery,
+  retention and recoverability are reported separately; it passes (exit 0)
+  only with all three, and a bucket without versions, without a retention
+  or that lets the version be deleted is reported unprotected. Every
+  upload sends `Content-MD5`, which B2 requires with Object Lock
+  (`packages/backup`'s conditional put notes it; MinIO does not require
+  it).
+- **Key custody** (`crypto/escrow.ts`, `domain/custody.ts`; ADR-0035 D9):
+  `kek export` writes the passphrase escrow blob, `kek restore` reads it
+  back, `kek split` prints Shamir shares and `kek combine` joins them;
+  restore and combine check the key against the installation's canary
+  when there is a database (read-only), and warn on a fresh host. `kek
+  verify` checks a key file (or the configured key). The passphrase comes
+  from `--passphrase-file`, `VARLATCH_KEK_PASSPHRASE`, or the terminal
+  without echo. `custody attest` records an
+  `installation.custody_attested` audit event (the Root KEK's with its
+  version), and `custody status` reads the latest per key, the Root KEK's
+  only for its current version. The messages are the TypeScript CLI's. As
+  there, `kek` and `custody attest` are refused during maintenance, and
+  `custody status` is not.
 - **The state** is the TypeScript server's, in the data directory, so
   step 7's migration and the Go CLI's `admin backup` (steps 5 and 6) read
   it as they are:
