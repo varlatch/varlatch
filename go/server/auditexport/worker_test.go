@@ -19,6 +19,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auditexport/s3fake"
+	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/write"
@@ -625,4 +626,109 @@ func TestWorkerKeyUnreadable(t *testing.T) {
 	if r := wd.row(id); r.LastError.String != "The export's key could not be read on this installation" || len(wd.fake.Requests()) != 4 {
 		t.Errorf("%+v, %d requests", r, len(wd.fake.Requests()))
 	}
+}
+
+// replaceKey replaces the export's key through ReplaceCredential with an
+// approved intent, as the requester's approval would.
+func (wd *world) replaceKey(id string, c Credential, expected int64, approval string) {
+	wd.t.Helper()
+	orgID := wd.org.ID
+	wd.approve(approval, auth.Binding{
+		Operation: "audit_export.change", OrganizationID: &orgID, Target: map[string]string{"exportId": id},
+		Body:  jsvalue.Object{{Key: "credential", Value: c.js()}, {Key: "expectedVersion", Value: expected}},
+		Query: map[string]string{}, ExpectedVersion: &expected,
+		Summary: auth.ApprovalSummary{Title: "Replace the key of the audit export of " + wd.org.Name,
+			Changes: []auth.ApprovalChange{{Field: "credential", Loosens: true}}},
+	})
+	req := alice()
+	req.Approval = &approval
+	if _, err := wd.s.ReplaceCredential(context.Background(), req, wd.org, id, c, expected); err != nil {
+		wd.t.Fatalf("replacing the key: %v", err)
+	}
+}
+
+// A new key (Decision 3) keeps the stream and the pending plan: the next
+// lease holder uploads the plan's unchanged bytes with the new key, never
+// the old one. A replacement during an upload makes that holder's commit
+// lost; the next holder finds the object landed (412, then the HEAD) with
+// the new key and commits it.
+func TestWorkerUploadsAPendingPlanWithANewKey(t *testing.T) {
+	newKey := Credential{AccessKeyID: s3fake.KeyNoRetentionRead, SecretAccessKey: "rotated-secret"}
+	t.Run("pending", func(t *testing.T) {
+		wd, _, id := streaming(t, good())
+		wd.run(id)
+		wd.record(3, "organization.renamed")
+		wd.fake.SetDown(true)
+		wd.run(id)
+		wd.fake.SetDown(false)
+		pending := wd.plan(id)
+		if pending == nil || pending.Kind != "batch" {
+			t.Fatalf("pending %+v", pending)
+		}
+		before := wd.row(id)
+		wd.replaceKey(id, newKey, before.Version, "apr_rekeyaaaaaaaaaaaaaaaaaaaaa")
+		after := wd.row(id)
+		if after.StreamID != before.StreamID || after.Generation != before.Generation+1 || after.KeyCanRead.Valid {
+			t.Fatalf("after the replacement: %+v", after)
+		}
+		if p := wd.plan(id); p == nil || p.ID != pending.ID || !bytes.Equal(p.Body, pending.Body) {
+			t.Fatalf("the pending plan changed: %+v", p)
+		}
+		// The pending batch, then the batch with the replacement's own
+		// event (audit_export.credential_replaced), each with the new key.
+		sent := len(wd.fake.Requests())
+		if out := wd.run(id); out != (Outcome{Committed: 2, Outcome: "done"}) {
+			t.Fatalf("%+v", out)
+		}
+		reqs := wd.fake.Requests()[sent:]
+		if len(reqs) != 2 || reqs[0].Method != "PUT" || reqs[0].Key != pending.ObjectName || reqs[0].Status != 200 {
+			t.Fatalf("requests %+v", reqs)
+		}
+		for _, r := range reqs {
+			if r.AccessKey != s3fake.KeyNoRetentionRead {
+				t.Errorf("a request with the old key: %+v", r)
+			}
+		}
+		if o := object(t, wd, pending.ObjectName); !bytes.Equal(o.Body, pending.Body) || o.SHA256 != pending.Sha256 {
+			t.Errorf("uploaded other bytes than the plan's")
+		}
+		if r := wd.row(id); r.CursorOrder != pending.LastOrder.Int64+1 {
+			t.Errorf("cursor %d, want %d", r.CursorOrder, pending.LastOrder.Int64+1)
+		}
+	})
+	t.Run("during an upload", func(t *testing.T) {
+		wd, _, id := streaming(t, good())
+		wd.run(id)
+		wd.record(2, "organization.renamed")
+		version := wd.row(id).Version
+		wd.s.Hooks.BeforeCommit = func(query.AuditExportPlan) {
+			wd.s.Hooks.BeforeCommit = nil
+			wd.replaceKey(id, newKey, version, "apr_rekeyduringaaaaaaaaaaaaaaa")
+		}
+		if out := wd.run(id); out != (Outcome{Outcome: "lost"}) {
+			t.Fatalf("the holder the replacement moved: %+v", out)
+		}
+		pending := wd.plan(id)
+		if pending == nil || pending.Kind != "batch" {
+			t.Fatalf("pending %+v", pending)
+		}
+		// The landed batch (412, then the HEAD), then the replacement's
+		// event in a batch of its own, all with the new key.
+		sent := len(wd.fake.Requests())
+		if out := wd.run(id); out != (Outcome{Committed: 2, Outcome: "done"}) {
+			t.Fatalf("%+v", out)
+		}
+		reqs := wd.fake.Requests()[sent:]
+		if len(reqs) != 3 || reqs[0].Key != pending.ObjectName || reqs[0].Status != 412 || reqs[1].Method != "HEAD" || reqs[2].Status != 200 {
+			t.Fatalf("requests %+v", reqs)
+		}
+		for _, r := range reqs {
+			if r.AccessKey != s3fake.KeyNoRetentionRead {
+				t.Errorf("a request with the old key: %+v", r)
+			}
+		}
+		if r := wd.row(id); r.CursorOrder != pending.LastOrder.Int64+1 || !r.KeyCanRead.Valid || !r.KeyCanRead.Bool {
+			t.Errorf("after: %+v", r)
+		}
+	})
 }
