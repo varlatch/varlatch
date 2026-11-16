@@ -326,12 +326,14 @@ func (db *DB) runBatch(batch []*job) {
 
 	if fatal != nil {
 		db.dropWriter()
+		// The metrics are recorded before any caller is released, so that a
+		// caller reading Metrics after its Write returns sees this batch.
+		db.m.batch(len(batch), 0, true, time.Since(t0), 0)
 		for i, j := range batch {
 			if ran[i] || j.start() {
 				j.done <- fatal
 			}
 		}
-		db.m.batch(len(batch), 0, true, time.Since(t0), 0)
 		return
 	}
 	crashPoint(db, "committed")
@@ -339,16 +341,18 @@ func (db *DB) runBatch(batch []*job) {
 		db.opts.OnCommit()
 	}
 	ownErrors := 0
+	for i := range batch {
+		if ran[i] && results[i] != nil {
+			ownErrors++
+		}
+	}
+	db.m.batch(len(batch), ownErrors, false, time.Since(t0), commit)
 	for i, j := range batch {
 		if ran[i] {
-			if results[i] != nil {
-				ownErrors++
-			}
 			j.timing.committed(commit)
 			j.done <- results[i]
 		}
 	}
-	db.m.batch(len(batch), ownErrors, false, time.Since(t0), commit)
 }
 
 // runJob runs fn and turns a panic into the job's own error: the savepoint
