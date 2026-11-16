@@ -26,10 +26,10 @@ import (
 // (YAML 1.2, the core schema, merge keys, at most 200 alias expansions,
 // repeated keys allowed): go.yaml.in/yaml/v3 parses, and this file turns
 // its nodes into JavaScript's values with that package's rules. Where it
-// cannot follow them (a %YAML version other than 1.2, the YAML 1.1 types
-// binary, timestamp, set, omap and pairs, a mapping or sequence as a key,
-// an alias inside its own anchor) the file reads as unreadable, which
-// makes every verdict unknown.
+// cannot follow them (any directive but "%YAML 1.2", a byte order mark
+// past the first, the YAML 1.1 types binary, timestamp, set, omap and
+// pairs, a mapping or sequence as a key, an alias inside its own anchor)
+// the file reads as unreadable, which makes every verdict unknown.
 
 // MaxComposeBytes is MAX_COMPOSE_BYTES: larger compose files are not
 // inspected.
@@ -535,47 +535,58 @@ func propertyKey(v any) string {
 	return jsString(v)
 }
 
-// directiveVersions is every %YAML directive's version before the first
-// document ("?" for one without a version).
-func directiveVersions(text string) []string {
-	var out []string
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimRight(line, "\r")
-		switch {
-		case strings.HasPrefix(line, "%YAML"):
-			fields := strings.Fields(strings.TrimPrefix(line, "%YAML"))
-			if len(fields) == 0 {
-				out = append(out, "?")
-			} else {
-				out = append(out, fields[0])
-			}
-		case strings.HasPrefix(line, "%"), strings.TrimSpace(line) == "", strings.HasPrefix(strings.TrimSpace(line), "#"):
-		default:
-			return out
-		}
-	}
-	return out
-}
+// yamlDirective is the one directive line read here: "%YAML 1.2", with
+// spaces or tabs, and an optional comment after a separating blank.
+var yamlDirective = regexp.MustCompile(`^%YAML[ \t]+1\.2(?:[ \t]+(?:#.*)?)?$`)
 
-// rewriteDirectives gives yaml.v3, which accepts only one "%YAML 1.1",
-// the prologue's "%YAML 1.2" lines at the same length: the first as 1.1,
-// any repeat as a comment (the `yaml` package accepts a repeat).
-func rewriteDirectives(text string) string {
+// normalize is the compose text as yaml.v3 is given it, so that it and
+// every lookup into the text (nonSpecific) see the same text:
+//   - one leading byte order mark dropped, as the `yaml` package drops it
+//     (yaml.v3 counts columns without it too); any other one makes the
+//     file unreadable;
+//   - the directives before the document, read strictly: only "%YAML 1.2"
+//     (repeated or not), which is the `yaml` package's own version, read
+//     here with its 1.2 rules. yaml.v3 accepts only "%YAML 1.1", which
+//     changes nothing its nodes report, so the first is given to it as
+//     1.1 and any repeat as a comment, at the same length. Any other
+//     directive (another version, %TAG, a reserved one, trailing text),
+//     and directives with no "---" after them, make the file unreadable:
+//     the conservative reading.
+func normalize(text string) (string, bool) {
+	text = strings.TrimPrefix(text, "\ufeff")
+	if strings.Contains(text, "\ufeff") {
+		// The `yaml` package keeps any other one as text (a second at the
+		// start becomes part of the first key); yaml.v3 drops some.
+		return "", false
+	}
 	lines := strings.Split(text, "\n")
 	seen := false
-	for i, line := range lines {
+	for i, raw := range lines {
+		line := strings.TrimSuffix(raw, "\r")
+		trimmed := strings.TrimLeft(line, " \t")
 		switch {
-		case strings.HasPrefix(line, "%YAML") && !seen:
-			lines[i] = "%YAML" + strings.Replace(strings.TrimPrefix(line, "%YAML"), "1.2", "1.1", 1)
-			seen = true
-		case strings.HasPrefix(line, "%YAML"):
-			lines[i] = "#" + line[1:]
-		case strings.HasPrefix(line, "%"), strings.TrimSpace(line) == "", strings.HasPrefix(strings.TrimSpace(line), "#"):
+		case strings.HasPrefix(line, "%"):
+			if !yamlDirective.MatchString(line) {
+				return "", false
+			}
+			if !seen {
+				lines[i] = "%YAML" + strings.Replace(raw[len("%YAML"):], "1.2", "1.1", 1)
+				seen = true
+			} else {
+				lines[i] = "#" + raw[1:]
+			}
+		case trimmed == "" || strings.HasPrefix(trimmed, "#"):
 		default:
-			return strings.Join(lines, "\n")
+			if seen && line != "---" && !strings.HasPrefix(line, "--- ") && !strings.HasPrefix(line, "---\t") {
+				return "", false
+			}
+			return strings.Join(lines, "\n"), true
 		}
 	}
-	return strings.Join(lines, "\n")
+	if seen {
+		return "", false // directives, and no document after them
+	}
+	return text, true
 }
 
 // parseBounded is the compose file as a JavaScript object, or false when
@@ -584,18 +595,9 @@ func parseBounded(text string) (Object, bool) {
 	if len(wellFormed(text)) > MaxComposeBytes {
 		return nil, false
 	}
-	// The `yaml` package's own version, 1.2, is read with its 1.2 rules
-	// here; yaml.v3 accepts only "%YAML 1.1", which changes nothing it
-	// reports (its nodes carry no resolution this file uses), so it is
-	// given the directive as 1.1. Any other version is unreadable.
-	parsed := text
-	if versions := directiveVersions(text); len(versions) > 0 {
-		for _, v := range versions {
-			if v != "1.2" {
-				return nil, false
-			}
-		}
-		parsed = rewriteDirectives(text)
+	parsed, ok := normalize(text)
+	if !ok {
+		return nil, false
 	}
 	dec := yaml.NewDecoder(strings.NewReader(parsed))
 	var doc yaml.Node
@@ -611,7 +613,7 @@ func parseBounded(text string) (Object, bool) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 {
 		return nil, false
 	}
-	c := &converter{anchors: map[*yaml.Node]*anchorData{}, active: map[*yaml.Node]bool{}, lines: strings.Split(text, "\n")}
+	c := &converter{anchors: map[*yaml.Node]*anchorData{}, active: map[*yaml.Node]bool{}, lines: strings.Split(parsed, "\n")}
 	v, err := c.toJS(doc.Content[0])
 	if err != nil {
 		return nil, false

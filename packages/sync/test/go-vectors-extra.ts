@@ -117,6 +117,20 @@ describe("extra: compose YAML as the yaml package reads it", () => {
     mergeTaggedQuoted: "services:\n  app:\n    environment:\n      !!merge \"<<\": {FOO: \"\"}\n      A: x\n",
     mergeTaggedOtherText: "services:\n  app:\n    environment:\n      !!merge 'anything': {FOO: \"\", A: $A}\n",
     mergeTaggedValue: "services:\n  app:\n    environment:\n      A: !!merge x\n",
+    bomNonSpecificKey: "\ufeffservices: {app: {environment: {! null: literal}}}\n",
+    bomNonSpecificBlock: "\ufeffservices:\n  app:\n    environment:\n      ! null: ''\n      A: ! ${A}\n",
+    bomYaml12: "\ufeff%YAML 1.2\n---\nservices: {app: {image: x}}\n",
+    bomYaml12Tag: "\ufeff%YAML 1.2\n---\nservices: {app: {environment: {! null: x, A: $A}}}\n",
+    bomMerge: "\ufeffx-a: &a {A: ''}\nservices:\n  app:\n    environment:\n      <<: *a\n      B: $B\n",
+    bomMultipleDocuments: "\ufeffservices: {app: {image: x}}\n---\nservices: {db: {image: y}}\n",
+    bomComment: "\ufeff# head\nservices: {app: {environment: {A: $A}}}\n",
+    yaml12Garbage: "%YAML 1.2 garbage\n---\nservices: {app: {image: x}}\n",
+    yaml12RepeatGarbage: "%YAML 1.2\n%YAML 1.2 garbage\n---\nservices: {app: {image: x}}\n",
+    yaml12HashNoBlank: "%YAML 1.2# c\n---\nservices: {app: {image: x}}\n",
+    yaml12Tabs: "%YAML\t1.2\t\n---\nservices: {app: {environment: {A: $A}}}\n",
+    yaml12Crlf: "%YAML 1.2\r\n---\r\nservices:\r\n  app:\r\n    environment:\r\n      ! null: ''\r\n",
+    yaml12Bare: "%YAML\n---\nservices: {app: {image: x}}\n",
+    yaml12CommentsBetween: "# a\n%YAML 1.2\n\n# b\n%YAML 1.2 # again\n--- # start\nservices: {app: {image: x}}\n",
   };
   for (const [name, raw] of Object.entries(corpus)) {
     it(name, () => {
@@ -148,6 +162,20 @@ describe("extra: compose YAML as the yaml package reads it", () => {
       classifyComposeUsage("services: &s\n  app:\n    environment:\n      A: x\n    loop: *s\n", generated(["app"]), 5, names),
     ).toThrow(RangeError);
   });
+  for (const [name, raw] of Object.entries({
+    "a %TAG directive": "%TAG !e! tag:example.com,2000:\n---\nservices: {app: {image: x}}\n",
+    "a reserved directive": "%FOO bar\n---\nservices: {app: {image: x}}\n",
+    "%YAML 1.3": "%YAML 1.3\n---\nservices: {app: {image: x}}\n",
+    "%YAML 1.20": "%YAML 1.20\n---\nservices: {app: {image: x}}\n",
+    "%YAML 1.1 then 1.2": "%YAML 1.1\n%YAML 1.2\n---\nservices: {app: {image: x}}\n",
+    "two byte order marks": "\ufeff\ufeffservices: {app: {image: x}}\n",
+    "a byte order mark inside": "services: {app: {environment: {A: \"\ufeff$A\"}}}\n",
+    "%YAML 1.2 then 1.1": "%YAML 1.2\n%YAML 1.1\n---\nservices: {app: {image: x}}\n",
+  })) {
+    it(`divergence: ${name}`, () => {
+      classifyComposeUsage(raw, generated(["app"]), 5, names);
+    });
+  }
   it("divergence: a sequence as a key", () => {
     classifyComposeUsage("services:\n  app:\n    environment:\n      ? [A, B]\n      : x\n", generated(["app"]), 5, names);
   });
