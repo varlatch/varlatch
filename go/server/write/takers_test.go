@@ -52,7 +52,7 @@ var exclusiveTakers = map[string]string{
 	`domain/orgdeletion.ts:await lockPeople(db, [actor.id, ...restoring.map((rid) => ({ id: rid, mode: "update" as const }))]);`:                                         "cancelling a deletion: the machines it restores (4.12)",
 	`domain/orgdeletion.ts:await lockPeople(db, [requester, ...referenced.map((r) => r.id), ...machines.map((id) => ({ id, mode: "update" as const }))]);`:               "running a deletion: its machines (4.12)",
 	`http/app.ts:await lockPeople(db, [{ id: principal.identity.id, mode: body.name !== undefined ? "update" : "key share" }]);`:                                         "updateMyProfile, renaming the person (not built yet)",
-	`http/app.ts:people: [body.subjectIdentityId, ...(approvalId !== null ? [{ id: principal.identity.id, mode: "update" as const }] : [])],`:                            "a Grant's protected writes: the requester (4.4)",
+	`http/app.ts:people: [body.subjectIdentityId, ...(approvalId !== null ? [{ id: principal.identity.id, mode: "update" as const }] : [])],`:                            "access.ReplaceGrant: the requester exclusive when it carries an approval (security.Request.Gates, 4.4b)",
 	`http/app.ts:approvalHeaderOf(c) !== null ? [{ id: principal.identity.id, mode: "update" as const }] : [];`:                                                          "an effect's protected writes: the requester (4.10)",
 	`http/app.ts:people: approvalId !== null ? [{ id: principal.identity.id, mode: "update" }] : [],`:                                                                    "updating a Requirement, a protected write: the requester (4.4c)",
 }

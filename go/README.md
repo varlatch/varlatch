@@ -733,6 +733,35 @@ The server's packages:
   take the gate (`write` `TestExclusiveTakersAgainstTypeScript`): a new
   taker on either side fails the test, but the mapping is reviewed, not
   proved; the gates the Go functions take are their own tests'.
+- `server/access` (step 4.4b): the access structure (ADR-0015, ADR-0028,
+  ADR-0029; `http/app.ts`, `domain/policy.ts`, `accessstepup.ts`), served
+  by `server/httpserver/access.go`: Grants (listed, created, revoked, and
+  replaced in one job under an Idempotency-Key), Roles, Groups and Teams
+  (created, changed in place under an Idempotency-Key, deleted), their
+  memberships and Team-Project links. Every write is a protected operation
+  (admin-step-up, with `accessstepup.ts`'s bindings and summaries), with
+  `policy.manage` rechecked once an approval is consumed. A Grant's subject
+  and a joining member are pinned by their person gate, held shared, so a
+  membership's removal (exclusive) either comes first, and they are not in
+  the Organization, or after. The Grant declaration is read with a small
+  zod 4 (`httpserver/zodschema.go`): its union reports the one option that
+  failed only on a size check, or "Invalid input" at its path. The API
+  takes any string as an action, which the OpenAPI document's enum does
+  not describe. Lists ordered by name use byte order, as the approval keys
+  do. A Grant names only its Organization's groups and roles: creating or
+  replacing one that names another's is answered as naming one that does
+  not exist is (the foreign key's internal error), and `authz.LoadGrants`
+  joins only the Organization's own. U+0000 in any string a lookup takes
+  from the request answers 500, as PostgreSQL refuses it in a text
+  parameter (`pgText`); a role's or group's name or actions that its write
+  refuses read as the name taken, as the TypeScript code reads any failure
+  there; a scope `jsonb` refuses fails the insert. The fixture
+  `access-v0.22.0.json` (`go-access-fixture.test.ts`, 227 requests)
+  covers every Grant shape, each control mode, every zod issue of the
+  declaration and U+0000 and lone surrogates where they reach a query;
+  the authorization vectors carry the write-side checks (`writeChecks`,
+  `grantForms`: who a Grant may name, who may join a group, and
+  declarations in their bound form).
 - `server/identities` (step 4.4a): an Organization's machine identities
   and their credentials (`domain/identities.ts`, `identitystepup.ts`, the
   issuing side of `auth/credentials.ts`; ADR-0015, ADR-0023, ADR-0034),
@@ -799,7 +828,14 @@ The server's packages:
   `stateDigest` and `stateDigests` recomputed from that manifest, on both
   sides and before any masking (`checkDigests`, `CheckDigests`), so a
   masked digest cannot diverge unseen. A domain ID's prefix has two to
-  four letters (a change set's `cs_`).
+  four letters (a change set's `cs_`). A replay that counts runs its
+  server on `HourClock`: the real clock, moved forward to the next hour
+  when less than `HourMargin` (30 minutes) of the current one is left, so
+  its report counts, kept per hour, fall in one hour, and its times never
+  precede the recording's (a list ordered by time keeps the file's rows
+  first). `Replay` checks every request's audit events, and the exposure
+  times it set, lie between when it was sent and answered, and fails a
+  replay on `HourClock` that runs into a second hour.
   `testdata/core-v0.22.0.json` is step 4.1's file (`go-core-fixture.test.ts`,
   regenerated with `VARLATCH_WRITE_GO_VECTORS=1` as the other vectors),
   and `core-v0.21.0.json` the same rows and requests with the canary,

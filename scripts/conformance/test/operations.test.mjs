@@ -183,6 +183,11 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     // Step 4.4a: machine identities and their credentials.
     "listIdentities", "createServiceIdentity", "renameIdentity", "retireIdentity", "reactivateIdentity",
     "listIdentityCredentials", "issueIdentityCredential", "revokeIdentityCredential",
+    // Step 4.4b: Grants, Roles, Groups and Teams.
+    "listGrants", "createGrant", "deleteGrant", "replaceGrant", "listRoles", "createRole", "updateRole", "deleteRole",
+    "listGroups", "createGroup", "updateGroup", "deleteGroup", "listGroupMembers", "addGroupMember", "removeGroupMember",
+    "listTeams", "createTeam", "updateTeam", "deleteTeam", "listTeamMembers", "addTeamMember", "removeTeamMember",
+    "listTeamProjects", "addTeamProject", "removeTeamProject",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is
@@ -211,7 +216,10 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // (Step 4.14) the maintenance suite, on the maintenance capability and
   // the operations its checks see. (4.4a) access, split into operation
   // groups: its machines group and the two checks of no group; and
-  // onboarding's check on a workload invite. Every other one lacks
+  // onboarding's check on a workload invite. (4.4b) access's grants and
+  // roles-groups-teams groups, client-runtime's and strict-run's
+  // service-identities groups, and p4's audit group (its connection and
+  // Sync Target lists are background reads). Every other one lacks
   // something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
@@ -221,9 +229,9 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     Object.keys(inventory.checks).filter((id) => id.startsWith("realtime-events.")).sort(),
   );
   const notYet = {
-    dashboard: [], values: ["tailnet"], p4: ["audit", "webhooks"], onboarding: [],
-    "client-runtime": ["service-identities"], "strict-run": ["service-identities", "agent-safe"],
-    access: ["grants", "invites", "oidc", "roles-groups-teams", "requirements", "capabilities"],
+    dashboard: [], values: ["tailnet"], p4: ["webhooks"], onboarding: [],
+    "client-runtime": [], "strict-run": ["agent-safe"],
+    access: ["invites", "oidc", "requirements", "capabilities"],
   };
   const ownLacking = [];
   const expected = Object.entries(inventory.checks).filter(([id, c]) =>
@@ -232,7 +240,7 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
     (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
-  assert.equal(runs.length, 279);
+  assert.equal(runs.length, 319);
   // The groups still lacking lack exactly their own operations.
   for (const [suite, groups] of Object.entries(notYet)) {
     for (const g of groups) {

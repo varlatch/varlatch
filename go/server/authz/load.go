@@ -35,10 +35,10 @@ func parseActions(text string) ([]*string, error) {
 
 // LoadGrants is loadGrants: the subject's effective Grants in the
 // Organization, with the ADR-0028 constructs expanded into flat Grants:
-//   - direct Grants, and Grants to any live Group the subject is in (the
-//     Group recorded as ViaGroupID);
+//   - direct Grants, and Grants to any live Group of the Organization the
+//     subject is in (the Group recorded as ViaGroupID);
 //   - a Grant's Role expanded to the Role's current actions (none for a
-//     revoked Role: default deny holds);
+//     revoked Role, or one of another Organization: default deny holds);
 //   - a team-scoped Grant expanded to one project-scoped Grant per Project
 //     the team owns.
 //
@@ -71,8 +71,8 @@ func LoadGrants(ctx context.Context, db query.DBTX, organizationID, subjectIdent
 	}
 	grants := []Grant{}
 	for i, r := range rows {
-		// A Role contributes its current actions; a revoked Role nothing
-		// (never a wildcard).
+		// A Role contributes its current actions; a revoked Role, or one of
+		// another Organization (not joined), nothing (never a wildcard).
 		text := r.Actions
 		if r.RoleID.Valid {
 			text = r.RoleActions
