@@ -3,6 +3,8 @@
 package httpserver
 
 import (
+	"math"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -50,22 +52,121 @@ func received(v any, present bool) string {
 	return zodReceived(v)
 }
 
-// zString is z.string(), with .min and .max when set (code points).
-type zString struct{ min, max int }
+// zString is z.string(), with .min and .max when set (code points), then
+// .regex when pattern is set (source is the pattern as JavaScript prints
+// it). Each check runs; none aborts.
+type zString struct {
+	min, max int
+	pattern  *regexp.Regexp
+	source   string
+}
 
 func (s zString) parse(v any, present bool, path []string) (any, []zIssue) {
 	str, ok := v.(string)
 	if !present || !ok {
 		return nil, []zIssue{{path, "Invalid input: expected string, received " + received(v, present), true}}
 	}
+	var issues []zIssue
 	n := codePoints(str)
 	switch {
 	case s.min > 0 && n < s.min:
-		return str, []zIssue{{path, "Too small: expected string to have >=" + strconv.Itoa(s.min) + " characters", false}}
+		issues = append(issues, zIssue{path, "Too small: expected string to have >=" + strconv.Itoa(s.min) + " characters", false})
 	case s.max > 0 && n > s.max:
-		return str, []zIssue{{path, "Too big: expected string to have <=" + strconv.Itoa(s.max) + " characters", false}}
+		issues = append(issues, zIssue{path, "Too big: expected string to have <=" + strconv.Itoa(s.max) + " characters", false})
 	}
-	return str, nil
+	if s.pattern != nil && !s.pattern.MatchString(str) {
+		issues = append(issues, zIssue{path, "Invalid string: must match pattern " + s.source, false})
+	}
+	return str, issues
+}
+
+// zNumber is z.number().int(), then .positive() (gt0) or .min and .max
+// when set: a value that is not a number, or not an integer, stops there;
+// a safe-integer bound and the range checks each add one.
+type zNumber struct {
+	gt0      bool
+	min, max *float64
+}
+
+func (z zNumber) parse(v any, present bool, path []string) (any, []zIssue) {
+	x, ok := v.(float64)
+	if !present || !ok || math.IsInf(x, 0) || math.IsNaN(x) {
+		return nil, []zIssue{{path, "Invalid input: expected number, received " + received(v, present), true}}
+	}
+	if x != math.Trunc(x) {
+		return nil, []zIssue{{path, "Invalid input: expected int, received number", true}}
+	}
+	var issues []zIssue
+	if x > maxSafeInt {
+		issues = append(issues, zIssue{path, "Too big: expected int to be <=" + strconv.Itoa(maxSafeInt), false})
+	} else if x < -maxSafeInt {
+		issues = append(issues, zIssue{path, "Too small: expected int to be >=-" + strconv.Itoa(maxSafeInt), false})
+	}
+	if z.gt0 && x <= 0 {
+		issues = append(issues, zIssue{path, "Too small: expected number to be >0", false})
+	}
+	if z.min != nil && x < *z.min {
+		issues = append(issues, zIssue{path, "Too small: expected number to be >=" + jsvalue.Number(*z.min), false})
+	}
+	if z.max != nil && x > *z.max {
+		issues = append(issues, zIssue{path, "Too big: expected number to be <=" + jsvalue.Number(*z.max), false})
+	}
+	return x, issues
+}
+
+func bound(x float64) *float64 { return &x }
+
+// zRecord is z.record(keys, value), as zod 4.6.7 parses it. With keys nil,
+// z.string() keys: each member parsed in the object's order, but an own
+// "__proto__" member is skipped before its value is checked, and left out.
+// With an enum of keys, exhaustive: each of the enum's keys in its order,
+// then one issue naming every member it does not have, "__proto__"
+// included (zod's for...in sees it, and only its loose mode skips it).
+type zRecord struct {
+	keys  zEnum
+	value zSchema
+}
+
+func (r zRecord) parse(v any, present bool, path []string) (any, []zIssue) {
+	obj, ok := v.(jsvalue.Object)
+	if !present || !ok {
+		return nil, []zIssue{{path, "Invalid input: expected record, received " + received(v, present), true}}
+	}
+	out := jsvalue.Object{}
+	var issues []zIssue
+	add := func(key string, val any, has bool) {
+		parsed, is := r.value.parse(val, has, zPath(path, key))
+		issues = append(issues, is...)
+		if !aborted(is) {
+			out = append(out, jsvalue.Member{Key: key, Value: parsed})
+		}
+	}
+	if r.keys == nil {
+		for _, m := range obj {
+			if m.Key != "__proto__" {
+				add(m.Key, m.Value, true)
+			}
+		}
+		return out, issues
+	}
+	for _, key := range r.keys {
+		val, has := obj.Get(key)
+		add(key, val, has)
+	}
+	var extra []string
+	for _, m := range obj {
+		if !containsString(r.keys, m.Key) {
+			extra = append(extra, `"`+m.Key+`"`)
+		}
+	}
+	switch len(extra) {
+	case 0:
+	case 1:
+		issues = append(issues, zIssue{path, "Unrecognized key: " + extra[0], false})
+	default:
+		issues = append(issues, zIssue{path, "Unrecognized keys: " + strings.Join(extra, ", "), false})
+	}
+	return out, issues
 }
 
 // zLiteral is z.literal(value).

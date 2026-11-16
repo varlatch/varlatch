@@ -40,7 +40,9 @@ SELECT requirement_id, requirement_version, target, selector FROM removal_requir
 
 -- name: ExposedVersion :one
 -- exposedVersion: the value owning an exposed version, and whether it,
--- its environment and its Project are live.
+-- its environment and its Project are live. No ORDER BY, as there: the
+-- rows of one version differ only in their environment and way, which are
+-- not selected, so any row gives the same answer.
 SELECT x.item_name, ev.environment_id, e.project_id,
        (ev.deleted_at IS NULL AND e.deleted_at IS NULL AND p.id IS NOT NULL AND p.deleted_at IS NULL) AS live,
        ev.id AS value_id

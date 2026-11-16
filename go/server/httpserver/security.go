@@ -216,6 +216,9 @@ func zodReceived(v any) string {
 		if math.IsNaN(x) {
 			return "NaN"
 		}
+		if x < 0 {
+			return "-Infinity"
+		}
 		return "Infinity"
 	}
 	return zodType(v)

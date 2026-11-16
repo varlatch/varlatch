@@ -52,10 +52,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "exerciseCapability": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "exportDeletedOrganizationAuditEvents": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -89,14 +85,6 @@
         "step": "ADR-0059 step 4"
       },
       "importGitHubApp": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "issueCapability": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "listCapabilities": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -153,10 +141,6 @@
         "step": "ADR-0059 step 4"
       },
       "resumeSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "revokeCapability": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
