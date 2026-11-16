@@ -62,6 +62,8 @@ export const PLAN = [
   { suite: "sdk", args: (ctx) => [ctx.origin, ctx.token, ctx.seededSecret] },
   // Security Controls over the API, in an Organization of its own.
   { suite: "security", args: (ctx) => [ctx.origin, ctx.token] },
+  // Audit webhook delivery against the target's local receiver.
+  { suite: "webhooks", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "doctor", args: () => [] },
   { suite: "convex-down", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "cli-download-off", args: (ctx) => [ctx.origin] },

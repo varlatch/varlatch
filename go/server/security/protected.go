@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
@@ -307,4 +308,26 @@ func WithApproval[T any](ctx context.Context, approvals *auth.Service, requester
 		return zero, approvals.StepUpRequired(ctx, requester, needed.Binding)
 	}
 	return out, err
+}
+
+// IdempotentProtected runs a protected write under an Idempotency-Key
+// claim (withIdempotency inside withApproval): the Organization's gate and
+// the requester's (exclusive when it carries an approval) taken first; a
+// replay runs the requester's checkpoint before answering from the claim.
+func IdempotentProtected(ctx context.Context, w *write.Writer, r Request, organizationID string, claim write.Claim,
+	run func(ctx context.Context, tx *storage.Tx, reports *[]auth.PendingReport) (write.Response, error)) (write.Response, []auth.PendingReport, error) {
+	ctx, release, err := w.Gates.Acquire(ctx, r.Gates(organizationID)...)
+	if err != nil {
+		return write.Response{}, nil, err
+	}
+	defer release()
+	var reports []auth.PendingReport
+	resp, _, err := write.Idempotent(ctx, w.Store, claim,
+		func(tx *storage.Tx) error {
+			var err error
+			reports, err = write.Checkpoint(ctx, tx, r.Principal, organizationID)
+			return err
+		},
+		func(tx *storage.Tx) (write.Response, error) { return run(ctx, tx, &reports) })
+	return resp, reports, err
 }

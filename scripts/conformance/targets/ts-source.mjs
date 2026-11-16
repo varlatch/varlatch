@@ -193,4 +193,5 @@ export const {
   maintenance,
   serveCli,
   tsStack,
+  webhookReceiver,
 } = stack;

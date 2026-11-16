@@ -90,3 +90,26 @@ func TestDomainToASCIIMatchesNodeForEveryCodePoint(t *testing.T) {
 		t.Fatalf("%d of %d blocks differ", bad, len(v.Blocks))
 	}
 }
+
+// RequestTarget and userinfo as Node's URL gives them (pathname, search
+// without "?", username, password; checked with Node 26).
+func TestRequestTargetAsNode(t *testing.T) {
+	for _, c := range []struct{ in, path, query, user, password string }{
+		{"https://h/a b/c|d^e[f]{g}`h?q=1 2&x=\"y\"<z>%41'#frag", "/a%20b/c|d%5Ee[f]%7Bg%7D%60h", "q=1%202&x=%22y%22%3Cz%3E%41%27", "", ""},
+		{"http://h/é/ü?é", "/%C3%A9/%C3%BC", "%C3%A9", "", ""},
+		{"https://user@h/", "/", "", "user", ""},
+		{"https://:@h/", "/", "", "", ""},
+		{"https://u:p@h/x", "/x", "", "u", "p"},
+		{"https://@h/", "/", "", "", ""},
+		{"myscheme://h/a b?c'd", "/a%20b", "c'd", "", ""},
+	} {
+		u, ok := ParseURL(c.in)
+		if !ok {
+			t.Fatalf("%q: not a URL", c.in)
+		}
+		path, query := u.RequestTarget()
+		if path != c.path || query != c.query || (u.Username == "") != (c.user == "") || (u.Password == "") != (c.password == "") {
+			t.Errorf("%q: %q %q user %q password %q", c.in, path, query, u.Username, u.Password)
+		}
+	}
+}

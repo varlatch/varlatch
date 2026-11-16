@@ -458,6 +458,58 @@ can choose or influence goes through it, and only it.
   context, which the dialer honours. The effect framework (decision 4)
   lands with its first user (4.9 or 4.10).
 
+### Audit webhooks (step 4.7b)
+
+`server/webhooks` is `domain/webhooks.ts`, with integrationstepup.ts'
+webhook bindings: an Organization's endpoints that receive its own audit
+events, signed (`X-Varlatch-Signature: t=<seconds>,v1=<hex>`, HMAC-SHA256
+of `<seconds>.<body>` with the webhook's secret).
+
+- **Operations.** `listWebhooks` (organization.manage, inspection while
+  frozen), `createWebhook`, `updateWebhook` (under an Idempotency-Key) and
+  `revokeWebhook`, each a protected operation (admin-step-up's
+  `webhook.create`, `.update`, `.delete`), with the TypeScript order of
+  refusals: an Organization being deleted, then the URL (WHATWG, http or
+  https, no userinfo), then the outbound policy, all before any approval.
+  A refused URL answers `VALIDATION_FAILED` with `details.outbound` (the
+  reason, never the address) and is recorded as `outbound.refused` in a
+  job of its own, which the failed request does not roll back. A name
+  that does not resolve is saved. The secret (`vlt_whsec_` and 32 random
+  bytes) is sealed under the Organization KEK (`webhook-secret`) and shown
+  once. `IdempotentProtected` (the claim inside the approval gate) moved
+  from server/access to server/security, which both use.
+- **Delivery.** A pass at once, then every 30 seconds
+  (feature-parity decision 10), skipped while the maintenance admission
+  is closed. Per live webhook of a live Organization, not suspended by a
+  deletion: up to 100 events after its cursor, of its filter's types when
+  it has one; the deletion lifecycle's events and those of a deleted
+  Project (or one of its environments) are left out, and a batch with
+  nothing left moves the cursor past it. Right before sending, the
+  webhook is read again (not revoked, not suspended, its Organization
+  live and without an open deletion) and the KEK with it. One POST
+  through the outbound policy's webhook client, 10 seconds in all; the
+  cursor moves only on a 2xx, so a failure retries the same batch on the
+  next pass. What the row keeps is what the TypeScript server keeps: the
+  status code, `outbound_refused` (the refusal recorded, within the rate
+  bound), `TimeoutError`, or `TypeError` for any other failure, a
+  redirect included. A delivery cut short by a stop records nothing, and
+  the next start sends it again.
+- **The request is the WHATWG URL's.** The host is the one `new URL`
+  gives (`0x7f.1` is `127.0.0.1`), so the policy decides what fetch would
+  connect to; the path and query are percent-encoded as fetch sends them
+  (`whatwg.URL.RequestTarget`), and the fragment is never sent. Headers
+  beyond Content-Type and the signature are Go's, not Node's (no
+  `accept-language` or `sec-fetch-mode`); receivers verify the signature
+  only.
+- **Parity.** `webhooks-v0.22.0.json` and `webhooks-v0.21.0.json`
+  (go-webhooks-fixture.test.ts) replay every operation's answers, audit
+  events and side rows, then one delivery pass at a fixed second whose
+  requests must match byte for byte, signatures included: G3 for webhook
+  secrets at the database level from both releases. `TestGoSealedFixture`
+  seals the secrets again in Go, and go.yml has the TypeScript server
+  deliver with them (the reverse direction). The `webhooks` conformance
+  suite runs against a local receiver on every target.
+
 The server's packages:
 
 - `server/config`: `varlatchd.conf`.

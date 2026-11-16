@@ -258,15 +258,13 @@
       "release": "v0.21.0",
       "envelopeVersion": 1,
       "direction": "ts-to-go",
-      "level": "envelope",
-      "fixtureKey": "webhooks",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestTypeScriptFixtures"
+          "go": "server/webhooks/parity_test.go",
+          "test": "TestTypeScriptFixtures/webhooks-v0.21.0.json"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "webhook-secret",
@@ -283,15 +281,13 @@
       "release": "v0.22.0",
       "envelopeVersion": 1,
       "direction": "ts-to-go",
-      "level": "envelope",
-      "fixtureKey": "webhooks",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestTypeScriptFixtures"
+          "go": "server/webhooks/parity_test.go",
+          "test": "TestTypeScriptFixtures/webhooks-v0.22.0.json"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "webhook-secret",
@@ -299,18 +295,21 @@
       "release": "v0.22.0",
       "envelopeVersion": 1,
       "direction": "go-to-ts",
-      "level": "envelope",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestGoFixtures"
+          "go": "server/webhooks/parity_test.go",
+          "test": "TestGoSealedFixture"
+        },
+        {
+          "vitest": "services/varlatchd/test/go-webhooks-fixture.test.ts",
+          "test": "webhook secrets the Go server sealed open here with the same deliveries"
         },
         {
           "ci": ".github/workflows/go.yml",
-          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+          "run": "VARLATCH_GO_SEALED_WEBHOOKS=\"$RUNNER_TEMP/go-sealed-webhooks.json\" pnpm --filter @varlatch/varlatchd exec vitest run test/go-webhooks-fixture.test.ts"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "platform-credential",

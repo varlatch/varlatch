@@ -21,7 +21,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { requestsFromNginxLog } from "./nginx-log.mjs";
@@ -108,6 +108,9 @@ export async function configure(state) {
     CONVEX_CLOUD_ORIGIN: `${origin}/convex`,
     BIND_ADDRESS: "127.0.0.1",
     VARLATCH_KEK_HOST_PATH: join(state.dir, "secrets", "varlatch-kek"),
+    // The webhooks suite's receiver, on varlatchd's own loopback inside its
+    // container: the one private destination the outbound policy allows.
+    VARLATCH_OUTBOUND_ALLOW: `127.0.0.1/32:${WEBHOOK_RECEIVER_PORT}`,
   };
   const hex = (bytes) => randomBytes(bytes).toString("hex");
   writeFileSync(join(state.dir, ".env"), [
@@ -271,4 +274,39 @@ export async function tsStack(state, action, ...args) {
     };
   }
   throw new Error(`unknown ts-stack action ${action}`);
+}
+
+/** The webhook receiver's port, inside varlatchd's container. */
+export const WEBHOOK_RECEIVER_PORT = 18787;
+
+const RECEIVER_SOURCE = new URL("../lib/webhook-receiver.cjs", import.meta.url);
+
+/** What the receiver recorded, read inside the container; null when it does not answer. */
+function receiverRequests(state) {
+  const read = `fetch("http://127.0.0.1:${WEBHOOK_RECEIVER_PORT}/_received").then((r) => r.text()).then((t) => process.stdout.write(t), () => process.exit(1))`;
+  const r = compose(state, ["exec", "-T", "varlatchd", "node", "-e", read]);
+  if (r.status !== 0) return null;
+  return JSON.parse(r.stdout);
+}
+
+/**
+ * The webhook-receiver capability: `url` starts the receiver
+ * (lib/webhook-receiver.cjs) inside varlatchd's container when it is not
+ * running, and answers the URL varlatchd reaches it at; `requests` what it
+ * recorded. It lives as long as the container: a restart of varlatchd ends
+ * it, and the next `url` starts it again, with nothing recorded.
+ */
+export async function webhookReceiver(state, action) {
+  if (action === "requests") {
+    const got = receiverRequests(state);
+    if (!got) throw new Error("the webhook receiver is not running: ask for its url first");
+    return got;
+  }
+  if (action !== "url") throw new Error(`unknown webhook-receiver action ${action}`);
+  if (!receiverRequests(state)) {
+    mustCompose(state, ["exec", "-d", "-T", "varlatchd", "node", "-e", readFileSync(RECEIVER_SOURCE, "utf8"), String(WEBHOOK_RECEIVER_PORT)]);
+    for (let i = 0; i < 50 && !receiverRequests(state); i++) await sleep(200);
+    if (!receiverRequests(state)) throw new Error("the webhook receiver did not start in varlatchd's container");
+  }
+  return { url: `http://127.0.0.1:${WEBHOOK_RECEIVER_PORT}` };
 }

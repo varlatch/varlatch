@@ -43,6 +43,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/security"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/web"
+	"github.com/varlatch/varlatch/go/server/webhooks"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -361,6 +362,17 @@ func serve(opts Options, h *hooks) int {
 	}
 	policy := outbound.New(allow, outbound.Options{Log: log})
 	defer policy.Close()
+	// Webhook delivery (feature-parity decision 10): a pass at once, then
+	// every 30 seconds, through the outbound policy. A stop ends it before
+	// the policy and the database close; an attempt cut short is not
+	// recorded, and the next start sends it again.
+	webhookDone := make(chan struct{})
+	go func() {
+		defer close(webhookDone)
+		hooks := &webhooks.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Log: log}
+		hooks.RunLoop(ctx, webhooks.Interval, admission.Enter)
+	}()
+	defer func() { cancel(); <-webhookDone }()
 	handler, err := httpserver.New(httpserver.Options{
 		Outbound:       policy,
 		Version:        buildinfo.Version,

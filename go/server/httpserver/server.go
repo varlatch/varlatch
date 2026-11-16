@@ -216,6 +216,8 @@ var BuiltOperations = []string{
 	// (requirements.go).
 	listRequirementsPattern, createRequirementPattern, updateRequirementPattern, deleteRequirementPattern,
 	credentialReviewPattern, machineReachPattern, myPermissionsPattern,
+	// Step 4.7b: audit webhooks (webhooks.go).
+	listWebhooksPattern, createWebhookPattern, updateWebhookPattern, revokeWebhookPattern,
 }
 
 // Server is the handler.

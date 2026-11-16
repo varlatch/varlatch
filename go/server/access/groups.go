@@ -189,7 +189,7 @@ func UpdateGroup(ctx context.Context, w *write.Writer, approvals *auth.Service, 
 	r := req.security(approvals)
 	actor := req.Principal.Identity.ID
 	claim := write.Claim{IdentityID: actor, Endpoint: "PATCH " + kind + "s " + groupID, Key: req.IdempotencyKey, Digest: write.BodyHash(patch.Body, rootKEK)}
-	return idempotentProtected(ctx, w, r, organizationID, claim, func(ctx context.Context, tx *storage.Tx, reports *[]auth.PendingReport) (write.Response, error) {
+	return security.IdempotentProtected(ctx, w, r, organizationID, claim, func(ctx context.Context, tx *storage.Tx, reports *[]auth.PendingReport) (write.Response, error) {
 		p, err := security.Prepare(ctx, tx, r, security.Protected{
 			Scope:  write.Scope{OrganizationID: organizationID},
 			Checks: []security.Check{{Control: security.AdminStepUp, Operation: GroupOperation(kind, "update")}},

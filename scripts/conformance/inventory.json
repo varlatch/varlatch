@@ -747,6 +747,33 @@
     "request-budget": {
       "title": "request budget: the server refused nothing unexpectedly",
       "runner": true
+    },
+    "webhooks": {
+      "title": "audit webhook delivery against a local receiver: signatures, filters, retries, updates, revocation, URL redaction, the outbound policy's refusals, suspension while a deletion is scheduled",
+      "script": "scripts/conformance/suites/webhooks.mjs",
+      "needs": [
+        "webhook-receiver"
+      ],
+      "operations": [
+        "admin-recover",
+        "whoami",
+        "createOrganization",
+        "createProject",
+        "listAuditEvents",
+        "listWebhooks",
+        "createWebhook",
+        "updateWebhook",
+        "revokeWebhook"
+      ],
+      "groups": {
+        "deletion": {
+          "title": "a webhook is suspended while its Organization's deletion is scheduled, and delivers what waited once the deletion is cancelled",
+          "operations": [
+            "scheduleOrganizationDeletion",
+            "cancelOrganizationDeletion"
+          ]
+        }
+      }
     }
   },
   "checks": {
@@ -3452,6 +3479,57 @@
       "suite": "request-budget",
       "kind": "conformance",
       "title": "the server answered no 429 other than the proxy probe's pending cap"
+    },
+    "webhooks.secret-shown-once": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "title": "registering a webhook answers its signing secret once; listing never shows it"
+    },
+    "webhooks.delivery-signed": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "title": "a delivery is a signed JSON POST of the Organization's events after the registration, the Project's creation among them"
+    },
+    "webhooks.event-type-filter": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "title": "a webhook with an event-type filter receives only those events"
+    },
+    "webhooks.retry-after-failure": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "title": "a batch the endpoint failed is sent again from the same event on the next pass; the webhook then shows the success"
+    },
+    "webhooks.update-keeps-secret": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "title": "a webhook moved to another URL in place delivers there, signed with its first secret, and nothing after the move goes to the old URL"
+    },
+    "webhooks.revoked-receives-nothing": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "title": "a revoked webhook receives nothing after its revocation"
+    },
+    "webhooks.url-redacted-in-audit": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "title": "webhook audit events show the URL with its path and query redacted, never a token in it"
+    },
+    "webhooks.private-destination-refused": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "title": "registering a webhook to a private address is refused with the outbound policy's reason, never the address"
+    },
+    "webhooks.refusal-recorded": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "title": "the refused registration is recorded as outbound.refused: purpose, phase, host, port and reason, no path or query"
+    },
+    "webhooks.suspended-while-deleting": {
+      "suite": "webhooks",
+      "kind": "conformance",
+      "group": "deletion",
+      "title": "nothing is delivered while the Organization's deletion is scheduled; once it is cancelled, what waited is delivered, without the deletion's own events"
     }
   },
   "goServerChecks": {

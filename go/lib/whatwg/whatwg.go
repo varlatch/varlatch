@@ -401,13 +401,43 @@ func serializeIPv6(a [8]uint16) string {
 	return b.String()
 }
 
-// URL is what audit redaction reads of a parsed URL, as `new URL` gives it.
+// URL is what audit redaction and outbound requests read of a parsed URL,
+// as `new URL` gives it. Pathname and Search are as written (only
+// RequestTarget percent-encodes them); Username and Password too, so only
+// whether each is empty is `new URL`'s answer.
 type URL struct {
 	Protocol string // "https:"
+	Username string
+	Password string
 	Host     string // the host, with the port when it is not the scheme's default
 	Pathname string
 	Search   string // "" or "?..."
 	Hash     string // "" or "#..."
+}
+
+// RequestTarget is what fetch sends for the URL: the pathname and the
+// query (without "?"), percent-encoded as `new URL` serializes them (the
+// path and query percent-encode sets, as Node has them: C0 controls,
+// space and non-ASCII,
+// and the set's characters; an existing escape is kept). The fragment is
+// never sent.
+func (u URL) RequestTarget() (path, query string) {
+	_, special := defaultPorts[strings.TrimSuffix(u.Protocol, ":")]
+	path = percentEncode(u.Pathname, encodeSet("\"#<>?^`{}"))
+	if u.Search != "" {
+		set := "\"#<>"
+		if special {
+			set += "'"
+		}
+		query = percentEncode(u.Search[1:], encodeSet(set))
+	}
+	return path, query
+}
+
+// encodeSet is a percent-encode set: C0 controls, space, DEL and
+// non-ASCII bytes, and the set's characters.
+func encodeSet(set string) func(byte) bool {
+	return func(c byte) bool { return c <= 0x20 || c >= 0x7f || strings.IndexByte(set, c) >= 0 }
 }
 
 var defaultPorts = map[string]string{"http": "80", "https": "443", "ws": "80", "wss": "443", "ftp": "21"}
@@ -455,6 +485,7 @@ func ParseURL(input string) (URL, bool) {
 		authority := rest[:end]
 		rest = rest[end:]
 		if at := strings.LastIndexByte(authority, '@'); at >= 0 {
+			u.Username, u.Password, _ = strings.Cut(authority[:at], ":")
 			authority = authority[at+1:]
 			if authority == "" {
 				return URL{}, false

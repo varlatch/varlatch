@@ -88,10 +88,10 @@ func (e zEnum) parse(v any, present bool, path []string) (any, []zIssue) {
 	return nil, []zIssue{{path, "Invalid option: expected one of " + quoteOptions(e), true}}
 }
 
-// zArray is z.array(element), with .min when set.
+// zArray is z.array(element), with .min and .max when set.
 type zArray struct {
-	element zSchema
-	min     int
+	element  zSchema
+	min, max int
 }
 
 func (a zArray) parse(v any, present bool, path []string) (any, []zIssue) {
@@ -109,7 +109,20 @@ func (a zArray) parse(v any, present bool, path []string) (any, []zIssue) {
 	if !aborted(issues) && len(list) < a.min {
 		issues = append(issues, zIssue{path, "Too small: expected array to have >=" + strconv.Itoa(a.min) + " items", false})
 	}
+	if !aborted(issues) && a.max > 0 && len(list) > a.max {
+		issues = append(issues, zIssue{path, "Too big: expected array to have <=" + strconv.Itoa(a.max) + " items", false})
+	}
 	return out, issues
+}
+
+// zNullable is schema.nullable(): null passes as null.
+type zNullable struct{ schema zSchema }
+
+func (n zNullable) parse(v any, present bool, path []string) (any, []zIssue) {
+	if present && v == nil {
+		return nil, nil
+	}
+	return n.schema.parse(v, present, path)
 }
 
 // zField is one member of a z.object.
