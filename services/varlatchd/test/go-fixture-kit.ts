@@ -543,10 +543,18 @@ const REPO_ROOT = new URL("../../../", import.meta.url);
  * between the two touches a ciphertext): the rows with every envelope the
  * read path opens sealed again by that release's code, in place. The
  * installation's canary; each live Organization's KEK (a new one, wrapped
- * by the Root KEK; a destroyed one stays destroyed); and each value
- * version, with plaintextOf(version) under its Organization's new KEK.
+ * by the Root KEK; a destroyed one stays destroyed); each value version,
+ * with plaintextOf(version) under its Organization's new KEK; and, with
+ * secretOf, each webhook's signing secret, secretOf(webhook) under it.
  */
-export async function resealWith(ref: string, rootKek: Buffer, rows: Record<string, Row[]>, plaintextOf: (version: Row) => string): Promise<void> {
+export async function resealWith(
+  ref: string,
+  rootKek: Buffer,
+  rows: Record<string, Row[]>,
+  plaintextOf: (version: Row) => string,
+  /** A webhook's signing secret, when the rows hold webhooks to seal again. */
+  secretOf?: (webhook: Row) => string,
+): Promise<void> {
   const crypto = await loadHierarchy(ref);
   for (const inst of rows.installation!) inst.kek_canary = crypto.createCanary(rootKek, inst.id as string) as Envelope;
   const kekOf = new Map<string, Buffer>();
@@ -556,9 +564,16 @@ export async function resealWith(ref: string, rootKek: Buffer, rows: Record<stri
     kekOf.set(org.id as string, orgKek);
     org.wrapped_org_kek = wrapped;
   }
-  const envOf = new Map(rows.environments!.map((e) => [e.id, e]));
-  const projectOf = new Map(rows.projects!.map((p) => [p.id, p]));
-  const valueOf = new Map(rows.env_values!.map((v) => [v.id, v]));
+  if (secretOf) {
+    for (const w of rows.webhooks ?? []) {
+      const orgKek = kekOf.get(w.organization_id as string);
+      if (!orgKek) throw new Error(`webhook ${String(w.id)}: its Organization has no KEK to seal it under`);
+      w.secret_envelope = crypto.encryptWebhookSecret(orgKek, w.organization_id as string, w.id as string, secretOf(w)) as Envelope;
+    }
+  }
+  const envOf = new Map((rows.environments ?? []).map((e) => [e.id, e]));
+  const projectOf = new Map((rows.projects ?? []).map((p) => [p.id, p]));
+  const valueOf = new Map((rows.env_values ?? []).map((v) => [v.id, v]));
   for (const version of rows.value_versions ?? []) {
     const value = valueOf.get(version.value_id)!;
     const orgId = projectOf.get(envOf.get(value.environment_id)!.project_id)!.organization_id as string;

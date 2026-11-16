@@ -21,11 +21,13 @@ test("a target's capabilities come from capabilities.json alone, and every adapt
 
 test("an adapter that lacks a listed capability's operation is refused", () => {
   const caps = file["ts-source"];
-  assert.deepEqual(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack"), caps), []);
+  assert.deepEqual(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack", "webhookReceiver"), caps), []);
   // maintenance listed, the adapter without its operation.
-  assert.match(adapterProblems("ts-source", adapter("probe", "serveCli", "tsStack"), caps).join("\n"), /gives target ts-source maintenance, but its adapter has no maintenance operation/);
+  assert.match(adapterProblems("ts-source", adapter("probe", "serveCli", "tsStack", "webhookReceiver"), caps).join("\n"), /gives target ts-source maintenance, but its adapter has no maintenance operation/);
+  // webhook-receiver listed, the adapter without webhookReceiver.
+  assert.match(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack"), caps).join("\n"), /webhook-receiver, but its adapter has no webhookReceiver operation/);
   // go-server listed for a target whose adapter has no goServer.
-  assert.match(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack"), [...caps, "go-server"]).join("\n"), /go-server, but its adapter has no goServer operation/);
+  assert.match(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack", "webhookReceiver"), [...caps, "go-server"]).join("\n"), /go-server, but its adapter has no goServer operation/);
   assert.match(adapterProblems("go-binary", adapter("probe", "goServer"), ["no-such-capability"]).join("\n"), /unknown capability no-such-capability/);
 });
 

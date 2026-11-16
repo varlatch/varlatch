@@ -209,7 +209,7 @@ func UpdateRole(ctx context.Context, w *write.Writer, approvals *auth.Service, r
 	r := req.security(approvals)
 	actor := req.Principal.Identity.ID
 	claim := write.Claim{IdentityID: actor, Endpoint: "PATCH roles " + roleID, Key: req.IdempotencyKey, Digest: write.BodyHash(patch.Body, rootKEK)}
-	return idempotentProtected(ctx, w, r, organizationID, claim, func(ctx context.Context, tx *storage.Tx, reports *[]auth.PendingReport) (write.Response, error) {
+	return security.IdempotentProtected(ctx, w, r, organizationID, claim, func(ctx context.Context, tx *storage.Tx, reports *[]auth.PendingReport) (write.Response, error) {
 		next := func(current Role) Role {
 			n := Role{ID: current.ID, Name: current.Name, Actions: current.Actions}
 			if patch.Name != nil {
@@ -296,28 +296,6 @@ func UpdateRole(ctx context.Context, w *write.Writer, approvals *auth.Service, r
 		}
 		return write.Response{Status: 200, Payload: Role{ID: roleID, Name: n.Name, Actions: n.Actions, Version: updated.Version, UpdatedAt: updated.UpdatedAt}.JS()}, nil
 	})
-}
-
-// idempotentProtected runs a protected write under an Idempotency-Key
-// claim (withIdempotency inside withApproval): the Organization's gate and
-// the requester's (exclusive when it carries an approval) taken first; a
-// replay runs the requester's checkpoint before answering from the claim.
-func idempotentProtected(ctx context.Context, w *write.Writer, r security.Request, organizationID string, claim write.Claim,
-	run func(ctx context.Context, tx *storage.Tx, reports *[]auth.PendingReport) (write.Response, error)) (write.Response, []auth.PendingReport, error) {
-	ctx, release, err := w.Gates.Acquire(ctx, r.Gates(organizationID)...)
-	if err != nil {
-		return write.Response{}, nil, err
-	}
-	defer release()
-	var reports []auth.PendingReport
-	resp, _, err := write.Idempotent(ctx, w.Store, claim,
-		func(tx *storage.Tx) error {
-			var err error
-			reports, err = write.Checkpoint(ctx, tx, r.Principal, organizationID)
-			return err
-		},
-		func(tx *storage.Tx) (write.Response, error) { return run(ctx, tx, &reports) })
-	return resp, reports, err
 }
 
 func roleChanged() error {

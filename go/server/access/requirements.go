@@ -220,7 +220,7 @@ func UpdateRequirement(ctx context.Context, w *write.Writer, approvals *auth.Ser
 		}
 		return target, selector
 	}
-	return idempotentProtected(ctx, w, r, organizationID, claim, func(ctx context.Context, tx *storage.Tx, reports *[]auth.PendingReport) (write.Response, error) {
+	return security.IdempotentProtected(ctx, w, r, organizationID, claim, func(ctx context.Context, tx *storage.Tx, reports *[]auth.PendingReport) (write.Response, error) {
 		p, err := security.Prepare(ctx, tx, r, security.Protected{
 			Scope:  write.Scope{OrganizationID: organizationID},
 			Checks: []security.Check{{Control: security.RequirementProtection, Operation: "requirement.update"}},

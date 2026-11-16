@@ -396,3 +396,50 @@ func TestTransportRefusesRedirects(t *testing.T) {
 		t.Fatalf("a redirect through the transport: %v, %d requests to its target", err, hits.Load())
 	}
 }
+
+// The Control hook refuses a socket to any address the dial did not check,
+// whatever made the dialer try it, and allows the checked ones in the
+// forms a socket names them (a mapped address as IPv4, a zone dropped).
+func TestControlRefusesUncheckedAddresses(t *testing.T) {
+	control := checkedControl([]Answer{v4("192.0.2.1"), v6("2001:db8::1"), v6("::ffff:198.51.100.7"), v6("fe80::1%eth0")})
+	for _, address := range []string{"192.0.2.1:443", "[2001:db8::1]:443", "198.51.100.7:443", "[::ffff:192.0.2.1]:443", "[fe80::1%eth1]:443"} {
+		if err := control("tcp", address, nil); err != nil {
+			t.Errorf("%s: %v", address, err)
+		}
+	}
+	for _, address := range []string{"192.0.2.2:443", "10.0.0.1:443", "[2001:db8::2]:443", "127.0.0.1:443", "[::1]:443", "192.0.2.1", "not an address"} {
+		if err := control("tcp", address, nil); err == nil || !strings.Contains(err.Error(), "unchecked address") {
+			t.Errorf("%s: %v, want a refusal", address, err)
+		}
+	}
+}
+
+// Each attempt's context is released when the attempt ends, not when the
+// dial returns: a failed attempt's timer does not live on beside the next.
+func TestAttemptContextsReleased(t *testing.T) {
+	var mu sync.Mutex
+	var ended []bool
+	var previous context.Context
+	refuse := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if previous != nil {
+			ended = append(ended, previous.Err() != nil)
+		}
+		previous = ctx
+		return nil, errors.New("connection refused")
+	}
+	dns := &fakeDNS{answers: map[string][]Answer{}, asked: map[string]int{}}
+	dns.set("refused.test", v4("192.0.2.1"), v4("192.0.2.2"), v4("192.0.2.3"))
+	entries, _ := ParseAllow("192.0.2.0/24:*")
+	p := New(entries, Options{Resolve: dns.resolve, ConnectTimeout: 5 * time.Second, dial: refuse})
+	t.Cleanup(p.Close)
+	if _, err := p.dialer("https:")(context.Background(), "tcp", "refused.test:443"); err == nil {
+		t.Fatal("connected")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ended) != 2 || !ended[0] || !ended[1] || previous.Err() == nil {
+		t.Errorf("attempt contexts ended %v, the last %v", ended, previous.Err())
+	}
+}

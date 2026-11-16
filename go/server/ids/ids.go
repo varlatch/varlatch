@@ -39,6 +39,8 @@ const (
 	Team  = "tem"
 	// Step 4.4c.
 	Requirement = "req"
+	// Step 4.7b: audit webhooks.
+	Webhook = "whk"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"

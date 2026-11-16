@@ -71,6 +71,7 @@ export const CAPABILITIES = [
   "serve-cli",
   "ts-stack",
   "go-server",
+  "webhook-receiver",
 ];
 
 /**

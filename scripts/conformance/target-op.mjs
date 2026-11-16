@@ -15,6 +15,7 @@
  *   target-op.mjs serve-cli on|off
  *   target-op.mjs ts-stack compose <args...> | compose-env
  *   target-op.mjs go-server fixture <name> [args...]  JSON
+ *   target-op.mjs webhook-receiver url|requests      JSON
  *
  * An optional operation the target does not have exits 3.
  */
@@ -74,6 +75,11 @@ switch (operation) {
   case "go-server":
     needs("go-server");
     print(JSON.stringify(await target.goServer(state, ...args)));
+    break;
+  case "webhook-receiver":
+    needs("webhook-receiver");
+    if (!["url", "requests"].includes(args[0])) throw new Error("webhook-receiver url|requests");
+    print(JSON.stringify(await target.webhookReceiver(state, args[0])));
     break;
   case "ts-stack": {
     needs("ts-stack");

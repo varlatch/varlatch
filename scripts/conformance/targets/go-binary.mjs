@@ -37,9 +37,14 @@
  *             suite's fixtures (Organizations, people, browser sessions,
  *             audit events, a removal) through `varlatchd admin
  *             conformance-fixture`, from the same conformance build; JSON
+ *   webhookReceiver
+ *             the webhooks suite's receiver (lib/webhook-receiver.cjs) on a
+ *             free loopback port that varlatchd.conf's outbound_allow
+ *             opens, a process of its own: `url` starts it, `requests`
+ *             reads what it recorded; `down` stops it by its recorded PID
  *
  * Optional capabilities (targets/capabilities.json, their only source): the
- * device sign-in probes and go-server. Maintenance and
+ * device sign-in probes, go-server and webhook-receiver. Maintenance and
  * serve-cli come with the operations that need them (expect/go-binary.json
  * lists them).
  * The only processes it signals are the ones it started, by the PID it
@@ -103,6 +108,8 @@ function config(state, extra = "") {
     `data_dir = ${state.dataDir}`,
     `root_kek_file = ${state.kekFile}`,
     `access_log = ${state.accessLog}`,
+    // The webhooks suite's receiver: the one private destination allowed.
+    ...(state.receiverPort ? [`outbound_allow = 127.0.0.1/32:${state.receiverPort}`] : []),
     extra,
   ].join("\n") + "\n";
 }
@@ -123,6 +130,7 @@ export async function up({ argument, onState = () => {} }) {
   }
   const dir = mkdtempSync(join(tmpdir(), "conformance-go-"));
   const port = await freePort();
+  const receiverPort = await freePort();
   const state = {
     target: `go-binary:${argument}`,
     binary,
@@ -135,6 +143,8 @@ export async function up({ argument, onState = () => {} }) {
     serverLog: join(dir, "varlatchd.log"),
     accessLog: join(dir, "access.log"),
     pidFile: join(dir, "varlatchd.pid"),
+    receiverPort,
+    receiverPidFile: join(dir, "receiver.pid"),
   };
   onState(state);
   try {
@@ -160,6 +170,7 @@ export async function up({ argument, onState = () => {} }) {
 /** Stops the server and removes the installation. */
 export async function down(state) {
   await stop(state).catch(() => {});
+  stopReceiver(state);
   if (state?.dir && state.dir.startsWith(join(tmpdir(), "conformance-go-"))) rmSync(state.dir, { recursive: true, force: true });
 }
 
@@ -376,6 +387,58 @@ export async function serveCli(state, on) {
   appendFileSync(state.serverLog, "--- conformance: serve_cli is not a varlatchd setting yet; started again without it\n");
   await start(state);
   throw new NotImplementedYet("varlatchd has no serve_cli setting yet");
+}
+
+const RECEIVER = join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "webhook-receiver.cjs");
+
+/** The receiver's recorded PID, when it still runs this installation's receiver. */
+function receiverPid(state) {
+  if (!state?.receiverPidFile || !existsSync(state.receiverPidFile)) return null;
+  const pid = Number(readFileSync(state.receiverPidFile, "utf8").trim());
+  if (!Number.isInteger(pid) || pid <= 1) return null;
+  try {
+    const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    return cmdline.includes(RECEIVER) && cmdline.includes(state.dir) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function stopReceiver(state) {
+  const pid = receiverPid(state);
+  if (pid) process.kill(pid, "SIGTERM");
+}
+
+async function receiverRequests(state) {
+  return fetch(`http://127.0.0.1:${state.receiverPort}/_received`, { signal: AbortSignal.timeout(5000) }).then(
+    (r) => (r.ok ? r.json() : null),
+    () => null,
+  );
+}
+
+/**
+ * The webhook-receiver capability: `url` starts the receiver
+ * (lib/webhook-receiver.cjs) on the loopback port varlatchd.conf allows,
+ * when it is not running, and answers its URL; `requests` what it
+ * recorded. A process of its own, apart from varlatchd (a restart keeps
+ * it), stopped by `down` by its recorded PID, and gone by itself once the
+ * installation directory is.
+ */
+export async function webhookReceiver(state, action) {
+  if (action === "requests") {
+    const got = await receiverRequests(state);
+    if (!got) throw new Error("the webhook receiver is not running: ask for its url first");
+    return got;
+  }
+  if (action !== "url") throw new Error(`unknown webhook-receiver action ${action}`);
+  if (!(await receiverRequests(state))) {
+    const child = spawn(process.execPath, [RECEIVER, state.dir, String(state.receiverPort)], { stdio: "ignore", detached: true });
+    writeFileSync(state.receiverPidFile, `${child.pid}\n`);
+    child.unref();
+    for (let i = 0; i < 50 && !(await receiverRequests(state)); i++) await sleep(100);
+    if (!(await receiverRequests(state))) throw new Error("the webhook receiver did not start");
+  }
+  return { url: `http://127.0.0.1:${state.receiverPort}` };
 }
 
 export function describe(state) {

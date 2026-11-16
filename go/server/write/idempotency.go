@@ -68,6 +68,40 @@ func BodyHash(body any, rootKEK []byte) string {
 	return "hmac-v1:" + hex.EncodeToString(m.Sum(nil))
 }
 
+// claimText refuses what the claim's INSERT, the TypeScript server's first
+// statement with the endpoint and the key, fails on before the write:
+// U+0000 in either (a path id in the endpoint), so the request answers
+// 500 before anything the write would refuse.
+func claimText(c Claim) error {
+	if strings.IndexByte(c.Endpoint, 0) >= 0 || strings.IndexByte(c.Key, 0) >= 0 {
+		return ErrPostgresText
+	}
+	return nil
+}
+
+// Claimed reports whether c's key already has a claim, read in db: an
+// operation whose TypeScript form runs its own checks inside
+// withIdempotency (after the claim) runs them only when there is none, so
+// a replay or a conflict answers first. It refuses what Idempotent refuses
+// before its claim (CheckKey, claimText), in the same order. A claim made
+// between this read and the job is still answered by Idempotent.
+func Claimed(ctx context.Context, db query.DBTX, c Claim) (bool, error) {
+	if c.Key == "" {
+		return false, nil
+	}
+	if err := CheckKey(c.Key); err != nil {
+		return false, err
+	}
+	if err := claimText(c); err != nil {
+		return false, err
+	}
+	_, err := query.New(db).IdempotencyClaim(ctx, query.IdempotencyClaimParams{IdentityID: c.IdentityID, Endpoint: c.Endpoint, IdempotencyKey: c.Key})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // Idempotent runs write as one job under c. With no key, it is just the
 // job. With a key: a stored claim with the same digest answers its stored
 // response (replayed true), after replay passes (the requester's
@@ -88,12 +122,8 @@ func Idempotent(ctx context.Context, store *storage.DB, c Claim, replay func(tx 
 	if err := CheckKey(c.Key); err != nil {
 		return Response{}, false, err
 	}
-	// The claim's INSERT is the TypeScript server's first statement with
-	// the endpoint and the key, before the write: U+0000 in either (a path
-	// id in the endpoint) fails it, so the request answers 500 before
-	// anything the write would refuse.
-	if strings.IndexByte(c.Endpoint, 0) >= 0 || strings.IndexByte(c.Key, 0) >= 0 {
-		return Response{}, false, ErrPostgresText
+	if err := claimText(c); err != nil {
+		return Response{}, false, err
 	}
 	err = store.Write(ctx, func(tx *storage.Tx) error {
 		resp, replayed = Response{}, false
