@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/envelope"
@@ -141,7 +142,7 @@ func TestRestoreRefusals(t *testing.T) {
 	untouched(cfg, "a changed archive")
 	// Another installation's data directory.
 	g := newFixture(t)
-	if _, err := Restore(ctx, g.cfg, res.Path, f.bekOf(t), f.rootKEK, nil); err == nil || !strings.Contains(err.Error(), "another installation") {
+	if _, err := Restore(ctx, g.cfg, res.Path, f.bekOf(t), f.rootKEK, nil); err == nil || !strings.Contains(err.Error(), "another installation") || !strings.Contains(err.Error(), "move varlatch.db") {
 		t.Errorf("over another installation: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(g.dir, backup.GateFile)); !os.IsNotExist(err) {
@@ -207,6 +208,15 @@ func TestFailedRestoreStaysIsolatedAndResumes(t *testing.T) {
 	}
 	if !maintenance.Open(cfg.DataDir, nil).Isolated() {
 		t.Error("a varlatchd starting now would not be isolated")
+	}
+	// Another archive is refused, with how to clear the gate.
+	f.add(time.Hour)
+	other, err := f.service(nil).Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(ctx, cfg, other.Path, bek, f.rootKEK, nil); err == nil || !strings.Contains(err.Error(), "a restore of archive "+res.ArchiveID+" has not completed") || !strings.Contains(err.Error(), "remove maintenance.json") {
+		t.Errorf("another archive after a failed restore: %v", err)
 	}
 	if _, err := Restore(ctx, cfg, res.Path, bek, f.rootKEK, nil); err != nil {
 		t.Fatalf("the retry: %v", err)

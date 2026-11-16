@@ -91,6 +91,8 @@ func TestKeyCustodyCommands(t *testing.T) {
 	if code != ExitOK || len(shares) != 5 || !regexp.MustCompile(`^Any 3 of these 5 shares reconstruct the KEK; fewer reveal nothing\.\nGive each share to a different custodian; never store two together\.\nSplit fingerprint: [0-9a-f]{8}\n\n$`).MatchString(errOut) {
 		t.Fatalf("split: %d %q %q", code, out, errOut)
 	}
+	// An existing file is overwritten with mode 0600.
+	os.WriteFile(filepath.Join(dir, "combined"), []byte("old"), 0o644)
 	code, out, errOut = run("kek", "combine", "--out", filepath.Join(dir, "combined"), "--share", shares[4], "--share", shares[0], "--share", shares[2])
 	if code != ExitOK || !strings.HasPrefix(out, "combined KEK verified against the installation canary.\n") || keyHex(filepath.Join(dir, "combined")) != hex.EncodeToString(rootKEK) {
 		t.Errorf("combine: %d %q %q", code, out, errOut)

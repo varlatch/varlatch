@@ -139,8 +139,22 @@ func runKek(cfg *config.Config, rest []string, stdin io.Reader, stdout, stderr i
 		}
 		return first, nil
 	}
+	// writeKey writes the key file with mode 0600, an existing file too:
+	// its mode is set before the key is written into it.
 	writeKey := func(path string, key []byte) error {
-		return os.WriteFile(path, []byte(hex.EncodeToString(key)+"\n"), 0o600)
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		if err := f.Chmod(0o600); err != nil {
+			f.Close()
+			return err
+		}
+		if _, err := f.WriteString(hex.EncodeToString(key) + "\n"); err != nil {
+			f.Close()
+			return err
+		}
+		return f.Close()
 	}
 	// verifyRecovered checks a recovered key against the installation's
 	// canary when there is a database; a fresh host gets a warning.

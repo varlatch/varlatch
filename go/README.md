@@ -286,7 +286,12 @@ daemon's maintenance admission and its one backup at a time.
   tries to delete that version and checks it is still there. Delivery,
   retention and recoverability are reported separately; it passes (exit 0)
   only with all three, and a bucket without versions, without a retention
-  or that lets the version be deleted is reported unprotected. Every
+  or that lets the version be deleted is reported unprotected. Only a
+  refused delete (access denied, or the version locked) counts: a delete
+  that failed otherwise (a network error) leaves the retention
+  inconclusive. A test is admitted as a run is (refused during
+  maintenance) and works in `backups/.bucket-test-<id>/`, which a run
+  removes only when no test is running. Every
   upload sends `Content-MD5`, which B2 requires with Object Lock
   (`packages/backup`'s conditional put notes it; MinIO does not require
   it).
@@ -314,7 +319,8 @@ daemon's maintenance admission and its one backup at a time.
     answers them, newest first, with `backupStatus`'s warnings;
   - `backups/.work-<archive id>/`, a run's temporary files, and
     `backups/<archive id>.vltbak.<hex>.partial`, a sealing in progress;
-    both are removed by the next run if a run was killed;
+    both are removed by the next run if a run was killed, as is a killed
+    bucket test's `backups/.bucket-test-<id>/`;
   - `maintenance.json`, the maintenance gate (`maintenance.ts`'s `Gate`:
     `id`, `kind` capture or restore, `phase`, `expiresAt` in Unix
     milliseconds for a lease, `archiveId`). A lease is a `capture` gate

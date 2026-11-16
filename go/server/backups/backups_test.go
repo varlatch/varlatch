@@ -544,3 +544,91 @@ func TestScheduleUnderClockChanges(t *testing.T) {
 		t.Fatalf("%d archives an hour after", archives())
 	}
 }
+
+// heldS3 holds a bucket test's upload until release is closed; everything
+// else it stores and serves.
+type heldS3 struct {
+	mu      sync.Mutex
+	objects map[string][]byte
+	held    chan struct{}
+	release chan struct{}
+}
+
+func (s *heldS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/bucket-test/") {
+		close(s.held)
+		<-s.release
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch r.Method {
+	case http.MethodPut:
+		b, _ := io.ReadAll(r.Body)
+		s.objects[r.URL.Path] = b
+		w.Header().Set("ETag", `"etag"`)
+	case http.MethodGet:
+		w.Write(s.objects[r.URL.Path])
+	}
+}
+
+// A backup run while a bucket test is uploading leaves the test's files
+// alone (a run removes only a killed test's), and the test still gets its
+// archive back; a bucket test while a maintenance gate is open is refused.
+func TestBucketTestBesideARun(t *testing.T) {
+	f := newFixture(t)
+	fake := &heldS3{objects: map[string][]byte{}, held: make(chan struct{}), release: make(chan struct{})}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	conf := filepath.Join(f.dir, "conf")
+	os.Mkdir(conf, 0o700)
+	os.WriteFile(filepath.Join(conf, "destinations.json"), []byte(`{"offsite":{"endpoint":"`+srv.URL+`","region":"us-east-1","bucket":"b","writeCredentialsFile":"write.json"}}`), 0o600)
+	os.WriteFile(filepath.Join(conf, "write.json"), []byte(`{"accessKeyId":"AKIDTEST","secretAccessKey":"not-a-secret"}`), 0o600)
+	f.cfg.BackupDestinationsFile = filepath.Join(conf, "destinations.json")
+	a := maintenance.Open(f.dir, nil)
+	s := f.service(func(o *Options) { o.Admission = a })
+
+	// A killed test's directory, which the run removes.
+	os.MkdirAll(filepath.Join(f.dir, Dir, bucketTestPrefix+"dead"), 0o700)
+	type outcome struct {
+		r   backup.BucketReport
+		err error
+	}
+	done := make(chan outcome, 1)
+	// The first run cleans up before the test starts.
+	if _, err := s.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, Dir, bucketTestPrefix+"dead")); !os.IsNotExist(err) {
+		t.Errorf("a killed test's directory stayed: %v", err)
+	}
+	go func() { r, err := s.TestBucket(context.Background()); done <- outcome{r, err} }()
+	<-fake.held
+	dirs, _ := filepath.Glob(filepath.Join(f.dir, Dir, bucketTestPrefix+"*"))
+	if len(dirs) != 1 {
+		t.Fatalf("the test's directory: %v", dirs)
+	}
+	f.add(time.Hour)
+	if _, err := s.Run(context.Background()); err != nil {
+		t.Fatalf("a run during the test: %v", err)
+	}
+	if _, err := os.Stat(dirs[0]); err != nil {
+		t.Fatalf("the run removed the running test's directory: %v", err)
+	}
+	close(fake.release)
+	o := <-done
+	if o.err != nil || !o.r.Delivery.OK || !o.r.Recoverability.OK {
+		t.Fatalf("%+v %v", o.r, o.err)
+	}
+	if _, err := os.Stat(dirs[0]); !os.IsNotExist(err) {
+		t.Errorf("the test left its directory: %v", err)
+	}
+
+	g, err := a.Begin(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TestBucket(context.Background()); !errors.Is(err, ErrMaintenance) {
+		t.Errorf("a bucket test during maintenance: %v", err)
+	}
+	a.End(g.ID)
+}

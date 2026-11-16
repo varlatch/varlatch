@@ -116,6 +116,9 @@ type Service struct {
 	dir string
 	// running is held for a whole run; a second run is refused.
 	running sync.Mutex
+	// bucketTests is held (read) by every bucket test for its whole length:
+	// a run removes a killed test's directory only while none runs.
+	bucketTests sync.RWMutex
 }
 
 // New makes the service for the data directory in o.Config.
@@ -350,12 +353,18 @@ func (s *Service) bek() (backup.BEK, error) {
 }
 
 // clean removes what a killed run left: its work directory and a partial
-// archive. Nothing else in the directory is touched.
+// archive, and a killed bucket test's directory when no bucket test runs.
+// Nothing else in the directory is touched.
 func (s *Service) clean(backups string) {
+	tests := s.bucketTests.TryLock()
+	if tests {
+		defer s.bucketTests.Unlock()
+	}
 	entries, _ := os.ReadDir(backups)
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, ".work-") || strings.HasSuffix(name, ".partial") && strings.Contains(name, ".vltbak.") {
+		if strings.HasPrefix(name, ".work-") || strings.HasSuffix(name, ".partial") && strings.Contains(name, ".vltbak.") ||
+			tests && strings.HasPrefix(name, bucketTestPrefix) {
 			if err := os.RemoveAll(filepath.Join(backups, name)); err != nil {
 				s.o.Log.Warn("backup: cannot remove a killed run's file", "file", name, "error", err)
 			}
