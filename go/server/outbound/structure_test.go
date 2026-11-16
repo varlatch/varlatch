@@ -25,13 +25,19 @@ import (
 //   - any use of net.Dial, DialTimeout, DialTCP, DialUDP, DialIP, DialUnix,
 //     the net.Dialer type, ListenPacket, ListenUDP, ListenIP and
 //     ListenMulticastUDP; crypto/tls's Dial, DialWithDialer and Dialer;
-//     anything of net/smtp;
+//     anything of net/smtp; net/rpc's and net/rpc/jsonrpc's Dial,
+//     DialHTTP and DialHTTPPath, net/textproto.Dial;
+//   - DNS lookups, a channel out of their own (a name under a domain
+//     someone else serves carries data to its servers): every net.Lookup*,
+//     net.DefaultResolver and the net.Resolver type;
 //   - http.DefaultClient, http.DefaultTransport, http.Get, Head, Post,
 //     PostForm and ProxyFromEnvironment;
 //   - an http.Client or http.Transport value made outside: a composite
-//     literal, new(...), or a variable or struct field of the type (a
-//     zero Client sends through the default transport); a pointer to one,
-//     handed in, is not caught;
+//     literal, new(...) or make(...), a variable, struct field or declared
+//     type of the type (an alias or a defined type: a zero Client sends
+//     through the default transport), or of an array, slice, map or
+//     channel of it, and in a composite literal a pointer element too (an
+//     elided {} makes one); a pointer to one, handed in, is not caught;
 //   - a dot-import of net, net/http, crypto/tls or net/smtp (its names
 //     would not be qualified);
 //   - an S3 client (s3.New, s3.NewFromConfig, lib/backup's NewClient).
@@ -55,6 +61,7 @@ type exception struct {
 var serverExceptions = []exception{
 	{"server/daemon/control.go", "net.DialTimeout", 1, "the daemon's own Unix control socket in the data directory (decision 11)"},
 	{"server/daemon/backup.go", "net.DialTimeout", 1, "restore checks that no varlatchd answers on the data directory's control socket"},
+	{"server/clientaddr/clientaddr.go", "net.DefaultResolver", 1, "the names in the host's trusted_proxies, looked up every 30 seconds (the host's configuration, never an Organization's)"},
 	{"server/backups/backups.go", "backup.NewClient", 1, "the host's backup destination, for uploads and the bucket test (ADR-0057 Decision 1: 4.14's uploads are an exception by name)"},
 }
 
@@ -79,6 +86,9 @@ var rules = []rule{
 	{path: "net", name: "ListenPacket"}, {path: "net", name: "ListenUDP"}, {path: "net", name: "ListenIP"}, {path: "net", name: "ListenMulticastUDP"},
 	{path: "crypto/tls", name: "Dial"}, {path: "crypto/tls", name: "DialWithDialer"}, {path: "crypto/tls", name: "Dialer"},
 	{path: "net/smtp", name: "*"},
+	{path: "net/rpc", name: "Dial"}, {path: "net/rpc", name: "DialHTTP"}, {path: "net/rpc", name: "DialHTTPPath"},
+	{path: "net/rpc/jsonrpc", name: "Dial"}, {path: "net/textproto", name: "Dial"},
+	{path: "net", name: "Lookup*"}, {path: "net", name: "DefaultResolver"}, {path: "net", name: "Resolver"},
 	{path: "net/http", name: "DefaultClient"}, {path: "net/http", name: "DefaultTransport"},
 	{path: "net/http", name: "Get"}, {path: "net/http", name: "Head"}, {path: "net/http", name: "Post"}, {path: "net/http", name: "PostForm"},
 	{path: "net/http", name: "ProxyFromEnvironment"},
@@ -88,7 +98,7 @@ var rules = []rule{
 }
 
 // guarded are the packages a dot-import of is refused.
-var guarded = []string{"net", "net/http", "crypto/tls", "net/smtp"}
+var guarded = []string{"net", "net/http", "crypto/tls", "net/smtp", "net/rpc", "net/rpc/jsonrpc", "net/textproto"}
 
 // use is one forbidden use found: file, the use as package.Name, line.
 type use struct {
@@ -163,34 +173,57 @@ func scanFile(fset *token.FileSet, f *ast.File, rel string) []use {
 			return "", false
 		}
 		for _, r := range rules {
-			if r.path == p && (r.name == sel.Sel.Name || r.name == "*") && r.value == value {
+			named := r.name == sel.Sel.Name || r.name == "*" || strings.HasSuffix(r.name, "*") && strings.HasPrefix(sel.Sel.Name, strings.TrimSuffix(r.name, "*"))
+			if r.path == p && named && r.value == value {
 				return p[strings.LastIndexByte(p, '/')+1:] + "." + sel.Sel.Name, true
 			}
 		}
 		return "", false
 	}
-	// valueOf reports a value use of a guarded type: the type itself, not
-	// a pointer to it.
-	valueOf := func(typ ast.Expr) {
-		if typ == nil {
-			return
-		}
-		if u, ok := match(typ, true); ok {
-			add(typ, u)
+	// valueOf reports a value use of a guarded type: the type itself, or
+	// the element type of an array, slice, map or channel of it; a pointer
+	// only where literal says so (a composite literal's elements, where
+	// an elided {} makes one).
+	var valueOf func(typ ast.Expr, literal bool)
+	valueOf = func(typ ast.Expr, literal bool) {
+		switch t := typ.(type) {
+		case nil:
+		case *ast.ParenExpr:
+			valueOf(t.X, literal)
+		case *ast.ArrayType:
+			valueOf(t.Elt, literal)
+		case *ast.MapType:
+			valueOf(t.Key, literal)
+			valueOf(t.Value, literal)
+		case *ast.ChanType:
+			valueOf(t.Value, literal)
+		case *ast.StarExpr:
+			if literal {
+				valueOf(t.X, literal)
+			}
+		default:
+			if u, ok := match(typ, true); ok {
+				add(typ, u)
+			}
 		}
 	}
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.CompositeLit:
-			valueOf(n.Type)
+			// The literal's type and its element types, pointers included
+			// ([]*http.Client{{}} makes Clients). An elided inner
+			// literal has no type: the outer one was judged.
+			valueOf(n.Type, true)
 		case *ast.CallExpr:
-			if id, ok := n.Fun.(*ast.Ident); ok && id.Name == "new" && len(n.Args) == 1 {
-				valueOf(n.Args[0])
+			if id, ok := n.Fun.(*ast.Ident); ok && (id.Name == "new" || id.Name == "make") && len(n.Args) >= 1 {
+				valueOf(n.Args[0], false)
 			}
 		case *ast.ValueSpec:
-			valueOf(n.Type)
+			valueOf(n.Type, false)
 		case *ast.Field:
-			valueOf(n.Type)
+			valueOf(n.Type, false)
+		case *ast.TypeSpec:
+			valueOf(n.Type, false)
 		case *ast.SelectorExpr:
 			if u, ok := match(n, false); ok {
 				add(n, u)
@@ -251,7 +284,8 @@ func TestExceptionsCount(t *testing.T) {
 }
 
 // The scan itself catches what it must: every form, a renamed import, a
-// dot-import, and nothing in a test file; a pointer type is not a value.
+// dot-import, declared types, element types, DNS lookups, and nothing in a
+// test file; a pointer type is not a value outside a composite literal.
 func TestStructureScanCatches(t *testing.T) {
 	dir := t.TempDir()
 	src := `package x
@@ -260,7 +294,10 @@ import (
 	"crypto/tls"
 	"net"
 	h "net/http"
+	"net/rpc"
+	"net/rpc/jsonrpc"
 	"net/smtp"
+	"net/textproto"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -289,6 +326,33 @@ func f(passed *h.Client) {
 	smtp.SendMail("x", nil, "", nil, nil)
 	s3.New(s3.Options{})
 }
+
+type alias = h.Client
+type defined h.Transport
+type pointer *h.Client
+
+var (
+	list   []h.Client
+	table  map[string]h.Transport
+	queue  chan h.Client
+	refs   []*h.Client
+	array  [2]h.Client
+)
+
+func g() {
+	_ = []h.Client{{}}
+	_ = []*h.Client{{}}
+	_ = map[string]*h.Transport{"a": {}}
+	_ = make([]h.Client, 3)
+	_ = make(chan *h.Client)
+	net.LookupHost("x")
+	net.LookupTXT("x")
+	_ = net.DefaultResolver
+	_ = &net.Resolver{}
+	rpc.Dial("tcp", "x")
+	jsonrpc.Dial("tcp", "x")
+	textproto.Dial("tcp", "x")
+}
 `
 	writeFile(t, filepath.Join(dir, "x.go"), src)
 	writeFile(t, filepath.Join(dir, "x_test.go"), src)
@@ -299,10 +363,15 @@ func f(passed *h.Client) {
 	}
 	want := []string{
 		"dot.go:3 dot-import of net/http",
-		"x.go:12 http.Client", "x.go:14 http.Transport", "x.go:17 http.Client",
-		"x.go:20 net.Dial", "x.go:21 net.Dialer", "x.go:22 net.ListenPacket", "x.go:23 http.DefaultClient", "x.go:24 http.Get",
-		"x.go:25 http.Transport", "x.go:26 http.Client", "x.go:27 http.Client", "x.go:28 http.Transport", "x.go:29 http.Client",
-		"x.go:31 http.ProxyFromEnvironment", "x.go:32 tls.Dial", "x.go:33 smtp.SendMail", "x.go:34 s3.New",
+		"x.go:15 http.Client", "x.go:17 http.Transport", "x.go:20 http.Client",
+		"x.go:23 net.Dial", "x.go:24 net.Dialer", "x.go:25 net.ListenPacket", "x.go:26 http.DefaultClient", "x.go:27 http.Get",
+		"x.go:28 http.Transport", "x.go:29 http.Client", "x.go:30 http.Client", "x.go:31 http.Transport", "x.go:32 http.Client",
+		"x.go:34 http.ProxyFromEnvironment", "x.go:35 tls.Dial", "x.go:36 smtp.SendMail", "x.go:37 s3.New",
+		"x.go:40 http.Client", "x.go:41 http.Transport",
+		"x.go:45 http.Client", "x.go:46 http.Transport", "x.go:47 http.Client", "x.go:49 http.Client",
+		"x.go:53 http.Client", "x.go:54 http.Client", "x.go:55 http.Transport", "x.go:56 http.Client",
+		"x.go:58 net.LookupHost", "x.go:59 net.LookupTXT", "x.go:60 net.DefaultResolver", "x.go:61 net.Resolver",
+		"x.go:62 rpc.Dial", "x.go:63 jsonrpc.Dial", "x.go:64 textproto.Dial",
 	}
 	sort.Strings(uses)
 	sort.Strings(want)

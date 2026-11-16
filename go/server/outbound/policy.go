@@ -373,6 +373,33 @@ func (p *Policy) dialer(scheme string) func(ctx context.Context, network, addr s
 // 8305), as Go's own dialer gives it.
 const fallbackDelay = 300 * time.Millisecond
 
+// socketAddress is an address as a socket names it: a mapped address in
+// its IPv4 form, the zone dropped.
+func socketAddress(address string) string {
+	a, err := netip.ParseAddr(address)
+	if err != nil {
+		return address
+	}
+	return a.WithZone("").Unmap().String()
+}
+
+// checkedControl is the dialer's Control hook: it sees the address the
+// socket connects to, and refuses any but the answers this dial checked,
+// so nothing is sent to an address the policy did not decide.
+func checkedControl(answers []Answer) func(network, address string, c syscall.RawConn) error {
+	checked := map[string]bool{}
+	for _, a := range answers {
+		checked[socketAddress(a.Address)] = true
+	}
+	return func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil || !checked[socketAddress(host)] {
+			return fmt.Errorf("outbound: a connection to an unchecked address %s", address)
+		}
+		return nil
+	}
+}
+
 // dialChecked connects to one of the checked addresses: the first answer's
 // family first, the other after fallbackDelay or the first family's
 // failure, each family's addresses in order; the first connection wins.
@@ -385,30 +412,9 @@ func (p *Policy) dialChecked(ctx context.Context, answers []Answer, port string)
 			fallback = append(fallback, a)
 		}
 	}
-	// The checked addresses as the socket names them (mapped addresses
-	// in their IPv4 form, zones dropped).
-	same := func(address string) string {
-		a, err := netip.ParseAddr(address)
-		if err != nil {
-			return address
-		}
-		return a.WithZone("").Unmap().String()
-	}
-	checked := map[string]bool{}
-	for _, a := range answers {
-		checked[same(a.Address)] = true
-	}
 	dial := p.dial
 	if dial == nil {
-		// Control sees the address the socket connects to: one this dial
-		// checked, or nothing is sent.
-		d := net.Dialer{Control: func(_, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil || !checked[same(host)] {
-				return fmt.Errorf("outbound: a connection to an unchecked address %s", address)
-			}
-			return nil
-		}}
+		d := net.Dialer{Control: checkedControl(answers)}
 		dial = d.DialContext
 	}
 	// serial tries a family's addresses in order within ctx's deadline,
@@ -418,15 +424,15 @@ func (p *Policy) dialChecked(ctx context.Context, answers []Answer, port string)
 	serial := func(ctx context.Context, list []Answer) (net.Conn, error) {
 		var last error
 		for i, a := range list {
-			attempt := ctx
+			attempt, cancel := ctx, context.CancelFunc(func() {})
 			if deadline, ok := ctx.Deadline(); ok {
 				share := time.Until(deadline) / time.Duration(len(list)-i)
 				share = max(share, min(2*time.Second, time.Until(deadline)))
-				var cancel context.CancelFunc
 				attempt, cancel = context.WithTimeout(ctx, share)
-				defer cancel()
 			}
 			c, err := dial(attempt, "tcp", net.JoinHostPort(a.Address, port))
+			// Released at once: a connection made outlives its dial's context.
+			cancel()
 			if err == nil {
 				return c, nil
 			}
