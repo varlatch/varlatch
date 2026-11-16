@@ -3,7 +3,8 @@
  * A minimal S3 client for the audit-export suite: AWS Signature Version 4
  * over fetch, path style, for the few requests the suite makes of the
  * local object store (create a bucket with Object Lock, list objects, read
- * an object and its retention). Standard library only.
+ * an object and its retention). Standard library only. An answer's body
+ * comes as text and as bytes (`body`, for a gzipped object).
  */
 import { createHash, createHmac } from "node:crypto";
 
@@ -43,7 +44,8 @@ export async function s3Request({ endpoint, region, accessKeyId, secretAccessKey
     ...(body ? { body } : {}),
     signal: AbortSignal.timeout(30_000),
   });
-  return { status: res.status, text: await res.text(), headers: res.headers };
+  const bytes = Buffer.from(await res.arrayBuffer());
+  return { status: res.status, text: bytes.toString("utf8"), body: bytes, headers: res.headers };
 }
 
 /** The keys a ListObjectsV2 answer names. */

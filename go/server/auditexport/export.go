@@ -13,7 +13,9 @@
 // change that loosens (another destination, a shorter or removed
 // retention, compliance to governance), a new key and removal always need
 // the requester's step-up approval, whatever the Security Controls' modes.
-// The worker, the drains and `admin audit-export` come in 4.11b.
+// The worker (worker.go) copies the log, one object at a time, through
+// plans stored before they are uploaded; drains, restarts and the host's
+// `admin audit-export discard-plan` are in streams.go.
 package auditexport
 
 import (
@@ -297,10 +299,12 @@ func streamBase(prefix, organizationID, streamID string) string {
 	return prefix + "varlatch-audit/" + organizationID + "/" + streamID + "/"
 }
 
-// planned is an object planned before it is uploaded.
+// planned is an object planned before it is uploaded (Planned).
 type planned struct {
 	kind, objectName, contentType string
 	body                          []byte
+	// A batch's positions and count; a heartbeat's hour.
+	firstOrder, lastOrder, eventCount, heartbeatHour sql.NullInt64
 }
 
 // msTime is a time as a JavaScript Date holds it: milliseconds.
@@ -308,20 +312,45 @@ func msTime(t time.Time) time.Time { return t.Truncate(time.Millisecond) }
 
 func isoMs(t time.Time) string { return audit.ISOTime(msTime(t).UnixMicro()) }
 
-// manifestPlan is manifestPlan: the stream's stream.json.
-func manifestPlan(prefix, organizationID, streamID string, startOrder int64, previousStreamID *string, reason string, plannedAt time.Time) planned {
-	var previous any
-	if previousStreamID != nil {
-		previous = *previousStreamID
+// overlap is a dropped batch's range, which a new stream may write again.
+type overlap struct{ firstOrder, lastOrder int64 }
+
+func (o *overlap) js() any {
+	if o == nil {
+		return nil
 	}
-	body := jsvalue.Stringify(jsvalue.Object{
+	return jsvalue.Object{{Key: "firstOrder", Value: strconv.FormatInt(o.firstOrder, 10)}, {Key: "lastOrder", Value: strconv.FormatInt(o.lastOrder, 10)}}
+}
+
+// manifest is manifestPlan's input. Previous is nil for a first stream;
+// cause is "" for none.
+type manifest struct {
+	prefix, organizationID, streamID string
+	startOrder                       int64
+	previous                         *string
+	reason, cause                    string
+	possibleOverlap                  *overlap
+	plannedAt                        time.Time
+}
+
+// manifestPlan is manifestPlan: the stream's stream.json.
+func manifestPlan(m manifest) planned {
+	var previous any
+	if m.previous != nil {
+		previous = *m.previous
+	}
+	o := jsvalue.Object{
 		{Key: "format", Value: formatName}, {Key: "version", Value: FormatVersion}, {Key: "kind", Value: "stream"},
-		{Key: "organizationId", Value: organizationID}, {Key: "streamId", Value: streamID},
-		{Key: "startOrder", Value: strconv.FormatInt(startOrder, 10)}, {Key: "previousStreamId", Value: previous},
-		{Key: "reason", Value: reason}, {Key: "possibleOverlap", Value: nil}, {Key: "plannedAt", Value: isoMs(plannedAt)},
-	})
-	return planned{kind: "manifest", objectName: streamBase(prefix, organizationID, streamID) + "stream.json",
-		body: append(body, '\n'), contentType: "application/json"}
+		{Key: "organizationId", Value: m.organizationID}, {Key: "streamId", Value: m.streamID},
+		{Key: "startOrder", Value: strconv.FormatInt(m.startOrder, 10)}, {Key: "previousStreamId", Value: previous},
+		{Key: "reason", Value: m.reason},
+	}
+	if m.cause != "" {
+		o = append(o, jsvalue.Member{Key: "cause", Value: m.cause})
+	}
+	o = append(o, jsvalue.Member{Key: "possibleOverlap", Value: m.possibleOverlap.js()}, jsvalue.Member{Key: "plannedAt", Value: isoMs(m.plannedAt)})
+	return planned{kind: "manifest", objectName: streamBase(m.prefix, m.organizationID, m.streamID) + "stream.json",
+		body: append(jsvalue.Stringify(o), '\n'), contentType: "application/json"}
 }
 
 func sha256Hex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
@@ -339,19 +368,27 @@ func insertPlan(ctx context.Context, db query.DBTX, exportID string, version int
 	return query.New(db).InsertAuditExportPlan(ctx, query.InsertAuditExportPlanParams{
 		ID: ids.New(ids.AuditExportPlan), ExportID: exportID, ExportVersion: version, StreamID: streamID, Generation: generation,
 		Kind: p.kind, ObjectName: p.objectName, Body: p.body, Sha256: sha256Hex(p.body), Md5: md5Hex(p.body),
-		ContentType: p.contentType, FormatVersion: FormatVersion, RetentionMode: mode, RetainUntil: until, PlannedAt: plannedAt.UnixMicro(),
+		ContentType: p.contentType, FormatVersion: FormatVersion, RetentionMode: mode, RetainUntil: until,
+		FirstOrder: p.firstOrder, LastOrder: p.lastOrder, EventCount: p.eventCount, HeartbeatHour: p.heartbeatHour, PlannedAt: plannedAt.UnixMicro(),
 	})
 }
 
-// streamStarted is streamStartedEvent.
-func streamStarted(organizationID, exportID, streamID string, previous *string, reason string, actor *string, requestID *string) audit.Event {
+// streamStarted is streamStartedEvent; cause "" and o nil for none.
+func streamStarted(organizationID, exportID, streamID string, previous *string, reason, cause string, actor *string, requestID *string, o *overlap) audit.Event {
 	var prev any
 	if previous != nil {
 		prev = *previous
 	}
+	md := jsvalue.Object{{Key: "streamId", Value: streamID}, {Key: "previousStreamId", Value: prev}, {Key: "reason", Value: reason}}
+	if cause != "" {
+		md = append(md, jsvalue.Member{Key: "cause", Value: cause})
+	}
+	if o != nil {
+		md = append(md, jsvalue.Member{Key: "overlapFirstOrder", Value: strconv.FormatInt(o.firstOrder, 10)},
+			jsvalue.Member{Key: "overlapLastOrder", Value: strconv.FormatInt(o.lastOrder, 10)})
+	}
 	return audit.Event{
 		Type: "audit_export.stream_started", Decision: audit.Info, ActorIdentityID: actor, OrganizationID: &organizationID, RequestID: requestID,
-		Resource: jsvalue.Object{{Key: "exportId", Value: exportID}},
-		Metadata: jsvalue.Object{{Key: "streamId", Value: streamID}, {Key: "previousStreamId", Value: prev}, {Key: "reason", Value: reason}},
+		Resource: jsvalue.Object{{Key: "exportId", Value: exportID}}, Metadata: md,
 	}
 }

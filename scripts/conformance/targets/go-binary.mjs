@@ -45,9 +45,11 @@
  *   objectStore
  *             MinIO, pinned by digest, on a free loopback port that
  *             outbound_allow opens: `start` runs it; `down` removes it
+ *   hostAdmin `audit-export ...` through the daemon's control socket: its
+ *             exit status and output
  *
  * Optional capabilities (targets/capabilities.json, their only source): the
- * device sign-in probes, go-server, webhook-receiver and object-store. Maintenance and
+ * device sign-in probes, go-server, webhook-receiver, object-store and host-admin. Maintenance and
  * serve-cli come with the operations that need them (expect/go-binary.json
  * lists them).
  * The only processes it signals are the ones it started, by the PID it
@@ -338,6 +340,17 @@ function admin(state, args) {
   }
   if (r.status !== 0) throw new Error(`varlatchd admin ${args[0]} exited ${r.status ?? r.signal}: ${(r.stderr || r.stdout).trim().slice(0, 500)}`);
   return r.stdout;
+}
+
+/**
+ * The host-admin capability: one `varlatchd admin` host command whose
+ * refusal a suite checks (`audit-export ...` only), through the daemon's
+ * control socket. Its exit status and output, whatever the status.
+ */
+export async function hostAdmin(state, ...args) {
+  if (args[0] !== "audit-export") throw new Error(`host-admin: unknown command ${args[0]}`);
+  const r = spawnSync(state.binary, ["admin", ...args, "--config", state.conf], { encoding: "utf8", timeout: 60_000 });
+  return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
 export async function bootstrap(state) {

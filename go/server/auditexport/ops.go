@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,10 @@ type Service struct {
 	// VerifiedProvider treats an endpoint as a verified Object Lock
 	// provider (tests: the local S3 server, Decision 7); nil for none.
 	VerifiedProvider func(endpoint string) bool
+	// Log is the worker's; nil logs to slog's default.
+	Log *slog.Logger
+	// Hooks are the worker's test-only fault injection.
+	Hooks Hooks
 }
 
 func (s *Service) now() time.Time {
@@ -355,7 +360,7 @@ func (s *Service) Create(ctx context.Context, req Request, org authz.Organizatio
 						{Key: "retentionMode", Value: rmode}, {Key: "retentionDays", Value: rdays}, {Key: "from", Value: in.From},
 					},
 				},
-				streamStarted(org.ID, id, streamID, nil, "created", &actor, &req.RequestID))
+				streamStarted(org.ID, id, streamID, nil, "created", "", &actor, &req.RequestID, nil))
 			if err != nil {
 				return struct{}{}, err
 			}
@@ -378,7 +383,7 @@ func (s *Service) Create(ctx context.Context, req Request, org authz.Organizatio
 				return struct{}{}, err
 			}
 			return struct{}{}, insertPlan(ctx, tx, id, 1, streamID, 0,
-				manifestPlan(dest.Prefix, org.ID, streamID, cursor, nil, "created", now), retention, now)
+				manifestPlan(manifest{prefix: dest.Prefix, organizationID: org.ID, streamID: streamID, startOrder: cursor, reason: "created", plannedAt: now}), retention, now)
 		},
 	})
 	return reports, err
@@ -774,7 +779,7 @@ func (s *Service) Change(ctx context.Context, req Request, org authz.Organizatio
 		if dc.c.destinationChanged {
 			previous := locked.StreamID
 			if err := insertPlan(ctx, tx, exportID, updated.Version, streamID, updated.Generation,
-				manifestPlan(dc.dest.Prefix, org.ID, streamID, updated.CursorOrder, &previous, "destination_changed", plannedAt), dc.ret, plannedAt); err != nil {
+				manifestPlan(manifest{prefix: dc.dest.Prefix, organizationID: org.ID, streamID: streamID, startOrder: updated.CursorOrder, previous: &previous, reason: "destination_changed", plannedAt: plannedAt}), dc.ret, plannedAt); err != nil {
 				return err
 			}
 		}
@@ -785,7 +790,7 @@ func (s *Service) Change(ctx context.Context, req Request, org authz.Organizatio
 		}}
 		if dc.c.destinationChanged {
 			previous := locked.StreamID
-			events = append(events, streamStarted(org.ID, exportID, streamID, &previous, "destination_changed", &actor, &req.RequestID))
+			events = append(events, streamStarted(org.ID, exportID, streamID, &previous, "destination_changed", "", &actor, &req.RequestID, nil))
 		}
 		_, err = audit.Record(ctx, tx, events...)
 		return err

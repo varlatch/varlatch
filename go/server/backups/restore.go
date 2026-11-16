@@ -21,6 +21,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/auditexport"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/db/query"
@@ -34,9 +35,8 @@ import (
 // archive, the Root KEK must open its canaries. It is the TypeScript
 // restore's sequence for one SQLite file:
 //
-//  1. the archive opens (integrity), this release restores it, the Root
-//     KEK opens its canaries, and it holds no audit export stream (those
-//     restart on a restore, which arrives with the audit export port);
+//  1. the archive opens (integrity), this release restores it, and the
+//     Root KEK opens its canaries;
 //  2. a database already in the directory must be the same installation;
 //  3. a restore gate (maintenance.json, kind restore) is opened, or a
 //     restore of the same archive that stopped is resumed. While it is
@@ -45,7 +45,8 @@ import (
 //     old WAL removed, renamed into place, the directory synced;
 //  5. the restored database opens with this release, its installation is
 //     the archive's and its canary opens with the Root KEK, and the
-//     installation.restored audit event is the first new one;
+//     installation.restored audit event is the first new one, with every
+//     live audit export's new stream after it (ADR-0056 Decision 5);
 //  6. the gate is removed.
 //
 // A restore that fails or is killed leaves the gate open; running it
@@ -86,11 +87,6 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 		return RestoreResult{}, errors.New("the Root KEK does not open the archive's canary: a restore needs the installation's own Root KEK")
 	}
 	snapshot := opened.Path(backup.ComponentDatabase)
-	if n, err := activeAuditExports(ctx, snapshot); err != nil {
-		return RestoreResult{}, err
-	} else if n > 0 {
-		return RestoreResult{}, fmt.Errorf("the archive has %d active audit export(s), whose streams a restore restarts; varlatchd restores them once the audit export is ported (ADR-0059 step 4)", n)
-	}
 	var settings Configuration
 	if raw, err := os.ReadFile(opened.Path(backup.ComponentConfiguration)); err != nil || json.Unmarshal(raw, &settings) != nil {
 		return RestoreResult{}, errors.New("the archive's configuration.json cannot be read")
@@ -128,7 +124,7 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 		return RestoreResult{}, err
 	}
 
-	if err := reconcile(audit.WithClock(ctx, now), cfg, m, opened.ManifestJSON, rootKEK); err != nil {
+	if err := reconcile(audit.WithClock(ctx, now), cfg, m, opened.ManifestJSON, rootKEK, now()); err != nil {
 		return RestoreResult{}, err
 	}
 	if err := os.Remove(filepath.Join(cfg.DataDir, backup.GateFile)); err != nil {
@@ -188,8 +184,9 @@ func openRestoreGate(dir, archiveID string, now func() time.Time) (backup.Gate, 
 
 // reconcile opens the restored database with this release, checks it is
 // the archive's installation under this Root KEK, and records
-// installation.restored.
-func reconcile(ctx context.Context, cfg *config.Config, m backup.Manifest, manifest []byte, rootKEK []byte) error {
+// installation.restored, every live audit export's stream restarted at
+// its restored cursor in the same job (recordRestore).
+func reconcile(ctx context.Context, cfg *config.Config, m backup.Manifest, manifest []byte, rootKEK []byte, now time.Time) error {
 	store, err := storage.Open(ctx, storage.Options{Path: cfg.DatabasePath()})
 	if err != nil {
 		return fmt.Errorf("the restored database does not open: %w", err)
@@ -208,11 +205,10 @@ func reconcile(ctx context.Context, cfg *config.Config, m backup.Manifest, manif
 		if row.ID != m.InstallationID || json.Unmarshal([]byte(row.KekCanary), &canary) != nil || !envelope.VerifyCanary(rootKEK, canary, row.ID) {
 			return errors.New("the restored installation, or its canary, did not verify")
 		}
-		_, err = audit.Record(ctx, tx, audit.Event{
+		return auditexport.RecordRestore(ctx, tx, audit.Event{
 			Type: "installation.restored", Decision: audit.Info,
 			Metadata: jsvalue.Object{{Key: "archiveId", Value: m.ArchiveID}, {Key: "manifestIdentity", Value: hex.EncodeToString(sum[:])}, {Key: "installationId", Value: row.ID}},
-		})
-		return err
+		}, now)
 	})
 }
 
@@ -242,19 +238,6 @@ func installationOf(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return id, nil
-}
-
-// activeAuditExports counts the snapshot's audit exports whose stream a
-// restore would restart.
-func activeAuditExports(ctx context.Context, snapshot string) (int, error) {
-	conn, err := sql.Open("sqlite", fileURI(snapshot)+"?mode=ro&immutable=1")
-	if err != nil {
-		return 0, err
-	}
-	defer conn.Close()
-	var n int
-	err = conn.QueryRowContext(ctx, "SELECT count(*) FROM audit_exports WHERE state IN ('active', 'draining')").Scan(&n)
-	return n, err
 }
 
 func copyFile(from, to string) (err error) {

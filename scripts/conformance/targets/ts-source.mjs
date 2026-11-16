@@ -195,4 +195,5 @@ export const {
   tsStack,
   webhookReceiver,
   objectStore,
+  hostAdmin,
 } = stack;

@@ -12,6 +12,124 @@ import (
 	"database/sql"
 )
 
+const abandonAuditExport = `-- name: AbandonAuditExport :exec
+UPDATE audit_exports SET state = 'abandoned', credential_envelope = NULL, generation = generation + 1, lease_expires_at = NULL,
+  updated_at = ?1
+WHERE id = ?2
+`
+
+type AbandonAuditExportParams struct {
+	At int64
+	ID string
+}
+
+// abandonLocked: no state guard; every caller has just checked, in its
+// job, that the export is a drain past its deadline.
+func (q *Queries) AbandonAuditExport(ctx context.Context, arg AbandonAuditExportParams) error {
+	_, err := q.db.ExecContext(ctx, abandonAuditExport, arg.At, arg.ID)
+	return err
+}
+
+const auditEventsToExport = `-- name: AuditEventsToExport :many
+SELECT event_order, id, schema_version, event_type, occurred_at, actor_identity_id, authentication_method_id, credential_id, organization_id, "action", resource, decision, authz, tailnet, listener, request_id, metadata, client FROM audit_events WHERE organization_id = ? AND event_order > ? ORDER BY event_order LIMIT ?
+`
+
+type AuditEventsToExportParams struct {
+	OrganizationID sql.NullString
+	EventOrder     int64
+	Limit          int64
+}
+
+// planNext: the next events after the cursor, in position order.
+func (q *Queries) AuditEventsToExport(ctx context.Context, arg AuditEventsToExportParams) ([]AuditEvent, error) {
+	rows, err := q.db.QueryContext(ctx, auditEventsToExport, arg.OrganizationID, arg.EventOrder, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditEvent
+	for rows.Next() {
+		var i AuditEvent
+		if err := rows.Scan(
+			&i.EventOrder,
+			&i.ID,
+			&i.SchemaVersion,
+			&i.EventType,
+			&i.OccurredAt,
+			&i.ActorIdentityID,
+			&i.AuthenticationMethodID,
+			&i.CredentialID,
+			&i.OrganizationID,
+			&i.Action,
+			&i.Resource,
+			&i.Decision,
+			&i.Authz,
+			&i.Tailnet,
+			&i.Listener,
+			&i.RequestID,
+			&i.Metadata,
+			&i.Client,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const auditExportByID = `-- name: AuditExportByID :one
+
+SELECT id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope, retention_mode, retention_days, stream_id, stream_started_at, cursor_order, generation, lease_expires_at, state, drain_deadline, last_attempt_at, last_success_at, last_error, failing_since, failing_recorded, key_can_read, retention_readable, stopped_reason, conditional_checked_at, lock_verified, last_heartbeat_hour, created_by, created_at, updated_at, removed_at, version FROM audit_exports WHERE id = ?
+`
+
+// The worker (Decisions 2, 3 and 10; ADR-0059 step 4.11b).
+func (q *Queries) AuditExportByID(ctx context.Context, id string) (AuditExport, error) {
+	row := q.db.QueryRowContext(ctx, auditExportByID, id)
+	var i AuditExport
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Endpoint,
+		&i.Region,
+		&i.Bucket,
+		&i.Prefix,
+		&i.PathStyle,
+		&i.CredentialEnvelope,
+		&i.RetentionMode,
+		&i.RetentionDays,
+		&i.StreamID,
+		&i.StreamStartedAt,
+		&i.CursorOrder,
+		&i.Generation,
+		&i.LeaseExpiresAt,
+		&i.State,
+		&i.DrainDeadline,
+		&i.LastAttemptAt,
+		&i.LastSuccessAt,
+		&i.LastError,
+		&i.FailingSince,
+		&i.FailingRecorded,
+		&i.KeyCanRead,
+		&i.RetentionReadable,
+		&i.StoppedReason,
+		&i.ConditionalCheckedAt,
+		&i.LockVerified,
+		&i.LastHeartbeatHour,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RemovedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
 const auditExportLag = `-- name: AuditExportLag :one
 SELECT count(e.event_order) AS n, min(e.occurred_at) AS oldest FROM audit_exports x
 JOIN audit_events e ON e.organization_id = x.organization_id AND e.event_order > x.cursor_order
@@ -155,6 +273,38 @@ func (q *Queries) ChangeAuditExport(ctx context.Context, arg ChangeAuditExportPa
 	return i, err
 }
 
+const commitAuditExportPlan = `-- name: CommitAuditExportPlan :exec
+UPDATE audit_exports SET cursor_order = ?1,
+  last_heartbeat_hour = coalesce(?2, last_heartbeat_hour),
+  last_success_at = ?3, last_attempt_at = ?3, last_error = NULL,
+  failing_since = NULL, failing_recorded = 0, key_can_read = coalesce(?4, key_can_read),
+  state = CASE WHEN CAST(?5 AS INTEGER) = 1 THEN 'completed' ELSE state END,
+  credential_envelope = CASE WHEN CAST(?5 AS INTEGER) = 1 THEN NULL ELSE credential_envelope END,
+  lease_expires_at = CASE WHEN CAST(?5 AS INTEGER) = 1 THEN NULL ELSE lease_expires_at END
+WHERE id = ?6
+`
+
+type CommitAuditExportPlanParams struct {
+	CursorOrder   int64
+	HeartbeatHour sql.NullInt64
+	At            sql.NullInt64
+	KeyCanRead    sql.NullBool
+	Completes     int64
+	ID            string
+}
+
+func (q *Queries) CommitAuditExportPlan(ctx context.Context, arg CommitAuditExportPlanParams) error {
+	_, err := q.db.ExecContext(ctx, commitAuditExportPlan,
+		arg.CursorOrder,
+		arg.HeartbeatHour,
+		arg.At,
+		arg.KeyCanRead,
+		arg.Completes,
+		arg.ID,
+	)
+	return err
+}
+
 const deleteAuditExportPlan = `-- name: DeleteAuditExportPlan :exec
 DELETE FROM audit_export_plans WHERE id = ?
 `
@@ -162,6 +312,129 @@ DELETE FROM audit_export_plans WHERE id = ?
 func (q *Queries) DeleteAuditExportPlan(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, deleteAuditExportPlan, id)
 	return err
+}
+
+const deleteAuditExportPlanOf = `-- name: DeleteAuditExportPlanOf :exec
+DELETE FROM audit_export_plans WHERE export_id = ?
+`
+
+func (q *Queries) DeleteAuditExportPlanOf(ctx context.Context, exportID string) error {
+	_, err := q.db.ExecContext(ctx, deleteAuditExportPlanOf, exportID)
+	return err
+}
+
+const drainAuditExport = `-- name: DrainAuditExport :exec
+UPDATE audit_exports SET state = 'draining', credential_envelope = ?1, drain_deadline = ?2,
+  generation = generation + 1, lease_expires_at = NULL, updated_at = ?3
+WHERE id = ?4
+`
+
+type DrainAuditExportParams struct {
+	CredentialEnvelope sql.NullString
+	DrainDeadline      sql.NullInt64
+	At                 int64
+	ID                 string
+}
+
+// rewrapForDrain: the key under the Root KEK, a fixed deadline.
+func (q *Queries) DrainAuditExport(ctx context.Context, arg DrainAuditExportParams) error {
+	_, err := q.db.ExecContext(ctx, drainAuditExport,
+		arg.CredentialEnvelope,
+		arg.DrainDeadline,
+		arg.At,
+		arg.ID,
+	)
+	return err
+}
+
+const dueAuditExports = `-- name: DueAuditExports :many
+SELECT id FROM audit_exports WHERE state IN ('active', 'draining') AND stopped_reason IS NULL
+  AND (lease_expires_at IS NULL OR lease_expires_at < ?1) ORDER BY id
+`
+
+// runAuditExportsOnce: every live export whose lease is free.
+func (q *Queries) DueAuditExports(ctx context.Context, now sql.NullInt64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, dueAuditExports, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const expiredAuditExportDrains = `-- name: ExpiredAuditExportDrains :many
+SELECT id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope, retention_mode, retention_days, stream_id, stream_started_at, cursor_order, generation, lease_expires_at, state, drain_deadline, last_attempt_at, last_success_at, last_error, failing_since, failing_recorded, key_can_read, retention_readable, stopped_reason, conditional_checked_at, lock_verified, last_heartbeat_hour, created_by, created_at, updated_at, removed_at, version FROM audit_exports WHERE state = 'draining' AND drain_deadline <= ? ORDER BY id
+`
+
+func (q *Queries) ExpiredAuditExportDrains(ctx context.Context, drainDeadline sql.NullInt64) ([]AuditExport, error) {
+	rows, err := q.db.QueryContext(ctx, expiredAuditExportDrains, drainDeadline)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditExport
+	for rows.Next() {
+		var i AuditExport
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Endpoint,
+			&i.Region,
+			&i.Bucket,
+			&i.Prefix,
+			&i.PathStyle,
+			&i.CredentialEnvelope,
+			&i.RetentionMode,
+			&i.RetentionDays,
+			&i.StreamID,
+			&i.StreamStartedAt,
+			&i.CursorOrder,
+			&i.Generation,
+			&i.LeaseExpiresAt,
+			&i.State,
+			&i.DrainDeadline,
+			&i.LastAttemptAt,
+			&i.LastSuccessAt,
+			&i.LastError,
+			&i.FailingSince,
+			&i.FailingRecorded,
+			&i.KeyCanRead,
+			&i.RetentionReadable,
+			&i.StoppedReason,
+			&i.ConditionalCheckedAt,
+			&i.LockVerified,
+			&i.LastHeartbeatHour,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RemovedAt,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const insertAuditExport = `-- name: InsertAuditExport :exec
@@ -273,6 +546,17 @@ func (q *Queries) InsertAuditExportPlan(ctx context.Context, arg InsertAuditExpo
 	return err
 }
 
+const latestAuditEventOrder = `-- name: LatestAuditEventOrder :one
+SELECT CAST(coalesce(max(event_order), 0) AS INTEGER) AS m FROM audit_events WHERE organization_id = ?
+`
+
+func (q *Queries) LatestAuditEventOrder(ctx context.Context, organizationID sql.NullString) (int64, error) {
+	row := q.db.QueryRowContext(ctx, latestAuditEventOrder, organizationID)
+	var m int64
+	err := row.Scan(&m)
+	return m, err
+}
+
 const latestAuditExport = `-- name: LatestAuditExport :one
 SELECT id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope, retention_mode, retention_days, stream_id, stream_started_at, cursor_order, generation, lease_expires_at, state, drain_deadline, last_attempt_at, last_success_at, last_error, failing_since, failing_recorded, key_can_read, retention_readable, stopped_reason, conditional_checked_at, lock_verified, last_heartbeat_hour, created_by, created_at, updated_at, removed_at, version FROM audit_exports WHERE organization_id = ?
 ORDER BY (state IN ('active', 'draining')) DESC, created_at DESC, id DESC LIMIT 1
@@ -325,9 +609,9 @@ const liveAuditExport = `-- name: LiveAuditExport :one
 SELECT id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope, retention_mode, retention_days, stream_id, stream_started_at, cursor_order, generation, lease_expires_at, state, drain_deadline, last_attempt_at, last_success_at, last_error, failing_since, failing_recorded, key_can_read, retention_readable, stopped_reason, conditional_checked_at, lock_verified, last_heartbeat_hour, created_by, created_at, updated_at, removed_at, version FROM audit_exports WHERE organization_id = ? AND state IN ('active', 'draining')
 `
 
-// Audit export to object storage, its configuration (domain/auditexport.ts;
-// ADR-0056; ADR-0059 step 4.11a). Every time written is varlatchd's clock,
-// passed in.
+// Audit export to object storage: its configuration and its worker
+// (domain/auditexport.ts; ADR-0056; ADR-0059 step 4.11). Every time written
+// or compared is varlatchd's clock, passed in.
 // liveExport: the Organization's active or draining export.
 func (q *Queries) LiveAuditExport(ctx context.Context, organizationID string) (AuditExport, error) {
 	row := q.db.QueryRowContext(ctx, liveAuditExport, organizationID)
@@ -368,6 +652,77 @@ func (q *Queries) LiveAuditExport(ctx context.Context, organizationID string) (A
 		&i.Version,
 	)
 	return i, err
+}
+
+const liveAuditExports = `-- name: LiveAuditExports :many
+SELECT id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope, retention_mode, retention_days, stream_id, stream_started_at, cursor_order, generation, lease_expires_at, state, drain_deadline, last_attempt_at, last_success_at, last_error, failing_since, failing_recorded, key_can_read, retention_readable, stopped_reason, conditional_checked_at, lock_verified, last_heartbeat_hour, created_by, created_at, updated_at, removed_at, version FROM audit_exports WHERE state IN ('active', 'draining') ORDER BY id
+`
+
+// recordRestore: every live export.
+func (q *Queries) LiveAuditExports(ctx context.Context) ([]AuditExport, error) {
+	rows, err := q.db.QueryContext(ctx, liveAuditExports)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditExport
+	for rows.Next() {
+		var i AuditExport
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Endpoint,
+			&i.Region,
+			&i.Bucket,
+			&i.Prefix,
+			&i.PathStyle,
+			&i.CredentialEnvelope,
+			&i.RetentionMode,
+			&i.RetentionDays,
+			&i.StreamID,
+			&i.StreamStartedAt,
+			&i.CursorOrder,
+			&i.Generation,
+			&i.LeaseExpiresAt,
+			&i.State,
+			&i.DrainDeadline,
+			&i.LastAttemptAt,
+			&i.LastSuccessAt,
+			&i.LastError,
+			&i.FailingSince,
+			&i.FailingRecorded,
+			&i.KeyCanRead,
+			&i.RetentionReadable,
+			&i.StoppedReason,
+			&i.ConditionalCheckedAt,
+			&i.LockVerified,
+			&i.LastHeartbeatHour,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RemovedAt,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markAuditExportFailingRecorded = `-- name: MarkAuditExportFailingRecorded :exec
+UPDATE audit_exports SET failing_recorded = 1 WHERE id = ?
+`
+
+func (q *Queries) MarkAuditExportFailingRecorded(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, markAuditExportFailingRecorded, id)
+	return err
 }
 
 const organizationAuditExport = `-- name: OrganizationAuditExport :one
@@ -419,6 +774,61 @@ func (q *Queries) OrganizationAuditExport(ctx context.Context, arg OrganizationA
 		&i.Version,
 	)
 	return i, err
+}
+
+const organizationDeletedBy = `-- name: OrganizationDeletedBy :one
+SELECT count(*) FROM audit_events WHERE organization_id = ? AND event_type = 'organization.deleted' AND event_order <= ?
+`
+
+type OrganizationDeletedByParams struct {
+	OrganizationID sql.NullString
+	EventOrder     int64
+}
+
+// commitPlan: a drain completes once its batches reach organization.deleted.
+func (q *Queries) OrganizationDeletedBy(ctx context.Context, arg OrganizationDeletedByParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, organizationDeletedBy, arg.OrganizationID, arg.EventOrder)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const recordAuditExportFailure = `-- name: RecordAuditExportFailure :one
+UPDATE audit_exports SET last_attempt_at = ?1, last_error = ?2,
+  failing_since = coalesce(failing_since, ?1)
+WHERE id = ?3 RETURNING failing_since, failing_recorded
+`
+
+type RecordAuditExportFailureParams struct {
+	At        sql.NullInt64
+	LastError sql.NullString
+	ID        string
+}
+
+type RecordAuditExportFailureRow struct {
+	FailingSince    sql.NullInt64
+	FailingRecorded bool
+}
+
+func (q *Queries) RecordAuditExportFailure(ctx context.Context, arg RecordAuditExportFailureParams) (RecordAuditExportFailureRow, error) {
+	row := q.db.QueryRowContext(ctx, recordAuditExportFailure, arg.At, arg.LastError, arg.ID)
+	var i RecordAuditExportFailureRow
+	err := row.Scan(&i.FailingSince, &i.FailingRecorded)
+	return i, err
+}
+
+const releaseAuditExportLease = `-- name: ReleaseAuditExportLease :exec
+UPDATE audit_exports SET lease_expires_at = NULL WHERE id = ? AND generation = ?
+`
+
+type ReleaseAuditExportLeaseParams struct {
+	ID         string
+	Generation int64
+}
+
+func (q *Queries) ReleaseAuditExportLease(ctx context.Context, arg ReleaseAuditExportLeaseParams) error {
+	_, err := q.db.ExecContext(ctx, releaseAuditExportLease, arg.ID, arg.Generation)
+	return err
 }
 
 const removeAuditExport = `-- name: RemoveAuditExport :one
@@ -487,6 +897,140 @@ type ReplaceAuditExportCredentialParams struct {
 
 func (q *Queries) ReplaceAuditExportCredential(ctx context.Context, arg ReplaceAuditExportCredentialParams) (AuditExport, error) {
 	row := q.db.QueryRowContext(ctx, replaceAuditExportCredential, arg.CredentialEnvelope, arg.UpdatedAt, arg.ID)
+	var i AuditExport
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Endpoint,
+		&i.Region,
+		&i.Bucket,
+		&i.Prefix,
+		&i.PathStyle,
+		&i.CredentialEnvelope,
+		&i.RetentionMode,
+		&i.RetentionDays,
+		&i.StreamID,
+		&i.StreamStartedAt,
+		&i.CursorOrder,
+		&i.Generation,
+		&i.LeaseExpiresAt,
+		&i.State,
+		&i.DrainDeadline,
+		&i.LastAttemptAt,
+		&i.LastSuccessAt,
+		&i.LastError,
+		&i.FailingSince,
+		&i.FailingRecorded,
+		&i.KeyCanRead,
+		&i.RetentionReadable,
+		&i.StoppedReason,
+		&i.ConditionalCheckedAt,
+		&i.LockVerified,
+		&i.LastHeartbeatHour,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RemovedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const restartAuditExportStream = `-- name: RestartAuditExportStream :one
+UPDATE audit_exports SET stream_id = ?1, stream_started_at = ?2, stopped_reason = NULL,
+  generation = generation + 1, lease_expires_at = NULL
+WHERE id = ?3 RETURNING id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope, retention_mode, retention_days, stream_id, stream_started_at, cursor_order, generation, lease_expires_at, state, drain_deadline, last_attempt_at, last_success_at, last_error, failing_since, failing_recorded, key_can_read, retention_readable, stopped_reason, conditional_checked_at, lock_verified, last_heartbeat_hour, created_by, created_at, updated_at, removed_at, version
+`
+
+type RestartAuditExportStreamParams struct {
+	StreamID string
+	At       int64
+	ID       string
+}
+
+// restartStream and recordRestore: a new stream at the committed cursor.
+func (q *Queries) RestartAuditExportStream(ctx context.Context, arg RestartAuditExportStreamParams) (AuditExport, error) {
+	row := q.db.QueryRowContext(ctx, restartAuditExportStream, arg.StreamID, arg.At, arg.ID)
+	var i AuditExport
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Endpoint,
+		&i.Region,
+		&i.Bucket,
+		&i.Prefix,
+		&i.PathStyle,
+		&i.CredentialEnvelope,
+		&i.RetentionMode,
+		&i.RetentionDays,
+		&i.StreamID,
+		&i.StreamStartedAt,
+		&i.CursorOrder,
+		&i.Generation,
+		&i.LeaseExpiresAt,
+		&i.State,
+		&i.DrainDeadline,
+		&i.LastAttemptAt,
+		&i.LastSuccessAt,
+		&i.LastError,
+		&i.FailingSince,
+		&i.FailingRecorded,
+		&i.KeyCanRead,
+		&i.RetentionReadable,
+		&i.StoppedReason,
+		&i.ConditionalCheckedAt,
+		&i.LockVerified,
+		&i.LastHeartbeatHour,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RemovedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const stopAuditExport = `-- name: StopAuditExport :exec
+UPDATE audit_exports SET stopped_reason = ?1, last_error = ?2, last_attempt_at = ?3,
+  failing_since = coalesce(failing_since, ?3), lease_expires_at = NULL
+WHERE id = ?4
+`
+
+type StopAuditExportParams struct {
+	StoppedReason sql.NullString
+	LastError     sql.NullString
+	At            sql.NullInt64
+	ID            string
+}
+
+// stopExport: an object conflict, or a plan this release cannot upload.
+func (q *Queries) StopAuditExport(ctx context.Context, arg StopAuditExportParams) error {
+	_, err := q.db.ExecContext(ctx, stopAuditExport,
+		arg.StoppedReason,
+		arg.LastError,
+		arg.At,
+		arg.ID,
+	)
+	return err
+}
+
+const takeAuditExportLease = `-- name: TakeAuditExportLease :one
+UPDATE audit_exports SET generation = generation + 1, lease_expires_at = ?1
+WHERE id = ?2 AND state IN ('active', 'draining') AND stopped_reason IS NULL
+  AND (lease_expires_at IS NULL OR lease_expires_at < ?3)
+  AND (state <> 'draining' OR drain_deadline > ?3)
+RETURNING id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope, retention_mode, retention_days, stream_id, stream_started_at, cursor_order, generation, lease_expires_at, state, drain_deadline, last_attempt_at, last_success_at, last_error, failing_since, failing_recorded, key_can_read, retention_readable, stopped_reason, conditional_checked_at, lock_verified, last_heartbeat_hour, created_by, created_at, updated_at, removed_at, version
+`
+
+type TakeAuditExportLeaseParams struct {
+	LeaseUntil sql.NullInt64
+	ID         string
+	Now        sql.NullInt64
+}
+
+// takeLease: never on a drain past its deadline (Decision 10).
+func (q *Queries) TakeAuditExportLease(ctx context.Context, arg TakeAuditExportLeaseParams) (AuditExport, error) {
+	row := q.db.QueryRowContext(ctx, takeAuditExportLease, arg.LeaseUntil, arg.ID, arg.Now)
 	var i AuditExport
 	err := row.Scan(
 		&i.ID,

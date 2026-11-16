@@ -164,6 +164,10 @@
       "title": "the host operator turns serving the CLI and install scripts on and off (ADR-0058 Decision 3; the target's serveCli operation)",
       "target": "serveCli"
     },
+    "admin-audit-export": {
+      "title": "varlatchd admin audit-export discard-plan: the host's restart of an export's stream past a plan that can no longer be uploaded, refused for one that can (ADR-0056 Decision 2; the target's hostAdmin operation)",
+      "target": "hostAdmin"
+    },
     "enroll-page": {
       "title": "the enrollment page a grant URL opens, and its passkey registration",
       "method": "GET",
@@ -776,10 +780,11 @@
       }
     },
     "audit-export": {
-      "title": "the audit export to object storage against a local S3 server with Object Lock: the probe, creation, changes with and without an approval, a refused endpoint",
+      "title": "the audit export to object storage against a local S3 server with Object Lock: the probe, creation, changes with and without an approval, a refused endpoint, the stream the worker writes, and the host's discard-plan refusing a plan that can still be uploaded",
       "script": "scripts/conformance/suites/audit-export.mjs",
       "needs": [
-        "object-store"
+        "object-store",
+        "host-admin"
       ],
       "operations": [
         "admin-recover",
@@ -791,7 +796,8 @@
         "changeAuditExport",
         "replaceAuditExportCredential",
         "removeAuditExport",
-        "cancelApproval"
+        "cancelApproval",
+        "admin-audit-export"
       ]
     }
   },
@@ -3570,6 +3576,16 @@
       "suite": "audit-export",
       "kind": "conformance",
       "title": "the probe's test objects stay in the bucket under the Organization's probe prefix"
+    },
+    "audit-export.stream": {
+      "suite": "audit-export",
+      "kind": "conformance",
+      "title": "the worker writes the stream on its own: its manifest, the hour's heartbeat, then the log from its beginning as gzipped NDJSON, each event with its position, under the export's retention"
+    },
+    "audit-export.host-discard-refused": {
+      "suite": "audit-export",
+      "kind": "conformance",
+      "title": "admin audit-export discard-plan refuses a pending plan that can still be uploaded, or finds none, and the stream goes on"
     },
     "audit-export.one-per-organization": {
       "suite": "audit-export",

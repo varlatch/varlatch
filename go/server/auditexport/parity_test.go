@@ -77,6 +77,35 @@ func read(t *testing.T) (paritytest.Fixture, extra) {
 	return f, x
 }
 
+// fixturePolicy is the fixtures' outbound policy: the allow list opens
+// the fixed endpoint, whose name resolves to a fixed address that, once
+// the policy allowed it, connects to the fake.
+func fixturePolicy(t *testing.T, fake *s3fake.Server, log *slog.Logger) *outbound.Policy {
+	t.Helper()
+	entries, err := outbound.ParseAllow(allow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := outbound.New(entries, outbound.Options{
+		Log: log,
+		Resolve: func(_ context.Context, name string) ([]outbound.Answer, error) {
+			if name == "s3.fixture.test" {
+				return []outbound.Answer{{Address: fixtureIP, Family: 4}}, nil
+			}
+			return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+		},
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if host, _, _ := net.SplitHostPort(address); host == fixtureIP {
+				address = fake.Listener.Addr().String()
+			}
+			var d net.Dialer
+			return d.DialContext(ctx, network, address)
+		},
+	})
+	t.Cleanup(policy.Close)
+	return policy
+}
+
 // replay runs the table against varlatchd on the file's rows, its
 // destination the Go fake under the fixture's fixed endpoint, and
 // compares each request's exchange with it.
@@ -95,29 +124,8 @@ func replay(t *testing.T, f paritytest.Fixture, x extra) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries, err := outbound.ParseAllow(allow)
-	if err != nil {
-		t.Fatal(err)
-	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	policy := outbound.New(entries, outbound.Options{
-		Log: log,
-		Resolve: func(_ context.Context, name string) ([]outbound.Answer, error) {
-			if name == "s3.fixture.test" {
-				return []outbound.Answer{{Address: fixtureIP, Family: 4}}, nil
-			}
-			return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
-		},
-		// The fixture's name, once the policy allowed it, connects to the fake.
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			if host, _, _ := net.SplitHostPort(address); host == fixtureIP {
-				address = fake.Listener.Addr().String()
-			}
-			var d net.Dialer
-			return d.DialContext(ctx, network, address)
-		},
-	})
-	t.Cleanup(policy.Close)
+	policy := fixturePolicy(t, fake, log)
 	public, _ := url.Parse(publicURL)
 	w := &write.Writer{Store: store, Gates: write.NewGates()}
 	now := paritytest.HourClock()

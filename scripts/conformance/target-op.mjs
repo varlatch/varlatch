@@ -17,6 +17,7 @@
  *   target-op.mjs go-server fixture <name> [args...]  JSON
  *   target-op.mjs webhook-receiver url|requests      JSON
  *   target-op.mjs object-store start                 JSON
+ *   target-op.mjs host-admin audit-export <args...>  JSON { status, stdout, stderr }
  *
  * An optional operation the target does not have exits 3.
  */
@@ -86,6 +87,11 @@ switch (operation) {
     needs("object-store");
     if (args[0] !== "start") throw new Error("object-store start");
     print(JSON.stringify(await target.objectStore(state, args[0])));
+    break;
+  case "host-admin":
+    needs("host-admin");
+    if (args[0] !== "audit-export") throw new Error("host-admin audit-export <args...>");
+    print(JSON.stringify(await target.hostAdmin(state, ...args)));
     break;
   case "ts-stack": {
     needs("ts-stack");

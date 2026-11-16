@@ -39,7 +39,7 @@ const OPERATION_NAME = /^[a-z][a-z0-9-]*$/;
 const OPERATION_ID = /^[a-z][A-Za-z0-9]*$/;
 const METHODS = ["get", "put", "post", "delete", "patch", "head", "options", "trace"];
 /** The target operations a named operation may stand for. */
-export const TARGET_OPERATIONS = ["bootstrap", "recover", "serveCli"];
+export const TARGET_OPERATIONS = ["bootstrap", "recover", "serveCli", "hostAdmin"];
 
 /**
  * The operations of the OpenAPI document: Map(operationId → { method, path }),
