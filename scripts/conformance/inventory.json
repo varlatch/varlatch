@@ -292,51 +292,102 @@
         "getMyProfile",
         "getInstallationBackups",
         "getInstallationRelease",
-        "listGrants",
         "listIdentities",
         "getOrganization",
-        "listInvitations",
-        "createInvitation",
         "listProjects",
         "listEnvironments",
-        "listRoles",
-        "listGroups",
-        "listTeams",
-        "listSecurityControls",
-        "createServiceIdentity",
-        "issueIdentityCredential",
-        "revokeIdentityCredential",
-        "listIdentityCredentials",
-        "listOidcBindings",
-        "createOidcBinding",
-        "revokeOidcBinding",
-        "machineReach",
-        "createGrant",
-        "deleteGrant",
-        "replaceGrant",
-        "createRole",
-        "updateRole",
-        "createGroup",
-        "updateGroup",
-        "addGroupMember",
-        "listGroupMembers",
-        "createTeam",
-        "updateTeam",
-        "addTeamProject",
-        "listTeamProjects",
-        "listRequirements",
-        "createRequirement",
-        "updateRequirement",
-        "deleteRequirement",
         "getEnvironment",
-        "listCapabilities",
-        "revokeCapability",
-        "issueCapability",
-        "exerciseCapability",
         "discloseSecrets",
         "getEffectiveConfiguration",
         "listMyCredentials"
-      ]
+      ],
+      "groups": {
+        "machines": {
+          "title": "a machine identity and its credentials: shown once, limits echoed, another issued and revoked, default-deny before any Grant",
+          "operations": [
+            "createServiceIdentity",
+            "issueIdentityCredential",
+            "listIdentityCredentials",
+            "revokeIdentityCredential"
+          ]
+        },
+        "grants": {
+          "title": "preset and environment-scoped Grants on the machine, compiling to real access and revoked",
+          "operations": [
+            "createServiceIdentity",
+            "issueIdentityCredential",
+            "listIdentityCredentials",
+            "revokeIdentityCredential",
+            "createGrant",
+            "deleteGrant",
+            "listGrants"
+          ]
+        },
+        "invites": {
+          "title": "an invite link on the Members tab",
+          "operations": [
+            "createInvitation",
+            "listInvitations"
+          ]
+        },
+        "oidc": {
+          "title": "an OIDC binding on the machine, listed and revoked",
+          "operations": [
+            "createServiceIdentity",
+            "issueIdentityCredential",
+            "listIdentityCredentials",
+            "revokeIdentityCredential",
+            "listOidcBindings",
+            "createOidcBinding",
+            "revokeOidcBinding"
+          ]
+        },
+        "roles-groups-teams": {
+          "title": "a custom Role, a Group and a Team granting the machine access, edited, replaced and renamed in place",
+          "operations": [
+            "createServiceIdentity",
+            "issueIdentityCredential",
+            "listIdentityCredentials",
+            "revokeIdentityCredential",
+            "createGrant",
+            "deleteGrant",
+            "replaceGrant",
+            "createRole",
+            "updateRole",
+            "createGroup",
+            "updateGroup",
+            "addGroupMember",
+            "listGroupMembers",
+            "createTeam",
+            "updateTeam",
+            "addTeamProject",
+            "listTeamProjects",
+            "listGrants",
+            "listRoles",
+            "listGroups",
+            "listTeams"
+          ]
+        },
+        "requirements": {
+          "title": "Tailnet Requirements: created, reviewed before a loosening edit, device-pinned, a concurrent change, removed",
+          "operations": [
+            "listRequirements",
+            "createRequirement",
+            "updateRequirement",
+            "deleteRequirement"
+          ]
+        },
+        "capabilities": {
+          "title": "a Broker's Capability for an Agent, listed, revoked from the dashboard and refused at its next exercise",
+          "operations": [
+            "createServiceIdentity",
+            "issueCapability",
+            "listCapabilities",
+            "revokeCapability",
+            "exerciseCapability"
+          ]
+        }
+      }
     },
     "p4": {
       "title": "audit, contract and palette (P4)",
@@ -1247,247 +1298,296 @@
     "access.one-time-machine-credential-displayed": {
       "suite": "access",
       "kind": "conformance",
-      "title": "one-time machine credential displayed"
+      "title": "one-time machine credential displayed",
+      "group": "machines"
     },
     "access.credential-dismissed-not-re-shown": {
       "suite": "access",
       "kind": "conformance",
-      "title": "credential dismissed, not re-shown"
+      "title": "credential dismissed, not re-shown",
+      "group": "machines"
     },
     "access.credential-expiry-use-budget-echoed-creation": {
       "suite": "access",
       "kind": "conformance",
-      "title": "credential expiry and use budget echoed at creation"
+      "title": "credential expiry and use budget echoed at creation",
+      "group": "machines"
     },
     "access.issued-credential-shown-once-new-service": {
       "suite": "access",
       "kind": "conformance",
-      "title": "issued credential shown once, a new service token"
+      "title": "issued credential shown once, a new service token",
+      "group": "machines"
     },
     "access.issued-credential-expiry-echoed": {
       "suite": "access",
       "kind": "conformance",
-      "title": "issued credential's expiry echoed"
+      "title": "issued credential's expiry echoed",
+      "group": "machines"
     },
     "access.issued-credential-dismissed-not-re-shown": {
       "suite": "access",
       "kind": "conformance",
-      "title": "issued credential dismissed, not re-shown"
+      "title": "issued credential dismissed, not re-shown",
+      "group": "machines"
     },
     "access.issued-credential-listed-under-name": {
       "suite": "access",
       "kind": "conformance",
-      "title": "issued credential listed under its name"
+      "title": "issued credential listed under its name",
+      "group": "machines"
     },
     "access.issued-credential-authenticates-machine-denied-not": {
       "suite": "access",
       "kind": "conformance",
-      "title": "issued credential authenticates as the machine (denied, not unauthenticated)"
+      "title": "issued credential authenticates as the machine (denied, not unauthenticated)",
+      "group": "machines"
     },
     "access.revoking-issued-credential-leaves-first-one": {
       "suite": "access",
       "kind": "conformance",
-      "title": "revoking the issued credential leaves the first one working"
+      "title": "revoking the issued credential leaves the first one working",
+      "group": "machines"
     },
     "access.machine-denied-before-any-grant": {
       "suite": "access",
       "kind": "conformance",
-      "title": "machine denied before any grant"
+      "title": "machine denied before any grant",
+      "group": "machines"
     },
     "access.grant-row-reads-sentence-keeps-actions": {
       "suite": "access",
       "kind": "conformance",
-      "title": "grant row reads as a sentence and keeps its actions"
+      "title": "grant row reads as a sentence and keeps its actions",
+      "group": "grants"
     },
     "access.machine-can-read-configuration-after-grant": {
       "suite": "access",
       "kind": "conformance",
-      "title": "machine can read configuration after grant"
+      "title": "machine can read configuration after grant",
+      "group": "grants"
     },
     "access.read-config-grant-does-not-allow-secret": {
       "suite": "access",
       "kind": "conformance",
-      "title": "read-config grant does NOT allow secret disclosure"
+      "title": "read-config grant does NOT allow secret disclosure",
+      "group": "grants"
     },
     "access.machine-denied-after-grant-revocation": {
       "suite": "access",
       "kind": "conformance",
-      "title": "machine denied after grant revocation"
+      "title": "machine denied after grant revocation",
+      "group": "grants"
     },
     "access.environment-scoped-grant-row-lists-selector": {
       "suite": "access",
       "kind": "conformance",
-      "title": "environment-scoped grant row lists its selector"
+      "title": "environment-scoped grant row lists its selector",
+      "group": "grants"
     },
     "access.granted-environment-readable": {
       "suite": "access",
       "kind": "conformance",
-      "title": "granted environment readable"
+      "title": "granted environment readable",
+      "group": "grants"
     },
     "access.sibling-environment-denied": {
       "suite": "access",
       "kind": "conformance",
-      "title": "sibling environment still denied"
+      "title": "sibling environment still denied",
+      "group": "grants"
     },
     "access.invite-link-minted-dashboard-origin": {
       "suite": "access",
       "kind": "conformance",
-      "title": "invite link minted on dashboard origin"
+      "title": "invite link minted on dashboard origin",
+      "group": "invites"
     },
     "access.oidc-binding-listed-issuer": {
       "suite": "access",
       "kind": "conformance",
-      "title": "oidc binding listed with issuer"
+      "title": "oidc binding listed with issuer",
+      "group": "oidc"
     },
     "access.oidc-binding-revoked-dashboard": {
       "suite": "access",
       "kind": "conformance",
-      "title": "oidc binding revoked from dashboard"
+      "title": "oidc binding revoked from dashboard",
+      "group": "oidc"
     },
     "access.machine-denied-before-role-group-grant": {
       "suite": "access",
       "kind": "conformance",
-      "title": "machine denied before role/group grant"
+      "title": "machine denied before role/group grant",
+      "group": "roles-groups-teams"
     },
     "access.custom-role-created": {
       "suite": "access",
       "kind": "conformance",
-      "title": "custom role created"
+      "title": "custom role created",
+      "group": "roles-groups-teams"
     },
     "access.identity-added-group": {
       "suite": "access",
       "kind": "conformance",
-      "title": "identity added to group"
+      "title": "identity added to group",
+      "group": "roles-groups-teams"
     },
     "access.group-role-grant-lists-role": {
       "suite": "access",
       "kind": "conformance",
-      "title": "group+role grant lists the role"
+      "title": "group+role grant lists the role",
+      "group": "roles-groups-teams"
     },
     "access.group-member-inherits-role-granted-access": {
       "suite": "access",
       "kind": "conformance",
-      "title": "group member inherits role-granted access"
+      "title": "group member inherits role-granted access",
+      "group": "roles-groups-teams"
     },
     "access.removing-action-role-narrows-member-immediately": {
       "suite": "access",
       "kind": "conformance",
-      "title": "removing an action from the role narrows the member immediately"
+      "title": "removing an action from the role narrows the member immediately",
+      "group": "roles-groups-teams"
     },
     "access.adding-action-back-widens-without-touching": {
       "suite": "access",
       "kind": "conformance",
-      "title": "adding the action back widens without touching the grant"
+      "title": "adding the action back widens without touching the grant",
+      "group": "roles-groups-teams"
     },
     "access.team-owns-project": {
       "suite": "access",
       "kind": "conformance",
-      "title": "team owns a project"
+      "title": "team owns a project",
+      "group": "roles-groups-teams"
     },
     "access.revoking-group-grant-denies-member-again": {
       "suite": "access",
       "kind": "conformance",
-      "title": "revoking the group grant denies the member again"
+      "title": "revoking the group grant denies the member again",
+      "group": "roles-groups-teams"
     },
     "access.replaced-grant-row-now-cites-role": {
       "suite": "access",
       "kind": "conformance",
-      "title": "replaced grant row now cites the role"
+      "title": "replaced grant row now cites the role",
+      "group": "roles-groups-teams"
     },
     "access.successor-grant-authorizes-via-role": {
       "suite": "access",
       "kind": "conformance",
-      "title": "successor grant authorizes via the role"
+      "title": "successor grant authorizes via the role",
+      "group": "roles-groups-teams"
     },
     "access.group-renamed-place": {
       "suite": "access",
       "kind": "conformance",
-      "title": "group renamed in place"
+      "title": "group renamed in place",
+      "group": "roles-groups-teams"
     },
     "access.team-renamed-place-owning-project": {
       "suite": "access",
       "kind": "conformance",
-      "title": "team renamed in place, still owning its project"
+      "title": "team renamed in place, still owning its project",
+      "group": "roles-groups-teams"
     },
     "access.tailnet-requirement-listed": {
       "suite": "access",
       "kind": "conformance",
-      "title": "tailnet requirement listed"
+      "title": "tailnet requirement listed",
+      "group": "requirements"
     },
     "access.loosening-edit-reviewed-scope-before-after": {
       "suite": "access",
       "kind": "conformance",
-      "title": "a loosening edit is reviewed with its scope, before and after"
+      "title": "a loosening edit is reviewed with its scope, before and after",
+      "group": "requirements"
     },
     "access.requirement-selector-edited-place-after-confirmation": {
       "suite": "access",
       "kind": "conformance",
-      "title": "requirement selector edited in place after confirmation"
+      "title": "requirement selector edited in place after confirmation",
+      "group": "requirements"
     },
     "access.device-pinned-requirement-created-through-api": {
       "suite": "access",
       "kind": "conformance",
-      "title": "device-pinned requirement created through the API"
+      "title": "device-pinned requirement created through the API",
+      "group": "requirements"
     },
     "access.device-pinned-requirement-names-environment-device": {
       "suite": "access",
       "kind": "conformance",
-      "title": "device-pinned requirement names its environment and device"
+      "title": "device-pinned requirement names its environment and device",
+      "group": "requirements"
     },
     "access.review-names-environment-change-applies": {
       "suite": "access",
       "kind": "conformance",
-      "title": "the review names the environment the change applies to"
+      "title": "the review names the environment the change applies to",
+      "group": "requirements"
     },
     "access.editing-keeps-environment-target-pinned-device": {
       "suite": "access",
       "kind": "conformance",
-      "title": "editing keeps the environment target and the pinned device"
+      "title": "editing keeps the environment target and the pinned device",
+      "group": "requirements"
     },
     "access.concurrent-change-through-api": {
       "suite": "access",
       "kind": "conformance",
-      "title": "concurrent change through the API"
+      "title": "concurrent change through the API",
+      "group": "requirements"
     },
     "access.review-confirmation-gone": {
       "suite": "access",
       "kind": "conformance",
-      "title": "the review and its confirmation are gone"
+      "title": "the review and its confirmation are gone",
+      "group": "requirements"
     },
     "access.nothing-stale-edit-was-saved": {
       "suite": "access",
       "kind": "conformance",
-      "title": "nothing from the stale edit was saved"
+      "title": "nothing from the stale edit was saved",
+      "group": "requirements"
     },
     "access.starting-over-loads-current-version": {
       "suite": "access",
       "kind": "conformance",
-      "title": "starting over loads the current version"
+      "title": "starting over loads the current version",
+      "group": "requirements"
     },
     "access.device-pinned-requirement-removed": {
       "suite": "access",
       "kind": "conformance",
-      "title": "device-pinned requirement removed"
+      "title": "device-pinned requirement removed",
+      "group": "requirements"
     },
     "access.broker-issued-capability-ui-test": {
       "suite": "access",
       "kind": "conformance",
-      "title": "broker issued a capability for the UI test"
+      "title": "broker issued a capability for the UI test",
+      "group": "capabilities"
     },
     "access.capability-row-shows-agent-broker-items": {
       "suite": "access",
       "kind": "conformance",
-      "title": "capability row shows agent, broker, items, destination, run"
+      "title": "capability row shows agent, broker, items, destination, run",
+      "group": "capabilities"
     },
     "access.capability-revoked-dashboard": {
       "suite": "access",
       "kind": "conformance",
-      "title": "capability revoked from the dashboard"
+      "title": "capability revoked from the dashboard",
+      "group": "capabilities"
     },
     "access.dashboard-revocation-denies-next-exercise": {
       "suite": "access",
       "kind": "conformance",
-      "title": "dashboard revocation denies the next exercise"
+      "title": "dashboard revocation denies the next exercise",
+      "group": "capabilities"
     },
     "access.own-credential-listed-session-marker": {
       "suite": "access",

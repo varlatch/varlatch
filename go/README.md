@@ -670,6 +670,23 @@ The server's packages:
   take the gate (`write` `TestExclusiveTakersAgainstTypeScript`): a new
   taker on either side fails the test, but the mapping is reviewed, not
   proved; the gates the Go functions take are their own tests'.
+- `server/identities` (step 4.4a): an Organization's machine identities
+  and their credentials (`domain/identities.ts`, `identitystepup.ts`, the
+  issuing side of `auth/credentials.ts`; ADR-0015, ADR-0023, ADR-0034),
+  served by `server/httpserver/identities.go`: listing, creating one with
+  its first service credential, issuing another, a Broker's short-lived
+  agent-run credentials for its Agents, revoking, retiring, reactivating
+  and renaming. Creating, issuing and reactivating are protected
+  operations (`security.Prepare`: admin-step-up and credential-lifetime,
+  with the bindings and summaries of `identitystepup.ts`). Retiring,
+  renaming and reactivating take the identity's person gate exclusive,
+  where the TypeScript code locks its row for update; issuing takes it
+  shared, so a retirement either came first (the identity is not found)
+  or comes after and revokes the new credential too
+  (`TestRetireWaitsForAnIssuanceAndRevokesItsCredential`). The fixture
+  `identities-v0.22.0.json` (`go-identities-fixture.test.ts`, 158
+  requests) covers every identity state, credential kind and limit, and
+  both controls off, at report and at enforce.
 - `server/pgtime` (step 4.3c): PostgreSQL 17's timestamptz input, ported
   (ParseDateTime, DecodeDateTime and tm2timestamp of `datetime.c` and
   `timestamp.c`; `pg_tzset`, `tzload`, `tzparse` and the DST boundary

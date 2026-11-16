@@ -403,10 +403,24 @@ func hourOverrun(began, done time.Time) error {
 		began.UTC().Format(time.RFC3339Nano), done.UTC().Format(time.RFC3339Nano))
 }
 
-// checkTimes checks the raw times a request wrote: each audit event after
-// event_order before, and each exposure row last seen from sent on, between
-// sent and done (microseconds, as stored).
-func checkTimes(t testing.TB, name string, store *storage.DB, before int64, sent, done time.Time) {
+// exposureTimes is every member_exposure row's first and last time, by
+// its key.
+func exposureTimes(t testing.TB, store *storage.DB) map[string][2]int64 {
+	t.Helper()
+	out := map[string][2]int64{}
+	for _, r := range Rows(t, store, "SELECT organization_id, identity_id, version_id, environment_id, way, first_at, last_at FROM member_exposure") {
+		key := fmt.Sprint(r["organization_id"], "/", r["identity_id"], "/", r["version_id"], "/", r["environment_id"], "/", r["way"])
+		out[key] = [2]int64{r["first_at"].(int64), r["last_at"].(int64)}
+	}
+	return out
+}
+
+// checkTimes checks the raw times a request wrote, between sent and done
+// (microseconds, as stored): each audit event after event_order before,
+// and each exposure row's first and last time it set, in a row it
+// inserted, or changed from what exposures (exposureTimes before the
+// request) held.
+func checkTimes(t testing.TB, name string, store *storage.DB, before int64, exposures map[string][2]int64, sent, done time.Time) {
 	t.Helper()
 	low, high := sent.UnixMicro(), done.UnixMicro()
 	for _, r := range Rows(t, store, "SELECT event_type, occurred_at FROM audit_events WHERE event_order > ? ORDER BY event_order", before) {
@@ -414,9 +428,15 @@ func checkTimes(t testing.TB, name string, store *storage.DB, before int64, sent
 			t.Errorf("%s: %s at %d, outside the request (%d to %d)", name, r["event_type"], at, low, high)
 		}
 	}
-	for _, r := range Rows(t, store, "SELECT first_at, last_at FROM member_exposure WHERE last_at >= ?", low) {
-		if last := r["last_at"].(int64); last > high {
-			t.Errorf("%s: an exposure last at %d, after the request (%d to %d)", name, last, low, high)
+	for key, now := range exposureTimes(t, store) {
+		was, existed := exposures[key]
+		for i, col := range []string{"first_at", "last_at"} {
+			if existed && now[i] == was[i] {
+				continue
+			}
+			if now[i] < low || now[i] > high {
+				t.Errorf("%s: exposure %s %s %d, outside the request (%d to %d)", name, key, col, now[i], low, high)
+			}
 		}
 	}
 }
@@ -663,6 +683,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		if err := target.Store.Reader().QueryRow("SELECT max(event_order) FROM audit_events").Scan(&before); err != nil {
 			t.Fatal(err)
 		}
+		exposures := exposureTimes(t, target.Store)
 		sideBefore := map[string][]Row{}
 		for _, st := range f.SideTables {
 			sideBefore[st.Name] = pgRows(t, target.Store, st.Name)
@@ -803,7 +824,7 @@ func Replay(t testing.TB, target Target, f Fixture) {
 		}
 		// The raw times: every event, and every exposure row it wrote, on
 		// the server's clock while the request was being answered.
-		checkTimes(t, name, target.Store, before.Int64, sent, done)
+		checkTimes(t, name, target.Store, before.Int64, exposures, sent, done)
 		if target.Now != nil {
 			if err := hourOverrun(began, done); err != nil {
 				t.Fatalf("%s: %v", name, err)

@@ -180,6 +180,9 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "beginRotation", "completeRotation",
     // Step 4.3c: the incident freeze and the audit log's reads.
     "getIncidentFreeze", "freezeOrganization", "liftIncidentFreeze", "listAuditEvents", "exportAuditEvents",
+    // Step 4.4a: machine identities and their credentials.
+    "listIdentities", "createServiceIdentity", "renameIdentity", "retireIdentity", "reactivateIdentity",
+    "listIdentityCredentials", "issueIdentityCredential", "revokeIdentityCredential",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is
@@ -206,7 +209,10 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // dashboard's audit-feed group, client-runtime's audit-export group and
   // values' two filtered audit checks. (Step 4.2) values's rotation group.
   // (Step 4.14) the maintenance suite, on the maintenance capability and
-  // the operations its checks see. Every other one lacks something.
+  // the operations its checks see. (4.4a) access, split into operation
+  // groups: its machines group and the two checks of no group; and
+  // onboarding's check on a workload invite. Every other one lacks
+  // something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
@@ -217,15 +223,16 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   const notYet = {
     dashboard: [], values: ["tailnet"], p4: ["audit", "webhooks"], onboarding: [],
     "client-runtime": ["service-identities"], "strict-run": ["service-identities", "agent-safe"],
+    access: ["grants", "invites", "oidc", "roles-groups-teams", "requirements", "capabilities"],
   };
-  const ownLacking = ["onboarding.workload-invite-recommended-not-required"];
+  const ownLacking = [];
   const expected = Object.entries(inventory.checks).filter(([id, c]) =>
     /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs|sdk|security|maintenance)\./.test(id) ||
     ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format",
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
     (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
-  assert.equal(runs.length, 266);
+  assert.equal(runs.length, 279);
   // The groups still lacking lack exactly their own operations.
   for (const [suite, groups] of Object.entries(notYet)) {
     for (const g of groups) {

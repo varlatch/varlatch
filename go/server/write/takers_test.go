@@ -45,16 +45,16 @@ var exclusiveTakers = map[string]string{
 	`domain/protected.ts:await lockPeople(tx, [...scope.people, ...more, ...(consuming ? [{ id: requester.identityId, mode: "update" as const }] : [])]);`:               "security.Request.Gates: the requester exclusive when it carries an approval (4.3a)",
 	`domain/protected.ts:return { id: gate.requester.identityId, mode: gate.approvalId !== null ? "update" : "key share" };`:                                             "security.Request.RequesterGate (4.3a)",
 	`domain/bootstrap.ts:await lockPeople(db, [{ id: input.identityId, mode: input.enable ? "update" : "key share" }]);`:                                                 "admin recover --enable (4.1a, daemon/admin.go)",
-	`domain/identities.ts:await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId, { id: identityId, mode: "update" }] });`: "retiring an identity (4.4)",
-	`domain/identities.ts:scope: { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] },`:                                                     "reactivating an identity (4.4)",
-	`domain/identities.ts:await lockLiveScope(db, { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] });`:                                   "disabling an identity (4.4)",
+	`domain/identities.ts:await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId, { id: identityId, mode: "update" }] });`: "identities.Retire: the identity exclusive (4.4a)",
+	`domain/identities.ts:scope: { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] },`:                                                     "identities.Reactivate: the identity exclusive (4.4a)",
+	`domain/identities.ts:await lockLiveScope(db, { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] });`:                                   "identities.Rename: the identity exclusive (4.4a)",
 	`domain/orgdeletion.ts:return suspending.map((sid) => ({ id: sid, mode: "update" as const }));`:                                                                      "scheduling a deletion: the machines it suspends (4.12)",
 	`domain/orgdeletion.ts:await lockPeople(db, [actor.id, ...restoring.map((rid) => ({ id: rid, mode: "update" as const }))]);`:                                         "cancelling a deletion: the machines it restores (4.12)",
 	`domain/orgdeletion.ts:await lockPeople(db, [requester, ...referenced.map((r) => r.id), ...machines.map((id) => ({ id, mode: "update" as const }))]);`:               "running a deletion: its machines (4.12)",
 	`http/app.ts:await lockPeople(db, [{ id: principal.identity.id, mode: body.name !== undefined ? "update" : "key share" }]);`:                                         "updateMyProfile, renaming the person (not built yet)",
 	`http/app.ts:people: [body.subjectIdentityId, ...(approvalId !== null ? [{ id: principal.identity.id, mode: "update" as const }] : [])],`:                            "a Grant's protected writes: the requester (4.4)",
 	`http/app.ts:approvalHeaderOf(c) !== null ? [{ id: principal.identity.id, mode: "update" as const }] : [];`:                                                          "an effect's protected writes: the requester (4.10)",
-	`http/app.ts:people: approvalId !== null ? [{ id: principal.identity.id, mode: "update" }] : [],`:                                                                    "a protected write's requester (4.4)",
+	`http/app.ts:people: approvalId !== null ? [{ id: principal.identity.id, mode: "update" }] : [],`:                                                                    "updating a Requirement, a protected write: the requester (4.4c)",
 }
 
 var (
