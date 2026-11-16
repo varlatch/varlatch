@@ -45,6 +45,8 @@ const (
 	AuditExport       = "aex"
 	AuditExportPlan   = "aep"
 	AuditExportStream = "aes"
+	// Step 4.5.
+	MembershipRemoval = "mrm"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"

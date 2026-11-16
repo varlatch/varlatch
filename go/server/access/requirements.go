@@ -313,11 +313,15 @@ func UpdateRequirement(ctx context.Context, w *write.Writer, approvals *auth.Ser
 	})
 }
 
-// moveToEnd puts an updated Requirement last in the rowid order, where
-// PostgreSQL's heap puts the updated row: loadTailnetRequirements reads
-// without an ORDER BY, and the order shows in reach's conditions and in
-// the Requirements an authorization event lists.
-// sqlc models no rowid, so the statement is written here.
+// moveToEnd puts an updated Requirement last in the rowid order.
+// loadTailnetRequirements reads without an ORDER BY, so the TypeScript
+// server's order is unspecified; in a small table it is PostgreSQL's heap
+// order, where an updated row goes last, and Go emulates that order
+// (TestUpdatedRequirementMovesToTheEnd). It shows in reach's conditions and
+// in the Requirements an authorization event lists. Once the TypeScript
+// line is retired (a step 7/8 follow-up), the read can take ORDER BY
+// created_at, id instead. sqlc models no rowid, so the statement is
+// written here.
 func moveToEnd(ctx context.Context, tx query.DBTX, requirementID string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE requirements SET rowid = (SELECT max(rowid) + 1 FROM requirements) WHERE id = ?`, requirementID)
 	return err

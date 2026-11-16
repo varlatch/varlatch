@@ -20,10 +20,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "changeMemberRole": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "checkPlatformAccess": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -33,10 +29,6 @@
         "step": "ADR-0059 step 4"
       },
       "confirmExposureRevocation": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "createInvitation": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -124,10 +116,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "listInvitations": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "listOidcBindings": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -168,10 +156,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "removeMember": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "replacePlatformCredential": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -180,15 +164,7 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "reviewMember": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "revokeCapability": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "revokeInvitation": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -213,10 +189,6 @@
         "step": "ADR-0059 step 4"
       },
       "startGitHubAppRegistration": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "updateMyProfile": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

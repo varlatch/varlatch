@@ -151,6 +151,10 @@ func GenerateToken(kind string) string {
 // vlt_invite_ or vlt_reenroll_ and 32 random bytes in base64url.
 func setupToken(prefix string) string { return prefix + randomBase64URL(32) }
 
+// InviteToken is an invitation's token: vlt_invite_ and 32 random bytes in
+// base64url (issueInviteGrant).
+func InviteToken() string { return setupToken("vlt_invite_") }
+
 // ISO is a time as JavaScript's Date.prototype.toISOString writes it.
 func ISO(micros int64) string { return audit.ISOTime(micros) }
 

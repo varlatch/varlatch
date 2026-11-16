@@ -450,11 +450,11 @@ func AddMember(ctx context.Context, w *write.Writer, approvals *auth.Service, re
 			return err
 		}
 		if kind == "human" {
-			live, err := q.LiveMembershipOf(ctx, query.LiveMembershipOfParams{OrganizationID: organizationID, IdentityID: identityID})
+			pinned, err := PinLiveMembership(ctx, tx, organizationID, identityID)
 			if err != nil {
 				return err
 			}
-			if live == 0 {
+			if !pinned {
 				return notInOrganization()
 			}
 		}
@@ -476,9 +476,8 @@ func AddMember(ctx context.Context, w *write.Writer, approvals *auth.Service, re
 	return reports, err
 }
 
-// groupStillLive re-reads the group (or team) in the job: one deleted
-// since the route read it takes no member and no Project. Hardening: the
-// TypeScript code reads it once, outside its transaction.
+// groupStillLive reads the group (or team) again in the job: one deleted
+// since the route read it takes no member and no Project.
 func groupStillLive(ctx context.Context, tx query.DBTX, organizationID, groupID string) error {
 	_, err := RequireGroup(ctx, tx, organizationID, groupID, "")
 	return err

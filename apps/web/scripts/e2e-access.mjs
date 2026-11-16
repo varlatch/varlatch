@@ -207,6 +207,39 @@ if (kit.group("invites")) {
   await page.waitForSelector('[data-testid="invite-url"]', { timeout: 10000 });
   const inviteText = await page.textContent('[data-testid="invite-url"]');
   check("access.invite-link-minted-dashboard-origin", "invite link minted on dashboard origin", inviteText.includes(`${base}/enroll#`));
+  // The link enrolls a new person into the Organization: opened in a
+  // browser of its own (its own passkey), the enrollment consumes the
+  // invitation, and the new person is a member of acme.
+  const inviteUrl = ((await page.textContent('[data-testid="invite-url"] p.font-mono')) ?? "").trim();
+  const invitee = await browser.newContext();
+  const page2 = await invitee.newPage();
+  const cdp2 = await invitee.newCDPSession(page2);
+  await cdp2.send("WebAuthn.enable");
+  await cdp2.send("WebAuthn.addVirtualAuthenticator", {
+    options: { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+  });
+  await page2.goto(inviteUrl);
+  if (await page2.isVisible("#name")) await page2.fill("#name", "Sam");
+  await page2.click("#enroll");
+  await page2.waitForFunction(() => /API credential|failed/.test(document.getElementById("status").textContent), null, { timeout: 20000 });
+  const joined = await page2.evaluate(async () => {
+    // varlatchd's own browser session checks a CSRF token on every POST
+    // under /auth, as the dashboard sends it: read from /auth/session when
+    // the server offers one.
+    const session = await fetch("/auth/session", { credentials: "include", headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    const csrf = session && typeof session.csrfToken === "string" ? { "Varlatch-CSRF": session.csrfToken } : {};
+    const minted = await fetch("/auth/varlatch-token", { method: "POST", credentials: "include", headers: csrf });
+    if (!minted.ok) return `token ${minted.status}`;
+    const { token } = await minted.json();
+    const res = await fetch("/v1/organizations", { headers: { Authorization: `Bearer ${token}` } });
+    return res.ok ? (await res.json()).items.map((o) => o.slug).join(",") : `organizations ${res.status}`;
+  });
+  const enrolledText = (await page2.textContent("#status")) ?? "";
+  const isMember = joined.split(",").includes("acme");
+  check("access.invite-link-enrolls-new-member", "invite link enrolls a new member", isMember, isMember ? joined : `${joined}; ${enrolledText.slice(0, 120)}`);
+  await invitee.close();
 }
 
 if (kit.group("oidc")) {

@@ -164,9 +164,9 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 		{"POST", "/v1/organizations/acme/platform-connections", "{not json"},
 		{"POST", "/v1/organizations/acme/platform-connections", strings.Repeat("x", 4096)},
 		{"GET", "/v1/organizations/acme/platform-connections", ""},
-		{"GET", "/v1/organizations/acme/invitations?limit=not-a-number", ""},
+		{"GET", "/v1/deleted-organizations/acme/audit-events?limit=not-a-number", ""},
 		{"DELETE", "/v1/organizations/acme/platform-connections/core", ""},
-		{"PATCH", "/v1/me/profile", "{}"},
+		{"PATCH", "/v1/organizations/acme/projects/api/environments/development/sync-targets/core", "{}"},
 	}
 	for _, c := range cases {
 		w := do(s, c.method, c.path, c.body, map[string]string{"Content-Type": "application/json", "Authorization": "Bearer nonsense"})

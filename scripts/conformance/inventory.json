@@ -1447,6 +1447,12 @@
       "title": "invite link minted on dashboard origin",
       "group": "invites"
     },
+    "access.invite-link-enrolls-new-member": {
+      "suite": "access",
+      "kind": "conformance",
+      "title": "invite link enrolls a new member",
+      "group": "invites"
+    },
     "access.oidc-binding-listed-issuer": {
       "suite": "access",
       "kind": "conformance",

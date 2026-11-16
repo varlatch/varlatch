@@ -948,10 +948,9 @@ The server's packages:
   `grantForms`: who a Grant may name, who may join a group, and
   declarations in their bound form). A summary's names are read in chunks
   of 500 ids (a declaration may name more than SQLite binds in one
-  statement), with the Organization bound before the list. A member or a
-  Project added to a group is refused if the group was deleted while the
-  job waited (a hardening: the TypeScript code reads the group once,
-  outside its transaction).
+  statement), with the Organization bound before the list. Adding a
+  member or a Project to a group, the job reads the group again: one
+  deleted while the job waited is refused.
   Step 4.4c adds Tailnet Requirements (ADR-0014, ADR-0029, ADR-0046's
   data; `requirementprotection.ts`), served by
   `server/httpserver/requirements.go`: listed, created (never protected,
@@ -961,10 +960,14 @@ The server's packages:
   selector are stored and read back in jsonb's key order; a change whose
   JSON text is unchanged answers the row as it is, and one that means the
   same Requirement is written and counted without an approval, as in
-  TypeScript. A changed Requirement moves to the end of the rowid order, as
-  PostgreSQL's heap puts the updated row last for `loadTailnetRequirements`'
-  unordered scan (reach's conditions and an authorization event's
-  Requirements follow that order). And the access reports (ADR-0054
+  TypeScript. `loadTailnetRequirements` reads without an ORDER BY, so the
+  TypeScript server's order is unspecified: in a small table, PostgreSQL's
+  heap order, where an updated row goes last. Go emulates that order: a
+  changed Requirement moves to the end of the rowid order
+  (`TestUpdatedRequirementMovesToTheEnd`); reach's conditions and an
+  authorization event's Requirements follow it. Once the TypeScript line
+  is retired (a step 7/8 follow-up), the read can take
+  `ORDER BY created_at, id` instead. And the access reports (ADR-0054
   Decision 8): machine reach (`domain/reach.ts`), the credential review
   (`domain/credentialReview.ts`) and the caller's own Organization
   permissions, each from one read snapshot, `Cache-Control: no-store`. The
@@ -972,6 +975,33 @@ The server's packages:
   covers Requirements in every control mode and the reports for every
   kind and state; its times keep their meaning whenever it is replayed,
   and `TestCredentialReviewTimeEdges` covers the windows they cannot pin.
+- `server/people` (step 4.5a): an Organization's people (ADR-0006,
+  ADR-0052; `domain/invitations.ts`, `domain/members.ts`,
+  `domain/peoplestepup.ts`, `issueInviteGrant`, the profile update),
+  served by `server/httpserver/people.go`. Invitations: listed newest
+  first by `(createdAt, id)` with the audit list's cursor (the time read
+  as PostgreSQL reads it), issued (inviting an admin is protected,
+  member.invite_admin, with `identity.manage` rechecked), revoked while
+  pending. Members: the review of what a person set up, role changes
+  (member.promote, member.demote), removal (member.remove) and leaving,
+  each with the admin check and the last-admin rule before an approval is
+  asked for and again in the job, the approval bound to the membership's
+  version. A removal records the authority snapshot (`removal_authority`,
+  `removal_requirements`, `removal_conditions`), then ends the membership,
+  the person's direct Grants, group links and pending invitations
+  (`endMembership`, which Organization deletion's finalization will
+  call). It holds the person's gate exclusive; a Grant naming them, a
+  group they join and an invitation they issue hold it shared and pin
+  their live membership, its version moved on, so an approval bound to
+  the earlier version no longer holds (`access.PinLiveMembership`). An
+  admin check's refusal is audited after the job, as a denial. The
+  profile: a person's name (in `identities` and their account) and image
+  (a `data:image` or `https` URL, 100KB at most). The fixture
+  `people-v0.22.0.json` (`go-people-fixture.test.ts`) covers invitations
+  in every state (times pinned so a later replay reads them the same),
+  every list parameter, members changed and removed with snapshot and
+  review, each control mode, the profile, and U+0000 where it reaches a
+  query.
 - `server/identities` (step 4.4a): an Organization's machine identities
   and their credentials (`domain/identities.ts`, `identitystepup.ts`, the
   issuing side of `auth/credentials.ts`; ADR-0015, ADR-0023, ADR-0034),
