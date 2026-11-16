@@ -488,7 +488,7 @@ func TestRequestFromTheWHATWGURL(t *testing.T) {
 		t.Fatalf("targets %q, want %q", got, want)
 	}
 	for _, target := range want {
-		u, ok := requestURL(origin + target)
+		u, ok := outbound.RequestURL(origin + target)
 		if !ok || u.Host != "127.0.0.1:"+rc.port() || u.RequestURI() != target {
 			t.Errorf("%s: %v %q", target, ok, u.RequestURI())
 		}

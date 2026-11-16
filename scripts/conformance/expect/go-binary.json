@@ -28,10 +28,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "createOidcBinding": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "createPlatformConnection": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -45,10 +41,6 @@
         "step": "ADR-0059 step 4"
       },
       "discardGitHubAppRegistration": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "exchangeOidcToken": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -100,10 +92,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "listOidcBindings": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "listOrgSyncTargets": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -141,10 +129,6 @@
         "step": "ADR-0059 step 4"
       },
       "resumeSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "revokeOidcBinding": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

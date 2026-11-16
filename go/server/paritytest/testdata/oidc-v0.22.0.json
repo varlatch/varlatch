@@ -1,0 +1,3258 @@
+{
+  "comment": "Written by services/varlatchd/test/go-oidc-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+  "ref": "v0.22.0",
+  "serverVersion": "0.22.0",
+  "rootKek": "6a6d2a5f313187ff278dea8d0d03c2eae9b47e1c494a53afbfb191d32e5a451b",
+  "tokens": {
+    "alice": "vlt_cli_EkddfcIcDrD5z-kOIj_0NuGcISYYo1CfzNJYH_DzCUc",
+    "alice2": "vlt_cli_VGjiBtDQAn6GikkDrvfKqo0GxtE1d7Z6SN4WR9i-QuA",
+    "bob": "vlt_cli_--Yw0gnBeQFy-2j5k1ESl3lTfbugzC8ozSE_oNqfprA"
+  },
+  "rows": {
+    "installation": [
+      {
+        "id": "inst_7qi5omlh52jggsqbmnycrgpxjy",
+        "kek_canary": {
+          "nonce": "QuV1Qx9tBhZ4Keww",
+          "authTag": "6eC6SY6ncoAqzgA+kKwaGg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "V/YV0pv/i4R27QGy8lNEoXpAt2LNAEoqKaTuixMzhnE=",
+          "formatVersion": 1
+        },
+        "bootstrapped_at": "2026-11-16T12:24:15.615Z",
+        "created_at": "2026-11-16T12:24:15.568Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "public_url": null
+      }
+    ],
+    "identities": [
+      {
+        "id": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+        "kind": "ci",
+        "name": "eci",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T12:24:16.088Z",
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+        "kind": "service",
+        "name": "worker",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T12:24:15.776Z",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_5shpyoim2tr4p3mr7pputweuaq",
+        "kind": "ci",
+        "name": "other",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T12:24:15.803Z",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "kind": "ci",
+        "name": "deployer",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T12:24:15.751Z",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_bpjnxuqtrjii43sl46couofgxq",
+        "kind": "ci",
+        "name": "fci",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-16T12:24:16.023Z",
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
+        "kind": "human",
+        "name": "Bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_v5h53ogaq532wplzu2m4m6llgm",
+        "kind": "ci",
+        "name": "retired",
+        "disabled": true,
+        "installation_admin": false,
+        "created_at": "2026-11-16T12:24:15.821Z",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_zemodxhfeomtnf6enha747g6by",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-11-16T12:24:15.615Z",
+        "organization_id": null,
+        "last_seen_at": "2026-01-15T00:00:00.000Z",
+        "suspended_by_deletion": null
+      }
+    ],
+    "credentials": [
+      {
+        "id": "crd_3sjasvalhbvk7nzcwvs2phfnz4",
+        "identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "0fcff46eea44bc7716c9d7e7fb600f5966ea413c3041ec531ee0b3dc93deb9a6",
+        "created_at": "2026-11-16T12:24:16.009Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_ppf5pru7f42cjnrehv6yvpazjq",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_df3qotz4tj3nyxpjlg3k62zdse",
+        "identity_id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+        "kind": "service",
+        "name": "worker credential",
+        "token_hash": "3469665f57616d2db7ae1a43b4c8ff17949f53cb29839aad971681845c4b9dd4",
+        "created_at": "2026-11-16T12:24:15.776Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "19941bc759109a45253c0df715ab1d801f0d16ddeb3b03172f1b2a09c95cea46",
+        "created_at": "2026-11-16T12:24:15.630Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-01-15T00:00:00.000Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "7cbf7562af0607ad7d074048168ba0cce46141103e4b43689dd3afd0c346c1db",
+        "created_at": "2026-11-16T12:24:15.642Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ],
+    "organizations": [
+      {
+        "id": "org_3titu3iv6mhvmit5raij65wmu4",
+        "slug": "enf",
+        "name": "enf",
+        "wrapped_org_kek": {
+          "nonce": "iOxyuVlio8VtAz5V",
+          "authTag": "8IM30GByEkKi/Q0g6pog2Q==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "sAIZzT/bC0nVS8+h2ubKGbg+w3OC0BpImfEwe85PBbE=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T12:24:15.711Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 2
+      },
+      {
+        "id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "slug": "acme",
+        "name": "acme",
+        "wrapped_org_kek": {
+          "nonce": "v4jh+9zcwIS6BrFE",
+          "authTag": "6WxezSuHRKP/p2Yg1lCrTA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "x56DyrbT7I8URpm52q0EfXZ/caDiA6ELfuUEm/RiSu0=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T12:24:15.693Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "slug": "frozen",
+        "name": "frozen",
+        "wrapped_org_kek": {
+          "nonce": "e09L9nhwJaBeKTOa",
+          "authTag": "omZGSacniRnIriH1k5G0/Q==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "mQRZgj+doW1eT6fcTt21i+fHUBs1hvbxk9SpnImAGAE=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-16T12:24:15.725Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      }
+    ],
+    "org_memberships": [
+      {
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "role": "admin",
+        "created_at": "2026-11-16T12:24:15.711Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
+        "role": "member",
+        "created_at": "2026-11-16T12:24:16.007Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "role": "admin",
+        "created_at": "2026-11-16T12:24:15.693Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "role": "admin",
+        "created_at": "2026-11-16T12:24:15.725Z",
+        "removed_at": null,
+        "version": 0
+      }
+    ],
+    "security_controls": [
+      {
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+        "control": "admin-step-up",
+        "mode": "enforce",
+        "config": null,
+        "version": 2,
+        "changed_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "changed_at": "2026-11-16T12:24:16.151Z"
+      }
+    ],
+    "security_control_counters": [],
+    "approval_intents": [
+      {
+        "id": "apr_oidccreateaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "auth_session_id": null,
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+        "operation": "oidc_binding.create",
+        "target": {
+          "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm"
+        },
+        "body_hash": "hmac-v1:11609a21f491fa3a32955352a3264cf2a272748ed3f7732286a0d0f2ce758f84",
+        "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
+        "expected_version": null,
+        "summary": {
+          "title": "Let tokens from \"https://issuer.example\" with subject \"enf:*\" act as \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)",
+          "changes": [
+            {
+              "to": "\"https://issuer.example\"",
+              "from": null,
+              "field": "issuer",
+              "loosens": false
+            },
+            {
+              "to": "\"varlatch\"",
+              "from": null,
+              "field": "audience",
+              "loosens": false
+            },
+            {
+              "to": "\"enf:*\"",
+              "from": null,
+              "field": "subject",
+              "loosens": false
+            }
+          ]
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      },
+      {
+        "id": "apr_oidcrevokeaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+        "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+        "auth_session_id": null,
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+        "operation": "oidc_binding.delete",
+        "target": {
+          "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+          "oidcBindingId": "oib_37zm5xjfwozt3kkdikxxi2qlca"
+        },
+        "body_hash": "hmac-v1:1ef8024b6ac1d2c7c7f5611afa109812323b3fbe215437268b7ba235e22ff9c5",
+        "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
+        "expected_version": null,
+        "summary": {
+          "title": "Remove the OIDC binding oib_37zm5xjfwozt3kkdikxxi2qlca (issuer \"https://issuer.example\", subject \"enf-old:*\", audience \"varlatch\") from \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)",
+          "changes": []
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      }
+    ],
+    "organization_freezes": [
+      {
+        "id": "ofz_sicpxtd7j2wjr3v775nvbi7jja",
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "frozen_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "frozen_at": "2026-03-01T00:00:00.000Z",
+        "reason": "incident drill",
+        "lifted_at": null,
+        "lifted_by": null,
+        "lift_method": null
+      }
+    ],
+    "oidc_bindings": [
+      {
+        "id": "oib_37zm5xjfwozt3kkdikxxi2qlca",
+        "identity_id": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+        "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "enf-old:*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:16.105Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_6eux6b5iadldonaqwiemdcl7mi",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "revoked:*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.971Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_6ixbu5yv62l2ldohi2ha7cmju4",
+        "identity_id": "idn_v5h53ogaq532wplzu2m4m6llgm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "retired:*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.931Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "repo:acme/api:*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.845Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_7r6j4ctxfl2mleiy52u64ojaqu",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "repo:acme/*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.910Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_guybzlzt3v7qbg4hn5iririwfy",
+        "identity_id": "idn_bpjnxuqtrjii43sl46couofgxq",
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "frozen-revoke:*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:16.065Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_lwor23v4nhushdgitmisvlhsmq",
+        "identity_id": "idn_bpjnxuqtrjii43sl46couofgxq",
+        "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "frozen:*",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:16.042Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_pcbplbtsnhef4bpm4wzi676rgq",
+        "identity_id": "idn_5shpyoim2tr4p3mr7pputweuaq",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "repo:acme/shared",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.888Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_qyzykwll6f6agvk2ehotkwojby",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://down.example",
+        "audience": "varlatch",
+        "subject": "x",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.992Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_s3yfy2cvhzkecwc7bqcdhofrpa",
+        "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://refused.example",
+        "audience": "varlatch",
+        "subject": "x",
+        "claims": null,
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-03-01T00:00:00.000Z",
+        "revoked_at": null
+      },
+      {
+        "id": "oib_wnbhlrweeqnavncyorlfymh7bi",
+        "identity_id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+        "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+        "issuer": "https://issuer.example",
+        "audience": "worker-aud",
+        "subject": "svc:worker",
+        "claims": {
+          "env": "prod",
+          "ref": "refs/heads/main"
+        },
+        "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+        "created_at": "2026-11-16T12:24:15.867Z",
+        "revoked_at": null
+      }
+    ]
+  },
+  "sideTables": [
+    {
+      "name": "oidc_bindings",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "identity_id",
+        "issuer",
+        "subject"
+      ],
+      "volatile": [
+        "created_at",
+        "revoked_at"
+      ]
+    },
+    {
+      "name": "credentials",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "identity_id",
+        "kind",
+        "name"
+      ],
+      "volatile": [
+        "token_hash",
+        "created_at",
+        "expires_at",
+        "revoked_at",
+        "last_used_at"
+      ]
+    },
+    {
+      "name": "security_control_counters",
+      "key": [
+        "organization_id",
+        "control",
+        "config_version",
+        "operation",
+        "actor_identity_id",
+        "reason",
+        "bucket_hour"
+      ],
+      "sortBy": [
+        "organization_id",
+        "control",
+        "config_version",
+        "operation",
+        "actor_identity_id",
+        "reason"
+      ],
+      "volatile": [
+        "bucket_hour",
+        "first_seen",
+        "last_seen",
+        "emitted_at"
+      ]
+    },
+    {
+      "name": "approval_intents",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "operation",
+        "target",
+        "body_hash"
+      ],
+      "volatile": [
+        "created_at",
+        "expires_at",
+        "consumed_at",
+        "closed_at"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "id": "GET list",
+      "name": "list",
+      "method": "GET",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"id\":\"oib_s3yfy2cvhzkecwc7bqcdhofrpa\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://refused.example\",\"audience\":\"varlatch\",\"subject\":\"x\",\"claims\":null,\"createdAt\":\"2026-03-01T00:00:00.000Z\"},{\"id\":\"oib_7mvpkjaecrsvvsdgf5axg4rgom\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"repo:acme/api:*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:15.845Z\"},{\"id\":\"oib_7r6j4ctxfl2mleiy52u64ojaqu\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"repo:acme/*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:15.910Z\"},{\"id\":\"oib_6eux6b5iadldonaqwiemdcl7mi\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"revoked:*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:15.971Z\"},{\"id\":\"oib_qyzykwll6f6agvk2ehotkwojby\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://down.example\",\"audience\":\"varlatch\",\"subject\":\"x\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:15.992Z\"}],\"nextCursor\":null}"
+      },
+      "audit": [],
+      "side": {
+        "credentials": {
+          "updated": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "2026-11-16T12:24:15.630Z",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": null,
+              "id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+              "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "kind": "cli",
+              "last_used_at": "{fresh}",
+              "max_uses": null,
+              "name": null,
+              "revoked_at": null,
+              "token_hash": "19941bc759109a45253c0df715ab1d801f0d16ddeb3b03172f1b2a09c95cea46",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET list as a member",
+      "name": "list as a member",
+      "method": "GET",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "bob",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_3sjasvalhbvk7nzcwvs2phfnz4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "updated": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "2026-11-16T12:24:16.009Z",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": null,
+              "id": "crd_3sjasvalhbvk7nzcwvs2phfnz4",
+              "identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
+              "issued_by": "idn_ppf5pru7f42cjnrehv6yvpazjq",
+              "kind": "cli",
+              "last_used_at": "{fresh}",
+              "max_uses": null,
+              "name": null,
+              "revoked_at": null,
+              "token_hash": "0fcff46eea44bc7716c9d7e7fb600f5966ea413c3041ec531ee0b3dc93deb9a6",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "GET list a person's",
+      "name": "list a person's",
+      "method": "GET",
+      "path": "/v1/organizations/acme/identities/{alice}/oidc-bindings",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list an unknown identity's",
+      "name": "list an unknown identity's",
+      "method": "GET",
+      "path": "/v1/organizations/acme/identities/idn_unknownaaaaaaaaaaaaaaaaaa/oidc-bindings",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list in a frozen Organization",
+      "name": "list in a frozen Organization",
+      "method": "GET",
+      "path": "/v1/organizations/frozen/identities/{fci}/oidc-bindings",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"id\":\"oib_lwor23v4nhushdgitmisvlhsmq\",\"identityId\":\"idn_bpjnxuqtrjii43sl46couofgxq\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"frozen:*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:16.042Z\"},{\"id\":\"oib_guybzlzt3v7qbg4hn5iririwfy\",\"identityId\":\"idn_bpjnxuqtrjii43sl46couofgxq\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"frozen-revoke:*\",\"claims\":null,\"createdAt\":\"2026-11-16T12:24:16.065Z\"}],\"nextCursor\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, not JSON",
+      "name": "create, not JSON",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "rawBody": "{nope",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an empty body",
+      "name": "create, an empty body",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {},
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"issuer: Invalid input: expected string, received undefined; audience: Invalid input: expected string, received undefined; subject: Invalid input: expected string, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, claims that are an array",
+      "name": "create, claims that are an array",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "https://issuer.example",
+        "audience": "aud-new",
+        "subject": "new:*",
+        "claims": []
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"claims: Invalid input: expected record, received array\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, a claim that is a number",
+      "name": "create, a claim that is a number",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "https://issuer.example",
+        "audience": "aud-new",
+        "subject": "new:*",
+        "claims": {
+          "2": "x",
+          "n": 1
+        }
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"claims.n: Invalid input: expected string, received number\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an empty issuer",
+      "name": "create, an empty issuer",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "",
+        "audience": "aud-new",
+        "subject": "new:*"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"issuer: Too small: expected string to have >=1 characters\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an issuer that is not a URL",
+      "name": "create, an issuer that is not a URL",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "not a url",
+        "audience": "aud-new",
+        "subject": "new:*"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Invalid issuer URL\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an http issuer",
+      "name": "create, an http issuer",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "http://issuer.example",
+        "audience": "aud-new",
+        "subject": "new:*"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Issuer must be a plain https URL\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an issuer with a query",
+      "name": "create, an issuer with a query",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "https://issuer.example/?x=1",
+        "audience": "aud-new",
+        "subject": "new:*"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Issuer must be a plain https URL\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, an issuer at a private address",
+      "name": "create, an issuer at a private address",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "https://10.0.0.5",
+        "audience": "aud-new",
+        "subject": "new:*"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"This address is on a private network, which this installation does not let Organizations reach. The host operator can allow it with VARLATCH_OUTBOUND_ALLOW. See https://docs.varlatch.com/reference/outbound-policy/\",\"requestId\":\"{requestId}\",\"details\":{\"outbound\":\"private_address\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "deny",
+          "event_type": "outbound.refused",
+          "listener": "ordinary",
+          "metadata": {
+            "host": "10.0.0.5",
+            "phase": "configuration",
+            "port": 443,
+            "purpose": "oidc",
+            "reason": "private_address",
+            "scheme": "https"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST create",
+      "name": "create",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "https://issuer.example",
+        "audience": "aud-new",
+        "subject": "new:*",
+        "claims": {
+          "1": "one",
+          "ref": "refs/heads/main",
+          "env": "prod"
+        },
+        "extra": true
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{oib#1}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"aud-new\",\"subject\":\"new:*\",\"claims\":{\"1\":\"one\",\"env\":\"prod\",\"ref\":\"refs/heads/main\"},\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "info",
+          "event_type": "oidc_binding.created",
+          "listener": "ordinary",
+          "metadata": {
+            "audience": "aud-new",
+            "issuer": "https://issuer.example",
+            "subject": "new:*"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+            "oidcBindingId": "{oib#1}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "inserted": [
+            {
+              "audience": "aud-new",
+              "claims": {
+                "1": "one",
+                "env": "prod",
+                "ref": "refs/heads/main"
+              },
+              "created_at": "{fresh}",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "{oib#1}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+              "revoked_at": null,
+              "subject": "new:*"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create, no claims",
+      "name": "create, no claims",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "https://issuer.example",
+        "audience": "aud-new",
+        "subject": "plain"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{oib#2}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"aud-new\",\"subject\":\"plain\",\"claims\":null,\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "info",
+          "event_type": "oidc_binding.created",
+          "listener": "ordinary",
+          "metadata": {
+            "audience": "aud-new",
+            "issuer": "https://issuer.example",
+            "subject": "plain"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+            "oidcBindingId": "{oib#2}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "inserted": [
+            {
+              "audience": "aud-new",
+              "claims": null,
+              "created_at": "{fresh}",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "{oib#2}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+              "revoked_at": null,
+              "subject": "plain"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create, a __proto__ claim",
+      "name": "create, a __proto__ claim",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "rawBody": "{\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"proto:*\",\"claims\":{\"__proto__\":\"x\"}}",
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{oib#3}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"proto:*\",\"claims\":{},\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "info",
+          "event_type": "oidc_binding.created",
+          "listener": "ordinary",
+          "metadata": {
+            "audience": "varlatch",
+            "issuer": "https://issuer.example",
+            "subject": "proto:*"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+            "oidcBindingId": "{oib#3}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "inserted": [
+            {
+              "audience": "varlatch",
+              "claims": {},
+              "created_at": "{fresh}",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "{oib#3}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+              "revoked_at": null,
+              "subject": "proto:*"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create, a constructor claim and a __proto__ that is a number",
+      "name": "create, a constructor claim and a __proto__ that is a number",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "alice",
+      "rawBody": "{\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"ctor:*\",\"claims\":{\"constructor\":\"c\",\"__proto__\":1}}",
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{oib#4}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"ctor:*\",\"claims\":{\"constructor\":\"c\"},\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "info",
+          "event_type": "oidc_binding.created",
+          "listener": "ordinary",
+          "metadata": {
+            "audience": "varlatch",
+            "issuer": "https://issuer.example",
+            "subject": "ctor:*"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+            "oidcBindingId": "{oib#4}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "inserted": [
+            {
+              "audience": "varlatch",
+              "claims": {
+                "constructor": "c"
+              },
+              "created_at": "{fresh}",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "{oib#4}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+              "revoked_at": null,
+              "subject": "ctor:*"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create as a member",
+      "name": "create as a member",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings",
+      "credential": "bob",
+      "body": {
+        "issuer": "https://issuer.example",
+        "audience": "aud-new",
+        "subject": "new:*"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_ppf5pru7f42cjnrehv6yvpazjq",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_3sjasvalhbvk7nzcwvs2phfnz4",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST create for a person",
+      "name": "create for a person",
+      "method": "POST",
+      "path": "/v1/organizations/acme/identities/{alice}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "https://issuer.example",
+        "audience": "aud-new",
+        "subject": "new:*"
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create in a frozen Organization",
+      "name": "create in a frozen Organization",
+      "method": "POST",
+      "path": "/v1/organizations/frozen/identities/{fci}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "https://issuer.example",
+        "audience": "aud-new",
+        "subject": "new:*"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_sicpxtd7j2wjr3v775nvbi7jja\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_sicpxtd7j2wjr3v775nvbi7jja",
+            "method": "POST",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org/identities/:identity/oidc-bindings"
+          },
+          "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_sicpxtd7j2wjr3v775nvbi7jja"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST create under enforce",
+      "name": "create under enforce",
+      "method": "POST",
+      "path": "/v1/organizations/enf/identities/{eci}/oidc-bindings",
+      "credential": "alice",
+      "body": {
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "enf:*"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#1} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#1}\",\"operation\":\"oidc_binding.create\",\"organization\":{\"id\":\"org_3titu3iv6mhvmit5raij65wmu4\",\"slug\":\"enf\",\"name\":\"enf\"},\"summary\":{\"title\":\"Let tokens from \\\"https://issuer.example\\\" with subject \\\"enf:*\\\" act as \\\"eci\\\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)\",\"changes\":[{\"to\":\"\\\"https://issuer.example\\\"\",\"from\":null,\"field\":\"issuer\",\"loosens\":false},{\"to\":\"\\\"varlatch\\\"\",\"from\":null,\"field\":\"audience\",\"loosens\":false},{\"to\":\"\\\"enf:*\\\"\",\"from\":null,\"field\":\"subject\",\"loosens\":false}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#1}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:11609a21f491fa3a32955352a3264cf2a272748ed3f7732286a0d0f2ce758f84",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+              "expected_version": null,
+              "expires_at": "{fresh}",
+              "id": "{apr#1}",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+              "last_polled_at": null,
+              "operation": "oidc_binding.create",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "issuer",
+                    "from": null,
+                    "loosens": false,
+                    "to": "\"https://issuer.example\""
+                  },
+                  {
+                    "field": "audience",
+                    "from": null,
+                    "loosens": false,
+                    "to": "\"varlatch\""
+                  },
+                  {
+                    "field": "subject",
+                    "from": null,
+                    "loosens": false,
+                    "to": "\"enf:*\""
+                  }
+                ],
+                "title": "Let tokens from \"https://issuer.example\" with subject \"enf:*\" act as \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)"
+              },
+              "target": {
+                "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create under enforce, its approval",
+      "name": "create under enforce, its approval",
+      "method": "POST",
+      "path": "/v1/organizations/enf/identities/{eci}/oidc-bindings",
+      "credential": "alice2",
+      "body": {
+        "issuer": "https://issuer.example",
+        "audience": "varlatch",
+        "subject": "enf:*"
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_oidccreateaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{oib#5}\",\"identityId\":\"idn_3ewxwqy5s3fdicnklvm3tpngfm\",\"issuer\":\"https://issuer.example\",\"audience\":\"varlatch\",\"subject\":\"enf:*\",\"claims\":null,\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+          "decision": "info",
+          "event_type": "oidc_binding.created",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": "apr_oidccreateaaaaaaaaaaaaaaaa",
+            "approvalPasskeyId": "PasskeyConf001",
+            "approvalUserVerified": true,
+            "audience": "varlatch",
+            "issuer": "https://issuer.example",
+            "subject": "enf:*"
+          },
+          "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+            "oidcBindingId": "{oib#5}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "inserted": [
+            {
+              "audience": "varlatch",
+              "claims": null,
+              "created_at": "{fresh}",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "{oib#5}",
+              "identity_id": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+              "revoked_at": null,
+              "subject": "enf:*"
+            }
+          ]
+        },
+        "credentials": {
+          "updated": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "2026-11-16T12:24:15.642Z",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": null,
+              "id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+              "issued_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "kind": "cli",
+              "last_used_at": "{fresh}",
+              "max_uses": null,
+              "name": null,
+              "revoked_at": null,
+              "token_hash": "7cbf7562af0607ad7d074048168ba0cce46141103e4b43689dd3afd0c346c1db",
+              "use_count": 0
+            }
+          ]
+        },
+        "approval_intents": {
+          "updated": [
+            {
+              "approval_user_verified": true,
+              "approved_at": "2026-01-10T00:01:00.000Z",
+              "approved_with_passkey_id": "PasskeyConf001",
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:11609a21f491fa3a32955352a3264cf2a272748ed3f7732286a0d0f2ce758f84",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": "{fresh}",
+              "created_at": "2026-01-10T00:00:00.000Z",
+              "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+              "expected_version": null,
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "apr_oidccreateaaaaaaaaaaaaaaaa",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+              "last_polled_at": null,
+              "operation": "oidc_binding.create",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "issuer",
+                    "from": null,
+                    "loosens": false,
+                    "to": "\"https://issuer.example\""
+                  },
+                  {
+                    "field": "audience",
+                    "from": null,
+                    "loosens": false,
+                    "to": "\"varlatch\""
+                  },
+                  {
+                    "field": "subject",
+                    "from": null,
+                    "loosens": false,
+                    "to": "\"enf:*\""
+                  }
+                ],
+                "title": "Let tokens from \"https://issuer.example\" with subject \"enf:*\" act as \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)"
+              },
+              "target": {
+                "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE revoke",
+      "name": "revoke",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings/{b8}",
+      "credential": "alice",
+      "expect": {
+        "status": 204,
+        "headers": {},
+        "body": ""
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "info",
+          "event_type": "oidc_binding.revoked",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+            "oidcBindingId": "oib_6eux6b5iadldonaqwiemdcl7mi"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "updated": [
+            {
+              "audience": "varlatch",
+              "claims": null,
+              "created_at": "2026-11-16T12:24:15.971Z",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "oib_6eux6b5iadldonaqwiemdcl7mi",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+              "revoked_at": "{fresh}",
+              "subject": "revoked:*"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE revoke again",
+      "name": "revoke again",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings/{b8}",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Binding not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE revoke an unknown binding",
+      "name": "revoke an unknown binding",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/identities/{deployer}/oidc-bindings/oib_unknownaaaaaaaaaaaaaaaaaa",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Binding not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE revoke another identity's binding",
+      "name": "revoke another identity's binding",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/identities/{worker}/oidc-bindings/{b8}",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Binding not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE revoke in a frozen Organization",
+      "name": "revoke in a frozen Organization",
+      "method": "DELETE",
+      "path": "/v1/organizations/frozen/identities/{fci}/oidc-bindings/{fb2}",
+      "credential": "alice",
+      "expect": {
+        "status": 204,
+        "headers": {},
+        "body": ""
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+          "decision": "info",
+          "event_type": "oidc_binding.revoked",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_bpjnxuqtrjii43sl46couofgxq",
+            "oidcBindingId": "oib_guybzlzt3v7qbg4hn5iririwfy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "updated": [
+            {
+              "audience": "varlatch",
+              "claims": null,
+              "created_at": "2026-11-16T12:24:16.065Z",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "oib_guybzlzt3v7qbg4hn5iririwfy",
+              "identity_id": "idn_bpjnxuqtrjii43sl46couofgxq",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+              "revoked_at": "{fresh}",
+              "subject": "frozen-revoke:*"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE revoke under enforce",
+      "name": "revoke under enforce",
+      "method": "DELETE",
+      "path": "/v1/organizations/enf/identities/{eci}/oidc-bindings/{eb1}",
+      "credential": "alice",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#2} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#2}\",\"operation\":\"oidc_binding.delete\",\"organization\":{\"id\":\"org_3titu3iv6mhvmit5raij65wmu4\",\"slug\":\"enf\",\"name\":\"enf\"},\"summary\":{\"title\":\"Remove the OIDC binding oib_37zm5xjfwozt3kkdikxxi2qlca (issuer \\\"https://issuer.example\\\", subject \\\"enf-old:*\\\", audience \\\"varlatch\\\") from \\\"eci\\\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)\",\"changes\":[]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#2}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:1ef8024b6ac1d2c7c7f5611afa109812323b3fbe215437268b7ba235e22ff9c5",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_qfny6j5yfqi4os53ngu7wwa4ru",
+              "expected_version": null,
+              "expires_at": "{fresh}",
+              "id": "{apr#2}",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+              "last_polled_at": null,
+              "operation": "oidc_binding.delete",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
+              "summary": {
+                "changes": [],
+                "title": "Remove the OIDC binding oib_37zm5xjfwozt3kkdikxxi2qlca (issuer \"https://issuer.example\", subject \"enf-old:*\", audience \"varlatch\") from \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)"
+              },
+              "target": {
+                "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+                "oidcBindingId": "oib_37zm5xjfwozt3kkdikxxi2qlca"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE revoke under enforce, its approval",
+      "name": "revoke under enforce, its approval",
+      "method": "DELETE",
+      "path": "/v1/organizations/enf/identities/{eci}/oidc-bindings/{eb1}",
+      "credential": "alice2",
+      "headers": {
+        "Varlatch-Approval": "apr_oidcrevokeaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 204,
+        "headers": {},
+        "body": ""
+      },
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+          "decision": "info",
+          "event_type": "oidc_binding.revoked",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": "apr_oidcrevokeaaaaaaaaaaaaaaaa",
+            "approvalPasskeyId": "PasskeyConf001",
+            "approvalUserVerified": true
+          },
+          "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+            "oidcBindingId": "oib_37zm5xjfwozt3kkdikxxi2qlca"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "oidc_bindings": {
+          "updated": [
+            {
+              "audience": "varlatch",
+              "claims": null,
+              "created_at": "2026-11-16T12:24:16.105Z",
+              "created_by": "idn_zemodxhfeomtnf6enha747g6by",
+              "id": "oib_37zm5xjfwozt3kkdikxxi2qlca",
+              "identity_id": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+              "issuer": "https://issuer.example",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+              "revoked_at": "{fresh}",
+              "subject": "enf-old:*"
+            }
+          ]
+        },
+        "approval_intents": {
+          "updated": [
+            {
+              "approval_user_verified": true,
+              "approved_at": "2026-01-10T00:01:00.000Z",
+              "approved_with_passkey_id": "PasskeyConf001",
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:1ef8024b6ac1d2c7c7f5611afa109812323b3fbe215437268b7ba235e22ff9c5",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": "{fresh}",
+              "created_at": "2026-01-10T00:00:00.000Z",
+              "credential_id": "crd_snfl2yfgumnqsy3nzoxr5xzt7a",
+              "expected_version": null,
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "apr_oidcrevokeaaaaaaaaaaaaaaaa",
+              "identity_id": "idn_zemodxhfeomtnf6enha747g6by",
+              "last_polled_at": null,
+              "operation": "oidc_binding.delete",
+              "organization_id": "org_3titu3iv6mhvmit5raij65wmu4",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:0d226b97510f690a8abc816f4a3758a6144647b8ba479808acf9f54aadd2d09b",
+              "summary": {
+                "changes": [],
+                "title": "Remove the OIDC binding oib_37zm5xjfwozt3kkdikxxi2qlca (issuer \"https://issuer.example\", subject \"enf-old:*\", audience \"varlatch\") from \"eci\" (idn_3ewxwqy5s3fdicnklvm3tpngfm)"
+              },
+              "target": {
+                "identityId": "idn_3ewxwqy5s3fdicnklvm3tpngfm",
+                "oidcBindingId": "oib_37zm5xjfwozt3kkdikxxi2qlca"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST exchange, not JSON",
+      "name": "exchange, not JSON",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "masked": [
+        "token"
+      ],
+      "rawBody": "{nope",
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, an empty body",
+      "name": "exchange, an empty body",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {},
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"token: Invalid input: expected string, received undefined; organization: Invalid input: expected string, received undefined\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a ttl of 0",
+      "name": "exchange, a ttl of 0",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:good}",
+        "organization": "acme",
+        "ttlSeconds": 0
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"ttlSeconds: Too small: expected number to be >=1\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a fractional ttl",
+      "name": "exchange, a fractional ttl",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:good}",
+        "organization": "acme",
+        "ttlSeconds": 1.5
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"ttlSeconds: Invalid input: expected int, received number\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a ttl over an hour",
+      "name": "exchange, a ttl over an hour",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:good}",
+        "organization": "acme",
+        "ttlSeconds": 3601
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"ttlSeconds: Too big: expected number to be <=3600\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a malformed token",
+      "name": "exchange, a malformed token",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "nope",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "malformed"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, an unknown issuer",
+      "name": "exchange, an unknown issuer",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:unknownIssuer}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "no-binding"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, an unknown Organization",
+      "name": "exchange, an unknown Organization",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:good}",
+        "organization": "nope"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "no-binding"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange",
+      "name": "exchange",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:good}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{crd#1}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+          "authz": null,
+          "client": null,
+          "credential_id": "{crd#1}",
+          "decision": "info",
+          "event_type": "credential.issued",
+          "listener": null,
+          "metadata": {
+            "expiresAt": "{time}",
+            "issuer": "https://issuer.example",
+            "kind": "oidc",
+            "method": "oidc",
+            "oidcBindingId": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
+            "subject": "repo:acme/api:ref:refs/heads/main"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "inserted": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "{fresh}",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": "{fresh}",
+              "id": "{crd#1}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "kind": "oidc",
+              "last_used_at": null,
+              "max_uses": null,
+              "name": "oidc:repo:acme/api:ref:refs/heads/main",
+              "revoked_at": null,
+              "token_hash": "{fresh}",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST exchange by the Organization's id, an hour",
+      "name": "exchange by the Organization's id, an hour",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:good}",
+        "organization": "{acmeId}",
+        "ttlSeconds": 3600
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{crd#2}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+          "authz": null,
+          "client": null,
+          "credential_id": "{crd#2}",
+          "decision": "info",
+          "event_type": "credential.issued",
+          "listener": null,
+          "metadata": {
+            "expiresAt": "{time}",
+            "issuer": "https://issuer.example",
+            "kind": "oidc",
+            "method": "oidc",
+            "oidcBindingId": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
+            "subject": "repo:acme/api:ref:refs/heads/main"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "inserted": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "{fresh}",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": "{fresh}",
+              "id": "{crd#2}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "kind": "oidc",
+              "last_used_at": null,
+              "max_uses": null,
+              "name": "oidc:repo:acme/api:ref:refs/heads/main",
+              "revoked_at": null,
+              "token_hash": "{fresh}",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST exchange, an audience in an array",
+      "name": "exchange, an audience in an array",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:audArray}",
+        "organization": "acme",
+        "ttlSeconds": 60
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{crd#3}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+          "authz": null,
+          "client": null,
+          "credential_id": "{crd#3}",
+          "decision": "info",
+          "event_type": "credential.issued",
+          "listener": null,
+          "metadata": {
+            "expiresAt": "{time}",
+            "issuer": "https://issuer.example",
+            "kind": "oidc",
+            "method": "oidc",
+            "oidcBindingId": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
+            "subject": "repo:acme/api:pull/7"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "inserted": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "{fresh}",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": "{fresh}",
+              "id": "{crd#3}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "kind": "oidc",
+              "last_used_at": null,
+              "max_uses": null,
+              "name": "oidc:repo:acme/api:pull/7",
+              "revoked_at": null,
+              "token_hash": "{fresh}",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST exchange, another audience",
+      "name": "exchange, another audience",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:wrongAudience}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "no-matching-binding"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, the claims a binding asks for",
+      "name": "exchange, the claims a binding asks for",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:worker}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{crd#4}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_4cho6seojkmqaoe3yw2pqcthpm\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+          "authz": null,
+          "client": null,
+          "credential_id": "{crd#4}",
+          "decision": "info",
+          "event_type": "credential.issued",
+          "listener": null,
+          "metadata": {
+            "expiresAt": "{time}",
+            "issuer": "https://issuer.example",
+            "kind": "oidc",
+            "method": "oidc",
+            "oidcBindingId": "oib_wnbhlrweeqnavncyorlfymh7bi",
+            "subject": "svc:worker"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_4cho6seojkmqaoe3yw2pqcthpm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "inserted": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "{fresh}",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": "{fresh}",
+              "id": "{crd#4}",
+              "identity_id": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+              "issued_by": "idn_4cho6seojkmqaoe3yw2pqcthpm",
+              "kind": "oidc",
+              "last_used_at": null,
+              "max_uses": null,
+              "name": "oidc:svc:worker",
+              "revoked_at": null,
+              "token_hash": "{fresh}",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST exchange, a claim that differs",
+      "name": "exchange, a claim that differs",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:workerOtherEnv}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "no-matching-binding"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, bindings of two identities",
+      "name": "exchange, bindings of two identities",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:shared}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "ambiguous-binding"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, an expired token",
+      "name": "exchange, an expired token",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:expired}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "Token expired"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a bad signature",
+      "name": "exchange, a bad signature",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:badSignature}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "Signature verification failed"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, an unknown key",
+      "name": "exchange, an unknown key",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:unknownKey}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "Unknown signing key"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a retired identity's binding",
+      "name": "exchange, a retired identity's binding",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:retired}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "no-matching-binding"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a revoked binding",
+      "name": "exchange, a revoked binding",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:revoked}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "no-matching-binding"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, an issuer that is down",
+      "name": "exchange, an issuer that is down",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:down}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "Issuer metadata fetch failed (503)"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, an issuer the policy refuses",
+      "name": "exchange, an issuer the policy refuses",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:refused}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "outbound.refused",
+          "listener": null,
+          "metadata": {
+            "host": "refused.example",
+            "phase": "connection",
+            "port": 443,
+            "purpose": "oidc",
+            "reason": "private_address",
+            "scheme": "https"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": "{requestId}",
+          "resource": {
+            "oidcBindingId": "oib_s3yfy2cvhzkecwc7bqcdhofrpa"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        },
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "Issuer metadata fetch failed"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange in a frozen Organization",
+      "name": "exchange in a frozen Organization",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:frozen}",
+        "organization": "frozen"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_sicpxtd7j2wjr3v775nvbi7jja\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": null,
+          "metadata": {
+            "freezeId": "ofz_sicpxtd7j2wjr3v775nvbi7jja",
+            "method": "POST",
+            "reason": "organization_frozen",
+            "route": "/v1/oidc/token"
+          },
+          "organization_id": "org_tt5a5b7gxkin7b76rc223lqxii",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_sicpxtd7j2wjr3v775nvbi7jja"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a binding whose __proto__ claim was dropped",
+      "name": "exchange, a binding whose __proto__ claim was dropped",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:proto}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{crd#5}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+          "authz": null,
+          "client": null,
+          "credential_id": "{crd#5}",
+          "decision": "info",
+          "event_type": "credential.issued",
+          "listener": null,
+          "metadata": {
+            "expiresAt": "{time}",
+            "issuer": "https://issuer.example",
+            "kind": "oidc",
+            "method": "oidc",
+            "oidcBindingId": "{oib#3}",
+            "subject": "proto:1"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "inserted": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "{fresh}",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": "{fresh}",
+              "id": "{crd#5}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "kind": "oidc",
+              "last_used_at": null,
+              "max_uses": null,
+              "name": "oidc:proto:1",
+              "revoked_at": null,
+              "token_hash": "{fresh}",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST exchange, a constructor claim missing",
+      "name": "exchange, a constructor claim missing",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:ctorMissing}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "no-matching-binding"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a constructor claim",
+      "name": "exchange, a constructor claim",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:ctor}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{crd#6}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+          "authz": null,
+          "client": null,
+          "credential_id": "{crd#6}",
+          "decision": "info",
+          "event_type": "credential.issued",
+          "listener": null,
+          "metadata": {
+            "expiresAt": "{time}",
+            "issuer": "https://issuer.example",
+            "kind": "oidc",
+            "method": "oidc",
+            "oidcBindingId": "{oib#4}",
+            "subject": "ctor:2"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "inserted": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "{fresh}",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": "{fresh}",
+              "id": "{crd#6}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "kind": "oidc",
+              "last_used_at": null,
+              "max_uses": null,
+              "name": "oidc:ctor:2",
+              "revoked_at": null,
+              "token_hash": "{fresh}",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST exchange, U+013D in the signature",
+      "name": "exchange, U+013D in the signature",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:unicodeSignature}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"OIDC token was not accepted\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": null,
+          "authz": null,
+          "client": null,
+          "credential_id": null,
+          "decision": "deny",
+          "event_type": "authentication.failed",
+          "listener": null,
+          "metadata": {
+            "method": "oidc",
+            "reason": "Signature verification failed"
+          },
+          "organization_id": null,
+          "request_id": "{requestId}",
+          "resource": null,
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST exchange, a null payload",
+      "name": "exchange, a null payload",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:nullPayload}",
+        "organization": "acme"
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 500,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"Internal error\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST exchange again: the keys are cached",
+      "name": "exchange again: the keys are cached",
+      "method": "POST",
+      "path": "/v1/oidc/token",
+      "credential": "none",
+      "body": {
+        "token": "{oidc:good}",
+        "organization": "acme",
+        "ttlSeconds": 1
+      },
+      "masked": [
+        "token"
+      ],
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{crd#7}\",\"token\":\"{masked}\",\"expiresAt\":\"{time}\",\"identityId\":\"idn_b2m7dtr2wizty3xqiq4vsqq7wm\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+          "authz": null,
+          "client": null,
+          "credential_id": "{crd#7}",
+          "decision": "info",
+          "event_type": "credential.issued",
+          "listener": null,
+          "metadata": {
+            "expiresAt": "{time}",
+            "issuer": "https://issuer.example",
+            "kind": "oidc",
+            "method": "oidc",
+            "oidcBindingId": "oib_7mvpkjaecrsvvsdgf5axg4rgom",
+            "subject": "repo:acme/api:ref:refs/heads/main"
+          },
+          "organization_id": "org_6w7zdbej3xokwlmyr5diqrvlui",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_b2m7dtr2wizty3xqiq4vsqq7wm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "credentials": {
+          "inserted": [
+            {
+              "auth_session_id": null,
+              "client": null,
+              "created_at": "{fresh}",
+              "evidence_passkey_id": null,
+              "evidence_user_verified": null,
+              "expires_at": "{fresh}",
+              "id": "{crd#7}",
+              "identity_id": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "issued_by": "idn_b2m7dtr2wizty3xqiq4vsqq7wm",
+              "kind": "oidc",
+              "last_used_at": null,
+              "max_uses": null,
+              "name": "oidc:repo:acme/api:ref:refs/heads/main",
+              "revoked_at": null,
+              "token_hash": "{fresh}",
+              "use_count": 0
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "counters": [],
+  "oidc": {
+    "jwks": [
+      {
+        "kty": "RSA",
+        "n": "wTCgY3BOJasDjN5SjeI_J1UDh-7ESS9jeJvdITC7_QlHMzLjzLi66ZC-74RIMDqKtWCmk9bnODlRWGuexC4I42--j_0-WEZR8KSDTQjLktxK4T9jbZ1Aj4MCrWIKkEBDJE1-YZyoh7iXi9OlYFevO-2Q5NJvfLB5feXjT0jdKK_zDUM1MkQ1jd56W9rWLM8kF1W2dmx_Ib10OTP9TxjzZNkSFxyxbpgEXPORlw4psAz08dROWyt6zTr0QFfaHM7MbN_ykqujnFTNgKPqFyDJ7I43-pphhUtJ3zlRQq1M4x0oK2eRAPi8x02WAlSs-JH2Q9sTKHxpdh9M-Sl6SnnF1Q",
+        "e": "AQAB",
+        "kid": "k1",
+        "alg": "RS256",
+        "use": "sig"
+      }
+    ],
+    "tokens": {
+      "good": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.BbApIwcVGCtbkKGP7k_XxD4fghND-lhv5khdnAqRnCZj3SwEHpjBa3hqvTRDyRkK-9zZuSiDI6xiV2fQ3Was2oPVXZ6jFTqqD7-FsRI-ycv4ul4EUYtbe1CXzebNVI8S1mtWP7JeUnaQ6624pmOgJq9KnamIWMcyURt8z657imwuKxWlv1Bf3FHN7dfERz5OayXkdbdvKOcCymKXi6crgJtm0NiGufHS6YdqPSwaqTAHOGS3VdFyB7cD065C1_HjhQVsb8w4dY-1CSQHumAsb1LDUywe1N7k9uR_Zk9gVMLFgfK6RMCkZFOOX3DhLUO6WSt7IQpRjttQqICnODhYSA",
+      "unknownIssuer": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL25vYm9keS5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJ4IiwiaWF0IjoxNzYzMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.QiXcBtoccs-JHJVIriGoH7xgUi5zJaeq8cJr5ggbNKIbPYDffIZwpmhxAHlVhlEXANaCVfEHQybEtBva8C4V_K8kycCj1r6S1V70DgyGLs6AWTOeHgWEo1edpmww5mpOWpxEeUvLYjoOnOVeMFjktNWdjB5mQmcXc2VtiVE54Rv6R_uOe_Hx6goGKs84p9r-6p2wnYHEAMbPlkoSfpcff2D75_8sh-hrASrZU9So8xsCmoM0yXUTLtRHjR7qc4bTWUu_yUoGAu4QyCo-lDc2S-sQ853Oc5d_IhiWBexvQkJgO5x_Lz-FoWXUkPHMWB7nlcQRM21JzzUclEJFzC7rSA",
+      "audArray": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjpbIm90aGVyIiwidmFybGF0Y2giXSwic3ViIjoicmVwbzphY21lL2FwaTpwdWxsLzciLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.QPWOP4f84U8Zt40BIzpbeQY1YRTtz24cJx250vjZAtgXcque7S2tdmW_CjkIxUClFTE4SV5HKY_uN_1Pwc1w77tP0AQ3DOYXe-HKWMp9z1GtcIg_37zX4Ok7Bro3X7GlWZW7kOE5R3V3QHd1GLMw_7sCP8q4SxGDhOjWyRCpQbXRo7zr_HxApseAH8C_paxYTBeEL_JA2K-ilLyA8duaMxmXSAJnxAfDPc4oV7zIew7hHlyYAMhZzp3ga13FYq7Pb4t8gaZBtamrDasFl0kNs1bKI6B9Y_y9xD0QI7wgYlWDxva3lc0bfcWvro21IHLg_ZWGhKr4AH03bh0UUG4Adw",
+      "wrongAudience": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoibm9wZSIsInN1YiI6InJlcG86YWNtZS9hcGk6eCIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.V4wBfbqr0MGRgYYOgco3tlUEtglsRT2MPsZy1mfCG0mhaSle5djNrwOaQtrfJnzqJjYIQsm8DA9TwnvMEQlvXoaYdJXp9BCXtSWriMszXa4AWn1yBr2LvrIS5NtEElX3TiYr_UilUlxs0bo8eXFnWOkzevTOxBO-eAUTpbcQtc25XJhRvB5IBKyvF7r1j5P6uP68eUzxnIXByzMFrlSqyZpSv7I_x1SY0OSjZXlH5jjNGizQ5AAjCqIaRzHvULPtRSe8xd5VzLQzwwh-nqTchLYJyypkPTqNp_vUggKWGG1vth6YJo2SRcwVdAYfTxtIoni96VFPBv1Cg7xWemF4KQ",
+      "worker": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoid29ya2VyLWF1ZCIsInN1YiI6InN2Yzp3b3JrZXIiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMCwicmVmIjoicmVmcy9oZWFkcy9tYWluIiwiZW52IjoicHJvZCJ9.suMsTRoihKUPVrdLZr-FciKOr8qzHjlUKn0RRq7wUwpevbHDWp0H7fbaBvaFfp0S7ut7_4js06b3ENjsjZIPUupXOqd9HPLLhIa3Rx6t8UuRj6v890_v_pjbosVcVHXl4FWfkcs8UmFwlcnX5SS0JWJAEYfuXsVwz6mY4FGLfzZmfIBJ2zKmHXp-Jv20dag6WXZOWbYwkskHmq2woMMrTav9YBoq40rG3gXm0C5p2s8yzZ7aodL6SWVB1-1-a3MgepjoOuCW-KJlcV6W_O0r5WELEEpBg1dxbnd3qCeZa8HzsNdbwGpx3U0mDT0HoQ9L9zhdtMaQyfdKNxy63Zd05Q",
+      "workerOtherEnv": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoid29ya2VyLWF1ZCIsInN1YiI6InN2Yzp3b3JrZXIiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMCwicmVmIjoicmVmcy9oZWFkcy9tYWluIiwiZW52IjoiZGV2In0.pPqlFRpNWCH5MLgpEENUw1bymDWd0gqLuGangiGu_q7y1B73KYHY8uHOOwmMLhodbbDoEpvMiIATwdhLbKwH214KACt2LIeoVtrVYplKSky3XYc8l0_ZpfTgkBTIB7LPEozDnQfbbVCbc2WNFOQ9n4GDEgOmj0fso1hq0wYvSYPClkfqVjAw7x7GlUEGu_cpN4IjQsTPeS8E6CWWiOwtwW_LVpg2fxXmuEavkzDcdN2PZXUcJy9k0NlHRsUhGjRINMeE92zO96KRq2LRqBuwxiAEPHqWSFOe-TQjMBs4SFgdiwBq1nphnkh4FEE_ML8IDBoliDJnx9D0M0ES71xJlw",
+      "shared": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvc2hhcmVkIiwiaWF0IjoxNzYzMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.HxR_Sw40pA82vIVSOEprJWxNBBT7YY1rc2rnbT2mA2_UbsbX2uzNgeoPgJbp9e2jltaiPx9WLV7w4ITunFaTGTfyFAGS3XZZfmD2MppuxcB8wY9nSNkyPtF-FL8Vm5HHRuiayff7SoXg_BrYzBPFv9yTuWRTcjWWINFZUMj5mVTQN3ZaReQzrqfWz7zEy7ybQj5lA3xuDlx42-Du2bnrxo4_-gziO_YXM8rqf7uzIbz8pA0RB1VofeK1QRMHdvmZTalVEMkZyhQKGodShmvoWJ7L9x5qySqwnBY-ckm4INjpkCQZ1iOZ93aknIhj3CAiLmE3cBH21ZNUjhEJ3wgILg",
+      "expired": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOngiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6MTYwMDAwMDAwMH0.ROxalsMpq8AM6L3VjEDBu361AoD5yO_EN0_DZp2wBh9OdG4lJ1AQP6E1uWjKEhu1C8-uJC_agB2xX9no90IaK5OLnj8ASjNT6oBf9Rx-G_Q6ZFvRn0Tcb7TWMAKTp2pVgSExcZghmRSo9U-TsBzXmtnEIcZvbVjSbaHkT8YSCzdLkuJmmwJSUoNVjPhvJAxpda5UT9mD2bAeVKqIVrW4sN-i7Q6Cm3gRQyPkYe1tp_wRyvvgQxYu9MKFTH5WGmOFZBz4OIqD7uNTsSw2YS6byUke_7iQuz4xkBE14eclfkPuKF_eem2xRgKNFKntstyiPqAeiPxcbBu5iNZLcTcplg",
+      "badSignature": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.BbApIwcVGCtbkKGP7k_XxD4fghND-lhv5khdnAqRnCZj3SwEHpjBa3hqvTRDyRkK-9zZuSiDI6xiV2fQ3Was2oPVXZ6jFTqqD7-FsRI-ycv4ul4EUYtbe1CXzebNVI8S1mtWP7JeUnaQ6624pmOgJq9KnamIWMcyURt8z657imwuKxWlv1Bf3FHN7dfERz5OayXkdbdvKOcCymKXi6crgJtm0NiGufHS6YdqPSwaqTAHOGS3VdFyB7cD065C1_HjhQVsb8w4dY-1CSQHumAsb1LDUywe1N7k9uR_Zk9gVMLFgfK6RMCkZFOOX3DhLUO6WSt7IQpRjttQqICnAAAAAA",
+      "unknownKey": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ims5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOngiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.dRDdMxJprwNPIMEqPJKxC8aRY_kCdPCF40F531E9McqQmGbEWBFLWcXX0hP6Bk_vjnRhsP85gS3xQgkEMO7AbzNXSf-jfm5ArNYYj8Iw7evyeasbGjXkzp3PltxoY9vHIsXUIY0ctZiThFLc0GJA0mQJEUuY0D2OGOwIwIO0Djb4dLPodOKFc2P2h5XEvNVS3NqSyRhPBrz2J7u7d2Xw_014uocaIQ__q_ECO_2q1NvzjwjpA1iGo9cNAZS9p8xnIk-CFx2kyJaC-NnpDDshSNuRQlUfkEeVT0Ab6bpBYhaVbF7geW_hZZzAIJViDp5Euu4s0urxJPoW6r87R5myDw",
+      "retired": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXRpcmVkOjEiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.sHjVswnywgzNbfwn0xcMW9OVRW7wJgPs_GcxsKfPSE1a8Zu9s1psa9IuE_iL2QO1idpMl2H1WuQJjyk_Wy-sm7u7JR9z84y3XCeL_R8KVi2Kwl-Umt2li5YUpUQZRAzfOvewTkWWS6Gi0xsn_4uLvREEO45Uv0oafDjR4-6zn-owg4tLOSV_ieR64n9n3KDstiUmuLI6hWLLiR56DUygt35vadpcnpxm8eiesKYHAiiYWsSR3HAQXgFuF49y_euLfzC7c-2_6l2kz5xdocFkgA1npenMsStNsA_P_hz507uX51WKZyFbBAuqbXcXJ_Vlj3myqN4IfLvCk4lZUJd5VQ",
+      "revoked": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXZva2VkOjEiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.ZvgJrYBhCnd6rzjVC7oN400uZIuRGWidafRraiqZ3-drYMkolKuOU5bnL0wC9VgpuFKeR7rJKxBTf-ydO-TryUlMNef-W19KxNMh7RyewQrLBT1OQoGbjOaPTVGiUdUQYwLOZlUBpxO8z8X0UqilQ7sc_XNLyX7Qoj4LSIWvi3wJnhZ_UVO2Q4JVSP6gB0-PerCP2WFXaFkLmQTbGTJDStHZ1yOn3LmkhyCYEoJ7MWFAMkMH5qHxiiefpWeF9WrD3rl8DQ_KRL_jhwVV2lcQRsSpmklsfBgaruj1w_bPo1qDsvXpsjXJYjkWVyRxLilETfhvG7yUY-ImJksq2DcYkg",
+      "down": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2Rvd24uZXhhbXBsZSIsImF1ZCI6InZhcmxhdGNoIiwic3ViIjoieCIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.AtYEDqyxb69cpGF6ytSXgwsvVZncdONcy-AY04n2PH3pG9QxSA4Uzr6dqxGLSALVRoj8DsQDy3HsW9YsKUoYyVQh5Mt3lFYiq6hwKFEzezKo21IPia1XcpEOmSWnI8ehS6c1f8_p8ZdfRZqTfQCE-62EoCOH1M3kAn72b46WCiw_o2Tmv0FzlL7vKJsp6aeAdIjF-JG5IWbdUubaFb-6UglVjTo2t7akpppGkWMrzTrXAp_0pT83E-GXKgTk9aE14QXW0blzAHKMfEiWRKfqu-zQFXCa2iJCzVkDzVQ2p_3_i-QIUfobj7_zTHU3Ikxn5ZUVeePiRKeYZ3ZKSIdA0g",
+      "refused": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL3JlZnVzZWQuZXhhbXBsZSIsImF1ZCI6InZhcmxhdGNoIiwic3ViIjoieCIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.roaqhdwmSYfhsYwsE7Z_6KoQP7mim0wkCL1OFBGcV3kHWzKBA0FrccOCMj05mwqCA1UGruYZQSbSZ_Ay73tuFkC4odapLv6JdHgc5JvrsalFb2u3yhLIN8nAakQj-fSvT60k8-kpgYZAQyEqSkG2ZrbA0uUFtTGHljhFx22Rmw_b5F1jZDKfzx79rrRl6VX7w38HxKh2AQa3hpzwXEt1KzOfvdmZ2ZMffcR5S-f3kP-pqwk_arNA2h4ZXiZar7U0nct18PRc5MNHnxyLI_UT1R67O9vBc25mIa-4UBNGu35UtnhNd8Twr8b5ds9czVmVgcoRb8seW8ccZjMcGcRoLA",
+      "frozen": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJmcm96ZW46MSIsImlhdCI6MTc2MzAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.A_zYiErlrz-9GssRaPSdiC_CU4rYgyoN17NE9s_YJaayylhLOz_mdQ0wRoNWDgs5tuL_YBdNneAHKxJm0-JrwsZEU1uQJF1dn2pbclnDWyMOsg02MKTYSob_VF7KEvKcCgeuJgkqxocnOYurMb5M4QHCw5Mx85ZSo3WuWFJP5leQwHC02IWcUCnVvD3OHNvX9qOMMasY2sTnJPdTgx0VzPu7vCOtx4M4bykpAAbW3UwfgEsPpB_4EAdhPguDJ5usn1XImRaBgxEiAS4qTuJytefr9eX2jz_nQCuh1fPQurz4ZzPuzfaSxWv5f0BCHCjXdjDnniz3uQD_9mRoho4HoA",
+      "nullPayload": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.bnVsbA.JuLpCzcl6kKBfod-SiALxl8-9m5s564cKwEih0HjZc-r0CDp4l_dXZiFdPKRGtjuR3TylySMkOD99E1Cg5wkYH5pXmuABvIYcgQ4J0gwMFZ2eTyaeB0B-v10ABDxMH00JUFpmKiwFYoUlScLQRdmqZTMsXFuXem-Y2VLnf-Q0U4yU24Kf6Pg2hVXC4mFp8TMWXnXrWU-kAn2QAi_Dx0X5lvl06agytBjKAwQRIcJ2wrq6mjgItwiRFwKrad8JQJzBeTLFcxl2EeFmtxba5H-aOXUmIyaz8EaaA3ngzGy2X-ybeXqAw7Sy_on9tL3eJCup6wpyUcZOuKM5rluy3zMXQ",
+      "proto": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJwcm90bzoxIiwiaWF0IjoxNzYzMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.Fo91sFiAh-tmBCZtj42WqtAouJwO6AzwGKolBkd6bFKN3hiIDFE2WuPwL2-blq-DUA78p6BIwKzHHA5XLVdSDkxwv3ZqwF6-i1mRrAn1gOJfOneG8FYllCsT-0GK_3wmHhenWi6306wHE5LVEp-jZATEXIbHK5ZAzrGZ5LP9sau8Jg5ulGb_t9evIA6mjiQEcRXdN40GtA4pvUxWzXuc7_XKjKXqnmG-7ZNHqGPacGv8II5lZujbkIxVfVVfUdnZk4rIILCG1qTeY0xZ4Y43jGuZMg5grpI8HFGZ74hE1wxZeTCxX2AGzhJuQpg0o5AncymcdA23AhD-7VDip86lPg",
+      "ctorMissing": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJjdG9yOjEiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.uyLd0aV2fA0p_9BmXmFDlHoEm-OAlAiKZRwAvnshRC8VDUzj1r0FE9FeyErrjGJpTzo3QIeWYKd2xzWYlTXvHYZsm55ySLze1JufG9JLbN4RyBrUtiRxHdzb_IKM83qYamgi95NPA4XKaX4y4P-sFWSyJXTiMwsxY9ylrAEhGVw-nj-Ue8PIjt887QKia0AaeUC81lF1DsCHBXN3HrwC1QFf8GL3ee-CSiycSFJmjhzx5Cg0GJDjD0YuS_lHjOE43iSn14IT_brexdSm-NAqu3G1XG0OAE_fVEdWJKEJwdz6qj8bomkIAeOubyDTzX-PvjxAIRfT8NQKoVuqvtReCA",
+      "ctor": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJjdG9yOjIiLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMCwiY29uc3RydWN0b3IiOiJjIn0.E4wcZO625IWUpeSbUSHGdxjr7pO3FsSw38vrbA5Ivwk6ba3lIRwylVulCzsmXTtYLeyoQUpeYpNGn24O92f9j8iuE_1Ng2fMt_s5F4_6Qw1ZcIuc2FQqsztmfif9dLUp7OzshZmNR_EHswEIkuTw9CWJH7eg66ZZqgZ6L9bHPm5CDTAQowXtE2c84-sdbO6CpEitWeTfoZ-IUspMrLq4HmusOSHUEcRWs29-Sw82KBlpdJ8RWeFBw4zt9lLxnFpFsBVASikbaprNc3iqAgJgkQbBVPhbOpVa1fGY6FEI07jl7q3TBKoGwbswZ2VJxtzYG21s6zOlVCy4xhdv1tByOQ",
+      "unicodeSignature": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3NjMwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.BbApĽIwcVGCtbkKGP7k_XxD4fghND-lhv5khdnAqRnCZj3SwEHpjBa3hqvTRDyRkK-9zZuSiDI6xiV2fQ3Was2oPVXZ6jFTqqD7-FsRI-ycv4ul4EUYtbe1CXzebNVI8S1mtWP7JeUnaQ6624pmOgJq9KnamIWMcyURt8z657imwuKxWlv1Bf3FHN7dfERz5OayXkdbdvKOcCymKXi6crgJtm0NiGufHS6YdqPSwaqTAHOGS3VdFyB7cD065C1_HjhQVsb8w4dY-1CSQHumAsb1LDUywe1N7k9uR_Zk9gVMLFgfK6RMCkZFOOX3DhLUO6WSt7IQpRjttQqICnODhYSA"
+    }
+  },
+  "fetched": {
+    "POST exchange": [
+      "https://issuer.example/.well-known/openid-configuration",
+      "https://issuer.example/jwks"
+    ],
+    "POST exchange, an unknown key": [
+      "https://issuer.example/.well-known/openid-configuration",
+      "https://issuer.example/jwks"
+    ],
+    "POST exchange, an issuer that is down": [
+      "https://down.example/.well-known/openid-configuration"
+    ],
+    "POST exchange, an issuer the policy refuses": [
+      "https://refused.example/.well-known/openid-configuration"
+    ]
+  }
+}

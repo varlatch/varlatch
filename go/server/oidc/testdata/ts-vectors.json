@@ -1,0 +1,2409 @@
+{
+  "comment": "Written by services/varlatchd/test/go-oidc-vectors.test.ts from the TypeScript verifier's own answers; do not edit.",
+  "verify": [
+    {
+      "name": "RS256",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "ES256",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImUxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.EiGA8GjKLhvjLRWFopqgic1TEpi0qxD2Xs7j8vVAc57a-TaocHn8qBoxhgOHu34ehdgMzUExZ0MvlNjbJvSbUw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "two parts",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "a.b",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token",
+        "fetched": []
+      }
+    },
+    {
+      "name": "four parts",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw.x",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a header that is not JSON",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "e25vcGU.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.aHEHrvZ6vlq_jP1LIbId6cucsmqagwZ5OSnRDEym2Hp7Y8sUn30r3ZZ6CHXVN9_J0TFEC3BeJWW_TGbf3_jcumIIku6LFYZYA5rjgmuWF0gsY7VpVEo0yH9TI2LWl63k2BDJ1dexkAQo-TijKJScryyH0kQRMd6QCkOF3F-WZazEz33klhcXt6lTn_X0mWDwl9-ndTqleeINR4Z4UWDY6XP6KZL-27s-BEaoC4NfYp56sDp4Ksj_LAujS1MyfxdFOlA2yhcY5W7P7e1rYWTcXqhVkc45S9rOi2RB6Bkx5G9zHuv96FqjUwfrcS36i8kO_GTyT15LhonZ8_2mWxY-7A",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token header",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a null header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "bnVsbA.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.Ia2qUcJ6SKRTdx-dHjdTUe3F9Yy_rclSmsTmGgZUHgXZ4bTWU3wjvp4LgwhClgMkOL80Bu_2Ar2qfMUbU1bQbJcaoQm4JwGqP--Pulmo4wxJosGKj4CH6ikbx2cE7guNt8AqkVXOWdoWlq8cSX6M__dbEudTYFYA-HZepxwj9bIgTtrFYGW_o21k3dyqtp5jaIb-kjs_oK4rZKvx__OPzy-oMT3bUxWvJyg80BO-Cn9_QiT7wD2pLkkTJPNvH8keWXrGxHdq_HbZcH-3323CecO7EwzFG51dLdTtd0ijnD_qG0gbcQZGKzYo-UubCjdOeF45EdDhMmv_eITr_OpQ1Q",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "verification-error",
+        "fetched": []
+      }
+    },
+    {
+      "name": "an array header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "W10.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.E0k9rW-29SGrSYqc91ZmW5jVOgWrgYo7UUbgPpx4W4qc_h6RdKpMWEZ1-m6rBh4e2aVZBtRHQQLKqzfgtFLu205oJeUzqPYDmjFoZ953ncAFiQMJ1JHRJULUqytwIFsHsghzSbm8V5rzOtia4QiyIjx5dX_RfJ7NeiikCPOCWCByRPF5WlUzpP-lWNWi-z4F7IkRww70XwcWd9raMEMzRTwttXFLuVJulR429XZKRKLXa3AZgwpMqa2LEYz5WQc6kc3K39osKLTryyoXnstLekbP-01QI_OvR40JDtjel4VgrlUDMBn9x0vlN-pfDKDL9oxRAoPOjLQbbxB3tLjBgw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Unsupported algorithm",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a number header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "NQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.LM0RB6EvknRsvdcMlvcXeIGZLsarX2C9dICBz4rYDm0nJpwbsyzKXYyROKHx1IgiOymWkTiCsO-tLdMd1LyT8YTJCg5b3ZyTtuAInFt5HA5q02OE_gh6qCbckSwHGdo0bh0DJ3j2FikgOPy24cmt_NBIHCHQ-roSZYWqr156RO1Yv4vOFnEKd5ETkhEM_DOp4FGu9tOuUvGtlHzFTB5gt_m34AH2ZLwoLr5u14cu0iWhIGufiQ7nyp54EzxELtbUswwRrf5drIKCnUsRcufPo8eqJrxYnkgaW16ils1fA8MdfHjQt-VV9RmzHooTx6IMfprO9gx2YxruH6kQZMy5ZQ",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Unsupported algorithm",
+        "fetched": []
+      }
+    },
+    {
+      "name": "alg none",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJub25lIiwia2lkIjoicjEifQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.h1ptElLys0CTX6HmstvFbx2eBptpmo5VoEqJwH-dzriH6s7HTdh10snf9cm8O_aBRXY8CjlFQ_ISVl_83p5_g29b2TlEZK1d9rjRYP-AD2tSNV16oO9exXSfCOqsOaWRLKxaCRS3VTSdTWVhSF4Jg9S1tpPlrNFxhkO7WpevXiu4eCEveC_8RfKGC-lAk3mJIySR541Qo2_5VNEoairP_eqcZQllm6J_7HT1mx9UZDDPBKxD_5R0n0Vkty5w5eMUp-vIjtSHljTuG81uQY-W-tHxi6FZYBWIs--VkWhekRrF9f9WrMMXmca2Ou26PThMYW54ind0ra46zx0ORijiig",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Unsupported algorithm",
+        "fetched": []
+      }
+    },
+    {
+      "name": "alg HS256",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJIUzI1NiIsImtpZCI6InIxIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.UHOTfxKgMfHe--JLcdipAknVBE0uyn9rbsPC4rtS7tV2QKAgWgUFa1qzZMhKvAspdOS1cfyMvprut_JL1r34Vz0DBg-DNkt2mCPPMAOz24Bile2vZoD6Z3A6bkRvcjfr7i3CYOCsSVGoiYmY3NDV9OReB0olDVDVPiDisobYt_dYavQqrclOIMQpWc_iVEp_BVOtErbDvDzEFV1228HVTe0eQ3d7wUY3L_WHhgrgQJT558lmXgIkBR4TwKr9l4bx65qdwklKsWsEOm_JzkWIYKKk724bDOUYQeBLhR4EBecxE0kAo81ETsFScU_0qI3_XqxCcDSoBaxr3dZiPljcsg",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Unsupported algorithm",
+        "fetched": []
+      }
+    },
+    {
+      "name": "alg in lower case",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJyczI1NiIsImtpZCI6InIxIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.IW8zTbwnecc6GNJ0y1d4DyqrhUNE_CcIEYxdjohOXZacj0_X1qIJNqa7wBqQc5Vg5RO8KIV17ZjJBO_sFzt0QmtbAfbfLQTz9GlW8ptLUZrxXGiF24AFN_kwiWQv5C_ZQMPkgm8ASfrksNQaaCCV_p_B5P7ZKtJ0xIxa0Hz7lDaIh4YDxHAmtQyb96KQHi-jfZCKm3PHMCT5xSSEbE9JleZDewdOXvn100UQSwaxm_kVtup3nwLP3GbV1htOiDr_5dFKwBfQduosW0SU_6SIGMFjRxQ7gX5igzV-TwS74JwcoI6Hvn1piyiJ-JtzIDnO83S1JfbDwBt8cIdwhMiBfw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Unsupported algorithm",
+        "fetched": []
+      }
+    },
+    {
+      "name": "alg a number",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOjI1Niwia2lkIjoicjEifQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.SjwufpuCGVAgdpvQZ5hIqrAIL1v-n0U02mjpo82pmEXcjayQ6dVouzn5hc_q_u7ot0XDd94p101Tl1UdWTLGTX-NV6Wb7p5XEBEIx9M2q7QY7zrF9bYtAkZfZsoJkoE6P7ViYoDvVqnCDWI5_jSclgXEvFWAOVTcsW_MtlD_unpTVivWP8Y8aUF1LkUAoEdU7iRTvzA94RtMlKfJvDSFFXY2qYx-aa70hbJTHSZgIJ0F1sqrgZkeUwDKm2MZYm5zmDIu_71y9QmyZ3mN8ZslBtLuj-Xw_T4stGZuUE00RvOQfKFUj0cQUIITw03o8lMDc2v79siEJXlspdAidHYqrg",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Unsupported algorithm",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a payload that is not JSON",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.e2lzcw.Zxfzax2NsVaQ1C1Z8MUmthmsqEfOqaiGBNv7ByXq0zCOO5pLa3IxiVuRCp5xGC6S_dyM3JBZnc1xyIzurOg-M_f2p4hwWr_ehREUV6eaiwU65E6bG2RMynpKsGrGb7rCCbCZZXzkou0R_x1bUo-vLPsieN7Ga38mQeVlciQibNacDWKkOQSOqGaoig1yaHUVYX2ITrHI_rYycIJQko9mXfh374Z-_zsjzU3OH4E9pn9Yk8jwpJmt7c30GLCw_66qkPgIdzTnkZxl3huPWanxzDOs9GDNf9xp_ZzCpF9_ZoEEDwcZUfO1BI_72FlBwTG7qhCeB9TUkzlHylCPTfYr-A",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token payload",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a null payload",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.bnVsbA.R3mKzH1L7btXIJGuwbxaThReB80AMhAzfvlx0ifk59E_DoVuTQek6Y4T0mLkVjc6ZROStNX7EAWOpc0lYoAJNSXJr1WiiSpGxVUC3hTMRC6GnoqgLjXYjH7kccIUdAlWi8Vfvj6Li6BV9EB-Z4LOQQk0mK8HBlF60dMcKFaKxiXKfxlgmYv7tKu1GT3JKPsphh6f_7U8xN2qiTzBXBBKPCK2lHPGuhh-9HOS4WimRe6xF2_vhRtIhN2TwQeAUOCaeZN5oZnT7nYPqNnx7O70N6QvS34CcFyHXTxY_tI0skL-uGL6JnRt4QSOv-N_hG_bK23ndT-u-rXVt--ETYhwkw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "verification-error",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a string payload",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.Ingi.XRHy7bpxrZWsSRoK33DCGWTm1_GrOlNijSHDqVYHkaF8VBpVTwRSJTYtd2RONKTaQO_hxzlMAp_CTSuRiLwX-6Cam_mcWGTU-DVVPV_DtcWeh0clns9uLqpV6-l1x8aqut0xVFJsuTjOufoYrWvxbIx47ORChNbylh0IaAW0nMzzhfzFOq6R22FbtB1Bi3nABW1Wk9njp5UW_BodpoVPKYmHAFIBImOJ3CxSuqFIRViIIxTFvGPsB6K6Sr1GhZTVb46M7XRQ8BooV3YYPjfr7rRxJAkHBplwDHLPUdT045_GEqHlSDQpcRcBQ7K74U1RowzIETISzUX7w01wXQjivA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer mismatch",
+        "fetched": []
+      }
+    },
+    {
+      "name": "another issuer",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL290aGVyLmV4YW1wbGUiLCJhdWQiOiJ2YXJsYXRjaCIsInN1YiI6InJlcG86YWNtZS9hcGk6cmVmOnJlZnMvaGVhZHMvbWFpbiIsImlhdCI6MTc5NDgzMDQwMCwiZXhwIjoxNzk0ODMwNzAwfQ.MkXFOQyxnM9ziWYtSm7kriHR-rH-dpVpdUTTxieFZPshXejKjKzAtaZd88hduvedJ4zhMKAIMWr4TYf0Xp74sM2kwqVArZz8tbWOKvmdDeIoW_NJmZX13K-PUA3rDRr-pOY9xQEdD8rvKbkqDxI37HdXiSGu-OzI0FGbAisYFubAlMRtCr3DxOisfZNn8QMR7UtXHTEEZGao5xaAkK5jYr7MFYL4Wh_K62QFfC6JnkOGNCEfXKCGTBeyPGS8pwvZMzZmcUbVx60or3VsI8DY2X-jZWN1U5j3e8B5oW3YNAwrsRzObNH7E-4V7sg2BMnhN3871NHRihLRgpc4e6aNbg",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer mismatch",
+        "fetched": []
+      }
+    },
+    {
+      "name": "no issuer",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJhdWQiOiJ2YXJsYXRjaCIsInN1YiI6InJlcG86YWNtZS9hcGk6cmVmOnJlZnMvaGVhZHMvbWFpbiIsImlhdCI6MTc5NDgzMDQwMCwiZXhwIjoxNzk0ODMwNzAwfQ.Rn80N8Oy4mAqRTYqRPZBOfum27kif0pgGr5wo1L-UcxPXxUqD_3enk_UqejbnOjmU2Xt6tyGmvN6B86RCGeDEqFxH0hfhtNvA4tAWXQoKPlUMXlYGB2IFj6Wy6LDIEdFsKHExGJZtiHMQBu48V8J1ZguhaPTKs20b8dkrylbDi2apnPc8MP0-GX2vNX3-zvRyyWLoIqwDYxglpkj3MFXQI-jBchx0KASphrNUKl_rhMm-u26oDUT5kuwJ0ym6_eFTOY5F6OjySRO4pJ1RSermhZA3NCB0lYdZ3XQvZmBOkb_aa19oHF0Irb7fNM4xnxFUL2p6wGFUgxcpN-eDfBwHA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer mismatch",
+        "fetched": []
+      }
+    },
+    {
+      "name": "an issuer that is a number",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOjUsImF1ZCI6InZhcmxhdGNoIiwic3ViIjoicmVwbzphY21lL2FwaTpyZWY6cmVmcy9oZWFkcy9tYWluIiwiaWF0IjoxNzk0ODMwNDAwLCJleHAiOjE3OTQ4MzA3MDB9.ks50_fmNrAqtepTwO1XySa3ahZYJ66apHwPZO3udt3kYOtw8X9AA4gZDPix2ECIKe9MceGTlQOVzQYIXUjNaX9F_zQU2Go8_ORo2NFZzpQeXxrfYp03RYFnA7UxLcZ-6iWF5Eqj9N3bVxQInvMGBkJ323jc7pnB3JfzY6GvnqKn2VzAF5zkxOOTc-E949rADmAzthUmNaOAtl4WL_0_K1a4h_zb8I1UOI5THVi7LOGRvZovyskShpEKYtTc_raXvIjJlmq2YlhCPnfK_FHmtLbs70NRu9_-7tqrxIIFj6uUptLpfKsINc-T2ZG9qnq66G-lPR-FlndCM4xTcggGBcA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer mismatch",
+        "fetched": []
+      }
+    },
+    {
+      "name": "no sub",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.AvAMk0Rs4-IElUlnsbx3s5QR7756DglWegQCf2BgyrGixFVjZsdKMHFz4lPOLvPkODLEc0nG7Lv4Vnm0xFpaAB9yi7cSPR4K2W5lywSVldAeNm9TLPRX1xUesSqlfwBwAMiKq2ckWrm3vht_xRdmXd6B4YghhouZgVNbtzpCFIL5dkl6_RCFssXrI3CajmXh6l3qas78-qJg0fNvXb3jsbwe2E55yaoNEuPX_8RX2cTd0yDRfc7MCJmoTs5esD6Oq3XbJXTOEDbFUkkizBzZSumo09-_0OWsV6d-vft-VauQ9YowIIEbeQgVVKoafKK-4zzRLaXjYxIkhycyjbckUA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Missing sub",
+        "fetched": []
+      }
+    },
+    {
+      "name": "an empty sub",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiIiLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.AmtgROHwnlfmEbBcW7jOpsLEnZAzz9nEGWQgFWGq08XI7FFvmCr6ylCkH_551IGOvNaV_BH-LiBmjQ3jrl6qU3tey7MEswzCih4Hq_5uxxCZItdbUdeNohLQM57HIQqNK202jyPon9--irDi3PS9A9dgH7cdQ6Nl9rhr6x0yNgFFqzn02fCKA36rv4eCNTQ4KYP2NsT0mi2WcROdGG1GYI6Mx3M5uziLWgYrzhez4DU8TKY9xXzW2ESD_ipLYETibHMqzySajhHae7iyfBxUEugOISy4ABzIo4ogvjvsxiowPN-Vmbzg5A0KwrsIYujCJuT4STJ5J_8wsTc1pY6E_w",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Missing sub",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a sub that is a number",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOjcsImlhdCI6MTc5NDgzMDQwMCwiZXhwIjoxNzk0ODMwNzAwfQ.ouk_PrsH9FHcTJ1HAX1G96aMVU9vhAV0bkN8jcqv6XhQPgrUz5mbHJo1qU7W5a9euJa9ayzNHGukzwMjLBzdvR49ANL7TNkl3xuFYHkOFfDpPGY1r6IF5ctcek9mg3dZII3fMNSYrQBwC7yZVTJpUp5ayYF-2wpbTzQkyagOfE06vP1PAzHBIyN_LClxCk1MhXGCJvleXIrVnBwPickeK4RII-kmJyZm0C3fMRhHG_wtHNdnyYsXs8WjiO25gA_VKIEjmB-Gwpkc-2Lt6_E7TjjvEAraSTgoemYh93Kw3rK5wJ698HV_-Z8njrEU3jO0K02wMiUenLixb1ZF2QVAxw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Missing sub",
+        "fetched": []
+      }
+    },
+    {
+      "name": "no exp",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDB9.LVJ4jyLqaRHtHrh-2QjEBA-7ZZc7gnxcmmYuF9n3BTAKaD8Y_5qHgCRmAXOpQLzXma5esY__Gdyi5k6HUZRd-zN5drAe3scn91avEz90OEGE8x53uNdexW0vnKnafTC6_nMG0QFSO94kLfJ3p2kGfBwscRQaiH_UTtuFag4AmdKAfmSYp40DufT3XinTi49e7GQD03u49ZmMc6e33yisXqHw66mR5tzcx5jG30AbFKgGOJYwy5Yferf233f8DsIrdexUSvxVHJ2glcx7L5BaqwGK19WHz1oU3qrQi6CkltamAGrJMio5PVjrGa6hovEecyobXhiYrMKjF1Czin77Yw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Token expired",
+        "fetched": []
+      }
+    },
+    {
+      "name": "an exp that is a string",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6IjE3OTQ4MzA3MDAifQ.oJB8AnWKFxGJ3vgkEKh1i7u-cf-QWFmcNmbJ2DPgTJa00wG5nt72oUV5amjXtNepe3sLmCpXUXT3foQATS38E_H7OvSJiyamaV5zJaNsL2DSnHtoqffCApd-EmZKzzp4R2xNPzCI35G3Edce5S1ApqieDxqBxqRtkDJDA-DXYHELUwuxAWhlMXjAk1esTs92Y3yUPOEo-bk_md5RdLAoKt_g0sbc9KlusituIRfBQTeZT3pVXsZim9AIJQo2MGt_DuzX5EK6aCJ7A9c2nGzgfxAww6GXKQcMq2xOKpP8w2nUuwyEFWfO3LI6ZiCf9R0fEwxuIu9RcwrvR7srfibmEA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Token expired",
+        "fetched": []
+      }
+    },
+    {
+      "name": "exp at the skew's edge",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDM0MH0.bkJ4WnIpaXp5lRNPB9aLNk0vnrR17TCUkmq90gDpCUOvRx4lGXXfHMhD46YIcck3qlyTEG5sA99oAbdc6O5axxKeiGxwWS209uMPa6jOxf7nDrEYBCuovJI9mtOo-tXbTXxN7ve-5JqkjfJwEyAT1tKSI9uW2YmMoCE_lhJEBBAHaMaFxLglFt1sjf3ONZ4yUNBB6y1lW6NBoMXxEINyXM_fxHrQEYI-Y456EdqbCRv1YyhFxOEw7C8De8LuOXDJF7BRen3PobquvBrfAHJcMWWtCYk6J1_gW82slOVrGX-h-9pkfYBo5e-bGTj79ZaOR9NCz1e0n9OD6nW0tkro4g",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Token expired",
+        "fetched": []
+      }
+    },
+    {
+      "name": "exp just inside the skew",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDM0MX0.a1CsfQHqcOW7lqvEAeetbgr0LjXHFpvl-3Wp4N_ebESmMi9xj3L8XV9RqAb8_PFe0cBcVDFhVIZQELWoNt_nhuFIJdrRAJbHDpNGv2PoNMdX2M0Yx-r6rwkzI1YTf2Q6EUOBbunXrucPlwuzIb5FS6B8EzYk50RKExo57_QQSFeICLBYhlhyt-p6iECg-gUGL-ZED11p3F16S_t0cRT4UVQjNFKSM6eWK_ZMBRs5Fi-auxAyaGSwTeCEorj62EPxXqYe60-K75xl2FbnXBO-oM3ikZVLqUpWAweg5puvUO5pz-Q-KBOpw0LbzilaQDEOy-TEMoqVUxKvIR53yljLnQ",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830341
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a fractional exp",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDM0MC41fQ.p1d1RqHF3ahnEeIC9n3ob8Fpb8P_Gigyy0hwgHiL3OBq0qOvxtk_AoYc6xH9YlqW6ae2Zk8iFKYn3VGpDtTkEG1yxFRhHHh-rOyyMKtMV7sIGj-RPD2CLpzh2YhcYAWkv0MpNJYFWL0xVLn5IcabGuZNyd4MPqi77wvaa93GwOoMuMhPt-P5leQnF3SaKn1ERWsPqNR_oM0rGBgv5qGrTFUzKcE0sFVLXbb-5fmFTq1HTtuN1E5HzfWl1A5Rmx7E3iDxeyZEV1Eo-T2L0_dd60Tomb2VCqHBdl-vAYUFFlvpxxAdgTnh8vsKBdp2j7aSmWQQAIl5g3k6Md4fb_lHlA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830340.5
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "nbf past the skew",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMCwibmJmIjoxNzk0ODMwNDYxfQ.RLw4dk7mmbw4WjX3bp_JzY1p-B8kcvs38cM-J--XX-qu1YVg7vrVzvRTIul5zYMadZudQGtxP5LkXNwtZgBy1LE-15nn8Ssw9TopEcyDlD_281An7D8XKv9klUcAlvOfKkt63P0Z4ku6dWC9pak8qobMjbrxeOEttHwzIL_oe9EPCZN7wlNILLw5uyl3jnqq-KDT2Hb9hDNfddi1wkZuKuT4mcednFet3ruicmorKihX2sw5sBPF4DeAjPq_zENrxwlxjJFWwGsIZowQcF2wQag-LkTBf7HI-Vj0UWDP35YiPOe0yBoEaXpHZZot7_Pk9kXTydX_xk7ZA9R1BCW_KA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Token not yet valid",
+        "fetched": []
+      }
+    },
+    {
+      "name": "nbf at the skew's edge",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMCwibmJmIjoxNzk0ODMwNDYwfQ.E-6NQyfp1XLBrU8I2kQCR4ZtjC-xMK_a9b2o1XibIxCQE7ew-kf_NceIeCLP3HVNiq4PrF0kMRYGuupc_hs-cmhAIN6KJwQf0dAKLOa_MtJ-X1xMiIXA7sLSA2bQs3Smji2fIam3tdyutt9ks6UHLPgw8qrJnHkxz4WTuux0YSR0LuQBJpbg-TBqDrTJPxEhO7Q70W51r3Fuo8id5OEoVoost81jTPoYac4Wh9vb2jvq9taK9vKztXV7aFOzl2mTAw8Z77pUzz0wgHgGPGUQ7F3hAdwF0vWrQqiXhZyJPMWTV6jat6f4YUa-qKDQ_t0zE0EBN_DPVgbLz7TM1jzhXg",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700,
+          "nbf": 1794830460
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "an nbf that is a string",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMCwibmJmIjoiMTc5NDgzMTAwMCJ9.FmlZbgbAmxhpepBJa4CmZFGOpf7Py1-FpyFRbHvKTSXuvH9sRfFXKxU8RFte5O4XUUCpeDSkAAr_aOX6B8268MZYmPTMFtC1Oe8ZJc6QgdC78p53XUhI5hSaReosYXiSCIrGYId3JejjSJeIFO56hD09iFG-1XdfXkA-k8I2CA-IAPYvfxmlRzTt5adO7G-RBUdQdOSaKhouw1X_2VWUVZHfYL3mmhtC03wActoUlCRKsunim9NEAucytFgjHw8zXFECWoRMGt0mGl_7doxfS3_Q1F2HI8ibCrP7QnCoZ88ysZWr49UDUwQmvMgD53lkTVvANhTW9OMK2ESMumL5mA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700,
+          "nbf": "1794831000"
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a repeated claim: the last one counts",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL290aGVyLmV4YW1wbGUiLCJzdWIiOiJzIiwiZXhwIjoxNzk0ODMwNzAwLCJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIn0.N2Q5p-ttmqIPYqOnLFhTcnn-6HYGyZZVLQjZm4I1FDsfPkL2AiPO0JvvF7YXRMozrUy_Eob4pkax6wkXrxcq_ge1Vq1Mx4geTs_8ADkFrVSjDvSNDMi4cbwi101bQ-1weKuFo9VrPNKNEIRy_TONIO1NYbpKAF5YHvHW2EznllKdTbkJ3hTDD7ObeNEzcC_k8yO4iF5QqrZGiZ7bPWj0oGZM96R77mhxxCrKrd9wm7NuP_ZGqTmOe306bHpSSf5Q7jeKfMmIHnm5AYZnul9DdIZgKV_-HfLlqnJTlJOfxJ5B58Sj6KvHeYOt_7YtiDBOf5_V1CHJOxRTVib4Tipn9A",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "sub": "s",
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "Unicode and an invalid UTF-8 byte in a claim",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwic3ViIjoiw6kg4pyTIP_igiIsImV4cCI6MTc5NDgzMDcwMH0.fYGLn11sZ5l0a8ESe4tpzgRg_FNGVC4HJyiJ4X8ycOdo-RlojJo4pgPe3o0Sq6H0mNaTfsp6tJUBzZNgp5XO1GK1iQf0JuSqhNBy1sUp8dtMb3RHF-63S930Dk6gfmWGLLFchNgTwPHUUyfggnhImkN_u2Jk50HjrYwvUaMFBYKCBPJb-rkIfP7Vdz6OOFaoJdjDt1ujz2f4_hAiVb9T_X2xxRemkESyqGCP3n9Dt2qEOV_Zp1lOd_pRZ6nS4sZAF5_fbChyQpzabsWlQfVX7GboxDFMs9chd21frtq4dkyIlVPIRyorl_dtUvlin1dnEKW0SJQRz0mJ4tJB3EN8vA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "sub": "é ✓ ��",
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a lone surrogate escaped in a claim",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwic3ViIjoiYVx1ZDgwMGIiLCJleHAiOjE3OTQ4MzA3MDB9.dURKhtNGYIFQqS3nkaUFVsgZEZnSQkdncLBesuddQHUCqasbNRmoMGqtTcEsWxIl-wOlyyHA64dfjRumzcLUgtoWl5NAvnJZ9VQMfUor-LRh4DnDl0L6_A4lcfsxwqXaDCV-RS7prVmkN1PaOEDrEGVTd4fXuuLXNwHvy6nCfBZwN7cLTux38vcJ0XM4Pl9w97Fn3RiJfqx73uH2bc2s4tVUIjZM2H2vVUR3djwbinhlWKW6WDmGSteA2NGuUv9ienm7l-43HnwuwB6eoqQT97yL-xIKm4wxSmD-xI4bk1Vn7o9O_Z7_8zjmbwc65fnGUJUpbCNwZQkpRM4EnLya9Q",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "sub": "a\ud800b",
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "padding in each segment",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0==.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0=.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw==",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "characters outside base64url",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJh !bGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "the base64 alphabet",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE+NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc/emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF+qFQYDA27kvtJ+A1Iq4ofOrtPWeRWDtzStC2s537JbR1G+X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a bad signature",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKAAAA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a signature by another key",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.a3Y1IkqozuTaLYaoaFVg8qekP3p9NVhKMVW-75oAmW8TeyN-EEKDP1I8tWUNzoCcqNYDr_DO8MiUSqjmiYKJUjtEqfC0wL85-pEh57awh67Of-u0L3Yq13k1IPO_DN_1XSVPcann3znMDjlfg0s3I-gH2aXnz6SJG1BssPnDDH_Z_5nQ90eZ3BNat13yLiV-LFliF-_k_XZrCESt-P-9dIHjQBOSx2OZ3EP9_gigquOJJfGVEJDSqMCnB4orO_MFakSUk_owfqsewDgZoTf7KFycHjhgFVyV6Iiwz7uSRiHGiyLdmFMxW2LPnhAqRANboVaD8Z9MVYoebSQovhUpTQ",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "an empty signature",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "an ES256 signature in DER",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImUxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.MEYCIQDYRFmCFLYafeB3n7fxMZb-4Qvl1lys33Q2IS1qNR6MjgIhAP-9m_RLWXyWZvwaiTy0puR1BD4Ncp-fwjtvO7WO0teq",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "RS256 with an EC key's kid",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImUxIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.pkl4fTtxBx0a3F3IxB-hUpatG-gO_S4VWe9jicoLTfAsEweC51O8nLTrMBt2Q2xV-lNMo2-rMOgxigi4fGoaq4q962WTqAx2h2iCoIXpWg4S7U_nEZvoXkUh1zvkxsKeDwEip75LbKW_Tn-hLswIaGh5jEuDvqieTSlf1DCoGiLjPS726NW7TZ7iPvoyBNvX7euyEvBbiVxDG2F7l7-itRQTZJF3Da3Cs0X5Dp2b-eCGHy9_5W5B5yvHqTQMVDvlGaheeYceI9VF_ShmXj7VKFUBHvsg5UqeyVvj1o7ZeeOLGR69L93xq-mmKNBpCWJhKGCHLZVZ-GcvP37vHUIIdw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Unknown signing key",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks",
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "an unknown kid: one refresh, then refused",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6Im5vcGUifQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.d4hTe_Y2q1GBNZAohE0ef8iJaefK7N-5v98wqU2wvBs8s3jJhmmxsNvTZ0Sm-qgmeFwtiSO5MbsJMHVSRG5lodj9_XTxbajKc1176SFsgFDsWzpMmQdnwuZcrgarp8WhllrsvwlZl9cKVykr1Fgfv4c7Cl8SKgNKzBKNjL-Bc8_6vrnouLClpaBmIlb-AJmeNr2c2IC_1hmVcfr4wtFMG-0srpL0ftaSqlcIMo5mxLtk7E7dciJuSaFqFo6Nl9fb8FMHdxvjYOvQXMCFaYnKakQU0m_BHSW0JuQ7BTSX3xiJmVzWcTEBP52iv5IjAQX66SzpB2_MSTcTr3SZAfm7Lw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Unknown signing key",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks",
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "no kid: every key of the type",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.ZeaA_kGNsJIMvlmDZ-tsGOnzz74nr6C-K15AlbTjJ38bemwuVXGwAjIrkzWt1TBklJI0snjxEnVLjzbsnYDLbxyEc2MJnd3pFO0DjE7vhX2aaZRZYZU0g7sWptAdRv5q6Qdq2SC2Xr5m2azEqCaBkx-hYi2TAlLZC0hdOjm0dietJRr5YD2lJYDL-XeN-Mngshyd4sI_5oqqO4Twcx3TQ9ygz2a0AeMZjqaiHxxE32N13pu89sZDIXr-0-eDFMUkuWXjn8uAYc9Ai1Rd-y1BEl5tvMbr43b4bUv1pOukoq_trsEMdc114Ws4dFPnM_suuE5-5rPiTgCscPDz6FI-ug",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a kid that is a number",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6NX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.CDWE2VvEVhSYXzq2-8FSM_v5sUo7BZXkNFTgTGmx3yDMyTk185vogAg7x1zNai00Ss5XRtWUOlg7IoIShFexe90eXHN0_G6SJG44IxNgvg_K9UvqYlhqKqaotglPLU2V_3oJ3hKHrd9ZbwRgXBANFNQvEVsyJlDluZxXO3aKub02U-vfyR3kQLgY24_j8skcblOvbVE_6dBHJFtWX2-wGIQba_dl0WV41OkrrUrCnHVWTzEAZJqDoeC3Oo3CVvkUDTf0-Ak5iIRl_GiTh-cNHpcMQjzsq7bvAtPzZcCN070BE7_jJ7YJwhumEdLxwsKEcqR_F-obsQJkBVTRAtv7zg",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Unknown signing key",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks",
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "an empty kid",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IiJ9.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.CNWT7iweyWQkEMWgLxBZlQXKbdQLm-1CrF7SzwUECHmEOLMAh4anh12dp7X09poT4gzFfAHOAb7EZmu9LBI0fpZWBaq0v6ZeGIXAathovvPROYBPmrkdZ2JONDtqigGOOj5FH0pLgiYX8dmIXofEQ33u4cRq3c8aDj4D5cultbAfyTpLB9MPq6NPr69ntd2XJRg9A8Ro9qkoL0G0bY0QKY87MKasC2KTd_6GGIEDBkHGaJP686X86C-7rLtaS-gC__M_2mNNcPFjpmAFuRS3oV-lUMNFq9JFu-81QnXf6uEHyam0j7Bj6sQNw124ZnIyMBIq-ynnqP1un4kaplIofA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "keys without kid",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"alg\":\"RS256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a key with an empty kid",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"\",\"alg\":\"RS256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a null key",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[null,{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "verification-error",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a string key and an unusable one before the good one",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[\"k\",{\"kty\":\"RSA\",\"kid\":\"r1\",\"n\":\"AQAB\",\"e\":\"AQAB\"},{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a key with extra members",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\",\"x5c\":[\"bm90IGEgY2VydA\"],\"key_ops\":[\"verify\"]}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "an EC key on P-384 for ES256",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImUxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.c90Rm0dW9CiLyOmTjyA_6SielzJdskpNFaR2vrdkuSZs-9JfV0pm9bouS-n2Q2y-ob7JYKYD9I8qF5l3lcnqCA",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"EC\",\"x\":\"oMNgzolsAzD-SxnMtYSwvF0A0mMiDyiWrpbGpX_nBtEYvwNcHV3Qzvf41fcfjHs-\",\"y\":\"HV-3YR8SnRyhUbHq2HaK1WZ0VZYdiYj1HhjsezlBbsQXfHEw-Z_FfPtuuOKclhZa\",\"crv\":\"P-384\",\"kid\":\"e1\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "discovery answers 404",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 404,
+          "body": ""
+        }
+      },
+      "expect": {
+        "reason": "Issuer metadata fetch failed (404)",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration"
+        ]
+      }
+    },
+    {
+      "name": "discovery fails",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "error": true
+        }
+      },
+      "expect": {
+        "reason": "Issuer metadata fetch failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration"
+        ]
+      }
+    },
+    {
+      "name": "discovery is not JSON",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "<html>"
+        }
+      },
+      "expect": {
+        "reason": "Issuer metadata is not JSON",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration"
+        ]
+      }
+    },
+    {
+      "name": "discovery with a byte order mark",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "﻿{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "discovery names another issuer",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://other.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer metadata mismatch",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration"
+        ]
+      }
+    },
+    {
+      "name": "discovery is null",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "null"
+        }
+      },
+      "expect": {
+        "reason": "verification-error",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration"
+        ]
+      }
+    },
+    {
+      "name": "discovery is an array",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "[]"
+        }
+      },
+      "expect": {
+        "reason": "Issuer metadata mismatch",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration"
+        ]
+      }
+    },
+    {
+      "name": "no jwks_uri",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\"}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer metadata missing jwks_uri",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration"
+        ]
+      }
+    },
+    {
+      "name": "a jwks_uri that is not a URL",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"not a url\"}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer jwks_uri is not a URL",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration"
+        ]
+      }
+    },
+    {
+      "name": "an http jwks_uri",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"http://issuer.example/jwks\"}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer jwks_uri is not https",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration"
+        ]
+      }
+    },
+    {
+      "name": "a jwks_uri fetch serializes",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"HTTPS://Issuer.Example:443/a b/../keys?x=1 2&y=é#frag\"}"
+        },
+        "https://issuer.example/keys?x=1%202&y=%C3%A9#frag": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/keys?x=1%202&y=%C3%A9#frag"
+        ]
+      }
+    },
+    {
+      "name": "the JWKS answers 500",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 500,
+          "body": ""
+        }
+      },
+      "expect": {
+        "reason": "Issuer metadata fetch failed (500)",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "an empty JWKS",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[]}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer JWKS is empty",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "keys that are not an array",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":{\"a\":1}}"
+        }
+      },
+      "expect": {
+        "reason": "Issuer JWKS is empty",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a null JWKS",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "null"
+        }
+      },
+      "expect": {
+        "reason": "verification-error",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "U+013D (low byte =) in the header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhĽbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token header",
+        "fetched": []
+      }
+    },
+    {
+      "name": "U+0141 (low byte A) in the header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhŁbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token header",
+        "fetched": []
+      }
+    },
+    {
+      "name": "U+00E9 (low byte outside base64) in the header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhébGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "U+012E (low byte .) in the header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhĮbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a surrogate pair whose high unit's low byte is = in the header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJh😀bGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token header",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a surrogate pair whose low unit's low byte is A in the header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJh🁁bGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token header",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a lone surrogate (low byte A) in the header",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJh\ud841bGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token header",
+        "fetched": []
+      }
+    },
+    {
+      "name": "U+013D (low byte =) in the payload",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpĽc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token payload",
+        "fetched": []
+      }
+    },
+    {
+      "name": "U+0141 (low byte A) in the payload",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpŁc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token payload",
+        "fetched": []
+      }
+    },
+    {
+      "name": "U+00E9 (low byte outside base64) in the payload",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpéc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "U+012E (low byte .) in the payload",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpĮc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a surrogate pair whose high unit's low byte is = in the payload",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJp😀c3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token payload",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a surrogate pair whose low unit's low byte is A in the payload",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJp🁁c3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token payload",
+        "fetched": []
+      }
+    },
+    {
+      "name": "a lone surrogate (low byte A) in the payload",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJp\ud841c3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Malformed token payload",
+        "fetched": []
+      }
+    },
+    {
+      "name": "U+013D (low byte =) in the signature",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fĽLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "U+0141 (low byte A) in the signature",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fŁLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "U+00E9 (low byte outside base64) in the signature",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1féLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "U+012E (low byte .) in the signature",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1fĮLLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a surrogate pair whose high unit's low byte is = in the signature",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1f😀LLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a surrogate pair whose low unit's low byte is A in the signature",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1f🁁LLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "a lone surrogate (low byte A) in the signature",
+      "issuer": "https://issuer.example",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgzMDcwMH0.iG1f\ud841LLkw5DizEFLoiKasfUISy8DkgyAZuhgcRA00WnHiS70D36iwikXaSwBDkhiyR27ATXbXO1IoYC1D4dULcRa5e1uVo6ln3cwSCGhMQYnYhFaNAPMd5GxDSE2DGnaE-NRLAwJ1jKRzxni9wsII3ydmuVqANlYeecssVvwLTHUyU8t1cPl8YvEbPG5czoior4Ja7YJlsv8dGD0gc_emJec1CZNLBfK2o6zXzrGbD8p5iI0aLLttFX4uV0vrxdvxrmkjqUj7EA0T9FzpAfsF-qFQYDA27kvtJ-A1Iq4ofOrtPWeRWDtzStC2s537JbR1G-X8pouu6tOA33xAPKbfbw",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"},{\"kty\":\"EC\",\"x\":\"--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk\",\"y\":\"gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY\",\"crv\":\"P-256\",\"kid\":\"e1\",\"alg\":\"ES256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "reason": "Signature verification failed",
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    },
+    {
+      "name": "an issuer with a trailing slash",
+      "issuer": "https://issuer.example/",
+      "now": 1794830400000,
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlLyIsImF1ZCI6InZhcmxhdGNoIiwic3ViIjoicmVwbzphY21lL2FwaTpyZWY6cmVmcy9oZWFkcy9tYWluIiwiaWF0IjoxNzk0ODMwNDAwLCJleHAiOjE3OTQ4MzA3MDB9.VmhRQmYHhFgy23Ff1bSSEldlMnC3ZDtqLJbOoW5LDFTsQ7RvEiQRB4C0Zfbn_bUZlDPz8IqBGmqJ1DZ_lG_RLey3f851lHetNL_EFlJkrF7LrBA9ab87F8ipLDDXA0dFuhJ6lB-IpNFI1cgQ_a3Xi6pEQoiOB1BzXonGskby1a8upqmGTXfTUBkm5pgu1HbH8NQKicryn5QE_3A2mLjm4wnmABKKasR_txtW8nBCo8eh1iNJdVVbpC2Wg4_r-ITihTjDAkZ4MnutihIzDxum_BK1q3SFuD2eJBmA8ocfbnN5te7l95LCYhXcuQlP7XX2aLJYJrDcAf4nKUAJ2BODjg",
+      "documents": {
+        "https://issuer.example/.well-known/openid-configuration": {
+          "status": 200,
+          "body": "{\"issuer\":\"https://issuer.example/\",\"jwks_uri\":\"https://issuer.example/jwks\"}"
+        },
+        "https://issuer.example/jwks": {
+          "status": 200,
+          "body": "{\"keys\":[{\"kty\":\"RSA\",\"n\":\"qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ\",\"e\":\"AQAB\",\"kid\":\"r1\",\"alg\":\"RS256\",\"use\":\"sig\"}]}"
+        }
+      },
+      "expect": {
+        "claims": {
+          "iss": "https://issuer.example/",
+          "aud": "varlatch",
+          "sub": "repo:acme/api:ref:refs/heads/main",
+          "iat": 1794830400,
+          "exp": 1794830700
+        },
+        "fetched": [
+          "https://issuer.example/.well-known/openid-configuration",
+          "https://issuer.example/jwks"
+        ]
+      }
+    }
+  ],
+  "bounds": {
+    "issuer": "https://issuer.example",
+    "jwks": {
+      "ok": [
+        {
+          "kty": "RSA",
+          "n": "qZCLqsqJAm98gOp6dVsPoK42pQfBNRkqaAEHtRdBhHS_zTXx8voVVuxPRIWJxfiQSkrdf6rwwzkC8Gz8xvdW6NOiv8b3Ehqz9_NV7P5SV78_WT4mmXK049yr4S-Smt8ScB0LgZSedBdy3eQYvcozLcuZu5iZ70mBfG-g8IIZwOE14oby8mH3p38u4JyvexsVx4oW4Fe546cOZUh1J2gd59V4DYIZZvXnVR-j6Y89cEWvQGs7Tq-5VzYkIgSiiaH95o4RHdKKFijqUWgeB_8Ysj151NVa8_dWGNowHHSb0MPrkStXAmSdQRd_zmHt293XLxwAl_4yeJveCaSxqcyPiQ",
+          "e": "AQAB",
+          "kid": "r1",
+          "alg": "RS256",
+          "use": "sig"
+        },
+        {
+          "kty": "EC",
+          "x": "--ISdpAQZDzeueNXUWCzltJ4ugltcSKouZxycEL4Ohk",
+          "y": "gb7Chhfh9ypmMRLkrLOCX9ohpaMrBKv9DXoWC6aLSdY",
+          "crv": "P-256",
+          "kid": "e1",
+          "alg": "ES256",
+          "use": "sig"
+        }
+      ],
+      "rotated": [
+        {
+          "kty": "RSA",
+          "n": "vBPcxU8m3FFA04IceZbgezLugaZQ7gJRG9h2exTm9x78Ue2lcQZOw9nw4u2cLcbDDn_ci4eW5TpcGa49DcINMnpj77XVbYHC2YYjraPcAyXzZKdhfZpbHMDEbo8UkJb6CTuvBRBmMRhVfV3SMdmOp2i5pQ1yQxveIdGPPxQKFaXmMFdNRdcT2QRCmKpUX843YHNUHBgTXMYTc5RWuWoORgswAgNGANdggH6aefnMqeWtr8k7JbMM3AI9VBxJPKMChmffuR9w0jsPSPRCZB9BHPxlwak3WMcq8KV9FmYSbckyugVmPOC0xaYdm3ycUMHpYu9htNPW4DmJ9zehdvGdOQ",
+          "e": "AQAB",
+          "kid": "r2",
+          "alg": "RS256",
+          "use": "sig"
+        }
+      ]
+    },
+    "scenarios": [
+      {
+        "name": "a JWKS is kept five minutes",
+        "steps": [
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "mode": "ok",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 1,
+              "jwks": 1
+            }
+          },
+          {
+            "advance": 299000,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 1,
+              "jwks": 1
+            }
+          },
+          {
+            "advance": 1999,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 2,
+              "jwks": 2
+            }
+          }
+        ]
+      },
+      {
+        "name": "a bad token never touches the caches",
+        "steps": [
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgyNjgwMH0.NX7vr4UyzhWhKxBek4A1rkXzKmrkstXUcwMjyeZKMRMBU6L8-UOHrRfumcA8AL3dyKlMxBtuFmc_Z41zAIEGpDMq_VYoNSxlf1eNhHxBJBFLOIpZDpQbsi1zi0hmhyKqHkZKGl8YrAZYdkBtEUwGsmKRmCVgLQ9-ebFkiP30MYQsICbLdlR0ragqLOm4aD1DedPk3S9AxFlVsEHNPm2OJ7LER4ZKs3qdVmnV5PRd4AcK4cxQe5LcYuRbl8gcktx2poOV4zS-2lhoEHw2pcecIQpLoDlNwQJkqOzSPPG2dMMj3dp4gRkM9Gzhbh0y94Jtb8qB44qkv5News9bB8SvKw",
+            "mode": "ok",
+            "expect": {
+              "outcome": "Token expired",
+              "discovery": 0,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgyNjgwMH0.NX7vr4UyzhWhKxBek4A1rkXzKmrkstXUcwMjyeZKMRMBU6L8-UOHrRfumcA8AL3dyKlMxBtuFmc_Z41zAIEGpDMq_VYoNSxlf1eNhHxBJBFLOIpZDpQbsi1zi0hmhyKqHkZKGl8YrAZYdkBtEUwGsmKRmCVgLQ9-ebFkiP30MYQsICbLdlR0ragqLOm4aD1DedPk3S9AxFlVsEHNPm2OJ7LER4ZKs3qdVmnV5PRd4AcK4cxQe5LcYuRbl8gcktx2poOV4zS-2lhoEHw2pcecIQpLoDlNwQJkqOzSPPG2dMMj3dp4gRkM9Gzhbh0y94Jtb8qB44qkv5News9bB8SvKw",
+            "expect": {
+              "outcome": "Token expired",
+              "discovery": 0,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 1,
+              "jwks": 1
+            }
+          },
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NDgyNjgwMH0.NX7vr4UyzhWhKxBek4A1rkXzKmrkstXUcwMjyeZKMRMBU6L8-UOHrRfumcA8AL3dyKlMxBtuFmc_Z41zAIEGpDMq_VYoNSxlf1eNhHxBJBFLOIpZDpQbsi1zi0hmhyKqHkZKGl8YrAZYdkBtEUwGsmKRmCVgLQ9-ebFkiP30MYQsICbLdlR0ragqLOm4aD1DedPk3S9AxFlVsEHNPm2OJ7LER4ZKs3qdVmnV5PRd4AcK4cxQe5LcYuRbl8gcktx2poOV4zS-2lhoEHw2pcecIQpLoDlNwQJkqOzSPPG2dMMj3dp4gRkM9Gzhbh0y94Jtb8qB44qkv5News9bB8SvKw",
+            "expect": {
+              "outcome": "Token expired",
+              "discovery": 1,
+              "jwks": 1
+            }
+          }
+        ]
+      },
+      {
+        "name": "a discovery failure backs off 30 s, doubling to 10 minutes",
+        "steps": [
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "mode": "discovery-fails",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 1,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 29999,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer temporarily unavailable",
+              "discovery": 1,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 1,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 2,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 59999,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer temporarily unavailable",
+              "discovery": 2,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 1,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 3,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 119999,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer temporarily unavailable",
+              "discovery": 3,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 1,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 4,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 239999,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer temporarily unavailable",
+              "discovery": 4,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 1,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 5,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 479999,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer temporarily unavailable",
+              "discovery": 5,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 1,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 6,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 599999,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer temporarily unavailable",
+              "discovery": 6,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 1,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 7,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 600000,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "mode": "ok",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 8,
+              "jwks": 1
+            }
+          },
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 8,
+              "jwks": 1
+            }
+          }
+        ]
+      },
+      {
+        "name": "a JWKS failure backs off too",
+        "steps": [
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "mode": "jwks-fails",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (500)",
+              "discovery": 1,
+              "jwks": 1
+            }
+          },
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer temporarily unavailable",
+              "discovery": 1,
+              "jwks": 1
+            }
+          },
+          {
+            "advance": 30000,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "mode": "ok",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 2,
+              "jwks": 2
+            }
+          },
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 2,
+              "jwks": 2
+            }
+          }
+        ]
+      },
+      {
+        "name": "a key rotation: an unknown kid refreshes once a minute",
+        "steps": [
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "mode": "ok",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 1,
+              "jwks": 1
+            }
+          },
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIyIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.ZtqiaCTC62cYcAT2E9jjzxWNI0wLRbrt49yy0dawY0mN5fgQu3ZK1u1f7I_juTuMqUnTcmKh9sb6PVEzIpGy-4a_uTKdNGy-Bm_YHm4psHHd7ZtWyB8UOb2pFQPUL6hKx5saX7DpmA5Qyi2Sv67v-hoRtcnOQ6VIdQ7iAythBHowcoXXg56D4JQbn2Lc_nswqA9PpfeTTmVxv4UMOJESZWsqo9HnF3a3Qq0xSfwUMzLCW5-T1FG5L_WLMG719vRuRw7DHqb7XJ1BEjAdjnTOBt6aEJrbZA3WMuPtjAz6yTvVOnWR6Ki_zSQx5r8VRyhC9P2WG47lgodgytsQjtr1dQ",
+            "mode": "rotated",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 2,
+              "jwks": 2
+            }
+          },
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6Im5vcGUifQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.mUorPTbxVjTBP_gl1DInRvhT8-g4uQ3Pd6M5qvDIUGm9pC-KRPj0ZgpvR4R8N33Rdze7IenG0FXlCThNXKvm8_Jea9LBEd8iYfAeD49oj5E3yR_si7dTjPCtP9Das8U-vdmbgql4_vDkee43JCJFIWe4GsXKe__oCfJVCMg6VPtp_PQ-OP43B3IXir7u-vhwLbioYYQVwGBO9Fqnr5wIz2ty5bSMsv4OQnjEX1YQVYGV92fKuUW64FLznFYZk_KNFeilk3ZFlZtedtNttMLLxrmYgKPS-7vCgzJHpCJNTKqx87qOdNrjU83_p9r2_BPNJYOmatcb2hUMR1GIR-7CgQ",
+            "expect": {
+              "outcome": "Unknown signing key",
+              "discovery": 2,
+              "jwks": 2
+            }
+          },
+          {
+            "advance": 30000,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6Im5vcGUifQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.mUorPTbxVjTBP_gl1DInRvhT8-g4uQ3Pd6M5qvDIUGm9pC-KRPj0ZgpvR4R8N33Rdze7IenG0FXlCThNXKvm8_Jea9LBEd8iYfAeD49oj5E3yR_si7dTjPCtP9Das8U-vdmbgql4_vDkee43JCJFIWe4GsXKe__oCfJVCMg6VPtp_PQ-OP43B3IXir7u-vhwLbioYYQVwGBO9Fqnr5wIz2ty5bSMsv4OQnjEX1YQVYGV92fKuUW64FLznFYZk_KNFeilk3ZFlZtedtNttMLLxrmYgKPS-7vCgzJHpCJNTKqx87qOdNrjU83_p9r2_BPNJYOmatcb2hUMR1GIR-7CgQ",
+            "expect": {
+              "outcome": "Unknown signing key",
+              "discovery": 2,
+              "jwks": 2
+            }
+          },
+          {
+            "advance": 30000,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6Im5vcGUifQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.mUorPTbxVjTBP_gl1DInRvhT8-g4uQ3Pd6M5qvDIUGm9pC-KRPj0ZgpvR4R8N33Rdze7IenG0FXlCThNXKvm8_Jea9LBEd8iYfAeD49oj5E3yR_si7dTjPCtP9Das8U-vdmbgql4_vDkee43JCJFIWe4GsXKe__oCfJVCMg6VPtp_PQ-OP43B3IXir7u-vhwLbioYYQVwGBO9Fqnr5wIz2ty5bSMsv4OQnjEX1YQVYGV92fKuUW64FLznFYZk_KNFeilk3ZFlZtedtNttMLLxrmYgKPS-7vCgzJHpCJNTKqx87qOdNrjU83_p9r2_BPNJYOmatcb2hUMR1GIR-7CgQ",
+            "expect": {
+              "outcome": "Unknown signing key",
+              "discovery": 3,
+              "jwks": 3
+            }
+          },
+          {
+            "advance": 1,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Unknown signing key",
+              "discovery": 3,
+              "jwks": 3
+            }
+          }
+        ]
+      },
+      {
+        "name": "a success resets the backoff",
+        "steps": [
+          {
+            "advance": 0,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "mode": "discovery-fails",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 1,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 30000,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 2,
+              "jwks": 0
+            }
+          },
+          {
+            "advance": 60000,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "mode": "ok",
+            "expect": {
+              "outcome": "ok",
+              "discovery": 3,
+              "jwks": 1
+            }
+          },
+          {
+            "advance": 300001,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "mode": "discovery-fails",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 4,
+              "jwks": 1
+            }
+          },
+          {
+            "advance": 30000,
+            "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InIxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoidmFybGF0Y2giLCJzdWIiOiJyZXBvOmFjbWUvYXBpOnJlZjpyZWZzL2hlYWRzL21haW4iLCJpYXQiOjE3OTQ4MzA0MDAsImV4cCI6MTc5NzQyMjQwMH0.Ih1MafWn11OAN7sJmp66UKAnUucbUJcnRJXAnD4-wcvv3jWWQ9fCsqge6252wqZwrNyIn5i_4njafp3ILFdC4W7MrEom4i-cGvTldT8W6ykjhvsE_BFBedDAYAzqrHBXb41HBaXIbKE6jjfMpoliwRsZRImSiU5r-XEQM1l0ze8wil4ZjMt8TR2TIbRLWCNNu_DWLg6ZtVU7Cl-lnmC2ImpSoIWa5G_42sg5B6FnV1E_rG2-lGAUMimzO4OnyqPr16Ejqrt2hpjxQj34MR-SvIyQ0Txm6GN_6StWpvZOklhobX5O8rj8wXMOPBiiAqm7W8TtjHvgPYrA46Qkmq78vw",
+            "expect": {
+              "outcome": "Issuer metadata fetch failed (503)",
+              "discovery": 5,
+              "jwks": 1
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

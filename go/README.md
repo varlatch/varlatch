@@ -519,6 +519,71 @@ of `<seconds>.<body>` with the webhook's secret).
   deliver with them (the reverse direction). The `webhooks` conformance
   suite runs against a local receiver on every target.
 
+### OIDC workload identity (step 4.8)
+
+`server/oidc` (AGPL) is `auth/oidc.ts` and the exchange of `domain/oidc.ts`;
+the bindings' operations are in `server/identities/oidc.go`, beside the
+other machine identity step-up operations.
+
+- **Bindings.** `listOidcBindings`, `createOidcBinding` and
+  `revokeOidcBinding` bind an issuer, an audience and a subject (and
+  optional exact-match claims) to a machine identity: identity.manage,
+  existence hidden.
+  - The issuer must be a plain https URL. The outbound policy checks it
+    (`oidc`, configuration phase, recorded) before anything is held.
+  - Creating and revoking are admin-step-up's `oidc_binding.create` and
+    `oidc_binding.delete`.
+  - Revoking is a recovery operation while frozen.
+- **The exchange** (`POST /v1/oidc/token`, no bearer) runs in this order:
+  1. the issuer's live bindings in the Organization (by id or slug), for
+     identities not disabled;
+  2. the token verified against that issuer's keys;
+  3. the bindings that match: the audience (or a member of an array), the
+     subject (exact, or a prefix when it ends with `*`), every extra claim
+     exactly. They must all name one identity;
+  4. an oidc credential of that identity, ten minutes by default, at most
+     an hour, issued under its live, held Organization.
+
+  Every failure answers 401 `INVALID_CREDENTIAL` alike; the
+  `authentication.failed` event keeps the reason.
+- **The verifier** (`verify.go`) checks the token as the TypeScript code
+  does:
+  - RS256 and ES256 only, with 60 seconds of skew on exp and nbf;
+  - the issuer's discovery document must name the issuer itself, and its
+    `jwks_uri` must be https.
+
+  Its inputs are decoded as Node decodes them, so the reasons match:
+  - each segment is base64url decoded leniently (either alphabet,
+    characters outside it skipped, stopping at "=");
+  - the bytes are decoded as WHATWG UTF-8, then read with `JSON.parse`'s
+    rules;
+  - a property read of null is a `TypeError`: "verification-error", or
+    500 for a null payload, as in TypeScript.
+
+  JWK import is go-jose's (v4, already pinned through tsnet), fed only
+  the members a public key is made of. The signature check is the
+  standard library's, on exactly the bytes the TypeScript code verifies.
+- **The bounds** (ADR-0057 Decision 7), per process:
+  - one discovery-and-JWKS operation per issuer at a time, shared by
+    concurrent callers;
+  - a JWKS kept five minutes;
+  - a failure kept 30 seconds, doubling to 10 minutes;
+  - a bad token never touches the caches;
+  - an unknown key id refreshes at most once a minute;
+  - each cache holds at most 1,000 issuers.
+
+  The documents go through the outbound policy's `oidc` client, without
+  following redirects, 10 seconds each. A refusal is audited for the
+  binding's Organization (connection phase).
+- **Parity.**
+  - `ts-vectors.json` (`go-oidc-vectors.test.ts`): the TypeScript
+    verifier's answers to 67 tokens (reasons and the URLs fetched) and to
+    six bounds scenarios.
+  - `oidc-v0.22.0.json` (`go-oidc-fixture.test.ts`): 55 requests,
+    with the documents each request fetched.
+  - The `oidc` conformance suite runs against a local issuer over https on
+    every target (the `oidc-issuer` capability).
+
 ### The audit export's configuration (step 4.11a)
 
 `server/auditexport` is the configuration side of `domain/auditexport.ts`
@@ -1426,6 +1491,7 @@ Kept, because they are on the wire:
 | `http/app.ts` `searchConfigItems`, a hit's environments | listed in the order of a query without `ORDER BY`, so the order is whatever PostgreSQL's plan gives and is not guaranteed: an index scan through `environments_live_name_key` (`project_id`, `name`) gives Project, then name, while a sequential scan of the same rows gives another order | by Project, then name (byte order), chosen on purpose: the index-scan order, which the fixture's TypeScript server used | the core fixture's search requests |
 | `http/app.ts` `listAuditEvents`, the `credentials` sidecar | the page's credentials from a query without `ORDER BY` (`id = ANY($1)`), so the object's member order is PostgreSQL's row order | the table's order (`rowid`), which is PostgreSQL's for a table nothing was deleted from, as the security fixture records | the security fixture's audit listings |
 | PostgreSQL's text and jsonb, under every route | U+0000 in a string written to a text or jsonb column fails the statement: the transaction rolls back and the route answers 500 `INTERNAL`; a lone surrogate reaches a text column as U+FFFD (Node's UTF-8) and fails in jsonb | the same: `write.Text` for text columns (U+0000 refused, lone surrogates as U+FFFD), `jsvalue.JsonbRefuses` for jsonb (`audit.Record`, `write.Idempotent`). **Every later slice applies them to each text or jsonb value it writes**, at the point the TypeScript statement would fail, and records the case in its parity fixture | `server/write` `TestText`; the core fixture's U+0000 and lone-surrogate requests |
+| `domain/oidc.ts` `exchangeOidcToken`, a token whose payload is JSON `null` | `peek.iss` is read outside the try: a `TypeError`, so `POST /v1/oidc/token` answers 500 `INTERNAL` instead of 401 `INVALID_CREDENTIAL`, with no `authentication.failed` event (step 4 defect 5, not a security defect) | the same for now, as the other 500s on bad input; once the TypeScript server is retired (step 7/8), 401 audited as "malformed" | the OIDC fixture's "exchange, a null payload" |
 
 Not reproduced:
 

@@ -21,7 +21,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { requestsFromNginxLog } from "./nginx-log.mjs";
@@ -121,8 +121,23 @@ export async function configure(state) {
     // The webhooks suite's receiver, on varlatchd's own loopback inside its
     // container: the one private destination the outbound policy allows.
     // and the audit-export suite's object store, on the project's network.
-    VARLATCH_OUTBOUND_ALLOW: `127.0.0.1/32:${WEBHOOK_RECEIVER_PORT},${OBJECT_STORE_ALIAS}:9000`,
+    // And the oidc suite's issuer, on varlatchd's loopback too.
+    VARLATCH_OUTBOUND_ALLOW: `127.0.0.1/32:${WEBHOOK_RECEIVER_PORT},${OBJECT_STORE_ALIAS}:9000,127.0.0.1/32:${OIDC_ISSUER_PORT}`,
   };
+  // The oidc suite's issuer certificate, which varlatchd trusts from its
+  // start (NODE_EXTRA_CA_CERTS), mounted with its key for the issuer.
+  issuerCertificate(join(state.dir, "oidc"));
+  writeFileSync(join(state.dir, OIDC_OVERRIDE), [
+    "# Written by scripts/conformance/targets/compose-stack.mjs: the oidc suite's issuer certificate.",
+    "services:",
+    "  varlatchd:",
+    "    environment:",
+    `      NODE_EXTRA_CA_CERTS: ${OIDC_MOUNT}/cert.pem`,
+    "    volumes:",
+    `      - ./oidc:${OIDC_MOUNT}:ro`,
+    "",
+  ].join("\n"));
+  if (!state.composeFiles.includes(OIDC_OVERRIDE)) state.composeFiles.push(OIDC_OVERRIDE);
   const hex = (bytes) => randomBytes(bytes).toString("hex");
   writeFileSync(join(state.dir, ".env"), [
     `POSTGRES_SUPERUSER_PASSWORD=${hex(24)}`,
@@ -322,6 +337,53 @@ export async function webhookReceiver(state, action) {
     if (!receiverRequests(state)) throw new Error("the webhook receiver did not start in varlatchd's container");
   }
   return { url: `http://127.0.0.1:${WEBHOOK_RECEIVER_PORT}` };
+}
+
+/** The oidc suite's issuer: its port on varlatchd's loopback, its Compose override and mount. */
+export const OIDC_ISSUER_PORT = 7443;
+const OIDC_OVERRIDE = "conformance-oidc.yml";
+const OIDC_MOUNT = "/conformance-oidc";
+export const ISSUER_SOURCE = new URL("../lib/oidc-issuer.cjs", import.meta.url);
+
+/**
+ * A self-signed certificate for https://127.0.0.1 and its key, in dir
+ * (cert.pem, key.pem; readable by the server's user), for the oidc suite's
+ * issuer.
+ */
+export function issuerCertificate(dir) {
+  mkdirSync(dir, { recursive: true });
+  const r = spawnSync("openssl", ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-days", "2",
+    "-subj", "/CN=conformance-oidc", "-addext", "subjectAltName=IP:127.0.0.1",
+    "-keyout", join(dir, "key.pem"), "-out", join(dir, "cert.pem")], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`openssl could not make the issuer certificate: ${(r.stderr || r.error || "").toString().trim().slice(-300)}`);
+  chmodSync(dir, 0o755);
+  chmodSync(join(dir, "key.pem"), 0o644);
+  chmodSync(join(dir, "cert.pem"), 0o644);
+}
+
+/**
+ * The oidc-issuer capability: `start` runs the issuer (lib/oidc-issuer.cjs)
+ * in varlatchd's container, on its loopback port the allow list opens,
+ * when it is not running, and answers its URL; `keys <json>` sets its
+ * JWKS; `counts` what it was fetched. A control request runs in the
+ * container too.
+ */
+export async function oidcIssuer(state, action, ...args) {
+  const control = (method, path, body) => compose(state, ["exec", "-T", "varlatchd", "node", "-e", readFileSync(ISSUER_SOURCE, "utf8"),
+    "control", `${OIDC_MOUNT}/cert.pem`, String(OIDC_ISSUER_PORT), method, path, ...(body ? [body] : [])]);
+  const running = () => control("GET", "/_conformance/counts").status === 0;
+  if (action === "start") {
+    if (!running()) {
+      mustCompose(state, ["exec", "-d", "-T", "varlatchd", "node", "-e", readFileSync(ISSUER_SOURCE, "utf8"), "serve", OIDC_MOUNT, String(OIDC_ISSUER_PORT)]);
+      for (let i = 0; i < 50 && !running(); i++) await sleep(200);
+      if (!running()) throw new Error("the oidc issuer did not start in varlatchd's container");
+    }
+    return { issuer: `https://127.0.0.1:${OIDC_ISSUER_PORT}` };
+  }
+  const r = action === "keys" ? control("PUT", "/_conformance/jwks", args[0]) : action === "counts" ? control("GET", "/_conformance/counts") : null;
+  if (!r) throw new Error(`unknown oidc-issuer action ${action}`);
+  if (r.status !== 0) throw new Error(`oidc-issuer ${action}: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+  return JSON.parse(r.stdout);
 }
 
 /** The object store's network alias, and the image the tests pin (MinIO withdrew its own images). */

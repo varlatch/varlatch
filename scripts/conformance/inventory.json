@@ -799,6 +799,23 @@
         "cancelApproval",
         "admin-audit-export"
       ]
+    },
+    "oidc": {
+      "title": "OIDC workload identity against a local issuer over https: discovery and keys, the exchange, claim matching, audiences, credential lifetimes, failures alike, a key rotation, revocation and a refused issuer address",
+      "script": "scripts/conformance/suites/oidc.mjs",
+      "needs": [
+        "oidc-issuer"
+      ],
+      "operations": [
+        "admin-recover",
+        "whoami",
+        "createOrganization",
+        "createServiceIdentity",
+        "listOidcBindings",
+        "createOidcBinding",
+        "revokeOidcBinding",
+        "exchangeOidcToken"
+      ]
     }
   },
   "checks": {
@@ -3606,6 +3623,46 @@
       "suite": "audit-export",
       "kind": "conformance",
       "title": "an endpoint at a private address is refused with the outbound policy's reason, before the key goes anywhere"
+    },
+    "oidc.exchange": {
+      "suite": "oidc",
+      "kind": "conformance",
+      "title": "a token the bound issuer signed is exchanged for a short-lived oidc credential of the bound identity, which authenticates; the issuer's discovery document and keys are fetched once"
+    },
+    "oidc.lifetimes": {
+      "suite": "oidc",
+      "kind": "conformance",
+      "title": "the credential lives as long as asked, up to an hour, ten minutes by default; a longer lifetime is refused"
+    },
+    "oidc.claim-matching": {
+      "suite": "oidc",
+      "kind": "conformance",
+      "title": "a subject ending in * matches by prefix, any other exactly; every claim the binding names must be equal"
+    },
+    "oidc.audiences": {
+      "suite": "oidc",
+      "kind": "conformance",
+      "title": "the binding's audience may be the token's aud or one of its members; another audience is refused"
+    },
+    "oidc.failures-alike": {
+      "suite": "oidc",
+      "kind": "conformance",
+      "title": "an expired token, a bad signature, an unknown issuer and a malformed token all answer the same 401 INVALID_CREDENTIAL, telling nothing apart"
+    },
+    "oidc.key-rotation": {
+      "suite": "oidc",
+      "kind": "conformance",
+      "title": "after the issuer rotates its keys, a token by the new key is accepted after one refresh of its keys, and the old key's tokens are refused"
+    },
+    "oidc.revocation": {
+      "suite": "oidc",
+      "kind": "conformance",
+      "title": "a revoked binding is no longer listed and its tokens are no longer exchanged"
+    },
+    "oidc.refused-issuer": {
+      "suite": "oidc",
+      "kind": "conformance",
+      "title": "an issuer at a private address the host has not allowed is refused with the outbound policy's reason"
     }
   },
   "goServerChecks": {
