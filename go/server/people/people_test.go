@@ -172,3 +172,48 @@ func TestNonAdminDoesNotHoldTheTargetsGate(t *testing.T) {
 		t.Errorf("a member demoting an admin: %v", err)
 	}
 }
+
+// Only a live built-in admin invites an admin: a person demoted to member
+// is refused (also when the demotion lands while the invitation waits for
+// their gate), and so is a machine, whatever its Grants; each refusal
+// leaves no invitation.
+func TestOnlyAnAdminInvitesAnAdmin(t *testing.T) {
+	wd := newWorld(t)
+	ctx := context.Background()
+	invite := func(p *auth.Principal) error {
+		_, _, err := people.CreateInvitation(ctx, wd.w, wd.approvals, people.Request{Principal: p}, wd.org, "Omar", "admin", time.Now)
+		return err
+	}
+	refused := func(what string, err error) {
+		t.Helper()
+		var r people.AdminInvitationRefused
+		var de *domainerr.Error
+		if !errors.As(err, &r) || !errors.As(err, &de) || de.Code != "PERMISSION_DENIED" || de.Message != "Only an Organization Admin can invite an admin" {
+			t.Fatalf("%s: %v", what, err)
+		}
+	}
+	if err := invite(person("idn_b")); err != nil {
+		t.Fatalf("an admin's admin invitation: %v", err)
+	}
+	wd.exec(`UPDATE org_memberships SET role = 'member' WHERE identity_id = 'idn_b'`)
+	refused("a member's admin invitation", invite(person("idn_b")))
+
+	wd.exec(`UPDATE org_memberships SET role = 'admin' WHERE identity_id = 'idn_b'`)
+	_, release, err := wd.w.Gates.Acquire(ctx, write.Person("idn_b", write.Exclusive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- invite(person("idn_b")) }()
+	waitingFor(wd, write.Person("idn_b", write.Shared))
+	wd.exec(`UPDATE org_memberships SET role = 'member' WHERE identity_id = 'idn_b'`)
+	release()
+	refused("an admin demoted while the invitation waited", <-done)
+
+	org := wd.org
+	machine := &auth.Principal{Identity: auth.Identity{ID: "idn_m", Kind: "service", OrganizationID: &org}, Credential: auth.Credential{ID: "crd_m", Kind: "service"}}
+	refused("a machine's admin invitation", invite(machine))
+	if n := wd.count(`SELECT count(*) FROM setup_grants WHERE kind = 'invite' AND invite_role = 'admin'`); n != 1 {
+		t.Errorf("%d admin invitations, want the admin's one", n)
+	}
+}

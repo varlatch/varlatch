@@ -4,9 +4,11 @@ import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import {
+  AdminInvitationRefused,
   consumeSetupGrant,
   ensureInstallation,
   issueBootstrapGrant,
+  issueInviteGrant,
   peekSetupGrant,
 } from "../src/domain/bootstrap.js";
 import { buildApp } from "../src/http/app.js";
@@ -229,5 +231,61 @@ describe("revoking an invitation", () => {
   it("advertises invitations.manage", async () => {
     const meta = await app.request("/v1/meta").then((r) => r.json() as Promise<{ capabilities: string[] }>);
     expect(meta.capabilities).toContain("invitations.manage");
+  });
+});
+
+describe("who invites an admin", () => {
+  const ORG = "/v1/organizations/acme";
+  const invitations = async (name: string) =>
+    ((await ctx.db.query("SELECT count(*)::int AS n FROM setup_grants WHERE kind = 'invite' AND invite_name = $1", [name])).rows[0] as { n: number }).n;
+  async function member(name: string) {
+    const { identityId } = await consumeSetupGrant(ctx, (await invite(name)).token, {});
+    return { id: identityId, token: (await issueCredential(ctx.db, { identityId, kind: "cli" })).token };
+  }
+  const grant = async (body: Record<string, unknown>) =>
+    expect((await call("POST", `${ORG}/grants`, { scope: { kind: "organization" }, ...body })).status).toBe(201);
+  const refused = (res: { status: number; body: any }) => {
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body).toEqual({
+      error: { code: "PERMISSION_DENIED", message: "Only an Organization Admin can invite an admin", requestId: expect.any(String) },
+    });
+  };
+
+  it("is an Organization Admin: identity.manage through a Grant, a custom role or a machine does not substitute", async () => {
+    const direct = await member("Direct");
+    await grant({ subjectIdentityId: direct.id, actions: ["identity.manage"] });
+    const viaRole = await member("ViaRole");
+    const role = await call("POST", `${ORG}/roles`, { name: "people", actions: ["identity.manage"] });
+    expect(role.status).toBe(201);
+    await grant({ subjectIdentityId: viaRole.id, roleId: role.body.id });
+    const svc = (await call("POST", `${ORG}/identities`, { name: "robot", kind: "service" })).body;
+    await grant({ subjectIdentityId: svc.id, actions: ["identity.manage"] });
+
+    for (const [caller, token] of [[direct.id, direct.token], [viaRole.id, viaRole.token], [svc.id, svc.credential]] as const) {
+      refused(await call("POST", `${ORG}/invitations`, { name: "Second", role: "admin" }, token));
+      // The denial is audited, like a member route's.
+      const denial = (await ctx.db.query(
+        "SELECT action, metadata FROM audit_events WHERE event_type = 'authorization.denied' AND actor_identity_id = $1 ORDER BY event_order DESC LIMIT 1",
+        [caller],
+      )).rows[0] as { action: string; metadata: unknown };
+      expect(denial.action).toBe("identity.manage");
+      expect(typeof denial.metadata === "string" ? JSON.parse(denial.metadata) : denial.metadata).toEqual({ operation: "POST invitations", reason: "not-admin" });
+      // Inviting a member is what identity.manage allows.
+      expect((await call("POST", `${ORG}/invitations`, { name: `Guest of ${caller}`, role: "member" }, token)).status).toBe(201);
+    }
+    expect(await invitations("Second")).toBe(0);
+    expect((await call("POST", `${ORG}/invitations`, { name: "Second", role: "admin" })).status).toBe(201);
+  });
+
+  it("is a live admin: a demoted one is refused, and a direct call is refused the same way", async () => {
+    const carol = await member("Carol");
+    await grant({ subjectIdentityId: carol.id, actions: ["identity.manage"] });
+    expect((await call("PATCH", `${ORG}/members/${carol.id}`, { role: "admin" })).status).toBe(200);
+    expect((await call("POST", `${ORG}/invitations`, { name: "Second", role: "admin" }, carol.token)).status).toBe(201);
+    expect((await call("PATCH", `${ORG}/members/${carol.id}`, { role: "member" })).status).toBe(200);
+    refused(await call("POST", `${ORG}/invitations`, { name: "Third", role: "admin" }, carol.token));
+    const orgId = ((await ctx.db.query("SELECT id FROM organizations WHERE slug = 'acme'")).rows[0] as { id: string }).id;
+    await expect(issueInviteGrant(ctx, { organizationId: orgId, role: "admin", name: "Third" }, carol.id)).rejects.toBeInstanceOf(AdminInvitationRefused);
+    expect(await invitations("Third")).toBe(0);
   });
 });

@@ -252,12 +252,14 @@ describe("with every control off", () => {
 });
 
 describe("in report mode", () => {
-  it("refuses nothing and counts each operation, by a person and by a machine; leaving, a member's invitation and the same role are not counted", async () => {
+  it("refuses nothing it would not refuse anyway and counts each operation; leaving, a member's invitation and the same role are not counted", async () => {
     const f = await fixtures();
     const bot = await robot();
     expect((await setMode("admin-step-up", "report")).status).toBe(200);
     expect((await inviteAs(admin.cli, "Zoe", "admin")).status).toBe(201);
-    expect((await inviteAs(bot.token, "Yann", "admin")).status).toBe(201);
+    // Only an admin invites an admin: a machine with identity.manage is
+    // refused, and a refused request is not counted.
+    expect((await inviteAs(bot.token, "Yann", "admin")).status).toBe(403);
     expect((await inviteAs(admin.cli, "Guest2", "member")).status).toBe(201);
     expect((await setRole(admin.cli, f.dave.id, "admin")).status).toBe(200);
     expect((await setRole(admin.cli, f.dave.id, "admin")).status).toBe(200);
@@ -269,7 +271,6 @@ describe("in report mode", () => {
       await rows("SELECT operation, reason, actor_identity_id, count::int AS count FROM security_control_counters WHERE control = 'admin-step-up' ORDER BY operation, reason"),
     ).toEqual([
       { operation: "member.demote", reason: "no-approval", actor_identity_id: admin.id, count: 1 },
-      { operation: "member.invite_admin", reason: "machine-credential", actor_identity_id: bot.id, count: 1 },
       { operation: "member.invite_admin", reason: "no-approval", actor_identity_id: admin.id, count: 1 },
       { operation: "member.promote", reason: "no-approval", actor_identity_id: admin.id, count: 1 },
       { operation: "member.remove", reason: "no-approval", actor_identity_id: admin.id, count: 1 },
@@ -458,9 +459,32 @@ describe("under enforce", () => {
     expect(notAdmin.status).toBe(403);
     expect(notAdmin.body.error.code).toBe("PERMISSION_DENIED");
     expect((await remove(f.bob.cli, f.dave.id)).status).toBe(403);
+    // Bob holds identity.manage through a Grant, which does not make him an admin.
+    const invited = await inviteAs(f.bob.cli, "Zoe", "admin");
+    expect(invited.status).toBe(403);
+    expect(invited.body.error).toMatchObject({ code: "PERMISSION_DENIED", message: "Only an Organization Admin can invite an admin" });
+    expect((await inviteAs(f.bob.cli, "Guest2", "member")).status).toBe(201);
     expect((await setRole(admin.cli, "idn_nobody", "admin")).status).toBe(404);
     expect((await remove(admin.cli, "idn_nobody")).status).toBe(404);
     expect(await intents()).toBe(before);
+  });
+
+  it("rechecks the admin role when the approved request is used: an admin demoted since is refused, and nothing is used", async () => {
+    // Carol keeps identity.manage through a Grant, so only the admin check refuses her.
+    await ctx.db.query(
+      `INSERT INTO grants (id, organization_id, subject_identity_id, scope, actions) VALUES ('grt_carol', $1, $2, '{"kind":"organization"}', $3)`,
+      [orgId, f.carol.id, ["identity.manage"]],
+    );
+    const asked = await approved(f.carol, await inviteAs(f.carol.cli, "Zoe", "admin"));
+    await ctx.db.query("UPDATE org_memberships SET role = 'member' WHERE organization_id = $1 AND identity_id = $2", [orgId, f.carol.id]);
+    const refused = await inviteAs(f.carol.cli, "Zoe", "admin", asked);
+    expect(refused.status, JSON.stringify(refused.body)).toBe(403);
+    expect(refused.body.error).toMatchObject({ code: "PERMISSION_DENIED", message: "Only an Organization Admin can invite an admin" });
+    expect(await invitations("Zoe")).toBe(0);
+    // Nothing was consumed: an admin again, the same approval works.
+    await ctx.db.query("UPDATE org_memberships SET role = 'admin' WHERE organization_id = $1 AND identity_id = $2", [orgId, f.carol.id]);
+    expect((await inviteAs(f.carol.cli, "Zoe", "admin", asked)).status).toBe(201);
+    expect(await invitations("Zoe")).toBe(1);
   });
 
   it("refuses another person's approval: even an admin finds nothing", async () => {
@@ -473,11 +497,9 @@ describe("under enforce", () => {
   });
 
   it("refuses a machine credential outright, without an intent", async () => {
-    const res = await inviteAs(bot.token, "Zoe", "admin");
-    expect(res.status, JSON.stringify(res.body)).toBe(403);
-    expect(res.body.error).toMatchObject({ code: "PERMISSION_DENIED", details: { reason: "machine-credential" } });
-    // A machine has no admin membership: role changes and removals are refused as before.
-    for (const answer of [await setRole(bot.token, f.dave.id, "admin"), await remove(bot.token, f.bob.id)]) {
+    // A machine has no admin membership: an admin invitation, role changes
+    // and removals are refused before an approval is asked for.
+    for (const answer of [await inviteAs(bot.token, "Zoe", "admin"), await setRole(bot.token, f.dave.id, "admin"), await remove(bot.token, f.bob.id)]) {
       expect(answer.status).toBe(403);
       expect(answer.body.error.code).toBe("PERMISSION_DENIED");
     }
