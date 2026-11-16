@@ -69,26 +69,19 @@ func TestAdaptersNeverBuildAClient(t *testing.T) {
 	}
 }
 
-// typeOnly reports whether sel appears only as a pointer type (*http.Client
-// in a field or parameter), never in a composite literal or new().
+// typeOnly reports whether sel appears only as the element of a pointer
+// type (*http.Client, Request.Client's type). A value of type http.Client
+// (a composite literal, new(http.Client), or a var of the type) is a
+// client made from scratch.
 func typeOnly(f *ast.File, sel *ast.SelectorExpr) bool {
-	only := true
+	pointer := false
 	ast.Inspect(f, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.CompositeLit:
-			if x.Type == sel {
-				only = false
-			}
-		case *ast.CallExpr:
-			if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "new" && len(x.Args) == 1 && x.Args[0] == sel {
-				only = false
-			}
-		case *ast.StarExpr:
-			// *http.Client as a type is fine.
+		if star, ok := n.(*ast.StarExpr); ok && star.X == sel {
+			pointer = true
 		}
 		return true
 	})
-	return only
+	return pointer
 }
 
 // roundTrips counts the requests a transport saw.

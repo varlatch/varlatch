@@ -52,8 +52,14 @@ func (r *response) text() string {
 // send is one request through the caller's client, as the TypeScript
 // adapters' fetch: redirects refused, the request's own timeout, and any
 // failure before an answer an *AdapterError named as fetch would reject.
-// The client is the caller's; only its redirect rule is replaced, in a copy
-// that keeps its transport.
+//
+// The request goes through a shallow copy of the caller's client that only
+// sets CheckRedirect (fetch's redirect: "error"). The copy keeps the
+// caller's Transport, Jar and Timeout, so the caller's transport, and with
+// it varlatchd's outbound policy, is still what dials: that is what step 4
+// decision 6 requires, and it allows this copy (the owner, 2026-11-16).
+// Nothing here builds a client or a transport from scratch;
+// structure_test.go forbids it.
 func send(ctx context.Context, req *Request, method, rawURL string, header [][2]string, body []byte) (*response, error) {
 	if req.Client == nil {
 		return nil, &AdapterError{Message: "TypeError", Retryable: true, Cause: errors.New("no HTTP client")}

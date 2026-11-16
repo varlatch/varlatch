@@ -52,7 +52,10 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   caller's `*http.Client` and never build one (decision 6;
   `structure_test.go` checks it): varlatchd passes the outbound policy's,
   the CLI a plain one. Platform answers are read as `JSON.parse` reads
-  them (JavaScript's property order, repeated keys, lone surrogates kept),
+  them (JavaScript's property order, repeated keys, lone surrogates kept)
+  by a reader of the package's own (`json.go`), which duplicates
+  `server/jsvalue`'s: that one is AGPL-3.0-or-later, and moving it to
+  `lib` is a licensing decision left to the owner,
   and a Compose file as the `yaml` package reads it, on
   `go.yaml.in/yaml/v3`'s nodes. The vectors
   (`testdata/ts-exchanges.json`, 672 cases) are recorded from the
@@ -70,7 +73,8 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
     other than 1.2, the YAML 1.1 types (`!!binary`, `!!timestamp`,
     `!!set`, `!!omap`, `!!pairs`), a mapping or sequence as a key, and an
     alias inside its own anchor (on which TypeScript overflows its stack
-    and `inspectUsage` throws). The vectors record each (`divergence:`).
+    and `inspectUsage` throws: defect 6, below). The vectors record each
+    (`divergence:`).
     A `!` non-specific tag on a plain scalar resolves as an untagged one
     (yaml.v3 does not report it); TypeScript reads a string.
   - An error that is not the adapter's own (an answer that is not JSON,
@@ -1548,6 +1552,7 @@ Not reproduced:
 | `mirror/publisher.ts:209` orders Convex mirror events by the text form of `event_order` | events after position 9 can be published out of order | nothing to port: there is no Convex in Go | | none |
 | `domain/securityreport.ts` `countWouldBlock`, a count whose hour and the current hour are both already summarized (possible only after the clock moved back across a summarized hour) | the count is dropped (an error is logged): the stored total is one short | the count goes to the hour after the last summarized one for its key, which no summary covers yet, so every committed count reaches exactly one summary; with a clock that does not move back nothing differs | `server/security` `TestCountsSurviveAClockMovedBack` | none |
 | `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | `server/values` `TestConcurrentExportsUnderReportCountExactly`: 24 concurrent named and all-authorized exports in one bucket all succeed and the counter is exact | none |
+| `packages/sync` `coolifyCompose.ts` `classifyComposeUsage`, a Compose file with an alias inside its own anchor (step 4 defect 6, not a security defect) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack, so the Coolify adapter's `inspectUsage` throws a `RangeError` though it never should: varlatchd's engine catches it (its `usage-unchecked` note says "the destination could not be read"), the CLI's `sync check` fails | `lib/sync` reads the file as unreadable: usage unchecked, every verdict unknown, the note's reason "the service's compose file is too large or could not be read" | `lib/sync` `TestTypeScriptExchanges`, the case "divergence: an alias inside its own anchor" | none |
 
 The TypeScript admin CLI refuses an ordinary command during maintenance
 with `Installation is in maintenance; ordinary admin operations are
