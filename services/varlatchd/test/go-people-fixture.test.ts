@@ -18,7 +18,9 @@
  * an OIDC binding, a machine credential she issued, a personal
  * environment), so removing her records an authority snapshot and a
  * review. Invitations in every state, with pinned times. People: bob (a
- * member), dave (an admin), erin (a former member), carol (in none).
+ * member), dave (an admin), erin (a former member), carol (in none), hal
+ * (a member of ppl and enf whose Grant holds identity.manage, as an admin
+ * machine's does there: neither invites an admin).
  * Approval intents of alice's second CLI credential in enf, bound to exact
  * requests of the table.
  *
@@ -181,6 +183,9 @@ function requestTable(): RequestCase[] {
     raw("invite, a body that is not JSON", "POST", "ppl/invitations", "{"),
     invite("invite as a member", "ppl", { name: "Bea", role: "member" }, "bob"),
     invite("invite as a machine", "ppl", { name: "Cal", role: "admin" }, "ppl-admin-svc"),
+    invite("invite an admin as a member who holds identity.manage", "ppl", { name: "Gil", role: "admin" }, "hal"),
+    invite("invite a member as a member who holds identity.manage", "ppl", { name: "Gia", role: "member" }, "hal"),
+    invite("invite a member as a machine", "ppl", { name: "Cid", role: "member" }, "ppl-admin-svc"),
     invite("invite in a frozen Organization", "frozen", { name: "Dee", role: "member" }),
     invite("invite in an Organization being deleted", "deleting", { name: "Eve", role: "member" }),
 
@@ -254,6 +259,7 @@ function requestTable(): RequestCase[] {
     send("enforce: remove, no approval", "DELETE", "enf/members/{idn:quinn}", undefined, "dave"),
     send("enforce: leave", "DELETE", "enf/members/me", undefined, "lea"),
     invite("enforce: a machine asks", "enf", { name: "Bot", role: "admin" }, "enf-admin-svc"),
+    invite("enforce: a member who holds identity.manage asks", "enf", { name: "Hap", role: "admin" }, "hal"),
     invite("enforce: invite an admin, its approval", "enf", { name: "Approved", role: "admin" }, "alice2", APPROVALS.inviteAdmin),
     invite("enforce: invite an admin, its approval again", "enf", { name: "Approved", role: "admin" }, "alice2", APPROVALS.inviteAdmin),
     invite("enforce: another request's approval", "enf", { name: "Someone", role: "admin" }, "alice2", APPROVALS.otherBody),
@@ -359,6 +365,7 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   await person("pam", [["ppl", "member"]]);
   for (const name of ["quinn", "sam", "lea"]) await person(name, all("member"));
   await person("ross", all("admin"));
+  await person("hal", [["ppl", "member"], ["enf", "member"]]);
 
   const machine = async (org: string, name: string, kind = "service") => {
     const m = await call("POST", `${ORG}/${org}/identities`, { name, kind });
@@ -444,10 +451,14 @@ async function build(): Promise<{ ctx: AppCtx & { close: () => Promise<void> }; 
   await invitation("other", "Other", 1, alice);
   await invitation("frozen", "Frozen", 1, alice);
 
-  // ppl and enf: an admin machine (identity.manage), to ask as a machine.
+  // ppl and enf: an admin machine (identity.manage), to ask as a machine,
+  // and hal, a member whose Grant holds identity.manage: neither may invite
+  // an admin.
   for (const org of ["ppl", "enf"]) {
     const m = await machine(org, `${org}-admin-svc`);
-    await call("POST", `${ORG}/${org}/grants`, { subjectIdentityId: m, scope: { kind: "organization" }, actions: ["identity.manage", "organization.read"] });
+    for (const subject of [m, ids.hal!]) {
+      await call("POST", `${ORG}/${org}/grants`, { subjectIdentityId: subject, scope: { kind: "organization" }, actions: ["identity.manage", "organization.read"] });
+    }
   }
 
   await db.query(

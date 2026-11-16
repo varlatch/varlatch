@@ -216,6 +216,21 @@ func (o *operations) CreateInvitation(ctx context.Context, _ api.CreateInvitatio
 		out, reports, err := people.CreateInvitation(ctx, o.s.opts.Writer, o.s.opts.Auth, q.peopleRequest(ctx), q.org.ID, name.(string), role.(string), o.s.opts.Now)
 		return result{out, reports}, err
 	})
+	if refusal := (people.AdminInvitationRefused{}); errors.As(err, &refusal) {
+		// Audited after the job, like any other denial.
+		actor, org, action, reqID := q.p.Identity.ID, q.org.ID, "identity.manage", requestIDOf(q.r)
+		e := audit.Event{Type: "authorization.denied", Decision: audit.Deny, ActorIdentityID: &actor, CredentialID: audit.Value(q.p.Credential.ID),
+			OrganizationID: &org, Action: &action, Resource: jsvalue.Object{{Key: "projectId", Value: nil}, {Key: "environmentId", Value: nil}},
+			Authz:     jsvalue.Object{{Key: "denial", Value: "no-grant"}, {Key: "requirements", Value: []any{}}},
+			Metadata:  jsvalue.Object{{Key: "operation", Value: "POST invitations"}, {Key: "reason", Value: "not-admin"}},
+			RequestID: &reqID}
+		if werr := o.s.opts.Auth.Store().Write(ctx, func(tx *storage.Tx) error {
+			_, e := audit.Record(ctx, tx, e)
+			return e
+		}); werr != nil {
+			return nil, werr
+		}
+	}
 	if err != nil {
 		return nil, q.refused(ctx, err)
 	}

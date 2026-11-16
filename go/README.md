@@ -981,7 +981,11 @@ The server's packages:
   served by `server/httpserver/people.go`. Invitations: listed newest
   first by `(createdAt, id)` with the audit list's cursor (the time read
   as PostgreSQL reads it), issued (inviting an admin is protected,
-  member.invite_admin, with `identity.manage` rechecked), revoked while
+  member.invite_admin, with `identity.manage` rechecked, and only a live
+  built-in admin may: a machine or a person whose Grant holds
+  `identity.manage` is refused, `PERMISSION_DENIED`, before an approval is
+  asked for and again in the job under the pinned membership, audited as
+  `authorization.denied`), revoked while
   pending. Members: the review of what a person set up, role changes
   (member.promote, member.demote), removal (member.remove) and leaving,
   each with the admin check and the last-admin rule before an approval is
