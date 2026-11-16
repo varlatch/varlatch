@@ -217,9 +217,13 @@ func withPrincipal(r *http.Request, p *auth.Principal) *http.Request {
 		uap = &ua
 	}
 	ctx := context.WithValue(r.Context(), principalKey{}, p)
-	ctx = audit.WithAttribution(ctx, audit.Attribution{
-		IdentityID: p.Identity.ID, CredentialID: p.Credential.ID, Client: auth.ClientLabel(uap), Listener: "ordinary",
-	})
+	a := audit.Attribution{IdentityID: p.Identity.ID, CredentialID: p.Credential.ID, Client: auth.ClientLabel(uap), Listener: "ordinary"}
+	// And which listener it came in on, with the device or the reason
+	// there is none (ADR-0046 Decision 8).
+	if res, ok := resolutionOf(ctx); ok {
+		a.Listener, a.Tailnet = "tailnet", res.JSValue()
+	}
+	ctx = audit.WithAttribution(ctx, a)
 	return r.WithContext(ctx)
 }
 

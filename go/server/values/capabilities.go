@@ -48,7 +48,7 @@ func HashSecret(secret string) string {
 
 // agentEvaluation is evaluateAgentSecretUse: the Agent's action on the
 // environment, with the Organization's Requirements and the request's
-// Tailnet Context (none until the tailnet listener, step 4.13).
+// Tailnet Context (on a tailnet listener; none elsewhere).
 func agentEvaluation(ctx context.Context, db query.DBTX, st *State, agentID, action string) (authz.Evaluation, error) {
 	if _, err := write.Text(agentID); err != nil {
 		return authz.Evaluation{}, err
@@ -61,7 +61,7 @@ func agentEvaluation(ctx context.Context, db query.DBTX, st *State, agentID, act
 	if err != nil {
 		return authz.Evaluation{}, err
 	}
-	return authz.Evaluate(authz.Input{Action: action, Resource: st.resource(), Grants: grants, Requirements: reqs}), nil
+	return authz.Evaluate(authz.Input{Action: action, Resource: st.resource(), Grants: grants, Requirements: reqs, TailnetContext: authz.TailnetFrom(ctx)}), nil
 }
 
 // Precondition is an IssuancePrecondition (ADR-0038 Decision 7): the state
@@ -273,7 +273,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 		if err := s.store.Write(ctx, func(tx *storage.Tx) error { _, err := audit.Record(ctx, tx, event); return err }); err != nil {
 			return err
 		}
-		return exerciseRefusal(reason, detail)
+		return exerciseRefusal(reason, detail, authz.TailnetFrom(ctx) != nil)
 	}
 
 	if row == nil {
@@ -509,7 +509,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 // exerciseRefusal is the error deny throws for reason. Existence is hidden:
 // only the bound Broker presenting the right secret learns more than
 // not-found.
-func exerciseRefusal(reason string, detail jsvalue.Object) error {
+func exerciseRefusal(reason string, detail jsvalue.Object, tailnet bool) error {
 	get := func(key string) string {
 		v, _ := detail.Get(key)
 		s, _ := v.(string)
@@ -520,8 +520,9 @@ func exerciseRefusal(reason string, detail jsvalue.Object) error {
 	case "not-found", "wrong-broker", "bad-secret":
 		return domainerr.New("RESOURCE_NOT_FOUND", "Capability not found")
 	case "requirement-failed":
-		// The Go server has no tailnet listener yet (step 4.13): never a
-		// Tailnet Context.
+		if tailnet {
+			return domainerr.New("TAILNET_CONTEXT_UNAVAILABLE", "Tailnet Context does not satisfy the required selector")
+		}
 		return domainerr.New("TAILNET_CONTEXT_REQUIRED", "This exercise requires trusted Tailnet Context")
 	case "capability-without-targets":
 		return &domainerr.Error{Code: "PERMISSION_DENIED", Details: details,

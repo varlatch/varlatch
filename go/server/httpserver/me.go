@@ -113,15 +113,21 @@ func (o *operations) Whoami(ctx context.Context, _ api.WhoamiRequestObject) (api
 		}
 	}
 	c := p.Credential
-	return ok(jsvalue.Object{
+	me := jsvalue.Object{
 		{Key: "identity", Value: jsvalue.Object{{Key: "id", Value: p.Identity.ID}, {Key: "name", Value: p.Identity.Name}, {Key: "kind", Value: p.Identity.Kind}, {Key: "email", Value: email}}},
 		{Key: "organization", Value: organization},
 		{Key: "credential", Value: jsvalue.Object{
 			{Key: "id", Value: c.ID}, {Key: "name", Value: orNull(c.Name, id[string])}, {Key: "kind", Value: c.Kind},
 			{Key: "expiresAt", Value: orNull(c.ExpiresAt, iso)},
 		}},
-		{Key: "listener", Value: "ordinary"},
-	}), nil
+		{Key: "listener", Value: listenerOf(ctx)},
+	}
+	// On the tailnet listener, the device this request's own connection
+	// resolved to, as GET /v1/tailnet/context reports it.
+	if res, on := resolutionOf(ctx); on {
+		me = append(me, jsvalue.Member{Key: "tailnet", Value: res.Device()})
+	}
+	return ok(me), nil
 }
 
 // ListMyCredentials is GET /v1/me/credentials: the caller's credentials,

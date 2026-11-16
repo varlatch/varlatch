@@ -83,7 +83,7 @@ export interface RequestCase {
   /** Stable: the method and the name, unique in the table. */
   id: string;
   name: string;
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
   path: string;
   credential: string;
   /** A JSON body, or the exact text of one that is not JSON (or holds what JSON.stringify would rewrite). */
@@ -100,6 +100,12 @@ export interface RequestCase {
   masked?: string[];
   /** Sent this many times at once; the answers are kept sorted. */
   concurrent?: number;
+  /**
+   * The listener it is sent to, as the fixture names its listeners (a
+   * tailnet listener with a stand-in resolution); the ordinary one when
+   * absent.
+   */
+  listener?: string;
 }
 
 export interface Answer {
@@ -151,7 +157,12 @@ export interface Fixture {
 /** The CLI's User-Agent, sent when a request names none. */
 export const CLI_AGENT = "varlatch-cli/0.22.0 (linux; x64)";
 const REQUEST_ID = "{requestId}";
-const HEADERS = ["Cache-Control", "Retry-After", "Content-Type", "Varlatch-Credential-Expires", "Location"];
+const HEADERS = [
+  "Cache-Control", "Retry-After", "Content-Type", "Varlatch-Credential-Expires", "Location",
+  // The tailnet browser endpoint's CORS answers (ADR-0046 Decision 4).
+  "Access-Control-Allow-Origin", "Access-Control-Allow-Methods", "Access-Control-Allow-Headers", "Access-Control-Max-Age",
+  "Access-Control-Expose-Headers", "Vary",
+];
 const AUDIT_COLUMNS =
   "event_type, actor_identity_id, credential_id, organization_id, action, resource, decision, authz, tailnet, listener, request_id, metadata, client, schema_version";
 
@@ -365,12 +376,14 @@ type App = { request: (path: string, init: RequestInit) => Response | Promise<Re
  * Runs the table against a database, recording each answer and what it
  * wrote. `app` is the app, or a function that makes one: a function is
  * called again every WINDOW_BATCH requests (a fresh request window), and a
- * table longer than that needs one. `path` fills a request's path (ids of
- * the file's own rows).
+ * table longer than that needs one. A request naming a `listener` is sent
+ * to the app the function makes for that name (one per name, made afresh
+ * with the others). `path` fills a request's path (ids of the file's own
+ * rows).
  */
 export async function record(
   ctx: AppCtx,
-  app: App | (() => App),
+  app: App | ((listener?: string) => App),
   f: Pick<Fixture, "rows" | "tokens" | "sideTables">,
   cases: RequestCase[],
   /** Fills a request's placeholders, in its path and its body. */
@@ -389,9 +402,22 @@ export async function record(
   if (!newApp && cases.length > WINDOW_BATCH) {
     throw new Error(`record: ${cases.length} requests pass the request window: pass a function that makes the app, so it is made afresh every ${WINDOW_BATCH}`);
   }
-  let current = newApp ? newApp() : (app as App);
+  if (!newApp && cases.some((c) => c.listener !== undefined)) {
+    throw new Error("record: a request names a listener: pass a function that makes the app for a listener's name");
+  }
+  let apps = new Map<string, App>();
+  const appFor = (listener: string | undefined): App => {
+    if (!newApp) return app as App;
+    let made = apps.get(listener ?? "");
+    if (!made) {
+      made = listener === undefined ? newApp() : newApp(listener);
+      apps.set(listener ?? "", made);
+    }
+    return made;
+  };
   for (const [index, c] of cases.entries()) {
-    if (newApp && index > 0 && index % WINDOW_BATCH === 0) current = newApp();
+    if (newApp && index > 0 && index % WINDOW_BATCH === 0) apps = new Map();
+    const current = appFor(c.listener);
     const before = Number(((await ctx.db.query("SELECT max(event_order) AS n FROM audit_events")).rows[0] as { n: unknown }).n ?? 0);
     const sideBefore = new Map<string, Row[]>();
     for (const t of f.sideTables) sideBefore.set(t.name, await dump(t));
@@ -451,6 +477,7 @@ export function definitions(cases: RequestCase[]): RequestCase[] {
     ...(c.userAgent !== undefined ? { userAgent: c.userAgent } : {}), ...(c.headers !== undefined ? { headers: c.headers } : {}),
     ...(c.masked !== undefined ? { masked: c.masked } : {}),
     ...(c.concurrent !== undefined ? { concurrent: c.concurrent } : {}),
+    ...(c.listener !== undefined ? { listener: c.listener } : {}),
   }));
 }
 

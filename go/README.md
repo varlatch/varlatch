@@ -746,6 +746,58 @@ the drains and `admin audit-export discard-plan`.
   worker writes and the host command's refusals on every target (the
   `host-admin` capability).
 
+### The tailnet listeners (step 4.13a)
+
+`server/tailnet` and `server/httpserver/tailnet.go` are the tailnet
+listeners' HTTP side (ADR-0014 §7, ADR-0046; `tailnet/whois.ts`,
+`tailnet/listener.ts`, `http/tailnet-browser.ts`), on a `tailnet.Node`:
+what varlatchd's own node answers about a peer (WhoIs) and about itself.
+The tsnet node itself, the pin and its re-pin, the listeners report and
+the Headscale tests are step 4.13b; the browser endpoint's HTTPS with
+Tailscale certificates is 4.13c. Until then a Node is a stand-in, and no
+tailnet listener is started.
+
+- **Listeners.** A tailnet listener is a server of its own
+  (`Options.Tailnet`): the API alone, with no nginx in front, no dashboard,
+  browser session, enrollment page or public URL, as the TypeScript tailnet
+  apps are built. The ordinary listener never has a resolver, so a Tailnet
+  Context cannot arise there.
+- **The device check** reads the accepted socket's own peer address, never
+  what the request says. A shared-in device is refused before its name is
+  read, a device of another tailnet (by the pinned MagicDNS suffix) and the
+  node itself are refused, and every failure (the node cannot say, a field
+  missing, its own identity unknown) refuses as `resolver-unavailable`.
+  A tagged device is known by its tags; a user login is kept for an untagged
+  one only. The node's own StableID is read fresh for every caller, the
+  reads shared and one in flight at most.
+- **The request** carries its Tailnet Context (`authz.WithTailnet`): every
+  authorization decision evaluates Requirements against it, as are a
+  Capability's exercise and an issuance's preflight. A Requirement a device
+  does not satisfy is `TAILNET_CONTEXT_UNAVAILABLE`; no device is
+  `TAILNET_CONTEXT_REQUIRED`. Audit events record the listener and the
+  device or the refusal; `/v1/me` reports both. A recognized device gets a
+  request window of its own.
+- **The browser endpoint's gate** runs before the device check: only the
+  node's own name; a request with `Origin` only from an exactly allowlisted
+  origin to the browser read routes, else 403 without CORS headers; a
+  preflight answered with the allowed methods and headers
+  (`Varlatch-Approval` only when asked for); CORS headers on every allowed
+  answer, never `Access-Control-Allow-Credentials`.
+- **Operations.** `getTailnetEndpoint` (the browser endpoint's URL, null
+  without one, on every listener), `getTailnetContext` (the caller's own
+  device, on the browser endpoint only), `getInstallationListeners`
+  (Installation Admins; null without a tailnet listener). `/v1/meta` lists
+  `tailnet.browser-reads` when a browser endpoint is configured.
+- **Parity.** `tailnet-v0.22.0.json` (go-tailnet-fixture.test.ts) replays 40
+  requests on the ordinary listener and on tailnet listeners with stand-in
+  device checks (tagged, a person's, another tag, shared, unavailable, the
+  browser endpoint with and without a device): Requirements met and not,
+  reads, disclosures, exercises, the gate's answers with their CORS headers,
+  and their audit events with listener and device. The parity kit now sends
+  a request to the listener it names (`listener`), and compares the CORS
+  headers. `/v1/meta`'s document is the Go server's own, so its tailnet
+  capability is a unit test.
+
 The server's packages:
 
 - `server/config`: `varlatchd.conf`.
@@ -1220,6 +1272,8 @@ The server's packages:
   kind of confirmation; `TestCoverageWhileTheBackfillRuns` the coverage
   of an unfinished backfill.
 
+- `server/tailnet` (step 4.13a): the tailnet listeners' device check on a
+  node (see "The tailnet listeners").
 - `server/capabilities` (step 4.6): broker Capabilities' issuance, list
   and revocation; their exercise is `server/values`' (see "Broker
   Capabilities").

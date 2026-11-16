@@ -70,10 +70,13 @@ type Recorded struct {
 	Masked []string `json:"masked,omitempty"`
 	// Concurrent requests are sent this many times at once; Answers holds
 	// every answer, sorted, and Expect the first.
-	Concurrent int      `json:"concurrent,omitempty"`
-	Expect     answer   `json:"expect"`
-	Answers    []answer `json:"answers,omitempty"`
-	Audit      []Row    `json:"audit"`
+	Concurrent int `json:"concurrent,omitempty"`
+	// Listener names the listener the request is sent to (Target.Listeners);
+	// the ordinary one when empty.
+	Listener string   `json:"listener,omitempty"`
+	Expect   answer   `json:"expect"`
+	Answers  []answer `json:"answers,omitempty"`
+	Audit    []Row    `json:"audit"`
 	// Side is, per side table, the "inserted", "updated" and "deleted"
 	// rows, normalized, in PostgreSQL's form.
 	Side map[string]map[string][]Row `json:"side"`
