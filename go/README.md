@@ -43,6 +43,54 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   control characters), `json:` (an RFC 6901 pointer); a Capability's
   targets canonical (at most 4 per item, none repeated, every item covered,
   items and targets in JavaScript's UTF-16 order) and their audit form.
+- `lib/sync/` (step 4.9a): the Platform Adapters of Sync Targets
+  (ADR-0031 §8), a port of `packages/sync` that varlatchd and (in step 5)
+  the CLI's `sync push` and `sync check` share: GitHub Actions secrets
+  (the sealed box, GitHub App listings, token expiry), Coolify
+  applications and services (flags, value fidelity, `platformExpands`,
+  redeploys, the Compose file's usage), and Convex. The adapters take the
+  caller's `*http.Client` and never build one (decision 6;
+  `structure_test.go` checks it): varlatchd passes the outbound policy's,
+  the CLI a plain one. Platform answers are read as `JSON.parse` reads
+  them (JavaScript's property order, repeated keys, lone surrogates kept),
+  and a Compose file as the `yaml` package reads it, on
+  `go.yaml.in/yaml/v3`'s nodes. The vectors
+  (`testdata/ts-exchanges.json`, 672 cases) are recorded from the
+  TypeScript adapters while their own tests and extra cases run
+  (`packages/sync/test/go-vectors.test.ts`, regenerated with
+  `VARLATCH_WRITE_GO_VECTORS=1`): each call's arguments, every request
+  (method, URL, headers, body; a sealed value by its length) and the fake
+  service's answer or transport failure, the send checks, the expiry
+  reports, and the result. Both languages replay the file and must send
+  the same requests and give the same results; the sealed box and Node's
+  base64 decoding have byte vectors of their own. Where Go answers
+  otherwise, only on input no platform sends:
+  - A Compose file the Go reader does not read is unreadable, so every
+    verdict is unknown (the conservative reading): a `%YAML` version
+    other than 1.2, the YAML 1.1 types (`!!binary`, `!!timestamp`,
+    `!!set`, `!!omap`, `!!pairs`), a mapping or sequence as a key, and an
+    alias inside its own anchor (on which TypeScript overflows its stack
+    and `inspectUsage` throws). The vectors record each (`divergence:`).
+    A `!` non-specific tag on a plain scalar resolves as an untagged one
+    (yaml.v3 does not report it); TypeScript reads a string.
+  - An error that is not the adapter's own (an answer that is not JSON,
+    or of the wrong shape) keeps JavaScript's name (`SyntaxError`,
+    `TypeError`, `URIError`) with Go's wording, not V8's.
+  - A transport failure is named as Node's fetch names it (`TypeError`,
+    `TimeoutError`, `AbortError`, and `OutboundRefusedError` for the
+    outbound policy's refusal anywhere in the error).
+  - An answer is read up to 32 MiB (`MaxResponseBytes`); TypeScript reads
+    any size.
+  - A Coolify variable whose key is not a string never matches a name
+    and is left out; one whose value is neither a string nor null reads
+    as unreadable (`nil`), which, like TypeScript's non-string, never
+    equals a value.
+  - A Coolify listing's labels sort in `golang.org/x/text`'s root
+    collation, where `localeCompare` uses ICU's; the vectors hold them to
+    the same order on mixed case, accents, digits, punctuation and
+    scripts.
+  - GitHub names uppercase as `toUpperCase` does wherever the result is
+    ASCII (the only names any pattern accepts).
 - `lib/whatwg/`: what the TypeScript code gets from Node.js's URL
   parser, `url.domainToASCII`, `net.isIP` and string functions, as far as
   audit redaction, Destination Selectors and url Config Items use them. Domain to ASCII is

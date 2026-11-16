@@ -52,6 +52,9 @@ GO='^go/|^\.github/workflows/go\.yml$'
 # go-values-fixture, go-core-fixture through the parity kit, go-contract-vectors,
 # go-timestamp-vectors, go-backup-vectors).
 SHARED='^go/server/(authz|audit|write|custody)/testdata/ts-vectors\.json$|^go/lib/(contract|backup)/testdata/ts-vectors\.json$|^go/server/environments/testdata/pg-timestamps\.json$|^go/server/paritytest/testdata/[a-z0-9.-]+\.json$|^go/server/httpserver/testdata/known-differences\.json$|^go/server/values/testdata/values-v[0-9.]+\.json$|^go/lib/whatwg/(nodeidna_table\.go|testdata/node-idna\.json|testdata/nodeidna\.mjs)$'
+# Go test data that packages/sync's tests produce and replay
+# (go-vectors.test.ts).
+SYNC_SHARED='^go/lib/sync/testdata/ts-exchanges\.json$'
 
 # True when a path lies inside a workspace package (pnpm-workspace.yaml).
 in_package() {
@@ -69,7 +72,7 @@ classify() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     total=$((total + 1))
-    if [[ $path =~ $SHARED ]]; then code=$((code + 1)); continue; fi
+    if [[ $path =~ $SHARED ]] || [[ $path =~ $SYNC_SHARED ]]; then code=$((code + 1)); continue; fi
     if [[ $path =~ $GO ]]; then go=$((go + 1)); continue; fi
     if [[ $path =~ $CHECKED_DOCS ]] || ! [[ $path =~ $DOCS ]]; then code=$((code + 1)); fi
     if ! [[ $path =~ $DOCS ]] && ! in_package "$path"; then global+=("$path"); fi
@@ -118,6 +121,11 @@ affected() {
   if (cd "$REPO_ROOT" && { git diff --name-only "$base"; git ls-files --others --exclude-standard; }) | grep -E "$SHARED" >/dev/null &&
     [[ " ${names[*]} " != *" @varlatch/varlatchd "* ]]; then
     names+=("@varlatch/varlatchd")
+  fi
+  # packages/sync's tests replay its Go test data (SYNC_SHARED).
+  if (cd "$REPO_ROOT" && { git diff --name-only "$base"; git ls-files --others --exclude-standard; }) | grep -E "$SYNC_SHARED" >/dev/null &&
+    [[ " ${names[*]} " != *" @varlatch/sync "* ]]; then
+    names+=("@varlatch/sync")
   fi
   # The Python accessor's tests read the contract and accessor vectors and
   # run the CLI's generator without depending on those packages; each of them
