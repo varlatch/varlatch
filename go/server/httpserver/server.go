@@ -41,6 +41,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/pgtime"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/values"
@@ -69,6 +70,9 @@ type Options struct {
 	// Backups, when set, is the backup status getInstallationBackups
 	// answers (ADR-0059 step 4.14).
 	Backups BackupStatus
+	// Outbound is the outbound policy (ADR-0057), from outbound_allow; nil
+	// is the strict policy (nothing beyond public https).
+	Outbound *outbound.Policy
 	// Version is the server version /v1/meta reports.
 	Version string
 	// PublicURL is the configured public URL; nil when not set.
@@ -205,6 +209,9 @@ var BuiltOperations = []string{
 	listTeamsPattern, createTeamPattern, updateTeamPattern, deleteTeamPattern,
 	listTeamMembersPattern, addTeamMemberPattern, removeTeamMemberPattern,
 	listTeamProjectsPattern, addTeamProjectPattern, removeTeamProjectPattern,
+	// Step 4.7a: the outbound policy's refused destinations (outbound.go).
+	getInstallationOutboundPattern,
+	refusedDestinationsPattern,
 }
 
 // Server is the handler.

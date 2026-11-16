@@ -44,6 +44,17 @@ trusted_proxies =
 # status and X-Forwarded-For. An absolute path, stdout (the journal) or off.
 access_log = stdout
 
+# The outbound policy's allow list (ADR-0057): what Organizations may reach
+# beyond public https destinations (webhooks, sync platforms, OIDC
+# issuers), comma-separated. A host name or *.suffix opens its private
+# addresses; a CIDR range or an address opens that range (a loopback,
+# link-local or metadata range only by an entry inside it); an entry may
+# end in :port or :* (any port), and without one allows the scheme's
+# default port; plain http needs an entry. Unspecified, multicast and
+# reserved addresses are never allowed. Default: nothing beyond public
+# https. See https://docs.varlatch.com/reference/outbound-policy/
+outbound_allow =
+
 # Outbound sync (ADR-0031): on lets authorized users configure Sync
 # Targets; off turns the feature off for the installation.
 sync = on

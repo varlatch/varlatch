@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/server/clientaddr"
+	"github.com/varlatch/varlatch/go/server/outbound"
 )
 
 // DefaultPath is where the unit and setup keep the file.
@@ -60,6 +61,10 @@ type Config struct {
 	// TrustedProxies is the trusted_proxies value, validated
 	// (VARLATCH_TRUSTED_PROXIES today); empty when no proxy is trusted.
 	TrustedProxies string
+	// OutboundAllow is the outbound policy's allow list (ADR-0057;
+	// VARLATCH_OUTBOUND_ALLOW today), validated; empty when nothing beyond
+	// public https destinations is allowed.
+	OutboundAllow string
 	// AccessLog is where the access log goes: a file path, "stdout", or
 	// "off".
 	AccessLog string
@@ -114,7 +119,7 @@ func (e *Error) Error() string {
 // Env is how Parse reads the environment (os.Getenv in production).
 type Env func(string) string
 
-var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "access_log", "sync", "sync_adapters",
+var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "outbound_allow", "access_log", "sync", "sync_adapters",
 	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination"}
 
 // Backup defaults: a day between backups, seven archives kept (the
@@ -227,6 +232,12 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 			return nil, at("trusted_proxies", "%v", err)
 		}
 		c.TrustedProxies = v
+	}
+	if v := values["outbound_allow"]; v != "" {
+		if _, err := outbound.ParseAllow(v); err != nil {
+			return nil, at("outbound_allow", "%v", err)
+		}
+		c.OutboundAllow = v
 	}
 	switch v := values["access_log"]; {
 	case v == "" || v == "stdout":

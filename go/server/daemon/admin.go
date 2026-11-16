@@ -53,7 +53,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
-	if sub != "bootstrap" && sub != "recover" && !conformance && !operator && !backup && !keys {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && !conformance && !operator && !backup && !keys {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -73,6 +73,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		rest = append(rest, args[i])
 	}
 	switch {
+	case sub == "outbound":
+		if _, msg := outboundArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
 	case sub == "kek":
 		if len(rest) == 0 || !slices.Contains([]string{"verify", "export", "restore", "split", "combine"}, rest[0]) {
 			fmt.Fprintln(stderr, kekUsage)
@@ -94,7 +99,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
-	case !conformance && sub != "kek":
+	case !conformance && sub != "kek" && sub != "outbound":
 		if _, msg := parseAdmin(sub, rest); msg != "" {
 			return adminUsage(stderr, msg)
 		}
@@ -110,6 +115,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return ExitFailure
 	}
 	switch {
+	case sub == "outbound":
+		return runOutboundCheck(cfg, rest, stdout, stderr)
 	case sub == "kek":
 		return runKek(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "custody" && rest[0] == "status":
@@ -124,7 +131,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] | "+
 		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] | "+
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
-		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status  (each with [--config <file>])\n", msg)
+		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check  (each with [--config <file>])\n", msg)
 	return 64
 }
 

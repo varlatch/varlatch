@@ -303,7 +303,12 @@ daemon's maintenance admission and its one backup at a time.
   verify` checks a key file (or the configured key). Every file they
   write (`--out`) is written as a temporary file of mode 0600 beside it,
   synced and renamed over it, so an existing file never holds the key with
-  its old mode and a crash never leaves it truncated. The passphrase comes
+  its old mode and a crash never leaves it truncated. Two consequences
+  differ from the TypeScript CLI, which writes through the path: an
+  `--out` that is a symbolic link is replaced by the new file (the link's
+  target is left as it was), and an `--out` that is a single-file bind
+  mount fails with EBUSY (rename cannot replace a mount point) and leaves
+  it untouched; write to a directory instead. The passphrase comes
   from `--passphrase-file`, `VARLATCH_KEK_PASSPHRASE`, or the terminal
   without echo. `custody attest` records an
   `installation.custody_attested` audit event (the Root KEK's with its
@@ -371,6 +376,62 @@ daemon's maintenance admission and its one backup at a time.
   host, the data directory and the key files, are left out). Its status
   record's `capture` holds the snapshot's duration (`snapshotHeldMs`),
   the sealing's (`dumpMs`) and the snapshot's size (`dumpBytes`).
+
+### The outbound policy (step 4.7)
+
+`server/outbound` is ADR-0057's outbound policy (`net/outbound.ts`,
+`net/outbound-check.ts`). Every request whose destination an Organization
+can choose or influence goes through it, and only it.
+
+- **The decision** is the TypeScript server's, held to it by vectors
+  (`testdata/ts-vectors.json`, written and checked by
+  `services/varlatchd/test/go-outbound-vectors.test.ts`): the class of
+  every address form (IPv4, IPv6, mapped, compatible, NAT64, link-local,
+  CGNAT, the metadata services, and strings that are not addresses), the
+  allow list parser's entries, refusals and doctor's warnings, 705
+  decisions, and the refusal sentences.
+- **The allow list** is `outbound_allow` in `varlatchd.conf`
+  (`VARLATCH_OUTBOUND_ALLOW` today), checked when the file is read. An
+  entry's text, warnings and errors are the TypeScript ones, which still
+  name `VARLATCH_OUTBOUND_ALLOW`.
+- **The connection check** (ADR-0057 Decision 4) is in the dialer: it
+  resolves the name once, decides every answer (one refused answer
+  refuses the name), and connects only to the addresses it checked, the
+  first answer's family first and the other after 300 ms (Happy
+  Eyeballs); a literal address is decided as it is and never looked up.
+  A resolver whose next answer differs changes nothing for a connection
+  already checked. TLS and the Host header use the URL's name. No
+  environment proxy applies, redirects are never followed, and a URL
+  carrying credentials is refused. The transports are shared by every
+  purpose, pooled per origin. `Transport` hands the same round tripper to
+  clients that take one (the audit export's S3 client, 4.11).
+- **Refusals** are `RefusedError` (the fixed sentence, never the address)
+  and `outbound.refused` audit events within the rate bound: a
+  configuration-phase refusal always, a connection-phase one once per
+  Organization, purpose, object and reason an hour and at most 100 an hour
+  in all, the held-back count carried by the next one.
+- **The configured destinations check** (`admin outbound check [--allow
+  <value>] [--org <org>] [--json]`, read-only, DNS lookups only, exit 0, 1
+  for a refusal, 2 for an unresolved name), and the two pages that show it
+  (`getInstallationOutbound` for Installation Admins,
+  `refusedDestinations` for an Organization's admins): webhooks, Coolify
+  and Convex Connections and OIDC issuers, with the allow list value that
+  would open the refused names. Lookups are bounded (8 at once in the
+  process, one per name and policy at a time, one per name within a scan),
+  and a page's scan is shared while it runs and reused for 30 seconds.
+  Rows are ordered by Organization slug in byte order.
+- **The structural test** (`structure_test.go`) parses every non-test file
+  under `go/server` and fails on a request made outside this package:
+  `net.Dial*`, a `net.Dialer`, `http.DefaultClient`,
+  `http.DefaultTransport`, `http.Get`, `Head`, `Post` and `PostForm`, a new
+  `http.Transport` or `http.Client`, or an S3 client, with a reviewed list
+  of exceptions: the daemon's Unix control socket, and the host's backup
+  destination (ADR-0057 Decision 1).
+- `externaleffect.ts` (the effect's deadline and the refusal records kept
+  across a rollback) is not ported here: webhooks do not run inside an
+  external effect in TypeScript, and in Go a request's deadline is its
+  context, which the dialer honours. The effect framework (decision 4)
+  lands with its first user (4.9 or 4.10).
 
 The server's packages:
 

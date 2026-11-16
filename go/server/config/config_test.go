@@ -40,6 +40,7 @@ func TestParseEverySetting(t *testing.T) {
 		"data_dir = /srv/varlatch/\n" +
 		"root_kek_file = /etc/varlatch/root-kek\n" +
 		"trusted_proxies = 10.0.0.0/8, caddy\n" +
+		"outbound_allow = hooks.internal, 10.0.0.0/8:443, [::1/128]:*\n" +
 		"access_log = /var/log/varlatch/access.log\n" +
 		"sync = off\n" +
 		"sync_adapters = coolify, convex\n" +
@@ -55,7 +56,7 @@ func TestParseEverySetting(t *testing.T) {
 	}
 	if c.Listen != "0.0.0.0:443" || c.PublicURL.String() != "https://varlatch.example.com" || c.DataDir != "/srv/varlatch" ||
 		c.RootKEKFile != "/etc/varlatch/root-kek" || c.TrustedProxies != "10.0.0.0/8, caddy" ||
-		c.AccessLog != "/var/log/varlatch/access.log" || c.Sync || !slices.Equal(c.SyncAdapters, []string{"coolify", "convex"}) ||
+		c.AccessLog != "/var/log/varlatch/access.log" || c.OutboundAllow != "hooks.internal, 10.0.0.0/8:443, [::1/128]:*" || c.Sync || !slices.Equal(c.SyncAdapters, []string{"coolify", "convex"}) ||
 		c.BackupKeyFile != "/etc/varlatch/bek" || c.BackupInterval != 12*time.Hour || c.BackupKeep != 30 ||
 		c.BackupDestinationsFile != "/etc/varlatch/destinations.json" || c.BackupDestination != "b2-eu" {
 		t.Errorf("%+v", c)
@@ -81,6 +82,7 @@ func TestParseErrors(t *testing.T) {
 		"relative root_kek_file":           "root_kek_file = root-kek\n",
 		"no Root KEK at all":               "listen = 127.0.0.1:1\n",
 		"bad trusted proxy":                kek + "trusted_proxies = under_score\n",
+		"bad outbound allow entry":         kek + "outbound_allow = 10.0.0.0/33\n",
 		"bad access_log":                   kek + "access_log = access.log\n",
 		"bad sync":                         kek + "sync = yes\n",
 		"unknown sync adapter":             kek + "sync_adapters = heroku\n",

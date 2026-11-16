@@ -38,6 +38,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/maintenance"
+	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/security"
 	"github.com/varlatch/varlatch/go/server/values"
@@ -352,7 +353,16 @@ func serve(opts Options, h *hooks) int {
 		env.backups.Loop(ctx)
 	}()
 	defer func() { cancel(); <-backupDone }()
+	// The outbound policy (ADR-0057), from outbound_allow (validated by
+	// config.Parse).
+	allow, err := outbound.ParseAllow(cfg.OutboundAllow)
+	if err != nil {
+		return fail(ExitConfig, "outbound_allow", "error", err)
+	}
+	policy := outbound.New(allow, outbound.Options{Log: log})
+	defer policy.Close()
 	handler, err := httpserver.New(httpserver.Options{
+		Outbound:       policy,
 		Version:        buildinfo.Version,
 		PublicURL:      cfg.PublicURL,
 		Sync:           cfg.Sync,

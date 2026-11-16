@@ -204,9 +204,17 @@ func Prepare(path string, rows map[string][]Row, tables []string) error {
 			var cols, marks []string
 			var args []any
 			for _, pg := range keys {
+				// A column is its SQLite name, or an object naming it with a
+				// note (audit_events.event_order, the rowid).
 				var col string
 				if err := json.Unmarshal(tm.Columns[pg], &col); err != nil {
-					return fmt.Errorf("%s.%s has no column name in the mapping: %w", table, pg, err)
+					var named struct {
+						SQLite string `json:"sqlite"`
+					}
+					if json.Unmarshal(tm.Columns[pg], &named) != nil || named.SQLite == "" {
+						return fmt.Errorf("%s.%s has no column name in the mapping: %w", table, pg, err)
+					}
+					col = named.SQLite
 				}
 				v, err := SQLiteValue(r[pg])
 				if err != nil {
