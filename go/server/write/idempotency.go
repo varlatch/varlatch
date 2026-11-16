@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"unicode/utf16"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -86,6 +87,13 @@ func Idempotent(ctx context.Context, store *storage.DB, c Claim, replay func(tx 
 	}
 	if err := CheckKey(c.Key); err != nil {
 		return Response{}, false, err
+	}
+	// The claim's INSERT is the TypeScript server's first statement with
+	// the endpoint and the key, before the write: U+0000 in either (a path
+	// id in the endpoint) fails it, so the request answers 500 before
+	// anything the write would refuse.
+	if strings.IndexByte(c.Endpoint, 0) >= 0 || strings.IndexByte(c.Key, 0) >= 0 {
+		return Response{}, false, ErrPostgresText
 	}
 	err = store.Write(ctx, func(tx *storage.Tx) error {
 		resp, replayed = Response{}, false

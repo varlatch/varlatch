@@ -306,52 +306,67 @@ func namesFor(ctx context.Context, db query.DBTX, organizationID string, decls .
 	q := query.New(db)
 	org := sql.NullString{String: organizationID, Valid: true}
 	n := names{identities: map[string]string{}, groups: map[string]string{}, roles: map[string]string{}, projects: map[string]string{}, environments: map[string]string{}}
-	if len(want.identities) > 0 {
-		rows, err := q.NamedIdentities(ctx, query.NamedIdentitiesParams{Ids: idsOf(want.identities), OrganizationID: org})
-		if err != nil {
-			return n, err
-		}
+	err := inChunks(idsOf(want.identities), func(ids []string) error {
+		rows, err := q.NamedIdentities(ctx, query.NamedIdentitiesParams{Ids: ids, OrganizationID: org})
 		for _, r := range rows {
 			n.identities[r.ID] = security.LabelWithID("", r.Name, r.ID)
 		}
+		return err
+	})
+	if err == nil {
+		err = inChunks(idsOf(want.groups), func(ids []string) error {
+			rows, err := q.NamedGroups(ctx, query.NamedGroupsParams{Ids: ids, OrganizationID: organizationID})
+			for _, r := range rows {
+				n.groups[r.ID] = security.LabelWithID(r.Kind, r.Name, r.ID)
+			}
+			return err
+		})
 	}
-	if len(want.groups) > 0 {
-		rows, err := q.NamedGroups(ctx, query.NamedGroupsParams{Ids: idsOf(want.groups), OrganizationID: organizationID})
-		if err != nil {
-			return n, err
-		}
-		for _, r := range rows {
-			n.groups[r.ID] = security.LabelWithID(r.Kind, r.Name, r.ID)
-		}
+	if err == nil {
+		err = inChunks(idsOf(want.roles), func(ids []string) error {
+			rows, err := q.NamedRoles(ctx, query.NamedRolesParams{Ids: ids, OrganizationID: organizationID})
+			for _, r := range rows {
+				n.roles[r.ID] = security.LabelWithID("role", r.Name, r.ID)
+			}
+			return err
+		})
 	}
-	if len(want.roles) > 0 {
-		rows, err := q.NamedRoles(ctx, query.NamedRolesParams{Ids: idsOf(want.roles), OrganizationID: organizationID})
-		if err != nil {
-			return n, err
-		}
-		for _, r := range rows {
-			n.roles[r.ID] = security.LabelWithID("role", r.Name, r.ID)
-		}
+	if err == nil {
+		err = inChunks(idsOf(want.projects), func(ids []string) error {
+			rows, err := q.NamedProjects(ctx, query.NamedProjectsParams{Ids: ids, OrganizationID: organizationID})
+			for _, r := range rows {
+				n.projects[r.ID] = security.LabelWithID("project", r.Slug, r.ID)
+			}
+			return err
+		})
 	}
-	if len(want.projects) > 0 {
-		rows, err := q.NamedProjects(ctx, query.NamedProjectsParams{Ids: idsOf(want.projects), OrganizationID: organizationID})
-		if err != nil {
-			return n, err
-		}
-		for _, r := range rows {
-			n.projects[r.ID] = security.LabelWithID("project", r.Slug, r.ID)
-		}
+	if err == nil {
+		err = inChunks(idsOf(want.environments), func(ids []string) error {
+			rows, err := q.NamedEnvironments(ctx, query.NamedEnvironmentsParams{Ids: ids, OrganizationID: organizationID})
+			for _, r := range rows {
+				n.environments[r.ID] = security.LabelWithID("", fmt.Sprint(r.Name), r.ID)
+			}
+			return err
+		})
 	}
-	if len(want.environments) > 0 {
-		rows, err := q.NamedEnvironments(ctx, query.NamedEnvironmentsParams{Ids: idsOf(want.environments), OrganizationID: organizationID})
-		if err != nil {
-			return n, err
+	return n, err
+}
+
+// lookupChunk bounds an IN list's parameters, far under SQLite's limit
+// (32,766 bound variables): a declaration may name any number of ids,
+// which PostgreSQL's = ANY($1) takes as one array parameter.
+const lookupChunk = 500
+
+// inChunks runs lookup over ids, lookupChunk at a time.
+func inChunks(ids []string, lookup func([]string) error) error {
+	for len(ids) > 0 {
+		n := min(len(ids), lookupChunk)
+		if err := lookup(ids[:n]); err != nil {
+			return err
 		}
-		for _, r := range rows {
-			n.environments[r.ID] = security.LabelWithID("", fmt.Sprint(r.Name), r.ID)
-		}
+		ids = ids[n:]
 	}
-	return n, nil
+	return nil
 }
 
 func or(m map[string]string, id, kind string) string {

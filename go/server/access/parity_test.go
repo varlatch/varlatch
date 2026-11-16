@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,8 +22,10 @@ import (
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/api/openapicheck"
 	"github.com/varlatch/varlatch/go/server/auth"
+	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/daemon"
 	"github.com/varlatch/varlatch/go/server/httpserver"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/paritytest"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/write"
@@ -37,7 +40,11 @@ var accessTables = []string{"installation", "identities", "user", "auth_user_lin
 // publicURL is the public URL both servers answer with (approvals need one).
 const publicURL = "http://127.0.0.1:8686"
 
-var placeholder = regexp.MustCompile(`\{(org|idn|role|group|prj|env|grant):([^}]+)\}`)
+var placeholder = regexp.MustCompile(`\{(org|idn|role|group|prj|env|grant|req):([^}]+)\}`)
+
+// requirementsTables are the tables of requirements-v0.22.0.json
+// (go-requirements-fixture.test.ts).
+var requirementsTables = append(append([]string{}, accessTables[:14]...), append([]string{"requirements"}, accessTables[14:]...)...)
 
 // actionsOf reads a grants row's actions: an array, or its JSON text.
 func actionsOf(v any) []string {
@@ -88,6 +95,17 @@ func fillPath(t *testing.T, f paritytest.Fixture) func(string) string {
 			project, env, _ := strings.Cut(b, "/")
 			pid := find("projects", func(r paritytest.Row) bool { return r["organization_id"] == org(a) && r["slug"] == project })
 			return find("environments", func(r paritytest.Row) bool { return r["project_id"] == pid && r["name"] == env })
+		case "req":
+			return find("requirements", func(r paritytest.Row) bool {
+				var config struct{ Tailnet string }
+				switch c := r["config"].(type) {
+				case string:
+					_ = json.Unmarshal([]byte(c), &config)
+				case map[string]any:
+					config.Tailnet, _ = c["tailnet"].(string)
+				}
+				return r["organization_id"] == org(a) && config.Tailnet == b
+			})
 		case "grant":
 			roles := map[string]string{}
 			for _, r := range f.Rows["roles"] {
@@ -126,12 +144,18 @@ type fixtureServer struct {
 
 func newFixtureServer(t *testing.T) fixtureServer {
 	t.Helper()
-	f, err := paritytest.Read(paritytest.Path("access-v0.22.0.json"))
+	return newServerOn(t, "access-v0.22.0.json", accessTables)
+}
+
+// newServerOn is the Go server on a fixture file's rows.
+func newServerOn(t *testing.T, file string, tables []string) fixtureServer {
+	t.Helper()
+	f, err := paritytest.Read(paritytest.Path(file))
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "varlatch.db")
-	if err := paritytest.Prepare(path, f.Rows, accessTables); err != nil {
+	if err := paritytest.Prepare(path, f.Rows, tables); err != nil {
 		t.Fatal(err)
 	}
 	store, err := storage.Open(context.Background(), storage.Options{Path: path})
@@ -180,16 +204,33 @@ func TestTypeScriptFixture(t *testing.T) {
 	paritytest.Replay(t, paritytest.Target{
 		Handler: h, Store: store, Settled: vs.Settled, Path: fillPath(t, f), Now: now,
 		// The API takes any string as an action (z.string()), which the
-		// OpenAPI document's enum does not describe: the answers that show
-		// the file's marker actions ("fx.…") or an unknown one are left
-		// out of the document check.
+		// OpenAPI document's closed Action enum does not describe: an
+		// answer's actions outside it (the file's markers, "fx.…", and
+		// unknown ones) are checked as a listed one, and everything else in
+		// the exchange against the document as it is.
 		Check: func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder) {
-			if b := rec.Body.String(); strings.Contains(b, `"fx.`) || strings.Contains(b, "no.such-action") {
-				return
-			}
-			openapicheck.Recorder{T: t}.Exchange(req, body, rec)
+			openapicheck.Recorder{T: t}.Exchange(req, body, withListedActions(t, rec))
 		},
 	}, f)
+}
+
+// The requirements fixture's operations give the TypeScript server's
+// answers (step 4.4c): Tailnet Requirements listed, created (every zod
+// issue of the body, the selector check, U+0000 and lone surrogates),
+// changed in place under an Idempotency-Key and revoked, off, at report
+// and at enforce with approvals; machine reach of every kind and state;
+// the credential review; the caller's own permissions.
+func TestRequirementsFixture(t *testing.T) {
+	fx := newServerOn(t, "requirements-v0.22.0.json", requirementsTables)
+	if len(fx.f.Requests) < 100 {
+		t.Fatalf("%d requests: the fixture is incomplete", len(fx.f.Requests))
+	}
+	paritytest.Replay(t, paritytest.Target{
+		Handler: fx.h, Store: fx.store, Settled: fx.vs.Settled, Path: fillPath(t, fx.f), Now: fx.now,
+		Check: func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder) {
+			openapicheck.Recorder{T: t}.Exchange(req, body, rec)
+		},
+	}, fx.f)
 }
 
 // Through the routes, a Grant naming another Organization's group or role
@@ -251,4 +292,52 @@ func TestForeignReferenceAnswersAsAnUnknownOne(t *testing.T) {
 	if n != 0 {
 		t.Errorf("%d Grants naming another Organization's group or role", n)
 	}
+}
+
+// withListedActions is the answer with every string of an "actions" array
+// that authz.Actions (the document's Action enum) does not list replaced
+// by one it does, so only that enum is left out of the document check.
+func withListedActions(t testing.TB, rec *httptest.ResponseRecorder) *httptest.ResponseRecorder {
+	t.Helper()
+	if !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") || rec.Body.Len() == 0 {
+		return rec
+	}
+	v, err := jsvalue.Parse(rec.Body.Bytes())
+	if err != nil {
+		return rec
+	}
+	var listed func(v any) any
+	listed = func(v any) any {
+		switch x := v.(type) {
+		case jsvalue.Object:
+			out := make(jsvalue.Object, len(x))
+			for i, m := range x {
+				if list, ok := m.Value.([]any); ok && m.Key == "actions" {
+					actions := make([]any, len(list))
+					for j, a := range list {
+						actions[j] = a
+						if s, ok := a.(string); ok && !slices.Contains(authz.Actions, s) {
+							actions[j] = "project.read"
+						}
+					}
+					out[i] = jsvalue.Member{Key: m.Key, Value: actions}
+					continue
+				}
+				out[i] = jsvalue.Member{Key: m.Key, Value: listed(m.Value)}
+			}
+			return out
+		case []any:
+			out := make([]any, len(x))
+			for i, e := range x {
+				out[i] = listed(e)
+			}
+			return out
+		}
+		return v
+	}
+	out := httptest.NewRecorder()
+	maps.Copy(out.Header(), rec.Header())
+	out.Code = rec.Code
+	out.Body.Write(jsvalue.Stringify(listed(v)))
+	return out
 }

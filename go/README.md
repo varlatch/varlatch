@@ -675,7 +675,9 @@ The server's packages:
     Claims are data the migration copies (step 7): a claim the
     TypeScript server stored replays from its copied row, with the same
     answer, and its digest refuses another body (the core fixture's
-    "stored" requests).
+    "stored" requests). U+0000 in the endpoint (a path id) or the key
+    fails the claim before the write, as the TypeScript claim's INSERT
+    fails, whatever the write would have refused.
 - `server/orgs` (step 4.1a): creating an Organization (its KEK wrapped
   under the Root KEK, its first admin, `organization.created`) and renaming
   it (the writer's checks and the passkey-verification checkpoint inside
@@ -835,12 +837,37 @@ The server's packages:
   parameter (`pgText`); a role's or group's name or actions that its write
   refuses read as the name taken, as the TypeScript code reads any failure
   there; a scope `jsonb` refuses fails the insert. The fixture
-  `access-v0.22.0.json` (`go-access-fixture.test.ts`, 227 requests)
+  `access-v0.22.0.json` (`go-access-fixture.test.ts`, 238 requests)
   covers every Grant shape, each control mode, every zod issue of the
   declaration and U+0000 and lone surrogates where they reach a query;
   the authorization vectors carry the write-side checks (`writeChecks`,
   `grantForms`: who a Grant may name, who may join a group, and
-  declarations in their bound form).
+  declarations in their bound form). A summary's names are read in chunks
+  of 500 ids (a declaration may name more than SQLite binds in one
+  statement), with the Organization bound before the list. A member or a
+  Project added to a group is refused if the group was deleted while the
+  job waited (a hardening: the TypeScript code reads the group once,
+  outside its transaction).
+  Step 4.4c adds Tailnet Requirements (ADR-0014, ADR-0029, ADR-0046's
+  data; `requirementprotection.ts`), served by
+  `server/httpserver/requirements.go`: listed, created (never protected,
+  recovery while frozen), changed in place under an Idempotency-Key and
+  revoked, the change and the revocation protected by
+  requirement-protection with its bindings and summaries. A target and a
+  selector are stored and read back in jsonb's key order; a change whose
+  JSON text is unchanged answers the row as it is, and one that means the
+  same Requirement is written and counted without an approval, as in
+  TypeScript. A changed Requirement moves to the end of the rowid order, as
+  PostgreSQL's heap puts the updated row last for `loadTailnetRequirements`'
+  unordered scan (reach's conditions and an authorization event's
+  Requirements follow that order). And the access reports (ADR-0054
+  Decision 8): machine reach (`domain/reach.ts`), the credential review
+  (`domain/credentialReview.ts`) and the caller's own Organization
+  permissions, each from one read snapshot, `Cache-Control: no-store`. The
+  fixture `requirements-v0.22.0.json` (`go-requirements-fixture.test.ts`)
+  covers Requirements in every control mode and the reports for every
+  kind and state; its times keep their meaning whenever it is replayed,
+  and `TestCredentialReviewTimeEdges` covers the windows they cannot pin.
 - `server/identities` (step 4.4a): an Organization's machine identities
   and their credentials (`domain/identities.ts`, `identitystepup.ts`, the
   issuing side of `auth/credentials.ts`; ADR-0015, ADR-0023, ADR-0034),

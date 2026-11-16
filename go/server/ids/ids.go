@@ -37,6 +37,8 @@ const (
 	Role  = "rol"
 	Group = "grp"
 	Team  = "tem"
+	// Step 4.4c.
+	Requirement = "req"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"
