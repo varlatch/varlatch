@@ -399,7 +399,7 @@ func hourOverrun(began, done time.Time) error {
 	if done.Truncate(time.Hour).Equal(began.Truncate(time.Hour)) {
 		return nil
 	}
-	return fmt.Errorf("the replay began at %s and ran into the next hour (%s): report counts are kept per hour, so a replay must take less than an hour on HourClock",
+	return fmt.Errorf("the replay began at %s and ran into the next hour (%s): report counts are kept per hour, so a replay must take less than HourMargin on HourClock",
 		began.UTC().Format(time.RFC3339Nano), done.UTC().Format(time.RFC3339Nano))
 }
 
@@ -441,17 +441,27 @@ func checkTimes(t testing.TB, name string, store *storage.DB, before int64, expo
 	}
 }
 
-// HourClock is the clock a replay runs its server on: the real clock moved
-// back to the start of the hour the replay begins in. Report counts are
+// HourClock is the clock a replay runs its server on. Report counts are
 // kept per hour (security_control_counters.bucket_hour), and the
-// recording's requests counted within one hour; on this clock a replay,
-// shorter than an hour, counts within one too, whenever it runs.
+// recording's requests counted within one hour; a replay must too. With
+// at least HourMargin of its hour left, the replay runs on the real clock;
+// with less, on the real clock moved forward to the start of the next
+// hour. Either way a replay shorter than HourMargin counts within one hour
+// (a longer one fails, hourOverrun), and its times never fall before the
+// recording's, which a clock moved back could (a list ordered by time
+// would then put the replay's new rows before the file's).
 func HourClock() func() time.Time { return hourClock(time.Now) }
+
+// HourMargin is how much of its hour a replay may take.
+const HourMargin = 30 * time.Minute
 
 func hourClock(real func() time.Time) func() time.Time {
 	start := real()
-	offset := start.Sub(start.Truncate(time.Hour))
-	return func() time.Time { return real().Add(-offset) }
+	var offset time.Duration
+	if left := start.Truncate(time.Hour).Add(time.Hour).Sub(start); left < HourMargin {
+		offset = left
+	}
+	return func() time.Time { return real().Add(offset) }
 }
 
 // Raw is what one request of a replay produced, before normalization.

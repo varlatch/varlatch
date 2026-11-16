@@ -32,6 +32,11 @@ const (
 	// keep the ids Better Auth gave them.
 	AuthSession = "ses"
 	Passkey     = "pky"
+	// Grant, Role, Group and Team are the access structure (ADR-0028).
+	Grant = "grt"
+	Role  = "rol"
+	Group = "grp"
+	Team  = "tem"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"

@@ -197,6 +197,14 @@ var BuiltOperations = []string{
 	listIdentityCredentialsPattern,
 	issueIdentityCredentialPattern,
 	revokeIdentityCredentialPattern,
+	// Step 4.4b: Grants, Roles, Groups and Teams (access.go).
+	listGrantsPattern, createGrantPattern, deleteGrantPattern, replaceGrantPattern,
+	listRolesPattern, createRolePattern, updateRolePattern, deleteRolePattern,
+	listGroupsPattern, createGroupPattern, updateGroupPattern, deleteGroupPattern,
+	listGroupMembersPattern, addGroupMemberPattern, removeGroupMemberPattern,
+	listTeamsPattern, createTeamPattern, updateTeamPattern, deleteTeamPattern,
+	listTeamMembersPattern, addTeamMemberPattern, removeTeamMemberPattern,
+	listTeamProjectsPattern, addTeamProjectPattern, removeTeamProjectPattern,
 }
 
 // Server is the handler.

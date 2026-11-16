@@ -16,6 +16,12 @@
  *   action and resource what decide answers (with and without existence
  *   hiding), and the incident freeze's answers at Organization entry and in
  *   refuseIfIncidentFrozen, and the two together in a request's order.
+ * - writeChecks and grantForms (step 4.4b): what a Grant may name and who
+ *   may join a group, for every identity of the world in each Organization
+ *   (accessstepup.ts checkGrantSubject and readEligibleMember), and Grant
+ *   declarations in their bound form (normalizedGrant) with which of them
+ *   mean the same Grant (sameGrant); go/server/access' vectors test reads
+ *   them.
  * - destination: authz/destination.ts, and Node's domainToASCII and isIP
  *   under it.
  *
@@ -48,6 +54,8 @@ import {
   type TailnetRequirementRecord,
 } from "../src/authz/evaluate.js";
 import { canonicalizeHost, destinationMatches, formatSelector, parseDestinationSelector } from "../src/authz/destination.js";
+import { canonicalJson } from "../src/domain/approvals.js";
+import { checkGrantSubject, normalizedGrant, readEligibleMember, sameGrant, type GrantDeclaration } from "../src/domain/accessstepup.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { DomainError } from "../src/domain/errors.js";
 import { refuseIfIncidentFrozen, type FreezeException } from "../src/domain/liveness.js";
@@ -185,6 +193,7 @@ function world(): [string, Row][] {
   add("identities", { id: "idn_agent", kind: "agent", name: "agent", organization_id: ORG["1"] });
   add("identities", { id: "idn_ci_other", kind: "ci", name: "ci", organization_id: ORG["2"] });
   add("identities", { id: "idn_svc_bare", kind: "service", name: "bare", organization_id: ORG["1"] });
+  add("identities", { id: "idn_svc_off", kind: "service", name: "off", organization_id: ORG["1"], disabled: true });
   const member = (identity: string, org: string, role: string, removed?: string) =>
     add("org_memberships", { organization_id: org, identity_id: identity, role, ...(removed ? { removed_at: ts(removed) } : {}) });
   member("idn_admin", ORG["1"], "admin");
@@ -328,6 +337,30 @@ function errorOf(e: unknown) {
   return { code: e.code, message: e.message, ...(e.details ? { details: e.details } : {}) };
 }
 
+/** Grant declarations as routes and rows hold them (step 4.4b). */
+const GRANT_FORMS: GrantDeclaration[] = [
+  { subjectIdentityId: "idn_svc", scope: { kind: "organization" }, actions: ["project.read", "organization.read"] },
+  { subjectIdentityId: "idn_svc", scope: { kind: "organization" }, actions: ["organization.read", "project.read", "project.read"] },
+  { subjectIdentityId: "idn_svc", subjectGroupId: null, scope: { kind: "organization" }, actions: ["organization.read", "project.read"], roleId: null },
+  { subjectIdentityId: "idn_svc", scope: { kind: "organization" }, roleId: "rol_reader" },
+  { subjectGroupId: "grp_ops", scope: { kind: "organization" }, roleId: "rol_reader" },
+  { subjectIdentityId: "", subjectGroupId: "grp_ops", scope: { kind: "organization" }, roleId: "rol_reader", actions: ["x"] },
+  { subjectIdentityId: "idn_svc", scope: { kind: "project", projectId: "prj_web" }, actions: ["Z", "a", "\u00e9", "\u{1F511}", "\uFF5E"] },
+  { subjectIdentityId: "idn_svc", scope: { projectId: "prj_web", kind: "project" }, actions: ["\uFF5E", "\u{1F511}", "\u00e9", "a", "Z"] },
+  {
+    subjectIdentityId: "idn_svc",
+    scope: { kind: "environments", projectId: "prj_web", selector: { kind: "environments", environmentIds: ["env_prd", "env_dev", "env_prd"] } },
+    actions: ["config.value.read"],
+  },
+  {
+    subjectIdentityId: "idn_svc",
+    scope: { kind: "environments", projectId: "prj_web", selector: { kind: "environments", environmentIds: ["env_dev", "env_prd"] } },
+    actions: ["config.value.read"],
+  },
+  { subjectIdentityId: "idn_svc", scope: { kind: "environments", projectId: "prj_web", selector: { kind: "tier", tier: "staging" } }, actions: ["config.value.read"] },
+  { subjectIdentityId: "idn_svc", scope: { kind: "team", teamId: "tem_web" }, actions: ["project.read"] },
+];
+
 async function worldVectors() {
   const rows = world();
   const db = await migratedTestDb({ lockOrder: "off" });
@@ -430,6 +463,25 @@ async function worldVectors() {
         }
       }
     }
+    // What a Grant may name, and who may join a group (step 4.4b).
+    const writeChecks: unknown[] = [];
+    const identities = [...rows.filter(([t]) => t === "identities").map(([, r]) => r.id as string), "idn_missing"];
+    for (const org of Object.values(ORG)) {
+      for (const id of identities) {
+        let subject: unknown = "ok";
+        try {
+          await checkGrantSubject(db, org, id);
+        } catch (e) {
+          subject = errorOf(e);
+        }
+        writeChecks.push({ organizationId: org, identityId: id, subject, eligible: await readEligibleMember(db, org, id) });
+      }
+    }
+    const grantForms = GRANT_FORMS.map((d) => ({ declaration: d, normalized: canonicalJson(normalizedGrant(d)) }));
+    const sameGrants: unknown[] = [];
+    GRANT_FORMS.forEach((a, i) => GRANT_FORMS.forEach((b, j) => {
+      if (i < j) sameGrants.push({ a: i, b: j, same: sameGrant(a, b) });
+    }));
     return {
       rows: rows.map(([table, row]) => ({ table, row })),
       principals: PRINCIPALS,
@@ -441,6 +493,9 @@ async function worldVectors() {
       entries,
       scopeChecks,
       requests,
+      writeChecks,
+      grantForms,
+      sameGrants,
     };
   } finally {
     await db.close();

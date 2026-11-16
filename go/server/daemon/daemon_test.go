@@ -150,13 +150,13 @@ func TestStartStopRestart(t *testing.T) {
 		t.Errorf("restart made another installation: %q then %q", meta.InstallationID, again.InstallationID)
 	}
 	// A request in flight finishes before the stop completes.
-	res, err := http.Post("http://"+r.addr+"/v1/organizations/acme/teams", "application/json", strings.NewReader("{}"))
+	res, err := http.Post("http://"+r.addr+"/v1/organizations/acme/webhooks", "application/json", strings.NewReader("{}"))
 	if err != nil || res.StatusCode != http.StatusNotImplemented {
 		t.Errorf("stub: %v %v", res, err)
 	}
 	r.stop(t)
 	log, _ := os.ReadFile(in.accessLog)
-	if !strings.Contains(string(log), `"method":"POST","path":"/v1/organizations/acme/teams","status":501`) {
+	if !strings.Contains(string(log), `"method":"POST","path":"/v1/organizations/acme/webhooks","status":501`) {
 		t.Errorf("access log: %s", log)
 	}
 }

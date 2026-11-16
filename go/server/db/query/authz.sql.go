@@ -61,7 +61,7 @@ const loadGrantRows = `-- name: LoadGrantRows :many
 SELECT g.id, g.subject_identity_id, g.subject_group_id, g.scope, g.actions, g.role_id,
        r.actions AS role_actions, r.revoked_at AS role_revoked, r.version AS role_version
 FROM grants g
-LEFT JOIN roles r ON r.id = g.role_id
+LEFT JOIN roles r ON r.id = g.role_id AND r.organization_id = g.organization_id
 WHERE g.organization_id = ?1 AND g.revoked_at IS NULL
   AND EXISTS (
     SELECT 1 FROM identities s WHERE s.id = ?2 AND (s.kind <> 'human' OR EXISTS (
@@ -75,6 +75,7 @@ WHERE g.organization_id = ?1 AND g.revoked_at IS NULL
       SELECT gm.group_id FROM group_members gm
       JOIN groups grp ON grp.id = gm.group_id
       WHERE gm.identity_id = ?2 AND grp.revoked_at IS NULL
+        AND grp.organization_id = ?1
     )
   )
 ORDER BY g.rowid
@@ -99,9 +100,10 @@ type LoadGrantRowsRow struct {
 
 // The subject's unrevoked Grants in the Organization, direct and through
 // live Groups, with their Role's current actions; a person's only through a
-// live membership (ADR-0052 Decision 1). PostgreSQL's query has no ORDER
-// BY: its rows come in heap order, which for rows never updated is the
-// order they were inserted in. Here that order is the rowid's.
+// live membership (ADR-0052 Decision 1). Grants join only this
+// Organization's Groups and Roles. PostgreSQL's query has no ORDER BY: its
+// rows come in heap order, which for rows never updated is the order they
+// were inserted in. Here that order is the rowid's.
 func (q *Queries) LoadGrantRows(ctx context.Context, arg LoadGrantRowsParams) ([]LoadGrantRowsRow, error) {
 	rows, err := q.db.QueryContext(ctx, loadGrantRows, arg.OrganizationID, arg.SubjectIdentityID)
 	if err != nil {

@@ -417,15 +417,13 @@
       ],
       "groups": {
         "audit": {
-          "title": "the audit timeline: filters, the provenance drawer, sentences with names; it filters for identity.created events, which the service identities earlier suites create give it",
+          "title": "the audit timeline: filters, the provenance drawer, sentences with names (the connection and Sync Target lists are background reads); it filters for identity.created events, which the service identities earlier suites create give it",
           "operations": [
             "listAuditEvents",
             "listIdentities",
             "listRoles",
             "listGroups",
             "listTeams",
-            "listPlatformConnections",
-            "listOrgSyncTargets",
             "createServiceIdentity"
           ]
         },
