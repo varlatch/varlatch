@@ -27,6 +27,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/db/query"
+	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 )
 
@@ -50,8 +51,13 @@ func (f *fixture) add(d time.Duration) {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	dir := t.TempDir()
-	f := &fixture{dir: dir, rootKEK: envelope.GenerateKey(), bek: envelope.GenerateKey(), inst: "inst_backuptest", now: time.Now().UTC().Truncate(time.Millisecond)}
+	return newFixtureIn(t, t.TempDir())
+}
+
+// newFixtureIn is newFixture with its data directory at dir.
+func newFixtureIn(t *testing.T, dir string) *fixture {
+	t.Helper()
+	f := &fixture{dir: dir, rootKEK: envelope.GenerateKey(), bek: envelope.GenerateKey(), inst: ids.New(ids.Installation), now: time.Now().UTC().Truncate(time.Millisecond)}
 	keyFile := filepath.Join(dir, "bek")
 	if err := os.WriteFile(keyFile, []byte(hex.EncodeToString(f.bek)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -464,4 +470,77 @@ func TestRunIsAdmitted(t *testing.T) {
 		t.Errorf("busy %d after the run", a.Busy())
 	}
 	a.End(g.ID)
+}
+
+// The schedule while its timer is armed and the wall clock changes: every
+// wait is at most Recheck, so a clock moved forward makes the overdue
+// backup at the next look, within an hour; a clock moved back makes the
+// newest archive look dated in the future, and a backup is taken at once,
+// not when the clock catches up with it.
+func TestScheduleUnderClockChanges(t *testing.T) {
+	f := newFixture(t)
+	timers := make(chan time.Duration, 1)
+	fire := make(chan time.Time)
+	s := f.service(func(o *Options) {
+		o.StartDelay = 5 * time.Second
+		o.After = func(d time.Duration) <-chan time.Time { timers <- d; return fire }
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); s.Loop(ctx) }()
+	defer func() { cancel(); <-done }()
+	armed := func(want time.Duration) {
+		t.Helper()
+		select {
+		case d := <-timers:
+			if d != want {
+				t.Fatalf("the timer was armed for %s, want %s", d, want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("the timer was not armed")
+		}
+	}
+	archives := func() int {
+		t.Helper()
+		st, err := s.Status()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(st.Archives)
+	}
+
+	armed(5 * time.Second)
+	fire <- time.Time{} // the first look: no archive, one is taken
+	armed(Recheck)
+	if archives() != 1 {
+		t.Fatalf("%d archives after the first look", archives())
+	}
+	// Armed for an hour; the clock moves 30 hours forward meanwhile.
+	f.add(30 * time.Hour)
+	fire <- time.Time{}
+	armed(Recheck)
+	if archives() != 2 {
+		t.Fatalf("%d archives after the clock moved forward", archives())
+	}
+	// Not due: the next look is still within the hour.
+	f.add(time.Hour)
+	fire <- time.Time{}
+	armed(Recheck)
+	if archives() != 2 {
+		t.Fatalf("%d archives an hour later", archives())
+	}
+	// The clock moves three days back while the timer is armed.
+	f.add(-72 * time.Hour)
+	fire <- time.Time{}
+	armed(Recheck)
+	if archives() != 3 {
+		t.Fatalf("%d archives after the clock moved back", archives())
+	}
+	// And from there the schedule goes on by the new archive's age.
+	f.add(time.Hour)
+	fire <- time.Time{}
+	armed(Recheck)
+	if archives() != 3 {
+		t.Fatalf("%d archives an hour after", archives())
+	}
 }

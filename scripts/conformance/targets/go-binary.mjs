@@ -7,7 +7,12 @@
  *   up        a fresh installation: a new directory with the data directory,
  *             a random Root KEK (mode 0600), varlatchd.conf (listening on a
  *             free loopback port, the access log in the directory), and the
- *             server's own output; varlatchd serve, until /readyz answers
+ *             server's own output; varlatchd serve, until /readyz answers.
+ *             With VARLATCH_GO_BINARY_FROM=<dir>, the data directory and the
+ *             Root KEK are copies of <dir>/data and <dir>/root-kek instead:
+ *             an installation prepared elsewhere (go.yml's restore drill
+ *             restores a Go archive there in a fresh container), which the
+ *             run then exercises in full
  *   origin    varlatchd itself: it serves the dashboard and the API
  *   restart   SIGTERM, then serve again on the same data
  *   logs      what varlatchd wrote to standard output and error
@@ -49,7 +54,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, appendFileSync, chmodSync, closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, appendFileSync, chmodSync, closeSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -133,8 +138,15 @@ export async function up({ argument, onState = () => {} }) {
   };
   onState(state);
   try {
-    mkdirSync(state.dataDir, { mode: 0o700 });
-    writeFileSync(state.kekFile, `${randomBytes(32).toString("hex")}\n`, { mode: 0o600 });
+    const from = process.env.VARLATCH_GO_BINARY_FROM;
+    if (from) {
+      cpSync(join(from, "data"), state.dataDir, { recursive: true });
+      chmodSync(state.dataDir, 0o700);
+      writeFileSync(state.kekFile, readFileSync(join(from, "root-kek")), { mode: 0o600 });
+    } else {
+      mkdirSync(state.dataDir, { mode: 0o700 });
+      writeFileSync(state.kekFile, `${randomBytes(32).toString("hex")}\n`, { mode: 0o600 });
+    }
     chmodSync(state.kekFile, 0o600);
     writeFileSync(state.conf, config(state));
     await start(state);

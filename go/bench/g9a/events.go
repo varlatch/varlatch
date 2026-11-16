@@ -60,6 +60,10 @@ type Event struct {
 	Note    string `json:"note,omitempty"`
 	WaitUs  int64  `json:"waitUs,omitempty"`
 
+	// backup_end: the sealing and check's duration, and the archive's size
+	SealUs       int64 `json:"sealUs,omitempty"`
+	ArchiveBytes int64 `json:"archiveBytes,omitempty"`
+
 	// backup_end, converge_end
 	Pages    int    `json:"pages,omitempty"`
 	Steps    int    `json:"steps,omitempty"`

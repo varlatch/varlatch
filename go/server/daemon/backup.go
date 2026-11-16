@@ -5,11 +5,19 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"slices"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
+	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/backups"
+	"github.com/varlatch/varlatch/go/server/config"
 )
 
 // The backup and maintenance host commands (ADR-0059 step 4.14), through
@@ -20,6 +28,8 @@ import (
 //
 //	varlatchd admin backup run [--json]
 //	varlatchd admin backup status
+//	varlatchd admin backup test-bucket [--json]
+//	varlatchd admin backup restore --in <archive> [--backup-key-file <file>]   (offline only)
 //	varlatchd admin maintenance begin --ttl <duration>
 //	varlatchd admin maintenance end <lease id>
 //	varlatchd admin maintenance status
@@ -37,11 +47,14 @@ func commandTimeout(args []string) time.Duration {
 	if len(args) >= 2 && args[0] == "backup" && args[1] == "run" {
 		return backupRunTimeout
 	}
+	if len(args) >= 2 && args[0] == "backup" && args[1] == "test-bucket" {
+		return time.Hour
+	}
 	return controlTimeout
 }
 
 const (
-	backupUsage      = "Usage: varlatchd admin backup run [--json] | varlatchd admin backup status"
+	backupUsage      = "Usage: varlatchd admin backup run [--json] | varlatchd admin backup status | varlatchd admin backup restore --in <archive> [--backup-key-file <file>] | varlatchd admin backup test-bucket [--json]"
 	maintenanceUsage = "Usage: varlatchd admin maintenance begin --ttl <duration> | varlatchd admin maintenance end <lease id> | varlatchd admin maintenance status"
 )
 
@@ -51,8 +64,13 @@ const (
 func backupArgs(sub string, rest []string) (ttl time.Duration, msg string) {
 	if sub == "backup" {
 		switch {
-		case len(rest) == 1 && rest[0] == "run", len(rest) == 2 && rest[0] == "run" && rest[1] == "--json", len(rest) == 1 && rest[0] == "status":
+		case len(rest) == 1 && rest[0] == "run", len(rest) == 2 && rest[0] == "run" && rest[1] == "--json", len(rest) == 1 && rest[0] == "status",
+			len(rest) == 1 && rest[0] == "test-bucket", len(rest) == 2 && rest[0] == "test-bucket" && rest[1] == "--json":
 			return 0, ""
+		case len(rest) > 0 && rest[0] == "restore":
+			if _, ok := restoreArgs(rest[1:]); ok {
+				return 0, ""
+			}
 		}
 		return 0, backupUsage
 	}
@@ -109,6 +127,30 @@ func runBackupCommand(ctx context.Context, env *hostEnv, sub string, rest []stri
 			return printJSON(g)
 		}
 	}
+	if rest[0] == "test-bucket" {
+		r, err := env.backups.TestBucket(ctx)
+		if err != nil {
+			return fail(err)
+		}
+		if len(rest) == 2 {
+			printJSON(r)
+		} else {
+			mark := func(ok bool) string {
+				if ok {
+					return "ok"
+				}
+				return "FAILED"
+			}
+			fmt.Fprintf(stdout, "Bucket test with %s:\n", r.Key)
+			fmt.Fprintf(stdout, "  delivery:       %s: %s\n", mark(r.Delivery.OK), r.Delivery.Detail)
+			fmt.Fprintf(stdout, "  retention:      %s: %s\n", map[bool]string{true: "ok", false: "UNPROTECTED"}[r.Retention.Protected], r.Retention.Detail)
+			fmt.Fprintf(stdout, "  recoverability: %s: %s\n", mark(r.Recoverability.OK), r.Recoverability.Detail)
+		}
+		if !r.Passed() {
+			return ExitFailure
+		}
+		return ExitOK
+	}
 	if rest[0] == "status" {
 		st, err := env.backups.Status()
 		if err != nil {
@@ -146,5 +188,108 @@ func runBackupCommand(ctx context.Context, env *hostEnv, sub string, rest []stri
 
 // newBackups is the backup service of a host environment.
 func newBackups(env *hostEnv) *backups.Service {
-	return backups.New(backups.Options{Config: env.cfg, Store: env.store, RootKEK: env.rootKEK, Admission: env.admission, Log: env.log})
+	o := backups.Options{Config: env.cfg, Store: env.store, RootKEK: env.rootKEK, Admission: env.admission, Log: env.log}
+	if env.tune != nil {
+		env.tune(&o)
+	}
+	return backups.New(o)
+}
+
+// restoreArgs reads `backup restore`'s flags: --in (required) and
+// --backup-key-file.
+func restoreArgs(rest []string) (map[string]string, bool) {
+	v := map[string]string{}
+	for i := 0; i < len(rest); i += 2 {
+		if i+1 >= len(rest) || (rest[i] != "--in" && rest[i] != "--backup-key-file") || rest[i+1] == "" {
+			return nil, false
+		}
+		v[rest[i]] = rest[i+1]
+	}
+	return v, v["--in"] != ""
+}
+
+// restoreOffline is `varlatchd admin backup restore`: never through the
+// socket, since it replaces the database a running varlatchd holds. It
+// takes the data directory's lock (a running varlatchd holds it, and is
+// refused) and restores in this process, from the archive, the Backup
+// Encryption Key (--backup-key-file, else backup_key_file) and the Root
+// KEK (root_kek_file): the two keys held apart from the archive.
+func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
+	const what = "varlatchd admin backup restore"
+	fail := func(status int, format string, args ...any) int {
+		fmt.Fprintf(stderr, what+": "+format+"\n", args...)
+		return status
+	}
+	args, _ := restoreArgs(rest)
+	owner, id, err := checkClientDir(cfg.DataDir, os.Getuid())
+	if err != nil {
+		return fail(ExitConfig, "%v; nothing was written", err)
+	}
+	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 5*time.Second); err == nil {
+		_ = conn.Close()
+		return fail(ExitFailure, "varlatchd is running on %s: stop it before a restore; nothing was written", cfg.DataDir)
+	}
+	unlock, err := lockDataDir(cfg.DataDir)
+	if errors.Is(err, errLocked) {
+		return fail(ExitFailure, "a varlatchd holds the data directory %s: stop it before a restore; nothing was written", cfg.DataDir)
+	}
+	if err != nil {
+		return fail(ExitFailure, "cannot lock the data directory %s: %v", cfg.DataDir, err)
+	}
+	defer unlock()
+	if owner >= 0 {
+		if err := sameDir(cfg.DataDir, id); err != nil {
+			return fail(ExitFailure, "%v; nothing was written", err)
+		}
+	}
+	bekFile := args["--backup-key-file"]
+	if bekFile == "" {
+		bekFile = cfg.BackupKeyFile
+	}
+	if bekFile == "" {
+		return fail(ExitConfig, "no Backup Encryption Key: give --backup-key-file, or set backup_key_file")
+	}
+	raw, err := os.ReadFile(bekFile)
+	if err != nil {
+		return fail(ExitFailure, "cannot read the Backup Encryption Key file: %v", err)
+	}
+	material, err := backup.ParseKey(string(raw))
+	clear(raw)
+	if err != nil {
+		return fail(ExitConfig, "%v", err)
+	}
+	bek, err := backup.KeyBEK(material)
+	clear(material)
+	if err != nil {
+		return fail(ExitConfig, "%v", err)
+	}
+	defer bek.Clear()
+	raw, err = os.ReadFile(cfg.RootKEKFile)
+	if err != nil {
+		return fail(ExitFailure, "cannot read the Root KEK file: %v", err)
+	}
+	rootKEK, err := envelope.ParseRootKEK(string(raw))
+	clear(raw)
+	if err != nil {
+		return fail(ExitConfig, "the Root KEK file does not hold a Root KEK: %v", err)
+	}
+	defer clear(rootKEK)
+	res, err := backups.Restore(context.Background(), cfg, args["--in"], bek, rootKEK, nil)
+	if err != nil {
+		return fail(ExitFailure, "%v", err)
+	}
+	fmt.Fprintf(stdout, "Restore completed for %s from archive %s (created %s): the database is restored and its canary verified.\n", res.InstallationID, res.ArchiveID, res.CreatedAt)
+	if len(res.Settings) > 0 {
+		names := make([]string, 0, len(res.Settings))
+		for k := range res.Settings {
+			names = append(names, k)
+		}
+		slices.Sort(names)
+		fmt.Fprintln(stdout, "The archive's settings, to compare with this host's varlatchd.conf:")
+		for _, k := range names {
+			fmt.Fprintf(stdout, "  %s = %s\n", k, res.Settings[k])
+		}
+	}
+	fmt.Fprintln(stdout, "Next: start varlatchd, then take and check a fresh archive (`varlatchd admin backup run`).")
+	return ExitOK
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
+	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
@@ -113,6 +114,8 @@ type hooks struct {
 	// writer sees the daemon's write path once it exists (tests: an
 	// external effect held open inside the daemon).
 	writer func(*write.Writer)
+	// backups tunes the backup service (tests: a slower sealing pace).
+	backups func(*backups.Options)
 }
 
 // productionStorage is the storage engine's options for serving: the
@@ -232,22 +235,33 @@ func serve(opts Options, h *hooks) int {
 	if observeSettings != nil {
 		observeSettings(settings)
 	}
-	if _, err := db.Init(ctx, store, buildinfo.Version); err != nil {
-		return fail(ExitFailure, "the database cannot be used", "file", cfg.DatabasePath(), "error", err)
+	// A restore that did not complete left its gate (or the gate cannot be
+	// read): the database may be the restore's, half done. varlatchd
+	// serves isolated, 503 MAINTENANCE, and touches nothing in it: no
+	// schema, no installation, no canary check, until the restore is run
+	// again (server/backups Restore).
+	var inst installation
+	if g, err := backup.ReadGate(cfg.DataDir); err != nil || g != nil && g.Kind == "restore" {
+		log.Warn("a restore has not completed: varlatchd answers 503 MAINTENANCE and leaves the database as it is; run varlatchd admin backup restore again", "file", filepath.Join(cfg.DataDir, backup.GateFile))
+	} else {
+		if _, err := db.Init(ctx, store, buildinfo.Version); err != nil {
+			return fail(ExitFailure, "the database cannot be used", "file", cfg.DatabasePath(), "error", err)
+		}
+		var created bool
+		inst, created, err = ensureInstallation(ctx, store, rootKEK)
+		if err != nil {
+			return fail(ExitFailure, "cannot prepare the installation", "error", err)
+		}
+		if created {
+			log.Info("installation initialized", "installationId", inst.ID)
+		}
+		if !verify(rootKEK, inst) {
+			// The installation was read and the key is not its key: restarting
+			// cannot change that, only configuring the right Root KEK can.
+			return fail(ExitConfig, "the configured Root KEK does not open this installation's canary; refusing to start with a wrong key (ADR-0019): configure this installation's Root KEK and start varlatchd again")
+		}
 	}
-	inst, created, err := ensureInstallation(ctx, store, rootKEK)
-	if err != nil {
-		return fail(ExitFailure, "cannot prepare the installation", "error", err)
-	}
-	if created {
-		log.Info("installation initialized", "installationId", inst.ID)
-	}
-	if !verify(rootKEK, inst) {
-		// The installation was read and the key is not its key: restarting
-		// cannot change that, only configuring the right Root KEK can.
-		return fail(ExitConfig, "the configured Root KEK does not open this installation's canary; refusing to start with a wrong key (ADR-0019): configure this installation's Root KEK and start varlatchd again")
-	}
-	if h.prepare != nil {
+	if h.prepare != nil && inst.ID != "" {
 		if err := h.prepare(ctx, store, rootKEK, log); err != nil {
 			return fail(ExitFailure, "preparing the run", "error", err)
 		}
@@ -265,7 +279,7 @@ func serve(opts Options, h *hooks) int {
 	} else if g != nil {
 		log.Warn("installation maintenance is active; varlatchd answers 503 MAINTENANCE until it ends", "kind", g.Kind, "lease", g.ID)
 	}
-	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log}
+	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups}
 	env.backups = newBackups(env)
 	control, err := listenControl(env, log)
 	if err != nil {

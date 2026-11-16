@@ -4,8 +4,10 @@ package backup
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -182,8 +184,13 @@ func (c *Client) upload(ctx context.Context, key, path string) error {
 		return err
 	}
 	if st.Size() <= partSize {
-		_, err := c.s3.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: &c.bucket, Key: &key, Body: f, ContentLength: aws.Int64(st.Size()), ContentType: aws.String("application/octet-stream"),
+		sum, err := md5Of(io.NewSectionReader(f, 0, st.Size()))
+		if err != nil {
+			return err
+		}
+		_, err = c.s3.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: &c.bucket, Key: &key, Body: io.NewSectionReader(f, 0, st.Size()), ContentLength: aws.Int64(st.Size()),
+			ContentType: aws.String("application/octet-stream"), ContentMD5: aws.String(sum),
 		})
 		return err
 	}
@@ -198,9 +205,13 @@ func (c *Client) upload(ctx context.Context, key, path string) error {
 	var parts []types.CompletedPart
 	for n, offset := int32(1), int64(0); offset < st.Size(); n, offset = n+1, offset+partSize {
 		size := min(partSize, st.Size()-offset)
+		sum, err := md5Of(io.NewSectionReader(f, offset, size))
+		if err != nil {
+			return abort(err)
+		}
 		got, err := c.s3.UploadPart(ctx, &s3.UploadPartInput{
 			Bucket: &c.bucket, Key: &key, UploadId: created.UploadId, PartNumber: aws.Int32(n),
-			Body: io.NewSectionReader(f, offset, size), ContentLength: aws.Int64(size),
+			Body: io.NewSectionReader(f, offset, size), ContentLength: aws.Int64(size), ContentMD5: aws.String(sum),
 		})
 		if err != nil {
 			return abort(err)
@@ -213,6 +224,18 @@ func (c *Client) upload(ctx context.Context, key, path string) error {
 		return abort(err)
 	}
 	return nil
+}
+
+// md5Of is a body's Content-MD5 (base64): an Object Lock bucket wants
+// one on every write (B2 refuses a write without it, as packages/backup's
+// conditional put notes), and the client sends no other checksum unless an
+// operation requires one.
+func md5Of(r io.Reader) (string, error) {
+	h := md5.New()
+	if _, err := io.Copy(h, r); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(h.Sum(nil)), nil
 }
 
 // Download writes the object at key to output, a new file (mode 0600);

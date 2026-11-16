@@ -275,6 +275,10 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 	return nil
 }
 
+// SyncDir syncs a directory, so a file linked or renamed into it survives a
+// crash.
+func SyncDir(dir string) error { return syncDir(dir) }
+
 func syncDir(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {

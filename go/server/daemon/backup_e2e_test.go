@@ -1,0 +1,415 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+//go:build linux
+
+package daemon
+
+import (
+	"bufio"
+	"context"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/varlatch/varlatch/go/lib/backup"
+	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/backups"
+	"github.com/varlatch/varlatch/go/server/config"
+)
+
+// backupInstall is the read path's fixture installation (g7Install) with a
+// Backup Encryption Key, no schedule, and fillerMiB of incompressible rows,
+// so a paced backup takes a while; and alice's token.
+func backupInstall(t *testing.T, dir string, fillerMiB int) (install, string, string) {
+	t.Helper()
+	in, f := g7Install(t, dir)
+	bek := filepath.Join(dir, "bek")
+	if err := os.WriteFile(bek, []byte(hex.EncodeToString(envelope.GenerateKey())+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in.write(t, "backup_key_file = "+bek+"\nbackup_interval = off\n")
+	if fillerMiB > 0 {
+		conn, err := sql.Open("sqlite", "file:"+filepath.Join(in.data, config.DatabaseFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if _, err := conn.Exec("CREATE TABLE g7_filler (v BLOB) STRICT"); err != nil {
+			t.Fatal(err)
+		}
+		for range fillerMiB {
+			if _, err := conn.Exec("INSERT INTO g7_filler VALUES (randomblob(1048576))"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return in, bek, f.Tokens["alice"]
+}
+
+// slowBackups paces a backup so a test can act while it runs.
+func slowBackups(o *backups.Options) {
+	o.SealRate = 4 << 20
+	o.Snapshot = storage.SnapshotOptions{StepPages: 64, Pause: 50 * time.Millisecond}
+}
+
+// damaged is the archive at good with the same identity, whose database
+// has no installation: it opens and passes every check before the
+// database is replaced, and fails after.
+func damaged(t *testing.T, good, bekFile string) string {
+	t.Helper()
+	raw, _ := os.ReadFile(bekFile)
+	material, err := backup.ParseKey(string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bek, _ := backup.KeyBEK(material)
+	scratch := t.TempDir()
+	o, err := backup.Open(good, bek, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	conn, err := sql.Open("sqlite", "file:"+o.Path(backup.ComponentDatabase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec("DELETE FROM installation"); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	m := o.Manifest
+	for i, c := range m.Components {
+		if m.Components[i], err = backup.Describe(c.Name, o.Path(c.Name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest, _ := json.Marshal(m)
+	out := filepath.Join(t.TempDir(), "damaged.vltbak")
+	if err := backup.Seal(out, manifest, []string{o.Path(backup.ComponentDatabase), o.Path(backup.ComponentConfiguration)}, bek, backup.SealOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func status(t *testing.T, url string) int {
+	t.Helper()
+	res, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	return res.StatusCode
+}
+
+// The Go replacement of scripts/test-backup-e2e.mjs: a backup taken while
+// varlatchd serves (every disclosure during it answered, none held up),
+// checked, then restored on a fresh host that holds only the
+// configuration, the archive and the two keys; the restored installation
+// serves the same values, records installation.restored, and a restore
+// that fails after replacing the database stays isolated across a
+// restart until running it again completes it.
+func TestBackupRestoreEndToEnd(t *testing.T) {
+	in, bek, fixture := backupInstall(t, t.TempDir(), 8)
+	r := startWith(t, in, &hooks{backups: slowBackups})
+	base := "http://" + r.addr
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	var during []string
+	done := make(chan struct{})
+	var out, errOut string
+	var code int
+	go func() {
+		defer close(done)
+		code, out, errOut = runAdmin(t, "backup", "run", "--config", in.conf)
+	}()
+	for running := true; running; {
+		select {
+		case <-done:
+			running = false
+		default:
+			s, _, body, err := disclose(client, base, fixture)
+			switch {
+			case err != nil:
+				during = append(during, err.Error())
+			case s == 200 && strings.Contains(body, "hunter2-hunter2"):
+				during = append(during, "disclosed")
+			default:
+				during = append(during, fmt.Sprint(s))
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	m := archiveCreated.FindStringSubmatch(out)
+	if code != ExitOK || m == nil {
+		t.Fatalf("backup run: %d %q %q", code, out, errOut)
+	}
+	for _, d := range during {
+		if d != "disclosed" {
+			t.Fatalf("a disclosure during the backup: %v", during)
+		}
+	}
+	if len(during) < 5 {
+		t.Fatalf("only %d disclosures during the backup", len(during))
+	}
+	archive, archiveID := m[1], m[2]
+	r.stop(t)
+
+	// A fresh host: the configuration, the archive and the two keys only.
+	host := t.TempDir()
+	target := install{dir: host, conf: filepath.Join(host, "varlatchd.conf"), kekFile: filepath.Join(host, "root-kek"),
+		data: filepath.Join(host, "data"), accessLog: filepath.Join(host, "access.log")}
+	os.MkdirAll(target.data, 0o700)
+	copyTo := func(from, to string) {
+		b, err := os.ReadFile(from)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(to, b, 0o600)
+	}
+	copyTo(in.kekFile, target.kekFile)
+	copyTo(bek, filepath.Join(host, "bek"))
+	copyTo(archive, filepath.Join(host, "archive.vltbak"))
+	target.write(t, "backup_key_file = "+filepath.Join(host, "bek")+"\nbackup_interval = off\n")
+
+	// A restore that fails after the database was replaced: isolated, and
+	// still isolated after a restart.
+	bad := damaged(t, archive, bek)
+	if code, _, errOut := runAdmin(t, "backup", "restore", "--in", bad, "--config", target.conf); code != ExitFailure || !strings.Contains(errOut, "no installation") {
+		t.Fatalf("the damaged restore: %d %q", code, errOut)
+	}
+	for i := 0; i < 2; i++ {
+		tr := start(t, target)
+		if s := status(t, "http://"+tr.addr+"/v1/meta"); s != 503 {
+			t.Errorf("start %d after the failed restore: /v1/meta %d", i, s)
+		}
+		if s := status(t, "http://"+tr.addr+"/readyz"); s != 503 {
+			t.Errorf("start %d after the failed restore: /readyz %d", i, s)
+		}
+		tr.stop(t)
+	}
+
+	// Running it again with the archive completes it.
+	code, out, errOut = runAdmin(t, "backup", "restore", "--in", filepath.Join(host, "archive.vltbak"), "--config", target.conf)
+	if code != ExitOK || !strings.HasPrefix(out, "Restore completed for inst_") || !strings.Contains(out, archiveID) {
+		t.Fatalf("restore: %d %q %q", code, out, errOut)
+	}
+	tr := start(t, target)
+	s, _, body, err := disclose(client, "http://"+tr.addr, fixture)
+	if err != nil || s != 200 || !strings.Contains(body, "hunter2-hunter2") {
+		t.Fatalf("a disclosure on the restored host: %d %v %.200s", s, err, body)
+	}
+	// While it runs, a restore is refused.
+	if code, _, errOut := runAdmin(t, "backup", "restore", "--in", filepath.Join(host, "archive.vltbak"), "--config", target.conf); code != ExitFailure || !strings.Contains(errOut, "stop it before a restore") {
+		t.Errorf("a restore while varlatchd runs: %d %q", code, errOut)
+	}
+	tr.stop(t)
+	conn, err := sql.Open("sqlite", "file:"+filepath.Join(target.data, config.DatabaseFile)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var restored string
+	if err := conn.QueryRow("SELECT json_extract(metadata, '$.archiveId') FROM audit_events WHERE event_type = 'installation.restored' ORDER BY event_order DESC LIMIT 1").Scan(&restored); err != nil || restored != archiveID {
+		t.Errorf("installation.restored names %q (%v), want %s", restored, err, archiveID)
+	}
+}
+
+// G7 during a backup: varlatchd (this test binary, serving) is killed with
+// SIGKILL in the middle of a backup, once during the snapshot and once
+// during the sealing, while clients ask for disclosures. Nothing committed
+// is lost (every disclosure answered has its audit event; the database is
+// consistent), and no partial archive is counted as a backup: there is no
+// archive and no status record, and the next run removes what the killed
+// one left and makes one.
+func TestKillDuringBackup(t *testing.T) {
+	if conf := os.Getenv("G7_BACKUP_SERVE_CONF"); conf != "" {
+		os.Exit(serve(Options{ConfigPath: conf, Stderr: os.Stderr, Ready: func(a net.Addr) {
+			fmt.Println("ready", a.String())
+		}}, &hooks{backups: slowBackups}))
+	}
+	for _, phase := range []string{"snapshot", "sealing"} {
+		t.Run(phase, func(t *testing.T) { killDuringBackup(t, phase) })
+	}
+}
+
+func killDuringBackup(t *testing.T, phase string) {
+	in, _, token := backupInstall(t, t.TempDir(), 16)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestKillDuringBackup$")
+	cmd.Env = append(os.Environ(), "G7_BACKUP_SERVE_CONF="+in.conf)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr syncBuffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	killed := false
+	defer func() {
+		if !killed {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	addr := make(chan string, 1)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			if a, ok := strings.CutPrefix(sc.Text(), "ready "); ok {
+				addr <- a
+			}
+		}
+	}()
+	var base string
+	select {
+	case a := <-addr:
+		base = "http://" + a
+	case <-time.After(30 * time.Second):
+		t.Fatalf("varlatchd did not serve: %s", stderr.String())
+	}
+
+	var mu sync.Mutex
+	var disclosed []string
+	var answered atomic.Int64
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	client := &http.Client{Timeout: 10 * time.Second}
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				s, id, body, err := disclose(client, base, token)
+				if err != nil {
+					return
+				}
+				if s == 200 && strings.Contains(body, "hunter2-hunter2") {
+					mu.Lock()
+					disclosed = append(disclosed, id)
+					mu.Unlock()
+					answered.Add(1)
+				} else if s != 429 {
+					t.Errorf("disclosure answered %d: %.200s", s, body)
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}()
+	}
+	// Disclosures are flowing before the backup starts (under the race
+	// detector everything is slower).
+	for deadline := time.Now().Add(60 * time.Second); answered.Load() < 5; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) || t.Failed() {
+			t.Fatalf("no disclosure answered before the backup: %s", stderr.String())
+		}
+	}
+	backupDone := make(chan struct{})
+	go func() {
+		defer close(backupDone)
+		runAdmin(t, "backup", "run", "--config", in.conf)
+	}()
+	dir := filepath.Join(in.data, backups.Dir)
+	inPhase := func() bool {
+		works, _ := filepath.Glob(filepath.Join(dir, ".work-*", backup.ComponentDatabase))
+		partials, _ := filepath.Glob(filepath.Join(dir, "*.partial"))
+		if phase == "snapshot" {
+			return len(works) > 0 && len(partials) == 0
+		}
+		return len(partials) > 0
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for !inPhase() {
+		if time.Now().After(deadline) {
+			t.Fatalf("the backup never reached its %s: %s", phase, stderr.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if !inPhase() {
+		t.Fatalf("the backup left its %s before the kill", phase)
+	}
+	if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	killed = true
+	close(stop)
+	wg.Wait()
+	<-backupDone
+	if answered.Load() == 0 {
+		t.Fatal("no disclosure was answered before the kill")
+	}
+
+	// Nothing committed is lost.
+	store, err := storage.Open(context.Background(), storage.Options{Path: filepath.Join(in.data, config.DatabaseFile)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := store.Reader()
+	var check string
+	if err := reader.QueryRow(`PRAGMA integrity_check`).Scan(&check); err != nil || check != "ok" {
+		t.Fatalf("integrity_check %q, %v", check, err)
+	}
+	mu.Lock()
+	for _, id := range disclosed {
+		var n int
+		if err := reader.QueryRow(`SELECT count(*) FROM audit_events WHERE request_id = ? AND event_type = 'secret.disclosed'`, id).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("request %s received its values, but its secret.disclosed event is missing after the kill (%v)", id, err)
+		}
+	}
+	mu.Unlock()
+	store.Close()
+
+	// No partial archive is counted as a backup.
+	if archives, _ := filepath.Glob(filepath.Join(dir, "*.vltbak")); len(archives) != 0 {
+		t.Errorf("an archive after the kill: %v", archives)
+	}
+	if records, _ := filepath.Glob(filepath.Join(dir, "*.json")); len(records) != 0 {
+		t.Errorf("a status record after the kill: %v", records)
+	}
+	left := listingOf(dir)
+	r := start(t, in)
+	code, out, _ := runAdmin(t, "backup", "status", "--config", in.conf)
+	var st backup.Status
+	if code != ExitOK || json.Unmarshal([]byte(out), &st) != nil || len(st.Archives) != 0 {
+		t.Errorf("status after the kill: %d %q", code, out)
+	}
+	code, out, errOut := runAdmin(t, "backup", "run", "--config", in.conf)
+	m := archiveCreated.FindStringSubmatch(out)
+	if code != ExitOK || m == nil {
+		t.Fatalf("the next run: %d %q %q", code, out, errOut)
+	}
+	if got := listingOf(dir); got != m[2]+".json "+m[2]+".vltbak" {
+		t.Errorf("after the next run the backups directory holds %q (the killed run left %q)", got, left)
+	}
+	r.stop(t)
+	t.Logf("killed during the %s with %q left; %d disclosures answered, each audited", phase, left, len(disclosed))
+}
+
+func listingOf(dir string) string {
+	entries, _ := os.ReadDir(dir)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return strings.Join(names, " ")
+}

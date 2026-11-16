@@ -90,6 +90,8 @@ type Options struct {
 	// StartDelay is how long the schedule waits after varlatchd starts
 	// before its first look (DefaultStartDelay).
 	StartDelay time.Duration
+	// After arms the schedule's timer (nil: a time.Timer; tests).
+	After func(time.Duration) <-chan time.Time
 }
 
 // The schedule's waits.
@@ -100,6 +102,12 @@ const (
 	RetryAfter = time.Hour
 	// MaintenanceRetry is the wait while a maintenance gate is open.
 	MaintenanceRetry = time.Minute
+	// Recheck bounds every wait: the schedule looks at the clock again at
+	// least this often, so a clock moved forward is noticed within it.
+	Recheck = time.Hour
+	// clockSkew is how far in the future the newest archive may be dated
+	// before the schedule takes the clock to have moved back.
+	clockSkew = time.Minute
 )
 
 // Service runs backups, one at a time.
@@ -159,6 +167,8 @@ type Result struct {
 	UploadError string           `json:"uploadError,omitempty"`
 	// Removed are the archives local retention removed.
 	Removed []string `json:"removed"`
+	// Snapshot is the snapshot's own account (the g9a build reports it).
+	Snapshot storage.SnapshotStats `json:"-"`
 }
 
 // Errors a run refuses with before it writes anything.
@@ -209,27 +219,11 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 		defer leave()
 	}
 	cfg := s.o.Config
-	if cfg.BackupKeyFile == "" {
-		return Result{}, ErrNoKey
-	}
-	raw, err := os.ReadFile(cfg.BackupKeyFile)
-	if err != nil {
-		return Result{}, fmt.Errorf("cannot read the Backup Encryption Key file: %w", err)
-	}
-	material, err := backup.ParseKey(string(raw))
-	clear(raw)
-	if err != nil {
-		return Result{}, err
-	}
-	bek, err := backup.KeyBEK(material)
-	clear(material)
+	bek, err := s.bek()
 	if err != nil {
 		return Result{}, err
 	}
 	defer bek.Clear()
-	if err := backup.DistinctKeys(bek, s.o.RootKEK); err != nil {
-		return Result{}, err
-	}
 
 	backups := filepath.Join(s.dir, Dir)
 	if err := os.MkdirAll(backups, 0o700); err != nil {
@@ -305,7 +299,7 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	res := Result{ArchiveID: id, Path: archive, Bytes: info.Size(), CreatedAt: createdAt, Verification: &verification, Capture: stats, Removed: []string{}}
+	res := Result{ArchiveID: id, Path: archive, Bytes: info.Size(), CreatedAt: createdAt, Verification: &verification, Capture: stats, Removed: []string{}, Snapshot: st}
 	if !verification.Integrity || !verification.Compatibility || !verification.KeyMatch {
 		return res, fmt.Errorf("the archive %s failed its check (integrity %t, compatibility %t, Root KEK match %t)", id, verification.Integrity, verification.Compatibility, verification.KeyMatch)
 	}
@@ -327,6 +321,32 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 		return res, errors.New(res.UploadError)
 	}
 	return res, nil
+}
+
+// bek reads the Backup Encryption Key, which must not be the Root KEK.
+func (s *Service) bek() (backup.BEK, error) {
+	if s.o.Config.BackupKeyFile == "" {
+		return backup.BEK{}, ErrNoKey
+	}
+	raw, err := os.ReadFile(s.o.Config.BackupKeyFile)
+	if err != nil {
+		return backup.BEK{}, fmt.Errorf("cannot read the Backup Encryption Key file: %w", err)
+	}
+	material, err := backup.ParseKey(string(raw))
+	clear(raw)
+	if err != nil {
+		return backup.BEK{}, err
+	}
+	bek, err := backup.KeyBEK(material)
+	clear(material)
+	if err != nil {
+		return backup.BEK{}, err
+	}
+	if err := backup.DistinctKeys(bek, s.o.RootKEK); err != nil {
+		bek.Clear()
+		return backup.BEK{}, err
+	}
+	return bek, nil
 }
 
 // clean removes what a killed run left: its work directory and a partial
@@ -512,11 +532,12 @@ func (s *Service) verify(archive string, bek backup.BEK, scratch string) backup.
 	return v
 }
 
-func (s *Service) upload(ctx context.Context, id, archive string) (*backup.Delivery, error) {
+// client is the configured destination's client, with its write key.
+func (s *Service) client() (*backup.Client, backup.Destination, error) {
 	cfg := s.o.Config
 	d, err := backup.ReadDestination(cfg.BackupDestinationsFile, cfg.BackupDestination)
 	if err != nil {
-		return nil, fmt.Errorf("Destination upload failed: %w; local archive remains available", err)
+		return nil, d, err
 	}
 	credentials := d.WriteCredentialsFile
 	if !filepath.IsAbs(credentials) {
@@ -524,13 +545,22 @@ func (s *Service) upload(ctx context.Context, id, archive string) (*backup.Deliv
 	}
 	c, err := backup.ReadCredentials(credentials)
 	if err != nil {
+		return nil, d, err
+	}
+	return backup.NewClient(d, c, s.o.HTTPClient), d, nil
+}
+
+func (s *Service) upload(ctx context.Context, id, archive string) (*backup.Delivery, error) {
+	cfg := s.o.Config
+	client, d, err := s.client()
+	if err != nil {
 		return nil, fmt.Errorf("Destination upload failed: %w; local archive remains available", err)
 	}
 	key, err := backup.ObjectKey(d, id)
 	if err != nil {
 		return nil, err
 	}
-	if err := backup.NewClient(d, c, s.o.HTTPClient).Upload(ctx, key, archive); err != nil {
+	if err := client.Upload(ctx, key, archive); err != nil {
 		return nil, err
 	}
 	return &backup.Delivery{Destination: cfg.BackupDestination, UploadedAt: iso(s.o.Now())}, nil
@@ -596,8 +626,12 @@ func fileURI(path string) string {
 // Loop runs the scheduled backups until ctx ends: one when the newest
 // archive is backup_interval old (at once when there is none), an hour
 // after a run that made no archive, and a minute after a maintenance gate
-// held one back. With backup_interval off or no backup_key_file, it does
-// nothing.
+// held one back. It goes by the archives' age, not a calendar time (the
+// TypeScript host backup's systemd timer runs at 03:30 UTC), and looks at
+// the wall clock again at least every Recheck: a clock moved forward is
+// noticed within an hour, and after a clock moved back the newest archive
+// not dated in the future decides (with none recent, a backup at once). With backup_interval off or no
+// backup_key_file, it does nothing.
 func (s *Service) Loop(ctx context.Context) {
 	cfg := s.o.Config
 	if cfg.BackupInterval == 0 {
@@ -610,14 +644,22 @@ func (s *Service) Loop(ctx context.Context) {
 	}
 	wait := s.o.StartDelay
 	for {
-		t := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return
-		case <-t.C:
+		if s.o.After != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.o.After(wait):
+			}
+		} else {
+			t := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
 		}
-		wait = s.tick(ctx)
+		wait = min(s.tick(ctx), Recheck)
 	}
 }
 
@@ -628,11 +670,23 @@ func (s *Service) tick(ctx context.Context) time.Duration {
 	now := s.o.Now()
 	if st, err := s.Status(); err != nil {
 		s.o.Log.Warn("backup: the status records cannot be read; taking a backup", "error", err)
-	} else if len(st.Archives) > 0 {
-		if created, err := time.Parse(time.RFC3339Nano, st.Archives[0].CreatedAt); err == nil {
+	} else {
+		// The newest archive not dated in the future decides. One from the
+		// future means the clock moved back: its age says nothing, so with
+		// no other recent archive a backup is taken now, not once the clock
+		// has caught up with it.
+		for _, a := range st.Archives {
+			created, err := time.Parse(time.RFC3339Nano, a.CreatedAt)
+			if err != nil {
+				continue
+			}
+			if created.After(now.Add(clockSkew)) {
+				continue
+			}
 			if due := created.Add(interval); now.Before(due) {
 				return due.Sub(now)
 			}
+			break
 		}
 	}
 	res, err := s.Run(ctx)
