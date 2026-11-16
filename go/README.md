@@ -58,15 +58,23 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   `lib` is a licensing decision left to the owner,
   and a Compose file as the `yaml` package reads it, on
   `go.yaml.in/yaml/v3`'s nodes. The vectors
-  (`testdata/ts-exchanges.json`, 672 cases) are recorded from the
+  (`testdata/ts-exchanges.json`, 685 cases) are recorded from the
   TypeScript adapters while their own tests and extra cases run
   (`packages/sync/test/go-vectors.test.ts`, regenerated with
   `VARLATCH_WRITE_GO_VECTORS=1`): each call's arguments, every request
-  (method, URL, headers, body; a sealed value by its length) and the fake
+  (method, URL, headers, body; a sealed value by its length, and by what
+  it opens to when sealed to one of the file's known recipients) and the fake
   service's answer or transport failure, the send checks, the expiry
   reports, and the result. Both languages replay the file and must send
   the same requests and give the same results; the sealed box and Node's
-  base64 decoding have byte vectors of their own. Where Go answers
+  base64 decoding have byte vectors of their own, and
+  `TestGitHubSealsEachRequestedValue` opens every value a write sends.
+  The YAML reader follows the `yaml` package where yaml.v3 reads
+  otherwise: the non-specific tag `!` (a string, which yaml.v3 does not
+  report: found from the text at the node's position), `%YAML 1.2`
+  (which yaml.v3 refuses: given to it as 1.1, a repeat as a comment),
+  and `!!merge` (a merge key whatever its quoting; a value so tagged is
+  read by no rule, so unknown). Where Go answers
   otherwise, only on input no platform sends:
   - A Compose file the Go reader does not read is unreadable, so every
     verdict is unknown (the conservative reading): a `%YAML` version
@@ -75,8 +83,6 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
     alias inside its own anchor (on which TypeScript overflows its stack
     and `inspectUsage` throws: defect 6, below). The vectors record each
     (`divergence:`).
-    A `!` non-specific tag on a plain scalar resolves as an untagged one
-    (yaml.v3 does not report it); TypeScript reads a string.
   - An error that is not the adapter's own (an answer that is not JSON,
     or of the wrong shape) keeps JavaScript's name (`SyntaxError`,
     `TypeError`, `URIError`) with Go's wording, not V8's.

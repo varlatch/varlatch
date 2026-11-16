@@ -47,8 +47,9 @@ vi.mock("../src/github.js", async (importOriginal) => {
   return { ...mod, parseTokenExpiration: recordFunction(rec, "parseTokenExpiration", mod.parseTokenExpiration) };
 });
 
-import { coolifyAdapter, convexAdapter, githubActionsAdapter, sealedBox, type AdapterRequest, type PlatformAdapter } from "../src/index.js";
+import { coolifyAdapter, convexAdapter, githubActionsAdapter, sealedBox, sealedBoxOpen, type AdapterRequest, type PlatformAdapter } from "../src/index.js";
 import { classifyComposeUsage } from "../src/coolifyCompose.js";
+import { SEAL_SECRETS } from "./go-vectors-seal.js";
 
 const FILE = new URL("../../../go/lib/sync/testdata/ts-exchanges.json", import.meta.url);
 
@@ -132,11 +133,21 @@ interface WireRequest {
   body: string | null;
 }
 
-/** A sealed GitHub value as its length: its bytes are random. */
+/**
+ * A sealed GitHub value as its length, its bytes being random; one sealed
+ * to a recipient of SEAL_SECRETS also as the hex of what it opens to.
+ */
 function normalizeBody(body: string | null): string | null {
-  return body === null
-    ? null
-    : body.replace(/"encrypted_value":"([^"]*)"/g, (_m, b64: string) => `"encrypted_value":"<sealed:${Buffer.from(b64, "base64").length}>"`);
+  if (body === null) return null;
+  return body.replace(/"encrypted_value":"([^"]*)"/g, (_m, b64: string) => {
+    const sealed = new Uint8Array(Buffer.from(b64, "base64"));
+    for (const hex of SEAL_SECRETS) {
+      const pair = nacl.box.keyPair.fromSecretKey(new Uint8Array(Buffer.from(hex, "hex")));
+      const opened = sealedBoxOpen(sealed, pair.publicKey, pair.secretKey);
+      if (opened) return `"encrypted_value":"<sealed:${sealed.length}:${Buffer.from(opened).toString("hex")}>"`;
+    }
+    return `"encrypted_value":"<sealed:${sealed.length}>"`;
+  });
 }
 
 function wireRequest(input: unknown, init: RequestInit | undefined): WireRequest {
@@ -409,6 +420,8 @@ interface Vectors {
   comment: string;
   /** Long strings, stored once: a case holds {"$s": index}. A long repeat in one is {"$rep": [unit, count]} inside {"$cat": [...]}. */
   strings: Encoded[];
+  /** SEAL_SECRETS: what a replay opens a sealed value with. */
+  sealSecrets: string[];
   seal: Seal[];
   base64: { input: string; bytes: string }[];
   cases: Case[];
@@ -485,6 +498,7 @@ function writeVectors(cases: Case[]): void {
   const text = [
     "{",
     ` "comment": ${line(COMMENT)},`,
+    ` "sealSecrets": ${line(SEAL_SECRETS)},`,
     ` "seal": ${line(sealVectors())},`,
     ` "base64": ${line(base64Vectors())},`,
     ` "strings": [\n${table.map((t) => "  " + line(compressRuns(t))).join(",\n")}\n ],`,
@@ -523,7 +537,10 @@ describe.skipIf(rec.writing)("the Go vectors", () => {
 
   it("hold the sealed box and the key decoding to this code", () => {
     const file = load();
+    expect(file.sealSecrets).toEqual(SEAL_SECRETS);
     expect(sealVectors()).toEqual(file.seal);
+    // The cases sealed to a known recipient carry the plaintext each sent.
+    expect(file.cases.filter((c) => JSON.stringify(c.exchanges ?? []).includes("<sealed:") && /<sealed:\d+:[0-9a-f]+>/.test(JSON.stringify(c.exchanges))).length).toBeGreaterThan(2);
     expect(base64Vectors()).toEqual(file.base64);
   });
 });

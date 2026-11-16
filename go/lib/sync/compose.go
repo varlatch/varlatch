@@ -74,7 +74,12 @@ var (
 
 // yaml11Tags are the YAML 1.1 types the `yaml` package knows by name and
 // turns into objects other than JSON's; this file does not read them.
-var yaml11Tags = map[string]bool{"!!binary": true, "!!timestamp": true, "!!set": true, "!!omap": true, "!!pairs": true, "!!merge": true}
+var yaml11Tags = map[string]bool{"!!binary": true, "!!timestamp": true, "!!set": true, "!!omap": true, "!!pairs": true}
+
+// mergeSymbol is a value tagged !!merge outside a key: the `yaml` package
+// makes it the merge key's Symbol, which no rule reads (not a string, not
+// in JSON), so a container setting a name to it is unknown.
+type mergeSymbol struct{}
 
 func plainStyle(n *yaml.Node) bool {
 	return n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) == 0
@@ -165,8 +170,13 @@ func scalarByTests(v string, tags ...string) (any, bool) {
 
 var coreTests = []string{"null", "bool", "intOct", "int", "intHex", "floatNaN", "floatExp", "float"}
 
-// scalarValue is a scalar node's JavaScript value.
-func scalarValue(n *yaml.Node) (any, error) {
+// scalarValue is a scalar node's JavaScript value. nonSpecific is a plain
+// scalar written with the non-specific tag "!", which the `yaml` package
+// reads as a string (yaml.v3 does not report it; see converter.nonSpecific).
+func scalarValue(n *yaml.Node, nonSpecific bool) (any, error) {
+	if nonSpecific {
+		return n.Value, nil
+	}
 	if tag, ok := explicitTag(n); ok {
 		var tests []string
 		switch tag {
@@ -180,6 +190,8 @@ func scalarValue(n *yaml.Node) (any, error) {
 			tests = []string{"intOct", "int", "intHex"}
 		case "!!float":
 			tests = []string{"floatNaN", "floatExp", "float"}
+		case "!!merge":
+			return mergeSymbol{}, nil
 		default:
 			if yaml11Tags[tag] {
 				return nil, errUnreadable
@@ -210,6 +222,43 @@ type anchorData struct {
 type converter struct {
 	anchors map[*yaml.Node]*anchorData
 	active  map[*yaml.Node]bool
+	// lines is the document's text by line, for nonSpecific.
+	lines []string
+}
+
+// nonSpecific reports a node written with the non-specific tag "!" (as in
+// "! null"). yaml.v3 reads "!" as no tag and resolves the scalar by its
+// own rules, where the `yaml` package makes it a string; so the node's
+// properties are read from the text: yaml.v3 places a node at its first
+// property, counting characters.
+func (c *converter) nonSpecific(n *yaml.Node) bool {
+	if n.Style&yaml.TaggedStyle != 0 || n.Line < 1 || n.Line > len(c.lines) || n.Column < 1 {
+		return false
+	}
+	line := []rune(strings.TrimSuffix(c.lines[n.Line-1], "\r"))
+	if n.Column-1 >= len(line) {
+		return false
+	}
+	rest := line[n.Column-1:]
+	isBreak := func(r rune) bool { return r == ' ' || r == '\t' }
+	for len(rest) > 0 {
+		switch {
+		case rest[0] == '&':
+			i := 1
+			for i < len(rest) && !isBreak(rest[i]) {
+				i++
+			}
+			for i < len(rest) && isBreak(rest[i]) {
+				i++
+			}
+			rest = rest[i:]
+		case rest[0] == '!':
+			return len(rest) == 1 || isBreak(rest[1]) || strings.ContainsRune(",[]{}", rest[1])
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // toJS is toJS(node): an anchored node registers its data first.
@@ -239,7 +288,7 @@ func (c *converter) toJSON(n *yaml.Node) (any, error) {
 	defer delete(c.active, n)
 	switch n.Kind {
 	case yaml.ScalarNode:
-		return scalarValue(n)
+		return scalarValue(n, c.nonSpecific(n))
 	case yaml.SequenceNode:
 		if tag, ok := explicitTag(n); ok && (tag == "!!omap" || tag == "!!pairs") {
 			return nil, errUnreadable
@@ -317,9 +366,17 @@ func (c *converter) aliasCount(n *yaml.Node) int {
 	return 1
 }
 
-// isMergeKey is a plain << key.
+// isMergeKey is a merge key: a plain << (whatever its tag), or any scalar
+// tagged !!merge, quoted or not (the `yaml` package resolves an explicit
+// !!merge to the merge key whatever the text).
 func isMergeKey(k *yaml.Node) bool {
-	return k.Kind == yaml.ScalarNode && plainStyle(k) && k.Value == "<<"
+	if k.Kind != yaml.ScalarNode {
+		return false
+	}
+	if tag, ok := explicitTag(k); ok && tag == "!!merge" {
+		return true
+	}
+	return plainStyle(k) && k.Value == "<<"
 }
 
 // scalarKey is a converted key, as a JavaScript value that is not an
@@ -478,24 +535,47 @@ func propertyKey(v any) string {
 	return jsString(v)
 }
 
-// directiveVersion is the %YAML directive's version before the first
-// document, "" when there is none.
-func directiveVersion(text string) string {
+// directiveVersions is every %YAML directive's version before the first
+// document ("?" for one without a version).
+func directiveVersions(text string) []string {
+	var out []string
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimRight(line, "\r")
 		switch {
 		case strings.HasPrefix(line, "%YAML"):
 			fields := strings.Fields(strings.TrimPrefix(line, "%YAML"))
 			if len(fields) == 0 {
-				return "?"
+				out = append(out, "?")
+			} else {
+				out = append(out, fields[0])
 			}
-			return fields[0]
 		case strings.HasPrefix(line, "%"), strings.TrimSpace(line) == "", strings.HasPrefix(strings.TrimSpace(line), "#"):
-			continue
+		default:
+			return out
 		}
-		return ""
 	}
-	return ""
+	return out
+}
+
+// rewriteDirectives gives yaml.v3, which accepts only one "%YAML 1.1",
+// the prologue's "%YAML 1.2" lines at the same length: the first as 1.1,
+// any repeat as a comment (the `yaml` package accepts a repeat).
+func rewriteDirectives(text string) string {
+	lines := strings.Split(text, "\n")
+	seen := false
+	for i, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "%YAML") && !seen:
+			lines[i] = "%YAML" + strings.Replace(strings.TrimPrefix(line, "%YAML"), "1.2", "1.1", 1)
+			seen = true
+		case strings.HasPrefix(line, "%YAML"):
+			lines[i] = "#" + line[1:]
+		case strings.HasPrefix(line, "%"), strings.TrimSpace(line) == "", strings.HasPrefix(strings.TrimSpace(line), "#"):
+		default:
+			return strings.Join(lines, "\n")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // parseBounded is the compose file as a JavaScript object, or false when
@@ -504,10 +584,20 @@ func parseBounded(text string) (Object, bool) {
 	if len(wellFormed(text)) > MaxComposeBytes {
 		return nil, false
 	}
-	if v := directiveVersion(text); v != "" && v != "1.2" {
-		return nil, false
+	// The `yaml` package's own version, 1.2, is read with its 1.2 rules
+	// here; yaml.v3 accepts only "%YAML 1.1", which changes nothing it
+	// reports (its nodes carry no resolution this file uses), so it is
+	// given the directive as 1.1. Any other version is unreadable.
+	parsed := text
+	if versions := directiveVersions(text); len(versions) > 0 {
+		for _, v := range versions {
+			if v != "1.2" {
+				return nil, false
+			}
+		}
+		parsed = rewriteDirectives(text)
 	}
-	dec := yaml.NewDecoder(strings.NewReader(text))
+	dec := yaml.NewDecoder(strings.NewReader(parsed))
 	var doc yaml.Node
 	if err := dec.Decode(&doc); err != nil {
 		return nil, false // an empty document is null, not a mapping
@@ -521,7 +611,7 @@ func parseBounded(text string) (Object, bool) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 {
 		return nil, false
 	}
-	c := &converter{anchors: map[*yaml.Node]*anchorData{}, active: map[*yaml.Node]bool{}}
+	c := &converter{anchors: map[*yaml.Node]*anchorData{}, active: map[*yaml.Node]bool{}, lines: strings.Split(text, "\n")}
 	v, err := c.toJS(doc.Content[0])
 	if err != nil {
 		return nil, false
