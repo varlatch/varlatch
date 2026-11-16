@@ -7,6 +7,7 @@ package daemon
 import (
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -173,17 +174,52 @@ func TestWritingCommandsRefusedDuringMaintenance(t *testing.T) {
 		t.Errorf("offline recover after the lease: %d %q %q", code, out, errOut)
 	}
 
-	// A fresh data directory under a lease: refused before the database
-	// (and with it the installation) is created.
+	// A fresh data directory under a persisted lease: every command either
+	// is refused or works on the directory's files, and none creates the
+	// database (and with it the installation) or any other state. The
+	// lock file, empty, is what flock serializes on.
 	fresh := newInstall(t, "")
 	expires := time.Now().Add(time.Hour).UnixMilli()
 	if err := backup.DurableJSON(filepath.Join(fresh.data, backup.GateFile), backup.Gate{ID: "lease", Kind: "capture", Phase: "draining", ExpiresAt: &expires}, true); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := runAdmin(t, "bootstrap", "--config", fresh.conf); code != ExitFailure || !strings.Contains(errOut, MaintenanceRefusal) {
-		t.Errorf("bootstrap on a fresh directory under a lease: %d %q", code, errOut)
+	files := func() string {
+		t.Helper()
+		var names []string
+		_ = filepath.WalkDir(fresh.data, func(p string, d fs.DirEntry, err error) error {
+			if err == nil && p != fresh.data {
+				names = append(names, strings.TrimPrefix(p, fresh.data+"/"))
+			}
+			return nil
+		})
+		return strings.Join(names, " ")
 	}
-	if _, err := os.Stat(filepath.Join(fresh.data, "varlatch.db")); !os.IsNotExist(err) {
-		t.Errorf("the database was created under the lease: %v", err)
+	for _, c := range []struct {
+		args []string
+		code int
+		err  string
+	}{
+		{[]string{"bootstrap"}, ExitFailure, "varlatchd admin bootstrap: " + MaintenanceRefusal + "\n"},
+		{[]string{"recover", "--new-admin"}, ExitFailure, "varlatchd admin recover: " + MaintenanceRefusal + "\n"},
+		{[]string{"security", "reset", "--org", "acme", "--all"}, ExitFailure, "varlatchd admin security: " + MaintenanceRefusal + "\n"},
+		{[]string{"unfreeze", "--org", "acme", "--confirm", "acme"}, ExitFailure, "varlatchd admin unfreeze: " + MaintenanceRefusal + "\n"},
+		{[]string{"backup", "run"}, ExitFailure, "varlatchd admin backup run: Installation maintenance is active; no backup was taken\n"},
+		{[]string{"backup", "status"}, ExitOK, ""},
+		{[]string{"maintenance", "status"}, ExitOK, ""},
+		{[]string{"maintenance", "begin", "--ttl", "1m"}, ExitFailure, "varlatchd admin maintenance begin: Installation maintenance is already active\n"},
+	} {
+		code, _, errOut := runAdmin(t, append(c.args, "--config", fresh.conf)...)
+		if code != c.code || errOut != c.err {
+			t.Errorf("%v on a fresh directory under a lease: %d %q", c.args, code, errOut)
+		}
+		if got := files(); got != "maintenance.json varlatchd.lock" {
+			t.Errorf("%v left %q in the data directory", c.args, got)
+		}
+	}
+	if code, _, errOut := runAdmin(t, "maintenance", "end", "lease", "--config", fresh.conf); code != ExitOK {
+		t.Errorf("maintenance end: %d %q", code, errOut)
+	}
+	if got := files(); got != "varlatchd.lock" {
+		t.Errorf("after the lease ended the data directory holds %q", got)
 	}
 }

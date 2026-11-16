@@ -281,9 +281,17 @@ daemon's maintenance admission and its one backup at a time.
     the socket or offline, enter before they take a gate or queue a job;
     under a gate they are refused with the TypeScript admin CLI's
     message, `Installation is in maintenance; ordinary admin operations
-    are blocked`, and exit 1. Offline that check comes before the
-    database is opened. `maintenance begin|end|status` and `backup status`
-    stay available;
+    are blocked`, and exit 1. `maintenance begin|end|status` and `backup
+    status` stay available;
+  - offline, nothing opens the database before a command needs it (its
+    first use creates the schema and the installation): the maintenance
+    commands and `backup status` work on the data directory's files only
+    (`maintenance.json`, `backups/*.json`), and under a gate a command
+    that writes, or `backup run`, is refused before the database is
+    opened. The data directory's lock is taken first, as the TypeScript
+    CLI takes its operator lease before it reads the gate: `flock` needs
+    `varlatchd.lock` (an empty file), and a gate read before the lock
+    could change before the command runs;
   - a backup run is admitted for its whole length, in one step with the
     check (`Enter`);
   - the Security Control report loop enters for each pass and skips the

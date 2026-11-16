@@ -186,6 +186,10 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 		}
 		return viaSocket(uc, what, args, stdout, stderr)
 	}
+	// The lock comes first, as the TypeScript admin CLI takes its operator
+	// lease before it reads the gate: flock needs varlatchd.lock to exist
+	// (an empty file, no state), and a gate read before the lock could
+	// change before the command runs (a daemon starting meanwhile).
 	unlock, err := lockDataDir(cfg.DataDir)
 	if errors.Is(err, errLocked) {
 		fmt.Fprintf(stderr, "%s: a varlatchd holds the data directory %s, but its control socket does not answer; nothing was written. "+
@@ -203,11 +207,26 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 			return ExitFailure
 		}
 	}
-	// Offline under a gate: refused before the database is opened (the
-	// first use would create the installation), as in the daemon.
-	if writes(args[0]) && maintenance.Open(cfg.DataDir, nil).Isolated() {
-		fmt.Fprintf(stderr, "%s: %s\n", what, MaintenanceRefusal)
-		return ExitFailure
+	// Offline, nothing opens the database before it is needed: its first
+	// use creates the schema and the installation.
+	//   - The maintenance commands and backup status work on the data
+	//     directory's files only (maintenance.json, backups/*.json).
+	//   - Under a gate, a command that writes and a backup run are refused
+	//     before the database is opened, as in the daemon.
+	if fileOnly(args) {
+		env := &hostEnv{cfg: cfg, admission: maintenance.Open(cfg.DataDir, nil), log: slog.New(slog.NewTextHandler(stderr, nil))}
+		env.backups = newBackups(env)
+		return runHost(context.Background(), env, args, stdout, stderr)
+	}
+	if maintenance.Open(cfg.DataDir, nil).Isolated() {
+		switch {
+		case writes(args[0]):
+			fmt.Fprintf(stderr, "%s: %s\n", what, MaintenanceRefusal)
+			return ExitFailure
+		case args[0] == "backup":
+			fmt.Fprintf(stderr, "%s %s: %s\n", what, args[1], backups.ErrMaintenance.Error())
+			return ExitFailure
+		}
 	}
 	env, status := openOffline(cfg, what, stderr)
 	if env == nil {
@@ -215,6 +234,13 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 	}
 	defer env.store.Close()
 	return runHost(context.Background(), env, args, stdout, stderr)
+}
+
+// fileOnly reports whether a host command reads and writes only the data
+// directory's files, never the database: the maintenance commands and
+// backup status.
+func fileOnly(args []string) bool {
+	return args[0] == "maintenance" || args[0] == "backup" && len(args) > 1 && args[1] == "status"
 }
 
 func viaSocket(conn *net.UnixConn, what string, args []string, stdout, stderr io.Writer) int {
