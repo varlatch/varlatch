@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -70,8 +72,15 @@ type Options struct {
 	Now     func() time.Time
 	// TLS is the client's TLS configuration (tests: a private CA).
 	TLS *tls.Config
-	// ConnectTimeout bounds one connection attempt (10 s).
+	// ConnectTimeout bounds a connection: every attempt to every checked
+	// address of a name, together (10 s, as undici's connect timeout with
+	// autoSelectFamily).
 	ConnectTimeout time.Duration
+	// LookupTimeout bounds one name's resolution (10 s).
+	LookupTimeout time.Duration
+	// dial replaces the connection attempt to one checked address (tests:
+	// a blackhole).
+	dial func(ctx context.Context, network, address string) (net.Conn, error)
 }
 
 // Policy is OutboundPolicy: the allow list, the resolver, the refusal
@@ -85,8 +94,11 @@ type Policy struct {
 	log            *slog.Logger
 	tls            *tls.Config
 	connectTimeout time.Duration
+	lookupTimeout  time.Duration
+	dial           func(ctx context.Context, network, address string) (net.Conn, error)
 
-	once  sync.Once
+	// mu guards the transports, made on first use.
+	mu    sync.Mutex
 	https *http.Transport
 	http  *http.Transport
 
@@ -105,13 +117,33 @@ func New(entries []Entry, o Options) *Policy {
 	if o.ConnectTimeout == 0 {
 		o.ConnectTimeout = 10 * time.Second
 	}
-	return &Policy{Entries: entries, Limiter: NewLimiter(o.Now), resolve: o.Resolve, log: o.Log, tls: o.TLS, connectTimeout: o.ConnectTimeout}
+	if o.LookupTimeout == 0 {
+		o.LookupTimeout = 10 * time.Second
+	}
+	return &Policy{Entries: entries, Limiter: NewLimiter(o.Now), resolve: o.Resolve, log: o.Log, tls: o.TLS,
+		connectTimeout: o.ConnectTimeout, lookupTimeout: o.LookupTimeout, dial: o.dial}
 }
 
-// Lookup resolves a name with the policy's resolver (the configured
-// destinations check bounds and shares its lookups). Decides nothing.
+// Lookup resolves a name with the policy's resolver, within LookupTimeout
+// (the configured destinations check bounds and shares its lookups).
+// Decides nothing. A failure is a *net.DNSError naming only the name:
+// never the resolver's own address.
 func (p *Policy) Lookup(ctx context.Context, name string) ([]Answer, error) {
-	return p.resolve(ctx, name)
+	ctx, cancel := context.WithTimeout(ctx, p.lookupTimeout)
+	defer cancel()
+	answers, err := p.resolve(ctx, name)
+	if err == nil {
+		return answers, nil
+	}
+	clean := &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+	var dns *net.DNSError
+	switch {
+	case errors.As(err, &dns) && (dns.IsTimeout || dns.IsTemporary):
+		clean = &net.DNSError{Err: "temporary failure in name resolution", Name: name, IsTimeout: dns.IsTimeout, IsTemporary: true}
+	case ctx.Err() != nil:
+		clean = &net.DNSError{Err: "lookup timed out", Name: name, IsTimeout: true, IsTemporary: true}
+	}
+	return nil, clean
 }
 
 // Decide is decide with the policy's allow list.
@@ -156,7 +188,7 @@ func (p *Policy) CheckURL(ctx context.Context, u whatwg.URL, lookup Resolver) (C
 		return CheckOutcome{Outcome: outcome(v), Destination: d, Addresses: []string{d.Host}, Verdict: &v}, nil
 	}
 	if lookup == nil {
-		lookup = p.resolve
+		lookup = p.Lookup
 	}
 	answers, err := lookup(ctx, d.Host)
 	if err != nil {
@@ -228,10 +260,21 @@ func (p *Policy) Client(purpose Purpose) *http.Client {
 }
 
 // Transport is the round tripper for a purpose: for clients that take a
-// transport rather than a client (the audit export's S3 client, 4.11).
+// transport rather than a client (the audit export's S3 client, 4.11). It
+// refuses a redirect itself (a request the client made from a redirect
+// response), so a client of the caller's that would follow one cannot.
 func (p *Policy) Transport(purpose Purpose) http.RoundTripper {
-	p.once.Do(p.build)
+	p.transports()
 	return roundTripper{p: p, purpose: purpose}
+}
+
+func (p *Policy) transports() (*http.Transport, *http.Transport) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.https == nil {
+		p.build()
+	}
+	return p.https, p.http
 }
 
 func (p *Policy) build() {
@@ -262,14 +305,18 @@ func (rt roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.User != nil {
 		return nil, errors.New("Outbound request URLs never carry credentials")
 	}
+	if req.Response != nil {
+		return nil, errRedirect
+	}
 	if err := req.Context().Err(); err != nil {
 		return nil, err
 	}
+	https, http := rt.p.transports()
 	switch req.URL.Scheme {
 	case "https":
-		return rt.p.https.RoundTrip(req)
+		return https.RoundTrip(req)
 	case "http":
-		return rt.p.http.RoundTrip(req)
+		return http.RoundTrip(req)
 	}
 	return nil, fmt.Errorf("Outbound requests use https or http, not %s:", req.URL.Scheme)
 }
@@ -292,7 +339,7 @@ func (p *Policy) dialer(scheme string) func(ctx context.Context, network, addr s
 		if fam := whatwg.IsIP(d.Host); fam != 0 {
 			answers = []Answer{{Address: d.Host, Family: fam}}
 		} else {
-			if answers, err = p.resolve(ctx, d.Host); err != nil {
+			if answers, err = p.Lookup(ctx, d.Host); err != nil {
 				return nil, err
 			}
 			if len(answers) == 0 {
@@ -315,6 +362,9 @@ func (p *Policy) dialer(scheme string) func(ctx context.Context, network, addr s
 		if len(wanted) == 0 {
 			return nil, &net.DNSError{Err: "no such host", Name: d.Host, IsNotFound: true}
 		}
+		// One deadline for every attempt to every checked address.
+		ctx, cancel := context.WithTimeout(ctx, p.connectTimeout)
+		defer cancel()
 		return p.dialChecked(ctx, wanted, portText)
 	}
 }
@@ -335,11 +385,48 @@ func (p *Policy) dialChecked(ctx context.Context, answers []Answer, port string)
 			fallback = append(fallback, a)
 		}
 	}
-	d := net.Dialer{Timeout: p.connectTimeout}
+	// The checked addresses as the socket names them (mapped addresses
+	// in their IPv4 form, zones dropped).
+	same := func(address string) string {
+		a, err := netip.ParseAddr(address)
+		if err != nil {
+			return address
+		}
+		return a.WithZone("").Unmap().String()
+	}
+	checked := map[string]bool{}
+	for _, a := range answers {
+		checked[same(a.Address)] = true
+	}
+	dial := p.dial
+	if dial == nil {
+		// Control sees the address the socket connects to: one this dial
+		// checked, or nothing is sent.
+		d := net.Dialer{Control: func(_, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil || !checked[same(host)] {
+				return fmt.Errorf("outbound: a connection to an unchecked address %s", address)
+			}
+			return nil
+		}}
+		dial = d.DialContext
+	}
+	// serial tries a family's addresses in order within ctx's deadline,
+	// each attempt given an equal share of what remains (at least 2 s, as
+	// Go's own dialer), so a name of several unreachable addresses is
+	// bounded by the one deadline.
 	serial := func(ctx context.Context, list []Answer) (net.Conn, error) {
 		var last error
-		for _, a := range list {
-			c, err := d.DialContext(ctx, "tcp", net.JoinHostPort(a.Address, port))
+		for i, a := range list {
+			attempt := ctx
+			if deadline, ok := ctx.Deadline(); ok {
+				share := time.Until(deadline) / time.Duration(len(list)-i)
+				share = max(share, min(2*time.Second, time.Until(deadline)))
+				var cancel context.CancelFunc
+				attempt, cancel = context.WithTimeout(ctx, share)
+				defer cancel()
+			}
+			c, err := dial(attempt, "tcp", net.JoinHostPort(a.Address, port))
 			if err == nil {
 				return c, nil
 			}
@@ -486,6 +573,8 @@ func (p *Policy) RecordRefusal(ctx context.Context, store *storage.DB, rec Refus
 
 // Close closes pooled connections.
 func (p *Policy) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.https != nil {
 		p.https.CloseIdleConnections()
 		p.http.CloseIdleConnections()

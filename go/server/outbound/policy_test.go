@@ -322,3 +322,77 @@ func TestReasonOfStatus(t *testing.T) {
 }
 
 func urlUser(name, password string) *url.Userinfo { return url.UserPassword(name, password) }
+
+// One deadline bounds the whole connection: a name with several
+// unreachable checked addresses (a blackhole: the attempt never
+// completes) fails within ConnectTimeout, not one timeout per address, in
+// one family and across two.
+func TestConnectDeadline(t *testing.T) {
+	var attempts atomic.Int64
+	blackhole := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		attempts.Add(1)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	dns := &fakeDNS{answers: map[string][]Answer{}, asked: map[string]int{}}
+	dns.set("black.test", v4("192.0.2.1"), v4("192.0.2.2"), v4("192.0.2.3"), v4("192.0.2.4"))
+	dns.set("dual.test", v6("2001:db8::1"), v6("2001:db8::2"), v4("192.0.2.1"), v4("192.0.2.2"))
+	entries, _ := ParseAllow("192.0.2.0/24:*,[2001:db8::/32]:*")
+	const timeout = 500 * time.Millisecond
+	p := New(entries, Options{Resolve: dns.resolve, ConnectTimeout: timeout, dial: blackhole})
+	t.Cleanup(p.Close)
+	for _, host := range []string{"black.test", "dual.test"} {
+		attempts.Store(0)
+		start := time.Now()
+		_, err := get(p.Client(Webhook), "http://"+host+":8080/x")
+		elapsed := time.Since(start)
+		if err == nil || RefusalOf(err) != nil {
+			t.Fatalf("%s: %v", host, err)
+		}
+		if elapsed < timeout || elapsed > timeout+400*time.Millisecond {
+			t.Errorf("%s: failed after %s with a %s deadline (%d attempts)", host, elapsed, timeout, attempts.Load())
+		}
+	}
+}
+
+// A lookup has its own deadline, and a failed one never names the
+// resolver's address.
+func TestLookupDeadlineAndErrors(t *testing.T) {
+	hang := func(ctx context.Context, _ string) ([]Answer, error) {
+		<-ctx.Done()
+		return nil, &net.DNSError{Err: "i/o timeout", Name: "slow.test", Server: "172.17.0.1:53", IsTimeout: true}
+	}
+	p := New(nil, Options{Resolve: hang, LookupTimeout: 200 * time.Millisecond})
+	start := time.Now()
+	_, err := p.Lookup(context.Background(), "slow.test")
+	var dns *net.DNSError
+	if !errors.As(err, &dns) || !dns.IsTimeout || dns.Server != "" || strings.Contains(err.Error(), "172.17.0.1") || time.Since(start) > time.Second {
+		t.Errorf("a hung lookup: %v after %s", err, time.Since(start))
+	}
+	if c, _ := p.Check(context.Background(), "https://slow.test/", nil); c.Outcome != "unresolved" || c.Error != "EAI_AGAIN" {
+		t.Errorf("check of a hung name: %+v", c)
+	}
+	refused := New(nil, Options{Resolve: func(context.Context, string) ([]Answer, error) {
+		return nil, &net.DNSError{Err: "server misbehaving", Name: "x.test", Server: "172.17.0.1:53"}
+	}})
+	if _, err := refused.Lookup(context.Background(), "x.test"); err == nil || strings.Contains(err.Error(), "172.17.0.1") || !strings.Contains(err.Error(), "no such host") {
+		t.Errorf("a resolver error: %v", err)
+	}
+	if _, err := get(refused.Client(Webhook), "https://x.test/"); err == nil || strings.Contains(err.Error(), "172.17.0.1") {
+		t.Errorf("a request's resolver error: %v", err)
+	}
+}
+
+// The transport refuses a redirect even under a client of the caller's
+// that would follow one.
+func TestTransportRefusesRedirects(t *testing.T) {
+	target, hits := counting(t, nil)
+	redirect, _ := counting(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/elsewhere", http.StatusFound)
+	})
+	dns := &fakeDNS{answers: map[string][]Answer{}, asked: map[string]int{}}
+	c := &http.Client{Transport: policyOf(t, "127.0.0.1/32:*", dns, nil).Transport(AuditExport)}
+	if _, err := get(c, redirect.URL+"/x"); err == nil || !errors.Is(err, errRedirect) || hits.Load() != 0 {
+		t.Fatalf("a redirect through the transport: %v, %d requests to its target", err, hits.Load())
+	}
+}

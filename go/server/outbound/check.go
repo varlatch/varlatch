@@ -202,7 +202,9 @@ func (p *Policy) sharedLookup(ctx context.Context, name string) ([]Answer, error
 			defer close(f.done)
 			lookupSlots <- struct{}{}
 			defer func() { <-lookupSlots }()
-			f.answers, f.err = p.resolve(context.WithoutCancel(ctx), name)
+			// Not the caller's cancellation (others share it), but the
+			// lookup's own deadline (Lookup).
+			f.answers, f.err = p.Lookup(context.WithoutCancel(ctx), name)
 			p.lookups.mu.Lock()
 			if p.lookups.inFlight[name] == f {
 				delete(p.lookups.inFlight, name)

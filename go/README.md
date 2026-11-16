@@ -400,11 +400,18 @@ can choose or influence goes through it, and only it.
   first answer's family first and the other after 300 ms (Happy
   Eyeballs); a literal address is decided as it is and never looked up.
   A resolver whose next answer differs changes nothing for a connection
-  already checked. TLS and the Host header use the URL's name. No
-  environment proxy applies, redirects are never followed, and a URL
-  carrying credentials is refused. The transports are shared by every
-  purpose, pooled per origin. `Transport` hands the same round tripper to
-  clients that take one (the audit export's S3 client, 4.11).
+  already checked, and the socket's own address is checked again as it
+  connects (`net.Dialer.Control`). One deadline (10 s) bounds every
+  attempt to every checked address together, each attempt taking an
+  equal share of what remains (at least 2 s, as Go's own dialer), as
+  undici's connect timeout does; a lookup has its own (10 s), and a
+  failed one names only the name, never the resolver's address. TLS and
+  the Host header use the URL's name. No environment proxy applies,
+  redirects are never followed, and a URL carrying credentials is refused.
+  The transports are shared by every purpose, pooled per origin.
+  `Transport` hands the same round tripper to clients that take one (the
+  audit export's S3 client, 4.11); it refuses a redirect itself, so a
+  caller's client that would follow one cannot.
 - **Refusals** are `RefusedError` (the fixed sentence, never the address)
   and `outbound.refused` audit events within the rate bound: a
   configuration-phase refusal always, a connection-phase one once per
@@ -421,12 +428,23 @@ can choose or influence goes through it, and only it.
   and a page's scan is shared while it runs and reused for 30 seconds.
   Rows are ordered by Organization slug in byte order.
 - **The structural test** (`structure_test.go`) parses every non-test file
-  under `go/server` and fails on a request made outside this package:
-  `net.Dial*`, a `net.Dialer`, `http.DefaultClient`,
-  `http.DefaultTransport`, `http.Get`, `Head`, `Post` and `PostForm`, a new
-  `http.Transport` or `http.Client`, or an S3 client, with a reviewed list
-  of exceptions: the daemon's Unix control socket, and the host's backup
-  destination (ADR-0057 Decision 1).
+  under `go/server`, `go/cmd/varlatchd` and `go/lib` and fails on a
+  request made outside this package: any use of `net.Dial*`, `net.Dialer`,
+  `net.Listen{Packet,UDP,IP,MulticastUDP}`, `tls.Dial`,
+  `tls.DialWithDialer`, `tls.Dialer`, anything of `net/smtp`,
+  `http.DefaultClient`, `http.DefaultTransport`, `http.Get`, `Head`,
+  `Post`, `PostForm` and `http.ProxyFromEnvironment`; an `http.Client` or
+  `http.Transport` value (a literal, `new`, a variable or a struct field:
+  a zero client sends through the default transport); a dot-import of
+  `net`, `net/http`, `crypto/tls` or `net/smtp`; or an S3 client. Imports
+  are matched by path. Each reviewed exception names its file, its use
+  and how many times: in go/server the daemon's Unix control socket
+  (twice) and the host's backup destination (ADR-0057 Decision 1); in
+  go/lib the backup destination's client and Sigstore's TUF repository.
+  It is a check of syntax, not of types: a request through a value of
+  these types obtained another way (a pointer handed in, returned by a
+  function, reached through reflection), or made inside a third-party
+  package, is not caught; review covers those.
 - `externaleffect.ts` (the effect's deadline and the refusal records kept
   across a rollback) is not ported here: webhooks do not run inside an
   external effect in TypeScript, and in Go a request's deadline is its
