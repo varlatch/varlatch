@@ -3,9 +3,15 @@
 package paritytest
 
 import (
+	"context"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/db"
 )
 
 // A replay that starts a second before an hour ends and runs on for two
@@ -38,5 +44,61 @@ func TestHourOverrunFails(t *testing.T) {
 	err := hourOverrun(began, began.Add(time.Hour))
 	if err == nil || !strings.Contains(err.Error(), "ran into the next hour") {
 		t.Errorf("past the hour: %v", err)
+	}
+}
+
+// errors records a check's errors without failing the test.
+type errors struct {
+	testing.TB
+	got []string
+}
+
+func (e *errors) Errorf(format string, args ...any) {
+	e.got = append(e.got, fmt.Sprintf(format, args...))
+}
+func (e *errors) Helper() {}
+
+// checkTimes checks every exposure time a request set: in a row it
+// inserted, both times; in a row it changed, the time that changed, even
+// before the request (a first time set too early), and nothing in a row
+// it left alone.
+func TestCheckTimesSeesEveryExposureTimeARequestSet(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, storage.Options{Path: filepath.Join(t.TempDir(), "varlatch.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := db.Init(ctx, store, "0.0.0-test"); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if err := store.Write(ctx, func(tx *storage.Tx) error { _, err := tx.ExecContext(ctx, q, args...); return err }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO identities (id, kind, name) VALUES ('idn_a', 'human', 'Alice')`)
+	exec(`INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'acme', 'Acme', '{}')`)
+	row := func(version string, first, last int64) {
+		exec(`INSERT INTO member_exposure (organization_id, identity_id, version_id, item_name, environment_id, way, first_at, last_at)
+			VALUES ('org_a', 'idn_a', ?, 'S', 'env_a', 'written', ?, ?)
+			ON CONFLICT (organization_id, identity_id, version_id, environment_id, way) DO UPDATE SET first_at = excluded.first_at, last_at = excluded.last_at`,
+			version, first, last)
+	}
+	sent := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	done := sent.Add(time.Second)
+	in, early := sent.Add(time.Millisecond).UnixMicro(), sent.Add(-time.Hour).UnixMicro()
+	row("ver_untouched", early, early)
+	row("ver_changed", early, early)
+	before := exposureTimes(t, store)
+	row("ver_new", in, in)          // inserted, both times in the request: fine
+	row("ver_changed", early-1, in) // its first time moved, to before the request
+	row("ver_new_early", early, in) // inserted with a first time before the request
+	e := &errors{TB: t}
+	checkTimes(e, "req", store, 1<<62, before, sent, done)
+	if len(e.got) != 2 || !strings.Contains(strings.Join(e.got, "\n"), "ver_changed/env_a/written first_at") ||
+		!strings.Contains(strings.Join(e.got, "\n"), "ver_new_early/env_a/written first_at") {
+		t.Errorf("errors:\n%s", strings.Join(e.got, "\n"))
 	}
 }

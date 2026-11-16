@@ -188,6 +188,15 @@ var BuiltOperations = []string{
 	liftIncidentFreezePattern,
 	listAuditEventsPattern,
 	exportAuditEventsPattern,
+	// Step 4.4a: machine identities and their credentials (identities.go).
+	listIdentitiesPattern,
+	createServiceIdentityPattern,
+	renameIdentityPattern,
+	retireIdentityPattern,
+	reactivateIdentityPattern,
+	listIdentityCredentialsPattern,
+	issueIdentityCredentialPattern,
+	revokeIdentityCredentialPattern,
 }
 
 // Server is the handler.

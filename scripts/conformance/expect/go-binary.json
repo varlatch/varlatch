@@ -88,10 +88,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "createServiceIdentity": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "createSyncTarget": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -192,10 +188,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "issueIdentityCredential": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "listCapabilities": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -221,14 +213,6 @@
         "step": "ADR-0059 step 4"
       },
       "listGroups": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "listIdentities": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "listIdentityCredentials": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -300,10 +284,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "reactivateIdentity": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "refusedDestinations": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -336,10 +316,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "renameIdentity": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "replaceAuditExportCredential": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -356,19 +332,11 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "retireIdentity": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "reviewMember": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
       "revokeCapability": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "revokeIdentityCredential": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
