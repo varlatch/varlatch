@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { classifyComposeUsage } from "../src/coolifyCompose.js";
 import { coolifyAdapter, convexAdapter, githubActionsAdapter, type AdapterRequest } from "../src/index.js";
 import { parseTokenExpiration } from "../src/github.js";
+import { SEAL_PUBLIC_KEYS } from "./go-vectors-seal.js";
 
 type Answer = { status: number; body?: string; headers?: Record<string, string> } | Error;
 
@@ -59,7 +60,7 @@ const generated = (containers: string[]) =>
   `services:\n${containers.map((c) => `  ${c}:\n    image: x\n    env_file:\n      - .env\n`).join("")}`;
 
 describe("extra: compose YAML as the yaml package reads it", () => {
-  const names = ["A", "B", "C", "D", "SERVICE_PASSWORD_X", "SERVICE_URL_APP"];
+  const names = ["A", "B", "C", "D", "FOO", "null", "7", "true", "SERVICE_PASSWORD_X", "SERVICE_URL_APP"];
   const corpus: Record<string, string> = {
     plain: "services:\n  app:\n    environment:\n      A: ${A}\n      B: literal\n      C: ''\n",
     list: "services:\n  app:\n    environment:\n      - A=${A}\n      - B\n      - C=\n",
@@ -106,6 +107,16 @@ describe("extra: compose YAML as the yaml package reads it", () => {
     buildArgsObject: "services:\n  app:\n    build:\n      context: .\n      args:\n        A: ${A}\n        B: ''\n",
     nonStringEnvironment: "services:\n  app:\n    environment: A=1\n  db:\n    environment: 5\n",
     servicesNotMapping: "services:\n  - app\n",
+    nonSpecificKey: "services: {app: {environment: {! null: \"\", ! 7: x, ! true: y}}}\n",
+    nonSpecificValues: "services:\n  app:\n    environment:\n      A: ! ${A}\n      B: &b ! null\n      C: ! &c 12\n      D: *b\n",
+    nonSpecificBlock: "services:\n  app:\n    environment:\n      ! null: ''\n      ! A: $A\n",
+    yaml12Directive: "%YAML 1.2\n---\nservices:\n  app:\n    environment:\n      A: ${A}\n      B: 0o17\n      C: yes\n",
+    yaml12DirectiveComment: "# head\n%YAML 1.2 # the version\n---\nservices:\n  app:\n    environment:\n      A: ''\n",
+    yaml12DirectiveTwice: "%YAML 1.2\n%YAML 1.2\n---\nservices:\n  app:\n    image: x\n",
+    yaml12NoDocumentStart: "%YAML 1.2\nservices:\n  app:\n    image: x\n",
+    mergeTaggedQuoted: "services:\n  app:\n    environment:\n      !!merge \"<<\": {FOO: \"\"}\n      A: x\n",
+    mergeTaggedOtherText: "services:\n  app:\n    environment:\n      !!merge 'anything': {FOO: \"\", A: $A}\n",
+    mergeTaggedValue: "services:\n  app:\n    environment:\n      A: !!merge x\n",
   };
   for (const [name, raw] of Object.entries(corpus)) {
     it(name, () => {
@@ -334,6 +345,22 @@ describe("extra: destinations as entered", () => {
       coolifyAdapter.validateName(name, { applicationUuid: "app-uuid-1" });
     }
     for (const name of ["CONVEX_SITE_URL", "CONVEX_OTHER", "x".repeat(257), "a.b"]) convexAdapter.validateName(name);
+  });
+});
+
+describe("extra: GitHub sealed values a replay opens", () => {
+  it("seals each value to the known recipients", async () => {
+    const values = ["postgres://user:pw@host/db", "", "\u00e9\u20ac\ud83d\ude00", "lone \ud800 surrogate", "x".repeat(1000), "line\nbreak\u0000nul"];
+    for (const [i, key] of SEAL_PUBLIC_KEYS.entries()) {
+      await githubActionsAdapter.writeValues(
+        github(script(json(200, { key_id: `k${i}`, key }), ...values.map(() => ({ status: 201 })))),
+        values.map((value, j) => ({ name: `V${j}`, value })),
+      );
+    }
+    await githubActionsAdapter.writeValues(
+      github(script(json(200, { key_id: "env", key: SEAL_PUBLIC_KEYS[0] }), { status: 204 }), { repo: "api", environment: "prod env" }),
+      [{ name: "ENV_VALUE", value: "in an environment" }],
+    );
   });
 });
 

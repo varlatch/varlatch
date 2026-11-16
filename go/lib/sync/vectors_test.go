@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"io"
 	"math"
@@ -19,6 +20,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/curve25519"
 )
 
 // The TypeScript adapters' recorded exchanges (packages/sync/test/
@@ -30,6 +33,10 @@ type vectors struct {
 	seal   []any
 	base64 []any
 }
+
+// sealSecrets are the recipients' secret keys the recording opens sealed
+// values with (SEAL_SECRETS), set by loadVectors.
+var sealSecrets [][]byte
 
 func loadVectors(t *testing.T) vectors {
 	t.Helper()
@@ -49,6 +56,10 @@ func loadVectors(t *testing.T) vectors {
 	var cases []Object
 	for _, c := range root.get("cases").([]any) {
 		cases = append(cases, unpack(c, table).(Object))
+	}
+	sealSecrets = nil
+	for _, h := range root.get("sealSecrets").([]any) {
+		sealSecrets = append(sealSecrets, hexBytes(t, h.(string)))
 	}
 	return vectors{cases: cases, seal: root.get("seal").([]any), base64: root.get("base64").([]any)}
 }
@@ -345,11 +356,21 @@ func recordedWire(v any) Object {
 
 var sealedValue = regexp.MustCompile(`"encrypted_value":"([^"]*)"`)
 
-// normalizeBody is the recording's: a sealed value as its length.
+// normalizeBody is the recording's: a sealed value as its length, and one
+// sealed to a recipient of sealSecrets also as the hex of what it opens to.
 func normalizeBody(body string) string {
 	return sealedValue.ReplaceAllStringFunc(body, func(m string) string {
-		b64 := sealedValue.FindStringSubmatch(m)[1]
-		return `"encrypted_value":"<sealed:` + strconv.Itoa(len(nodeBase64(b64))) + `>"`
+		sealed := nodeBase64(sealedValue.FindStringSubmatch(m)[1])
+		for _, secret := range sealSecrets {
+			public, err := curve25519.X25519(secret, curve25519.Basepoint)
+			if err != nil {
+				panic(err)
+			}
+			if opened, ok := SealedBoxOpen(sealed, public, secret); ok {
+				return `"encrypted_value":"<sealed:` + strconv.Itoa(len(sealed)) + ":" + hex.EncodeToString(opened) + `>"`
+			}
+		}
+		return `"encrypted_value":"<sealed:` + strconv.Itoa(len(sealed)) + `>"`
 	})
 }
 
