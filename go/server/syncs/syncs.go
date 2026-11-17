@@ -62,6 +62,9 @@ type Service struct {
 	client *http.Client
 	// commitHook sees every converge commit by its name (tests only).
 	commitHook func(point string)
+	// scanBatches replaces the trigger scan's batches a pass (tests only;
+	// 0 is scanBatches).
+	scanBatches int
 }
 
 func (s *Service) logger() *slog.Logger {

@@ -20,3 +20,7 @@ func OnCommit(s *Service, hook func(point string)) { s.commitHook = hook }
 // ScanTriggers runs the engine's trigger scan alone (scanSyncTriggers):
 // tests.
 func ScanTriggers(ctx context.Context, s *Service) error { return s.scanTriggers(ctx) }
+
+// ScanBatches sets how many batches of 500 events one pass's trigger scan
+// reads at most (tests; the engine's is 200).
+func ScanBatches(s *Service, n int) { s.scanBatches = n }

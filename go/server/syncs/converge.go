@@ -55,6 +55,12 @@ const (
 	failureBudget  = 10
 	scanBatch      = 500
 	maxTargetNotes = 50
+	// scanBatches is the most batches of scanBatch events one pass's
+	// trigger scan reads: 100,000 events, so that a pass stays bounded.
+	// TypeScript reads one batch a pass, so a backlog of audit events (an
+	// import, a burst of disclosures) delays every sync by a pass per 500
+	// events (TypeScript defect 10, fixed here: CONVERGE.md).
+	scanBatches = 200
 )
 
 // nonTriggering is NON_TRIGGERING_EVENTS: events that never change what a
@@ -226,9 +232,31 @@ func (s *Service) RunOnce(ctx context.Context, opts RunOptions) {
 	}
 }
 
-// scanTriggers is scanSyncTriggers: Targets whose effective output an
-// audit event may have changed are marked due, then the cursor advances.
+// scanTriggers is scanSyncTriggers, drained: batch after batch until the
+// scan reaches the end of the audit log, at most scanBatches a pass
+// (TypeScript defect 10: TypeScript reads one batch a pass). Each batch is
+// TypeScript's: its Targets marked, then the cursor advanced.
 func (s *Service) scanTriggers(ctx context.Context) error {
+	limit := s.scanBatches
+	if limit == 0 {
+		limit = scanBatches
+	}
+	for range limit {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		read, err := s.scanTriggerBatch(ctx)
+		if err != nil || read < scanBatch {
+			return err
+		}
+	}
+	return nil
+}
+
+// scanTriggerBatch is one batch of scanSyncTriggers: Targets whose
+// effective output an audit event may have changed are marked due, then
+// the cursor advances. It answers how many events it read.
+func (s *Service) scanTriggerBatch(ctx context.Context) (int, error) {
 	reader := s.store().Reader()
 	cursor, err := query.New(reader).SyncCursor(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -236,16 +264,16 @@ func (s *Service) scanTriggers(ctx context.Context) error {
 		if err := s.commit(ctx, nil, "cursor-init", func(ctx context.Context, q *query.Queries, _ *storage.Tx) error {
 			return q.InsertSyncCursor(ctx, now)
 		}); err != nil {
-			return err
+			return 0, err
 		}
 		cursor, err = query.New(reader).SyncCursor(ctx)
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 	events, err := query.New(reader).TriggerEvents(ctx, query.TriggerEventsParams{EventOrder: cursor, Limit: scanBatch})
 	if err != nil || len(events) == 0 {
-		return err
+		return 0, err
 	}
 	environments, projects := []any{}, []any{}
 	seenE, seenP := map[string]bool{}, map[string]bool{}
@@ -273,11 +301,11 @@ func (s *Service) scanTriggers(ctx context.Context) error {
 				EnvironmentIds: string(jsvalue.Stringify(environments)), ProjectIds: string(jsvalue.Stringify(projects)),
 			})
 		}); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	last := events[len(events)-1]
-	return s.commit(ctx, nil, "trigger-cursor", func(ctx context.Context, q *query.Queries, _ *storage.Tx) error {
+	return len(events), s.commit(ctx, nil, "trigger-cursor", func(ctx context.Context, q *query.Queries, _ *storage.Tx) error {
 		return q.AdvanceSyncCursor(ctx, query.AdvanceSyncCursorParams{EventOrder: last.EventOrder, EventID: last.ID})
 	})
 }
