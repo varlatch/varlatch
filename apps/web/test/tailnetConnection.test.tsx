@@ -30,11 +30,15 @@ import { TailnetConnectStatus } from "../src/features/values/TailnetOnly";
  */
 
 const ENDPOINT = "https://varlatch.example.ts.net:8688";
+/** Another endpoint the installation may name instead. */
+const OTHER_ENDPOINT = "https://varlatch-2.example.ts.net:8688";
 const DEVICE = { recognized: true, tailnet: "example.ts.net", nodeId: "nLAPTOP", nodeName: "laptop", tags: ["tag:prod"] };
 
 type Sent = { url: string; method: string; credentials: RequestCredentials | undefined; auth: string | undefined };
 let sent: Sent[];
 let endpointConfigured: boolean;
+/** The endpoint the installation names while one is configured. */
+let configuredEndpoint: string;
 /** How the endpoint answers; the default never answers until aborted. */
 let endpoint: (url: string, init: RequestInit) => Promise<Response>;
 let state: ReturnType<typeof useTailnetConnection>;
@@ -47,16 +51,17 @@ const never = (_url: string, init: RequestInit) =>
 beforeEach(() => {
   sent = [];
   endpointConfigured = true;
+  configuredEndpoint = ENDPOINT;
   endpoint = never;
   vi.stubGlobal("document", new EventTarget());
   vi.stubGlobal("fetch", async (input: unknown, init: RequestInit = {}) => {
     const url = String(input);
     const headers = (init.headers ?? {}) as Record<string, string>;
     sent.push({ url, method: init.method ?? "GET", credentials: init.credentials, auth: headers.Authorization });
-    if (url.startsWith(ENDPOINT)) return endpoint(url, init);
+    if (url.startsWith(ENDPOINT) || url.startsWith(OTHER_ENDPOINT)) return endpoint(url, init);
     if (url.endsWith("/auth/varlatch-token")) return Response.json({ token: "bearer-1", identityId: "idn_me" });
     if (url.endsWith("/v1/meta")) return Response.json({ apiMajor: 1, serverVersion: "x", capabilities: ["tailnet.browser-reads", "environments.tailnet-required"] });
-    if (url.endsWith("/v1/tailnet/endpoint")) return Response.json({ browserEndpoint: endpointConfigured ? ENDPOINT : null });
+    if (url.endsWith("/v1/tailnet/endpoint")) return Response.json({ browserEndpoint: endpointConfigured ? configuredEndpoint : null });
     return Response.json({ items: [] });
   });
 });
@@ -472,6 +477,31 @@ describe("a Connect probe that is no longer wanted", () => {
     expect(state.connection).toEqual({ status: "unavailable" });
   });
 
+  it("stops while it waits for a queued policy violation, settling that wait", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A browser without targetAddressSpace: the probe's only timer is its deadline.
+    vi.stubGlobal("Request", browserRequest(["credentials", "signal"]));
+    endpoint = async () => {
+      throw new TypeError("Failed to fetch");
+    };
+    await mount();
+    vi.useFakeTimers();
+    const before = vi.getTimerCount();
+    await act(async () => state.connect());
+    // The request failed and the deadline is cleared: the probe now waits on the zero-delay timer.
+    expect(state.connection).toEqual({ status: "connecting", endpoint: ENDPOINT });
+    expect(vi.getTimerCount()).toBe(before + 1);
+    // Unmounting stops it there, without letting any timer run first.
+    await act(async () => root!.unmount());
+    root = undefined;
+    client.clear();
+    // Cleared at once, not left to fire.
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(PERMISSION_PROBE_TIMEOUT_MS + 1)));
+    expect(state.connection).toEqual({ status: "connecting", endpoint: ENDPOINT });
+    expect(errors.mock.calls.filter(([m]) => !String(m).includes("react-test-renderer is deprecated"))).toEqual([]);
+  });
+
   it("is replaced by a new Connect, which stops the first", async () => {
     await startProbe();
     const first = probeSignal!;
@@ -482,5 +512,94 @@ describe("a Connect probe that is no longer wanted", () => {
     expect(probeSignal?.aborted).toBe(false);
     expect(listening).toBe(1);
     expect(vi.getTimerCount()).toBe(baseline + 2);
+  });
+});
+
+/**
+ * A protected read that fails rechecks the connection, but only for the
+ * identity and endpoint its client was made for, and only while the
+ * provider is mounted.
+ */
+describe("a failed read from a client that is no longer current", () => {
+  let reads: AbortSignal[];
+  let listening: number;
+  /** Connected on ENDPOINT, with a read through it that never answers. */
+  async function connectedWithHangingRead() {
+    // Local Network Access: a first Connect to another endpoint waits 30 seconds, longer than a read.
+    vi.stubGlobal("Request", localNetworkAccess());
+    listening = 0;
+    const doc = document;
+    vi.spyOn(doc, "addEventListener").mockImplementation(function (this: EventTarget, type: string) {
+      if (type === "securitypolicyviolation") listening++;
+    } as typeof doc.addEventListener);
+    vi.spyOn(doc, "removeEventListener").mockImplementation(function (this: EventTarget, type: string) {
+      if (type === "securitypolicyviolation") listening--;
+    } as typeof doc.removeEventListener);
+    endpoint = async () => Response.json(DEVICE);
+    await mount();
+    await connect();
+    expect(state.connection.status).toBe("connected");
+    const reader = state.client!;
+    reads = [];
+    endpoint = (url, init) => {
+      if (url.endsWith("/disclosures")) reads.push(init.signal!);
+      return never(url, init);
+    };
+    vi.useFakeTimers();
+    let failure: unknown;
+    const read = reader.discloseSecrets("acme", "api", "production", { scope: "all-authorized-secrets" }).then(
+      () => undefined,
+      (e: unknown) => (failure = e),
+    );
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(reads).toHaveLength(1);
+    return { read, failure: () => failure };
+  }
+  const toAnyEndpoint = () => sent.filter((r) => r.url.startsWith(ENDPOINT) || r.url.startsWith(OTHER_ENDPOINT));
+  const contextChecks = (base: string) => toAnyEndpoint().filter((r) => r.url === `${base}/v1/tailnet/context`).length;
+
+  it("leaves another endpoint's Connect alone, and does not call the old one", async () => {
+    const { read, failure } = await connectedWithHangingRead();
+    // The installation now names another endpoint, and the person connects to it.
+    configuredEndpoint = OTHER_ENDPOINT;
+    let otherProbe: AbortSignal | undefined;
+    const reading = endpoint;
+    endpoint = (url, init) => {
+      if (url === `${OTHER_ENDPOINT}/v1/tailnet/context`) {
+        otherProbe = init.signal!;
+        return never(url, init);
+      }
+      return reading(url, init);
+    };
+    await act(async () => void (await client.invalidateQueries({ queryKey: ["tailnet-endpoint"] })));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(state.connection).toEqual({ status: "idle", endpoint: OTHER_ENDPOINT });
+    await act(async () => state.connect());
+    expect(otherProbe?.aborted).toBe(false);
+    const checksOnA = contextChecks(ENDPOINT);
+    // The old read times out.
+    await act(async () => void (await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS + 1)));
+    await read;
+    expect(failure()).toBeInstanceOf(TailnetUnreachableError);
+    expect(otherProbe?.aborted).toBe(false);
+    expect(contextChecks(ENDPOINT)).toBe(checksOnA);
+    expect(contextChecks(OTHER_ENDPOINT)).toBe(1);
+    expect(state.connection).toEqual({ status: "connecting", endpoint: OTHER_ENDPOINT, awaitingPermission: true });
+  });
+
+  it("starts nothing after the provider unmounts", async () => {
+    const { read, failure } = await connectedWithHangingRead();
+    await act(async () => root!.unmount());
+    root = undefined;
+    client.clear();
+    const before = toAnyEndpoint().length;
+    // The read's own deadline is the only timer left.
+    expect(vi.getTimerCount()).toBe(1);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS + 1)));
+    await read;
+    expect(failure()).toBeInstanceOf(TailnetUnreachableError);
+    expect(toAnyEndpoint()).toHaveLength(before);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(listening).toBe(0);
   });
 });
