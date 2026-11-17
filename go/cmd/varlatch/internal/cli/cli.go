@@ -171,7 +171,11 @@ func (r *Run) dispatch(hasCommand bool) error {
 	}
 	c := lookup(r.Command)
 	if c == nil {
-		return UsageErrorWithUsage("varlatch: unknown command "+clientctx.MaskURLInValue(r.Command), "\n\n"+Usage)
+		shown := clientctx.MaskURLInValue(r.Command)
+		if clientctx.HasAtSign(shown) {
+			return UsageErrorWithUsage("varlatch: "+shown+": unknown command", "\n\n"+Usage) // the explanation follows the URL
+		}
+		return UsageErrorWithUsage("varlatch: unknown command "+shown, "\n\n"+Usage)
 	}
 	if c.run == nil {
 		return notBuilt(c)

@@ -202,3 +202,49 @@ func TestFailuresKeepTextWithoutCredentials(t *testing.T) {
 		}
 	}
 }
+
+// TestFailureExplanationsSurvive: a message echoing a value with a URL's
+// user name and password puts its explanation after the value (an accepted
+// wording difference from TypeScript), so what the fail-safe keeps, after
+// the last at-sign, still says what went wrong. Pinned through Main, the
+// fail-safe included.
+func TestFailureExplanationsSurvive(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, text string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("config/credentials.json", `{"servers": {"https://u:fake@a.example": {"token": "t"}}}`)
+	write("bad/varlatch.toml", "organization = \"acme\"\nproject = \"web\"\nserver = \"https://alice:fake@h.example\" x\n")
+	env := MapEnv{"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config"), "HOME": filepath.Join(dir, "home")}
+	for _, c := range []struct {
+		cwd  string
+		args []string
+		want string
+	}{
+		{"", []string{"server", "https://alice:fake@example.com"}, "varlatch server:[redacted]@example.com: unexpected argument\nUsage: varlatch server [--json]"},
+		{"", []string{"server", "--https://alice:fake@example.com"}, "varlatch server:[redacted]@example.com: unknown option\nUsage: varlatch server [--json]"},
+		{"", []string{"https://alice:fake@example.com"}, "varlatch:[redacted]@example.com: unknown command\n\nvarlatch — "},
+		{"", []string{"--approval", "https://alice:fake@x", "status"}, "varlatch:[redacted]@x: not an approval id\n"},
+		{"", []string{"server", "use", "https://alice:fake@[bad"}, "varlatch server use:[redacted]@[bad: not a URL\n"},
+		{"", []string{"server", "use", "https://alice:fake@z.example"}, "varlatch server use:[redacted]@z.example: you are not signed in to this server; sign in first with varlatch login --server and its URL\n"},
+		{"bad", []string{"context"}, "Invalid varlatch.toml:[redacted]@h.example\" x\n"},
+		{"bad", []string{"context"}, "Invalid TOML document: each key-value declaration must be followed by an end-of-line\n"},
+	} {
+		if err := os.MkdirAll(filepath.Join(dir, c.cwd), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(filepath.Join(dir, c.cwd))
+		var stdout, stderr bytes.Buffer
+		Main(c.args, env, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+		if !strings.Contains(stderr.String(), c.want) || strings.Contains(stderr.String(), "fake") {
+			t.Errorf("%q: stderr\n%s\nwant it to hold\n%s", c.args, stderr.String(), c.want)
+		}
+	}
+}

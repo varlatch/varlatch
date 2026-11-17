@@ -67,7 +67,11 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 	parsed := &ParsedOptions{Values: map[string]string{}, Lists: map[string][]string{}}
 	positional := func(arg string) error {
 		if len(parsed.Positionals) >= spec.Positionals {
-			return &OptionsError{"unexpected argument " + clientctx.MaskURLInValue(arg)}
+			shown := clientctx.MaskURLInValue(arg)
+			if clientctx.HasAtSign(shown) {
+				return &OptionsError{shown + ": unexpected argument"} // the explanation follows the URL
+			}
+			return &OptionsError{"unexpected argument " + shown}
 		}
 		parsed.Positionals = append(parsed.Positionals, arg)
 		return nil
@@ -136,7 +140,11 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 			if spec.EndOfOptions {
 				hint = ` (a value that begins with "-" goes after --)`
 			}
-			return nil, &OptionsError{"unknown option " + clientctx.MaskURLInValue(arg) + hint}
+			shown := clientctx.MaskURLInValue(arg)
+			if clientctx.HasAtSign(shown) {
+				return nil, &OptionsError{shown + ": unknown option" + hint} // the explanation follows the URL
+			}
+			return nil, &OptionsError{"unknown option " + shown + hint}
 		}
 		if err := positional(arg); err != nil {
 			return nil, err

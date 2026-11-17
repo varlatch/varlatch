@@ -131,7 +131,11 @@ func TakeApprovalOption(argv []string) (rest []string, approval string, problem 
 		case given:
 			problem = approvalOption + " given twice"
 		case !approvalID.MatchString(own[i+1]):
-			problem = approvalOption + ": not an approval id: " + clientctx.MaskURLInValue(own[i+1])
+			shown := clientctx.MaskURLInValue(own[i+1])
+			problem = approvalOption + ": not an approval id: " + shown
+			if clientctx.HasAtSign(shown) {
+				problem = approvalOption + ": " + shown + ": not an approval id" // the explanation follows the URL
+			}
 		default:
 			approval, given = own[i+1], true
 		}

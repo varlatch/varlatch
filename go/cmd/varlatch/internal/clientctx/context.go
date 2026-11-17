@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/toml"
@@ -72,7 +73,13 @@ func LoadRepoConfig(repoRoot string) (RepoConfig, error) {
 	if err != nil {
 		// The message quotes the file's lines: each string's URL is masked (the
 		// precise layer); the fail-safe covers the failure's final text.
-		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + MaskTOMLStrings(err.Error())}
+		message := MaskTOMLStrings(err.Error())
+		if what, block, ok := strings.Cut(message, "\n\n"); ok && HasAtSign(block) {
+			// The explanation follows the quoted lines, so the fail-safe (which
+			// keeps what follows the last at-sign) keeps it.
+			return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ":\n\n" + block + what}
+		}
+		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + message}
 	}
 	str := func(key string) string {
 		v, _ := table.Get(key)

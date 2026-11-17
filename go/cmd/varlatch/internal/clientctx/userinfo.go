@@ -192,6 +192,20 @@ func MaskUserinfoInText(text string) string {
 	return text[:at[colon]+1] + "[redacted]@" + text[at[last+size-1]+1:]
 }
 
+// HasAtSign is whether s holds an at-sign as the fail-safe sees one. A
+// message whose echoed value holds one puts its explanation after the
+// value, since the fail-safe keeps only what follows the last at-sign (the
+// explanation follows the URL).
+func HasAtSign(s string) bool {
+	b := []byte(s)
+	for i := range b {
+		if atSignAt(b, i) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // atSignAt is the length of the at-sign at s[i] ("@", "\u0040", "\x40",
 // "\U00000040" or "%40", any case of hex digits), 0 when there is none.
 func atSignAt(s []byte, i int) int {
