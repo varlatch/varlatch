@@ -132,25 +132,12 @@ func (o *operations) ListAuditEvents(ctx context.Context, _ api.ListAuditEventsR
 	where := []string{"organization_id = ?"}
 	args := []any{q.org.ID}
 	if decoded != nil {
-		// (occurred_at, id) < ($3::timestamptz, $4), read by PostgreSQL once
-		// the filters were checked, with JavaScript's undefined for a missing
-		// part: no time matches nothing; no id leaves the time to decide.
-		switch {
-		case len(decoded) == 0:
-			where = append(where, "0")
-		default:
-			at, err := o.cursorTime(decoded[0])
-			if err != nil {
-				return nil, err
-			}
-			if len(decoded) == 1 {
-				where = append(where, "occurred_at < ?")
-				args = append(args, at)
-			} else {
-				where = append(where, "(occurred_at, id) < (?, ?)")
-				args = append(args, at, decoded[1])
-			}
+		// Read by PostgreSQL once the filters were checked.
+		conds, more, err := o.cursorConditions(decoded)
+		if err != nil {
+			return nil, err
 		}
+		where, args = append(where, conds...), append(args, more...)
 	}
 	conds, more := filters.Conditions()
 	where = append(where, conds...)
@@ -255,12 +242,18 @@ func (o *operations) ExportAuditEvents(ctx context.Context, _ api.ExportAuditEve
 	if err := q.settle(ctx); err != nil {
 		return nil, err
 	}
+	return o.auditExportStream(ctx, q.org.ID, filters)
+}
+
+// auditExportStream is auditExport: an Organization's events as NDJSON, in
+// audit order up to the high-water mark when the export starts, narrowed
+// by the filters (none for a deleted Organization's), a batch at a time.
+func (o *operations) auditExportStream(ctx context.Context, org string, filters audit.Filters) (ndjsonReply, error) {
 	reader := o.s.opts.Auth.Store().Reader()
 	var upper int64
-	if err := reader.QueryRowContext(ctx, "SELECT coalesce(max(event_order), 0) FROM audit_events WHERE organization_id = ?", q.org.ID).Scan(&upper); err != nil {
-		return nil, err
+	if err := reader.QueryRowContext(ctx, "SELECT coalesce(max(event_order), 0) FROM audit_events WHERE organization_id = ?", org).Scan(&upper); err != nil {
+		return ndjsonReply{}, err
 	}
-	org := q.org.ID
 	return ndjsonReply{stream: func(w http.ResponseWriter) error {
 		flusher, _ := w.(http.Flusher)
 		for cursor := int64(0); ; {

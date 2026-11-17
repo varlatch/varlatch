@@ -166,6 +166,12 @@ type Settings struct {
 // Settings returns the effective settings Open found.
 func (db *DB) Settings() Settings { return db.settings }
 
+// CrashPoint marks a named point of a multi-step flow for G7's kill tests
+// (crashpoint.go, a build with the crashpoint tag: logged, and paused at
+// when VARLATCH_CRASHPOINT_PAUSE names it). It does nothing in every other
+// build.
+func CrashPoint(db *DB, point string) { crashPoint(db, point) }
+
 // Open opens (or creates) the database at opts.Path and starts its writer
 // and checkpointer.
 func Open(ctx context.Context, opts Options) (*DB, error) {

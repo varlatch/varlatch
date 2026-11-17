@@ -4,9 +4,8 @@ import "../../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in out
 /**
  * Deletion over the API (ADR-0051): a Project's deletion (Decision 2,
  * immediate and final), and, under admin-step-up at enforce, the approval
- * it asks for (ADR-0054 amendment B). Organization deletion (scheduling,
- * approval, cancellation, the due run, deleted Organizations' audit) is
- * step 4.12b's part of this suite.
+ * it asks for (ADR-0054 amendment B); then an Organization's deletion
+ * (Decisions 4 to 8) and the audit-access tombstone (Decision 8).
  *
  * In an Organization of its own: a Project with two environments, an
  * active Contract, values (one with a second version) and a Team linking
@@ -14,10 +13,25 @@ import "../../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in out
  * slug free again, the Team's link gone, project.deleted with the counts).
  * Then, in a second Organization at enforce, the deletion's approval.
  *
+ * Then an Organization with a machine identity and a second admin (an
+ * admin invitation enrolled in a browser, services/varlatchd/scripts/
+ * e2e-enroll-invitee.mjs): its deletion scheduled (the machine suspended,
+ * writes refused), approved by the second admin and not by the one who
+ * scheduled it, made due (the target's deletion-due probe) and run by the
+ * deletion loop's next pass; its audit read and exported by its
+ * readers, listed by the Installation Admin, who removes a reader. And in
+ * another Organization, a scheduled deletion cancelled, which restores its
+ * machine.
+ *
  *   deletion.mjs <origin> <api token>   (run by scripts/conformance/run.mjs)
  */
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { reporter } from "../suite-kit.mjs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { reporter, targetOp } from "../suite-kit.mjs";
 
 const [origin, token] = process.argv.slice(2);
 if (!origin || !token) {
@@ -27,11 +41,11 @@ if (!origin || !token) {
 const kit = reporter({ detailOnFailure: true });
 const { check, error, finish } = kit;
 
-async function api(method, path, { body } = {}) {
+async function api(method, path, { body, bearer = token } = {}) {
   const res = await fetch(new URL(path, origin), {
     method,
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${bearer}`,
       "User-Agent": "varlatch-conformance-deletion",
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
@@ -53,6 +67,21 @@ const ok = (r, what) => {
 };
 
 const suffix = randomBytes(4).toString("hex");
+const ENROLL = fileURLToPath(new URL("../../../services/varlatchd/scripts/e2e-enroll-invitee.mjs", import.meta.url));
+
+/** An invitation enrolled in a browser: the new person's short-lived API credential. */
+function enroll(url, name) {
+  const dir = mkdtempSync(join(tmpdir(), "deletion-enroll-"));
+  try {
+    const r = spawnSync(process.execPath, [ENROLL, url, name, join(dir, "credential")], { encoding: "utf8", timeout: 120_000 });
+    if (r.status !== 0) throw new Error(`enrolling ${name}: ${(r.stderr || r.stdout).trim().slice(-500)}`);
+    return readFileSync(join(dir, "credential"), "utf8").trim();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const item = (name, sensitive) => ({ name, required: { kind: "never" }, sensitive, type: "string" });
 
 try {
@@ -132,6 +161,97 @@ try {
     `${asked.status} ${asked.text}; the Project: ${still.status}`,
   );
   if (approval?.id) ok(await api("POST", `/v1/me/approvals/${approval.id}/cancel`), "cancelling the approval");
+
+  // ---- An Organization's deletion: scheduled, approved by another admin.
+  const dorg = ok(await api("POST", "/v1/organizations", { body: { name: `Deleted ${suffix}`, slug: `deleted-${suffix}` } }), "creating the Organization to delete");
+  const D = `/v1/organizations/${dorg.slug}`;
+  const bot = ok(await api("POST", `${D}/identities`, { body: { name: "bot", kind: "service" } }), "creating its machine identity");
+  const invitation = ok(await api("POST", `${D}/invitations`, { body: { role: "admin", name: "Second admin" } }), "inviting a second admin");
+  const second = enroll(`${origin}/enroll#${invitation.token}`, "Second admin");
+  const botBefore = (await api("GET", "/v1/organizations", { bearer: bot.credential })).status;
+  const scheduled = await api("POST", `${D}/deletion`, { body: { afterDays: 1 } });
+  const request = scheduled.json ?? {};
+  const shown = ok(await api("GET", `${D}/deletion`), "reading the request").deletion;
+  const refused = await api("POST", `${D}/projects`, { body: { name: "Late", slug: "late", contractAuthority: "managed" } });
+  const botDuring = (await api("GET", "/v1/organizations", { bearer: bot.credential })).status;
+  check(
+    "deletion.organization-scheduled",
+    "scheduling an Organization's deletion answers the request (an approval required with two admins, due after the waiting period) and shows it; writes are refused with ORGANIZATION_DELETING and its machine identities are suspended",
+    scheduled.status === 201 && request.approvalRequired === true && request.approvedBy === null &&
+      Date.parse(request.runAfter) - Date.parse(request.scheduledAt) === 86_400_000 && shown?.id === request.id &&
+      refused.status === 409 && refused.json?.error?.code === "ORGANIZATION_DELETING" && botBefore === 200 && botDuring === 401,
+    JSON.stringify({ scheduled: scheduled.status, request, refused: refused.status, botBefore, botDuring }),
+  );
+
+  const selfApproval = await api("POST", `${D}/deletion/${request.id}/approve`);
+  const approved = await api("POST", `${D}/deletion/${request.id}/approve`, { bearer: second });
+  const approvedAgain = await api("POST", `${D}/deletion/${request.id}/approve`, { bearer: second });
+  check(
+    "deletion.organization-approval-by-another-admin",
+    "the admin who scheduled an Organization's deletion cannot approve it; another admin can, and approving again answers the same approval",
+    selfApproval.status === 403 && approved.status === 200 && typeof approved.json?.approvedBy === "string" &&
+      approved.json.approvedBy !== request.requestedBy && approvedAgain.status === 200 && approvedAgain.json?.approvedAt === approved.json.approvedAt,
+    JSON.stringify({ self: selfApproval.status, approved: approved.status, by: approved.json?.approvedBy, again: approvedAgain.status }),
+  );
+
+  // ---- In another Organization: a scheduled deletion cancelled.
+  const corg = ok(await api("POST", "/v1/organizations", { body: { name: `Kept ${suffix}`, slug: `kept-${suffix}` } }), "creating the Organization to keep");
+  const C = `/v1/organizations/${corg.slug}`;
+  const keptBot = ok(await api("POST", `${C}/identities`, { body: { name: "bot", kind: "service" } }), "creating its machine identity");
+  const toCancel = ok(await api("POST", `${C}/deletion`, { body: {} }), "scheduling its deletion");
+  const keptBotDuring = (await api("GET", "/v1/organizations", { bearer: keptBot.credential })).status;
+  const cancelled = await api("POST", `${C}/deletion/${toCancel.id}/cancel`);
+  const cancelledAgain = await api("POST", `${C}/deletion/${toCancel.id}/cancel`);
+  const keptBotAfter = (await api("GET", "/v1/organizations", { bearer: keptBot.credential })).status;
+  const afterCancel = ok(await api("GET", `${C}/deletion`), "reading its request").deletion;
+  const writable = await api("POST", `${C}/projects`, { body: { name: "Kept", slug: "kept", contractAuthority: "managed" } });
+  check(
+    "deletion.organization-cancelled",
+    "cancelling a scheduled deletion ends the request, restores the machine identities it suspended and writes again; a second cancel is refused",
+    toCancel.approvalRequired === false && keptBotDuring === 401 && cancelled.status === 200 && typeof cancelled.json?.cancelledAt === "string" &&
+      cancelledAgain.status === 409 && cancelledAgain.json?.error?.code === "STATE_CHANGED" && keptBotAfter === 200 && afterCancel === null &&
+      writable.status === 201,
+    JSON.stringify({ during: keptBotDuring, cancelled: cancelled.status, again: cancelledAgain.status, after: keptBotAfter, writable: writable.status }),
+  );
+
+  // ---- The due run: made due, then run by the deletion loop's next pass
+  // (every minute on both servers).
+  targetOp("probe", ["deletion-due", request.id]);
+  let gone = 0;
+  for (const deadline = Date.now() + 90_000; Date.now() < deadline; await sleep(1000)) {
+    gone = (await api("GET", D)).status;
+    if (gone === 404) break;
+  }
+  const botAfter = (await api("GET", "/v1/organizations", { bearer: bot.credential })).status;
+  const T = `/v1/deleted-organizations/${dorg.id}/audit-events`;
+  const page = await api("GET", `${T}?limit=500`);
+  const orgDeleted = (page.json?.items ?? []).find((e) => e.eventType === "organization.deleted");
+  check(
+    "deletion.organization-deleted-when-due",
+    "once due and approved, the deletion loop deletes the Organization: it is not found, its machine credentials are refused, and its audit records organization.deleted with what it ended",
+    gone === 404 && botAfter === 401 && page.status === 200 && orgDeleted?.metadata?.members === 2 && orgDeleted.metadata.readers === 2 &&
+      orgDeleted.metadata.identitiesRetired === 1 && orgDeleted.metadata.approvedBy === approved.json?.approvedBy &&
+      orgDeleted.resource?.organizationSlug === dorg.slug,
+    JSON.stringify({ gone, botAfter, page: page.status, deleted: orgDeleted ?? null }),
+  );
+
+  // ---- The tombstone's readers.
+  const secondReads = (await api("GET", T, { bearer: second })).status;
+  const exported = await api("GET", `${T}/export`);
+  const exportedTypes = exported.text.split("\n").filter(Boolean).map((l) => JSON.parse(l).eventType);
+  const listed = (ok(await api("GET", "/v1/installation/deleted-organizations"), "listing the tombstones").items ?? []).find((o) => o.id === dorg.id);
+  const secondId = listed?.readers?.find((r) => r.identityId !== request.requestedBy)?.identityId;
+  const removed = secondId ? await api("DELETE", `/v1/installation/deleted-organizations/${dorg.id}/readers/${secondId}`) : { status: 0 };
+  const secondAfter = (await api("GET", T, { bearer: second })).status;
+  const relisted = (ok(await api("GET", "/v1/installation/deleted-organizations"), "listing the tombstones again").items ?? []).find((o) => o.id === dorg.id);
+  check(
+    "deletion.tombstone-readers",
+    "a deleted Organization's audit is read and exported by the admins fixed as its readers; the Installation Admin lists the tombstone with its readers and removes one, who then reads nothing",
+    secondReads === 200 && exported.status === 200 && exportedTypes.includes("organization.deleted") && exportedTypes[0] === "organization.created" &&
+      listed?.slug === dorg.slug && listed.readers.length === 2 && removed.status === 204 && secondAfter === 404 &&
+      relisted?.readers?.some((r) => r.identityId === secondId && typeof r.removedAt === "string"),
+    JSON.stringify({ secondReads, exported: exported.status, types: exportedTypes.slice(-3), listed: listed ?? null, removed: removed.status, secondAfter }),
+  );
 } catch (err) {
   error(err instanceof Error ? err.stack ?? err.message : String(err));
 }

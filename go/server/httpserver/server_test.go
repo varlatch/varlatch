@@ -162,11 +162,11 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 	s, b, _, _ := newTestServer(t, nil)
 	cases := []struct{ method, path, body string }{
 		{"POST", "/v1/organizations/acme/github-app/import", "{not json"},
-		{"POST", "/v1/organizations/acme/deletion", strings.Repeat("x", 4096)},
+		{"POST", "/v1/organizations/acme/github-app/registrations", strings.Repeat("x", 4096)},
 		{"GET", "/v1/organizations/acme/github-app", ""},
-		{"GET", "/v1/deleted-organizations/acme/audit-events?limit=not-a-number", ""},
+		{"GET", "/v1/organizations/acme/github-app/installations?limit=not-a-number", ""},
 		{"DELETE", "/v1/organizations/acme/github-app/registrations/core", ""},
-		{"POST", "/v1/organizations/acme/deletion/core/approve", "{}"},
+		{"POST", "/v1/organizations/acme/github-app/registrations/core/attach", "{}"},
 	}
 	for _, c := range cases {
 		w := do(s, c.method, c.path, c.body, map[string]string{"Content-Type": "application/json", "Authorization": "Bearer nonsense"})

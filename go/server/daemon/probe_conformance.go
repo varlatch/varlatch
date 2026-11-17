@@ -27,8 +27,12 @@ import (
 //	expire-pending-device-sign-ins   every pending device sign-in expires now
 //	device-sign-in-addresses <name>  [{"requesterIp": ...}] of the sign-ins requested under <name>
 //	proxy-addresses                  [] (nothing stands in front of varlatchd)
+//	deletion-due <odl_...>           the open deletion request made due now (as if scheduled
+//	                                 40 days ago, due a second ago)
 
 var probeName = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+
+var deletionID = regexp.MustCompile(`^odl_[a-z2-7]{26}$`)
 
 func init() {
 	conformanceProbe = func(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io.Writer) int {
@@ -51,6 +55,18 @@ func init() {
 		case "expire-pending-device-sign-ins":
 			err = store.Write(ctx, func(tx *storage.Tx) error {
 				return query.New(tx).ExpirePendingDeviceSignIns(ctx, time.Now().Add(-time.Second).UnixMicro())
+			})
+			out = true
+		case "deletion-due":
+			if len(rest) != 2 || !deletionID.MatchString(rest[1]) {
+				return fail(fmt.Errorf("deletion-due: a deletion request id (odl_...)"))
+			}
+			now := time.Now()
+			err = store.Write(ctx, func(tx *storage.Tx) error {
+				_, err := tx.ExecContext(ctx, `UPDATE organization_deletions SET scheduled_at = scheduled_at - ?, run_after = ?
+					WHERE id = ? AND cancelled_at IS NULL AND completed_at IS NULL`,
+					(40 * 24 * time.Hour).Microseconds(), now.Add(-time.Second).UnixMicro(), rest[1])
+				return err
 			})
 			out = true
 		case "device-sign-in-addresses":

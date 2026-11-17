@@ -215,6 +215,9 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "pauseSyncTarget", "resumeSyncTarget", "revokeSyncTarget",
     // Step 4.12a: Project deletion.
     "deleteProject",
+    // Step 4.12b: Organization deletion and the audit-access tombstone.
+    "getOrganizationDeletion", "scheduleOrganizationDeletion", "approveOrganizationDeletion", "cancelOrganizationDeletion",
+    "listDeletedOrganizationAuditEvents", "exportDeletedOrganizationAuditEvents", "listDeletedOrganizations", "removeDeletedOrganizationReader",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is
@@ -253,7 +256,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // (4.5a) access's invites group. (4.6) the broker suite, strict-run's
   // agent-safe group and access's capabilities group. (4.8) access's oidc
   // group and the oidc suite. (4.12a) the deletion suite, on Project
-  // deletion. Every other one lacks something.
+  // deletion; (4.12b) on Organization deletion and the tombstone too, and
+  // the webhooks suite's deletion group. Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
   // G11's go-server checks (step 3.5) lack nothing either.
@@ -262,7 +266,7 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     Object.keys(inventory.checks).filter((id) => id.startsWith("realtime-events.")).sort(),
   );
   const notYet = {
-    dashboard: [], values: [], p4: [], onboarding: [], webhooks: ["deletion"],
+    dashboard: [], values: [], p4: [], onboarding: [], webhooks: [],
     "client-runtime": [], "strict-run": [], broker: [],
     access: [],
   };
@@ -273,7 +277,7 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
     (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
-  assert.equal(runs.length, 447);
+  assert.equal(runs.length, 453);
   // The groups still lacking lack exactly their own operations.
   for (const [suite, groups] of Object.entries(notYet)) {
     for (const g of groups) {

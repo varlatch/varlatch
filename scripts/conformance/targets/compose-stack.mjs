@@ -250,6 +250,14 @@ const PROBES = {
     if (!/^[a-z0-9-]{1,64}$/.test(requestedName ?? "")) throw new Error("device-sign-in-addresses: name must be lower-case letters, digits and dashes");
     return JSON.parse(psql(state, `SELECT coalesce(json_agg(json_build_object('requesterIp', requester_ip)), '[]') FROM device_sign_ins WHERE requested_name = '${requestedName}'`));
   },
+  "deletion-due": (state, deletionId) => {
+    // An Organization's open deletion request (ADR-0051), made due now: as
+    // if scheduled 40 days ago and due a second ago. Only an id reaches SQL.
+    if (!/^odl_[a-z2-7]{26}$/.test(deletionId ?? "")) throw new Error("deletion-due: a deletion request id (odl_...)");
+    psql(state, `UPDATE organization_deletions SET scheduled_at = scheduled_at - interval '40 days', run_after = clock_timestamp() - interval '1 second'
+      WHERE id = '${deletionId}' AND cancelled_at IS NULL AND completed_at IS NULL`);
+    return true;
+  },
   "proxy-addresses": (state) => {
     const id = mustCompose(state, ["ps", "-q", "varlatch-web"]).trim();
     const r = spawnSync("docker", ["inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", id], { encoding: "utf8" });

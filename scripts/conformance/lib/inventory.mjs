@@ -67,6 +67,7 @@ export const CAPABILITIES = [
   "probe:device-sign-in-addresses",
   "probe:expire-pending-device-sign-ins",
   "probe:proxy-addresses",
+  "probe:deletion-due",
   "maintenance",
   "serve-cli",
   "ts-stack",
