@@ -264,7 +264,7 @@ describe("exit statuses", () => {
     ["an unknown security status option", ["security", "status", "--jsno"]],
     // Against the Go CLI, only the commands it has: a command not built yet
     // answers 64 too, which would pass without testing anything.
-  ].filter(([, args]) => !goLacksCommand(args[0] as string)) as [string, string[]][];
+  ].filter(([, args]) => !goLacksCommand((args as string[])[0] as string)) as [string, string[]][];
 
   it.each(malformed)("%s: 64 (usage) with a credential, before any request", async (_name, args) => {
     const r = await cli(args);

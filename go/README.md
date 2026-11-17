@@ -489,6 +489,9 @@ comes. `verify-release`, which the installers run, is Go's own.
 - Conformance: `node scripts/conformance/run.mjs --target <target> --cli
   go:<path to varlatch>` runs the suites with this CLI; the features it
   does not have yet report client-lacks (`scripts/conformance/README.md`).
+  The `cli-handover` suite pairs it with the TypeScript CLI 0.22.0
+  (`--handover-cli` chooses another) and checks that each uses what the
+  other stored (internal `docs/design/go-cli.md`, decision 11).
 
 Text the Go CLI copies byte for byte from the TypeScript CLI's output (the
 usage text in `usage.txt`, and the recordings and vectors made from it)
@@ -523,6 +526,9 @@ it to the recording.
 | `toml-escaped`: how `init` writes `varlatch.toml`'s values | not compared | each value as an escaped TOML basic string (`\"`, `\\`, control characters), so the file reads back as exactly what was given | A value with a quote, a backslash or a control character means what it says; transcripts compare the escaped form (`init.raw-values`); `TestInitValuesReadBackAsGiven` |
 | How `agents install` replaces a file | in place (`writeFileSync`) | a temporary file in the same directory, readable by its owner only until it is complete, synced, given the file's mode, then renamed over it; the names of a hard-linked `AGENTS.md`/`CLAUDE.md` pair are each renamed onto the new file; a file with any other name is refused (78) | A crash or a full disk never leaves a settings file empty or half written, and no other file shares the change; bytes and modes are the same |
 | A redirect's relative `Location` | resolved by the WHATWG URL parser | resolved by `apiclient`'s own resolver (absolute, `//host`, `/path`, `?query` and path-relative references), then parsed by `lib/whatwg` | varlatchd sends no redirect; a proxy's is absolute or root-relative |
+| `login`, `logout` and `whoami` never print a server URL's user name and password | a server URL is printed as given or stored: `Logged in to <server>`, `<server>: credential revoked and removed.`, the stored servers a `logout` or `whoami` usage error lists, `No stored credential for <server>`, and a refused revocation's reason quotes fetch's message with the whole URL | the same, with `[redacted]` in place of a URL's user name and password; every other URL byte for byte the same | Output is printed, logged and pasted into issues. Pinned by `TestSessionCommandsNeverShowUserinfo`; `TestLoginNeverShowsTheCredential` pins that a credential given to `login` (`--token`, `--token-stdin`) never appears in its output, accepted or refused |
+| `login` without `--token` or `--token-stdin` | browser sign-in, `--oidc`, and device sign-in (`--start`, `--wait`, and assisted mode's default) | a usage error (64) saying the method is not in this build of the Go CLI yet (slice 5.2), before anything is read, sent or written | Slice 5.2 ports them; `TestLoginLaterMethodsSayNotYet` |
+| `now` (how transcripts compare, not a behaviour) | `login` and `env use` write the time of the run (`issuedAt`, `tierCachedAt`) | the same, at another time | A case that lists the `now` pattern has each ISO 8601 timestamp between its run's start and end written `{{now}}`, in the recording and the replay alike (`goKit.ts` `nowPattern`, `transcript.NowPattern`); a timestamp outside the run is compared as it is |
 
 ## varlatchd
 
