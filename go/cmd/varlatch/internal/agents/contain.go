@@ -148,7 +148,11 @@ func hardLinkRefusal(rel string, nothingChanged bool) error {
 
 // aliases are the names of the regular file rel inside the root, rel
 // first: every name the file has must be one of aliasCandidates found in
-// the root, or there is a name the CLI cannot see (ok false).
+// the root, or there is a name the CLI cannot see (ok false). The count
+// and the names are read one after the other, not as one snapshot: a name
+// created after they are read is not seen. Such a name keeps the old
+// content, because the file is replaced by renaming, never written in
+// place, so nothing outside the root is ever changed.
 func aliases(root, rel string) (names []string, ok bool, err error) {
 	at := func(name string) string { return filepath.Join(root, name) }
 	f, err := os.Open(at(rel))
@@ -237,7 +241,13 @@ func (w *writer) temp(rel string, data []byte, mode os.FileMode) (string, error)
 // renamed over it. A file with several names is replaced only when every
 // name is one install gives it (an AGENTS.md and the CLAUDE.md that is
 // it): each name is renamed onto the new file, so they stay one file.
-// One with a name the CLI cannot see is refused.
+// One with a name the CLI cannot see is refused. A name created during
+// the run may keep the old content (see aliases); nothing outside the
+// root is ever changed. The names of a pair are renamed one at a time, not
+// as one transaction: a crash between the renames leaves one name with the
+// old content and the other with the new, each complete, never partly
+// written. They are then two files, and running install again treats them
+// so (CLAUDE.md gains the import of AGENTS.md).
 func (w *writer) write(rel string, data []byte) error {
 	if err := checkBelow(w.path, filepath.Dir(rel)); err != nil {
 		return err

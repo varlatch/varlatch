@@ -435,7 +435,14 @@ comes. `verify-release`, which the installers run, is Go's own.
   is replaced only when every name is one install itself gives it (an
   `AGENTS.md` and the `CLAUDE.md` that is it, found in the root); each name
   is then renamed onto the new file, so they stay one file. A file with a
-  name the CLI cannot see is refused before anything changes (78). A
+  name the CLI cannot see is refused before anything changes (78). The
+  names are counted before the replacement, not as one snapshot with it:
+  a name created during the run may keep the old content, and nothing
+  outside the root is ever changed. A pair is renamed one name at a time,
+  not as a transaction: a crash between the two renames leaves one name
+  with the old content and the other with the new, each complete, never
+  partly written. They are then two files, and running install again
+  treats them so (`CLAUDE.md` gains the import of `AGENTS.md`). A
   directory below the scope's root (the project, or the home directory
   for `--scope user`) that is a symbolic link or a Windows junction, on
   the way to a file the run reads, writes, removes or prunes, refuses the

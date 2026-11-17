@@ -356,3 +356,47 @@ func TestTemporaryFilesArePrivate(t *testing.T) {
 		}
 	}
 }
+
+// TestLateNamesKeepTheOldContent: a name the file gets after its names
+// were counted (here, through the hook, while the new content is being
+// written) is not seen, so the refusal cannot cover it. It keeps the old
+// content, inside the root or outside it: the file is replaced by
+// renaming, so the late name's file is never written.
+func TestLateNamesKeepTheOldContent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hard links in the test's own setup")
+	}
+	dir := t.TempDir()
+	root, outside := filepath.Join(dir, "root"), filepath.Join(dir, "outside")
+	writeAt(t, filepath.Join(root, "AGENTS.md"), "# Rules\n")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linked := false
+	tempWritten = func(_ *os.Root, tmp string) {
+		if linked || !strings.Contains(tmp, "AGENTS.md") {
+			return
+		}
+		linked = true
+		for _, name := range []string{filepath.Join(outside, "late.md"), filepath.Join(root, "CLAUDE.md")} {
+			if err := os.Link(filepath.Join(root, "AGENTS.md"), name); err != nil {
+				t.Errorf("link: %v", err)
+			}
+		}
+	}
+	defer func() { tempWritten = nil }()
+	if _, err := RunInstall(Options{Scope: "project", Root: root, Version: "1", Mode: "install"}); err != nil {
+		t.Fatal(err)
+	}
+	if !linked {
+		t.Fatal("the hook never ran")
+	}
+	for _, name := range []string{filepath.Join(outside, "late.md"), filepath.Join(root, "CLAUDE.md")} {
+		if data, _ := os.ReadFile(name); string(data) != "# Rules\n" {
+			t.Errorf("%s: %q, want the old content", name, data)
+		}
+	}
+	if data, _ := os.ReadFile(filepath.Join(root, "AGENTS.md")); !strings.Contains(string(data), "<!-- varlatch:begin -->") {
+		t.Errorf("AGENTS.md was not replaced: %q", data)
+	}
+}
