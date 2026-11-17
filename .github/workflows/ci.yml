@@ -17,13 +17,13 @@ name: CI
 # package's tests. The slow suites
 # (multi-arch, contributor-setup, and the recovery and install-lifecycle steps
 # of backup-recovery) run on a pull request only when it touches what they
-# guard. A push to main (a merge) runs the fast checks with every package's
-# tests, so every merge commit has a recorded full pass. Everything runs
+# guard. A merge group (the merge queue) runs a pull request's tiers with
+# every package's tests, on the exact commit that then lands on main, so
+# every merge commit has a recorded full pass; main runs no CI of its own on
+# a merge, since that would test the same commit twice. Everything runs
 # nightly on main when main has new commits, on manual dispatch, and before
 # every release (release.yml calls this workflow).
 on:
-  push:
-    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   # The merge queue (ADR-0059 workflow, 2026-11-17): each queued pull
@@ -432,11 +432,11 @@ jobs:
   # (tests=affected or all; scripts/ci-changes.sh has the rules). Each slow
   # suite runs only when the pull request touches what it guards; tests
   # (*/test/) never trigger one, and a pull request that changes only
-  # documentation or Go files triggers none. A push to main runs only the
-  # fast checks, in full. A scheduled run skips everything when main has no
-  # commits since the last one; any other event runs everything, including a
-  # release: release.yml calls this workflow on a tag push, which must not
-  # count as a push to main.
+  # documentation or Go files triggers none. A merge group runs its pull
+  # request's tiers with every package's tests. A scheduled run skips
+  # everything when main has no commits since the last one; any other event
+  # runs everything, including a release (release.yml calls this workflow on
+  # a tag push).
   changes:
     needs: hosted-runner
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -488,12 +488,6 @@ jobs:
             echo "tests=all" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
-            echo "A push to main: the fast checks only, with every package's tests."
-            printf '%s\n' run=true code=true tests=all >> "$GITHUB_OUTPUT"
-            for t in $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           if [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; then
             echo "Every tier runs ($EVENT on $REF)."
             for t in run code $tiers; do echo "$t=true"; done >> "$GITHUB_OUTPUT"
@@ -504,6 +498,11 @@ jobs:
           changed=$(git diff --no-renames --name-only "$BASE" HEAD)
           # code=true|false and tests=affected|all, shared with `pnpm verify`.
           selected=$(scripts/ci-changes.sh classify <<< "$changed")
+          # A merge group tests every package: its commit is the one that
+          # lands on main, which runs no CI of its own.
+          if [ "$EVENT" = merge_group ]; then
+            selected=${selected/tests=affected/tests=all}
+          fi
           echo "run=true" >> "$GITHUB_OUTPUT"
           echo "$selected" >> "$GITHUB_OUTPUT"
           if grep -qx code=false <<< "$selected"; then
