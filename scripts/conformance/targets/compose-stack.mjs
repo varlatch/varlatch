@@ -284,6 +284,13 @@ const PROBES = {
     if (!got) throw new Error(`sync-repair-due: no Sync Target ${targetId}`);
     return JSON.parse(got);
   },
+  "audit-export-drain-due": (state, organizationId) => {
+    if (!/^org_[a-z0-9]{26}$/.test(organizationId ?? "")) throw new Error("audit-export-drain-due: an Organization id (org_...)");
+    const got = psql(state, `UPDATE audit_exports SET drain_deadline = clock_timestamp() - interval '1 second'
+      WHERE organization_id = '${organizationId}' AND state = 'draining' RETURNING 'true'`);
+    if (!/\btrue\b/.test(got ?? "")) throw new Error(`audit-export-drain-due: no draining audit export of ${organizationId}`);
+    return true;
+  },
   "github-app-pending-expired": (state, registrationId) => {
     if (!/^ghr_[a-z0-9]{26}$/.test(registrationId ?? "")) throw new Error("github-app-pending-expired: a GitHub App registration id (ghr_...)");
     // The pending conversion's material is written once, by a trigger; this

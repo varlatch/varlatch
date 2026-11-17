@@ -33,6 +33,9 @@ import (
 //	                                 {"needsSync", "nextAttemptAt"}, which it leaves as they are
 //	sync-trigger-position            {"cursor", "latest"}: the converge engine's trigger scan's
 //	                                 position, and the last audit event it reads (not sync.*)
+//	audit-export-drain-due <org_...>  a deleted Organization's draining audit export past its
+//	                                 deadline (a second ago), so the deletion loop's next pass,
+//	                                 within a minute, abandons it; true
 //	github-app-pending-expired <ghr_...>  a pending GitHub App conversion's hour over (converted
 //	                                 two hours ago, expired a second ago), so the registration
 //	                                 sweep's next pass, within a minute, ends it; true
@@ -42,6 +45,7 @@ var (
 	deletionID   = regexp.MustCompile(`^odl_[a-z2-7]{26}$`)
 	syncTargetID = regexp.MustCompile(`^snt_[a-z0-9]{26}$`)
 	ghrID        = regexp.MustCompile(`^ghr_[a-z0-9]{26}$`)
+	orgID        = regexp.MustCompile(`^org_[a-z0-9]{26}$`)
 )
 
 func init() {
@@ -98,6 +102,22 @@ func init() {
 				return nil
 			})
 			out = settled
+		case "audit-export-drain-due":
+			if len(rest) != 2 || !orgID.MatchString(rest[1]) {
+				return fail(fmt.Errorf("audit-export-drain-due: an Organization id (org_...)"))
+			}
+			err = store.Write(ctx, func(tx *storage.Tx) error {
+				res, err := tx.ExecContext(ctx, `UPDATE audit_exports SET drain_deadline = ? WHERE organization_id = ? AND state = 'draining'`,
+					time.Now().Add(-time.Second).UnixMicro(), rest[1])
+				if err != nil {
+					return err
+				}
+				if n, _ := res.RowsAffected(); n == 0 {
+					return fmt.Errorf("no draining audit export of %s", rest[1])
+				}
+				return nil
+			})
+			out = true
 		case "github-app-pending-expired":
 			// The pending conversion's material is written once, by a
 			// trigger; the probe drops it for this one update and creates

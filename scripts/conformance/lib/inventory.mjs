@@ -70,6 +70,7 @@ export const CAPABILITIES = [
   "probe:deletion-due",
   "probe:sync-repair-due",
   "probe:github-app-pending-expired",
+  "probe:audit-export-drain-due",
   "probe:sync-trigger-position",
   "maintenance",
   "serve-cli",

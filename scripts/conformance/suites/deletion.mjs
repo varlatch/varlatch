@@ -23,6 +23,16 @@ import "../../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in out
  * another Organization, a scheduled deletion cancelled, which restores its
  * machine.
  *
+ * What the due run tears down, in the Organization deleted: a Sync Target
+ * (a GitHub repository on a token Connection, the fake platforms) paused
+ * when the deletion is scheduled and revoked with its Connection when it
+ * runs; a webhook suspended, then removed; its GitHub App (imported from
+ * the fake GitHub) removed; and its audit export to a local S3 server,
+ * which drains: the final events, organization.deleted among them, reach
+ * the bucket and the drain completes. In a third Organization, an export
+ * whose bucket is gone cannot drain, and is abandoned once its deadline
+ * passes (the target's audit-export-drain-due probe).
+ *
  *   deletion.mjs <origin> <api token>   (run by scripts/conformance/run.mjs)
  */
 import { spawnSync } from "node:child_process";
@@ -31,6 +41,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
+import { listedKeys, s3Request } from "../lib/s3.mjs";
 import { reporter, targetOp } from "../suite-kit.mjs";
 
 const [origin, token] = process.argv.slice(2);
@@ -82,6 +94,45 @@ function enroll(url, name) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Waits until `done()` answers a truthy value, for up to `ms`; answers the last value. */
+async function waitFor(done, ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const got = await done();
+    if (got || Date.now() > deadline) return got;
+    await sleep(2000);
+  }
+}
+
+/**
+ * A bucket on the object store (Object Lock when `lock`). MinIO can answer
+ * ready before it finishes initializing, refusing requests with 503
+ * XMinioServerNotInitialized for a moment: that answer is retried within
+ * 30 seconds.
+ */
+async function bucket(s3, name, lock) {
+  const headers = lock ? { "x-amz-bucket-object-lock-enabled": "true" } : {};
+  const deadline = Date.now() + 30_000;
+  let made = await s3Request(s3, "PUT", `/${name}`, { headers });
+  while (made.status === 503 && made.text.includes("XMinioServerNotInitialized") && Date.now() < deadline) {
+    await sleep(500);
+    made = await s3Request(s3, "PUT", `/${name}`, { headers, timeoutMs: Math.max(1000, deadline - Date.now()) });
+  }
+  if (made.status !== 200) throw new Error(`creating the bucket ${name}: ${made.status} ${made.text.slice(0, 300)}`);
+}
+
+/** Deletes a bucket without Object Lock and everything in it; the export may still be writing to it. */
+async function removeBucket(s3, name) {
+  for (let attempt = 0; attempt < 15; attempt++) {
+    for (const key of listedKeys((await s3Request(s3, "GET", `/${name}`, { query: { "list-type": "2" } })).text)) {
+      await s3Request(s3, "DELETE", `/${name}/${key}`);
+    }
+    const gone = await s3Request(s3, "DELETE", `/${name}`);
+    if (gone.status === 204 || gone.status === 404) return;
+    await sleep(1000);
+  }
+  throw new Error(`the bucket ${name} could not be removed`);
+}
 const item = (name, sensitive) => ({ name, required: { kind: "never" }, sensitive, type: "string" });
 
 try {
@@ -168,12 +219,52 @@ try {
   const bot = ok(await api("POST", `${D}/identities`, { body: { name: "bot", kind: "service" } }), "creating its machine identity");
   const invitation = ok(await api("POST", `${D}/invitations`, { body: { role: "admin", name: "Second admin" } }), "inviting a second admin");
   const second = enroll(`${origin}/enroll#${invitation.token}`, "Second admin");
+
+  // What its deletion tears down: a Sync Target pushed to a repository, a
+  // webhook, its GitHub App, and its audit export.
+  const hosts = JSON.parse(targetOp("platform-fakes", ["start"]));
+  ok(await api("POST", `${D}/projects`, { body: { name: "App", slug: "app", contractAuthority: "managed" } }), "creating its Project");
+  ok(await api("POST", `${D}/projects/app/environments`, { body: { name: "production", tier: "production" } }), "creating its environment");
+  const drev = ok(await api("POST", `${D}/projects/app/contract/revisions`, { body: { contract: { schemaVersion: 1, items: [item("SECRET", true)] } } }), "its Contract");
+  ok(await api("POST", `${D}/projects/app/contract/revisions/${drev.id}/activate`), "activating it");
+  ok(await api("PUT", `${D}/projects/app/environments/production/values/SECRET`, { body: { value: `doomed-${suffix}` } }), "setting SECRET");
+  const dconn = ok(await api("POST", `${D}/platform-connections`, { body: { platform: "github-actions", baseIdentity: hosts.github, name: "GitHub", credential: `conformance-deletion-${suffix}` } }), "its Connection");
+  const dtarget = ok(await api("POST", `${D}/projects/app/environments/production/sync-targets`, { body: { connectionId: dconn.id, destination: { repo: `deletion-${suffix}` }, mapping: { kind: "wildcard" } } }), "its Sync Target");
+  const pushedBefore = await waitFor(() => (JSON.parse(targetOp("platform-fakes", ["state"])).github[`${hosts.github}/deletion-${suffix}`] ?? []).includes("SECRET"), 90_000);
+  const receiverUrl = JSON.parse(targetOp("webhook-receiver", ["url"])).url;
+  ok(await api("POST", `${D}/webhooks`, { body: { url: `${receiverUrl}/${suffix}/deleted-organization` } }), "its webhook");
+  const appNumber = 8000 + Number.parseInt(suffix.slice(0, 4), 16);
+  const fakeApp = { id: appNumber, slug: `varlatch-deleted-${suffix}`, clientId: `Iv1.del${suffix}`, owner: { login: `acme-deleted-${suffix}`, id: 9300, type: "Organization" } };
+  const { pem } = JSON.parse(targetOp("platform-fakes", ["github", JSON.stringify({ op: "app", app: fakeApp })]));
+  ok(await api("POST", `${D}/github-app/import`, { body: { appId: fakeApp.id, privateKey: pem } }), "importing its GitHub App");
+  const store = JSON.parse(targetOp("object-store", ["start"]));
+  const s3 = { endpoint: store.hostEndpoint, region: store.region, accessKeyId: store.accessKeyId, secretAccessKey: store.secretAccessKey };
+  const exportOf = async (o, name, lock) => {
+    await bucket(s3, name, lock);
+    return ok(await api("POST", `${o}/audit-export`, { body: {
+      destination: { endpoint: store.endpoint, region: store.region, bucket: name, prefix: "varlatch", pathStyle: true },
+      credential: { accessKeyId: store.accessKeyId, secretAccessKey: store.secretAccessKey },
+      retention: lock ? { mode: "governance", days: 1 } : null,
+    } }), `its audit export to ${name}`);
+  };
+  const dexport = await exportOf(D, `deleted-${suffix}`, true);
+
   const botBefore = (await api("GET", "/v1/organizations", { bearer: bot.credential })).status;
   const scheduled = await api("POST", `${D}/deletion`, { body: { afterDays: 1 } });
   const request = scheduled.json ?? {};
   const shown = ok(await api("GET", `${D}/deletion`), "reading the request").deletion;
   const refused = await api("POST", `${D}/projects`, { body: { name: "Late", slug: "late", contractAuthority: "managed" } });
   const botDuring = (await api("GET", "/v1/organizations", { bearer: bot.credential })).status;
+  const scheduledEvent = (ok(await api("GET", `${D}/audit-events?eventType=organization.deletion_scheduled&limit=10`), "listing deletion_scheduled").items ?? [])
+    .find((e) => e.resource?.deletionId === request.id);
+  const pausedTarget = await api("GET", `${D}/projects/app/environments/production/sync-targets/${dtarget.id}`);
+  check(
+    "deletion.teardown-suspended",
+    "scheduling the deletion pauses the Organization's Sync Targets (fenced: a Target that was pushed is paused) and suspends its webhooks, and organization.deletion_scheduled counts them",
+    Boolean(pushedBefore) && scheduledEvent?.metadata?.targetsPaused === 1 && scheduledEvent.metadata.webhooksSuspended === 1 &&
+      pausedTarget.status === 200 && pausedTarget.json?.state === "paused",
+    JSON.stringify({ pushedBefore: Boolean(pushedBefore), scheduled: scheduledEvent?.metadata ?? null, target: [pausedTarget.status, pausedTarget.json?.state] }),
+  );
   check(
     "deletion.organization-scheduled",
     "scheduling an Organization's deletion answers the request (an approval required with two admins, due after the waiting period) and shows it; writes are refused with ORGANIZATION_DELETING and its machine identities are suspended",
@@ -235,6 +326,36 @@ try {
     JSON.stringify({ gone, botAfter, page: page.status, deleted: orgDeleted ?? null }),
   );
 
+  check(
+    "deletion.teardown-ended",
+    "the due run revokes the Organization's Sync Targets and their Connections, removes its webhooks and its GitHub App, and organization.deleted counts them",
+    orgDeleted?.metadata?.targetsRevoked === 1 && orgDeleted.metadata.connectionsRevoked === 1 && orgDeleted.metadata.webhooksRemoved === 1 &&
+      orgDeleted.metadata.githubAppRemoved === true,
+    JSON.stringify(orgDeleted?.metadata ?? null),
+  );
+
+  // The audit export drains: its final events, organization.deleted among
+  // them, reach the bucket, and the drain completes.
+  const prefix = `varlatch/varlatch-audit/${dorg.id}/`;
+  const drained = await waitFor(async () => {
+    const events = (await api("GET", `${T}?limit=500`)).json?.items ?? [];
+    return events.some((e) => e.eventType === "audit_export.completed") && events;
+  }, 150_000);
+  const lines = [];
+  for (const key of listedKeys((await s3Request(s3, "GET", `/deleted-${suffix}`, { query: { "list-type": "2", prefix } })).text)) {
+    if (!key.endsWith(".ndjson.gz")) continue;
+    const got = await s3Request(s3, "GET", `/deleted-${suffix}/${key}`);
+    lines.push(...gunzipSync(got.body).toString("utf8").trimEnd().split("\n").map((l) => JSON.parse(l)));
+  }
+  const delivered = lines.find((l) => l.eventType === "organization.deleted");
+  check(
+    "deletion.audit-export-drained",
+    "after the deletion its audit export drains: the final events, organization.deleted among them, reach the bucket, and the drain completes (audit_export.completed in the deleted Organization's audit)",
+    Boolean(drained) && delivered?.organizationId === dorg.id && delivered.resource?.deletionId === request.id &&
+      !(drained || []).some((e) => e.eventType === "audit_export.abandoned"),
+    JSON.stringify({ completed: Boolean(drained), export: dexport.id, delivered: delivered ? { eventType: delivered.eventType, position: delivered.position } : null, lines: lines.length }),
+  );
+
   // ---- The tombstone's readers.
   const secondReads = (await api("GET", T, { bearer: second })).status;
   const exported = await api("GET", `${T}/export`);
@@ -251,6 +372,27 @@ try {
       listed?.slug === dorg.slug && listed.readers.length === 2 && removed.status === 204 && secondAfter === 404 &&
       relisted?.readers?.some((r) => r.identityId === secondId && typeof r.removedAt === "string"),
     JSON.stringify({ secondReads, exported: exported.status, types: exportedTypes.slice(-3), listed: listed ?? null, removed: removed.status, secondAfter }),
+  );
+
+  // ---- An audit export that cannot drain (its bucket is gone) is
+  // abandoned once its deadline passes.
+  const lorg = ok(await api("POST", "/v1/organizations", { body: { name: `Lost ${suffix}`, slug: `lost-${suffix}` } }), "creating the third Organization");
+  const L = `/v1/organizations/${lorg.slug}`;
+  const lexport = await exportOf(L, `lost-${suffix}`, false);
+  await removeBucket(s3, `lost-${suffix}`);
+  const lrequest = ok(await api("POST", `${L}/deletion`, { body: {} }), "scheduling its deletion");
+  targetOp("probe", ["deletion-due", lrequest.id]);
+  const lgone = await waitFor(async () => (await api("GET", L)).status === 404, 90_000);
+  if (lgone) targetOp("probe", ["audit-export-drain-due", lorg.id]);
+  const LT = `/v1/deleted-organizations/${lorg.id}/audit-events`;
+  const abandoned = lgone && await waitFor(async () => ((await api("GET", `${LT}?limit=500`)).json?.items ?? []).find((e) => e.eventType === "audit_export.abandoned") ?? null, 90_000);
+  const lastEvents = (await api("GET", `${LT}?limit=500`)).json?.items ?? [];
+  check(
+    "deletion.audit-export-drain-deadline",
+    "an audit export that cannot deliver its final events is abandoned once its drain deadline passes: audit_export.abandoned with the deadline, never completed",
+    Boolean(lgone) && abandoned?.resource?.exportId === lexport.id && typeof abandoned.metadata?.drainDeadline === "string" &&
+      !lastEvents.some((e) => e.eventType === "audit_export.completed"),
+    JSON.stringify({ gone: Boolean(lgone), abandoned: abandoned ? { resource: abandoned.resource, metadata: abandoned.metadata } : null, types: lastEvents.map((e) => e.eventType).slice(-5) }),
   );
 } catch (err) {
   error(err instanceof Error ? err.stack ?? err.message : String(err));
