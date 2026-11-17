@@ -176,6 +176,12 @@ func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 				"http:\\\\[redacted]@127.0.0.1:3: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n"},
 		{"logout naming several, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout"}, 64,
 			"Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\\\[redacted]@127.0.0.1:3)."},
+		{"whoami --json refuses it, three slashes", map[string]map[string]any{tripleSlash: {"token": "vlt_cli_x"}}, []string{"whoami", "--json"}, 1,
+			"Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:2/v1/meta"},
+		{"whoami --json --server refuses it, backslashes", map[string]map[string]any{backslashes: {"token": "vlt_cli_x"}}, []string{"whoami", "--json", "--server", backslashes}, 1,
+			"Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:3/v1/meta"},
+		{"whoami --json naming several, backslashes and no slashes", map[string]map[string]any{backslashes: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami", "--json"}, 64,
+			"credentials are stored for http:\\\\[redacted]@127.0.0.1:3, http:[redacted]@127.0.0.1:4;"},
 		{"whoami naming several, three slashes and no slashes", map[string]map[string]any{tripleSlash: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami"}, 64,
 			"credentials are stored for http:///[redacted]@127.0.0.1:2, http:[redacted]@127.0.0.1:4;"},
 	}
