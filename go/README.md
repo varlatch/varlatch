@@ -78,15 +78,39 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   read by no rule, so unknown). Where Go answers
   otherwise, only on input no platform sends:
   - A Compose file the Go reader does not read is unreadable, so every
-    verdict is unknown (the conservative reading): any directive but
-    `%YAML 1.2` (another version, `%TAG`, a reserved one, trailing text,
-    or no `---` after it), a byte order mark past the first, a carriage return
-    outside a CRLF pair (which the `yaml` package refuses too, except inside
-    a quoted value), the YAML 1.1 types (`!!binary`, `!!timestamp`,
-    `!!set`, `!!omap`, `!!pairs`), a mapping or sequence as a key, and an
-    alias inside its own anchor (on which TypeScript overflows its stack
-    and `inspectUsage` throws: defect 6, below). The vectors record each
-    (`divergence:`).
+    verdict is unknown (the conservative reading). The Go reader reads a
+    subset of YAML, an allowlist, and calls everything else unreadable
+    (#218, Sol's fourth round; `inSubset` and `subsetCharacters` in
+    `compose.go`):
+    - characters: printable ones, tab, line feed, and carriage return
+      only before a line feed. No other control character (C0, DEL, C1,
+      NEL), no U+2028 or U+2029, no byte order mark past the first, no
+      U+FFFE or U+FFFF, nothing that is not UTF-8 (a lone surrogate);
+    - quoted and plain scalars, keys included, start and end on one line.
+      Block scalars (`|`, `>`) are read;
+    - flow collections (`{…}`, `[…]`) close on the line they open on;
+    - anchors and aliases named with letters, digits, `_`, `-` and `.`;
+      tags `!`, `!name` or `!!name`, with a name of letters, digits and
+      `-`;
+    - directives: only `%YAML 1.2`, with a `---` after it.
+
+    TypeScript reads some of what falls outside: a lone surrogate, quoted
+    or plain values over indented lines, an escaped line break, a flow
+    collection over indented lines, a property alone on its line. It also
+    reads the YAML 1.1 types (`!!binary`, `!!timestamp`, `!!set`,
+    `!!omap`, `!!pairs`), a mapping or sequence as a key, and an alias
+    inside its own anchor (on which TypeScript overflows its stack and
+    `inspectUsage` throws: defect 6, below). The vectors record each of
+    those (`divergence:`), and each class outside the subset that
+    TypeScript cannot read either (`subset:`).
+  - The differential fuzz: `packages/sync/test/go-compose-fuzz.test.ts`
+    writes mutants of every Compose input the vectors hold, with awkward
+    characters and forms inserted or swapped in, each with TypeScript's
+    verdict. `TestComposeFuzzDifferential` fails on each mutant where Go's
+    verdict is more confident than TypeScript's. It is opt-in, not part of
+    CI (the commands are in the test file). At #218's fourth round, 36,000
+    mutants (seeds 1 to 6) had none: 32,691 gave the same verdict, 3,309
+    were unreadable only in Go.
   - An error that is not the adapter's own (an answer that is not JSON,
     or of the wrong shape) keeps JavaScript's name (`SyntaxError`,
     `TypeError`, `URIError`) with Go's wording, not V8's.
