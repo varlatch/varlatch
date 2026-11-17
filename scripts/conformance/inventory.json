@@ -715,6 +715,29 @@
         "securityApprovalKeys"
       ]
     },
+    "deletion": {
+      "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce",
+      "script": "scripts/conformance/suites/deletion.mjs",
+      "operations": [
+        "createOrganization",
+        "createProject",
+        "createEnvironment",
+        "pushContractRevision",
+        "activateContractRevision",
+        "setValue",
+        "createTeam",
+        "addTeamProject",
+        "listTeamProjects",
+        "deleteProject",
+        "getProject",
+        "listProjects",
+        "listEnvironments",
+        "getEffectiveConfiguration",
+        "listAuditEvents",
+        "changeSecurityControl",
+        "cancelApproval"
+      ]
+    },
     "doctor": {
       "title": "read-only doctor of the Compose installation (ADR-0035 D8)",
       "script": "scripts/conformance/suites/doctor.mjs",
@@ -3343,6 +3366,26 @@
       "suite": "security",
       "kind": "conformance",
       "title": "the approval keys list the Organization's admins with their passkeys' trust, names and dates, never a credential id or key"
+    },
+    "deletion.project-deleted": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "deleting a Project answers what it ended: its live environments, its values, the versions erased, the Team links removed"
+    },
+    "deletion.project-gone": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "a deleted Project and its environments and values are not found, a second deletion too; it is no longer listed or linked to its Team, and its slug can be used again"
+    },
+    "deletion.project-audited": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "the deletion is recorded as project.deleted, under project.manage, with the Project's slug and name and the counts"
+    },
+    "deletion.project-step-up": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "under admin-step-up at enforce, deleting a Project answers STEP_UP_REQUIRED with an approval for project.delete that names the Project and its environment, and deletes nothing"
     },
     "doctor.exits-0": {
       "suite": "doctor",

@@ -188,6 +188,7 @@ var BuiltOperations = []string{
 	createProjectPattern,
 	getProjectPattern,
 	renameProjectPattern,
+	deleteProjectPattern,
 	listEnvironmentsPattern,
 	createEnvironmentPattern,
 	getEnvironmentPattern,

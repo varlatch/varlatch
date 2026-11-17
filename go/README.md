@@ -1429,9 +1429,9 @@ The server's packages:
   jsonb's text and answered in jsonb's member order, as PostgreSQL hands it
   back to the TypeScript server; a Contract jsonb refuses (U+0000, a lone
   surrogate) fails the push with 500, as the insert fails there.
-- `server/projects` and `server/environments` (step 4.1c): an
-  Organization's Projects (`domain/projects.ts` without deletion, which is
-  step 4.12: creating and renaming one) and a Project's environments
+- `server/projects` and `server/environments` (steps 4.1c and 4.12a): an
+  Organization's Projects (`domain/projects.ts`: creating, renaming and
+  deleting one) and a Project's environments
   (`domain/environments.ts`: creating a root or a derived one, ADR-0012
   and ADR-0020, and removing one, ADR-0025), each write one job behind the
   Organization's and the requester's shared gates, with the writer's
@@ -1447,7 +1447,28 @@ The server's packages:
   year 0 refused with 500), held to PostgreSQL by
   `testdata/pg-timestamps.json` (`go-timestamp-vectors.test.ts`).
   `audit.ISOTime` writes years past 9999 as `toISOString` does
-  (`+010000-…`). Served by `server/httpserver/projects.go`, with
+  (`+010000-…`).
+  A Project's deletion (`projects.Delete`, ADR-0051 Decision 2) is
+  immediate and final, one job: a protected operation (admin-step-up's
+  `project.delete`, bound to the Project by its id with no body, as
+  `deletionstepup.ts` binds it; the Project's not-found ahead of the
+  passkey-verification checkpoint; `project.manage` checked again once an
+  approval was consumed), then every environment tombstoned (derived ones
+  first), every value deleted with its version pointers and rotation
+  cleared, every version's ciphertext and wrapped key erased, the
+  environments' outstanding Capabilities and the Project's Sync Targets
+  revoked (a push in progress fenced, the destination claim released),
+  the Teams' links removed, the Project tombstoned and `project.deleted`
+  recorded with the counts the route answers. Contract Revisions and audit
+  events stay. `project-deletion-v0.22.0.json`
+  (`go-project-deletion-fixture.test.ts`) replays 23 requests: who may
+  delete, a frozen or deleting Organization, the deletion of a Project
+  holding every kind of row it ends, what is left (not found, the slug
+  free again, the Team link gone), report mode, and enforce (no approval,
+  another request's, a malformed one, a machine credential, its own);
+  every answer, audit event and changed row equal. The `deletion`
+  conformance suite runs it over the API.
+  Served by `server/httpserver/projects.go`, with
   `environmentsOut`'s tailnet fields (`tailnetRequired`, and the covering
   Requirements' IDs for a caller holding `policy.read`, decided without a
   record). `server/httpserver/installation.go` answers the two

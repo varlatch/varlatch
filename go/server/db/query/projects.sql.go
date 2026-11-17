@@ -12,6 +12,21 @@ import (
 	"database/sql"
 )
 
+const deleteDerivedEnvironmentsOfProject = `-- name: DeleteDerivedEnvironmentsOfProject :exec
+UPDATE environments SET deleted_at = ? WHERE project_id = ? AND deleted_at IS NULL AND parent_environment_id IS NOT NULL
+`
+
+type DeleteDerivedEnvironmentsOfProjectParams struct {
+	DeletedAt sql.NullInt64
+	ProjectID string
+}
+
+// Derived environments first, then roots: an order of updates only.
+func (q *Queries) DeleteDerivedEnvironmentsOfProject(ctx context.Context, arg DeleteDerivedEnvironmentsOfProjectParams) error {
+	_, err := q.db.ExecContext(ctx, deleteDerivedEnvironmentsOfProject, arg.DeletedAt, arg.ProjectID)
+	return err
+}
+
 const deleteEnvironment = `-- name: DeleteEnvironment :execrows
 UPDATE environments SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL
 `
@@ -23,6 +38,32 @@ type DeleteEnvironmentParams struct {
 
 func (q *Queries) DeleteEnvironment(ctx context.Context, arg DeleteEnvironmentParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteEnvironment, arg.DeletedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteEnvironmentsOfProject = `-- name: DeleteEnvironmentsOfProject :exec
+UPDATE environments SET deleted_at = ? WHERE project_id = ? AND deleted_at IS NULL
+`
+
+type DeleteEnvironmentsOfProjectParams struct {
+	DeletedAt sql.NullInt64
+	ProjectID string
+}
+
+func (q *Queries) DeleteEnvironmentsOfProject(ctx context.Context, arg DeleteEnvironmentsOfProjectParams) error {
+	_, err := q.db.ExecContext(ctx, deleteEnvironmentsOfProject, arg.DeletedAt, arg.ProjectID)
+	return err
+}
+
+const deleteTeamLinksOfProject = `-- name: DeleteTeamLinksOfProject :execrows
+DELETE FROM team_projects WHERE project_id = ?
+`
+
+func (q *Queries) DeleteTeamLinksOfProject(ctx context.Context, projectID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteTeamLinksOfProject, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -41,6 +82,47 @@ type DeleteValuesOfEnvironmentParams struct {
 func (q *Queries) DeleteValuesOfEnvironment(ctx context.Context, arg DeleteValuesOfEnvironmentParams) error {
 	_, err := q.db.ExecContext(ctx, deleteValuesOfEnvironment, arg.DeletedAt, arg.EnvironmentID)
 	return err
+}
+
+const deleteValuesOfProject = `-- name: DeleteValuesOfProject :execrows
+UPDATE env_values SET deleted_at = COALESCE(deleted_at, ?1), current_version_id = NULL,
+  retiring_version_id = NULL, rotation_deadline = NULL, rotation_started_at = NULL
+WHERE environment_id IN (SELECT e.id FROM environments e WHERE e.project_id = ?2)
+`
+
+type DeleteValuesOfProjectParams struct {
+	DeletedAt sql.NullInt64
+	ProjectID string
+}
+
+// Every value of the Project, its version pointers and rotation cleared;
+// one deleted before keeps its deletion time.
+func (q *Queries) DeleteValuesOfProject(ctx context.Context, arg DeleteValuesOfProjectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteValuesOfProject, arg.DeletedAt, arg.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const eraseVersionsOfProject = `-- name: EraseVersionsOfProject :execrows
+UPDATE value_versions SET payload = NULL, wrapped_dek = NULL, erased_at = ?1
+WHERE erased_at IS NULL AND value_id IN (
+  SELECT v.id FROM env_values v JOIN environments e ON e.id = v.environment_id WHERE e.project_id = ?2)
+`
+
+type EraseVersionsOfProjectParams struct {
+	ErasedAt  sql.NullInt64
+	ProjectID string
+}
+
+// The versions' ciphertext and wrapped keys erased from the live database.
+func (q *Queries) EraseVersionsOfProject(ctx context.Context, arg EraseVersionsOfProjectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, eraseVersionsOfProject, arg.ErasedAt, arg.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const insertEnvironment = `-- name: InsertEnvironment :exec
@@ -167,7 +249,7 @@ type ListLiveProjectsRow struct {
 	CreatedAt                int64
 }
 
-// Projects and environments (domain/projects.ts without deletion,
+// Projects and environments (domain/projects.ts,
 // domain/environments.ts; ADR-0059 step 4.1c). The lookups by slug, name
 // or ID are values.sql's LiveProject and LiveEnvironment.
 // listProjects: the Organization's live Projects, oldest first.
@@ -269,6 +351,56 @@ func (q *Queries) LiveProjectSlugTaken(ctx context.Context, arg LiveProjectSlugT
 	return count, err
 }
 
+const markProjectDeleted = `-- name: MarkProjectDeleted :exec
+UPDATE projects SET deleted_at = ? WHERE id = ?
+`
+
+type MarkProjectDeletedParams struct {
+	DeletedAt sql.NullInt64
+	ID        string
+}
+
+func (q *Queries) MarkProjectDeleted(ctx context.Context, arg MarkProjectDeletedParams) error {
+	_, err := q.db.ExecContext(ctx, markProjectDeleted, arg.DeletedAt, arg.ID)
+	return err
+}
+
+const projectForDeletion = `-- name: ProjectForDeletion :one
+
+SELECT p.id, p.slug, p.name,
+  (SELECT count(*) FROM environments e WHERE e.project_id = p.id AND e.deleted_at IS NULL) AS environments
+FROM projects p WHERE p.id = ? AND p.organization_id = ? AND p.deleted_at IS NULL
+`
+
+type ProjectForDeletionParams struct {
+	ID             string
+	OrganizationID string
+}
+
+type ProjectForDeletionRow struct {
+	ID           string
+	Slug         string
+	Name         string
+	Environments int64
+}
+
+// Project deletion (deleteProject, ADR-0051 Decision 2; ADR-0059 step
+// 4.12a). Every row of the Project's environments, live or not, as the
+// TypeScript server's envIds holds them all.
+// readProjectForDeletion: a live Project of the Organization, with its
+// live environments counted.
+func (q *Queries) ProjectForDeletion(ctx context.Context, arg ProjectForDeletionParams) (ProjectForDeletionRow, error) {
+	row := q.db.QueryRowContext(ctx, projectForDeletion, arg.ID, arg.OrganizationID)
+	var i ProjectForDeletionRow
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Name,
+		&i.Environments,
+	)
+	return i, err
+}
+
 const projectNames = `-- name: ProjectNames :one
 SELECT slug, name FROM projects WHERE organization_id = ? AND id = ?
 `
@@ -316,6 +448,45 @@ type RevokeCapabilitiesOfEnvironmentParams struct {
 
 func (q *Queries) RevokeCapabilitiesOfEnvironment(ctx context.Context, arg RevokeCapabilitiesOfEnvironmentParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, revokeCapabilitiesOfEnvironment, arg.RevokedAt, arg.EnvironmentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const revokeCapabilitiesOfProject = `-- name: RevokeCapabilitiesOfProject :execrows
+UPDATE capabilities SET revoked_at = ?1
+WHERE revoked_at IS NULL AND environment_id IN (SELECT e.id FROM environments e WHERE e.project_id = ?2)
+`
+
+type RevokeCapabilitiesOfProjectParams struct {
+	RevokedAt sql.NullInt64
+	ProjectID string
+}
+
+func (q *Queries) RevokeCapabilitiesOfProject(ctx context.Context, arg RevokeCapabilitiesOfProjectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeCapabilitiesOfProject, arg.RevokedAt, arg.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const revokeSyncTargetsOfProject = `-- name: RevokeSyncTargetsOfProject :execrows
+UPDATE sync_targets SET revoked_at = ?1, generation = generation + 1, lease_expires_at = NULL,
+  repair_cycle_started_at = NULL, version = version + 1, updated_at = ?1
+WHERE project_id = ?2 AND revoked_at IS NULL
+`
+
+type RevokeSyncTargetsOfProjectParams struct {
+	RevokedAt sql.NullInt64
+	ProjectID string
+}
+
+// Revocation fences a push in progress (ADR-0050 Decision 1) and releases
+// the destination claim.
+func (q *Queries) RevokeSyncTargetsOfProject(ctx context.Context, arg RevokeSyncTargetsOfProjectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeSyncTargetsOfProject, arg.RevokedAt, arg.ProjectID)
 	if err != nil {
 		return 0, err
 	}
