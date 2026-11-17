@@ -93,10 +93,12 @@ The CLI never writes through a symbolic link:
   before anything is read or changed, `--check` included. Replace it with
   a directory, then run the command again.
 
-A file the CLI changes is replaced as a whole, keeping its permissions.
-`AGENTS.md` and a `CLAUDE.md` that is the same file stay one file; a file
-with any other second name (a hard link) stops the command with status 78
-before anything is changed.
+A file the CLI changes is replaced as a whole: it keeps its permission
+bits; ownership, ACLs and extended attributes are not carried over.
+`AGENTS.md` and a `CLAUDE.md` that is the same file stay one file, and
+`--remove` removes both names when it removes the file; a file with any
+other second name (a hard link) stops the command with status 78 before
+anything is changed.
 
 An unknown option, a missing option value, or an extra argument exits 64
 before anything is written, so a mistyped `--check` never installs.
