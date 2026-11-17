@@ -4,7 +4,7 @@
 // ADR-0046; tailnet/whois.ts, tailnet/listener.ts), on a Node: what
 // varlatchd's own tailnet node answers about a connection's peer (WhoIs)
 // and about itself. ADR-0059 Decision 5 makes the node tsnet, in process
-// (step 4.13b); until then, and in tests, a Node is a stand-in.
+// (node.go, step 4.13b); in tests, a Node can be a stand-in.
 //
 // The check reads only the accepted socket's own peer address, never what
 // the request says. Every way it can fail refuses: the peer then has no

@@ -443,6 +443,48 @@ func TestCLIDownloadOff(t *testing.T) {
 	}
 }
 
+// With a tailnet browser endpoint, the dashboard's connect-src names it,
+// as the TypeScript installation's dashboard container writes it for
+// VARLATCH_TAILNET_ENDPOINT (less the Convex origins the Go server has
+// none of), so the dashboard can Connect. It follows the endpoint as it is
+// now: none before enrolment or once the pin is closed. An endpoint that is
+// not exactly an https origin is never written into the header.
+func TestDashboardCSPNamesTheBrowserEndpoint(t *testing.T) {
+	endpoint := ""
+	s, _, _, _ := newTestServer(t, func(o *Options) { o.BrowserEndpoint = func() string { return endpoint } })
+	csp := func() string {
+		t.Helper()
+		w := do(s, "GET", "/orgs/acme", "", nil)
+		if w.Code != 200 {
+			t.Fatalf("the dashboard: %d", w.Code)
+		}
+		return w.Header().Get("Content-Security-Policy")
+	}
+	if got := csp(); got != ContentSecurityPolicy {
+		t.Errorf("before enrolment: %q", got)
+	}
+	endpoint = "https://varlatch.corp.ts.net:8443"
+	want := "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; font-src 'self' data:; " +
+		"connect-src 'self' https://varlatch.corp.ts.net:8443; manifest-src 'self'; base-uri 'none'; " +
+		"form-action 'self' https://github.com; frame-ancestors 'none'; object-src 'none'"
+	if got := csp(); got != want {
+		t.Errorf("with the endpoint:\n got %q\nwant %q", got, want)
+	}
+	for _, bad := range []string{
+		"https://varlatch.corp.ts.net:8443; script-src *", "http://varlatch.corp.ts.net:8443", "https://Varlatch.corp.ts.net",
+		"https://varlatch.corp.ts.net:8443/path", "https://varlatch.corp.ts.net:8443 https://evil.example", "https://-x.ts.net",
+	} {
+		endpoint = bad
+		if got := csp(); got != ContentSecurityPolicy {
+			t.Errorf("%q written into the CSP: %q", bad, got)
+		}
+	}
+	endpoint = ""
+	if got := csp(); got != ContentSecurityPolicy {
+		t.Errorf("once the pin is closed: %q", got)
+	}
+}
+
 // The dashboard: files of the build where the path names one, index.html
 // for every other path, with the CSP; never for /v1, /auth or /enroll.
 func TestDashboard(t *testing.T) {
