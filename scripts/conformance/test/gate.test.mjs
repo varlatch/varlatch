@@ -157,7 +157,12 @@ test("today no target can pass the gate: the doctor and lifecycle replacements a
     if (id.startsWith("realtime.") && typeof c.replacement === "string") assert.match(c.replacement, /^(realtime-degraded|dashboard)\./, id);
   }
   assert.ok(open.some((r) => r.of.startsWith("doctor.") && /step 6/.test(r.replacement.open)));
-  for (const name of Object.keys(inventory.externalSuites)) assert.ok(open.some((r) => r.of.startsWith(`${name} (`)), name);
+  // An external suite is open until its Go counterpart lands; the backup
+  // suites' run in the Go workflow, so they name none.
+  for (const [name, suite] of Object.entries(inventory.externalSuites)) {
+    if (["backup-e2e", "backup-s3"].includes(name)) assert.match(suite.replacement.none, /go\.yml/, name);
+    else assert.ok(open.some((r) => r.of.startsWith(`${name} (`)), name);
+  }
 
   // The best a run can do on each target: every check passes (a ts-stack
   // check does not apply where the target has no TypeScript stack, nor a

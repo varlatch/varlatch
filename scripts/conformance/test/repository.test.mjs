@@ -272,6 +272,42 @@ test("every lifecycle and installer suite (scripts/test-*.mjs) is an external su
   }
 });
 
+// An external suite whose replacement is `none` because its Go
+// counterparts run in the Go workflow names them: every Go test it names
+// exists, and every step it quotes is one of go.yml's. The S3 step runs
+// the tests it names and cannot skip them.
+test("an external suite's Go counterparts it names exist", () => {
+  const goTests = new Set();
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith("_test.go")) for (const m of readFileSync(p, "utf8").matchAll(/^func (Test\w+)\(t \*testing\.T\)/gm)) goTests.add(m[1]);
+    }
+  };
+  walk(join(repoRoot, "go"));
+  const workflow = readFileSync(join(repoRoot, ".github/workflows/go.yml"), "utf8");
+  const steps = new Set([...workflow.matchAll(/^\s+- name: (.+)$/gm)].map((m) => m[1].trim()));
+  let named = 0;
+  for (const [name, suite] of Object.entries(inventory.externalSuites)) {
+    const why = suite.replacement?.none;
+    if (typeof why !== "string" || !why.includes("go.yml")) continue;
+    for (const [, t] of why.matchAll(/\b(Test[A-Z]\w*)/g)) {
+      assert.ok(goTests.has(t), `${name}: ${t} is not a Go test`);
+      named++;
+    }
+    for (const [, step] of why.matchAll(/'([^']+)'/g)) assert.ok(steps.has(step), `${name}: '${step}' is not a step of go.yml`);
+  }
+  assert.ok(named >= 8, `only ${named} Go tests named`);
+  const s3 = workflow.slice(workflow.indexOf("- name: G13, the S3 client"));
+  const run = s3.slice(0, s3.indexOf("\n      - ", 1));
+  assert.match(run, /VARLATCH_REQUIRE_S3=1/);
+  for (const t of ["TestS3UploadDownload", "TestS3MultipartAbortAndRetry", "TestBucketTest"]) {
+    assert.ok(inventory.externalSuites["backup-s3"].replacement.none.includes(t), t);
+    assert.ok(run.includes(t), `the S3 step does not run ${t}`);
+  }
+});
+
 test("each expectations file is valid and named after a target", async () => {
   const { validateExpectations } = await import("../lib/expect.mjs");
   const { openapiOperations } = await import("../lib/operations.mjs");
