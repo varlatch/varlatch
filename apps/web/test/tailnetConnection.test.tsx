@@ -405,3 +405,82 @@ describe("the Connect deadline", () => {
     expect(state.connection).toMatchObject({ status: "unreachable", blockedByPolicy: false });
   });
 });
+
+/**
+ * A probe in flight stops with the provider, and when the identity or the
+ * endpoint changes: its request is aborted, its timers cleared and its
+ * listener removed then, not when it would have settled up to 30 seconds
+ * later.
+ */
+describe("a Connect probe that is no longer wanted", () => {
+  let probeSignal: AbortSignal | undefined;
+  let listening: number;
+  let baseline: number;
+  /** Starts a probe that waits on the browser's permission prompt: a request, two timers, a listener. */
+  async function startProbe() {
+    vi.stubGlobal("Request", localNetworkAccess());
+    const doc = document;
+    listening = 0;
+    vi.spyOn(doc, "addEventListener").mockImplementation(function (this: EventTarget, type: string) {
+      if (type === "securitypolicyviolation") listening++;
+    } as typeof doc.addEventListener);
+    vi.spyOn(doc, "removeEventListener").mockImplementation(function (this: EventTarget, type: string) {
+      if (type === "securitypolicyviolation") listening--;
+    } as typeof doc.removeEventListener);
+    probeSignal = undefined;
+    endpoint = (_url, init) => {
+      probeSignal = init.signal ?? undefined;
+      return never(_url, init);
+    };
+    await mount();
+    vi.useFakeTimers();
+    baseline = vi.getTimerCount();
+    await act(async () => state.connect());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(state.connection).toEqual({ status: "connecting", endpoint: ENDPOINT });
+    expect(probeSignal?.aborted).toBe(false);
+    expect(listening).toBe(1);
+    expect(vi.getTimerCount()).toBe(baseline + 2);
+  }
+
+  it("stops when the provider unmounts", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await startProbe();
+    await act(async () => root!.unmount());
+    root = undefined;
+    client.clear();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(probeSignal?.aborted).toBe(true);
+    expect(listening).toBe(0);
+    // Not even the zero-delay wait for a policy violation: the probe ended
+    // before it could report anything.
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(PERMISSION_PROBE_TIMEOUT_MS + 1)));
+    expect(errors.mock.calls.filter(([m]) => !String(m).includes("react-test-renderer is deprecated"))).toEqual([]);
+  });
+
+  it("stops when the endpoint changes, and the new one stays unconnected", async () => {
+    await startProbe();
+    endpointConfigured = false;
+    await act(async () => void (await client.invalidateQueries({ queryKey: ["tailnet-endpoint"] })));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(state.connection).toEqual({ status: "unavailable" });
+    expect(probeSignal?.aborted).toBe(true);
+    expect(listening).toBe(0);
+    expect(vi.getTimerCount()).toBe(baseline);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(PERMISSION_PROBE_TIMEOUT_MS + 1)));
+    expect(state.connection).toEqual({ status: "unavailable" });
+  });
+
+  it("is replaced by a new Connect, which stops the first", async () => {
+    await startProbe();
+    const first = probeSignal!;
+    await act(async () => state.connect());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(first.aborted).toBe(true);
+    expect(probeSignal).not.toBe(first);
+    expect(probeSignal?.aborted).toBe(false);
+    expect(listening).toBe(1);
+    expect(vi.getTimerCount()).toBe(baseline + 2);
+  });
+});
