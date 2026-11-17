@@ -1,0 +1,3980 @@
+{
+  "comment": "Written by services/varlatchd/test/go-project-deletion-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+  "ref": "v0.22.0",
+  "serverVersion": "0.22.0",
+  "rootKek": "d9f7509aa5a40b7421ad1d9f16230499a71be3cf9b025adc19a6f63854e0feec",
+  "tokens": {
+    "alice": "vlt_cli_TLY-SUW2e-gcORgMxdp4Wudp7K4fFKr8ipwFHNy__Cc",
+    "alice2": "vlt_cli_FgMldC1jdeu4qHFxOtS8OQsGiEKDxhKbnMco-eiDnsc",
+    "bob": "vlt_cli_949HSGTXF8O8Y1lIvDTiQffuKI-EVJKOuArmixwcba4",
+    "carol": "vlt_cli_uE16FEZkG9Ci8lhR68k_3C0IMI7l-ayFl4uf2Hsn168",
+    "broker": "vlt_svc_z3JlvnHDF16rOVdy3Znuxq9jH0Pyt-lxp0Ewh0kU8Gs",
+    "agent": null,
+    "svc": "vlt_svc_XF3ZkZCtlwY_voK7EDMzS8O5TCNDBACDFwrR9p8_Spc"
+  },
+  "rows": {
+    "installation": [
+      {
+        "id": "inst_gcv5jgnoyroh7jfrpkdodjnb4a",
+        "kek_canary": {
+          "nonce": "swdriR5dAJ7d+Yo9",
+          "authTag": "FXfGYeQZAMx6P3d5tbqh3A==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "PW1b8Baxw0qgUYTIx1JOUvgfsFhdUpibjtBkoxpoUng=",
+          "formatVersion": 1
+        },
+        "bootstrapped_at": "2026-11-17T02:21:14.256Z",
+        "created_at": "2026-11-17T02:21:14.186Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "public_url": null
+      }
+    ],
+    "identities": [
+      {
+        "id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "kind": "broker",
+        "name": "broker",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-17T02:21:14.987Z",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "kind": "human",
+        "name": "bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_iqaxiisgsalmqzjjt66azugq4q",
+        "kind": "agent",
+        "name": "agent",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-17T02:21:15.016Z",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-11-17T02:21:14.256Z",
+        "organization_id": null,
+        "last_seen_at": "2026-11-17T02:21:14.338Z",
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_kmolx2mhvmjf5i4tqnut2a2f2i",
+        "kind": "service",
+        "name": "svc",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-11-17T02:21:15.445Z",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_q4ikzpueamz3fhn3h44dixdhie",
+        "kind": "human",
+        "name": "carol",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      }
+    ],
+    "credentials": [
+      {
+        "id": "crd_5itvcydl6da67r4z6h3qwis7eu",
+        "identity_id": "idn_kmolx2mhvmjf5i4tqnut2a2f2i",
+        "kind": "service",
+        "name": "svc credential",
+        "token_hash": "2d5625757f63c318336df4f0e1367b61fed55ed8abac8c25d8fad2f5b13b5b7b",
+        "created_at": "2026-11-17T02:21:15.445Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_7dotnskrrhj4dq7ykj4l74wqny",
+        "identity_id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "e0997d66fa1bb75b450dbb0f82f6724b906d7f2b9ac900284186560c06b6117f",
+        "created_at": "2026-11-17T02:21:14.439Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_ap3riblxgcvat4jdwyee7lt2zm",
+        "identity_id": "idn_q4ikzpueamz3fhn3h44dixdhie",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "9fe832689d735a05ea2918def7c5a5082906571cc595ae29bb8d677d631e9ff1",
+        "created_at": "2026-11-17T02:21:14.447Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_q4ikzpueamz3fhn3h44dixdhie",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_cemogxqqrclfq3t77jj2t2ug3a",
+        "identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "kind": "service",
+        "name": "broker credential",
+        "token_hash": "31d12ced56a39f5d6c83fa086cf66d5d3f844bea98b227bac26b27ed6c9e1bc8",
+        "created_at": "2026-11-17T02:21:14.987Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "40226a21388bcc00b8ca18a63dbb8e51dd78fc9fd2d949d8db5a72efee5e4621",
+        "created_at": "2026-11-17T02:21:14.295Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-11-17T02:21:14.328Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_qruv76njtosmo7tlnzayoy42xy",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "a492402b0cefeccc4fab6610055a0cbad8ec0162d840eb478048d71c063c05cf",
+        "created_at": "2026-11-17T02:21:14.280Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ],
+    "organizations": [
+      {
+        "id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "slug": "deleting",
+        "name": "Deleting",
+        "wrapped_org_kek": {
+          "nonce": "VvgVvoluRp18n6fX",
+          "authTag": "9W7cG1pHpafml19HlaWh9Q==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "UzRwZHVYHJOait1iQVvasAKHp51Ml2qETn58a43XGqM=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.413Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "slug": "rep",
+        "name": "Rep",
+        "wrapped_org_kek": {
+          "nonce": "HJspd3U4MV/recPc",
+          "authTag": "LHnDL2FY8p3Qf9drwvWR9w==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "49nUUCDpXF/arFqr1WPh9lh/e18s4JKWAA+Yk7QmQy8=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.366Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 1
+      },
+      {
+        "id": "org_strudq63wz4o5ezbtlkao46xma",
+        "slug": "acme",
+        "name": "Acme",
+        "wrapped_org_kek": {
+          "nonce": "zEq53A450pcJMxjM",
+          "authTag": "qXL0yZSB8FIP9meyv6f4hA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "aKZyLhxNpkyfIqzUkJWPJywz2CAsxfm4K1h15yu5UEo=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.344Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "slug": "beta",
+        "name": "Beta",
+        "wrapped_org_kek": {
+          "nonce": "z5Xx0F1UH0QN1ulB",
+          "authTag": "XHFh+R5C0D2jTgmTqdE6kg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "vTv6KF9tGpAwVnh4AM0G36bXmefaKgVnrTwaYTkVWF8=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.426Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "slug": "frozen",
+        "name": "Frozen",
+        "wrapped_org_kek": {
+          "nonce": "ve0BSI0ilfXFpvwK",
+          "authTag": "vugU4wYePTs6ykw1dG3Umg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "voGihusdu21AE5oOpNrY2h2Bv8Vq8FianqKbyz3TAP4=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.396Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "slug": "enf",
+        "name": "Enf",
+        "wrapped_org_kek": {
+          "nonce": "WUxh+gsIb7jIQReS",
+          "authTag": "4+bq0tZsAfG/uFzdnqnSpw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "Mb+ig8r23aGhYfexinQ8Jh/xDvcgJI3Zdje2bzwn0ws=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.382Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 2
+      }
+    ],
+    "org_memberships": [
+      {
+        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "role": "admin",
+        "created_at": "2026-11-17T02:21:14.413Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "role": "admin",
+        "created_at": "2026-11-17T02:21:14.366Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "identity_id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "role": "member",
+        "created_at": "2026-11-17T02:21:14.436Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "role": "admin",
+        "created_at": "2026-11-17T02:21:14.344Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "role": "admin",
+        "created_at": "2026-11-17T02:21:14.426Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "role": "admin",
+        "created_at": "2026-11-17T02:21:14.396Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "role": "admin",
+        "created_at": "2026-11-17T02:21:14.382Z",
+        "removed_at": null,
+        "version": 0
+      }
+    ],
+    "groups": [
+      {
+        "id": "tem_46kcxutp2vwsay4uaydfsw5uie",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "name": "core",
+        "kind": "team",
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:15.124Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null
+      }
+    ],
+    "grants": [
+      {
+        "id": "grt_dpyqfcxtqvsr74dxp67ldeyblu",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "subject_identity_id": "idn_kmolx2mhvmjf5i4tqnut2a2f2i",
+        "scope": {
+          "kind": "project",
+          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a"
+        },
+        "actions": [
+          "project.manage"
+        ],
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:15.466Z",
+        "revoked_at": null,
+        "subject_group_id": null,
+        "role_id": null
+      }
+    ],
+    "projects": [
+      {
+        "id": "prj_3mzwzc6uqa3y7qxhfmlsxj5kia",
+        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "slug": "web",
+        "name": "WEB",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T02:21:15.199Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_4sgzvm4qgxbu67w3ftjp43grvy",
+        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "slug": "dp",
+        "name": "DP",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T02:21:15.409Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_7bm35l2ba5uusfl35ejwudpjkq",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "slug": "keep",
+        "name": "KEEP",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T02:21:15.083Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "slug": "ep",
+        "name": "EP",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T02:21:15.278Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "slug": "rp",
+        "name": "RP",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T02:21:15.238Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_oqk5kl4ecpddujqqjeapmqg22y",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "slug": "ep2",
+        "name": "EP2",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T02:21:15.335Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "slug": "full",
+        "name": "FULL",
+        "contract_authority": "git",
+        "active_contract_revision_id": "rev_et2px6g2nxphm4lwjwqjlugl4i",
+        "created_at": "2026-11-17T02:21:14.470Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_xwxumzzcdzzcrty5enwm7ie7ki",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "slug": "empty",
+        "name": "EMPTY",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T02:21:15.065Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_y77zeqbyztkznyl7em3cnhpce4",
+        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "slug": "fp",
+        "name": "FP",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T02:21:15.372Z",
+        "deleted_at": null
+      }
+    ],
+    "team_projects": [
+      {
+        "team_id": "tem_46kcxutp2vwsay4uaydfsw5uie",
+        "project_id": "prj_7bm35l2ba5uusfl35ejwudpjkq",
+        "created_at": "2026-11-17T02:21:15.177Z"
+      },
+      {
+        "team_id": "tem_46kcxutp2vwsay4uaydfsw5uie",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "created_at": "2026-11-17T02:21:15.148Z"
+      }
+    ],
+    "contract_revisions": [
+      {
+        "id": "rev_et2px6g2nxphm4lwjwqjlugl4i",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "content_hash": "sha256:2789214da361977c7cad48eaddcb565c0e3f7738af236271e34c6e8e793fb5a8",
+        "contract": {
+          "items": [
+            {
+              "name": "PLAIN",
+              "type": "string",
+              "required": {
+                "kind": "never"
+              },
+              "sensitive": false
+            },
+            {
+              "name": "SECRET_A",
+              "type": "string",
+              "required": {
+                "kind": "never"
+              },
+              "sensitive": true
+            },
+            {
+              "name": "SECRET_B",
+              "type": "string",
+              "required": {
+                "kind": "never"
+              },
+              "sensitive": true
+            }
+          ],
+          "schemaVersion": 1,
+          "semanticsVersion": 3
+        },
+        "provenance": null,
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:14.629Z"
+      }
+    ],
+    "environments": [
+      {
+        "id": "env_2wbjjreukterlvmklntz32dlz4",
+        "project_id": "prj_oqk5kl4ecpddujqqjeapmqg22y",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:15.353Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_3c2gae2ltjk2m52mvn762ijh3u",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "name": "old",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:14.600Z",
+        "deleted_at": "2026-11-17T02:21:14.961Z"
+      },
+      {
+        "id": "env_aad7bkhnmsfqj6fp2caepmn3wy",
+        "project_id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:15.296Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "name": "production",
+        "kind": "shared",
+        "tier": "production",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:14.536Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_c2oqkn6qvl54z72kn44um75d4a",
+        "project_id": "prj_4sgzvm4qgxbu67w3ftjp43grvy",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:15.426Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_hujfqmpbe6yhk76fdgz32cnhna",
+        "project_id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+        "name": "production",
+        "kind": "shared",
+        "tier": "production",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:15.316Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_keexwsutmg7sojej4nrkppafxy",
+        "project_id": "prj_7bm35l2ba5uusfl35ejwudpjkq",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:15.103Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_krplpytbz7nd6tspsahmfvruom",
+        "project_id": "prj_3mzwzc6uqa3y7qxhfmlsxj5kia",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:15.218Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_njahli6f72utsmjrc6fobqwliy",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:14.499Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_smiqyndfiakcrfpoajtolnfscy",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "name": "development/feature-x",
+        "kind": "preview",
+        "tier": "development",
+        "parent_environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:14.566Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_xewdnsbp32abgtwcx37r7uy22y",
+        "project_id": "prj_y77zeqbyztkznyl7em3cnhpce4",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:15.389Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_yyhqsu7inhpnikvm7gwzcg2f74",
+        "project_id": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T02:21:15.258Z",
+        "deleted_at": null
+      }
+    ],
+    "env_values": [
+      {
+        "id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "item_name": "SECRET_A",
+        "current_version_id": "ver_3hglvrwrdsirpjidmgim3se22i",
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.689Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_bnjhmvr4ubtcuqlmulsw4clyz4",
+        "environment_id": "env_smiqyndfiakcrfpoajtolnfscy",
+        "item_name": "SECRET_A",
+        "current_version_id": "ver_d2ohal3emo5lytj2kmlwcwyci4",
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.864Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_g3wd7k4htttcw2sk2rxor4qjyq",
+        "environment_id": "env_3c2gae2ltjk2m52mvn762ijh3u",
+        "item_name": "SECRET_A",
+        "current_version_id": null,
+        "deleted_at": "2026-11-17T02:21:14.961Z",
+        "created_at": "2026-11-17T02:21:14.898Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_hcf3wob4y6jofewbmveyzuerju",
+        "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+        "item_name": "SECRET_A",
+        "current_version_id": "ver_rm6lqudaqljubbomk7n72pomiy",
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.831Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_ojefqympv723xtsbas3syz3xee",
+        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "item_name": "PLAIN",
+        "current_version_id": "ver_seymwabgn6n3hnl5dmp4h7spbe",
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.800Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_xtoe5ehligqrz6vqapoqofrdeu",
+        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "item_name": "SECRET_B",
+        "current_version_id": "ver_yxg3fj7g7xhllwc3ukpjuzug2i",
+        "deleted_at": null,
+        "created_at": "2026-11-17T02:21:14.767Z",
+        "retiring_version_id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
+        "rotation_deadline": "2026-11-18T02:21:14.938Z",
+        "rotation_started_at": "2026-11-17T02:21:14.928Z"
+      }
+    ],
+    "value_versions": [
+      {
+        "id": "ver_3hglvrwrdsirpjidmgim3se22i",
+        "value_id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+        "payload": {
+          "nonce": "NEZvq7hVOuBDtpgO",
+          "authTag": "oHytvjzStm+M8qzYvK9QBw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "EDsj",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "41s/HTPD3rfbHEzi",
+          "authTag": "adFRa+8JnBuibzUQlaS/hw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "GXCrPJ68kz3t5jPs9gIzhgU5dMxkdP1kkNNm71QXrhc=",
+          "formatVersion": 1
+        },
+        "previous_version_id": "ver_enc3dnh5ge3torz42wingzi4g4",
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:14.731Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_57uqfdbvd4hwvsopm42bbrsy2y",
+        "value_id": "val_g3wd7k4htttcw2sk2rxor4qjyq",
+        "payload": {
+          "nonce": "YX4iZsopY7iPfNV7",
+          "authTag": "hn0Pp0unPMSi5zWaIB+1BA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "hunZbug=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "xa/dWgbe8e2Ks230",
+          "authTag": "OCbUaSwtUSaOFNNwOIj7xg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "8nQpLsEZSAojqC+11/oP7bL+GCV+qxZFgQK7CdWbBo0=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:14.898Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_d2ohal3emo5lytj2kmlwcwyci4",
+        "value_id": "val_bnjhmvr4ubtcuqlmulsw4clyz4",
+        "payload": {
+          "nonce": "pkR3Vo5EDWv0oW9f",
+          "authTag": "ZYIYGLno8B/MLxTA6CXUPQ==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "ap+wTNLNVQ==",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "Crrf0vOqQ+ixT/5s",
+          "authTag": "IJFeeruTDtIoDVooUkcd8A==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "YI050sF+cUOX+3T2AJDx9hPzb8Sl5y473mRe8EXaXFw=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:14.864Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_enc3dnh5ge3torz42wingzi4g4",
+        "value_id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+        "payload": {
+          "nonce": "qxeoJHW7yd0DZB55",
+          "authTag": "5hy32bpksy6BZLjLytPkAw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "GW5b",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "cz5ye/sDPdNVeBVz",
+          "authTag": "eC3aGXNJGjI5L5yatrXQRA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "gTsFDYhQew/AConZPQdIyrZGHHqqhdQLW2vPpFG1wlQ=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:14.689Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_rm6lqudaqljubbomk7n72pomiy",
+        "value_id": "val_hcf3wob4y6jofewbmveyzuerju",
+        "payload": {
+          "nonce": "PgYBdASf6syXtYIb",
+          "authTag": "g3sK/ltKBXtzAHjb4LcC2g==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "F0FcxxdY",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "i4WljIqJ7EP/HY5m",
+          "authTag": "ODzNWzRdkcEnRaurydIacg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "LHh6w6xoG/cbY5H6j6BkYzK48t/UbY3bXdrPYpanGF4=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:14.831Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_seymwabgn6n3hnl5dmp4h7spbe",
+        "value_id": "val_ojefqympv723xtsbas3syz3xee",
+        "payload": {
+          "nonce": "4f7J/AfULITIhXYz",
+          "authTag": "7NNWA1No/svLwFWoPcZY+A==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "+1TIS1U=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "eVdzEqTN1/tAe4mH",
+          "authTag": "zmatfLlbi03ctnGTPMaUUw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "V6zktGagB4pBYM/m0fx9oyJamseCZppAr2NyLzGjMUo=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:14.800Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
+        "value_id": "val_xtoe5ehligqrz6vqapoqofrdeu",
+        "payload": {
+          "nonce": "XCh4jaOx37ZYIWOH",
+          "authTag": "AuvSqp3WFW/c+Gt5J/Wo+A==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "pmB6Rmg=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "7ZEZ4Fc9jqA2Lv9A",
+          "authTag": "Vr4T4/Kiif7M+bqkcinWUg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "hcQaHo9WDjklkQNaaQsIHMWczlYnIgwE9fv/pxK8KIE=",
+          "formatVersion": 1
+        },
+        "previous_version_id": null,
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:14.767Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_yxg3fj7g7xhllwc3ukpjuzug2i",
+        "value_id": "val_xtoe5ehligqrz6vqapoqofrdeu",
+        "payload": {
+          "nonce": "VJMpXVXgVyVX/50V",
+          "authTag": "LgscMbkbOWj8r0ddjsw13g==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "fqHOXo4=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "jEoO7+2+wbxL+iUE",
+          "authTag": "/B1+1dwdTGGVgw4QHdxnqw==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "/+L+xCqu7wO8VIzz27SHVWPObRRSNiMeneq9y4ecCgQ=",
+          "formatVersion": 1
+        },
+        "previous_version_id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-11-17T02:21:14.928Z",
+        "erased_at": null
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "cap_2rvxe6eyq7ekhpapwvkan3u2qm",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+        "items": [
+          "SECRET_A"
+        ],
+        "destinations": [
+          "api.example.com:443"
+        ],
+        "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "run_id": "prod-live",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": null,
+        "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "targets": {
+          "SECRET_A": [
+            "header:authorization"
+          ]
+        }
+      },
+      {
+        "id": "cap_fkufd6odcwtdrwfehi53xaptbe",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "items": [
+          "SECRET_A"
+        ],
+        "destinations": [
+          "api.example.com:443"
+        ],
+        "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "run_id": "dev-revoked",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": "2026-02-02T00:00:00.000Z",
+        "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "targets": {
+          "SECRET_A": [
+            "header:authorization"
+          ]
+        }
+      },
+      {
+        "id": "cap_nfo27mymnpwnaqz3q77ufcibk4",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "items": [
+          "SECRET_A"
+        ],
+        "destinations": [
+          "api.example.com:443"
+        ],
+        "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "run_id": "dev-live",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": null,
+        "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "targets": {
+          "SECRET_A": [
+            "header:authorization"
+          ]
+        }
+      }
+    ],
+    "platform_connections": [
+      {
+        "id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "platform": "coolify",
+        "base_identity": "https://coolify.example.com",
+        "name": "Coolify",
+        "credential_envelope": {
+          "fixture": "not opened"
+        },
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "credential_expires_at": null,
+        "credential_expiry_seen_at": null,
+        "credential_kind": "token",
+        "github_app_id": null,
+        "github_installation_id": null
+      }
+    ],
+    "sync_targets": [
+      {
+        "id": "snt_d2dt3xivt2nzketvequwx55cei",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+        "destination": {
+          "application": "app-gone"
+        },
+        "canonical_destination": "coolify:app-gone",
+        "mapping": {},
+        "remove_orphans": false,
+        "redeploy": false,
+        "state": "active",
+        "disabled_reason": null,
+        "failure_count": 0,
+        "needs_sync": true,
+        "next_attempt_at": null,
+        "last_attempt_at": null,
+        "last_result": null,
+        "last_repair_at": null,
+        "generation": 3,
+        "lease_expires_at": "2026-02-01T01:00:00.000Z",
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "revoked_at": "2026-02-02T00:00:00.000Z",
+        "version": 1,
+        "updated_at": "2026-02-01T00:00:00.000Z",
+        "last_notes": null,
+        "repair_cycle_started_at": null,
+        "redeploy_owed": 0,
+        "redeploy_paid": 0,
+        "last_drift_at": null,
+        "last_drift_count": null,
+        "last_drift_names": null,
+        "last_drift_event_id": null
+      },
+      {
+        "id": "snt_enxxtxspv2fvkqu42ixojr4sv4",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+        "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+        "destination": {
+          "application": "app-prod"
+        },
+        "canonical_destination": "coolify:app-prod",
+        "mapping": {},
+        "remove_orphans": false,
+        "redeploy": false,
+        "state": "active",
+        "disabled_reason": null,
+        "failure_count": 0,
+        "needs_sync": true,
+        "next_attempt_at": null,
+        "last_attempt_at": null,
+        "last_result": null,
+        "last_repair_at": null,
+        "generation": 3,
+        "lease_expires_at": "2026-02-01T01:00:00.000Z",
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": "2026-02-01T00:00:00.000Z",
+        "last_notes": null,
+        "repair_cycle_started_at": null,
+        "redeploy_owed": 0,
+        "redeploy_paid": 0,
+        "last_drift_at": null,
+        "last_drift_count": null,
+        "last_drift_names": null,
+        "last_drift_event_id": null
+      },
+      {
+        "id": "snt_w7sdljw6n7ycnrhcqtyofcy64i",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+        "destination": {
+          "application": "app-dev"
+        },
+        "canonical_destination": "coolify:app-dev",
+        "mapping": {},
+        "remove_orphans": false,
+        "redeploy": false,
+        "state": "active",
+        "disabled_reason": null,
+        "failure_count": 0,
+        "needs_sync": true,
+        "next_attempt_at": null,
+        "last_attempt_at": null,
+        "last_result": null,
+        "last_repair_at": null,
+        "generation": 3,
+        "lease_expires_at": "2026-02-01T01:00:00.000Z",
+        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": "2026-02-01T00:00:00.000Z",
+        "last_notes": null,
+        "repair_cycle_started_at": null,
+        "redeploy_owed": 0,
+        "redeploy_paid": 0,
+        "last_drift_at": null,
+        "last_drift_count": null,
+        "last_drift_names": null,
+        "last_drift_event_id": null
+      }
+    ],
+    "security_controls": [
+      {
+        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "control": "admin-step-up",
+        "mode": "report",
+        "config": null,
+        "version": 1,
+        "changed_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "changed_at": "2026-11-17T02:21:15.495Z"
+      },
+      {
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "control": "admin-step-up",
+        "mode": "enforce",
+        "config": null,
+        "version": 2,
+        "changed_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "changed_at": "2026-11-17T02:21:15.537Z"
+      }
+    ],
+    "approval_intents": [
+      {
+        "id": "apr_epaaaaaaaaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "auth_session_id": null,
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "operation": "project.delete",
+        "target": {
+          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a"
+        },
+        "body_hash": "hmac-v1:778b14fb7d1d22b83bca64f8c69f6424791fcd9281842ffaada9da0f0ee1655e",
+        "query_hash": "hmac-v1:cb3dcc9afc45c7442e2fa70dc53ce546ae82cb198c1d0d13ec7e17384902183c",
+        "expected_version": null,
+        "summary": {
+          "title": "Delete the project \"EP\" (prj_d5fdeh72xeh7oceg4wiwa3rb3a), slug \"ep\", now: 2 environments and their values erased. This cannot be undone",
+          "changes": []
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      },
+      {
+        "id": "apr_eptwoaaaaaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
+        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "auth_session_id": null,
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "operation": "project.delete",
+        "target": {
+          "projectId": "prj_oqk5kl4ecpddujqqjeapmqg22y"
+        },
+        "body_hash": "hmac-v1:778b14fb7d1d22b83bca64f8c69f6424791fcd9281842ffaada9da0f0ee1655e",
+        "query_hash": "hmac-v1:cb3dcc9afc45c7442e2fa70dc53ce546ae82cb198c1d0d13ec7e17384902183c",
+        "expected_version": null,
+        "summary": {
+          "title": "Delete the project \"EP2\" (prj_oqk5kl4ecpddujqqjeapmqg22y), slug \"ep2\", now: 1 environment and their values erased. This cannot be undone",
+          "changes": []
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      }
+    ],
+    "organization_freezes": [
+      {
+        "id": "ofz_qwlpwdbdq2toyrbuh7okypwwfe",
+        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "frozen_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "frozen_at": "2026-03-01T00:00:00.000Z",
+        "reason": "incident drill",
+        "lifted_at": null,
+        "lifted_by": null,
+        "lift_method": null
+      }
+    ],
+    "organization_deletions": [
+      {
+        "id": "odl_4v5wcd25iddyed63iqd5it3jom",
+        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "requested_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "scheduled_at": "2026-03-01T00:00:00.000Z",
+        "run_after": "2099-03-01T00:00:00.000Z",
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "cancelled_at": null,
+        "completed_at": null
+      }
+    ],
+    "audit_events": [
+      {
+        "id": "evt_ulq5ejtazikpidptcmxhzbblqm",
+        "schema_version": 1,
+        "event_type": "installation.initialized",
+        "occurred_at": "2026-11-17T02:21:14.186Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": null,
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "installationId": "inst_gcv5jgnoyroh7jfrpkdodjnb4a"
+        },
+        "event_order": 1,
+        "client": null
+      },
+      {
+        "id": "evt_6pal7z3su57fgxgh76pmg7vnpa",
+        "schema_version": 1,
+        "event_type": "bootstrap.grant_issued",
+        "occurred_at": "2026-11-17T02:21:14.239Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": null,
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "expiresAt": "2026-11-17T02:36:14.240Z"
+        },
+        "event_order": 2,
+        "client": null
+      },
+      {
+        "id": "evt_oqxzk36bobr3n7difzdwohjenu",
+        "schema_version": 1,
+        "event_type": "bootstrap.completed",
+        "occurred_at": "2026-11-17T02:21:14.256Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_klxvmokh74e7qwb5g4goesb3mi"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": null,
+        "event_order": 3,
+        "client": null
+      },
+      {
+        "id": "evt_t7anwt6f7j7bjoolfcf5a7v3da",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T02:21:14.280Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_klxvmokh74e7qwb5g4goesb3mi"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 4,
+        "client": null
+      },
+      {
+        "id": "evt_s4c2m4ycbiq6r5jc37hngbwi5e",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T02:21:14.295Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_klxvmokh74e7qwb5g4goesb3mi"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 5,
+        "client": null
+      },
+      {
+        "id": "evt_h5lgdwpju6tvq7xlfm6h54zr3y",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T02:21:14.344Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "organizationSlug": "acme"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 6,
+        "client": null
+      },
+      {
+        "id": "evt_vvawwsmz26oo7u7fu5dqhnaukq",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T02:21:14.366Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "action": null,
+        "resource": {
+          "organizationSlug": "rep"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 7,
+        "client": null
+      },
+      {
+        "id": "evt_pstk7brlocgsjljhxnb6uhbcce",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T02:21:14.382Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": null,
+        "resource": {
+          "organizationSlug": "enf"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 8,
+        "client": null
+      },
+      {
+        "id": "evt_6a5y7ntbg6mds7iu2htuq4tei4",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T02:21:14.396Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "action": null,
+        "resource": {
+          "organizationSlug": "frozen"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 9,
+        "client": null
+      },
+      {
+        "id": "evt_voavqmo25n2mnppzmdbcjgdtwq",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T02:21:14.413Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "action": null,
+        "resource": {
+          "organizationSlug": "deleting"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 10,
+        "client": null
+      },
+      {
+        "id": "evt_ry5u3qqwad2kdhdvco2lahwnee",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T02:21:14.426Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "action": null,
+        "resource": {
+          "organizationSlug": "beta"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 11,
+        "client": null
+      },
+      {
+        "id": "evt_zacj5jkxz3bntry7bmwci5l6fm",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T02:21:14.439Z",
+        "actor_identity_id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "authentication_method_id": null,
+        "credential_id": "crd_7dotnskrrhj4dq7ykj4l74wqny",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_h2vyo7nlyfemdys6tbmbrw57q4"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 12,
+        "client": null
+      },
+      {
+        "id": "evt_x7qcwxzbpopmwryet6dnxzrjky",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T02:21:14.447Z",
+        "actor_identity_id": "idn_q4ikzpueamz3fhn3h44dixdhie",
+        "authentication_method_id": null,
+        "credential_id": "crd_ap3riblxgcvat4jdwyee7lt2zm",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_q4ikzpueamz3fhn3h44dixdhie"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 13,
+        "client": null
+      },
+      {
+        "id": "evt_iw2634sakdsvob32qjio5ws2fy",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T02:21:14.470Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "projectSlug": "full"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 14,
+        "client": null
+      },
+      {
+        "id": "evt_kgq3sph4t2bxqj5znn2qjvimum",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:14.499Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "environmentName": "development"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 15,
+        "client": null
+      },
+      {
+        "id": "evt_d5k6r2l5frretn3qpxr2a34hle",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:14.536Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "environmentId": "env_br2gtxmi6npwpxpdrf7wypej6m",
+          "environmentName": "production"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "production",
+          "derived": false
+        },
+        "event_order": 16,
+        "client": null
+      },
+      {
+        "id": "evt_cfggg6ucbtssudnaooiyi2qfs4",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:14.566Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "environmentId": "env_smiqyndfiakcrfpoajtolnfscy",
+          "environmentName": "development/feature-x"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "preview",
+          "tier": "development",
+          "derived": true
+        },
+        "event_order": 17,
+        "client": null
+      },
+      {
+        "id": "evt_kzdbcvxiaa5okpvyhx5o4h7r2y",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:14.600Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "environmentId": "env_3c2gae2ltjk2m52mvn762ijh3u",
+          "environmentName": "old"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 18,
+        "client": null
+      },
+      {
+        "id": "evt_p5fs32chglrew3s7yvynkxzdqi",
+        "schema_version": 1,
+        "event_type": "contract.revision_pushed",
+        "occurred_at": "2026-11-17T02:21:14.629Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "contract.submit",
+        "resource": {
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "contractRevisionId": "rev_et2px6g2nxphm4lwjwqjlugl4i"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "itemCount": 3,
+          "contentHash": "sha256:2789214da361977c7cad48eaddcb565c0e3f7738af236271e34c6e8e793fb5a8",
+          "semanticsVersion": 3
+        },
+        "event_order": 19,
+        "client": null
+      },
+      {
+        "id": "evt_i4lj4w72ylklkqixo6upld2cgy",
+        "schema_version": 1,
+        "event_type": "contract.activated",
+        "occurred_at": "2026-11-17T02:21:14.659Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "contract.activate",
+        "resource": {
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "contractRevisionId": "rev_et2px6g2nxphm4lwjwqjlugl4i"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "initial": true
+        },
+        "event_order": 20,
+        "client": null
+      },
+      {
+        "id": "evt_7flbhfg4aebyb3iokjontfvmwm",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-17T02:21:14.689Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "SECRET_A",
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "versionId": "ver_enc3dnh5ge3torz42wingzi4g4",
+          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": true
+        },
+        "event_order": 21,
+        "client": null
+      },
+      {
+        "id": "evt_sctbslvv3tvb3xivknmh3hj7pm",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-17T02:21:14.731Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "SECRET_A",
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "versionId": "ver_3hglvrwrdsirpjidmgim3se22i",
+          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "previousVersionId": "ver_enc3dnh5ge3torz42wingzi4g4"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": true
+        },
+        "event_order": 22,
+        "client": null
+      },
+      {
+        "id": "evt_3i2df2m2etkeqfc2ul3nfucsue",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-17T02:21:14.767Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "SECRET_B",
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "versionId": "ver_vrnxraqo72n64qo54dtqs3pmjy",
+          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": true
+        },
+        "event_order": 23,
+        "client": null
+      },
+      {
+        "id": "evt_oakokgk7ddqtrzbkorko6lq77e",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-17T02:21:14.800Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "PLAIN",
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "versionId": "ver_seymwabgn6n3hnl5dmp4h7spbe",
+          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": false
+        },
+        "event_order": 24,
+        "client": null
+      },
+      {
+        "id": "evt_x5rrjw5cp3c6w2e7nuiza65abm",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-17T02:21:14.831Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "SECRET_A",
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "versionId": "ver_rm6lqudaqljubbomk7n72pomiy",
+          "environmentId": "env_br2gtxmi6npwpxpdrf7wypej6m",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": true
+        },
+        "event_order": 25,
+        "client": null
+      },
+      {
+        "id": "evt_neqvdt4im73zigo5fqfriws7ha",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-17T02:21:14.864Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "SECRET_A",
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "versionId": "ver_d2ohal3emo5lytj2kmlwcwyci4",
+          "environmentId": "env_smiqyndfiakcrfpoajtolnfscy",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": true
+        },
+        "event_order": 26,
+        "client": null
+      },
+      {
+        "id": "evt_3c73lg5azscerlv25e7gvlqvym",
+        "schema_version": 1,
+        "event_type": "value.written",
+        "occurred_at": "2026-11-17T02:21:14.898Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "SECRET_A",
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "versionId": "ver_57uqfdbvd4hwvsopm42bbrsy2y",
+          "environmentId": "env_3c2gae2ltjk2m52mvn762ijh3u",
+          "previousVersionId": null
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "sensitive": true
+        },
+        "event_order": 27,
+        "client": null
+      },
+      {
+        "id": "evt_pwmrbe5jtt6szexjasyg5xzdui",
+        "schema_version": 1,
+        "event_type": "value.rotation_started",
+        "occurred_at": "2026-11-17T02:21:14.928Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "config.value.write",
+        "resource": {
+          "itemName": "SECRET_B",
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "versionId": "ver_yxg3fj7g7xhllwc3ukpjuzug2i",
+          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "previousVersionId": "ver_vrnxraqo72n64qo54dtqs3pmjy"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "deadline": "2026-11-18T02:21:14.938Z",
+          "retiring": "SECRET_B@ver_vrnxraqo72n64qo54dtqs3pmjy",
+          "sensitive": true
+        },
+        "event_order": 28,
+        "client": null
+      },
+      {
+        "id": "evt_nn4a4t6b6mhqxsuvljzynkblji",
+        "schema_version": 1,
+        "event_type": "environment.deleted",
+        "occurred_at": "2026-11-17T02:21:14.961Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "environmentId": "env_3c2gae2ltjk2m52mvn762ijh3u",
+          "environmentName": "old"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false,
+          "expired": false,
+          "capabilitiesRevoked": 0
+        },
+        "event_order": 29,
+        "client": null
+      },
+      {
+        "id": "evt_jktepnctnuabwqijcbi44tcwae",
+        "schema_version": 1,
+        "event_type": "identity.created",
+        "occurred_at": "2026-11-17T02:21:14.987Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "identity.manage",
+        "resource": {
+          "identityId": "idn_5vffsj2ameueagxrqrccpnxpr4"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "broker"
+        },
+        "event_order": 30,
+        "client": null
+      },
+      {
+        "id": "evt_ktxbvpunh6kdkz4nncf4ig2hwq",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T02:21:14.987Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_cemogxqqrclfq3t77jj2t2ug3a",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "identityId": "idn_5vffsj2ameueagxrqrccpnxpr4"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "service"
+        },
+        "event_order": 31,
+        "client": null
+      },
+      {
+        "id": "evt_mz7r53kdwhapxlxb2snlrrqnpi",
+        "schema_version": 1,
+        "event_type": "identity.created",
+        "occurred_at": "2026-11-17T02:21:15.016Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "identity.manage",
+        "resource": {
+          "identityId": "idn_iqaxiisgsalmqzjjt66azugq4q"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "agent"
+        },
+        "event_order": 32,
+        "client": null
+      },
+      {
+        "id": "evt_iv2fcssrv2wufxceewqz3k4ncm",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T02:21:15.065Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "projectId": "prj_xwxumzzcdzzcrty5enwm7ie7ki",
+          "projectSlug": "empty"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 33,
+        "client": null
+      },
+      {
+        "id": "evt_2bligsfgicexm2fdpjxlytbuxq",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T02:21:15.083Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "projectId": "prj_7bm35l2ba5uusfl35ejwudpjkq",
+          "projectSlug": "keep"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 34,
+        "client": null
+      },
+      {
+        "id": "evt_zplevru3x5dtq65x43wrqoeyli",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:15.103Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": null,
+        "resource": {
+          "projectId": "prj_7bm35l2ba5uusfl35ejwudpjkq",
+          "environmentId": "env_keexwsutmg7sojej4nrkppafxy",
+          "environmentName": "development"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 35,
+        "client": null
+      },
+      {
+        "id": "evt_5iyrvdt2qmj5xf4ghoovd7uyw4",
+        "schema_version": 1,
+        "event_type": "team.created",
+        "occurred_at": "2026-11-17T02:21:15.124Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "policy.manage",
+        "resource": {
+          "groupId": "tem_46kcxutp2vwsay4uaydfsw5uie"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "name": "core"
+        },
+        "event_order": 36,
+        "client": null
+      },
+      {
+        "id": "evt_pgf7vl2es2zqnpgjclfuv6dqxu",
+        "schema_version": 1,
+        "event_type": "team.project_added",
+        "occurred_at": "2026-11-17T02:21:15.148Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "policy.manage",
+        "resource": {
+          "groupId": "tem_46kcxutp2vwsay4uaydfsw5uie",
+          "projectId": "prj_qkati2n4qooc4ifxesoxior2su"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 37,
+        "client": null
+      },
+      {
+        "id": "evt_cgrm24o34iu2afh4viwu54ejmm",
+        "schema_version": 1,
+        "event_type": "team.project_added",
+        "occurred_at": "2026-11-17T02:21:15.177Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "action": "policy.manage",
+        "resource": {
+          "groupId": "tem_46kcxutp2vwsay4uaydfsw5uie",
+          "projectId": "prj_7bm35l2ba5uusfl35ejwudpjkq"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 38,
+        "client": null
+      },
+      {
+        "id": "evt_d44bcvoe5c4mpoxbqejw747zhi",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T02:21:15.199Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "action": null,
+        "resource": {
+          "projectId": "prj_3mzwzc6uqa3y7qxhfmlsxj5kia",
+          "projectSlug": "web"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 39,
+        "client": null
+      },
+      {
+        "id": "evt_qwnrnwwklbxqcettzudv2ye4gm",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:15.218Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "action": null,
+        "resource": {
+          "projectId": "prj_3mzwzc6uqa3y7qxhfmlsxj5kia",
+          "environmentId": "env_krplpytbz7nd6tspsahmfvruom",
+          "environmentName": "development"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 40,
+        "client": null
+      },
+      {
+        "id": "evt_phhynugmikth6oxqa4aewggaom",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T02:21:15.238Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "action": null,
+        "resource": {
+          "projectId": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+          "projectSlug": "rp"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 41,
+        "client": null
+      },
+      {
+        "id": "evt_b7hqnolgz3jzmwnlfojbyvygl4",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:15.258Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "action": null,
+        "resource": {
+          "projectId": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+          "environmentId": "env_yyhqsu7inhpnikvm7gwzcg2f74",
+          "environmentName": "development"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 42,
+        "client": null
+      },
+      {
+        "id": "evt_dh5qfjd7vemyxmy7b4l7zlg3cu",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T02:21:15.278Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": null,
+        "resource": {
+          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+          "projectSlug": "ep"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 43,
+        "client": null
+      },
+      {
+        "id": "evt_pn3sn3amd7hot4vajuergyuhgi",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:15.296Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": null,
+        "resource": {
+          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+          "environmentId": "env_aad7bkhnmsfqj6fp2caepmn3wy",
+          "environmentName": "development"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 44,
+        "client": null
+      },
+      {
+        "id": "evt_7iuzaaprz3yuhvfeec52usdwuy",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:15.316Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": null,
+        "resource": {
+          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+          "environmentId": "env_hujfqmpbe6yhk76fdgz32cnhna",
+          "environmentName": "production"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "production",
+          "derived": false
+        },
+        "event_order": 45,
+        "client": null
+      },
+      {
+        "id": "evt_dxdrtkqbacyvmyqjxqu32gt3wa",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T02:21:15.335Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": null,
+        "resource": {
+          "projectId": "prj_oqk5kl4ecpddujqqjeapmqg22y",
+          "projectSlug": "ep2"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 46,
+        "client": null
+      },
+      {
+        "id": "evt_appqkch6l2k56dftyh3f4k4ly4",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:15.353Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": null,
+        "resource": {
+          "projectId": "prj_oqk5kl4ecpddujqqjeapmqg22y",
+          "environmentId": "env_2wbjjreukterlvmklntz32dlz4",
+          "environmentName": "development"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 47,
+        "client": null
+      },
+      {
+        "id": "evt_c7nhzsewla3s7queohyxeskgbi",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T02:21:15.372Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "action": null,
+        "resource": {
+          "projectId": "prj_y77zeqbyztkznyl7em3cnhpce4",
+          "projectSlug": "fp"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 48,
+        "client": null
+      },
+      {
+        "id": "evt_7ci7wqu7hsbp3n2her7fuzrgpe",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:15.389Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "action": null,
+        "resource": {
+          "projectId": "prj_y77zeqbyztkznyl7em3cnhpce4",
+          "environmentId": "env_xewdnsbp32abgtwcx37r7uy22y",
+          "environmentName": "development"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 49,
+        "client": null
+      },
+      {
+        "id": "evt_xkipaomgbzvp4c6dwzvofedd6m",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T02:21:15.409Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "action": null,
+        "resource": {
+          "projectId": "prj_4sgzvm4qgxbu67w3ftjp43grvy",
+          "projectSlug": "dp"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "git"
+        },
+        "event_order": 50,
+        "client": null
+      },
+      {
+        "id": "evt_zk7axxcx2t6iucqog4cisfsfgy",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T02:21:15.426Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "action": null,
+        "resource": {
+          "projectId": "prj_4sgzvm4qgxbu67w3ftjp43grvy",
+          "environmentId": "env_c2oqkn6qvl54z72kn44um75d4a",
+          "environmentName": "development"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "development",
+          "derived": false
+        },
+        "event_order": 51,
+        "client": null
+      },
+      {
+        "id": "evt_4wrjymjmnqeijlqc5ltenfaecm",
+        "schema_version": 1,
+        "event_type": "identity.created",
+        "occurred_at": "2026-11-17T02:21:15.445Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": "identity.manage",
+        "resource": {
+          "identityId": "idn_kmolx2mhvmjf5i4tqnut2a2f2i"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "service"
+        },
+        "event_order": 52,
+        "client": null
+      },
+      {
+        "id": "evt_pbws2mq6dceo3mwjpwv5yuwrmi",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T02:21:15.445Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_5itvcydl6da67r4z6h3qwis7eu",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": null,
+        "resource": {
+          "identityId": "idn_kmolx2mhvmjf5i4tqnut2a2f2i"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "service"
+        },
+        "event_order": 53,
+        "client": null
+      },
+      {
+        "id": "evt_rppo6tvuqsjvk5fphyvkvlug74",
+        "schema_version": 1,
+        "event_type": "grant.created",
+        "occurred_at": "2026-11-17T02:21:15.466Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": "policy.manage",
+        "resource": {
+          "grantId": "grt_dpyqfcxtqvsr74dxp67ldeyblu",
+          "subjectIdentityId": "idn_kmolx2mhvmjf5i4tqnut2a2f2i"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "actions": "project.manage"
+        },
+        "event_order": 54,
+        "client": null
+      },
+      {
+        "id": "evt_pviw3kte2w2vticzz3gii3yseu",
+        "schema_version": 1,
+        "event_type": "security_control.changed",
+        "occurred_at": "2026-11-17T02:21:15.487Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "action": "organization.manage",
+        "resource": {
+          "control": "admin-step-up"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": "req_983c9980-6c5c-4288-9848-9fd385fbe917",
+        "metadata": {
+          "toMode": "report",
+          "control": "admin-step-up",
+          "fromMode": "off",
+          "loosened": false,
+          "toVersion": 1,
+          "approvalId": null,
+          "fromVersion": 0,
+          "loosenedFields": "",
+          "toMaxTtlSeconds": null,
+          "fromMaxTtlSeconds": null,
+          "toDefaultTtlSeconds": null,
+          "fromDefaultTtlSeconds": null
+        },
+        "event_order": 55,
+        "client": null
+      },
+      {
+        "id": "evt_ajue4z2xelvgnaypkiibq6nf5y",
+        "schema_version": 1,
+        "event_type": "security_control.changed",
+        "occurred_at": "2026-11-17T02:21:15.509Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": "organization.manage",
+        "resource": {
+          "control": "admin-step-up"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": "req_9aa0fa25-2a91-4293-a311-461f55948b8c",
+        "metadata": {
+          "toMode": "report",
+          "control": "admin-step-up",
+          "fromMode": "off",
+          "loosened": false,
+          "toVersion": 1,
+          "approvalId": null,
+          "fromVersion": 0,
+          "loosenedFields": "",
+          "toMaxTtlSeconds": null,
+          "fromMaxTtlSeconds": null,
+          "toDefaultTtlSeconds": null,
+          "fromDefaultTtlSeconds": null
+        },
+        "event_order": 56,
+        "client": null
+      },
+      {
+        "id": "evt_fifp7ahvfcdfmp4cvprk6j6u6y",
+        "schema_version": 1,
+        "event_type": "security_control.changed",
+        "occurred_at": "2026-11-17T02:21:15.529Z",
+        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "authentication_method_id": null,
+        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "action": "organization.manage",
+        "resource": {
+          "control": "admin-step-up"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": "req_12ac6ae7-9555-4133-9526-f78ce06a92ad",
+        "metadata": {
+          "toMode": "enforce",
+          "control": "admin-step-up",
+          "fromMode": "report",
+          "loosened": false,
+          "toVersion": 2,
+          "approvalId": null,
+          "fromVersion": 1,
+          "loosenedFields": "",
+          "toMaxTtlSeconds": null,
+          "fromMaxTtlSeconds": null,
+          "toDefaultTtlSeconds": null,
+          "fromDefaultTtlSeconds": null
+        },
+        "event_order": 57,
+        "client": null
+      }
+    ]
+  },
+  "sideTables": [
+    {
+      "name": "projects",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "slug",
+        "deleted_at"
+      ],
+      "volatile": [
+        "created_at",
+        "deleted_at"
+      ]
+    },
+    {
+      "name": "environments",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "project_id",
+        "name",
+        "deleted_at"
+      ],
+      "volatile": [
+        "created_at",
+        "deleted_at"
+      ]
+    },
+    {
+      "name": "env_values",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "environment_id",
+        "item_name"
+      ],
+      "volatile": [
+        "deleted_at"
+      ]
+    },
+    {
+      "name": "value_versions",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "value_id",
+        "version"
+      ],
+      "volatile": [
+        "erased_at"
+      ]
+    },
+    {
+      "name": "capabilities",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "run_id"
+      ],
+      "volatile": [
+        "revoked_at"
+      ]
+    },
+    {
+      "name": "sync_targets",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "canonical_destination"
+      ],
+      "volatile": [
+        "revoked_at",
+        "updated_at"
+      ]
+    },
+    {
+      "name": "team_projects",
+      "key": [
+        "team_id",
+        "project_id"
+      ],
+      "sortBy": [
+        "team_id",
+        "project_id"
+      ]
+    },
+    {
+      "name": "approval_intents",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "operation",
+        "target",
+        "body_hash"
+      ],
+      "volatile": [
+        "created_at",
+        "expires_at",
+        "consumed_at",
+        "closed_at"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "id": "DELETE delete as a member",
+      "name": "delete as a member",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/projects/full",
+      "credential": "bob",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "project.manage",
+          "actor_identity_id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_7dotnskrrhj4dq7ykj4l74wqny",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": "prj_qkati2n4qooc4ifxesoxior2su"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete as an outsider",
+      "name": "delete as an outsider",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/projects/full",
+      "credential": "carol",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "project.manage",
+          "actor_identity_id": "idn_q4ikzpueamz3fhn3h44dixdhie",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_ap3riblxgcvat4jdwyee7lt2zm",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": "prj_qkati2n4qooc4ifxesoxior2su"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete an unknown Project",
+      "name": "delete an unknown Project",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/projects/nope",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Project not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete another Organization's Project by id",
+      "name": "delete another Organization's Project by id",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/projects/{betaWebId}",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Project not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete in an unknown Organization",
+      "name": "delete in an unknown Organization",
+      "method": "DELETE",
+      "path": "/v1/organizations/nope/projects/full",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete in a frozen Organization",
+      "name": "delete in a frozen Organization",
+      "method": "DELETE",
+      "path": "/v1/organizations/frozen/projects/fp",
+      "credential": "alice",
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_qwlpwdbdq2toyrbuh7okypwwfe\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_qwlpwdbdq2toyrbuh7okypwwfe",
+            "method": "DELETE",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org/projects/:project"
+          },
+          "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_qwlpwdbdq2toyrbuh7okypwwfe"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete in an Organization being deleted",
+      "name": "delete in an Organization being deleted",
+      "method": "DELETE",
+      "path": "/v1/organizations/deleting/projects/dp",
+      "credential": "alice",
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_4v5wcd25iddyed63iqd5it3jom\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete",
+      "name": "delete",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/projects/full",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"projectId\":\"prj_qkati2n4qooc4ifxesoxior2su\",\"slug\":\"full\",\"environments\":3,\"values\":6,\"versionsErased\":8,\"capabilitiesRevoked\":2,\"targetsRevoked\":2,\"teamLinksRemoved\":1}"
+      },
+      "audit": [
+        {
+          "action": "project.manage",
+          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "decision": "info",
+          "event_type": "project.deleted",
+          "listener": "ordinary",
+          "metadata": {
+            "capabilitiesRevoked": 2,
+            "environments": 3,
+            "name": "FULL",
+            "targetsRevoked": 2,
+            "teamLinksRemoved": 1,
+            "values": 6,
+            "versionsErased": 8
+          },
+          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "request_id": null,
+          "resource": {
+            "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+            "projectSlug": "full"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "projects": {
+          "updated": [
+            {
+              "active_contract_revision_id": "rev_et2px6g2nxphm4lwjwqjlugl4i",
+              "contract_authority": "git",
+              "created_at": "2026-11-17T02:21:14.470Z",
+              "deleted_at": "{fresh}",
+              "id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "name": "FULL",
+              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "slug": "full"
+            }
+          ]
+        },
+        "environments": {
+          "updated": [
+            {
+              "created_at": "2026-11-17T02:21:14.499Z",
+              "deleted_at": "{fresh}",
+              "expires_at": null,
+              "id": "env_njahli6f72utsmjrc6fobqwliy",
+              "kind": "shared",
+              "name": "development",
+              "owner_identity_id": null,
+              "parent_environment_id": null,
+              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "tier": "development"
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.536Z",
+              "deleted_at": "{fresh}",
+              "expires_at": null,
+              "id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+              "kind": "shared",
+              "name": "production",
+              "owner_identity_id": null,
+              "parent_environment_id": null,
+              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "tier": "production"
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.566Z",
+              "deleted_at": "{fresh}",
+              "expires_at": null,
+              "id": "env_smiqyndfiakcrfpoajtolnfscy",
+              "kind": "preview",
+              "name": "development/feature-x",
+              "owner_identity_id": null,
+              "parent_environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "tier": "development"
+            }
+          ]
+        },
+        "env_values": {
+          "updated": [
+            {
+              "created_at": "2026-11-17T02:21:14.689Z",
+              "current_version_id": null,
+              "deleted_at": "{fresh}",
+              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+              "id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+              "item_name": "SECRET_A",
+              "retiring_version_id": null,
+              "rotation_deadline": null,
+              "rotation_started_at": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.767Z",
+              "current_version_id": null,
+              "deleted_at": "{fresh}",
+              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+              "id": "val_xtoe5ehligqrz6vqapoqofrdeu",
+              "item_name": "SECRET_B",
+              "retiring_version_id": null,
+              "rotation_deadline": null,
+              "rotation_started_at": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.800Z",
+              "current_version_id": null,
+              "deleted_at": "{fresh}",
+              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+              "id": "val_ojefqympv723xtsbas3syz3xee",
+              "item_name": "PLAIN",
+              "retiring_version_id": null,
+              "rotation_deadline": null,
+              "rotation_started_at": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.831Z",
+              "current_version_id": null,
+              "deleted_at": "{fresh}",
+              "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+              "id": "val_hcf3wob4y6jofewbmveyzuerju",
+              "item_name": "SECRET_A",
+              "retiring_version_id": null,
+              "rotation_deadline": null,
+              "rotation_started_at": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.864Z",
+              "current_version_id": null,
+              "deleted_at": "{fresh}",
+              "environment_id": "env_smiqyndfiakcrfpoajtolnfscy",
+              "id": "val_bnjhmvr4ubtcuqlmulsw4clyz4",
+              "item_name": "SECRET_A",
+              "retiring_version_id": null,
+              "rotation_deadline": null,
+              "rotation_started_at": null
+            }
+          ]
+        },
+        "value_versions": {
+          "updated": [
+            {
+              "created_at": "2026-11-17T02:21:14.689Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "erased_at": "{fresh}",
+              "id": "ver_enc3dnh5ge3torz42wingzi4g4",
+              "payload": null,
+              "previous_version_id": null,
+              "value_id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+              "wrapped_dek": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.731Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "erased_at": "{fresh}",
+              "id": "ver_3hglvrwrdsirpjidmgim3se22i",
+              "payload": null,
+              "previous_version_id": "ver_enc3dnh5ge3torz42wingzi4g4",
+              "value_id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+              "wrapped_dek": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.767Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "erased_at": "{fresh}",
+              "id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
+              "payload": null,
+              "previous_version_id": null,
+              "value_id": "val_xtoe5ehligqrz6vqapoqofrdeu",
+              "wrapped_dek": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.800Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "erased_at": "{fresh}",
+              "id": "ver_seymwabgn6n3hnl5dmp4h7spbe",
+              "payload": null,
+              "previous_version_id": null,
+              "value_id": "val_ojefqympv723xtsbas3syz3xee",
+              "wrapped_dek": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.831Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "erased_at": "{fresh}",
+              "id": "ver_rm6lqudaqljubbomk7n72pomiy",
+              "payload": null,
+              "previous_version_id": null,
+              "value_id": "val_hcf3wob4y6jofewbmveyzuerju",
+              "wrapped_dek": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.864Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "erased_at": "{fresh}",
+              "id": "ver_d2ohal3emo5lytj2kmlwcwyci4",
+              "payload": null,
+              "previous_version_id": null,
+              "value_id": "val_bnjhmvr4ubtcuqlmulsw4clyz4",
+              "wrapped_dek": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.898Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "erased_at": "{fresh}",
+              "id": "ver_57uqfdbvd4hwvsopm42bbrsy2y",
+              "payload": null,
+              "previous_version_id": null,
+              "value_id": "val_g3wd7k4htttcw2sk2rxor4qjyq",
+              "wrapped_dek": null
+            },
+            {
+              "created_at": "2026-11-17T02:21:14.928Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "erased_at": "{fresh}",
+              "id": "ver_yxg3fj7g7xhllwc3ukpjuzug2i",
+              "payload": null,
+              "previous_version_id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
+              "value_id": "val_xtoe5ehligqrz6vqapoqofrdeu",
+              "wrapped_dek": null
+            }
+          ]
+        },
+        "capabilities": {
+          "updated": [
+            {
+              "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
+              "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+              "created_at": "2026-02-01T00:00:00.000Z",
+              "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
+              "destinations": [
+                "api.example.com:443"
+              ],
+              "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "cap_2rvxe6eyq7ekhpapwvkan3u2qm",
+              "items": [
+                "SECRET_A"
+              ],
+              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "revoked_at": "{fresh}",
+              "run_id": "prod-live",
+              "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+              "targets": {
+                "SECRET_A": [
+                  "header:authorization"
+                ]
+              }
+            },
+            {
+              "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
+              "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+              "created_at": "2026-02-01T00:00:00.000Z",
+              "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
+              "destinations": [
+                "api.example.com:443"
+              ],
+              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "cap_nfo27mymnpwnaqz3q77ufcibk4",
+              "items": [
+                "SECRET_A"
+              ],
+              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "revoked_at": "{fresh}",
+              "run_id": "dev-live",
+              "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+              "targets": {
+                "SECRET_A": [
+                  "header:authorization"
+                ]
+              }
+            }
+          ]
+        },
+        "sync_targets": {
+          "updated": [
+            {
+              "canonical_destination": "coolify:app-dev",
+              "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+              "created_at": "2026-02-01T00:00:00.000Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "destination": {
+                "application": "app-dev"
+              },
+              "disabled_reason": null,
+              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+              "failure_count": 0,
+              "generation": 4,
+              "id": "snt_w7sdljw6n7ycnrhcqtyofcy64i",
+              "last_attempt_at": null,
+              "last_drift_at": null,
+              "last_drift_count": null,
+              "last_drift_event_id": null,
+              "last_drift_names": null,
+              "last_notes": null,
+              "last_repair_at": null,
+              "last_result": null,
+              "lease_expires_at": null,
+              "mapping": {},
+              "needs_sync": true,
+              "next_attempt_at": null,
+              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "redeploy": false,
+              "redeploy_owed": 0,
+              "redeploy_paid": 0,
+              "remove_orphans": false,
+              "repair_cycle_started_at": null,
+              "revoked_at": "{fresh}",
+              "state": "active",
+              "updated_at": "{fresh}",
+              "version": 2
+            },
+            {
+              "canonical_destination": "coolify:app-prod",
+              "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+              "created_at": "2026-02-01T00:00:00.000Z",
+              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "destination": {
+                "application": "app-prod"
+              },
+              "disabled_reason": null,
+              "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+              "failure_count": 0,
+              "generation": 4,
+              "id": "snt_enxxtxspv2fvkqu42ixojr4sv4",
+              "last_attempt_at": null,
+              "last_drift_at": null,
+              "last_drift_count": null,
+              "last_drift_event_id": null,
+              "last_drift_names": null,
+              "last_notes": null,
+              "last_repair_at": null,
+              "last_result": null,
+              "lease_expires_at": null,
+              "mapping": {},
+              "needs_sync": true,
+              "next_attempt_at": null,
+              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "redeploy": false,
+              "redeploy_owed": 0,
+              "redeploy_paid": 0,
+              "remove_orphans": false,
+              "repair_cycle_started_at": null,
+              "revoked_at": "{fresh}",
+              "state": "active",
+              "updated_at": "{fresh}",
+              "version": 2
+            }
+          ]
+        },
+        "team_projects": {
+          "deleted": [
+            {
+              "created_at": "2026-11-17T02:21:15.148Z",
+              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "team_id": "tem_46kcxutp2vwsay4uaydfsw5uie"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE delete again",
+      "name": "delete again",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/projects/full",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Project not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET get the deleted Project",
+      "name": "get the deleted Project",
+      "method": "GET",
+      "path": "/v1/organizations/acme/projects/full",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Project not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list its environments",
+      "name": "list its environments",
+      "method": "GET",
+      "path": "/v1/organizations/acme/projects/full/environments",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Project not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list the Projects afterwards",
+      "name": "list the Projects afterwards",
+      "method": "GET",
+      "path": "/v1/organizations/acme/projects",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"id\":\"prj_xwxumzzcdzzcrty5enwm7ie7ki\",\"organizationId\":\"org_strudq63wz4o5ezbtlkao46xma\",\"slug\":\"empty\",\"name\":\"EMPTY\",\"contractAuthority\":\"git\",\"activeContractRevisionId\":null,\"createdAt\":\"2026-11-17T02:21:15.065Z\"},{\"id\":\"prj_7bm35l2ba5uusfl35ejwudpjkq\",\"organizationId\":\"org_strudq63wz4o5ezbtlkao46xma\",\"slug\":\"keep\",\"name\":\"KEEP\",\"contractAuthority\":\"git\",\"activeContractRevisionId\":null,\"createdAt\":\"2026-11-17T02:21:15.083Z\"}],\"nextCursor\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list the Team's Projects afterwards",
+      "name": "list the Team's Projects afterwards",
+      "method": "GET",
+      "path": "/v1/organizations/acme/teams/{coreTeamId}/projects",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"projectId\":\"prj_7bm35l2ba5uusfl35ejwudpjkq\"}],\"nextCursor\":null}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete a Project without environments, by id",
+      "name": "delete a Project without environments, by id",
+      "method": "DELETE",
+      "path": "/v1/organizations/acme/projects/{emptyId}",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"projectId\":\"prj_xwxumzzcdzzcrty5enwm7ie7ki\",\"slug\":\"empty\",\"environments\":0,\"values\":0,\"versionsErased\":0,\"capabilitiesRevoked\":0,\"targetsRevoked\":0,\"teamLinksRemoved\":0}"
+      },
+      "audit": [
+        {
+          "action": "project.manage",
+          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "decision": "info",
+          "event_type": "project.deleted",
+          "listener": "ordinary",
+          "metadata": {
+            "capabilitiesRevoked": 0,
+            "environments": 0,
+            "name": "EMPTY",
+            "targetsRevoked": 0,
+            "teamLinksRemoved": 0,
+            "values": 0,
+            "versionsErased": 0
+          },
+          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "request_id": null,
+          "resource": {
+            "projectId": "prj_xwxumzzcdzzcrty5enwm7ie7ki",
+            "projectSlug": "empty"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "projects": {
+          "updated": [
+            {
+              "active_contract_revision_id": null,
+              "contract_authority": "git",
+              "created_at": "2026-11-17T02:21:15.065Z",
+              "deleted_at": "{fresh}",
+              "id": "prj_xwxumzzcdzzcrty5enwm7ie7ki",
+              "name": "EMPTY",
+              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "slug": "empty"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create a Project with the deleted slug",
+      "name": "create a Project with the deleted slug",
+      "method": "POST",
+      "path": "/v1/organizations/acme/projects",
+      "credential": "alice",
+      "body": {
+        "slug": "full",
+        "name": "Full again",
+        "contractAuthority": "managed"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{prj#1}\",\"organizationId\":\"org_strudq63wz4o5ezbtlkao46xma\",\"slug\":\"full\",\"name\":\"Full again\",\"contractAuthority\":\"managed\",\"activeContractRevisionId\":null,\"createdAt\":\"{time}\"}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "decision": "info",
+          "event_type": "project.created",
+          "listener": "ordinary",
+          "metadata": {
+            "contractAuthority": "managed"
+          },
+          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "request_id": null,
+          "resource": {
+            "projectId": "{prj#1}",
+            "projectSlug": "full"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "projects": {
+          "inserted": [
+            {
+              "active_contract_revision_id": null,
+              "contract_authority": "managed",
+              "created_at": "{fresh}",
+              "deleted_at": null,
+              "id": "{prj#1}",
+              "name": "Full again",
+              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "slug": "full"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE delete at report",
+      "name": "delete at report",
+      "method": "DELETE",
+      "path": "/v1/organizations/rep/projects/rp",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"projectId\":\"prj_h44yrfcvnlt6e67oex6ulp4fja\",\"slug\":\"rp\",\"environments\":1,\"values\":0,\"versionsErased\":0,\"capabilitiesRevoked\":0,\"targetsRevoked\":0,\"teamLinksRemoved\":0}"
+      },
+      "audit": [
+        {
+          "action": "project.manage",
+          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "decision": "info",
+          "event_type": "project.deleted",
+          "listener": "ordinary",
+          "metadata": {
+            "capabilitiesRevoked": 0,
+            "environments": 1,
+            "name": "RP",
+            "targetsRevoked": 0,
+            "teamLinksRemoved": 0,
+            "values": 0,
+            "versionsErased": 0
+          },
+          "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+          "request_id": null,
+          "resource": {
+            "projectId": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+            "projectSlug": "rp"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "projects": {
+          "updated": [
+            {
+              "active_contract_revision_id": null,
+              "contract_authority": "git",
+              "created_at": "2026-11-17T02:21:15.238Z",
+              "deleted_at": "{fresh}",
+              "id": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+              "name": "RP",
+              "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+              "slug": "rp"
+            }
+          ]
+        },
+        "environments": {
+          "updated": [
+            {
+              "created_at": "2026-11-17T02:21:15.258Z",
+              "deleted_at": "{fresh}",
+              "expires_at": null,
+              "id": "env_yyhqsu7inhpnikvm7gwzcg2f74",
+              "kind": "shared",
+              "name": "development",
+              "owner_identity_id": null,
+              "parent_environment_id": null,
+              "project_id": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+              "tier": "development"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE delete at enforce, no approval",
+      "name": "delete at enforce, no approval",
+      "method": "DELETE",
+      "path": "/v1/organizations/enf/projects/ep",
+      "credential": "alice",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#1} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#1}\",\"operation\":\"project.delete\",\"organization\":{\"id\":\"org_yc7pzijmirml54aqh7jjpufkrm\",\"slug\":\"enf\",\"name\":\"Enf\"},\"summary\":{\"title\":\"Delete the project \\\"EP\\\" (prj_d5fdeh72xeh7oceg4wiwa3rb3a), slug \\\"ep\\\", now: 2 environments and their values erased. This cannot be undone\",\"changes\":[]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#1}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:778b14fb7d1d22b83bca64f8c69f6424791fcd9281842ffaada9da0f0ee1655e",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+              "expected_version": null,
+              "expires_at": "{fresh}",
+              "id": "{apr#1}",
+              "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "last_polled_at": null,
+              "operation": "project.delete",
+              "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:cb3dcc9afc45c7442e2fa70dc53ce546ae82cb198c1d0d13ec7e17384902183c",
+              "summary": {
+                "changes": [],
+                "title": "Delete the project \"EP\" (prj_d5fdeh72xeh7oceg4wiwa3rb3a), slug \"ep\", now: 2 environments and their values erased. This cannot be undone"
+              },
+              "target": {
+                "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE delete at enforce, another request's approval",
+      "name": "delete at enforce, another request's approval",
+      "method": "DELETE",
+      "path": "/v1/organizations/enf/projects/ep",
+      "credential": "alice2",
+      "headers": {
+        "Varlatch-Approval": "apr_eptwoaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"This approval was given for another request: another operation, target, body or credential\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"mismatch\",\"approvalId\":\"apr_eptwoaaaaaaaaaaaaaaaaaaaaa\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete at enforce, a malformed approval",
+      "name": "delete at enforce, a malformed approval",
+      "method": "DELETE",
+      "path": "/v1/organizations/enf/projects/ep",
+      "credential": "alice2",
+      "headers": {
+        "Varlatch-Approval": "not-an-approval"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"No approval of yours has this id\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"not-found\",\"approvalId\":null}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete at enforce, a machine credential",
+      "name": "delete at enforce, a machine credential",
+      "method": "DELETE",
+      "path": "/v1/organizations/enf/projects/ep",
+      "credential": "svc",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"project.delete needs a person's approval with a passkey under this organization's security controls, which a machine credential cannot give\",\"requestId\":\"{requestId}\",\"details\":{\"reason\":\"machine-credential\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "DELETE delete at enforce, its approval",
+      "name": "delete at enforce, its approval",
+      "method": "DELETE",
+      "path": "/v1/organizations/enf/projects/ep",
+      "credential": "alice2",
+      "headers": {
+        "Varlatch-Approval": "apr_epaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"projectId\":\"prj_d5fdeh72xeh7oceg4wiwa3rb3a\",\"slug\":\"ep\",\"environments\":2,\"values\":0,\"versionsErased\":0,\"capabilitiesRevoked\":0,\"targetsRevoked\":0,\"teamLinksRemoved\":0}"
+      },
+      "audit": [
+        {
+          "action": "project.manage",
+          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
+          "decision": "info",
+          "event_type": "project.deleted",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": "apr_epaaaaaaaaaaaaaaaaaaaaaaaa",
+            "approvalPasskeyId": "PasskeyConf001",
+            "approvalUserVerified": true,
+            "capabilitiesRevoked": 0,
+            "environments": 2,
+            "name": "EP",
+            "targetsRevoked": 0,
+            "teamLinksRemoved": 0,
+            "values": 0,
+            "versionsErased": 0
+          },
+          "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+          "request_id": null,
+          "resource": {
+            "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+            "projectSlug": "ep"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "projects": {
+          "updated": [
+            {
+              "active_contract_revision_id": null,
+              "contract_authority": "git",
+              "created_at": "2026-11-17T02:21:15.278Z",
+              "deleted_at": "{fresh}",
+              "id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+              "name": "EP",
+              "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+              "slug": "ep"
+            }
+          ]
+        },
+        "environments": {
+          "updated": [
+            {
+              "created_at": "2026-11-17T02:21:15.296Z",
+              "deleted_at": "{fresh}",
+              "expires_at": null,
+              "id": "env_aad7bkhnmsfqj6fp2caepmn3wy",
+              "kind": "shared",
+              "name": "development",
+              "owner_identity_id": null,
+              "parent_environment_id": null,
+              "project_id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+              "tier": "development"
+            },
+            {
+              "created_at": "2026-11-17T02:21:15.316Z",
+              "deleted_at": "{fresh}",
+              "expires_at": null,
+              "id": "env_hujfqmpbe6yhk76fdgz32cnhna",
+              "kind": "shared",
+              "name": "production",
+              "owner_identity_id": null,
+              "parent_environment_id": null,
+              "project_id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+              "tier": "production"
+            }
+          ]
+        },
+        "approval_intents": {
+          "updated": [
+            {
+              "approval_user_verified": true,
+              "approved_at": "2026-01-10T00:01:00.000Z",
+              "approved_with_passkey_id": "PasskeyConf001",
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:778b14fb7d1d22b83bca64f8c69f6424791fcd9281842ffaada9da0f0ee1655e",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": "{fresh}",
+              "created_at": "2026-01-10T00:00:00.000Z",
+              "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
+              "expected_version": null,
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "apr_epaaaaaaaaaaaaaaaaaaaaaaaa",
+              "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "last_polled_at": null,
+              "operation": "project.delete",
+              "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:cb3dcc9afc45c7442e2fa70dc53ce546ae82cb198c1d0d13ec7e17384902183c",
+              "summary": {
+                "changes": [],
+                "title": "Delete the project \"EP\" (prj_d5fdeh72xeh7oceg4wiwa3rb3a), slug \"ep\", now: 2 environments and their values erased. This cannot be undone"
+              },
+              "target": {
+                "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "DELETE delete at enforce, its approval again",
+      "name": "delete at enforce, its approval again",
+      "method": "DELETE",
+      "path": "/v1/organizations/enf/projects/ep",
+      "credential": "alice2",
+      "headers": {
+        "Varlatch-Approval": "apr_epaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Project not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list enf's Projects afterwards",
+      "name": "list enf's Projects afterwards",
+      "method": "GET",
+      "path": "/v1/organizations/enf/projects",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[{\"id\":\"prj_oqk5kl4ecpddujqqjeapmqg22y\",\"organizationId\":\"org_yc7pzijmirml54aqh7jjpufkrm\",\"slug\":\"ep2\",\"name\":\"EP2\",\"contractAuthority\":\"git\",\"activeContractRevisionId\":null,\"createdAt\":\"2026-11-17T02:21:15.335Z\"}],\"nextCursor\":null}"
+      },
+      "audit": [],
+      "side": {}
+    }
+  ],
+  "counters": [
+    {
+      "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+      "config_version": 1,
+      "control": "admin-step-up",
+      "count": 1,
+      "operation": "project.delete",
+      "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+      "reason": "no-approval"
+    }
+  ]
+}

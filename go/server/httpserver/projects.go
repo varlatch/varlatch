@@ -9,24 +9,27 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/contract"
 	"github.com/varlatch/varlatch/go/server/api"
+	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/environments"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/projects"
+	"github.com/varlatch/varlatch/go/server/security"
 )
 
 // Projects and environments (ADR-0059 step 4.1c): listProjects,
-// createProject, getProject and renameProject, and listEnvironments,
-// createEnvironment, getEnvironment and deleteEnvironment, as http/app.ts
-// serves them, on go/server/projects and go/server/environments. Project
-// deletion is step 4.12. The reads run while the Organization is frozen
-// for an incident (inspection); the writes do not.
+// createProject, getProject, renameProject and (step 4.12a)
+// deleteProject, and listEnvironments, createEnvironment, getEnvironment
+// and deleteEnvironment, as http/app.ts serves them, on go/server/projects
+// and go/server/environments. The reads run while the Organization is
+// frozen for an incident (inspection); the writes do not.
 
 const (
 	listProjectsPattern      = "GET /v1/organizations/{org}/projects"
 	createProjectPattern     = "POST /v1/organizations/{org}/projects"
 	getProjectPattern        = "GET /v1/organizations/{org}/projects/{project}"
 	renameProjectPattern     = "PATCH /v1/organizations/{org}/projects/{project}"
+	deleteProjectPattern     = "DELETE /v1/organizations/{org}/projects/{project}"
 	listEnvironmentsPattern  = "GET /v1/organizations/{org}/projects/{project}/environments"
 	createEnvironmentPattern = "POST /v1/organizations/{org}/projects/{project}/environments"
 	getEnvironmentPattern    = "GET /v1/organizations/{org}/projects/{project}/environments/{environment}"
@@ -39,7 +42,7 @@ const (
 )
 
 func init() {
-	for _, p := range []string{createProjectPattern, renameProjectPattern, createEnvironmentPattern} {
+	for _, p := range []string{createProjectPattern, renameProjectPattern, deleteProjectPattern, createEnvironmentPattern} {
 		readsItself[p] = true
 	}
 }
@@ -48,6 +51,7 @@ func (r reply) VisitListProjectsResponse(w http.ResponseWriter) error      { ret
 func (r reply) VisitCreateProjectResponse(w http.ResponseWriter) error     { return r.visit(w) }
 func (r reply) VisitGetProjectResponse(w http.ResponseWriter) error        { return r.visit(w) }
 func (r reply) VisitRenameProjectResponse(w http.ResponseWriter) error     { return r.visit(w) }
+func (r reply) VisitDeleteProjectResponse(w http.ResponseWriter) error     { return r.visit(w) }
 func (r reply) VisitListEnvironmentsResponse(w http.ResponseWriter) error  { return r.visit(w) }
 func (r reply) VisitCreateEnvironmentResponse(w http.ResponseWriter) error { return r.visit(w) }
 func (r reply) VisitGetEnvironmentResponse(w http.ResponseWriter) error    { return r.visit(w) }
@@ -163,6 +167,39 @@ func (o *operations) RenameProject(ctx context.Context, _ api.RenameProjectReque
 		return nil, err
 	}
 	return ok(projects.JS(renamed)), nil
+}
+
+// DeleteProject is DELETE …/projects/{project} (ADR-0051 Decision 2):
+// project.manage, existence hidden, as for a root environment and now for
+// the whole Project's history, without reveal authority. A protected
+// operation (admin-step-up's project.delete): under enforce the
+// requester's approval, consumed in the deletion's job, where
+// project.manage is checked again. The answer names the Project and what
+// its deletion ended.
+func (o *operations) DeleteProject(ctx context.Context, _ api.DeleteProjectRequestObject) (api.DeleteProjectResponseObject, error) {
+	p, err := o.enterProject(ctx, projectRoute, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := p.authorizeOn(ctx, "project.manage", p.resource()); err != nil {
+		return nil, err
+	}
+	type result struct {
+		deleted projects.Deletion
+		reports []auth.PendingReport
+	}
+	req := projects.NewDeleteRequest(p.p, approvalHeaderOf(ctx), o.s.opts.Auth, p.org.ID, p.project.ID, requestIDOf(p.r))
+	res, err := security.WithApproval(ctx, o.s.opts.Auth, auth.RequesterOf(p.p), func() (result, error) {
+		d, reports, err := projects.Delete(ctx, o.s.opts.Writer, req, p.org.ID, p.project.ID, o.s.opts.Now)
+		return result{d, reports}, err
+	})
+	if err != nil {
+		return nil, p.refused(ctx, err)
+	}
+	if err := p.orgRequest.written(ctx, res.reports); err != nil {
+		return nil, err
+	}
+	return ok(append(jsvalue.Object{{Key: "projectId", Value: p.project.ID}, {Key: "slug", Value: p.project.Slug}}, res.deleted.JS()...)), nil
 }
 
 // envResource is envResource: an environment as authorization sees it.

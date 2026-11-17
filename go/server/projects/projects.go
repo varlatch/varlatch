@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package projects is an Organization's Projects (the TypeScript
-// domain/projects.ts without deletion, which is step 4.12; ADR-0059 step
-// 4.1c): creating one and renaming one, each one job of the single writer
-// behind the Organization's and the requester's shared gates, with the
-// writer's checks and the passkey-verification checkpoint inside it.
+// domain/projects.ts; ADR-0059 steps 4.1c and 4.12a): creating one,
+// renaming one and deleting one (delete.go), each one job of the single
+// writer behind the Organization's and the requester's shared gates, with
+// the writer's checks and the passkey-verification checkpoint inside it.
 package projects
 
 import (

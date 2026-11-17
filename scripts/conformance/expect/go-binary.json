@@ -24,10 +24,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "deleteProject": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "discardGitHubAppRegistration": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"

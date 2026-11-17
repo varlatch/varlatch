@@ -62,6 +62,8 @@ export const PLAN = [
   { suite: "sdk", args: (ctx) => [ctx.origin, ctx.token, ctx.seededSecret] },
   // Security Controls over the API, in an Organization of its own.
   { suite: "security", args: (ctx) => [ctx.origin, ctx.token] },
+  // Deletion over the API: a Project's deletion, its approval at enforce.
+  { suite: "deletion", args: (ctx) => [ctx.origin, ctx.token] },
   // Audit webhook delivery against the target's local receiver.
   { suite: "webhooks", args: (ctx) => [ctx.origin, ctx.token] },
   // The audit export to object storage, against the target's local S3 server.
