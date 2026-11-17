@@ -368,11 +368,20 @@ jobs:
         run: ./scripts/test-dev-setup.sh
 
   # Clean-room browser E2E: fresh canonical stack, passkey bootstrap with a
-  # virtual authenticator, dashboard, and CLI browser-handoff login.
+  # virtual authenticator, dashboard, and CLI browser-handoff login. The run
+  # is split into three shards (run.mjs --shard, shard.mjs), each against
+  # its own stack, so each has the server's whole request window and the
+  # three run in parallel. Every suite is in exactly one shard; every shard
+  # checks its own server's request budget and logs. ci-ok fails when any
+  # shard fails.
   e2e:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
     defaults:
       run:
@@ -391,7 +400,16 @@ jobs:
       - name: Install Chromium
         run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
       - name: Run clean-room E2E suites
-        run: ./scripts/ci-e2e.sh
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: ./scripts/ci-e2e.sh --shard "$SHARD/3" --report conformance-report.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: conformance-report-ts-source-cli-source-shard-${{ matrix.shard }}
+          path: conformance-report.json
+          retention-days: 30
+          if-no-files-found: warn
 
   # The conformance harness with a released CLI (ADR-0059 step 2): the same
   # suites against the stack built from this checkout, driven by the pinned

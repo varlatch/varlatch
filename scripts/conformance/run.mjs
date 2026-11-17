@@ -8,7 +8,7 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  * against inventory.json.
  *
  *   node scripts/conformance/run.mjs --target <target> --cli source|<version>|go:<path>
- *        [--report <file.json>] [--suite <name>]...
+ *        [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]
  *        [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]
  *
  *   --target   the server under test (targets/index.mjs): ts-source,
@@ -25,6 +25,12 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *   --report   also write the report as JSON to this file
  *   --suite    run only these suites (and the setup they need); the report
  *              then covers only their checks
+ *   --shard    run shard k of n (1-based): the suites shard.mjs assigns to
+ *              it, as a --suite selection, so the report covers only their
+ *              checks; every suite is in exactly one shard, and every shard
+ *              also checks its own server's request budget and logs
+ *              (shard.mjs PER_SHARD). --shard 1/1 is a full run. Not with
+ *              --suite or --gate
  *   --gate     judge the run as ADR-0059's gates G1 and G2 are judged
  *              (lib/gate.mjs): no expected failure, every replacement present
  *              and passing, the browser-walkthrough evidence named with
@@ -62,6 +68,7 @@ import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
 import { parseSuiteOutput, resultLine } from "./lib/results.mjs";
 import { PLAN } from "./plan.mjs";
+import { loadWeights, parseShard, shardSuites } from "./shard.mjs";
 import { loadTarget } from "./targets/index.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -72,7 +79,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function usage(message) {
   console.error(
-    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version>|go:<path> [--report <file.json>] [--suite <name>]...` +
+    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version>|go:<path> [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
       " [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]",
   );
   process.exit(64);
@@ -87,6 +94,10 @@ function parseArgs(argv) {
     else if (flag === "--cli") options.cli = value();
     else if (flag === "--report") options.report = value();
     else if (flag === "--suite") options.suites.push(value());
+    else if (flag === "--shard") {
+      const text = value();
+      options.shard = parseShard(text) ?? usage(`--shard ${text}: expected <k>/<n> with 1 <= k <= n`);
+    }
     else if (flag === "--gate") options.gate = true;
     else if (flag === "--walkthrough") options.walkthrough = value();
     else if (flag === "--recent-cli-report") options.recentCliReport = value();
@@ -96,6 +107,8 @@ function parseArgs(argv) {
   if (!options.cli) usage("--cli is required");
   if (!options.gate && (options.walkthrough || options.recentCliReport)) usage("--walkthrough and --recent-cli-report belong to --gate");
   if (options.gate && options.suites.length > 0) usage("--gate judges a whole run: --suite is not allowed");
+  if (options.shard && options.suites.length > 0) usage("--shard selects the suites itself: --suite is not allowed");
+  if (options.shard && options.gate) usage("--gate judges a whole run: --shard is not allowed");
   if (options.gate && !options.walkthrough) usage("--gate needs the browser-walkthrough evidence file: --walkthrough docs/evidence/<file>");
   return options;
 }
@@ -173,6 +186,11 @@ async function main() {
   const unplanned = Object.keys(inventory.suites).filter((s) => !PLAN.some((e) => e.suite === s));
   if (unknown.length || unplanned.length) throw new Error(`plan.mjs and inventory.json disagree: not in the inventory: ${unknown.join(", ") || "none"}; not in the plan: ${unplanned.join(", ") || "none"}`);
   for (const s of options.suites) if (!inventory.suites[s]) usage(`--suite ${s}: no such suite`);
+  // A shard is a --suite selection (shard.mjs), so everything below treats
+  // it as one: the always suites and the setup still run, and the report,
+  // the errors and the expected failures cover only the selected suites'
+  // checks. One shard of one is the whole plan: a full run.
+  if (options.shard && options.shard.count > 1) options.suites = shardSuites(PLAN, loadWeights(), options.shard.index, options.shard.count);
   const inScope = (suite) => options.suites.length === 0 || options.suites.includes(suite);
 
   let loaded;
@@ -230,6 +248,8 @@ async function main() {
     cli: { spec: cli.spec, version: cli.version, commit: cli.commit, sha256: cli.sha256, verified: cli.verified },
     sdk: sdk ? { from: cli.commit ? `release ${cli.version} (${cli.commit})` : "this checkout", commit: sdk.commit, sha256: sdk.sha256 } : null,
     partial: options.suites.length > 0 ? options.suites : false,
+    // Which shard this is; a shard of one is a full run, recorded as one.
+    shard: options.shard?.count > 1 ? `${options.shard.index}/${options.shard.count}` : null,
     lacks: { declared: Object.fromEntries(lacks), stale: [] },
     clientLacks: { declared: Object.fromEntries(clientLacks), stale: [] },
     startedAt: new Date().toISOString(),
@@ -260,6 +280,7 @@ async function main() {
 
   try {
     console.log(`--- target ${options.target}, CLI ${cli.spec} (${cli.path}, sha256 ${cli.sha256})`);
+    if (report.shard) console.log(`--- shard ${report.shard}: ${report.partial ? report.partial.join(", ") : "every suite"}`);
     if (sdk) console.log(`--- sdk from ${report.sdk.from}: ${sdk.path}, sha256 ${sdk.sha256}`);
     try {
       // `onState` hands over the state before up creates anything, so a
@@ -586,6 +607,7 @@ async function main() {
   const gateFailed = options.gate && report.gate?.passed !== true;
   if (!judged.ok) console.log("CONFORMANCE RUN FAILED");
   else if (gateFailed) console.log(`CONFORMANCE GATE FAILED (the run passed; target ${targetName}, CLI ${cli.spec})`);
+  else if (report.shard && report.partial) console.log(`SHARD ${report.shard} PASSED (only ${report.partial.join(", ")}; target ${targetName}, CLI ${cli.spec})`);
   else if (report.partial) console.log(`PARTIAL RUN PASSED (only ${report.partial.join(", ")}; target ${targetName}, CLI ${cli.spec})`);
   else console.log(`ALL E2E SUITES PASSED (target ${targetName}, CLI ${cli.spec})${options.gate ? "; GATE PASSED" : ""}`);
   process.exit(judged.ok && !gateFailed ? 0 : 1);

@@ -45,8 +45,11 @@ export const PLAN = [
   { suite: "values", args: async (ctx) => [await ctx.grant(), ctx.token] },
   { suite: "access", args: async (ctx) => [await ctx.grant()] },
   // A disposable same-identity credential the suite revokes live, to assert
-  // the identity signal refreshes /credentials without a reload.
-  { suite: "p4", args: async (ctx) => [await ctx.grant(), ctx.token, await ctx.cliCredential()] },
+  // the identity signal refreshes /credentials without a reload. Its audit
+  // timeline checks filter for the identity.created events the access suite
+  // just wrote, so a sharded run keeps it in access's shard (shardWith,
+  // shard.mjs).
+  { suite: "p4", args: async (ctx) => [await ctx.grant(), ctx.token, await ctx.cliCredential()], shardWith: "access" },
   { suite: "onboarding", args: async (ctx) => [await ctx.grant(), ctx.token] },
   { suite: "realtime", args: async (ctx) => [await ctx.grant(), ctx.token] },
   // Degraded live updates on any server: the connection cut in the page;

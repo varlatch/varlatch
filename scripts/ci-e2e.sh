@@ -7,7 +7,8 @@
 # reports each check by its ID, and removes the project on exit. Used by CI
 # and runnable locally after `pnpm build` (wrap in `newgrp docker` if your
 # session lacks the group). Extra arguments go to the runner, for example
-# `--report report.json` or `--suite values`.
+# `--report report.json`, `--suite values` or `--shard 2/3` (CI runs three
+# shards in parallel).
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 exec node "$REPO_ROOT/scripts/conformance/run.mjs" --target ts-source --cli source "$@"

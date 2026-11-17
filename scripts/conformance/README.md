@@ -10,6 +10,7 @@ pnpm build
 scripts/ci-e2e.sh                     # = node scripts/conformance/run.mjs --target ts-source --cli source
 scripts/ci-e2e.sh --report out.json   # also write the report as JSON
 scripts/ci-e2e.sh --suite values      # one suite (plus the setup it needs); a partial report
+scripts/ci-e2e.sh --shard 2/3         # the second of three shards (CI runs all three in parallel)
 node scripts/conformance/run.mjs --target ts-source --cli 0.22.0   # a released CLI, verified first
 node scripts/conformance/run.mjs --target ts-release:0.22.0 --cli source   # a signed release, verified, pulled by digest
 ```
@@ -32,6 +33,7 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 | `clients.mjs` | Downloads and verifies a pinned CLI; bundles `packages/sdk` for the sdk suite. |
 | `client-go.json` | The CLI features the Go CLI (`--cli go:<path>`) does not have yet, each with the slice that builds it: their checks report client-lacks (`lib/client-lacks.mjs`). |
 | `plan.mjs` | The order of the suites and how each gets its arguments. |
+| `shard.mjs`, `shard-weights.json` | `--shard <k>/<n>`: which suites each shard runs, balanced by each suite's measured seconds. |
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
 | `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`), the registry, and each target's optional capabilities as data (`capabilities.json`). |
@@ -136,6 +138,25 @@ pending-cap answers: `POST /v1/auth/device`, while the proxy-probe suite ran,
 and, where the target records the forwarded header, from one of the probe's
 forged addresses. A suite too large for one window is split; the limit is
 never raised.
+
+### Shards
+
+`--shard <k>/<n>` runs one of n parts of the plan against a server of its
+own, so each part has the whole request window and the parts can run in
+parallel (CI's `e2e` and `go-binary` jobs run three). `shard.mjs` assigns
+every suite of the plan to exactly one shard, greedily, heaviest first, by
+the seconds in `shard-weights.json` (measured from CI logs without the
+request-budget waits; a suite not listed weighs 60 s), and keeps the plan's
+order within a shard. A shard is a `--suite` selection: the `always` suites
+and the setup still run, and the report and the expected failures cover
+only the checks of the suites it selects, so each check and each expected
+failure is judged in the one shard that owns its suite. The lacks probe asks
+every shard's server. Two suites check the server itself and are in every
+shard besides: `request-budget` (no unexpected 429 from this shard's
+server) and `server-logs` (no seeded secret in its logs). `--shard 1/1` is a
+full run; `--shard` with `--suite` or `--gate` is a usage error. Re-measure
+the weights when a suite's time changes by a minute or more
+(`test/shard.test.mjs` keeps the three-shard split within a minute).
 
 Optional **capabilities**, each a named operation a suite asks for instead
 of reaching into Compose or the database:
@@ -503,7 +524,8 @@ job, with its own stack (or server) on its own free ports, at most three at
 a time and 60 minutes each, and uploads its `conformance-report.json`
 (`conformance-report-<target>-cli-<cli>`, tokens masked as in the logs).
 `go.yml` also runs the `go-binary` target with the source CLI on every pull
-request that changes `go/` or the harness's `go-binary` pieces.
+request that changes `go/` or the harness's `go-binary` pieces, in three
+shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
 
 ## Clients
 

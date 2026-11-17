@@ -49,6 +49,9 @@ on:
       - "scripts/conformance/targets/go-binary.mjs"
       - "scripts/conformance/expect/go-binary.json"
       - "scripts/conformance/targets/capabilities.json"
+      # Which suites each go-binary shard runs.
+      - "scripts/conformance/shard.mjs"
+      - "scripts/conformance/shard-weights.json"
       - "services/varlatchd/test/go-values-fixture.test.ts"
       - "services/varlatchd/test/go-webhooks-fixture.test.ts"
       - "services/varlatchd/test/go-fixture-kit.ts"
@@ -107,6 +110,8 @@ jobs:
             scripts/conformance/targets/go-binary.mjs
             scripts/conformance/expect/go-binary.json
             scripts/conformance/targets/capabilities.json
+            scripts/conformance/shard.mjs
+            scripts/conformance/shard-weights.json
             services/varlatchd/test/go-values-fixture.test.ts
             services/varlatchd/test/go-webhooks-fixture.test.ts
             services/varlatchd/test/go-fixture-kit.ts
@@ -614,11 +619,22 @@ jobs:
   # operation varlatchd lacks reporting target-lacks
   # (scripts/conformance/expect/go-binary.json). The weekly matrix
   # (conformance.yml) has the same row.
+  #
+  # The run is split into three shards (run.mjs --shard, shard.mjs), each
+  # against its own restored varlatchd, so each has the server's whole
+  # request window and the three run in parallel. Every suite is in exactly
+  # one shard; every shard checks its own server's request budget and logs.
+  # The checks that are not the conformance run (the G3 fixtures and the
+  # adapter test) run once, in shard 1. go-ok fails when any shard fails.
   go-binary:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
     defaults:
       run:
@@ -655,6 +671,7 @@ jobs:
       # committed fixtures (values-v0.22.0.json, values-v0.21.0.json, which
       # the Go tests replay) are still this server's answers.
       - name: The TypeScript server reads values Go sealed
+        if: matrix.shard == 1
         env:
           CGO_ENABLED: "0"
         run: |
@@ -667,6 +684,7 @@ jobs:
       # its answers. The same run checks that the committed fixtures
       # (webhooks-v0.22.0.json, webhooks-v0.21.0.json) are still its own.
       - name: The TypeScript server delivers with webhook secrets Go sealed
+        if: matrix.shard == 1
         env:
           CGO_ENABLED: "0"
         run: |
@@ -680,6 +698,7 @@ jobs:
       # committed fixtures (connections-v0.22.0.json, connections-v0.21.0.json)
       # are still its own.
       - name: The TypeScript server sends Platform Connection credentials Go sealed
+        if: matrix.shard == 1
         env:
           CGO_ENABLED: "0"
         run: |
@@ -692,6 +711,7 @@ jobs:
       # records. The same run checks that the committed fixtures
       # (github-app-v0.22.0.json, github-app-v0.21.0.json) are still its own.
       - name: The TypeScript server attaches GitHub App keys Go sealed
+        if: matrix.shard == 1
         env:
           CGO_ENABLED: "0"
         run: |
@@ -704,6 +724,7 @@ jobs:
       # records. The same run checks that audit-export-v0.22.0.json is still
       # its own.
       - name: The TypeScript server sends audit export keys Go sealed
+        if: matrix.shard == 1
         env:
           CGO_ENABLED: "0"
         run: |
@@ -716,6 +737,7 @@ jobs:
       # same run checks that audit-export-worker-v0.22.0.json is still its
       # own worker's.
       - name: The TypeScript worker drains with keys Go sealed
+        if: matrix.shard == 1
         env:
           CGO_ENABLED: "0"
         run: |
@@ -728,6 +750,7 @@ jobs:
       # restores and combines what this commit's Go code made, and the
       # committed vectors are still its own.
       - name: The TypeScript server opens archives Go sealed, and escrows and splits Go made
+        if: matrix.shard == 1
         env:
           CGO_ENABLED: "0"
         run: |
@@ -736,6 +759,7 @@ jobs:
           VARLATCH_GO_BACKUP_VECTORS="$RUNNER_TEMP/go-backup-vectors.json" VARLATCH_GO_CUSTODY_VECTORS="$RUNNER_TEMP/go-custody-vectors.json" \
             pnpm --filter @varlatch/varlatchd exec vitest run test/go-backup-vectors.test.ts
       - name: The go-binary adapter and the stale-lacks probe against varlatchd
+        if: matrix.shard == 1
         env:
           VARLATCH_REQUIRE_GO_BINARY: "1"
         run: VARLATCH_GO_BINARY="$RUNNER_TEMP/varlatchd" node --test scripts/conformance/test/go-binary.test.mjs
@@ -745,17 +769,19 @@ jobs:
       # a fresh container that holds only the archive and the two keys (a
       # scratch image with varlatchd alone, no network), and the source's
       # Root KEK opening the restored canary. The conformance run below then
-      # serves that restored installation, so the full run is against it.
+      # serves that restored installation, so every shard runs against a
+      # restored one (the drill runs in each).
       - name: Restore a Go archive in a fresh container
         run: sh go/bench/restore-drill.sh "$RUNNER_TEMP/varlatchd" "$RUNNER_TEMP/restore-drill"
       - name: Run the conformance suites against the restored varlatchd
         env:
           VARLATCH_GO_BINARY_FROM: ${{ runner.temp }}/restore-drill/restored
-        run: node scripts/conformance/run.mjs --target "go-binary:$RUNNER_TEMP/varlatchd" --cli source --report conformance-report.json
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/conformance/run.mjs --target "go-binary:$RUNNER_TEMP/varlatchd" --cli source --shard "$SHARD/3" --report conformance-report.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: conformance-report-go-binary-cli-source
+          name: conformance-report-go-binary-cli-source-shard-${{ matrix.shard }}
           path: conformance-report.json
           retention-days: 30
           if-no-files-found: warn
