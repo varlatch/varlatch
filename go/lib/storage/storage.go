@@ -113,7 +113,8 @@ type DB struct {
 	jobs   chan *job
 	ops    chan *op
 
-	rdb *sql.DB // read-only pool
+	rdb   *sql.DB // read-only pool
+	rconn *readerConnector
 
 	// The checkpointer's own connection.
 	cdb   *sql.DB
@@ -217,9 +218,11 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 		return nil, err
 	}
 
-	if db.rdb, err = sql.Open("sqlite", db.dsn(false, true)); err != nil {
+	// The readers keep their statements prepared (stmtcache.go).
+	if db.rconn, err = newReaderConnector(db.dsn(false, true), readerStmtCacheSize); err != nil {
 		return nil, err
 	}
+	db.rdb = sql.OpenDB(db.rconn)
 	db.rdb.SetMaxOpenConns(opts.ReadConns)
 	db.rdb.SetMaxIdleConns(opts.ReadConns)
 
