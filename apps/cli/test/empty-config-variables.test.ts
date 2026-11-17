@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,27 @@ function cli(args: string[], cwd: string, env: Record<string, string>): Promise<
 }
 
 describe("empty configuration variables", () => {
+  it("with no home directory at all, a command exits 64 with a message, not a stack trace", async () => {
+    const preload = join(dir, "no-home.cjs");
+    writeFileSync(preload, 'const os = require("node:os"); os.userInfo = () => { throw new Error("no passwd entry"); };\n');
+    const cwd = join(dir, "nohome");
+    mkdirSync(cwd, { recursive: true });
+    const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, ["--require", preload, bundle, "status"], { cwd, env: { PATH: process.env.PATH ?? "", HOME: "" }, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
+      child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+    });
+    expect(r.code).toBe(64);
+    expect(r.stderr.trim()).toBe(
+      "varlatch: the home directory is unknown: HOME is empty or unset, and the system records none for this user. Set HOME, or VARLATCH_CONFIG_DIR",
+    );
+    expect(readdirSync(cwd)).toEqual([]);
+  });
+
   it("an empty VARLATCH_CONFIG_DIR does not read a credential store in the working directory", async () => {
     const checkout = join(dir, "checkout");
     mkdirSync(checkout, { recursive: true });

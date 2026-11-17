@@ -9,6 +9,7 @@ import {
   REPO_CONFIG_FILE,
   agentRunOf,
   deleteCredential,
+  HomeDirectoryError,
   findRepoRoot,
   homeDirectory,
   listCredentials,
@@ -3452,6 +3453,7 @@ async function main(): Promise<void> {
   } catch (err) {
     if (err instanceof Error && err.name === "BackupError") fail(err.message);
     if (err instanceof Error && err.name === "ExportContextError") fail(`varlatch: ${err.message}. Nothing was started.`);
+    if (err instanceof HomeDirectoryError) fail(err.message, EXIT.usage);
     if (err instanceof ContextError) fail(maskUserinfoInText(err.message));
     if (err instanceof EnvSchemaParseError || err instanceof UnknownEnvironmentNameError) fail(err.message);
     // Its message names the approval by the id the server gave: escaped (issue #119).

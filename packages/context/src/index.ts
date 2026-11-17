@@ -252,11 +252,23 @@ export function resolveServer(options: {
  * An empty variable counts as unset, as everywhere else in the CLI.
  */
 export function homeDirectory(): string {
-  const home = homedir();
-  if (home !== "") return home;
-  const recorded = userInfo().homedir;
-  if (recorded === "") throw new Error("the home directory is unknown: set HOME, or VARLATCH_CONFIG_DIR");
-  return recorded;
+  let home = "";
+  try {
+    home = homedir();
+    if (home === "") home = userInfo().homedir;
+  } catch {
+    home = "";
+  }
+  if (home === "") throw new HomeDirectoryError();
+  return home;
+}
+
+/** Neither HOME (USERPROFILE on Windows) nor the operating system names a home directory: the command line must give one (64). */
+export class HomeDirectoryError extends Error {
+  override name = "HomeDirectoryError";
+  constructor() {
+    super("varlatch: the home directory is unknown: HOME is empty or unset, and the system records none for this user. Set HOME, or VARLATCH_CONFIG_DIR");
+  }
 }
 
 function defaultConfigDir(env: NodeJS.ProcessEnv): string {
