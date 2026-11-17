@@ -18,6 +18,15 @@ import "../../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in out
  * the pause fence; drift found and put back by a repair pass, with its
  * audit event; and the repair cycle closing.
  *
+ * Then the GitHub App (ADR-0047), against the fake GitHub's App side:
+ * the manifest flow (a registration started, GitHub's code converted into
+ * the App, the state consumed once); an App GitHub created on another
+ * account refused; an App imported by its id and key; the App's
+ * installations; a Connection on an installation, whose Target is pushed
+ * with installation tokens narrowed to its repository; the key rotated;
+ * under admin-step-up at enforce, a pending conversion discarded, and one
+ * ended by the hourly sweep once its hour is over; and the App removed.
+ *
  *   sync.mjs <origin> <api token>   (run by scripts/conformance/run.mjs)
  */
 import { randomBytes } from "node:crypto";
@@ -58,6 +67,8 @@ const ok = (r, what) => {
 };
 
 const fakes = () => JSON.parse(targetOp("platform-fakes", ["state"]));
+/** The fake GitHub's App side (lib/platform-fakes.cjs, POST /_github). */
+const github = (op) => JSON.parse(targetOp("platform-fakes", ["github", JSON.stringify(op)]));
 
 /** Waits until `done()` holds (it may read the fakes or the API), for up to `ms`; answers the last value. */
 async function waitFor(done, ms = PASS_MS) {
@@ -262,6 +273,180 @@ try {
   const sentAfter = fakes().requests.slice(after).filter((r) => r.path.startsWith("/api/v1/applications/app-conformance"));
   check("sync.repair-cycle-closes", "after its repair pass a converged Target is not due again: the next passes send its destination nothing",
     sentAfter.length === 0, JSON.stringify(sentAfter));
+
+  // ---- The GitHub App (ADR-0047).
+  const appNumber = 7000 + Number.parseInt(suffix.slice(0, 4), 16);
+  const owner = { login: `acme-apps-${suffix}`, id: 9100 + Number.parseInt(suffix.slice(4), 16), type: "Organization" };
+  const account = { login: owner.login, type: "organization" };
+  const fakeApp = (n) => ({ id: appNumber + n, slug: `varlatch-${suffix}-${n}`, clientId: `Iv1.conf${suffix}${n}`, owner });
+  const appOrg = async (name) => {
+    const s = `${name}-${suffix}`;
+    ok(await api("POST", "/v1/organizations", { body: { name, slug: s } }), `creating the Organization ${s}`);
+    return `/v1/organizations/${s}`;
+  };
+  const start = async (o) => ok(await api("POST", `${o}/github-app/registrations`, { body: { account } }), "starting a registration");
+
+  // The manifest flow: a registration started, GitHub's code converted into
+  // the App (its key kept, never shown), the state consumed once.
+  const A = await appOrg("sync-app");
+  const started = await start(A);
+  github({ op: "manifest-code", code: `code-${suffix}-1`, app: fakeApp(1) });
+  const completed = await api("POST", `${A}/github-app/registrations/complete`, { body: { state: started.state, code: `code-${suffix}-1` } });
+  const again = await api("POST", `${A}/github-app/registrations/complete`, { body: { state: started.state, code: `code-${suffix}-1` } });
+  const stored = await api("GET", `${A}/github-app`);
+  check(
+    "sync.github-app-registered",
+    "a registration started for a GitHub account names GitHub's form and a single-use state; completing it with GitHub's code stores the App GitHub handed over, never showing its key, and the state cannot complete again",
+    typeof started.state === "string" && started.account?.login === account.login && typeof started.manifest === "object" &&
+      String(started.action ?? "").startsWith(`https://github.com/organizations/${account.login}/settings/apps/new`) &&
+      completed.status === 201 && completed.json?.outcome === "registered" && completed.json.app?.githubAppId === fakeApp(1).id &&
+      completed.json.app.slug === fakeApp(1).slug && completed.json.app.owner?.type === "organization" &&
+      stored.status === 200 && stored.json?.githubAppId === fakeApp(1).id && !stored.text.includes("PRIVATE KEY") && !completed.text.includes("PRIVATE KEY") &&
+      again.status === 410 && again.json?.error?.code === "CONSUMED" && fakes().codesUsed.includes(`code-${suffix}-1`),
+    JSON.stringify({ started: { action: started.action, account: started.account }, completed: completed.status, outcome: completed.json?.outcome, app: completed.json?.app, again: [again.status, again.json?.error?.code], stored: stored.status }),
+  );
+
+  // Its installations, read as the App; a Connection on one; a Target on
+  // that Connection pushed with installation tokens narrowed to its
+  // repository.
+  const appRepo = `app-${suffix}`;
+  const { installationId } = github({ op: "install", appId: fakeApp(1).id, account: owner, repos: [appRepo, `other-${suffix}`] });
+  const listing = ok(await api("GET", `${A}/github-app/installations`), "listing the installations");
+  const listed = (listing.items ?? []).find((i) => i.installationId === installationId);
+  check("sync.github-app-installations", "the App's installations are listed as GitHub answers them to the App, each with its account",
+    listing.check?.status === "ok" && listed?.account?.login === owner.login && listed.repositorySelection === "selected" && listed.suspended === false,
+    JSON.stringify(listing));
+  const AE = `${A}/projects/api/environments/production`;
+  ok(await api("POST", `${A}/projects`, { body: { slug: "api", name: "API", contractAuthority: "managed" } }), "creating the App Organization's Project");
+  ok(await api("POST", `${A}/projects/api/environments`, { body: { name: "production", tier: "production" } }), "creating its environment");
+  const appItems = ["APP_TOKEN", "APP_MODE"].map((name) => ({ name, required: { kind: "never" }, sensitive: name === "APP_TOKEN", type: "string" }));
+  const appRevision = ok(await api("POST", `${A}/projects/api/contract/revisions`, { body: { contract: { schemaVersion: 1, items: appItems } } }), "its Contract");
+  ok(await api("POST", `${A}/projects/api/contract/revisions/${appRevision.id}/activate`, { body: {} }), "activating it");
+  ok(await api("PUT", `${AE}/values/APP_TOKEN`, { body: { value: `t-${suffix}` } }), "setting APP_TOKEN");
+  const appConnection = await api("POST", `${A}/platform-connections`, { body: { credentialKind: "github-app", installationId, name: "App" } });
+  const mintsBefore = fakes().mints.length;
+  const appTarget = appConnection.status === 201
+    ? ok(await api("POST", `${AE}/sync-targets`, { body: { connectionId: appConnection.json.id, destination: { repo: appRepo }, mapping: { kind: "wildcard" } } }), "creating the App Target").id
+    : null;
+  const appPushed = appTarget && await waitFor(() => {
+    const s = fakes();
+    return (s.github[`${owner.login}/${appRepo}`] ?? []).includes("APP_TOKEN") && s;
+  });
+  const appMints = fakes().mints.slice(mintsBefore).filter((m) => m.installationId === installationId);
+  check(
+    "sync.github-app-connection-pushes",
+    "a Connection on an installation of the App takes the installation's account as its base identity, and its Target is pushed with installation tokens minted narrowed to the Target's repository",
+    appConnection.status === 201 && appConnection.json?.credentialKind === "github-app" && appConnection.json.installationId === installationId &&
+      appConnection.json.githubAppId === stored.json?.id && appConnection.json.baseIdentity === owner.login && Boolean(appPushed) &&
+      appMints.length > 0 && appMints.every((m) => JSON.stringify(m.repositories) === JSON.stringify([appRepo.toLowerCase()])) &&
+      !(fakes().github[`${owner.login}/other-${suffix}`] ?? []).length,
+    JSON.stringify({ connection: [appConnection.status, appConnection.json?.credentialKind, appConnection.json?.baseIdentity, appConnection.json?.error], pushed: Boolean(appPushed), mints: appMints }),
+  );
+
+  // The key rotated: a key GitHub does not know is refused; the new one is
+  // taken, the old one deleted on GitHub, and the Target pushed with it.
+  const { pem: stranger } = github({ op: "app", app: fakeApp(9) });
+  const refusedKey = await api("POST", `${A}/github-app/key`, { body: { privateKey: stranger, expectedVersion: stored.json?.version } });
+  const { pem: newPem } = github({ op: "add-key", appId: fakeApp(1).id });
+  const rotated = await api("POST", `${A}/github-app/key`, { body: { privateKey: newPem, expectedVersion: stored.json?.version } });
+  const stale = await api("POST", `${A}/github-app/key`, { body: { privateKey: newPem, expectedVersion: stored.json?.version } });
+  // Every other key is deleted on GitHub: only the new one signs now, so
+  // the next push shows the rotation took.
+  const keysLeft = github({ op: "keep-only-key", appId: fakeApp(1).id, pem: newPem }).keys;
+  ok(await api("PUT", `${AE}/values/APP_MODE`, { body: { value: "rotated" } }), "setting APP_MODE");
+  const afterRotation = await waitFor(() => (fakes().github[`${owner.login}/${appRepo}`] ?? []).includes("APP_MODE"));
+  check(
+    "sync.github-app-key-rotation",
+    "rotating the App's key verifies the new key as the App first (a key GitHub does not know is refused, nothing changes), takes it at the App's version, refuses a stale version, and pushes with it",
+    refusedKey.status === 200 && refusedKey.json?.outcome === "failed" && rotated.status === 200 && rotated.json?.outcome === "rotated" &&
+      rotated.json.app?.version === stored.json.version + 1 && stale.status === 409 && Boolean(afterRotation) && keysLeft === 1,
+    JSON.stringify({ refused: [refusedKey.status, refusedKey.json?.outcome], rotated: [rotated.status, rotated.json?.outcome, rotated.json?.app?.version], stale: stale.status, pushed: Boolean(afterRotation) }),
+  );
+
+  // The App removed: its Connection revoked, its Target disabled.
+  const removed = await api("DELETE", `${A}/github-app?appId=${encodeURIComponent(stored.json?.id ?? "")}`);
+  const gone = await api("GET", `${A}/github-app`);
+  const connectionAfter = appConnection.json?.id ? await api("GET", `${A}/platform-connections/${appConnection.json.id}`) : { status: 0 };
+  const targetAfter = appTarget ? await api("GET", `${AE}/sync-targets/${appTarget}`) : { status: 0 };
+  check(
+    "sync.github-app-removed",
+    "removing the App revokes every Connection on it and disables their Targets; the Organization has no App afterwards",
+    removed.status === 204 && (gone.status === 404 || gone.json === null) &&
+      (connectionAfter.status === 404 || typeof connectionAfter.json?.revokedAt === "string") &&
+      (targetAfter.status === 404 || targetAfter.json?.state === "disabled" || typeof targetAfter.json?.revokedAt === "string"),
+    JSON.stringify({ removed: removed.status, gone: [gone.status, gone.json], connection: [connectionAfter.status, connectionAfter.json?.revokedAt], target: [targetAfter.status, targetAfter.json?.state] }),
+  );
+
+  // An App GitHub created on another account is refused and nothing is
+  // kept; then an App imported by its id and private key.
+  const B = await appOrg("sync-app-import");
+  const elsewhere = await start(B);
+  github({ op: "manifest-code", code: `code-${suffix}-2`, app: { ...fakeApp(2), owner: { login: `someone-${suffix}`, id: 9999, type: "User" } } });
+  const mismatch = await api("POST", `${B}/github-app/registrations/complete`, { body: { state: elsewhere.state, code: `code-${suffix}-2` } });
+  const noneKept = await api("GET", `${B}/github-app`);
+  check(
+    "sync.github-app-owner-mismatch",
+    "an App GitHub created on another account than the one named is refused with where to delete it, and nothing is kept",
+    mismatch.status === 200 && mismatch.json?.outcome === "refused" && mismatch.json.reason === "owner-mismatch" &&
+      typeof mismatch.json.deleteUrl === "string" && mismatch.json.deleteUrl.includes(fakeApp(2).slug) && (noneKept.status === 404 || noneKept.json === null),
+    JSON.stringify({ mismatch: [mismatch.status, mismatch.json?.outcome, mismatch.json?.reason, mismatch.json?.deleteUrl], kept: [noneKept.status, noneKept.json] }),
+  );
+  const { pem: importPem } = github({ op: "app", app: fakeApp(3) });
+  const wrongPair = await api("POST", `${B}/github-app/import`, { body: { appId: fakeApp(3).id, privateKey: stranger } });
+  const imported = await api("POST", `${B}/github-app/import`, { body: { appId: fakeApp(3).id, privateKey: importPem } });
+  check(
+    "sync.github-app-import",
+    "an App is imported by its id and private key, verified as the App first: a key that does not sign for it is refused; the slug, client id and owner come from GitHub",
+    wrongPair.status === 200 && wrongPair.json?.outcome === "failed" && imported.status === 201 && imported.json?.outcome === "registered" &&
+      imported.json.app?.githubAppId === fakeApp(3).id && imported.json.app.slug === fakeApp(3).slug && imported.json.app.clientId === fakeApp(3).clientId &&
+      imported.json.app.owner?.login === owner.login && !imported.text.includes("PRIVATE KEY"),
+    JSON.stringify({ wrong: [wrongPair.status, wrongPair.json?.outcome], imported: [imported.status, imported.json?.outcome, imported.json?.app] }),
+  );
+
+  // Under admin-step-up at enforce, GitHub's answer is kept as a pending
+  // conversion and its attachment asks for an approval: one discarded by
+  // the person who started it; another ended by the hourly sweep once its
+  // hour is over.
+  const C = await appOrg("sync-app-staged");
+  for (const [mode, version] of [["report", 0], ["enforce", 1]]) {
+    ok(await api("PATCH", `${C}/security/controls/admin-step-up`, { body: { mode, expectedVersion: version } }), `admin-step-up at ${mode}`);
+  }
+  const pendingOf = async (n) => {
+    const r = await start(C);
+    github({ op: "manifest-code", code: `code-${suffix}-${n}`, app: fakeApp(n) });
+    const c = await api("POST", `${C}/github-app/registrations/complete`, { body: { state: r.state, code: `code-${suffix}-${n}` } });
+    const approval = c.json?.error?.details?.approval?.id;
+    if (approval) ok(await api("POST", `/v1/me/approvals/${approval}/cancel`), "cancelling the approval");
+    return { status: c.status, code: c.json?.error?.code, registrationId: c.json?.error?.details?.registrationId };
+  };
+  const p4 = await pendingOf(4);
+  const discarded = p4.registrationId ? await api("DELETE", `${C}/github-app/registrations/${p4.registrationId}`) : { status: 0 };
+  const discardedAgain = p4.registrationId ? await api("DELETE", `${C}/github-app/registrations/${p4.registrationId}`) : { status: 0 };
+  const attachEnded = p4.registrationId ? await api("POST", `${C}/github-app/registrations/${p4.registrationId}/attach`, { body: {} }) : { status: 0 };
+  check(
+    "sync.github-app-pending-discard",
+    "under admin-step-up at enforce, completing a registration keeps GitHub's App pending and asks for an approval to attach it; the person who started it discards it, with where to delete the App; discarding again changes nothing, and attaching it then is refused before any approval",
+    p4.status === 403 && p4.code === "STEP_UP_REQUIRED" && typeof p4.registrationId === "string" &&
+      discarded.status === 200 && discarded.json?.discarded === true && discarded.json.state === "discarded" &&
+      typeof discarded.json.deleteUrl === "string" && discarded.json.app?.githubAppId === fakeApp(4).id &&
+      discardedAgain.status === 200 && discardedAgain.json?.discarded === false && discardedAgain.json.state === "ended" &&
+      attachEnded.status === 200 && attachEnded.json?.outcome === "refused" && attachEnded.json.reason === "registration-ended",
+    JSON.stringify({ pending: p4, discarded: [discarded.status, discarded.json], again: [discardedAgain.status, discardedAgain.json?.state], attach: [attachEnded.status, attachEnded.json?.outcome, attachEnded.json?.reason] }),
+  );
+  const p5 = await pendingOf(5);
+  if (p5.registrationId) JSON.parse(targetOp("probe", ["github-app-pending-expired", p5.registrationId]));
+  const swept = p5.registrationId && await waitFor(async () => {
+    const items = ok(await api("GET", `${C}/audit-events?eventType=sync.github_app_registration_abandoned&limit=50`), "listing abandoned registrations").items ?? [];
+    return items.find((e) => e.metadata?.registrationId === p5.registrationId) ?? null;
+  }, 90_000);
+  const afterSweep = p5.registrationId ? await api("DELETE", `${C}/github-app/registrations/${p5.registrationId}`) : { status: 0 };
+  check(
+    "sync.github-app-sweep",
+    "a pending conversion not attached within its hour is ended by the registration sweep (recorded with reason expired, its key deleted); discarding it afterwards changes nothing",
+    p5.status === 403 && Boolean(swept) && swept.metadata?.reason === "expired" && swept.metadata?.appId === fakeApp(5).id &&
+      afterSweep.status === 200 && afterSweep.json?.discarded === false && afterSweep.json.state === "ended",
+    JSON.stringify({ pending: p5, swept: swept ? { metadata: swept.metadata } : null, after: [afterSweep.status, afterSweep.json?.state] }),
+  );
 } catch (err) {
   error(err instanceof Error ? err.message : String(err));
 }

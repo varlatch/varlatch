@@ -284,6 +284,17 @@ const PROBES = {
     if (!got) throw new Error(`sync-repair-due: no Sync Target ${targetId}`);
     return JSON.parse(got);
   },
+  "github-app-pending-expired": (state, registrationId) => {
+    if (!/^ghr_[a-z0-9]{26}$/.test(registrationId ?? "")) throw new Error("github-app-pending-expired: a GitHub App registration id (ghr_...)");
+    // The pending conversion's material is written once, by a trigger; this
+    // one update runs with triggers off (the superuser's replica role), in
+    // its own transaction.
+    const got = psql(state, `BEGIN; SET LOCAL session_replication_role = replica;
+      UPDATE github_app_registrations SET converted_at = clock_timestamp() - interval '2 hours', pending_expires_at = clock_timestamp() - interval '1 second'
+      WHERE id = '${registrationId}' AND converted_at IS NOT NULL AND ended_at IS NULL RETURNING 'true'; COMMIT;`);
+    if (!/\btrue\b/.test(got ?? "")) throw new Error(`github-app-pending-expired: no pending GitHub App conversion ${registrationId}`);
+    return true;
+  },
   "proxy-addresses": (state) => {
     const id = mustCompose(state, ["ps", "-q", "varlatch-web"]).trim();
     const r = spawnSync("docker", ["inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", id], { encoding: "utf8" });
@@ -408,8 +419,9 @@ function platformFakesControl(state, method, path, body) {
  * (lib/platform-fakes.cjs) in varlatchd's container, on its loopback port
  * 443 (which the platforms' host names lead to) when they are not running;
  * `state` what they hold and every request they saw; `drift <resource>
- * <key> <value>` changes a Coolify value behind Varlatch's back. They live
- * as long as the container.
+ * <key> <value>` changes a Coolify value behind Varlatch's back; `github
+ * <json>` sets up the fake GitHub's App side (lib/platform-fakes.cjs,
+ * POST /_github). They live as long as the container.
  */
 export async function platformFakes(state, action, ...args) {
   if (action === "state") {
@@ -421,6 +433,11 @@ export async function platformFakes(state, action, ...args) {
     const [resource, key, value] = args;
     const got = platformFakesControl(state, "POST", "/_drift", JSON.stringify({ resource, key, value }));
     if (!got) throw new Error(`the fake platforms could not drift ${resource} ${key}`);
+    return got;
+  }
+  if (action === "github") {
+    const got = platformFakesControl(state, "POST", "/_github", args[0]);
+    if (!got) throw new Error(`the fake GitHub refused ${args[0]?.slice(0, 80)}`);
     return got;
   }
   if (action !== "start") throw new Error(`unknown platform-fakes action ${action}`);

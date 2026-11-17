@@ -69,6 +69,7 @@ export const CAPABILITIES = [
   "probe:proxy-addresses",
   "probe:deletion-due",
   "probe:sync-repair-due",
+  "probe:github-app-pending-expired",
   "probe:sync-trigger-position",
   "maintenance",
   "serve-cli",
