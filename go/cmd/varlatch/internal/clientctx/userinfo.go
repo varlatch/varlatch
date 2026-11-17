@@ -133,202 +133,307 @@ func MaskServer(v any) any {
 // varlatch.toml, and quote values with %q. There a URL's end is not known,
 // so the rules are (the orchestrator's design, after #265's review):
 //
-//   - A URL starts at a scheme (tabs and newlines in it dropped, as WHATWG
-//     drops them) whose authority follows: a special scheme and any run of
-//     "/" and "\", or another scheme and "//". Once inside an authority,
-//     no other URL starts there (a password holding "ftp:" is still the
-//     password), unless a space, comma, semicolon or line end followed by
-//     another "scheme:" ends it first (a list of servers or values).
-//   - A double-quoted string (opened after a space, "=", "(", "[", "{", ","
-//     or ":" or at the start, closed before a space, punctuation or the end,
-//     on one line) is decoded (\", \\, \n, \t, \uXXXX, \UXXXXXXXX, \xHH
-//     and the rest), masked, and shown re-quoted only when masking changed
-//     it: a URL in it ends with the string, so the next string's "@" is
-//     never taken, and an escaped quote or "@" never hides a password.
+//   - A URL starts at a scheme that may begin at any letter (after "--",
+//     inside a word: when unsure it is a URL), tabs and newlines in it
+//     dropped as WHATWG drops them, whose authority follows: a special
+//     scheme and any run of "/" and "\", or another scheme and "//". No
+//     other URL starts inside an authority (a password holding "ftp:" is
+//     still the password), unless a space, comma or semicolon followed by
+//     another "scheme:" ends it first (a list of servers or values). Tab,
+//     CR and LF never end it: WHATWG drops them from a password.
+//   - A quoted string (double-quoted, single-line or triple; or a triple
+//     single-quoted literal) opened after a space, "=", "(", "[", "{", ","
+//     or ":" or at the start, and closed on its line before a space,
+//     punctuation or the end (a quote with no closing one on its line is
+//     plain text), is decoded (\", \\, \n, \t, \uXXXX, \UXXXXXXXX, \xHH and the rest) and
+//     masked as text again, so quoting nested in quoting is read layer by
+//     layer; it is shown re-quoted only when masking changed it. A URL in it
+//     ends with the string, so the next string's "@" is never taken; but
+//     when its authority runs to the string's end with no "@" and an "@"
+//     follows on the line before any "/", "?", "#" or other string, the
+//     string is read as plain text.
 //   - Outside such strings an authority runs to the first "/", "?" or "#",
 //     across quotes and lines (a user name or password may hold spaces,
 //     quotes and newlines), and is masked to its last "@"; where that does
-//     not parse, on to the first "?" or "#" (a password may hold "/").
+//     not parse, on to the first "?" or "#" (a password may hold "/"). An
+//     escape that decodes to "@" (@, \x40, \U00000040) counts as one.
 //   - Where the URL text parses (lib/whatwg), WHATWG decides whether it has a
 //     user name or password and where they end (a special scheme's
 //     backslash starts the path); where it does not, the span is masked
 //     conservatively. When in doubt, more is masked: in error text, never
 //     leaking comes first, and text with no URL credentials keeps its bytes.
+//   - One forward pass finds every scheme, delimiter and "@" (scanFor), so
+//     masking takes time linear in the text (per layer of quoting).
+//
+// The limit, chosen on purpose (correct lists of servers matter more): a
+// password that contains a space, comma or semicolon followed by a URL
+// scheme ("fake ftp:x") is split there, and its part before may be shown.
+
+// maxQuoteDepth is how many layers of quoting are decoded (a TOML line in a
+// %q value in a message is two).
+const maxQuoteDepth = 4
 
 // MaskUserinfoInText masks every URL's user name and password in free text.
-func MaskUserinfoInText(text string) string {
-	segments := quotedSegments(text)
+func MaskUserinfoInText(text string) string { return maskText(text, maxQuoteDepth) }
+
+// MaskUserinfoInArgument masks every URL's user name and password in one
+// value given as it is (an argument): no quoting rules.
+func MaskUserinfoInArgument(text string) string {
+	sc := scanFor(text)
 	var b strings.Builder
-	last, pos, k := 0, 0, 0
+	last, pos := 0, 0
+	for _, st := range sc.starts {
+		if st.p < pos {
+			continue // inside an authority already read
+		}
+		from, to, end, mask := sc.span(st, len(text))
+		pos = end
+		if mask {
+			b.WriteString(text[last:from])
+			b.WriteString("[redacted]")
+			last, pos = to, to
+		}
+	}
+	b.WriteString(text[last:])
+	return b.String()
+}
+
+func maskText(text string, depth int) string {
+	sc := scanFor(text)
+	segs := quotedSegments(text)
+	var b strings.Builder
+	last, pos, k, si := 0, 0, 0, 0
 	for pos < len(text) {
-		for k < len(segments) && segments[k][0] < pos {
-			k++ // consumed by an authority that ran across it
+		for k < len(segs) && segs[k].open < pos {
+			k++ // read as part of an authority that ran across it
 		}
 		limit := len(text)
-		if k < len(segments) {
-			limit = segments[k][0]
+		if k < len(segs) {
+			limit = segs[k].open
 		}
-		if p, authStart, special, ok := nextURL(text, pos, limit); ok {
-			bound := urlBound(text, authStart, len(text))
-			end := min(authorityEnd(text, authStart), bound)
-			if from, to, mask := credentialSpan(text, p, authStart, end, bound, special); mask {
+		for si < len(sc.starts) && sc.starts[si].p < pos {
+			si++
+		}
+		if si < len(sc.starts) && sc.starts[si].p < limit {
+			st := sc.starts[si]
+			si++
+			from, to, end, mask := sc.span(st, len(text))
+			if mask {
 				b.WriteString(text[last:from])
 				b.WriteString("[redacted]")
-				last = to
-				pos = last // on from the "@": what follows is a host, and strings after it are read
+				last, pos = to, to // on from the "@": what follows is a host, and strings after it are read
 			} else {
 				pos = min(end, limit) // nothing masked: a string it ran into is still read
 			}
 			continue
 		}
-		if k == len(segments) {
+		if k == len(segs) {
 			break
 		}
-		open, close := segments[k][0], segments[k][1]
-		decoded := decodeQuoted(text[open+1 : close])
-		if masked := MaskUserinfoInArgument(decoded); masked != decoded {
-			b.WriteString(text[last:open])
+		sg := segs[k]
+		decoded := text[sg.contentStart:sg.contentEnd]
+		if sg.escapes {
+			decoded = decodeQuoted(decoded)
+		}
+		if sc.atFollows(sg, segs[k+1:]) && unterminatedURL(decoded) {
+			k++ // its URL goes on past the quote to an "@": read the string as plain text
+			continue
+		}
+		var masked string
+		if depth > 1 {
+			masked = maskText(decoded, depth-1)
+		} else {
+			masked = MaskUserinfoInArgument(decoded)
+		}
+		if masked != decoded {
+			b.WriteString(text[last:sg.open])
 			b.WriteString(requote(masked))
-			last = close + 1
+			last = sg.close
 		}
-		pos = close + 1
+		pos = sg.close
 	}
 	b.WriteString(text[last:])
 	return b.String()
 }
 
-// MaskUserinfoInArgument masks every URL's user name and password in one
-// value given as it is (an argument, a decoded string): no quoting rules,
-// an authority runs to the first "/", "?" or "#".
-func MaskUserinfoInArgument(text string) string {
-	var b strings.Builder
-	last, pos := 0, 0
-	for pos < len(text) {
-		p, authStart, special, ok := nextURL(text, pos, len(text))
-		if !ok {
-			break
-		}
-		bound := urlBound(text, authStart, len(text))
-		end := min(authorityEnd(text, authStart), bound)
-		pos = end // never a URL inside the authority read
-		if from, to, mask := credentialSpan(text, p, authStart, end, bound, special); mask {
-			b.WriteString(text[last:from])
-			b.WriteString("[redacted]")
-			last = to
-			pos = last
-		}
-	}
-	b.WriteString(text[last:])
-	return b.String()
+// urlStart is a URL's start: its scheme at p, its authority at authStart.
+type urlStart struct {
+	p, authStart int
+	special      bool
 }
 
-// credentialSpan is the span of text to mask for the URL at p whose
-// authority starts at authStart and runs to end (the first "/", "?" or
-// "#"), and whether there is one. Where text[p:end] parses, WHATWG
-// decides. Where it does not (a password holding "/", a host that does not
-// parse), the span runs on to the first "?" or "#" before limit (the end of
-// the string the URL is in, or of the text), and is masked to its last "@":
-// more is masked rather than any of a password.
-func credentialSpan(text string, p, authStart, end, limit int, special bool) (from, to int, mask bool) {
+// scanned is what one forward pass over a text finds, for masking in
+// linear time.
+type scanned struct {
+	text   string
+	starts []urlStart
+	// nextDelim[i]: the first "/", "?" or "#" at or after i (len(text) if
+	// none); nextQH[i]: the first "?" or "#"; nextBound[i]: the first list
+	// entry's scheme (a "scheme:" after a space, comma or semicolon);
+	// prevAt[i]: the last "@" (or an escape of one) before i, -1 if none.
+	nextDelim, nextQH, nextBound, prevAt []int
+}
+
+func scanFor(text string) *scanned {
+	n := len(text)
+	sc := &scanned{text: text, nextDelim: make([]int, n+1), nextQH: make([]int, n+1), nextBound: make([]int, n+1), prevAt: make([]int, n+1)}
+	bound := make([]bool, n+1)
+	runStart := -1 // the current run of scheme characters, tabs and newlines
+	for i := 0; i < n; i++ {
+		c := text[i]
+		if isSchemeChar(c) || isTabNewline(c) {
+			if runStart < 0 {
+				runStart = i
+			}
+			continue
+		}
+		if c == ':' && runStart >= 0 {
+			if st, ok := startAt(text, runStart, i); ok {
+				sc.starts = append(sc.starts, st)
+			}
+			if runStart > 0 && strings.IndexByte(" ,;", text[runStart-1]) >= 0 && isAlpha(text[runStart]) {
+				bound[runStart] = true
+			}
+		}
+		runStart = -1
+	}
+	sc.nextDelim[n], sc.nextQH[n], sc.nextBound[n] = n, n, n
+	for i := n - 1; i >= 0; i-- {
+		sc.nextDelim[i], sc.nextQH[i], sc.nextBound[i] = sc.nextDelim[i+1], sc.nextQH[i+1], sc.nextBound[i+1]
+		switch text[i] {
+		case '/':
+			sc.nextDelim[i] = i
+		case '?', '#':
+			sc.nextDelim[i], sc.nextQH[i] = i, i
+		}
+		if bound[i] {
+			sc.nextBound[i] = i
+		}
+	}
+	at := -1
+	for i := 0; i < n; i++ {
+		sc.prevAt[i] = at
+		if text[i] == '@' || text[i] == '\\' && escapedAt(text[i:]) {
+			at = i
+		}
+	}
+	sc.prevAt[n] = at
+	return sc
+}
+
+// escapedAt is whether s starts with an escape of "@": @, \x40,
+// \U00000040 (any case of hex digits).
+func escapedAt(s string) bool {
+	for _, e := range []string{`@`, `\x40`, `\U00000040`} {
+		if len(s) >= len(e) && strings.EqualFold(s[:len(e)], e) {
+			return true
+		}
+	}
+	return false
+}
+
+// startAt is the URL start whose scheme is in the run text[runStart:colon]
+// (scheme characters, tabs and newlines), if one is: a special scheme
+// ending the run (its last letters, tabs and newlines dropped), or the run
+// from its first letter when "//" follows the colon.
+func startAt(text string, runStart, colon int) (urlStart, bool) {
+	var last [5]byte
+	var lastAt [5]int
+	m := 0 // the run's last letters, at most "https", in reverse
+	for j := colon - 1; j >= runStart && m < 5; j-- {
+		if isTabNewline(text[j]) {
+			continue
+		}
+		last[m], lastAt[m] = text[j]|0x20, j
+		m++
+	}
+	for k := m; k >= 2; k-- { // the longest special suffix first
+		var name [5]byte
+		for x := 0; x < k; x++ {
+			name[x] = last[k-1-x]
+		}
+		if isAlpha(text[lastAt[k-1]]) && specialSchemes[string(name[:k])] {
+			a := colon + 1
+			for a < len(text) && (text[a] == '/' || text[a] == '\\' || isTabNewline(text[a])) {
+				a++
+			}
+			return urlStart{p: lastAt[k-1], authStart: a, special: true}, true
+		}
+	}
+	p := runStart
+	for p < colon && !isAlpha(text[p]) {
+		p++
+	}
+	if p == colon {
+		return urlStart{}, false
+	}
+	a, slashes := colon+1, 0
+	for a < len(text) && slashes < 2 && (text[a] == '/' || isTabNewline(text[a])) {
+		if text[a] == '/' {
+			slashes++
+		}
+		a++
+	}
+	if slashes < 2 {
+		return urlStart{}, false
+	}
+	return urlStart{p: p, authStart: a}, true
+}
+
+// span is what to mask for the URL st, limit being where the text the URL
+// is in ends: the span [from, to), the end of its authority, and whether
+// there is one. Where text[p:end] parses, WHATWG decides. Where it does not
+// (a password holding "/", a host that does not parse), the span runs on
+// to the first "?" or "#", and is masked to its last "@": more is masked
+// rather than any of a password.
+func (sc *scanned) span(st urlStart, limit int) (from, to, end int, mask bool) {
+	bound := min(sc.nextBound[st.authStart], limit)
+	end = min(sc.nextDelim[st.authStart], bound)
 	stop := end
-	if u, ok := whatwg.ParseURL(text[p:end]); ok {
+	if u, ok := whatwg.ParseURL(sc.text[st.p:end]); ok {
 		if u.Username == "" && u.Password == "" {
-			return 0, 0, false
+			return 0, 0, end, false
 		}
-		if special {
-			if i := strings.IndexByte(text[authStart:end], '\\'); i >= 0 {
-				stop = authStart + i // WHATWG: a special scheme's backslash starts the path
+		if st.special {
+			if i := strings.IndexByte(sc.text[st.authStart:end], '\\'); i >= 0 {
+				stop = st.authStart + i // WHATWG: a special scheme's backslash starts the path
 			}
 		}
 	} else {
-		stop = limit
-		if i := strings.IndexAny(text[authStart:limit], "?#"); i >= 0 {
-			stop = authStart + i
-		}
+		stop = min(sc.nextQH[st.authStart], bound)
 	}
-	at := strings.LastIndexByte(text[authStart:stop], '@')
-	if at <= 0 {
-		return 0, 0, false
+	at := sc.prevAt[stop]
+	if at <= st.authStart {
+		return 0, 0, end, false
 	}
-	return authStart, authStart + at, true
+	return st.authStart, at, end, true
 }
 
-// nextURL finds the next URL start in text[pos:limit]: the scheme's
-// start, where its authority starts, and whether the scheme is special.
-func nextURL(text string, pos, limit int) (p, authStart int, special, ok bool) {
-	for p = pos; p < limit; p++ {
-		if !isAlpha(text[p]) || p > 0 && isSchemeChar(text[p-1]) {
-			continue
-		}
-		j := p + 1
-		for j < len(text) && (isSchemeChar(text[j]) || isTabNewline(text[j])) {
-			j++
-		}
-		if j >= len(text) || text[j] != ':' {
-			continue
-		}
-		scheme := strings.ToLower(strings.NewReplacer("\t", "", "\n", "", "\r", "").Replace(text[p:j]))
-		k := j + 1
-		if specialSchemes[scheme] {
-			for k < len(text) && (text[k] == '/' || text[k] == '\\' || isTabNewline(text[k])) {
-				k++
-			}
-			return p, k, true, true
-		}
-		slashes := 0
-		for k < len(text) && slashes < 2 && (text[k] == '/' || isTabNewline(text[k])) {
-			if text[k] == '/' {
-				slashes++
-			}
-			k++
-		}
-		if slashes == 2 {
-			return p, k, false, true
-		}
+// atFollows is whether, after the string sg on its line, an "@" comes
+// before any "/", "?", "#", the next string or the line's end.
+func (sc *scanned) atFollows(sg segment, after []segment) bool {
+	if sg.close >= len(sc.text) {
+		return false
 	}
-	return 0, 0, false, false
+	stop := sc.nextDelim[sg.close]
+	if len(after) > 0 {
+		stop = min(stop, after[0].open) // first, so the line's end is looked for only up to the next string
+	}
+	if nl := strings.IndexByte(sc.text[sg.close:stop], '\n'); nl >= 0 {
+		stop = sg.close + nl
+	}
+	return sc.prevAt[stop] >= sg.close
 }
 
-// urlBound is where the text after the authority starting at authStart
-// stops belonging to it: at a "scheme:" token that follows a space, comma,
-// semicolon or line end, as in a list of servers
-// ("http://[redacted]@h1, http:\\[redacted]@h2") or of values. A scheme
-// right inside a user name or password ("alice:ftp:@h") follows no
-// separator, and a password with spaces ("fake pass@h") has no scheme after
-// them, so both stay in the authority. limit when there is no such token.
-//
-// The limit, chosen on purpose (correct lists of servers matter more): a
-// password that contains a separator followed by a URL scheme ("fake
-// ftp:x") is split there, and its part before the separator may be shown.
-func urlBound(text string, authStart, limit int) int {
-	for s := authStart; s < limit; s++ {
-		if !strings.ContainsRune(" \t\r\n,;", rune(text[s])) {
-			continue
-		}
-		t := s
-		for t < limit && strings.ContainsRune(" \t\r\n,;", rune(text[t])) {
-			t++
-		}
-		if t < limit && isAlpha(text[t]) {
-			u := t + 1
-			for u < limit && (isSchemeChar(text[u]) || isTabNewline(text[u])) {
-				u++ // tabs and newlines inside a scheme are dropped, as WHATWG drops them
-			}
-			if u < limit && text[u] == ':' {
-				return t
-			}
-		}
-		s = t - 1
+// unterminatedURL is whether the last URL in s runs to its end with no "/",
+// "?", "#" or "@" in its authority.
+func unterminatedURL(s string) bool {
+	sc := scanFor(s)
+	if len(sc.starts) == 0 {
+		return false
 	}
-	return limit
-}
-
-// authorityEnd is the first "/", "?" or "#" from start, or the end.
-func authorityEnd(text string, start int) int {
-	if i := strings.IndexAny(text[start:], "/?#"); i >= 0 {
-		return start + i
-	}
-	return len(text)
+	st := sc.starts[len(sc.starts)-1]
+	return sc.nextDelim[st.authStart] == len(s) && sc.prevAt[len(s)] < st.authStart
 }
 
 func isSchemeChar(c byte) bool {
@@ -337,33 +442,59 @@ func isSchemeChar(c byte) bool {
 
 func isTabNewline(c byte) bool { return c == '\t' || c == '\n' || c == '\r' }
 
-// quotedSegments lists the double-quoted strings of text, as [open, close]
-// quote positions: opened at the start or after whitespace or one of
-// "=([{,:", closed on the same line before the end, whitespace or one of
-// ",;:)]}#.", a backslash escaping the next character. A quote that does
-// not fit both sides is ordinary text.
-func quotedSegments(text string) [][2]int {
-	var out [][2]int
-	for i := 0; i < len(text); i++ {
-		if text[i] != '"' || i > 0 && !strings.ContainsRune(" \t\r\n=([{,:", rune(text[i-1])) {
+// segment is a quoted string: its opening quote, its content, and the
+// position after its closing quote (or its line's end when it has none).
+type segment struct {
+	open, contentStart, contentEnd, close int
+	escapes                               bool
+}
+
+// quotedSegments lists the quoted strings of text (see the rules above).
+// A closing quote glued to more text is no string: its quotes are ordinary
+// text. One pass.
+func quotedSegments(text string) []segment {
+	var out []segment
+	n := len(text)
+	for i := 0; i < n; i++ {
+		c := text[i]
+		if c != '"' && c != '\'' || i > 0 && !strings.ContainsRune(" \t\r\n=([{,:", rune(text[i-1])) {
 			continue
 		}
-		for j := i + 1; j < len(text); j++ {
-			if text[j] == '\\' {
-				j++
+		q := 1
+		if strings.HasPrefix(text[i:], strings.Repeat(string(c), 3)) {
+			q = 3
+		} else if c == '\'' {
+			continue // a single quote alone is too often an apostrophe
+		}
+		quote := text[i : i+q]
+		escapes := c == '"'
+		j := i + q
+		closed := false
+		for j < n && text[j] != '\n' {
+			if escapes && text[j] == '\\' {
+				j += 2
 				continue
 			}
-			if text[j] == '\n' {
+			if strings.HasPrefix(text[j:], quote) {
+				closed = true
 				break
 			}
-			if text[j] == '"' {
-				if j+1 == len(text) || strings.ContainsRune(" \t\r\n,;:)]}#.", rune(text[j+1])) {
-					out = append(out, [2]int{i, j})
-					i = j
-				}
-				break
-			}
+			j++
 		}
+		j = min(j, n)
+		if !closed {
+			// No closing quote on its line: no string (a newline may be inside a
+			// password, which WHATWG drops), so its text stays plain.
+			i = j - 1
+			continue
+		}
+		after := j + q
+		if after == n || strings.ContainsRune(" \t\r\n,;:)]}#.", rune(text[after])) {
+			out = append(out, segment{open: i, contentStart: i + q, contentEnd: j, close: after, escapes: escapes})
+			i = after - 1
+			continue
+		}
+		i = j // glued: the quotes are ordinary text
 	}
 	return out
 }

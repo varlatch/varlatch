@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/whatwg"
 )
@@ -96,6 +97,22 @@ func TestMaskUserinfoInText(t *testing.T) {
 		"me@example.com and https://h.example/a@b":                     "me@example.com and https://h.example/a@b",
 		`mailto:user:ftp:pw@h is not one`:                              `mailto:user:ftp:[redacted]@h is not one`,
 		"varlatch: unknown command https://h.example\n\nUsage: # x @y": "varlatch: unknown command https://h.example\n\nUsage: # x @y",
+		// Sol, #265 round 2, P1: a scheme after "--" (or any character) still starts a URL.
+		"varlatch server: unknown option --https://alice:fake-review-pass@example.com": "varlatch server: unknown option --https://[redacted]@example.com",
+		"see xhttps://alice:fake@h and a-ftp:/bob:pw@h2":                               "see xhttps://[redacted]@h and a-ftp:/[redacted]@h2",
+		// P1: tab, CR and LF never end an authority (WHATWG drops them): a "scheme:" after one is in the password.
+		"https://alice:pass\tlabel:tail@example.com":   "https://[redacted]@example.com",
+		"https://alice:pass\r\nlabel:tail@example.com": "https://[redacted]@example.com",
+		// P2: quoting. A quoted URL followed by a space and "@=x" (WHATWG reads one authority across the quote);
+		// glued; triple-quoted with \U00000040; a %q value holding a TOML string with an escaped "@" or quote.
+		`server = "https://alice:fake" @=x`:                                    `server = "https://[redacted]@=x`,
+		`server = "https://alice:fake"@=x`:                                     `server = "https://[redacted]@=x`,
+		"3:  server = \"\"\"https://alice:fake\\U00000040h\"\"\"\n4:  x = = 1": "3:  server = \"https://[redacted]@h\"\n4:  x = = 1",
+		`got "server = \"https://alice:fake\\u0040x\""`:                        `got "server = \"https://[redacted]@x\""`,
+		`got "server = \"https://alice:fa\\\"ke@x\""`:                          `got "server = \"https://[redacted]@x\""`,
+		"3:  server = 'https://alice:fake@h'":                                  "3:  server = 'https://[redacted]@h'",
+		"3:  server = '''https://alice:fake@h'''":                              "3:  server = \"https://[redacted]@h\"",
+		`unquoted https://alice:fake@h`:                                        `unquoted https://[redacted]@h`,
 		// WHATWG reads a user name across a line break (it drops newlines): masked.
 		"line one https://h.example\nnext line has me@x.example": "line one https://[redacted]@x.example",
 	} {
@@ -186,7 +203,7 @@ func TestMaskUserinfoAgreesWithWHATWG(t *testing.T) {
 func TestMaskUserinfoInTextAgreesWithWHATWG(t *testing.T) {
 	schemes := []string{"https", "HTTPS", "ht\ttps", "http", "ftp", "foo", "mailto"}
 	separators := []string{"//", "/", "", `\`, "///", "/\n/"}
-	userinfos := []string{"", "Us3r:Pa55word@", "Us3r:ftp:Pa55@", `Us3r:Pa55"q@`, "Us3r:Pa55 sp@", "Us3r:Pa\n55@", "Us3r:Pa\t55@", "Us3r@", ":Pa55@", "Us3r:Pa55@x@", "Us3r:ftp://Pa55:@"}
+	userinfos := []string{"", "Us3r:Pa55word@", "Us3r:ftp:Pa55@", `Us3r:Pa55"q@`, "Us3r:Pa55 sp@", "Us3r:Pa\n55@", "Us3r:Pa\t55@", "Us3r@", ":Pa55@", "Us3r:Pa55@x@", "Us3r:ftp://Pa55:@", "Us3r:Pa55\tlabel:tail@", "Us3r:Pa55\nhttps:tail@"}
 	hosts := []string{"example.com", "[bad", "h:8080"}
 	tails := []string{"", "/p", `\path@seg`, "?q@r"}
 	tomlQuote := func(v string) string {
@@ -204,6 +221,8 @@ func TestMaskUserinfoInTextAgreesWithWHATWG(t *testing.T) {
 		{"go-quoted", func(v string) string { return "--file needs <path>=<name>, got " + strconv.Quote(v) }, false},
 		{"prose-email", func(v string) string { return "reach " + v + " or mail ops@example.net" }, true},
 		{"glued", func(v string) string { return `server = "` + v + `"x@y` }, true},
+		{"after-dashes", func(v string) string { return "varlatch server: unknown option --" + v }, false},
+		{"glued-word", func(v string) string { return "x" + v + " (given)" }, false},
 		{"list-after", func(v string) string { return "servers: https://h0.example, " + v + "; done" }, false},
 		{"list-before", func(v string) string { return "stored for " + v + ", http:///[redacted]@127.0.0.1:3." }, false},
 	}
@@ -216,15 +235,16 @@ func TestMaskUserinfoInTextAgreesWithWHATWG(t *testing.T) {
 						v := sc + ":" + sep + ui + h + tail
 						u, parsed := whatwg.ParseURL(v)
 						creds := parsed && (u.Username != "" || u.Password != "")
-						// A URL whose own path holds a scheme (mailto:...ftp:...) is ambiguous in free text.
-						nestedInPath := !creds && strings.Contains(ui, "ftp:")
+						// A URL whose own path holds a special scheme (mailto:...ftp:..., foo:/...https:...) is
+						// ambiguous in free text: the inner one is read as a URL (when unsure, it is one).
+						nestedInPath := !creds && (strings.Contains(ui, "ftp:") || strings.Contains(ui, "https:"))
 						for _, c := range contexts {
 							text := c.build(v)
 							masked := MaskUserinfoInText(text)
 							switch {
 							case creds:
 								checked["credentials"]++
-								for _, secret := range []string{"Us3r", "Pa55", "Pa\n55", "Pa\t55"} {
+								for _, secret := range []string{"Us3r", "Pa55", "Pa\n55", "Pa\t55", "label:tail", "https:tail"} {
 									if strings.Contains(v, secret) && strings.Contains(masked, secret) {
 										t.Errorf("%s: MaskUserinfoInText(%q) = %q shows %q", c.name, text, masked, secret)
 									}
@@ -271,4 +291,24 @@ func FuzzMaskUserinfoInText(f *testing.F) {
 		_ = MaskUserinfoInArgument(text)
 		_ = MaskUserinfo(text)
 	})
+}
+
+// TestMaskingIsLinear: inputs that made the scanner rescan (a tab after
+// every letter, a URL every ten bytes, quotes, escapes, "@"s) take time
+// linear in their length: 200 KB in well under a second each (Sol, #265
+// round 2).
+func TestMaskingIsLinear(t *testing.T) {
+	const size = 200_000
+	for _, unit := range []string{
+		"a\t", "https://h/", "https://u:p@", "https:", "@", "ht\ttps:", "--", `"https://h" `, `"x" `, `"@" `,
+		`https:"x"`, `'''a`, `a\"`, ", https:", "a:", "https://[", "http:/u:p@h, ", `"https://a:b" @`, "x\n", `"https://a:b`,
+	} {
+		in := strings.Repeat(unit, size/len(unit)+1)[:size]
+		start := time.Now()
+		MaskUserinfoInText(in)
+		MaskUserinfoInArgument(in)
+		if elapsed := time.Since(start); elapsed > 700*time.Millisecond {
+			t.Errorf("%q repeated to %d bytes: %v", unit, size, elapsed)
+		}
+	}
 }

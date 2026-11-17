@@ -124,6 +124,10 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 		"bad-host":      `server = "https://[bad\\alice:fake-pass@h" x`,
 		"slash":         `server = "https://alice:fake/pass@h" x`,
 		"tab-scheme":    "server = \"ht\\ttps:/alice:fake-pass@h\" x",
+		// Sol, #265 round 2.
+		"triple-escaped-at": "server = \"\"\"https://alice:fake\\U00000040h\"\"\"\nx = = 1",
+		"spaced-at":         `server = "https://alice:fake" @=x`,
+		"tab-password":      "server = \"https://alice:fake\\tlabel:tail@h\" x",
 	}
 	var tomlDirs []string
 	for name, line := range tomls {
@@ -153,6 +157,8 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 		{repo, []string{"server"}},
 		{dir, []string{"server", "https://alice:ftp:@example.com"}},
 		{dir, []string{"server", "use", "https://alice:fake/pass@h"}},
+		{dir, []string{"server", "--https://alice:fake-review-pass@example.com"}},
+		{dir, []string{"server", "https://alice:fake\tlabel:tail@example.com"}},
 	}
 	for _, d := range tomlDirs {
 		cases = append(cases, struct {
