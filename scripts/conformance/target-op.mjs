@@ -19,6 +19,7 @@
  *   target-op.mjs object-store start                 JSON
  *   target-op.mjs host-admin audit-export <args...>  JSON { status, stdout, stderr }
  *   target-op.mjs oidc-issuer start|keys <json>|counts  JSON
+ *   target-op.mjs platform-fakes start|state|drift <resource> <key> <value>  JSON
  *
  * An optional operation the target does not have exits 3.
  */
@@ -98,6 +99,11 @@ switch (operation) {
     needs("oidc-issuer");
     if (!["start", "keys", "counts"].includes(args[0])) throw new Error("oidc-issuer start|keys <json>|counts");
     print(JSON.stringify(await target.oidcIssuer(state, ...args)));
+    break;
+  case "platform-fakes":
+    needs("platform-fakes");
+    if (!["start", "state", "drift"].includes(args[0])) throw new Error("platform-fakes start|state|drift <resource> <key> <value>");
+    print(JSON.stringify(await target.platformFakes(state, ...args)));
     break;
   case "ts-stack": {
     needs("ts-stack");

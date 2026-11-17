@@ -32,6 +32,20 @@ fixes.
   - An Organization rename's `name` is limited to 200 characters after
     trimming, which the schema no longer states as a raw length.
 
+### Access
+
+- **A route inside a Project or an environment checks the Organization
+  first.** A caller with no role, no Grant and no machine identity in the
+  Organization now gets the answer for an unknown Organization (404
+  `RESOURCE_NOT_FOUND`, "Organization not found") before the Project or
+  environment is looked up, whatever the path names. This includes the
+  capability routes, which answered "Not found" to another Organization's
+  machine, and requests whose body would not have passed validation. A
+  person's refusal is audited as `authorization.denied` with no `action`
+  and no Project or environment. Members, including those whose only
+  authority is a Grant scoped to a Project or an environment, and the
+  Organization's own machines are not affected.
+
 ## 0.22.0 (2026-11-13)
 
 ### Sign-in

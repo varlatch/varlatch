@@ -34,7 +34,7 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
 | `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`), the registry, and each target's optional capabilities as data (`capabilities.json`). |
-| `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), the client suites (the CLI's compatibility core, `varlatch mcp`, and the sdk smoke), G11's checks on the Go server's server-sent events (`realtime-events`), and the suites where the e2e suites cover nothing (Security Controls over the API, audit webhook delivery, the audit export). |
+| `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), the client suites (the CLI's compatibility core, `varlatch mcp`, and the sdk smoke), G11's checks on the Go server's server-sent events (`realtime-events`), and the suites where the e2e suites cover nothing (Security Controls over the API, audit webhook delivery, the audit export, Sync Target delivery). |
 | `lib/` | The runner's pure logic: result lines, inventory rules, operations and declared gaps, the request-log check, the client pins, release verification, expected failures, gate mode. |
 | `test/` | Unit tests: `pnpm test:conformance`. |
 
@@ -146,12 +146,15 @@ of reaching into Compose or the database:
 | `probe:device-sign-in-addresses` | `probe device-sign-in-addresses <name>`: `[{ "requesterIp": ... }]` for the sign-ins requested under that name |
 | `probe:proxy-addresses` | `probe proxy-addresses`: the addresses of any proxy in front of the server (`[]` when none) |
 | `probe:deletion-due` | `probe deletion-due <odl_...>`: an Organization's open deletion request made due now (as if scheduled 40 days ago, due a second ago), so the deletion loop's next pass, within a minute, runs it (ADR-0051) |
+| `probe:sync-repair-due` | `probe sync-repair-due <target id>`: the Sync Target's last repair pass moved hours into the past and nothing else changed, so that only the periodic repair schedule makes it due; answers `{"needsSync", "nextAttemptAt"}`, which it leaves as they are (the TypeScript stacks: SQL in the database container; go-binary: the conformance build's probe) |
+| `probe:sync-trigger-position` | `probe sync-trigger-position`: `{"cursor", "latest"}`, where the converge engine's trigger scan stands (`sync_cursor.cursor_order`) and the last audit event it reads (not `sync.*`): a value change reaches the engine once the cursor passes its event (the TypeScript stacks: SQL in the database container; go-binary: the conformance build's probe) |
 | `maintenance` | `maintenance <ttl ms>`: the `503 MAINTENANCE` admission a restore uses, for a lease |
 | `serve-cli` | `serve-cli on\|off`: the server serves the CLI and install scripts, or not (ADR-0058 Decision 3) |
 | `ts-stack` | `ts-stack compose <args...>` and `ts-stack compose-env`: Compose control for the ts-stack checks |
 | `webhook-receiver` | `webhook-receiver url\|requests`: a local endpoint the server reaches on its own loopback (`url` starts it when it is not running and answers the URL to register; `requests` what it recorded: `[{ at, method, target, contentType, signature, body, status }]`); a path with a segment `fail-<n>` answers 500 to its first n requests. The target's outbound allow list opens that port and nothing else private (the TypeScript stacks run it inside varlatchd's container with `VARLATCH_OUTBOUND_ALLOW`; go-binary as a process of its own with `outbound_allow`) |
 | `host-admin` | `host-admin audit-export <args...>`: one `varlatchd admin audit-export` host command, run as the operator runs it (the TypeScript stacks: in the container; go-binary: through the daemon's control socket). JSON: `{ status, stdout, stderr }`, whatever the status, so a suite can check a refusal |
 | `oidc-issuer` | `oidc-issuer start`: a local OIDC issuer over https (lib/oidc-issuer.cjs) at `https://127.0.0.1:<port>`, its self-signed certificate made when the target starts and trusted by its server (the TypeScript stacks: `NODE_EXTRA_CA_CERTS`, the issuer inside varlatchd's container; go-binary: `SSL_CERT_FILE`, the issuer on a host loopback port). The allow list opens its port. JSON `{ issuer }`. `keys <json>` sets its JWKS (`{ keys }`); `counts` answers `{ discovery, jwks }`, its documents fetched so far |
+| `platform-fakes` | `platform-fakes start`: fake GitHub, Coolify and Convex services (lib/platform-fakes.cjs) the server's sync engine reaches under the platforms' own host names: `api.github.com`, `coolify.conformance.test`, `convex.conformance.test`, over https with a certificate made when the target starts and trusted by its server. The TypeScript stacks run them inside varlatchd's container on its loopback port 443, with `extra_hosts` leading the names there and `NODE_EXTRA_CA_CERTS`; go-binary runs them on a host loopback port, which the conformance build's host override (`VARLATCH_CONFORMANCE_OUTBOUND_HOSTS`, never in a release) leads the names to, with `SSL_CERT_FILE`. Either way the outbound allow list is what lets the fakes' address through. JSON `{ github, coolify, convex }` (the base identities). `state` answers what they hold and every request they saw (`{ github, coolify, running, convex, requests }`, credentials and sealed values left out); `drift <resource> <key> <value>` changes a Coolify value behind Varlatch's back |
 | `object-store` | `object-store start`: a local S3 server with Object Lock (MinIO, pinned by digest), running until `down` removes it by its name. JSON: `{ endpoint, hostEndpoint, region, accessKeyId, secretAccessKey }`, the endpoint the server reaches it at and the one the suite does. The target's outbound allow list opens it and nothing else private (the TypeScript stacks: an alias on the Compose project's network; go-binary: a loopback port) |
 | `go-server` | `go-server fixture <name> [args...]`: the Go server's fixtures for its go-server checks (organizations, people, browser sessions, audit events, a removal), written while the `/v1` writes that would make them are not built (ADR-0059 step 4); JSON |
 
@@ -408,7 +411,15 @@ upgrade, backup, move, ingress, sidecar, installers, the manual tailnet and
 Coolify checks) test the TypeScript installation and do not run under the
 runner. `inventory.json` lists each in `externalSuites`, with its
 `replacement` the way a ts-stack check names one: the Go counterparts come
-in ADR-0059 steps 4, 6 and 7, so each is `{ "open": "<the step>" }` today.
+in ADR-0059 steps 4, 6 and 7, so each is `{ "open": "<the step>" }` until
+its counterpart lands. A counterpart that runs in the Go workflow
+(`.github/workflows/go.yml`) rather than under the runner is named in a
+`{ "none": "<why>" }`: `backup-e2e`'s are Go tests (the backup and
+restore end to end, the maintenance lease) and the step that restores a
+Go archive in a fresh container and runs the conformance suites against
+it; `backup-s3`'s is the step that runs the S3 client's tests against a
+local S3 server with `VARLATCH_REQUIRE_S3=1`. `test/repository.test.mjs`
+checks that every Go test and go.yml step such a reason names exists.
 `pnpm test:conformance` fails when a `scripts/test-*.mjs` is not listed.
 
 ## Gate mode
@@ -462,8 +473,8 @@ workflow run gives the same assurance.
 
 The report's `gate` holds the verdict and each problem; a gate failure
 prints `CONFORMANCE GATE FAILED` and exits 1. Gate mode fails today on every
-target: doctor's replacements (step 6) and every external suite's are
-still open; on `go-binary`, its declared gaps too. The Convex realtime
+target: doctor's replacements (step 6) and every external suite's but the
+two backup suites' are still open; on `go-binary`, its declared gaps too. The Convex realtime
 checks' replacements are the `realtime-degraded` checks (step 3.5), and
 G11's own checks on the Go server's events are the `realtime-events`
 go-server checks, which a gate run on `go-binary` needs passing. `test/gate.test.mjs`

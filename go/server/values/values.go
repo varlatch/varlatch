@@ -46,6 +46,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/security"
 	"github.com/varlatch/varlatch/go/server/stages"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -282,6 +283,18 @@ func scope(ctx context.Context, db query.DBTX, req Request) (State, error) {
 	org, err := authz.EnterOrganization(ctx, db, req.Org, &p, "")
 	if err != nil {
 		return State{}, err
+	}
+	// Whether the principal can see the Organization first: an outsider gets
+	// the same answer whether the Project or environment exists or not.
+	denied, event, err := authz.RequireVisible(ctx, db, p, org.ID, req.RequestID)
+	if err != nil {
+		return State{}, err
+	}
+	if denied != nil {
+		if event != nil {
+			return State{}, &security.DeferredDenial{Err: denied, Event: *event}
+		}
+		return State{}, denied
 	}
 	q := query.New(db)
 	project, err := q.LiveProject(ctx, query.LiveProjectParams{OrganizationID: org.ID, SlugOrID: req.Project})
@@ -602,13 +615,17 @@ func ptr(s string) *string { return &s }
 
 // refused audits a refusal the TypeScript server audits from app.onError,
 // once, after the snapshot that refused it ended: the incident freeze
-// (auditFrozenRefusal) and passkey-verification (auditPasskeyRefusal).
+// (auditFrozenRefusal), passkey-verification (auditPasskeyRefusal) and an
+// Organization the principal cannot see (auditDeferredDenial).
 // Best effort, as there: a failure is logged and the answer stays.
 func (s *Service) refused(ctx context.Context, req Request, t *tracker, err error) error {
 	var frozen *authz.FrozenError
 	var verification *auth.VerificationRefusal
 	var event *audit.Event
+	var deferred *security.DeferredDenial
 	switch {
+	case errors.As(err, &deferred):
+		event = &deferred.Event
 	case errors.As(err, &frozen):
 		p := req.authzPrincipal()
 		e := authz.FrozenRefusalEvent(&p, frozen, req.Method, req.Route, req.RequestID)

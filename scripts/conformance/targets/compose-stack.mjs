@@ -122,17 +122,27 @@ export async function configure(state) {
     // container: the one private destination the outbound policy allows.
     // and the audit-export suite's object store, on the project's network.
     // And the oidc suite's issuer, on varlatchd's loopback too.
-    VARLATCH_OUTBOUND_ALLOW: `127.0.0.1/32:${WEBHOOK_RECEIVER_PORT},${OBJECT_STORE_ALIAS}:9000,127.0.0.1/32:${OIDC_ISSUER_PORT}`,
+    // And the sync suite's fake platforms, on its loopback port 443.
+    VARLATCH_OUTBOUND_ALLOW: `127.0.0.1/32:${WEBHOOK_RECEIVER_PORT},${OBJECT_STORE_ALIAS}:9000,127.0.0.1/32:${OIDC_ISSUER_PORT},127.0.0.1/32:443`,
   };
-  // The oidc suite's issuer certificate, which varlatchd trusts from its
-  // start (NODE_EXTRA_CA_CERTS), mounted with its key for the issuer.
+  // The oidc suite's issuer certificate and the sync suite's fake
+  // platforms' certificate, which varlatchd trusts from its start
+  // (NODE_EXTRA_CA_CERTS), mounted with their keys for the issuer and the
+  // fakes. The fakes run in varlatchd's container on its loopback, and the
+  // platforms' host names lead there (extra_hosts).
   issuerCertificate(join(state.dir, "oidc"));
+  platformFakesCertificate(join(state.dir, "oidc"));
+  writeFileSync(join(state.dir, "oidc", "roots.pem"), `${readFileSync(join(state.dir, "oidc", "cert.pem"), "utf8")}${readFileSync(join(state.dir, "oidc", "fakes-cert.pem"), "utf8")}`);
+  chmodSync(join(state.dir, "oidc", "roots.pem"), 0o644);
   writeFileSync(join(state.dir, OIDC_OVERRIDE), [
-    "# Written by scripts/conformance/targets/compose-stack.mjs: the oidc suite's issuer certificate.",
+    "# Written by scripts/conformance/targets/compose-stack.mjs: the oidc suite's issuer certificate,",
+    "# the sync suite's fake platforms' certificate, and their host names.",
     "services:",
     "  varlatchd:",
     "    environment:",
-    `      NODE_EXTRA_CA_CERTS: ${OIDC_MOUNT}/cert.pem`,
+    `      NODE_EXTRA_CA_CERTS: ${OIDC_MOUNT}/roots.pem`,
+    "    extra_hosts:",
+    ...PLATFORM_FAKE_HOSTS.map((h) => `      - "${h}:127.0.0.1"`),
     "    volumes:",
     `      - ./oidc:${OIDC_MOUNT}:ro`,
     "",
@@ -258,6 +268,22 @@ const PROBES = {
       WHERE id = '${deletionId}' AND cancelled_at IS NULL AND completed_at IS NULL`);
     return true;
   },
+  // Where the converge engine's trigger scan stands: a change reaches the
+  // engine once the scan's cursor passes its audit event.
+  "sync-trigger-position": (state) => JSON.parse(psql(state, `SELECT json_build_object(
+      'cursor', COALESCE((SELECT cursor_order FROM sync_cursor), 0),
+      'latest', COALESCE((SELECT max(event_order) FROM audit_events WHERE substr(event_type, 1, 5) <> 'sync.'), 0))`)),
+  // The sync suite's repair pass: the Target's last repair hours ago, as
+  // six hours later, and nothing else changed, so that only the periodic
+  // schedule can make it due. Answers what would also have made it due,
+  // for the suite to see the Target was settled.
+  "sync-repair-due": (state, targetId) => {
+    if (!/^snt_[a-z0-9]{26}$/.test(targetId ?? "")) throw new Error("sync-repair-due: a Sync Target id");
+    const got = psql(state, `UPDATE sync_targets SET last_repair_at = clock_timestamp() - interval '7 hours' WHERE id = '${targetId}'
+      RETURNING json_build_object('needsSync', needs_sync, 'nextAttemptAt', next_attempt_at)`);
+    if (!got) throw new Error(`sync-repair-due: no Sync Target ${targetId}`);
+    return JSON.parse(got);
+  },
   "proxy-addresses": (state) => {
     const id = mustCompose(state, ["ps", "-q", "varlatch-web"]).trim();
     const r = spawnSync("docker", ["inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", id], { encoding: "utf8" });
@@ -345,6 +371,66 @@ export async function webhookReceiver(state, action) {
     if (!receiverRequests(state)) throw new Error("the webhook receiver did not start in varlatchd's container");
   }
   return { url: `http://127.0.0.1:${WEBHOOK_RECEIVER_PORT}` };
+}
+
+/** The sync suite's fake platforms' host names (lib/platform-fakes.cjs). */
+export const PLATFORM_FAKE_HOSTS = ["api.github.com", "coolify.conformance.test", "convex.conformance.test"];
+
+/**
+ * A self-signed certificate for the fake platforms' host names and its key,
+ * in dir (fakes-cert.pem, fakes-key.pem; readable by the server's user):
+ * the targets trust it for this run only.
+ */
+export function platformFakesCertificate(dir) {
+  mkdirSync(dir, { recursive: true });
+  const r = spawnSync("openssl", ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-days", "2",
+    "-subj", "/CN=conformance-platform-fakes", "-addext", `subjectAltName=${PLATFORM_FAKE_HOSTS.map((h) => `DNS:${h}`).join(",")}`,
+    "-keyout", join(dir, "fakes-key.pem"), "-out", join(dir, "fakes-cert.pem")], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`openssl could not make the fake platforms' certificate: ${(r.stderr || r.error || "").toString().trim().slice(-300)}`);
+  chmodSync(dir, 0o755);
+  chmodSync(join(dir, "fakes-key.pem"), 0o644);
+  chmodSync(join(dir, "fakes-cert.pem"), 0o644);
+}
+
+/** The fake platforms' control port, inside varlatchd's container. */
+const PLATFORM_FAKES_CONTROL = 18788;
+const PLATFORM_FAKES_SOURCE = new URL("../lib/platform-fakes.cjs", import.meta.url);
+
+/** A control request to the fake platforms, made inside the container; null when they do not answer. */
+function platformFakesControl(state, method, path, body) {
+  const call = `fetch("http://127.0.0.1:${PLATFORM_FAKES_CONTROL}${path}", { method: ${JSON.stringify(method)}, ${body ? `body: ${JSON.stringify(body)}, ` : ""}}).then((r) => r.ok ? r.text() : Promise.reject(r.status)).then((t) => process.stdout.write(t), () => process.exit(1))`;
+  const r = compose(state, ["exec", "-T", "varlatchd", "node", "-e", call]);
+  return r.status === 0 ? JSON.parse(r.stdout) : null;
+}
+
+/**
+ * The platform-fakes capability: `start` runs the fake platforms
+ * (lib/platform-fakes.cjs) in varlatchd's container, on its loopback port
+ * 443 (which the platforms' host names lead to) when they are not running;
+ * `state` what they hold and every request they saw; `drift <resource>
+ * <key> <value>` changes a Coolify value behind Varlatch's back. They live
+ * as long as the container.
+ */
+export async function platformFakes(state, action, ...args) {
+  if (action === "state") {
+    const got = platformFakesControl(state, "GET", "/_state");
+    if (!got) throw new Error("the fake platforms are not running: start them first");
+    return got;
+  }
+  if (action === "drift") {
+    const [resource, key, value] = args;
+    const got = platformFakesControl(state, "POST", "/_drift", JSON.stringify({ resource, key, value }));
+    if (!got) throw new Error(`the fake platforms could not drift ${resource} ${key}`);
+    return got;
+  }
+  if (action !== "start") throw new Error(`unknown platform-fakes action ${action}`);
+  if (!platformFakesControl(state, "GET", "/_state")) {
+    mustCompose(state, ["exec", "-d", "-T", "varlatchd", "node", "-e", readFileSync(PLATFORM_FAKES_SOURCE, "utf8"),
+      "443", String(PLATFORM_FAKES_CONTROL), `${OIDC_MOUNT}/fakes-cert.pem`, `${OIDC_MOUNT}/fakes-key.pem`]);
+    for (let i = 0; i < 50 && !platformFakesControl(state, "GET", "/_state"); i++) await sleep(200);
+    if (!platformFakesControl(state, "GET", "/_state")) throw new Error("the fake platforms did not start in varlatchd's container");
+  }
+  return { coolify: "https://coolify.conformance.test", convex: "https://convex.conformance.test", github: "acme" };
 }
 
 /** The oidc suite's issuer: its port on varlatchd's loopback, its Compose override and mount. */

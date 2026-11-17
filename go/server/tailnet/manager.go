@@ -317,13 +317,17 @@ func (m *Manager) browserHostLocked() string {
 }
 
 // BrowserEndpoint is the browser endpoint's URL, as getTailnetEndpoint
-// answers it; "" without a browser endpoint, or before the node is
-// enrolled and its tailnet known.
+// answers it and the dashboard's policy allows it; "" without a browser
+// endpoint, before the node is enrolled and its tailnet known, and while
+// the pin is closed (the tailnet changed: the host names the pinned
+// tailnet, which the node is no longer on), until a re-pin. The
+// TypeScript server has no latched closure: it answers its configured
+// endpoint whatever the tailnet, and refuses each request there.
 func (m *Manager) BrowserEndpoint() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	host := m.browserHostLocked()
-	if host == "" {
+	if host == "" || m.pin.Closed != nil {
 		return ""
 	}
 	return fmt.Sprintf("https://%s:%d", host, m.browser.port)

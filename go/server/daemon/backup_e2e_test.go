@@ -132,7 +132,8 @@ func status(t *testing.T, url string) int {
 }
 
 // The Go replacement of scripts/test-backup-e2e.mjs: a backup taken while
-// varlatchd serves (every disclosure during it answered, none held up),
+// varlatchd serves (ready throughout, and every disclosure during it
+// answered, none held up),
 // checked, then restored on a fresh host that holds only the
 // configuration, the archive and the two keys; the restored installation
 // serves the same values, records installation.restored, and a restore
@@ -157,6 +158,14 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 		case <-done:
 			running = false
 		default:
+			if res, err := client.Get(base + "/readyz"); err != nil {
+				during = append(during, "readyz: "+err.Error())
+			} else {
+				res.Body.Close()
+				if res.StatusCode != 200 {
+					during = append(during, fmt.Sprint("readyz ", res.StatusCode))
+				}
+			}
 			s, _, body, err := disclose(client, base, fixture)
 			switch {
 			case err != nil:
@@ -175,7 +184,7 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 	}
 	for _, d := range during {
 		if d != "disclosed" {
-			t.Fatalf("a disclosure during the backup: %v", during)
+			t.Fatalf("not ready, or a disclosure not answered, during the backup: %v", during)
 		}
 	}
 	if len(during) < 5 {

@@ -397,22 +397,38 @@ export async function onClock<T>(now: () => number, fn: () => Promise<T>): Promi
   });
   globalThis.Date = moved;
   try {
-    return await fn();
+    const out = await fn();
+    // A replay that put another Date in place ran on a clock of its own.
+    if (globalThis.Date !== moved) throw new Error("onClock: the replay replaced Date while it ran on a moved clock");
+    return out;
   } finally {
     globalThis.Date = Found;
   }
 }
 
 const HOUR_MS = 3_600_000;
-const HOUR_MARGIN_MS = 30 * 60_000;
+
+/** How much of its hour a replay may take (paritytest.HourMargin). */
+export const HOUR_MARGIN_MS = 30 * 60_000;
+
+/**
+ * The hour clock's move for a replay beginning at `start` (ms):
+ * paritytest's hourClock. With at least `margin` of the hour left, 0;
+ * with less, forward to the start of the next hour. Never back: a replay's
+ * times never fall before what was written before it.
+ */
+export function hourClockOffset(start: number, margin = HOUR_MARGIN_MS): number {
+  const left = HOUR_MS - (start % HOUR_MS);
+  return left < margin ? left : 0;
+}
 
 /**
  * Runs `fn` (a replay of `rows`) on the recording's clock, as the Go
  * replay runs on paritytest.RecordedClock: the rows' last audit event,
  * moved on by the time the replay takes (forward to the next hour with
- * less than 30 minutes of that hour left, as paritytest.HourClock). The
- * rows' lifetimes, counted from their recording (a plan retained a day,
- * an invitation valid a week), then mean what they meant when the fixture
+ * less than 30 minutes of that hour left, hourClockOffset). The rows'
+ * lifetimes, counted from their recording (a plan retained a day, an
+ * invitation valid a week), then mean what they meant when the fixture
  * was recorded, whatever the date: replays on the real clock had them run
  * out in real time (varlatch run 44049762382).
  */
@@ -420,14 +436,65 @@ export function onRecordedClock<T>(rows: Record<string, Row[]>, fn: () => Promis
   const times = (rows.audit_events ?? []).map((e) => Date.parse(String(e.occurred_at)));
   if (times.length === 0 || times.some(Number.isNaN)) throw new Error("the rows have no audit event to date their recording");
   let start = Math.max(...times);
-  const left = HOUR_MS - (start % HOUR_MS);
-  if (left < HOUR_MARGIN_MS) start += left;
+  start += hourClockOffset(start);
   const wall = Date;
   const offset = start - wall.now();
   return onClock(() => wall.now() + offset, fn);
 }
 
-export async function record(
+let onTheHourClock = false;
+
+/**
+ * Runs `fn` on the hour clock, as the Go replay runs on paritytest's
+ * HourClock. Report counts are kept per hour
+ * (security_control_counters.bucket_hour, from PGlite's clock, which reads
+ * `Date.now()`), and a replay that crossed an hour split one count into
+ * two rows (core-v0.21.0.json's passkey-verification count, 5 + 2 for 7,
+ * across 07:00 UTC). With at least `margin` (HOUR_MARGIN_MS) of its hour
+ * left, the replay runs on the clock it finds, Date untouched; with less,
+ * on that clock moved forward to the start of the next hour (onClock).
+ * Either way a replay shorter than the margin counts within one hour (a
+ * longer one fails), and its times never fall before anything written
+ * before it (the fixture's rows, or what a test built first), which a
+ * clock moved back could: a list ordered by time would put the replay's
+ * new rows first.
+ *
+ * Inside onRecordedClock (a replay of rows with lifetimes) it finds the
+ * recording's clock, which already has the margin left, and moves nothing.
+ * One hour clock at a time: a call while another runs fails. `margin` is
+ * for tests (HOUR_MS always moves the clock).
+ */
+export async function onHourClock<T>(fn: () => Promise<T>, margin = HOUR_MARGIN_MS): Promise<T> {
+  if (onTheHourClock) throw new Error("onHourClock: a replay is already running on the hour clock; replays must not overlap");
+  onTheHourClock = true;
+  try {
+    const wall = Date;
+    const offset = hourClockOffset(wall.now(), margin);
+    const now = () => wall.now() + offset;
+    const began = now();
+    const out = offset > 0 ? await onClock(now, fn) : await fn();
+    const ended = now();
+    if (Math.floor(ended / HOUR_MS) !== Math.floor(began / HOUR_MS)) {
+      throw new Error(
+        `the replay began at ${new wall(began).toISOString()} and ran into the next hour (${new wall(ended).toISOString()}): ` +
+          "report counts are kept per hour, so a replay must take less than HOUR_MARGIN_MS on the hour clock",
+      );
+    }
+    return out;
+  } finally {
+    onTheHourClock = false;
+  }
+}
+
+/**
+ * Runs the table against the app (recordOnce) on the hour clock
+ * (onHourClock).
+ */
+export function record(...args: Parameters<typeof recordOnce>): ReturnType<typeof recordOnce> {
+  return onHourClock(() => recordOnce(...args));
+}
+
+async function recordOnce(
   ctx: AppCtx,
   app: App | ((listener?: string) => App),
   f: Pick<Fixture, "rows" | "tokens" | "sideTables">,

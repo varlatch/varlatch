@@ -69,19 +69,26 @@ func TestLease(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, backup.GateFile)); !os.IsNotExist(err) || a.Isolated() {
 		t.Errorf("the lease outlived its end: %v", err)
 	}
-	// A lease ends by itself, and its file goes.
-	if _, err := a.Begin(time.Second); err != nil {
+	// A lease ends by itself, and its file goes; its id no longer ends
+	// anything.
+	expired, err := a.Begin(time.Second)
+	if err != nil {
 		t.Fatal(err)
 	}
 	c.add(time.Second)
+	if err := a.End(expired.ID); err == nil {
+		t.Error("an expired lease's id ended it")
+	}
 	if _, ok := a.Enter(); !ok {
 		t.Error("not admitted after the lease expired")
 	}
 	if _, err := os.Stat(filepath.Join(dir, backup.GateFile)); !os.IsNotExist(err) {
 		t.Errorf("the expired lease's file stayed: %v", err)
 	}
-	// One that expired while varlatchd was stopped.
-	if _, err := a.Begin(time.Second); err != nil {
+	// One that expired while varlatchd was stopped: its id ends neither
+	// it nor the lease opened after it.
+	stale, err := a.Begin(time.Second)
+	if err != nil {
 		t.Fatal(err)
 	}
 	c.add(time.Hour)
@@ -89,8 +96,18 @@ func TestLease(t *testing.T) {
 	if b.Isolated() {
 		t.Error("an expired lease isolated a restart")
 	}
-	if _, err := b.Begin(time.Minute); err != nil {
-		t.Errorf("a lease after an expired one: %v", err)
+	if err := b.End(stale.ID); err == nil {
+		t.Error("an expired lease's id ended it after a restart")
+	}
+	next, err := b.Begin(time.Minute)
+	if err != nil {
+		t.Fatalf("a lease after an expired one: %v", err)
+	}
+	if err := b.End(stale.ID); err == nil || !b.Isolated() {
+		t.Errorf("an expired lease's id ended the next lease: %v", err)
+	}
+	if err := b.End(next.ID); err != nil || b.Isolated() {
+		t.Errorf("the next lease's own id: %v", err)
 	}
 }
 
