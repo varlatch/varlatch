@@ -39,6 +39,26 @@ test("for n = 1..5 the shards are disjoint and together hold every inventory sui
   }
 });
 
+test("a suite with shardWith shares a shard with the suite it names, for n = 1..5", () => {
+  const pairs = PLAN.filter((e) => e.shardWith).map((e) => [e.suite, e.shardWith]);
+  assert.ok(pairs.some(([s, w]) => s === "p4" && w === "access"), "p4 reads the identity.created events access writes");
+  const weights = loadWeights();
+  for (let n = 1; n <= 5; n++) {
+    const shards = partition(PLAN, weights, n);
+    for (const [suite, withSuite] of pairs) {
+      const home = shards.findIndex((s) => s.includes(suite));
+      assert.ok(home >= 0 && shards[home].includes(withSuite), `n=${n}: ${suite} and ${withSuite} in different shards`);
+    }
+  }
+});
+
+test("shardWith must name a sharded suite of the plan, without cycles", () => {
+  const plan = [{ suite: "a" }, { suite: "b", shardWith: "nope" }];
+  assert.throws(() => partition(plan, {}, 2), /shardWith nope/);
+  const cycle = [{ suite: "a", shardWith: "b" }, { suite: "b", shardWith: "a" }];
+  assert.throws(() => partition(cycle, {}, 2), /cycle/);
+});
+
 test("one shard of one is the whole plan", () => {
   assert.deepEqual(shardSuites(PLAN, weights, 1, 1), PLAN.filter((e) => e.suite).map((e) => e.suite));
 });

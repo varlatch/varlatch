@@ -22,6 +22,12 @@
  * after the suites that handle it; the suites that do are spread over the
  * shards, so every shard's server logs are searched.
  *
+ * A suite whose checks read what an earlier suite left behind names that
+ * suite in its plan entry (`shardWith`): the two are one unit, weighed
+ * together and placed together, so a sharded run keeps the dependency a
+ * full run has (test/shard.test.mjs checks that every such pair shares a
+ * shard for n = 1..5).
+ *
  * The plan's `always` suites (the reconcile and passkey suites, whose work
  * every later step needs) run in every shard anyway, so they weigh nothing
  * when the shards are balanced; each is still owned, and judged, by one.
@@ -68,13 +74,32 @@ export function partition(plan, weights, count) {
   if (!Number.isInteger(count) || count < 1) throw new Error(`a run has at least one shard, not ${count}`);
   const entries = plan.map((e, position) => ({ ...e, position })).filter((e) => e.suite && !PER_SHARD.includes(e.suite));
   const weightOf = (e) => (e.always ? 0 : (weights[e.suite] ?? DEFAULT_WEIGHT));
-  const order = [...entries].sort((a, b) => weightOf(b) - weightOf(a) || a.position - b.position);
+  // Units: a suite with `shardWith` joins the unit of the suite it names
+  // (followed transitively), so the two are placed as one.
+  const bySuite = new Map(entries.map((e) => [e.suite, e]));
+  const rootOf = (e, seen = new Set()) => {
+    if (!e.shardWith) return e;
+    const to = bySuite.get(e.shardWith);
+    if (!to) throw new Error(`plan.mjs: ${e.suite} has shardWith ${e.shardWith}, which is not a sharded suite of the plan`);
+    if (seen.has(e.suite)) throw new Error(`plan.mjs: shardWith cycle through ${e.suite}`);
+    seen.add(e.suite);
+    return rootOf(to, seen);
+  };
+  const units = new Map();
+  for (const e of entries) {
+    const root = rootOf(e);
+    if (!units.has(root.suite)) units.set(root.suite, { position: root.position, weight: 0, entries: [] });
+    const u = units.get(root.suite);
+    u.entries.push(e);
+    u.weight += weightOf(e);
+  }
+  const order = [...units.values()].sort((a, b) => b.weight - a.weight || a.position - b.position);
   const shards = Array.from({ length: count }, () => ({ load: 0, entries: [] }));
-  for (const e of order) {
+  for (const u of order) {
     let lightest = shards[0];
     for (const s of shards) if (s.load < lightest.load) lightest = s;
-    lightest.entries.push(e);
-    lightest.load += weightOf(e);
+    lightest.entries.push(...u.entries);
+    lightest.load += u.weight;
   }
   return shards.map((s) => s.entries.sort((a, b) => a.position - b.position).map((e) => e.suite));
 }
