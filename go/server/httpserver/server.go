@@ -271,6 +271,8 @@ var BuiltOperations = []string{
 	approveOrganizationDeletionPattern, cancelOrganizationDeletionPattern,
 	deletedAuditEventsPattern, deletedAuditExportPattern,
 	listDeletedOrganizationsPattern, removeDeletedReaderPattern,
+	// Step 4.9d: pushing (targets.go; the engine in syncs/converge.go).
+	pushSyncTargetPattern,
 }
 
 // Server is the handler.

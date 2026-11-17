@@ -186,8 +186,8 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 		t.Errorf("the stub reached the backend: %+v", b)
 	}
 	// The stub names the operation's route.
-	w := do(s, "POST", "/v1/organizations/acme/projects/api/environments/development/sync-targets/core/push", "{}", nil)
-	if e := decode(t, w); !strings.HasPrefix(e.Error.Message, "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/push is not built yet") {
+	w := do(s, "POST", "/v1/organizations/acme/github-app/registrations", "{}", nil)
+	if e := decode(t, w); !strings.HasPrefix(e.Error.Message, "POST /v1/organizations/{org}/github-app/registrations is not built yet") {
 		t.Errorf("message %q", e.Error.Message)
 	}
 }

@@ -87,7 +87,7 @@ test("the stale-lacks probe against a real varlatchd", needBinary, async () => {
     state = await goBinary.up({ argument: binary, onState: (s) => (state = s) });
     const ask = (list) => probeLacks({ inventory, openapi, lacks: list, origin: state.origin, target: goBinary, state });
     assert.deepEqual(await ask(lacks), []);
-    const stale = await ask(["pushSyncTarget", "getMeta", "whoami"]);
+    const stale = await ask(["getGitHubApp", "getMeta", "whoami"]);
     assert.deepEqual(stale.map((s) => s.operation), ["getMeta", "whoami"]);
     assert.match(stale[0].why, /answered 200, not 501 NOT_IMPLEMENTED_YET/);
     // The runner turns a stale entry into a problem: the run fails.

@@ -56,8 +56,19 @@ type Service struct {
 	Adapters []string
 	Now      func() time.Time
 	Log      *slog.Logger
+	// OnRun, when set, receives every converge run's report.
+	OnRun func(RunStats)
 	// client replaces the policy's clients (tests only).
 	client *http.Client
+	// commitHook sees every converge commit by its name (tests only).
+	commitHook func(point string)
+}
+
+func (s *Service) logger() *slog.Logger {
+	if s.Log != nil {
+		return s.Log
+	}
+	return slog.New(slog.DiscardHandler)
 }
 
 func (s *Service) now() time.Time {

@@ -199,3 +199,196 @@ UPDATE sync_targets
 SET revoked_at = sqlc.arg(at), generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
     version = version + 1, updated_at = sqlc.arg(at)
 WHERE id = sqlc.arg(id);
+
+-- ---------------------------------------------------------------------------
+-- The converge engine (domain/syncdelivery.ts; server/syncs/CONVERGE.md).
+
+-- name: SyncProject :one
+-- reconcileUnderLease: the Target's Project, live.
+SELECT id, active_contract_revision_id FROM projects WHERE id = ? AND deleted_at IS NULL;
+
+-- name: SyncEnvironment :one
+-- reconcileUnderLease: the Target's environment, live.
+SELECT id, parent_environment_id, expires_at FROM environments WHERE id = ? AND deleted_at IS NULL;
+
+-- name: SyncCursor :one
+SELECT cursor_order FROM sync_cursor WHERE singleton = 1;
+
+-- name: InsertSyncCursor :exec
+-- T1: scanSyncTriggers' cursor row.
+INSERT INTO sync_cursor (singleton, occurred_at, event_id) VALUES (1, ?, '') ON CONFLICT (singleton) DO NOTHING;
+
+-- name: TriggerEvents :many
+-- scanSyncTriggers: the next events after the cursor, in order, delivery's
+-- own excluded. The TypeScript query orders them as text (TypeScript
+-- defect 8, fixed here: CONVERGE.md).
+SELECT id, event_order, event_type, decision, resource FROM audit_events
+WHERE event_order > ? AND substr(event_type, 1, 5) <> 'sync.'
+ORDER BY event_order LIMIT ?;
+
+-- name: MarkTriggeredTargets :exec
+-- T2: Targets of the environments the events name, of their derived
+-- children, and of the Projects whose Contract changed.
+UPDATE sync_targets SET needs_sync = 1
+WHERE revoked_at IS NULL AND needs_sync = 0 AND (
+  environment_id IN (SELECT value FROM json_each(sqlc.arg(environment_ids)))
+  OR environment_id IN (SELECT id FROM environments WHERE parent_environment_id IN (SELECT value FROM json_each(sqlc.arg(environment_ids))))
+  OR project_id IN (SELECT value FROM json_each(sqlc.arg(project_ids)))
+);
+
+-- name: AdvanceSyncCursor :exec
+-- T3.
+UPDATE sync_cursor SET cursor_order = max(cursor_order, sqlc.arg(event_order)), event_id = sqlc.arg(event_id) WHERE singleton = 1;
+
+-- name: ExpiredRunExists :one
+SELECT EXISTS (SELECT 1 FROM sync_runs WHERE deadline <= ?);
+
+-- name: DeleteExpiredRuns :exec
+-- T4.
+DELETE FROM sync_runs WHERE deadline <= ?;
+
+-- name: DueTargets :many
+-- runSyncOnce's candidates: ids only, every fact is read at the lease.
+-- A Target on a GitHub App Connection waits for step 4.10's minting.
+SELECT t.id FROM sync_targets t
+JOIN organizations o ON o.id = t.organization_id
+JOIN platform_connections c ON c.id = t.connection_id
+WHERE t.revoked_at IS NULL AND t.state = 'active' AND o.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = t.organization_id AND f.lifted_at IS NULL)
+  AND (t.next_attempt_at IS NULL OR t.next_attempt_at <= sqlc.arg(now))
+  AND (t.needs_sync = 1 OR t.last_repair_at IS NULL OR t.last_repair_at < sqlc.arg(repair_before))
+  AND c.credential_kind <> 'github-app'
+ORDER BY t.created_at, t.id;
+
+-- name: LeaseTarget :one
+-- C1: the lease; the configuration snapshot the run acts on.
+UPDATE sync_targets
+SET generation = generation + 1, lease_expires_at = sqlc.arg(lease_expires_at), needs_sync = 0, last_attempt_at = sqlc.arg(now)
+WHERE sync_targets.id = sqlc.arg(id) AND sync_targets.revoked_at IS NULL AND sync_targets.state = 'active'
+  AND (sync_targets.lease_expires_at IS NULL OR sync_targets.lease_expires_at < sqlc.arg(now))
+  AND NOT EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = sync_targets.organization_id AND f.lifted_at IS NULL)
+RETURNING id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping,
+          remove_orphans, redeploy, last_repair_at, generation;
+
+-- name: InsertSyncRun :exec
+-- C1: the run's row, with its deadline.
+INSERT INTO sync_runs (target_id, generation, started_at, deadline) VALUES (?, ?, ?, ?);
+
+-- name: RunConnection :one
+-- reconcileTarget: the Connection and the Organization's key, after the lease.
+SELECT c.platform, c.base_identity, c.credential_envelope, c.version, c.revoked_at, c.credential_kind, o.wrapped_org_kek
+FROM platform_connections c
+JOIN organizations o ON o.id = sqlc.arg(organization_id) AND o.deleted_at IS NULL
+WHERE c.id = sqlc.arg(id);
+
+-- name: OpenRepairCycle :one
+-- C4.
+UPDATE sync_targets SET repair_cycle_started_at = COALESCE(repair_cycle_started_at, sqlc.arg(now))
+WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation)
+RETURNING repair_cycle_started_at;
+
+-- name: TargetGeneration :one
+SELECT generation FROM sync_targets WHERE id = ?;
+
+-- name: RunLedger :many
+-- reconcileUnderLease's ledger read. TypeScript reads it in the table's row
+-- order, unspecified, which for a small PostgreSQL table is the order of
+-- each row's last write; this is that order, made explicit.
+SELECT dest_name, fingerprint, state, generation, repaired_at FROM sync_ledger WHERE target_id = ? ORDER BY updated_at, dest_name;
+
+-- name: SetLedger :exec
+-- ledgerSet: a confirmed write or deletion earns repair credit (repaired_at
+-- is the time then); an intent or a failure clears it (NULL).
+INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation, last_error, updated_at, repaired_at)
+VALUES (sqlc.arg(target_id), sqlc.arg(dest_name), sqlc.arg(fingerprint), sqlc.arg(state), sqlc.arg(generation), sqlc.arg(last_error),
+        sqlc.arg(now), sqlc.narg(repaired_at))
+ON CONFLICT (target_id, dest_name) DO UPDATE
+SET fingerprint = excluded.fingerprint, state = excluded.state, generation = excluded.generation, last_error = excluded.last_error,
+    updated_at = excluded.updated_at, repaired_at = excluded.repaired_at;
+
+-- name: OweRedeploy :exec
+-- Only while the Target still wants redeploys.
+UPDATE sync_targets SET redeploy_owed = redeploy_owed + 1 WHERE id = ? AND redeploy = 1;
+
+-- name: CreditVerified :exec
+-- C7.
+UPDATE sync_ledger SET repaired_at = sqlc.arg(now)
+WHERE target_id = sqlc.arg(target_id) AND dest_name IN (SELECT value FROM json_each(sqlc.arg(names))) AND state IN ('written', 'tombstone');
+
+-- name: RecordDrift :exec
+-- C9: the Target's last drift.
+UPDATE sync_targets SET last_drift_at = sqlc.arg(now), last_drift_count = sqlc.arg(count), last_drift_names = sqlc.arg(names),
+       last_drift_event_id = sqlc.arg(event_id)
+WHERE id = sqlc.arg(id);
+
+-- name: RedeployDebt :one
+-- payRedeploy: the current setting and debt, under the run's generation.
+SELECT redeploy, redeploy_owed, redeploy_paid FROM sync_targets WHERE id = ? AND generation = ?;
+
+-- name: SettleRedeploy :exec
+-- C16.
+UPDATE sync_targets SET redeploy_paid = max(redeploy_paid, sqlc.arg(owed)) WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation);
+
+-- name: SendCheck :one
+-- SEND_CHECK_SQL: the generation, the run's deadline, the freeze.
+SELECT t.generation,
+       CAST(COALESCE((SELECT r.deadline FROM sync_runs r WHERE r.target_id = t.id AND r.generation = sqlc.arg(generation)), 0) AS INTEGER) AS deadline,
+       EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = t.organization_id AND f.lifted_at IS NULL) AS frozen
+FROM sync_targets t WHERE t.id = sqlc.arg(id);
+
+-- name: YieldTarget :exec
+-- C18.
+UPDATE sync_targets SET needs_sync = 1 WHERE id = ? AND generation = ?;
+
+-- name: RefuseTarget :exec
+-- C20: recordRefusal.
+UPDATE sync_targets
+SET last_result = sqlc.arg(result), needs_sync = 1, next_attempt_at = sqlc.arg(next_attempt_at),
+    last_notes = CASE WHEN CAST(sqlc.arg(set_notes) AS INTEGER) <> 0 THEN sqlc.arg(notes) ELSE last_notes END
+WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation) AND revoked_at IS NULL;
+
+-- name: CloseRepairCycle :exec
+-- C22.
+UPDATE sync_targets SET last_repair_at = COALESCE(repair_cycle_started_at, sqlc.arg(now)), repair_cycle_started_at = NULL
+WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation);
+
+-- name: TargetSucceeded :exec
+-- C23.
+UPDATE sync_targets
+SET failure_count = 0, next_attempt_at = NULL, last_result = sqlc.arg(result),
+    last_notes = CASE WHEN CAST(sqlc.arg(set_notes) AS INTEGER) <> 0 THEN sqlc.arg(notes) ELSE last_notes END
+WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation);
+
+-- name: ConnectionVersion :one
+SELECT version FROM platform_connections WHERE id = ?;
+
+-- name: GuardedFailureCount :one
+-- recordFailure: the count as it is now, under the run's generation.
+SELECT failure_count FROM sync_targets WHERE id = ? AND revoked_at IS NULL AND generation = ?;
+
+-- name: TargetFailed :exec
+-- recordFailure.
+UPDATE sync_targets
+SET failure_count = sqlc.arg(failures), last_result = sqlc.arg(result), needs_sync = 1, next_attempt_at = sqlc.arg(next_attempt_at),
+    state = CASE WHEN CAST(sqlc.arg(disable) AS INTEGER) <> 0 THEN 'disabled' ELSE state END,
+    disabled_reason = CASE WHEN CAST(sqlc.arg(disable) AS INTEGER) <> 0 THEN 'failure-budget-exhausted' ELSE disabled_reason END,
+    last_notes = CASE WHEN CAST(sqlc.arg(set_notes) AS INTEGER) <> 0 THEN sqlc.arg(notes) ELSE last_notes END
+WHERE id = sqlc.arg(id);
+
+-- name: ReleaseLease :exec
+-- C25.
+UPDATE sync_targets SET lease_expires_at = NULL WHERE id = ? AND generation = ?;
+
+-- name: DeleteRun :exec
+-- C26.
+DELETE FROM sync_runs WHERE target_id = ? AND generation = ?;
+
+-- name: ClearRefusedBackoff :exec
+-- At startup, Targets the outbound policy refused are due again at once.
+UPDATE sync_targets SET next_attempt_at = NULL
+WHERE revoked_at IS NULL AND next_attempt_at IS NOT NULL AND substr(last_result, 1, 17) = 'outbound_refused:';
+
+-- name: RequestPush :one
+-- requestPush.
+UPDATE sync_targets SET needs_sync = 1, next_attempt_at = NULL
+WHERE id = ? AND organization_id = ? AND revoked_at IS NULL RETURNING id;
