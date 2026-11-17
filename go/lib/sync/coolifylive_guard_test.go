@@ -38,3 +38,22 @@ func TestCoolifyLiveEscapedReference(t *testing.T) {
 		t.Fatalf("the compose fixture's ESCAPED_REF is not a YAML escape:\n%s", c)
 	}
 }
+
+// Only a JSON array is a listing: an HTTP 200 null (or anything else) must
+// not read as an empty scope and confirm a cleanup.
+func TestCoolifyLiveListing(t *testing.T) {
+	for body, want := range map[string]bool{
+		`[]`:                   true,
+		`[{"key":"X","id":1}]`: true,
+		`null`:                 false,
+		`{}`:                   false,
+		`"x"`:                  false,
+		``:                     false,
+		`[`:                    false,
+		`1`:                    false,
+	} {
+		if _, ok := decodeListing([]byte(body)); ok != want {
+			t.Errorf("%q: a listing %v, want %v", body, ok, want)
+		}
+	}
+}

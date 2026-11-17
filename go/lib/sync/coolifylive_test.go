@@ -314,11 +314,7 @@ func (l *live) survey() (left []found, complete bool) {
 		if err != nil || code != 200 {
 			return nil, false
 		}
-		var rows []map[string]any
-		if json.Unmarshal(b, &rows) != nil {
-			return nil, false
-		}
-		return rows, true
+		return decodeListing(b)
 	}
 	str := func(m map[string]any, k string) string { s, _ := m[k].(string); return s }
 	idOf := func(m map[string]any) string {
@@ -389,6 +385,17 @@ func (l *live) survey() (left []found, complete bool) {
 		left = append(left, found{"project", uuid, "/projects/" + uuid})
 	}
 	return left, complete
+}
+
+// decodeListing is a listing's rows, and whether the answer was a JSON
+// array: null, an object or anything else is not a listing, and confirms
+// nothing (null decodes to a nil slice, an empty array to an empty one).
+func decodeListing(b []byte) ([]map[string]any, bool) {
+	var rows []map[string]any
+	if json.Unmarshal(b, &rows) != nil || rows == nil {
+		return nil, false
+	}
+	return rows, true
 }
 
 // cleanup deletes what the run left, recorded or not: first the shared
