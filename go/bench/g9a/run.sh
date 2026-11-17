@@ -8,8 +8,9 @@
 #
 # OUT must not exist yet. Without a plan file the G9a profile runs (36
 # minutes of load). The server is varlatchd built with the g9a tag
-# (varlatchd g9a: the production serve path with the W1 seed, the converge
-# simulation, paced backups and the run's event log); this harness drives
+# (varlatchd g9a: the production serve path with the W1 seed, converge
+# runs on the real engine against a Coolify instance it starts, paced
+# backups and the run's event log); this harness drives
 # it as a process. Exit status: the report's (0 pass, 1 fail,
 # 2 inconclusive), or 3 when the harness itself failed.
 #

@@ -123,6 +123,12 @@ type hooks struct {
 	writer func(*write.Writer)
 	// backups tunes the backup service (tests: a slower sealing pace).
 	backups func(*backups.Options)
+	// outbound adds to the outbound policy's options before it is made
+	// (the g9a build: the fake provider's certificate among the roots).
+	outbound func(*outbound.Options)
+	// sync sees the parts a converge engine is made of once they exist
+	// (the g9a build drives its own engine's runs, sync = off).
+	sync func(writer *write.Writer, approvals *auth.Service, policy *outbound.Policy)
 	// tailnetControl replaces the tailnet node's control server (tests: an
 	// in-process one), and tailnetCerts where the browser endpoint's
 	// certificate comes from (tests: a test CA, since a real one needs
@@ -392,8 +398,15 @@ func serve(opts Options, h *hooks) int {
 	if err != nil {
 		return fail(ExitConfig, "outbound_allow", "error", err)
 	}
-	policy := outbound.New(allow, outbound.Options{Log: log})
+	policyOptions := outbound.Options{Log: log}
+	if h.outbound != nil {
+		h.outbound(&policyOptions)
+	}
+	policy := outbound.New(allow, policyOptions)
 	defer policy.Close()
+	if h.sync != nil {
+		h.sync(writer, approvals, policy)
+	}
 	// Webhook delivery (feature-parity decision 10): a pass at once, then
 	// every 30 seconds, through the outbound policy. A stop ends it before
 	// the policy and the database close; an attempt cut short is not

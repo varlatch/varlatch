@@ -113,6 +113,10 @@ type DB struct {
 	jobs   chan *job
 	ops    chan *op
 
+	// pageSize is the database's page size, read once by the g9a build's
+	// WAL accounting (timing_on.go); writer goroutine only.
+	pageSize int64
+
 	rdb *sql.DB // read-only pool
 
 	// The checkpointer's own connection.

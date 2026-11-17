@@ -237,7 +237,8 @@ jobs:
       # engine's effective settings equal the production build's (a smoke
       # plan's WAL bound aside, which it reports), and a short run seeds W1
       # in the production tables, serves disclosures to the manifest's
-      # credentials and runs the converge simulation's writes.
+      # credentials and runs the real converge engine against the run's
+      # Coolify instance, which reports each commit and its WAL bytes.
       - name: The g9a build's settings are the production build's
         working-directory: go
         env:
@@ -289,8 +290,9 @@ jobs:
 
       # G9a at smoke scale (ADR-0059 step 3.6): 5 % of the profile's
       # length against varlatchd built with the g9a tag (the production
-      # serve path with the W1 seed, the converge simulation and paced
-      # backups), driven by the harness as a process: k6 (the pinned image)
+      # serve path with the W1 seed, converge runs on the real engine against
+      # a Coolify instance it starts, and paced backups), driven by the
+      # harness as a process: k6 (the pinned image)
       # from 20 loopback addresses, varlatchd under G9's memory limits in a
       # scope of its own, and the report. A smoke run is reported as smoke
       # and never counts for the gate: the bound is 512 KiB so the size
@@ -354,7 +356,13 @@ jobs:
             and ([.inconclusive[] | select(startswith("the plan differs from G9a") | not)] == [])
             and (.stages | length) == 8 and ([.stages[] | .count > 0] | all)
             and .profile.overlapsLoad == true
+            and .converge != null and (.converge.runs | length) == .converges
+            and ([.converge.runs[] | .targets == 20 and .values == 20 * 5 and .commits > 0 and .walBytes > 0 and .engineMs > 0] | all)
           ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
+          # The real engine's cost, for the review of feature-parity decision
+          # 7 (commits and WAL bytes per run): converge.jsonl holds every
+          # Target run's commits.
+          jq -se 'length > 0 and all(.runs | length == 20 and all(.commits > 0 and .walBytes > 0 and (.jobs | length) >= .commits))' "$out/converge.jsonl" || { echo "converge.jsonl does not hold the runs"; exit 1; }
           # The plan's backups are real ones (step 4.14): each sealed an archive.
           jq -se '[.[] | select(.ev == "backup_end")] | length > 0 and all(.err == null and .archiveBytes > 0)' "$out/events.jsonl" || { echo "a backup sealed no archive"; exit 1; }
           [ -s "$out/cpu.pprof" ] || { echo "no CPU profile"; exit 1; }
@@ -373,6 +381,8 @@ jobs:
             ${{ runner.temp }}/g9a-smoke/cpu.pprof
             ${{ runner.temp }}/g9a-smoke/cpu-window.json
             ${{ runner.temp }}/g9a-smoke/profile-disclose.txt
+            ${{ runner.temp }}/g9a-smoke/converge.jsonl
+            ${{ runner.temp }}/g9a-smoke/verdict.json
           retention-days: 30
           if-no-files-found: warn
 

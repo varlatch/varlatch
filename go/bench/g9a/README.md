@@ -10,7 +10,7 @@ The server is varlatchd built with the `g9a` build tag (AGPL,
 serves the run with the production serve path (the same storage engine
 and settings, HTTP layer, request window and read path of values) on a
 fresh installation, and adds workload drivers and instrumentation only: the
-W1 seed in the production tables, the converge simulation, the plan's
+W1 seed in the production tables, converge runs on the real engine, the plan's
 paced backups on its own storage instance, and the run's event log and
 control routes, which come from this package's `Runner`. This package
 (Apache-2.0) drives that binary as a process and imports nothing from
@@ -37,8 +37,10 @@ harness failed.
   in two versions (5,000 versions, sealed under the Organization's KEK);
   50 identities: 30 people (members, with an Organization Grant) and 20
   service identities (each with a Grant on one environment), every one
-  with a credential; 4 Platform Connections and 20 Sync Targets, one per
-  environment.
+  with a credential; 4 Coolify Platform Connections and 20 Sync Targets,
+  one per environment, each to a Coolify application of the run's own
+  Coolify instance (`bench_g9a_coolify.go`, over TLS on a loopback port
+  that `outbound_allow` opens, through the outbound policy).
 - **The load**: `POST …/disclosures` of one Secret, the read path of
   values with its audit event committed before the value is decrypted.
   k6 sends it from 20 loopback source addresses (127.0.0.2 to
@@ -46,19 +48,27 @@ harness failed.
   credential (`manifest.json`: alternately a person's and a service
   identity's), with varlatchd's request window (600 requests per address
   and minute) in force. At 50/s that is about 150 a minute per address.
-- **The converge simulation**, every period for every Target in turn:
-  reconcileTarget's successful path (`domain/syncdelivery.ts`), with k
-  changed destinations per run (`changesPerRun`, 5 by default): the
-  lease and the `sync_runs` row (one job); the reads, outside any write;
-  `sync.values_decrypted`, committed before the values are decrypted
-  (one job); the guarded `sync.push_attempted` (one job); k
-  `intent-write` ledger entries (k jobs); a simulated provider call of
-  200 ms outside any transaction; k `written` entries (k jobs); the
-  guarded `sync.push_result` (one job); the result columns (one job); the
-  lease released and the run's row deleted (two jobs): 2k + 7 commits per
-  Target and run, each a job of the single writer. No deletions, repair
-  cycle, redeploy debt or credential-expiry bookkeeping, which add writes
-  in production.
+- **Converge runs on the real engine** (`server/syncs`, 4.9d), every
+  period: first k values changed in every Target's environment
+  (`changesPerRun`, 5 by default), written as `PUT …/values/{item}`
+  writes them (a new version and its `value.written` event); then one
+  engine pass, as the sync loop runs it: the trigger scan marks the
+  Targets those events name, and each Target's run writes its changed
+  values to its application, one provider call each after reading its
+  variables, every call waiting the plan's provider delay
+  (`providerDelayMs`, 200 ms). Before the load, an untimed first pass
+  with no delay writes every Target's 125 values. The engine reports
+  each Target's run: its commits one by one (named as CONVERGE.md names
+  them), their time queued for the writer and in their jobs, and the
+  WAL bytes their batches wrote, which this build's storage counts
+  (SQLite's `SQLITE_DBSTATUS_CACHE_WRITE` on the writer's connection
+  after each batch: exact for a job alone in its batch, a share
+  otherwise). The run keeps them in `converge.jsonl`, and the report
+  shows them per run and per commit point (feature-parity decision 7: a
+  pull request that raises commits or WAL bytes per run by more than
+  20 % says why). The period of a scaled plan is at least 45 s
+  (`MinConvergeSeconds`): a run over 20 Targets with k = 5 takes about
+  24 s of provider calls.
 - **Its effective storage settings**, read back from its connections at
   start (pragmas, WAL bound, batch size, checkpoint period, snapshot
   pacing), compared with a production build's, and recorded in

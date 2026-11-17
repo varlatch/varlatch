@@ -6,12 +6,10 @@ package daemon
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
-	"database/sql"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -31,15 +29,17 @@ import (
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
-	"github.com/varlatch/varlatch/go/server/audit"
+	vsync "github.com/varlatch/varlatch/go/lib/sync"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/ids"
-	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/stages"
+	"github.com/varlatch/varlatch/go/server/syncs"
 	"github.com/varlatch/varlatch/go/server/values"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 // The G9a build (ADR-0059 step 3.6, varlatchd-core decisions 6 and 7):
@@ -56,8 +56,9 @@ import (
 //     people, members with an Organization Grant, and 20 service
 //     identities with a Grant on one environment each, every one with a
 //     credential), 20 Sync Targets on 4 Platform Connections;
-//   - the converge simulation, reconcileTarget's successful path
-//     (converge), once a period for every Target;
+//   - converge runs on the real engine (server/syncs) against a Coolify
+//     instance the run starts (benchCoolify), once a period, each after
+//     changing values in every Target's environment;
 //   - the plan's backups, real ones (server/backups: the paced snapshot
 //     on this server's own storage instance, the paced sealing, the
 //     archive's check and local retention), and the event log: every
@@ -111,22 +112,28 @@ func runBench(args []string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "varlatchd g9a: %v\n", err)
 		return ExitConfig
 	}
-	conf, err := benchInstallation(*data, *out, *listen)
-	if err != nil {
-		fmt.Fprintf(stderr, "varlatchd g9a: %v\n", err)
-		return ExitFailure
-	}
 	if *profile < 0 || *profile > 3600 {
 		fmt.Fprintln(stderr, "varlatchd g9a: -profile: 0 to 3600 seconds")
 		return 64
 	}
-	return benchServe(Options{ConfigPath: conf, Stderr: stderr}, p, *data, *out, time.Duration(*profile)*time.Second)
+	coolify, err := startBenchCoolify(benchProjects * benchEnvsPer)
+	if err != nil {
+		fmt.Fprintf(stderr, "varlatchd g9a: the Coolify instance: %v\n", err)
+		return ExitFailure
+	}
+	defer coolify.close()
+	conf, err := benchInstallation(*data, *out, *listen, coolify.Port())
+	if err != nil {
+		fmt.Fprintf(stderr, "varlatchd g9a: %v\n", err)
+		return ExitFailure
+	}
+	return benchServe(Options{ConfigPath: conf, Stderr: stderr}, p, *data, *out, time.Duration(*profile)*time.Second, coolify)
 }
 
 // benchInstallation makes a fresh installation for the run: a Root KEK in
 // the data directory, and varlatchd.conf in the output directory (kept
 // with the report), with the access log there too.
-func benchInstallation(data, out, listen string) (string, error) {
+func benchInstallation(data, out, listen string, coolifyPort int) (string, error) {
 	for _, d := range []string{data, out} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return "", err
@@ -141,27 +148,27 @@ func benchInstallation(data, out, listen string) (string, error) {
 	}
 	// The plan's backups are real ones, sealed with a key of their own;
 	// the run drives them, so the schedule is off. The run drives the
-	// converge too (the simulation below, until 4.9's G9a smoke moves it
-	// to the engine), so the engine's own loop is off: sync = off.
+	// converge engine's passes too, so its own loop is off (sync = off),
+	// and outbound_allow opens the run's Coolify instance on loopback.
 	bekFile := filepath.Join(data, "backup-key")
 	if err := os.WriteFile(bekFile, []byte(hex.EncodeToString(envelope.GenerateKey())+"\n"), 0o600); err != nil {
 		return "", err
 	}
 	conf := filepath.Join(out, g9a.FileConfig)
-	text := fmt.Sprintf("# Written by varlatchd g9a for one run.\nlisten = %s\ndata_dir = %s\nroot_kek_file = %s\naccess_log = %s\nbackup_key_file = %s\nbackup_interval = off\nbackup_keep = 2\nsync = off\n",
-		listen, data, kekFile, filepath.Join(out, g9a.FileAccessLog), bekFile)
+	text := fmt.Sprintf("# Written by varlatchd g9a for one run.\nlisten = %s\ndata_dir = %s\nroot_kek_file = %s\naccess_log = %s\nbackup_key_file = %s\nbackup_interval = off\nbackup_keep = 2\nsync = off\noutbound_allow = 127.0.0.1/32:%d\n",
+		listen, data, kekFile, filepath.Join(out, g9a.FileAccessLog), bekFile, coolifyPort)
 	return conf, os.WriteFile(conf, []byte(text), 0o644)
 }
 
 // benchServe serves the run: serve with the run's hooks.
-func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duration) int {
+func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duration, coolify *benchCoolify) int {
 	log := slog.New(slog.NewTextHandler(opts.Stderr, nil))
 	cfg, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		fmt.Fprintf(opts.Stderr, "varlatchd g9a: %v\n", err)
 		return ExitConfig
 	}
-	t := &benchTarget{plan: p, cfg: cfg, log: log}
+	t := &benchTarget{plan: p, cfg: cfg, log: log, coolify: coolify}
 	runner, err := g9a.NewRunner(g9a.RunnerOptions{DataDir: data, OutDir: out, Plan: p, Target: t,
 		Logf: func(format string, args ...any) { log.Info(fmt.Sprintf(format, args...)) }})
 	if err != nil {
@@ -224,10 +231,11 @@ func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duratio
 			t.store, t.rootKEK = store, rootKEK
 			t0 := time.Now()
 			log.Info("seeding W1", "targets", p.Targets)
-			manifest, err := seedW1(ctx, store, rootKEK, p.Targets)
+			manifest, writes, err := seedW1(ctx, store, rootKEK, p.Targets, coolify.URL())
 			if err != nil {
 				return fmt.Errorf("seed: %w", err)
 			}
+			t.writes = writes
 			seeded := time.Since(t0)
 			if err := runner.WriteManifest(manifest); err != nil {
 				return err
@@ -259,6 +267,13 @@ func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duratio
 				runner.Count(rec.status != http.StatusOK, false)
 			})
 		},
+		// The engine's provider: the run's Coolify, its certificate
+		// trusted by the outbound policy, which still decides every
+		// connection (outbound_allow opens its loopback port).
+		outbound: func(o *outbound.Options) {
+			o.TLS = &tls.Config{RootCAs: coolify.roots, MinVersion: tls.VersionTLS12}
+		},
+		sync: t.startEngine,
 		stop: runner.Done(),
 		stopped: func() {
 			stopProfile()
@@ -340,16 +355,27 @@ func compareProduction(ctx context.Context, dir string, got storage.Settings) (b
 	return true, note, nil
 }
 
-// benchTarget is the run's target: this server's storage instance and the
-// converge simulation.
+// benchTarget is the run's target: this server's storage instance, its
+// converge engine and the run's Coolify.
 type benchTarget struct {
 	plan    g9a.Plan
 	cfg     *config.Config
 	log     *slog.Logger
+	coolify *benchCoolify
 	store   *storage.DB
 	rootKEK []byte
 	running atomic.Bool
 	runs    atomic.Int64
+
+	writes    *benchWrites
+	writer    *write.Writer
+	approvals *auth.Service
+	engine    *syncs.Service
+	principal *auth.Principal
+	setupErr  error
+
+	mu        sync.Mutex
+	collected []g9a.TargetRun
 }
 
 func (t *benchTarget) WALSize() int64 { return t.store.Metrics().WALBytes }
@@ -366,15 +392,23 @@ func (t *benchTarget) Backup(ctx context.Context, _ int, o storage.SnapshotOptio
 // import would write, and returns the load's manifest: one entry per
 // source address, alternately a person's and a service identity's
 // credential, each with the Secrets of one environment.
-func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int) ([]g9a.ManifestEntry, error) {
+func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int, coolifyURL string) ([]g9a.ManifestEntry, *benchWrites, error) {
 	if targets != benchProjects*benchEnvsPer {
-		return nil, fmt.Errorf("W1 has %d Sync Targets; the plan names %d", benchProjects*benchEnvsPer, targets)
+		return nil, nil, fmt.Errorf("W1 has %d Sync Targets; the plan names %d", benchProjects*benchEnvsPer, targets)
+	}
+	adapter, err := vsync.GetAdapter("coolify")
+	if err != nil {
+		return nil, nil, err
+	}
+	base, err := adapter.CanonicalizeBaseIdentity(coolifyURL)
+	if err != nil {
+		return nil, nil, err
 	}
 	now := time.Now().UnixMicro()
 	org := ids.New("org")
 	orgKEK, wrapped, err := envelope.WrapOrgKEK(rootKEK, org)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer clear(orgKEK)
 	w, _ := json.Marshal(wrapped)
@@ -388,7 +422,7 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int)
 	contractText, _ := json.Marshal(contract)
 	canon, err := envelope.CanonicalJSON(map[string]any{"schemaVersion": 1, "semanticsVersion": 3, "items": items})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sum := sha256.Sum256([]byte(canon))
 	contentHash := "sha256:" + hex.EncodeToString(sum[:])
@@ -449,12 +483,14 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int)
 			if err := exec(tx, `UPDATE projects SET active_contract_revision_id = ? WHERE id = ?`, rev, project); err != nil {
 				return err
 			}
-			credential, err := envelope.Seal(orgKEK, []byte("g9a-platform-token-"+conn), envelope.PlatformCredentialContext(org, conn))
+			// A Coolify Connection to the run's instance (benchCoolify),
+			// as createPlatformConnection stores one.
+			credential, err := envelope.Seal(orgKEK, []byte("g9a-coolify-token-"+conn), envelope.PlatformCredentialContext(org, conn))
 			if err != nil {
 				return err
 			}
 			c, _ := json.Marshal(credential)
-			if err := exec(tx, `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope) VALUES (?, ?, 'vercel', 'team_g9a', ?, ?)`, conn, org, slug, string(c)); err != nil {
+			if err := exec(tx, `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope) VALUES (?, ?, 'coolify', ?, ?, ?)`, conn, org, base, slug, string(c)); err != nil {
 				return err
 			}
 			for ei := range benchEnvsPer {
@@ -462,9 +498,16 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int)
 				if err := exec(tx, `INSERT INTO environments (id, project_id, name, kind, tier) VALUES (?, ?, ?, 'shared', ?)`, e.id, project, e.name, tiers[ei%len(tiers)]); err != nil {
 					return err
 				}
-				dest, _ := json.Marshal(map[string]any{"projectId": slug + "-" + e.name})
+				// One Coolify application each, every Secret mapped.
+				app := benchApp(len(envs))
+				dest, err := adapter.CanonicalizeDestination(vsync.Object{{Key: "applicationUuid", Value: app}})
+				if err != nil {
+					return err
+				}
+				fields, _ := json.Marshal(map[string]any{"applicationUuid": app})
 				if err := exec(tx, `INSERT INTO sync_targets (id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping, created_by)
-					VALUES (?, ?, ?, ?, ?, ?, ?, '{"kind":"wildcard"}', ?)`, ids.New("snt"), org, project, e.id, conn, string(dest), slug+"-"+e.name, people[0]); err != nil {
+					VALUES (?, ?, ?, ?, ?, ?, ?, '{"kind":"wildcard"}', ?)`, ids.New("snt"), org, project, e.id, conn, string(fields),
+					vsync.CanonicalDestinationIdentity("coolify", base, dest.Key), people[0]); err != nil {
 					return err
 				}
 				envs = append(envs, e)
@@ -490,7 +533,7 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int)
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// The values: two versions of each Secret, one environment per job.
 	for _, e := range envs {
@@ -523,7 +566,7 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int)
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	manifest := make([]g9a.ManifestEntry, len(BenchAddresses))
@@ -541,7 +584,11 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int)
 		manifest[i] = g9a.ManifestEntry{Address: addr, Identity: identity, Token: tokens[identity], Org: benchOrgSlug,
 			Project: e.projectSlug, Env: e.name, Keys: keys}
 	}
-	return manifest, nil
+	writes := &benchWrites{token: tokens[people[0]], org: org, keys: keys}
+	for _, e := range envs {
+		writes.envs = append(writes.envs, benchEnv{project: e.project, id: e.id})
+	}
+	return manifest, writes, nil
 }
 
 // benchSecret is a Secret's value: 48 characters from its version's id.
@@ -550,279 +597,130 @@ func benchSecret(version string) string {
 	return hex.EncodeToString(sum[:])[:benchSecretLength]
 }
 
-// The converge simulation (varlatchd-core decision 7): reconcileTarget's
-// successful path (services/varlatchd/src/domain/syncdelivery.ts), for
-// every Target in turn, as runSyncOnce takes them, with k changed
-// destinations per run. Each "job" is one write job of the single writer,
-// so group commit may share fsyncs between them as in production; reads
-// run on the read pool, outside any write; no write is held across the
-// simulated provider call. 2k + 7 commits per Target and run.
+// The converge runs (feature-parity decision 7, 4.9d): the real engine
+// (server/syncs) against benchCoolify, through the outbound policy. Each
+// run first changes ChangesPerRun values in every Target's environment as
+// a person's write does (values.SetValue: a new version and its
+// value.written event), then runs one engine pass (RunOnce) as the sync
+// loop would: its trigger scan marks the Targets those events name, and
+// each Target's run writes its changed values to its application, a
+// provider call each, every call waiting the plan's provider delay. The
+// engine reports each Target's run (OnRun): its commits one by one, their
+// time queued for the writer and in their jobs, and the WAL bytes their
+// batches wrote (this build's storage counts them).
 
-const (
-	leaseTTL      = 300 * time.Second // LEASE_TTL_SECONDS
-	runBudget     = 240 * time.Second // RUN_BUDGET_SECONDS
-	providerDelay = 200 * time.Millisecond
-)
+// benchWrites is what a run needs to change values: the writer's
+// credential (a person of the seed), its Organization, the environments
+// and the Secrets' names.
+type benchWrites struct {
+	token, org string
+	keys       []string
+	envs       []benchEnv
+}
 
-// Converge runs one converge over every Sync Target.
+type benchEnv struct{ project, id string }
+
+// startEngine is the run's engine, on the daemon's write path, approvals
+// and outbound policy (hooks.sync), and its first pass with no provider
+// delay: it writes every Target's values to its application, the
+// platforms' state the load starts from, untimed.
+func (t *benchTarget) startEngine(w *write.Writer, approvals *auth.Service, policy *outbound.Policy) {
+	t.writer, t.approvals = w, approvals
+	t.engine = &syncs.Service{Writer: w, Approvals: approvals, RootKEK: t.rootKEK, Policy: policy, Log: t.log, OnRun: t.onRun}
+	t.coolify.setDelay(0)
+	t0 := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	t.engine.RunOnce(ctx, syncs.RunOptions{})
+	t.take()
+	var ok int
+	err := t.store.Reader().QueryRowContext(ctx, `SELECT count(*) FROM sync_targets WHERE failure_count = 0 AND last_result IS NOT NULL AND lease_expires_at IS NULL`).Scan(&ok)
+	if err != nil || ok != t.plan.Targets {
+		t.setupErr = fmt.Errorf("the first converge pass left %d of %d Targets converged (%v)", ok, t.plan.Targets, err)
+		t.log.Error("first converge pass", "error", t.setupErr)
+	}
+	t.log.Info("first converge pass", "targets", ok, "values", t.coolify.writes.Load(), "seconds", time.Since(t0).Seconds())
+	t.coolify.setDelay(time.Duration(t.plan.ProviderDelayMs) * time.Millisecond)
+}
+
+// onRun keeps a Target run's report (syncs.Service.OnRun).
+func (t *benchTarget) onRun(st syncs.RunStats) {
+	run := g9a.TargetRun{Target: st.TargetID, Commits: st.Commits, SharedCommits: st.SharedCommits, WALBytes: st.WALBytes,
+		QueuedUs: st.Queued.Microseconds(), InJobsUs: st.InJobs.Microseconds(), DurationUs: st.Duration.Microseconds()}
+	for _, j := range st.Jobs {
+		run.Jobs = append(run.Jobs, g9a.JobRun{Point: j.Point, QueuedUs: j.Queued.Microseconds(), InJobUs: j.InJob.Microseconds(),
+			WALBytes: j.WALBytes, BatchJobs: j.BatchJobs, Committed: j.Committed})
+	}
+	t.mu.Lock()
+	t.collected = append(t.collected, run)
+	t.mu.Unlock()
+}
+
+// take answers the Target runs reported since the last take.
+func (t *benchTarget) take() []g9a.TargetRun {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := t.collected
+	t.collected = nil
+	return out
+}
+
+// Converge runs one converge: the values changed, then an engine pass.
 func (t *benchTarget) Converge(ctx context.Context) g9a.ConvergeResult {
 	if !t.running.CompareAndSwap(false, true) {
 		return g9a.ConvergeResult{Err: g9a.ErrConvergeRunning}
 	}
 	defer t.running.Store(false)
-	run := t.runs.Add(1)
-	rows, err := t.store.Reader().QueryContext(ctx, `SELECT id FROM sync_targets WHERE revoked_at IS NULL ORDER BY id`)
-	if err != nil {
-		return g9a.ConvergeResult{Err: err}
+	if t.setupErr != nil {
+		return g9a.ConvergeResult{Err: t.setupErr}
 	}
-	var targets []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return g9a.ConvergeResult{Err: err}
-		}
-		targets = append(targets, id)
+	run := int(t.runs.Add(1))
+	if err := t.change(ctx, run); err != nil {
+		return g9a.ConvergeResult{Err: fmt.Errorf("changing values: %w", err)}
 	}
-	rows.Close()
-	res := g9a.ConvergeResult{}
-	for _, id := range targets {
-		n, err := t.reconcile(ctx, id, int(run))
-		if err != nil {
-			res.Err = fmt.Errorf("target %s: %w", id, err)
-			return res
-		}
-		res.Targets++
-		res.Values += n
+	calls, writes := t.coolify.calls.Load(), t.coolify.writes.Load()
+	t.engine.RunOnce(ctx, syncs.RunOptions{})
+	runs := t.take()
+	res := g9a.ConvergeResult{Targets: len(runs), Values: int(t.coolify.writes.Load() - writes), Calls: t.coolify.calls.Load() - calls, Runs: runs}
+	if err := t.store.Reader().QueryRowContext(ctx, `SELECT count(*) FROM sync_targets WHERE failure_count > 0`).Scan(&res.PushFailed); err != nil {
+		res.Err = err
 	}
 	return res
 }
 
-type leased struct {
-	organizationID, projectID, environmentID, connectionID string
-	generation                                             int64
-}
-
-// reconcile is one Target's run: the TypeScript statement each step
-// reproduces is named on it.
-func (t *benchTarget) reconcile(ctx context.Context, targetID string, run int) (int, error) {
+// change writes ChangesPerRun new values in every Target's environment,
+// a different set each run, as PUT …/values/{item} writes them (its
+// authorization, the HTTP layer's, is not the converge's cost).
+func (t *benchTarget) change(ctx context.Context, run int) error {
+	if t.principal == nil {
+		p, _, err := t.approvals.Authenticate(ctx, t.writes.token)
+		if err != nil {
+			return err
+		}
+		t.principal = p
+	}
+	q := query.New(t.store.Reader())
 	k := t.plan.ChangesPerRun
-	now := func() int64 { return time.Now().UnixMicro() }
-
-	// 1. The lease, one job: the Target's generation and lease columns, and
-	// the sync_runs row (reconcileTarget: WITH lease AS (UPDATE sync_targets
-	// ... RETURNING ...), run AS (INSERT INTO sync_runs ...)).
-	var l leased
-	err := t.store.Write(ctx, func(tx *storage.Tx) error {
-		n := now()
-		err := tx.QueryRowContext(ctx, `UPDATE sync_targets
-			SET generation = generation + 1, lease_expires_at = ?, needs_sync = 0, last_attempt_at = ?
-			WHERE id = ? AND revoked_at IS NULL AND state = 'active'
-			  AND (lease_expires_at IS NULL OR lease_expires_at < ?)
-			  AND NOT EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = sync_targets.organization_id AND f.lifted_at IS NULL)
-			RETURNING organization_id, project_id, environment_id, connection_id, generation`,
-			n+leaseTTL.Microseconds(), n, targetID, n).Scan(&l.organizationID, &l.projectID, &l.environmentID, &l.connectionID, &l.generation)
+	for _, e := range t.writes.envs {
+		project, err := q.LiveProject(ctx, query.LiveProjectParams{OrganizationID: t.writes.org, SlugOrID: e.project})
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO sync_runs (target_id, generation, deadline) VALUES (?, ?, ?)`, targetID, l.generation, n+runBudget.Microseconds())
-		return err
-	})
-	if err != nil {
-		return 0, fmt.Errorf("lease: %w", err)
-	}
-
-	// 2. Reads, outside any write: the Connection and the Organization's
-	// KEK (reconcileTarget's connRes), the Project and the environment
-	// (reconcileUnderLease), the values it will push and their ciphertext
-	// (renderEffectiveOutput, decryptForSync), and the ledger.
-	r := t.store.Reader()
-	var credential, wrappedKEK sql.NullString
-	if err := r.QueryRowContext(ctx, `SELECT c.credential_envelope, o.wrapped_org_kek FROM platform_connections c
-		JOIN organizations o ON o.id = ? AND o.deleted_at IS NULL WHERE c.id = ?`, l.organizationID, l.connectionID).Scan(&credential, &wrappedKEK); err != nil {
-		return 0, fmt.Errorf("connection: %w", err)
-	}
-	var present int
-	if err := r.QueryRowContext(ctx, `SELECT count(*) FROM projects p JOIN environments e ON e.project_id = p.id
-		WHERE p.id = ? AND p.deleted_at IS NULL AND e.id = ? AND e.deleted_at IS NULL`, l.projectID, l.environmentID).Scan(&present); err != nil || present != 1 {
-		return 0, fmt.Errorf("environment: %v (%d)", err, present)
-	}
-	q := query.New(r)
-	current, err := q.CurrentValuesOfEnvironment(ctx, l.environmentID)
-	if err != nil {
-		return 0, fmt.Errorf("values: %w", err)
-	}
-	versionIDs := make([]string, len(current))
-	entries := make([]string, len(current))
-	for i, v := range current {
-		versionIDs[i], entries[i] = v.CurrentVersionID.String, v.ItemName+"@"+v.CurrentVersionID.String
-	}
-	cipher, err := q.CapturedCiphertext(ctx, versionIDs)
-	if err != nil {
-		return 0, fmt.Errorf("ciphertext: %w", err)
-	}
-	ledger, err := r.QueryContext(ctx, `SELECT dest_name, fingerprint, state, generation, repaired_at FROM sync_ledger WHERE target_id = ?`, targetID)
-	if err != nil {
-		return 0, fmt.Errorf("ledger: %w", err)
-	}
-	for ledger.Next() {
-	}
-	_ = ledger.Close()
-
-	resource := jsvalue.Object{{Key: "targetId", Value: targetID}, {Key: "environmentId", Value: l.environmentID}}
-	event := func(typ string, metadata jsvalue.Object) audit.Event {
-		org, action := l.organizationID, "config.sync.manage"
-		return audit.Event{Type: typ, Decision: audit.Info, OrganizationID: &org, Action: &action, Resource: resource, Metadata: metadata}
-	}
-	// 3. sync.values_decrypted, one job, committed before any of those
-	// values is decrypted (renderEffectiveOutput's audit callback,
-	// recordAuditEvent), then the decryption.
-	if err := t.store.Write(ctx, func(tx *storage.Tx) error {
-		_, err := audit.Record(ctx, tx, event("sync.values_decrypted", jsvalue.Object{
-			{Key: "purpose", Value: "sync-reconcile"}, {Key: "items", Value: strings.Join(entries, ",")}, {Key: "generation", Value: l.generation},
-		}))
-		return err
-	}); err != nil {
-		return 0, fmt.Errorf("sync.values_decrypted: %w", err)
-	}
-	var wrapped envelope.Envelope
-	if err := json.Unmarshal([]byte(wrappedKEK.String), &wrapped); err != nil {
-		return 0, err
-	}
-	orgKEK, err := envelope.UnwrapOrgKEK(t.rootKEK, wrapped, l.organizationID)
-	if err != nil {
-		return 0, err
-	}
-	defer clear(orgKEK)
-	rowOf := map[string]string{}
-	for _, v := range current {
-		rowOf[v.CurrentVersionID.String] = v.ID
-	}
-	plain := map[string]string{}
-	for _, c := range cipher {
-		var payload, dek envelope.Envelope
-		if json.Unmarshal([]byte(c.Payload.String), &payload) != nil || json.Unmarshal([]byte(c.WrappedDek.String), &dek) != nil {
-			return 0, errors.New("a value version is not an envelope")
-		}
-		b, err := envelope.DecryptValue(orgKEK, l.organizationID, rowOf[c.ID], c.ID, envelope.EncryptedValue{Payload: payload, WrappedDEK: dek})
+		env, err := q.LiveEnvironment(ctx, query.LiveEnvironmentParams{ProjectID: e.project, NameOrID: e.id})
 		if err != nil {
-			return 0, err
-		}
-		plain[c.ID] = string(b)
-	}
-	// The k changed destinations of this run, and their fingerprints
-	// (fingerprint: an HMAC keyed per Target).
-	fpKey := hmac.New(sha256.New, orgKEK)
-	fpKey.Write([]byte("sync-fingerprint:" + targetID))
-	key := fpKey.Sum(nil)
-	type write struct{ name, version, fingerprint string }
-	writes := make([]write, k)
-	for i := range k {
-		v := current[(run*k+i)%len(current)]
-		m := hmac.New(sha256.New, key)
-		m.Write([]byte(v.ItemName + "\x00" + plain[v.CurrentVersionID.String]))
-		writes[i] = write{v.ItemName, v.CurrentVersionID.String, "hmac-sha256:" + hex.EncodeToString(m.Sum(nil))}
-	}
-
-	// guarded is recordGuardedEvent: the event only while the Target's
-	// generation is still this run's.
-	guarded := func(e audit.Event) error {
-		return t.store.Write(ctx, func(tx *storage.Tx) error {
-			var gen int64
-			if err := tx.QueryRowContext(ctx, `SELECT generation FROM sync_targets WHERE id = ?`, targetID).Scan(&gen); err != nil {
-				return err
-			}
-			if gen != l.generation {
-				return errors.New("lease lost")
-			}
-			_, err := audit.Record(ctx, tx, e)
 			return err
-		})
-	}
-	// ledgerSet: the guard, then the ledger upsert.
-	ledgerSet := func(name, state, fingerprint string) error {
-		return t.store.Write(ctx, func(tx *storage.Tx) error {
-			var gen int64
-			if err := tx.QueryRowContext(ctx, `SELECT generation FROM sync_targets WHERE id = ?`, targetID).Scan(&gen); err != nil {
-				return err
+		}
+		target := values.Target{OrganizationID: t.writes.org, Project: project, Env: env}
+		for i := range k {
+			item := t.writes.keys[(run*k+i)%len(t.writes.keys)]
+			value := benchSecret(fmt.Sprintf("%s/%s/%d", e.id, item, run))
+			if _, _, _, err := values.SetValue(ctx, t.writer, t.rootKEK, t.principal, target, item, values.SetInput{Value: value},
+				write.Claim{IdentityID: t.principal.Identity.ID}, time.Now); err != nil {
+				return fmt.Errorf("%s: %w", item, err)
 			}
-			if gen != l.generation {
-				return errors.New("lease lost")
-			}
-			n := now()
-			var repaired any
-			if state == "written" || state == "tombstone" {
-				repaired = n
-			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation, last_error, repaired_at)
-				VALUES (?, ?, ?, ?, ?, NULL, ?)
-				ON CONFLICT (target_id, dest_name) DO UPDATE
-				  SET fingerprint = excluded.fingerprint, state = excluded.state, generation = excluded.generation,
-				      last_error = NULL, updated_at = ?, repaired_at = excluded.repaired_at`,
-				targetID, name, fingerprint, state, l.generation, repaired, n)
-			return err
-		})
-	}
-	writeEntries := make([]string, k)
-	for i, w := range writes {
-		writeEntries[i] = w.name + "@" + w.version
-	}
-	// 4. The guarded sync.push_attempted, one job.
-	if err := guarded(event("sync.push_attempted", jsvalue.Object{
-		{Key: "destination", Value: "vercel:" + targetID}, {Key: "items", Value: strings.Join(writeEntries, ",")},
-		{Key: "deletes", Value: ""}, {Key: "generation", Value: l.generation}, {Key: "forced", Value: false},
-	})); err != nil {
-		return 0, fmt.Errorf("sync.push_attempted: %w", err)
-	}
-	// 5. k jobs, one intent-write ledger entry each.
-	for _, w := range writes {
-		if err := ledgerSet(w.name, "intent-write", w.fingerprint); err != nil {
-			return 0, fmt.Errorf("intent-write: %w", err)
 		}
 	}
-	// 6. The provider call, outside any transaction.
-	select {
-	case <-time.After(providerDelay):
-	case <-ctx.Done():
-		return 0, ctx.Err()
-	}
-	// 7. k jobs, one written ledger entry each.
-	for _, w := range writes {
-		if err := ledgerSet(w.name, "written", w.fingerprint); err != nil {
-			return 0, fmt.Errorf("written: %w", err)
-		}
-	}
-	// 8. The guarded sync.push_result, one job.
-	if err := guarded(event("sync.push_result", jsvalue.Object{
-		{Key: "written", Value: k}, {Key: "deleted", Value: 0}, {Key: "failed", Value: 0}, {Key: "held", Value: 0},
-		{Key: "generation", Value: l.generation}, {Key: "result", Value: "ok"},
-	})); err != nil {
-		return 0, fmt.Errorf("sync.push_result: %w", err)
-	}
-	// 9. The result columns on the Target, one job (UPDATE sync_targets SET
-	// failure_count = 0, next_attempt_at = NULL, last_result = $2 WHERE id =
-	// $1 AND generation = $3).
-	if err := t.store.Write(ctx, func(tx *storage.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE sync_targets SET failure_count = 0, next_attempt_at = NULL, last_result = 'ok' WHERE id = ? AND generation = ?`, targetID, l.generation)
-		return err
-	}); err != nil {
-		return 0, fmt.Errorf("result: %w", err)
-	}
-	// 10. Two jobs: the lease released, the run's row deleted
-	// (reconcileTarget's finally).
-	if err := t.store.Write(ctx, func(tx *storage.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE sync_targets SET lease_expires_at = NULL WHERE id = ? AND generation = ?`, targetID, l.generation)
-		return err
-	}); err != nil {
-		return 0, fmt.Errorf("release: %w", err)
-	}
-	if err := t.store.Write(ctx, func(tx *storage.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM sync_runs WHERE target_id = ? AND generation = ?`, targetID, l.generation)
-		return err
-	}); err != nil {
-		return 0, fmt.Errorf("run row: %w", err)
-	}
-	return k, nil
+	return nil
 }
 
 // writeStages writes the run's per-stage timings of its disclosures

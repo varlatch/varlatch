@@ -94,7 +94,7 @@ func (o RunOptions) runBudget() time.Duration {
 
 // RunStats is one Target run's report (feature-parity decision 7): its
 // commits, its time queued for the writer and in its jobs, and its
-// duration.
+// duration; with OnRun set, also each commit and the WAL bytes written.
 type RunStats struct {
 	TargetID   string
 	Generation int64
@@ -102,6 +102,28 @@ type RunStats struct {
 	Queued     time.Duration
 	InJobs     time.Duration
 	Duration   time.Duration
+	// WALBytes is what the run's commits wrote to the WAL: for each, its
+	// share of its batch's bytes (storage.JobTiming), exact for a commit
+	// that had its batch to itself. SharedCommits counts those that did
+	// not. Only the g9a build's storage counts WAL bytes; elsewhere both
+	// are 0.
+	WALBytes      int64
+	SharedCommits int
+	// Jobs is each commit the run made, in order (only with OnRun set).
+	Jobs []JobStats
+}
+
+// JobStats is one commit of a run: its name (CONVERGE.md), its time
+// queued and in its job, and its batch's WAL bytes and jobs
+// (storage.JobTiming; 0 outside the g9a build).
+type JobStats struct {
+	Point     string
+	Queued    time.Duration
+	InJob     time.Duration
+	WALBytes  int64
+	BatchJobs int
+	// Committed is false for a job that wrote nothing: fenced, or failed.
+	Committed bool
 }
 
 // Crash is what a test's commit hook panics with to stop the engine as a
@@ -117,13 +139,31 @@ var errFenced = errors.New("syncs: the run was fenced")
 func (s *Service) commit(ctx context.Context, stats *RunStats, point string, fn func(ctx context.Context, q *query.Queries, tx *storage.Tx) error) error {
 	began := time.Now()
 	var entered time.Time
+	// A run whose report is asked for gets each job's timing and WAL bytes
+	// (storage.WithTiming: the g9a build's storage reports them).
+	report := stats != nil && s.OnRun != nil
+	var timing storage.JobTiming
+	if report {
+		ctx = storage.WithTiming(ctx, func(t storage.JobTiming) { timing = t })
+	}
 	err := s.Writer.Job(ctx, nil, func(ctx context.Context, tx *storage.Tx) error {
 		entered = time.Now()
 		return fn(ctx, query.New(tx), tx)
 	})
 	if stats != nil && !entered.IsZero() {
-		stats.Queued += entered.Sub(began)
-		stats.InJobs += time.Since(entered)
+		queued, inJob := entered.Sub(began), time.Since(entered)
+		stats.Queued += queued
+		stats.InJobs += inJob
+		if report {
+			job := JobStats{Point: point, Queued: queued, InJob: inJob, WALBytes: timing.WALBytes, BatchJobs: timing.BatchJobs, Committed: err == nil}
+			if job.Committed && timing.BatchJobs > 0 {
+				stats.WALBytes += timing.WALBytes / int64(timing.BatchJobs)
+				if timing.BatchJobs > 1 {
+					stats.SharedCommits++
+				}
+			}
+			stats.Jobs = append(stats.Jobs, job)
+		}
 	}
 	if err != nil {
 		return err
@@ -529,7 +569,7 @@ func (r *run) finish(ctx context.Context, began time.Time) {
 		r.s.OnRun(r.stats)
 	}
 	r.s.logger().Debug("sync run", "target", r.stats.TargetID, "generation", r.stats.Generation, "commits", r.stats.Commits,
-		"queued", r.stats.Queued, "inJobs", r.stats.InJobs, "duration", r.stats.Duration)
+		"queued", r.stats.Queued, "inJobs", r.stats.InJobs, "duration", r.stats.Duration, "walBytes", r.stats.WALBytes)
 }
 
 func (r *run) now() int64 { return r.s.now().UnixMicro() }
