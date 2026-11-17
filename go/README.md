@@ -80,7 +80,9 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   - A Compose file the Go reader does not read is unreadable, so every
     verdict is unknown (the conservative reading): any directive but
     `%YAML 1.2` (another version, `%TAG`, a reserved one, trailing text,
-    or no `---` after it), a byte order mark past the first, the YAML 1.1 types (`!!binary`, `!!timestamp`,
+    or no `---` after it), a byte order mark past the first, a carriage return
+    outside a CRLF pair (which the `yaml` package refuses too, except inside
+    a quoted value), the YAML 1.1 types (`!!binary`, `!!timestamp`,
     `!!set`, `!!omap`, `!!pairs`), a mapping or sequence as a key, and an
     alias inside its own anchor (on which TypeScript overflows its stack
     and `inspectUsage` throws: defect 6, below). The vectors record each
