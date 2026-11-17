@@ -10,6 +10,7 @@ import {
   agentRunOf,
   deleteCredential,
   findRepoRoot,
+  homeDirectory,
   listCredentials,
   loadCredential,
   loadLocalState,
@@ -1579,12 +1580,11 @@ async function main(): Promise<void> {
         const mode = opts.booleans.has("--check") ? "check" : opts.booleans.has("--remove") ? "remove" : "install";
         const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
         const { AgentsInstallError, describeInstall, runInstall } = await import("./agents/install.js");
-        const { homedir } = await import("node:os");
         let result: ReturnType<typeof runInstall>;
         try {
           result = runInstall({
             scope,
-            root: scope === "user" ? homedir() : (findRepoRoot(process.cwd()) ?? process.cwd()),
+            root: scope === "user" ? homeDirectory() : (findRepoRoot(process.cwd()) ?? process.cwd()),
             version: EMBEDDED_RELEASE.version,
             agents: opts.lists.get("--agent") ?? [],
             mode,

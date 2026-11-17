@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir, userInfo } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ContextError,
   agentRunOf,
+  credentialsPath,
   defaultServer,
   deleteCredential,
   findRepoRoot,
+  homeDirectory,
   listCredentials,
   loadCredential,
   loadToken,
+  pendingSignInsPath,
   rememberServerIfUnset,
   resolveContext,
   resolveServer,
@@ -293,5 +296,44 @@ describe("the remembered default server (ADR-0058 Decision 1)", () => {
     const serverless = repo('organization = "acme"\nproject = "api"\n');
     expect(resolveServer({ cwd: serverless, env })).toBeNull();
     expect(resolveServer({ cwd: serverless, env, stored: ["https://only.example"] })).toBeNull();
+  });
+});
+
+describe("an empty configuration or home variable counts as unset", () => {
+  /** Runs fn with HOME (USERPROFILE on Windows) set but empty. */
+  function withEmptyHome<T>(fn: () => T): T {
+    const name = process.platform === "win32" ? "USERPROFILE" : "HOME";
+    const saved = process.env[name];
+    process.env[name] = "";
+    try {
+      return fn();
+    } finally {
+      if (saved === undefined) delete process.env[name];
+      else process.env[name] = saved;
+    }
+  }
+
+  it("an empty VARLATCH_CONFIG_DIR is the default directory, never the working directory", () => {
+    const xdg = mkdtempSync(join(tmpdir(), "varlatch-ctx-xdg-"));
+    const env = { VARLATCH_CONFIG_DIR: "", XDG_CONFIG_HOME: xdg };
+    expect(credentialsPath(env)).toBe(join(xdg, "varlatch", "credentials.json"));
+    expect(settingsPath(env)).toBe(join(xdg, "varlatch", "settings.json"));
+    expect(pendingSignInsPath(env)).toBe(join(xdg, "varlatch", "pending-sign-ins.json"));
+  });
+
+  it("an empty home variable falls back to the user's home directory", () => {
+    const home = userInfo().homedir;
+    const paths = withEmptyHome(() => [credentialsPath({}), settingsPath({ VARLATCH_CONFIG_DIR: "" }), pendingSignInsPath({}), homeDirectory()]);
+    expect(paths).toEqual([
+      join(home, ".config", "varlatch", "credentials.json"),
+      join(home, ".config", "varlatch", "settings.json"),
+      join(home, ".config", "varlatch", "pending-sign-ins.json"),
+      home,
+    ]);
+    for (const path of paths) expect(isAbsolute(path)).toBe(true);
+  });
+
+  it("a set home variable still wins", () => {
+    expect(homeDirectory()).toBe(homedir());
   });
 });
