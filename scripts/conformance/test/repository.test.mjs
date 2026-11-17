@@ -297,7 +297,8 @@ test("the Go tests a none replacement names exist, by their package", () => {
   const testStep = workflow.slice(workflow.indexOf("      - name: Test\n"));
   const testRun = testStep.slice(0, testStep.indexOf("\n      - ", 1));
   assert.match(testRun, /working-directory: go\n/);
-  assert.match(testRun, /go test \.\/\.\.\.\s*$/m);
+  // -count=1 only (no cached results); -run, -list or -tags would narrow it.
+  assert.match(testRun, /go test (-count=1 )?\.\/\.\.\.[ \t]*$/m);
   // The S3 step runs the S3 tests named, in their package, without skipping.
   const s3 = workflow.slice(workflow.indexOf("- name: G13, the S3 client"));
   const run = s3.slice(0, s3.indexOf("\n      - ", 1));
