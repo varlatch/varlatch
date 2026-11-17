@@ -249,7 +249,6 @@ DELETE FROM sync_runs WHERE deadline <= ?;
 
 -- name: DueTargets :many
 -- runSyncOnce's candidates: ids only, every fact is read at the lease.
--- A Target on a GitHub App Connection waits for step 4.10's minting.
 SELECT t.id FROM sync_targets t
 JOIN organizations o ON o.id = t.organization_id
 JOIN platform_connections c ON c.id = t.connection_id
@@ -257,7 +256,6 @@ WHERE t.revoked_at IS NULL AND t.state = 'active' AND o.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = t.organization_id AND f.lifted_at IS NULL)
   AND (t.next_attempt_at IS NULL OR t.next_attempt_at <= sqlc.arg(now))
   AND (t.needs_sync = 1 OR t.last_repair_at IS NULL OR t.last_repair_at < sqlc.arg(repair_before))
-  AND c.credential_kind <> 'github-app'
 ORDER BY t.created_at, t.id;
 
 -- name: LeaseTarget :one
@@ -276,7 +274,8 @@ INSERT INTO sync_runs (target_id, generation, started_at, deadline) VALUES (?, ?
 
 -- name: RunConnection :one
 -- reconcileTarget: the Connection and the Organization's key, after the lease.
-SELECT c.platform, c.base_identity, c.credential_envelope, c.version, c.revoked_at, c.credential_kind, o.wrapped_org_kek
+SELECT c.platform, c.base_identity, c.credential_envelope, c.version, c.revoked_at, c.credential_kind, c.github_app_id, c.github_installation_id,
+       o.wrapped_org_kek
 FROM platform_connections c
 JOIN organizations o ON o.id = sqlc.arg(organization_id) AND o.deleted_at IS NULL
 WHERE c.id = sqlc.arg(id);

@@ -24,6 +24,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
+	"github.com/varlatch/varlatch/go/server/githubapps"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/outbound"
@@ -524,9 +525,20 @@ func (r *run) attempt(ctx context.Context) {
 	}
 }
 
+// appTokenError is GitHubAppTokenError: Varlatch could not get a token for
+// an App Connection's push, and the run fails with GitHub's reason, as
+// Varlatch reads it.
+type appTokenError struct{ message string }
+
+func (e *appTokenError) Error() string { return e.message }
+
 // errorResult is `${err.name}: ${err.message}`, as the TypeScript engine
 // names what it caught.
 func errorResult(err error) string {
+	var at *appTokenError
+	if errors.As(err, &at) {
+		return "GitHub App: " + at.message
+	}
 	var ae *vsync.AdapterError
 	if errors.As(err, &ae) {
 		return "AdapterError: " + ae.Message
@@ -821,10 +833,19 @@ func (r *run) httpClient() *http.Client {
 }
 
 // request is adapterRequest: the base identity, the destination, the
-// credential (a stored token, opened once per run; its expiry noted when
-// the platform reports it), and, when gated, the send check before every
-// write, delete or redeploy request.
+// credential (credentialOf: a stored token, opened once per run, its expiry
+// noted when the platform reports it; or an App Connection's token, minted
+// once per run, its expiry never recorded), and, when gated, the send
+// check before every write, delete or redeploy request.
 func (r *run) request(ctx context.Context, destination vsync.Fields, gated bool) (*vsync.Request, error) {
+	app := r.conn.CredentialKind == "github-app"
+	if r.credential == nil && app {
+		token, err := r.mint(ctx, destination)
+		if err != nil {
+			return nil, err
+		}
+		r.credential = &token
+	}
 	if r.credential == nil {
 		if !r.conn.CredentialEnvelope.Valid {
 			return nil, domainerr.New("INTERNAL", "The Connection holds no credential")
@@ -839,10 +860,38 @@ func (r *run) request(ctx context.Context, destination vsync.Fields, gated bool)
 		BaseIdentity: r.conn.BaseIdentity, Destination: destination, Credential: *r.credential, CredentialKind: vsync.Token,
 		Client: r.httpClient(), OnCredentialExpiry: func(at string) { r.observedExpiry = at },
 	}
+	if app {
+		req.CredentialKind, req.OnCredentialExpiry = vsync.GitHubApp, nil
+	}
 	if gated {
 		req.ShouldAbort = r.sendCheck
 	}
 	return req, nil
+}
+
+// mint is credentialOf's App part (ADR-0047 Decision 3): an installation
+// token for this run's pushes, narrowed to the Target's repository (and
+// environment) with write on its secrets, through the run's own client (a
+// refusal by the outbound policy is the run's refusal). Never stored.
+func (r *run) mint(ctx context.Context, destination vsync.Fields) (string, error) {
+	reader := r.s.store().Reader()
+	kek, err := r.s.orgKEK(ctx, reader, r.target.OrganizationID)
+	if err != nil {
+		return "", err
+	}
+	cred, err := githubapps.CredentialFrom(ctx, reader, kek, r.target.OrganizationID, r.conn.GithubAppID.String,
+		r.conn.GithubInstallationID.Int64, r.conn.BaseIdentity)
+	if err != nil {
+		return "", err
+	}
+	if cred == nil || !r.conn.GithubAppID.Valid || !r.conn.GithubInstallationID.Valid {
+		return "", &appTokenError{githubapps.AppRemoved.Message}
+	}
+	token, check := githubapps.Mint(ctx, r.httpClient(), *cred, githubapps.UsePush, destination, r.s.now())
+	if check != nil {
+		return "", &appTokenError{check.Message}
+	}
+	return token, nil
 }
 
 // sendCheck is the send check (SEND_CHECK_SQL): the generation still

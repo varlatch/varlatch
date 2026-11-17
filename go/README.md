@@ -838,8 +838,6 @@ varlatchd runs it every 30 seconds when `sync = on`.
   writer and in jobs, and its duration (`Service.OnRun`, a debug log
   line).
 - **Where Go differs** (CONVERGE.md):
-  - a Target on a GitHub App Connection waits for 4.10's minting
-    (`needs_sync` kept, nothing recorded);
   - the ledger is read in last-write order, which TypeScript leaves
     unspecified.
 - **Two TypeScript defects, fixed in Go only** (feature-parity.md; the
@@ -891,7 +889,10 @@ varlatchd runs it every 30 seconds when `sync = on`.
   - a refusal by the outbound policy is not a failure;
   - a run out of budget yields;
   - a freeze mid-run yields, and nothing is leased while frozen;
-  - App Connection Targets wait;
+  - App Connection Targets push with a token minted once per run
+    (narrowed to the destination, never stored, its expiry never
+    recorded); a removed App or a refused mint fails the run as
+    `GitHub App: <reason>`;
   - the trigger scan skips no event (defect 8).
 
 ### The audit export's configuration (step 4.11a)
