@@ -58,7 +58,7 @@ import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../s
 import type { AppCtx } from "../src/domain/ctx.js";
 import { accessCountsSettled } from "../src/domain/securityreport.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { resealWith } from "./go-fixture-kit.js";
+import { onHourClock, resealWith } from "./go-fixture-kit.js";
 
 // The unwrapped app, as go-parity.test.ts uses it: some of the table's
 // requests are outside the OpenAPI document on purpose (a body with both
@@ -477,8 +477,15 @@ async function loadRows(rows: Record<string, Row[]>): Promise<AppCtx["db"] & { c
   return db;
 }
 
-/** Run the table against a database, recording each answer and what it wrote. */
-async function record(ctx: AppCtx, tokens: Record<string, string>, cases: RequestCase[], ids: { orgId: string; projectId: string }): Promise<{ requests: Recorded[]; counters: Row[] }> {
+/**
+ * Run the table against a database, recording each answer and what it
+ * wrote, on the hour clock (onHourClock: its report counts in one hour).
+ */
+function record(ctx: AppCtx, tokens: Record<string, string>, cases: RequestCase[], ids: { orgId: string; projectId: string }): Promise<{ requests: Recorded[]; counters: Row[] }> {
+  return onHourClock(() => recordOnce(ctx, tokens, cases, ids));
+}
+
+async function recordOnce(ctx: AppCtx, tokens: Record<string, string>, cases: RequestCase[], ids: { orgId: string; projectId: string }): Promise<{ requests: Recorded[]; counters: Row[] }> {
   const app = buildApp(ctx);
   const out: Recorded[] = [];
   const last = async (sql: string) => Number(((await ctx.db.query(sql)).rows[0] as { n: string | number | null }).n ?? 0);
