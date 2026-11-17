@@ -584,6 +584,8 @@ export async function resealWith(
   plaintextOf: (version: Row) => string,
   /** A webhook's signing secret, when the rows hold webhooks to seal again. */
   secretOf?: (webhook: Row) => string,
+  /** Platform Connection credentials and GitHub App keys, when the rows hold them to seal again. */
+  more: { credentialOf?: (connection: Row) => string; appKeyOf?: (app: Row) => string } = {},
 ): Promise<void> {
   const crypto = await loadHierarchy(ref);
   for (const inst of rows.installation!) inst.kek_canary = crypto.createCanary(rootKek, inst.id as string) as Envelope;
@@ -599,6 +601,22 @@ export async function resealWith(
       const orgKek = kekOf.get(w.organization_id as string);
       if (!orgKek) throw new Error(`webhook ${String(w.id)}: its Organization has no KEK to seal it under`);
       w.secret_envelope = crypto.encryptWebhookSecret(orgKek, w.organization_id as string, w.id as string, secretOf(w)) as Envelope;
+    }
+  }
+  if (more.credentialOf) {
+    for (const c of rows.platform_connections ?? []) {
+      if (c.credential_envelope === null) continue;
+      const orgKek = kekOf.get(c.organization_id as string);
+      if (!orgKek) throw new Error(`connection ${String(c.id)}: its Organization has no KEK to seal it under`);
+      c.credential_envelope = crypto.encryptPlatformCredential(orgKek, c.organization_id as string, c.id as string, more.credentialOf(c)) as Envelope;
+    }
+  }
+  if (more.appKeyOf) {
+    for (const a of rows.github_apps ?? []) {
+      if (a.key_envelope === null) continue;
+      const orgKek = kekOf.get(a.organization_id as string);
+      if (!orgKek) throw new Error(`GitHub App ${String(a.id)}: its Organization has no KEK to seal it under`);
+      a.key_envelope = crypto.encryptGitHubAppKey(orgKek, a.organization_id as string, a.id as string, more.appKeyOf(a)) as Envelope;
     }
   }
   const envOf = new Map((rows.environments ?? []).map((e) => [e.id, e]));

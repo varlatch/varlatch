@@ -317,15 +317,13 @@
       "release": "v0.21.0",
       "envelopeVersion": 1,
       "direction": "ts-to-go",
-      "level": "envelope",
-      "fixtureKey": "connections",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestTypeScriptFixtures"
+          "go": "server/syncs/parity_test.go",
+          "test": "TestTypeScriptFixtures/connections-v0.21.0.json"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "platform-credential",
@@ -342,15 +340,13 @@
       "release": "v0.22.0",
       "envelopeVersion": 1,
       "direction": "ts-to-go",
-      "level": "envelope",
-      "fixtureKey": "connections",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestTypeScriptFixtures"
+          "go": "server/syncs/parity_test.go",
+          "test": "TestTypeScriptFixtures/connections-v0.22.0.json"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "platform-credential",
@@ -358,18 +354,21 @@
       "release": "v0.22.0",
       "envelopeVersion": 1,
       "direction": "go-to-ts",
-      "level": "envelope",
+      "level": "database",
       "tests": [
         {
-          "go": "lib/envelope/envelope_test.go",
-          "test": "TestGoFixtures"
+          "go": "server/syncs/parity_test.go",
+          "test": "TestGoSealedFixture"
+        },
+        {
+          "vitest": "services/varlatchd/test/go-connections-fixture.test.ts",
+          "test": "Platform Connection credentials the Go server sealed open here with the same exchanges"
         },
         {
           "ci": ".github/workflows/go.yml",
-          "run": "node go/lib/envelope/testdata/tsfixtures.mjs verify \"$fresh\""
+          "run": "VARLATCH_GO_SEALED_CONNECTIONS=\"$RUNNER_TEMP/go-sealed-connections.json\" pnpm --filter @varlatch/varlatchd exec vitest run test/go-connections-fixture.test.ts"
         }
-      ],
-      "databaseLevelWith": "ADR-0059 step 4, with the feature that stores it"
+      ]
     },
     {
       "purpose": "github-app-key",

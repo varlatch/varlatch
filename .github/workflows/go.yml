@@ -501,6 +501,19 @@ jobs:
         run: |
           (cd go && go test -count=1 -run '^TestGoSealedFixture$' ./server/webhooks -args -write-go-sealed="$RUNNER_TEMP/go-sealed-webhooks.json")
           VARLATCH_GO_SEALED_WEBHOOKS="$RUNNER_TEMP/go-sealed-webhooks.json" pnpm --filter @varlatch/varlatchd exec vitest run test/go-webhooks-fixture.test.ts
+      # G3 for Platform Connection credentials (step 4.9b), the reverse
+      # direction: the TypeScript server's own checks and listings send the
+      # credentials this commit's Go code sealed (with the canary and every
+      # Organization KEK) and must give the answers and the requests to the
+      # platforms the fixture records. The same run checks that the
+      # committed fixtures (connections-v0.22.0.json, connections-v0.21.0.json)
+      # are still its own.
+      - name: The TypeScript server sends Platform Connection credentials Go sealed
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go test -count=1 -run '^TestGoSealedFixture$' ./server/syncs -args -write-go-sealed="$RUNNER_TEMP/go-sealed-connections.json")
+          VARLATCH_GO_SEALED_CONNECTIONS="$RUNNER_TEMP/go-sealed-connections.json" pnpm --filter @varlatch/varlatchd exec vitest run test/go-connections-fixture.test.ts
       # G3 for audit export credentials (step 4.11a), the reverse
       # direction: the TypeScript server's own probe sends the keys this
       # commit's Go code sealed (with every Organization KEK) and must give

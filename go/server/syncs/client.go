@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package syncs
+
+import "net/http"
+
+// UseClient makes s send the platforms' requests through c instead of the
+// outbound policy's clients: tests, with fake platforms. Base identities
+// are still checked by the policy.
+func UseClient(s *Service, c *http.Client) { s.client = c }
