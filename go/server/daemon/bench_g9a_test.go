@@ -20,6 +20,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/bench/g9a"
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/auditexport/s3fake"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/stages"
 )
@@ -54,13 +55,19 @@ func (l *settingsLog) last(t *testing.T) storage.Settings {
 // stops it with POST /run/stop. It returns the output directory.
 func benchRun(t *testing.T, p g9a.Plan, fn func(base string, manifest []g9a.ManifestEntry)) string {
 	t.Helper()
+	return benchRunTo(t, p, benchDestination{}, fn)
+}
+
+// benchRunTo is benchRun with the backups uploading to dest.
+func benchRunTo(t *testing.T, p g9a.Plan, dest benchDestination, fn func(base string, manifest []g9a.ManifestEntry)) string {
+	t.Helper()
 	data, out := t.TempDir(), t.TempDir()
 	coolify, err := startBenchCoolify(benchProjects * benchEnvsPer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(coolify.close)
-	conf, err := benchInstallation(data, out, "127.0.0.1:0", coolify.Port())
+	conf, err := benchInstallation(data, out, "127.0.0.1:0", coolify.Port(), dest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,6 +372,85 @@ func TestBenchRun(t *testing.T) {
 	} {
 		if got := count(c.q); got != c.want {
 			t.Errorf("%s: %d, want %d", c.q, got, c.want)
+		}
+	}
+}
+
+// ADR-0059 amendment 6: G9's backups are the shipped backup path, writing
+// to an S3-compatible server on the same host. With -backup-destinations,
+// each of the run's backups uploads its archive there (backup_end names
+// the destination), and a failed upload is a failed backup, which the
+// report fails. Against s3fake: once with the server up, once down.
+func TestBenchBackupUploads(t *testing.T) {
+	for _, down := range []bool{false, true} {
+		t.Run(map[bool]string{false: "uploaded", true: "upload-fails"}[down], func(t *testing.T) {
+			srv := s3fake.New()
+			t.Cleanup(srv.Close)
+			srv.SetDown(down)
+			dir := t.TempDir()
+			creds := filepath.Join(dir, "credentials.json")
+			if err := os.WriteFile(creds, []byte(`{"accessKeyId":"`+s3fake.KeyGood+`","secretAccessKey":"fixture-secret"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			dests := filepath.Join(dir, "destinations.json")
+			if err := os.WriteFile(dests, []byte(`{"local":{"endpoint":"`+srv.URL+`","region":"us-east-1","bucket":"`+s3fake.BucketLocked+`","prefix":"g9a/","writeCredentialsFile":"`+creds+`"}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			p := quickPlan()
+			p.Phases = []g9a.Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 1, Seconds: 3}}
+			p.Backups = []g9a.Backup{{Phase: "p", AtSeconds: 1}}
+			p.ConvergeEverySeconds = 600
+			p.ProviderDelayMs = 5
+			out := benchRunTo(t, p, benchDestination{File: dests, Name: "local"}, func(base string, _ []g9a.ManifestEntry) {
+				resp, err := http.Post(base+"/run/start", "", nil)
+				if err != nil || resp.StatusCode != 200 {
+					t.Fatalf("/run/start: %v %v", err, resp)
+				}
+				resp.Body.Close()
+				time.Sleep(5 * time.Second)
+			})
+			conf, err := os.ReadFile(filepath.Join(out, g9a.FileConfig))
+			if err != nil || !strings.Contains(string(conf), "backup_destinations_file = "+dests+"\nbackup_destination = local\n") {
+				t.Fatalf("%s: %v\n%s", g9a.FileConfig, err, conf)
+			}
+			events, err := g9a.ReadEvents(filepath.Join(out, g9a.FileEvents))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ends := 0
+			for _, e := range events {
+				if e.Ev != g9a.EvBackupEnd {
+					continue
+				}
+				ends++
+				if down {
+					if e.Err == "" || e.UploadedTo != "" {
+						t.Errorf("backup with the destination down: %+v", e)
+					}
+				} else if e.Err != "" || e.UploadedTo != "local" || e.ArchiveBytes == 0 {
+					t.Errorf("backup: %+v", e)
+				}
+			}
+			if ends != 1 {
+				t.Fatalf("%d backup_end events", ends)
+			}
+			keys := srv.Keys(s3fake.BucketLocked)
+			if down != (len(keys) == 0) || !down && (len(keys) != 1 || !strings.HasPrefix(keys[0], "g9a/") || !strings.HasSuffix(keys[0], ".vltbak")) {
+				t.Fatalf("objects in the bucket: %v", keys)
+			}
+		})
+	}
+}
+
+// The two destination flags go together.
+func TestBenchDestinationFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"-plan", "p", "-data", "d", "-out", "o", "-backup-destinations", "/x.json"},
+		{"-plan", "p", "-data", "d", "-out", "o", "-backup-destination", "local"},
+	} {
+		var stderr strings.Builder
+		if code := runBench(args, &stderr); code != 64 || !strings.Contains(stderr.String(), "go together") {
+			t.Errorf("%v: exit %d: %s", args, code, stderr.String())
 		}
 	}
 }

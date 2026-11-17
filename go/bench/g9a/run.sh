@@ -29,6 +29,12 @@
 #   G9A_SCOPE      a command the server runs under for G9's memory limits,
 #                  as root on the benchmark host:
 #                  systemd-run --scope --quiet -p MemoryMax=1G -p MemorySwapMax=0
+#   G9A_BACKUP_DESTINATIONS, G9A_BACKUP_DESTINATION
+#                  a destinations file (absolute) and the name of one of
+#                  its destinations: the plan's backups upload there (the
+#                  shipped backup path, ADR-0059 amendment 6), and a failed
+#                  upload fails the backup; unset, archives stay in the
+#                  data directory
 #   K6             a k6 binary (default: k6 on PATH, else the pinned image
 #                  in Docker, which needs host networking)
 #
@@ -65,8 +71,12 @@ else
 fi
 
 # The server: seeds, probes the idle disk, then waits for the load.
+set -- -plan "$OUT/plan.in.json" -data "$DATA" -out "$OUT" -listen "$LISTEN" -profile "${G9A_PROFILE:-0}"
+if [ -n "${G9A_BACKUP_DESTINATIONS:-}" ]; then
+  set -- "$@" -backup-destinations "$G9A_BACKUP_DESTINATIONS" -backup-destination "${G9A_BACKUP_DESTINATION:-}"
+fi
 # shellcheck disable=SC2086 # G9A_SCOPE is a command line
-${G9A_SCOPE:-} "$VARLATCHD" g9a -plan "$OUT/plan.in.json" -data "$DATA" -out "$OUT" -listen "$LISTEN" -profile "${G9A_PROFILE:-0}" 2> "$OUT/server.log" &
+${G9A_SCOPE:-} "$VARLATCHD" g9a "$@" 2> "$OUT/server.log" &
 SERVER=$!
 # shellcheck disable=SC2329 # called by the trap
 stop_server() { kill "$SERVER" 2>/dev/null || true; }

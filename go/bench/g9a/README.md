@@ -146,6 +146,17 @@ that class of disk only. Runs on shared infrastructure need the owner's
 approval first, with the load agreed (the profile above), as for every
 load test.
 
+G9 (ADR-0059 amendment 6) runs the backups through the shipped backup
+path to an S3-compatible server on the same host. `G9A_BACKUP_DESTINATIONS`
+(a destinations file, absolute, in the `backup_destinations_file` format)
+and `G9A_BACKUP_DESTINATION` (one of its names) make run.sh pass
+`-backup-destinations` and `-backup-destination` to `varlatchd g9a`, which
+writes them into the run's `varlatchd.conf`. Each backup then uploads its
+archive, its window (`backup_start` to `backup_end`) includes the upload,
+`backup_end` names the destination (`uploadedTo`), and a failed upload is
+a failed backup, which fails the run. Without them the archives stay in
+the data directory, as in CI's smoke.
+
 ## What it records
 
 - `varlatchd.conf` and `access.log`: the configuration the run served

@@ -60,9 +60,12 @@ type Event struct {
 	Note    string `json:"note,omitempty"`
 	WaitUs  int64  `json:"waitUs,omitempty"`
 
-	// backup_end: the sealing and check's duration, and the archive's size
-	SealUs       int64 `json:"sealUs,omitempty"`
-	ArchiveBytes int64 `json:"archiveBytes,omitempty"`
+	// backup_end: the sealing and check's duration, the archive's size,
+	// and the destination it was uploaded to (none configured: empty).
+	// The backup's window, backup_start to backup_end, includes the upload.
+	SealUs       int64  `json:"sealUs,omitempty"`
+	ArchiveBytes int64  `json:"archiveBytes,omitempty"`
+	UploadedTo   string `json:"uploadedTo,omitempty"`
 
 	// backup_end, converge_end
 	Pages    int    `json:"pages,omitempty"`
