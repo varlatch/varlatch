@@ -153,7 +153,9 @@ func replayWorker(t *testing.T, f workerFixture, wall func() time.Time) {
 	if err := paritytest.Prepare(path, f.Rows, workerTables); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	// Every audit event the replay writes, the steps' own (record) as the
+	// worker's, is stamped on the recording's clock.
+	ctx := audit.WithClock(context.Background(), clock)
 	store, err := storage.Open(ctx, storage.Options{Path: path})
 	if err != nil {
 		t.Fatal(err)
@@ -309,6 +311,43 @@ func replayWorker(t *testing.T, f workerFixture, wall func() time.Time) {
 		if g, w := paritytest.Canonical(normalized), paritytest.Canonical(plainJSON(t, f.Results[i])); g != w {
 			t.Fatalf("step %d, %s:\n got %s\nwant %s", i, s.Name, g, w)
 		}
+	}
+	checkEventTimes(t, store, f, clock())
+}
+
+// checkEventTimes checks the audit events' raw times, which the
+// comparison normalizes away: in event order they never go back, from the
+// fixture's own events through every one the replay wrote, and none is
+// after end, the replay clock's last reading. An event stamped by another
+// clock (the real one, a date after the recording) breaks the order.
+func checkEventTimes(t *testing.T, store *storage.DB, f workerFixture, end time.Time) {
+	t.Helper()
+	rows, err := store.Reader().Query(`SELECT event_order, event_type, occurred_at FROM audit_events ORDER BY event_order`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var last int64
+	n := 0
+	for rows.Next() {
+		var order, at int64
+		var typ string
+		if err := rows.Scan(&order, &typ, &at); err != nil {
+			t.Fatal(err)
+		}
+		if at < last {
+			t.Errorf("event %d (%s) at %s, before the one before it (%s)", order, typ,
+				time.UnixMicro(at).UTC().Format(time.RFC3339Nano), time.UnixMicro(last).UTC().Format(time.RFC3339Nano))
+		}
+		if at > end.UnixMicro() {
+			t.Errorf("event %d (%s) at %s, after the replay's clock ended (%s)", order, typ,
+				time.UnixMicro(at).UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
+		}
+		last = max(last, at)
+		n++
+	}
+	if n <= len(f.Rows["audit_events"]) {
+		t.Fatalf("%d audit events, the fixture's %d: the replay wrote none", n, len(f.Rows["audit_events"]))
 	}
 }
 
