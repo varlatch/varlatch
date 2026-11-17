@@ -843,15 +843,22 @@ jobs:
   # succeeded or was skipped because no Go path changed.
   go-ok:
     name: go-ok
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    # On a draft it runs too, and fails: every other job is skipped then, and
+    # a skipped required check would read as passed.
+    if: always()
     needs: [changes, go, go-race, go-platforms, go-binary, openapi, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Every Go job passed or was skipped
         env:
+          DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
           RESULTS: ${{ toJSON(needs.*.result) }}
         run: |
+          if [ "$DRAFT" = true ]; then
+            echo "::error::A draft runs no CI, so there is no verdict. Mark it ready for review (pnpm ready) to run it."
+            exit 1
+          fi
           echo "$RESULTS"
           if echo "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
             echo "::error::A Go job failed or was cancelled."

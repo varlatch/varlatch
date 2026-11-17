@@ -641,15 +641,23 @@ jobs:
   # out (see above).
   ci-ok:
     name: ci-ok
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    # On a draft it runs too, and fails: every other job is skipped then, and
+    # a skipped required check would read as passed.
+    if: always()
     needs: [hosted-runner, changes, test, python-accessor, secret-scan, installers, docker, multi-arch, contributor-setup, e2e, e2e-cli, backup-recovery]
-    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
+    # A draft has no probe answer; its one-step verdict runs on a hosted runner.
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || (github.event.pull_request.draft && 'ubuntu-latest') || 'varlatch-ci' }}
     timeout-minutes: 5
     steps:
       - name: Every job passed or was skipped
         env:
+          DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
           RESULTS: "changes=${{ needs.changes.result }} test=${{ needs.test.result }} python-accessor=${{ needs.python-accessor.result }} secret-scan=${{ needs.secret-scan.result }} installers=${{ needs.installers.result }} docker=${{ needs.docker.result }} multi-arch=${{ needs.multi-arch.result }} contributor-setup=${{ needs.contributor-setup.result }} e2e=${{ needs.e2e.result }} e2e-cli=${{ needs.e2e-cli.result }} backup-recovery=${{ needs.backup-recovery.result }}"
         run: |
+          if [ "$DRAFT" = true ]; then
+            echo "::error::A draft runs no CI, so there is no verdict. Mark it ready for review (pnpm ready) to run it."
+            exit 1
+          fi
           echo "$RESULTS" | tr ' ' '\n'
           if echo "$RESULTS" | grep -qE '=(failure|cancelled)( |$)'; then
             echo "::error::A CI job failed or was cancelled."
