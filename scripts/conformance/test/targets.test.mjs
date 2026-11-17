@@ -21,13 +21,15 @@ test("a target's capabilities come from capabilities.json alone, and every adapt
 
 test("an adapter that lacks a listed capability's operation is refused", () => {
   const caps = file["ts-source"];
-  assert.deepEqual(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack", "webhookReceiver", "objectStore", "hostAdmin", "oidcIssuer"), caps), []);
+  assert.deepEqual(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack", "webhookReceiver", "objectStore", "hostAdmin", "oidcIssuer", "platformFakes"), caps), []);
+  // platform-fakes listed, the adapter without platformFakes.
+  assert.match(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack", "webhookReceiver", "objectStore", "hostAdmin", "oidcIssuer"), caps).join("\n"), /platform-fakes, but its adapter has no platformFakes operation/);
   // maintenance listed, the adapter without its operation.
   assert.match(adapterProblems("ts-source", adapter("probe", "serveCli", "tsStack", "webhookReceiver", "objectStore", "hostAdmin", "oidcIssuer"), caps).join("\n"), /gives target ts-source maintenance, but its adapter has no maintenance operation/);
   // webhook-receiver listed, the adapter without webhookReceiver.
   assert.match(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack"), caps).join("\n"), /webhook-receiver, but its adapter has no webhookReceiver operation/);
   // go-server listed for a target whose adapter has no goServer.
-  assert.match(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack", "webhookReceiver", "objectStore", "hostAdmin", "oidcIssuer"), [...caps, "go-server"]).join("\n"), /go-server, but its adapter has no goServer operation/);
+  assert.match(adapterProblems("ts-source", adapter("probe", "maintenance", "serveCli", "tsStack", "webhookReceiver", "objectStore", "hostAdmin", "oidcIssuer", "platformFakes"), [...caps, "go-server"]).join("\n"), /go-server, but its adapter has no goServer operation/);
   assert.match(adapterProblems("go-binary", adapter("probe", "goServer"), ["no-such-capability"]).join("\n"), /unknown capability no-such-capability/);
 });
 

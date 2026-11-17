@@ -66,6 +66,7 @@ export const PLAN = [
   { suite: "deletion", args: (ctx) => [ctx.origin, ctx.token] },
   // Audit webhook delivery against the target's local receiver.
   { suite: "webhooks", args: (ctx) => [ctx.origin, ctx.token] },
+  { suite: "sync", args: (ctx) => [ctx.origin, ctx.token] },
   // The audit export to object storage, against the target's local S3 server.
   { suite: "audit-export", args: (ctx) => [ctx.origin, ctx.token] },
   // OIDC workload identity, against the target's local issuer.

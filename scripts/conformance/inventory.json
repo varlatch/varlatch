@@ -856,6 +856,33 @@
         "revokeOidcBinding",
         "exchangeOidcToken"
       ]
+    },
+    "sync": {
+      "title": "Sync Targets delivered by the converge engine to fake GitHub, Coolify and Convex services: a push, the redeploy debt, credential expiry, a partial failure, pushSyncTarget, a deletion, the pause fence, drift put back by a repair pass, the repair cycle closing",
+      "script": "scripts/conformance/suites/sync.mjs",
+      "needs": [
+        "platform-fakes",
+        "probe:sync-repair-due"
+      ],
+      "operations": [
+        "admin-recover",
+        "whoami",
+        "createOrganization",
+        "createProject",
+        "createEnvironment",
+        "pushContractRevision",
+        "activateContractRevision",
+        "setValue",
+        "deleteValue",
+        "createPlatformConnection",
+        "getPlatformConnection",
+        "createSyncTarget",
+        "getSyncTarget",
+        "pushSyncTarget",
+        "pauseSyncTarget",
+        "resumeSyncTarget",
+        "listAuditEvents"
+      ]
     }
   },
   "checks": {
@@ -3748,6 +3775,51 @@
       "suite": "oidc",
       "kind": "conformance",
       "title": "an issuer at a private address the host has not allowed is refused with the outbound policy's reason"
+    },
+    "sync.push-converges": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "every Target's destination holds what its mapping selects, and each Target reports its run succeeded"
+    },
+    "sync.redeploy-paid": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "a Target that redeploys on change has its application redeployed: it runs what it stores"
+    },
+    "sync.credential-expiry": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "the expiry a platform reports for a stored credential is recorded on its Connection"
+    },
+    "sync.partial-failure": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "a name the platform refuses degrades its Target and counts a failure; its other names stay, and other Targets are unaffected"
+    },
+    "sync.push-scheduled": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "pushSyncTarget answers 202 and the Target runs again at the next pass, its backoff cleared"
+    },
+    "sync.deletion": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "a value removed from the environment is deleted from the destinations of Targets that remove orphans"
+    },
+    "sync.pause-fence": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "a paused Target answers paused once no run of it can send, sends nothing while paused, and converges once resumed"
+    },
+    "sync.drift-put-back": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "a repair pass finds a value changed on the platform, records sync.drift_detected (names, never values) and the Target's last drift, and puts the value back"
+    },
+    "sync.repair-cycle-closes": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "after its repair pass a converged Target is not due again: the next passes send its destination nothing"
     }
   },
   "goServerChecks": {

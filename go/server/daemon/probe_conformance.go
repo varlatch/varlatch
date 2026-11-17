@@ -29,10 +29,13 @@ import (
 //	proxy-addresses                  [] (nothing stands in front of varlatchd)
 //	deletion-due <odl_...>           the open deletion request made due now (as if scheduled
 //	                                 40 days ago, due a second ago)
+//	sync-repair-due <target id>      true: the Sync Target is due for its repair pass now
 
-var probeName = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
-
-var deletionID = regexp.MustCompile(`^odl_[a-z2-7]{26}$`)
+var (
+	probeName    = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+	deletionID   = regexp.MustCompile(`^odl_[a-z2-7]{26}$`)
+	syncTargetID = regexp.MustCompile(`^snt_[a-z0-9]{26}$`)
+)
 
 func init() {
 	conformanceProbe = func(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io.Writer) int {
@@ -52,6 +55,18 @@ func init() {
 		var err error
 		var out any
 		switch rest[0] {
+		case "sync-repair-due":
+			// The sync suite's repair pass: the Target is due for repair
+			// now (its last one hours ago), as six hours later.
+			if len(rest) != 2 || !syncTargetID.MatchString(rest[1]) {
+				return fail(fmt.Errorf("sync-repair-due: a Sync Target id"))
+			}
+			err = store.Write(ctx, func(tx *storage.Tx) error {
+				_, err := tx.ExecContext(ctx, `UPDATE sync_targets SET last_repair_at = ?, needs_sync = 1, next_attempt_at = NULL WHERE id = ?`,
+					time.Now().Add(-7*time.Hour).UnixMicro(), rest[1])
+				return err
+			})
+			out = true
 		case "expire-pending-device-sign-ins":
 			err = store.Write(ctx, func(tx *storage.Tx) error {
 				return query.New(tx).ExpirePendingDeviceSignIns(ctx, time.Now().Add(-time.Second).UnixMicro())
