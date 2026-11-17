@@ -161,18 +161,38 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
   const [localAddressSpace] = useState(() => supportsTargetAddressSpace());
   // Whether a probe has connected since the last reset: later probes need no time for a permission prompt.
   const connectedBefore = useRef(false);
+  // Stops the probe in flight, if any: its request, its timers and its listener.
+  const stopProbe = useRef<(() => void) | null>(null);
+  const cancelProbe = useCallback(() => {
+    stopProbe.current?.();
+    stopProbe.current = null;
+  }, []);
 
-  // Another identity, or another endpoint: start over, unconnected.
+  // This identity and endpoint while the provider is mounted: a token per
+  // reset, null after unmount. Work started for an earlier one (a read's
+  // recheck) does nothing.
+  const scope = useRef<object | null>(null);
+
+  // Another identity, or another endpoint: start over, unconnected. The
+  // probe in flight is stopped then, and on unmount.
   useEffect(() => {
     generation.current++;
     connectedBefore.current = false;
+    scope.current = {};
     setProbe(null);
-  }, [identityId, endpoint]);
+    return () => {
+      scope.current = null;
+      cancelProbe();
+    };
+  }, [identityId, endpoint, cancelProbe]);
 
   const runProbe = useCallback(async () => {
-    if (!endpoint) return;
+    if (!endpoint || !scope.current) return;
+    // A new Connect replaces the probe in flight.
+    cancelProbe();
     const mine = ++generation.current;
     setProbe({ status: "connecting", endpoint });
+    const ctl = new AbortController();
     let blockedByPolicy = false;
     const onViolation = (e: SecurityPolicyViolationEvent) => {
       if (e.blockedURI.startsWith(endpoint)) blockedByPolicy = true;
@@ -185,9 +205,30 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
             if (generation.current === mine) setProbe({ status: "connecting", endpoint, awaitingPermission: true });
           }, PROBE_TIMEOUT_MS)
         : undefined;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      clearTimeout(slow);
+      globalThis.document?.removeEventListener("securitypolicyviolation", onViolation);
+    };
+    let cancelled = false;
+    // The wait for a queued policy violation, settled early when the probe stops.
+    let wait: { timer: ReturnType<typeof setTimeout>; settle: () => void } | undefined;
+    const stop = () => {
+      cancelled = true;
+      release();
+      if (wait) {
+        clearTimeout(wait.timer);
+        wait.settle();
+      }
+      ctl.abort(new DOMException("Connect was cancelled", "AbortError"));
+    };
+    stopProbe.current = stop;
     let next: TailnetConnection;
     try {
-      const body = await withTimeout(timeout, null, async (signal) => {
+      // The deadline's timer goes with the request when the probe is stopped.
+      const body = await withTimeout(timeout, ctl.signal, async (signal) => {
         const res = await sessionFetch(`${endpoint}/v1/tailnet/context`, endpointRequestInit({ signal }, localAddressSpace));
         return res.ok ? ((await res.json()) as TailnetDevice) : null;
       });
@@ -197,17 +238,22 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
           ? { status: "connected", endpoint, device: body, checkedAt: Date.now() }
           : { status: "unrecognized", endpoint, reason: body.reason ?? "unrecognized", checkedAt: Date.now() };
     } catch {
+      // Stopped: nothing to report, and nothing left running.
+      if (cancelled) return;
       // The violation event is queued; let it land first.
-      await new Promise((r) => setTimeout(r, 0));
+      await new Promise<void>((settle) => {
+        wait = { timer: setTimeout(settle, 0), settle };
+      });
+      if (cancelled) return;
       next = { status: "unreachable", endpoint, blockedByPolicy, checkedAt: Date.now() };
     } finally {
-      clearTimeout(slow);
-      globalThis.document?.removeEventListener("securitypolicyviolation", onViolation);
+      release();
+      if (stopProbe.current === stop) stopProbe.current = null;
     }
-    if (generation.current !== mine) return;
+    if (cancelled || generation.current !== mine) return;
     if (next.status === "connected") connectedBefore.current = true;
     setProbe(next);
-  }, [endpoint, sessionFetch, localAddressSpace]);
+  }, [endpoint, sessionFetch, localAddressSpace, cancelProbe]);
 
   const connection = useMemo<TailnetConnection>(
     () => (!endpoint ? { status: "unavailable" } : probe && probe.endpoint === endpoint ? probe : { status: "idle", endpoint }),
@@ -224,6 +270,10 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
 
   const client = useMemo(() => {
     if (connection.status !== "connected") return null;
+    // The identity and endpoint this client reads for. Once either changes,
+    // or the provider unmounts, a failed read checks nothing: the probe in
+    // flight then belongs to another endpoint, or to nobody.
+    const createdIn = scope.current;
     return new VarlatchClient({
       server: connection.endpoint,
       // An export through the endpoint may need a step-up approval
@@ -246,7 +296,7 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
         } catch (err) {
           if (!isNetworkFailure(err)) throw err;
           // Never sent again; check the connection instead (ADR-0046, Failure handling).
-          void runProbe();
+          if (createdIn && scope.current === createdIn) void runProbe();
           throw new TailnetUnreachableError();
         }
       },
