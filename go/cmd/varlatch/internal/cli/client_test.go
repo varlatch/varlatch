@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 )
 
 // The CLI's client (connectClient and its warnings). Until slice 5.1e
@@ -243,5 +245,22 @@ func TestClientMessagesNeverShowUserinfo(t *testing.T) {
 	want := "varlatch: credential for " + shown + " expired 2020-01-02T00:00:00.000Z — run `varlatch login --server " + shown + "`\n"
 	if stderr.String() != want {
 		t.Errorf("stderr %q, want %q", stderr.String(), want)
+	}
+}
+
+// TestNotAuthenticatedReadsAfterTheFailSafe: with a server URL holding a
+// user name and password, "Not authenticated" shows it once and its sign-in
+// instructions after it, so the fail-safe keeps them.
+func TestNotAuthenticatedReadsAfterTheFailSafe(t *testing.T) {
+	r, _ := testRun(MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()})
+	_, err := r.connectClient("https://user:hunter2pass@v.example")
+	var exit *exitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("%v", err)
+	}
+	want := "Not authenticated to https:[redacted]@v.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
+		"adding --start to approve in a browser on any device, or --token-stdin to pipe a credential"
+	if got := clientctx.MaskUserinfoInText(exit.message); got != want {
+		t.Errorf("%q, want %q", got, want)
 	}
 }

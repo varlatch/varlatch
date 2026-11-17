@@ -44,9 +44,9 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	want := map[string]string{
 		"http://127.0.0.1:2":            "the credential contains a character that is not allowed in an HTTP header",
 		"http://127.0.0.1:3":            "the credential contains a character that is not allowed in an HTTP header",
-		"http://[redacted]@127.0.0.1:2": "Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:2/v1/meta",
-		"http://[redacted]@[::1":        "Failed to parse URL from http://[redacted]@[::1/v1/meta",
-		"http:/[redacted]@[::1":         "Failed to parse URL from http:/[redacted]@[::1/v1/meta",
+		"http://[redacted]@127.0.0.1:2": "http://[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
+		"http://[redacted]@[::1":        "http://[redacted]@[::1/v1/meta: can't be parsed as a URL",
+		"http:/[redacted]@[::1":         "http:/[redacted]@[::1/v1/meta: can't be parsed as a URL",
 	}
 	// Nothing printed may hold a token or a URL's password.
 	leaks := func(text string) bool {

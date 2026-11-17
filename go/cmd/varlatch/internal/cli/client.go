@@ -173,6 +173,12 @@ func (r *Run) connectClient(server string) (*apiclient.Client, error) {
 			"Agent no Varlatch credential and never uses the operator's.\nFor read access to configuration metadata, "+
 			"the operator relaunches the run with --agent-metadata.", ExitDenied)
 	}
+	if token == "" && clientctx.HasAtSign(shown) {
+		// The URL once, the instructions after it: the fail-safe keeps what
+		// follows the last at-sign (the explanation follows the URL).
+		return nil, Fail("Not authenticated to "+shown+": sign in with varlatch login --server and this server's URL (in a browser on this machine), "+
+			"adding --start to approve in a browser on any device, or --token-stdin to pipe a credential", ExitDenied)
+	}
 	if token == "" {
 		return nil, Fail("Not authenticated to "+shown+".\nSign in: varlatch login --server "+shown+" (in a browser on this machine), "+
 			"varlatch login --server "+shown+" --start (approve in a browser on any device), "+
