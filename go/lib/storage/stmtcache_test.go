@@ -175,6 +175,95 @@ func TestReaderStatementCacheBounded(t *testing.T) {
 	}
 }
 
+// The cache never holds more than its size, even with every slot's rows
+// open: 256 distinct queries open at once on one connection cache 128
+// and run the rest as one-off statements; once their rows closed, the
+// same 256 queries again keep the cache at 128.
+func TestReaderStatementCacheBoundedWhileBusy(t *testing.T) {
+	db := open(t, Options{ReadConns: 1})
+	mustWrite(t, db, insert("a"))
+	conn, err := db.Reader().Conn(bg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	cached := func() (n int) {
+		t.Helper()
+		if err := conn.Raw(func(dc any) error {
+			c := dc.(*cachingConn)
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.lru.Len() != len(c.byQuery) {
+				return fmt.Errorf("%d listed, %d by query", c.lru.Len(), len(c.byQuery))
+			}
+			n = c.lru.Len()
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	const queries = 2 * readerStmtCacheSize
+	q := func(i int) string { return fmt.Sprintf(`SELECT %d, name FROM item`, i) }
+	_, _, o0 := stmtStats(db)
+	var open []*sql.Rows
+	// On a failure, the rows close before the connection (Close waits for
+	// open rows).
+	defer func() {
+		for _, rows := range open {
+			_ = rows.Close()
+		}
+	}()
+	for i := range queries {
+		rows, err := conn.QueryContext(bg, q(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		open = append(open, rows)
+		if n := cached(); n > readerStmtCacheSize {
+			t.Fatalf("after %d queries with their rows open: %d statements cached", i+1, n)
+		}
+	}
+	if _, _, o := stmtStats(db); o-o0 != queries-readerStmtCacheSize {
+		t.Errorf("%d one-off statements with every slot in use, want %d", o-o0, queries-readerStmtCacheSize)
+	}
+	for i, rows := range open {
+		var n int
+		var name string
+		if !rows.Next() {
+			t.Fatalf("query %d: no row", i)
+		}
+		if err := rows.Scan(&n, &name); err != nil || n != i || name != "a" {
+			t.Fatalf("query %d: %d %q %v", i, n, name, err)
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := cached(); n != readerStmtCacheSize {
+		t.Errorf("after the rows closed: %d statements cached, want %d", n, readerStmtCacheSize)
+	}
+	// Reused, and queries the cache did not hold pushing older ones out:
+	// never above the size.
+	for range 2 {
+		for i := range queries {
+			var n int
+			var name string
+			if err := conn.QueryRowContext(bg, q(i)).Scan(&n, &name); err != nil || n != i {
+				t.Fatalf("query %d again: %d %v", i, n, err)
+			}
+			if c := cached(); c > readerStmtCacheSize {
+				t.Fatalf("query %d again: %d statements cached", i, c)
+			}
+		}
+	}
+	// Every statement that left the cache was finalized.
+	prepared, _, _ := stmtStats(db)
+	if closed := db.rconn.stats.closed.Load(); prepared-closed != int64(cached()) {
+		t.Errorf("%d prepared, %d closed, %d cached", prepared, closed, cached())
+	}
+}
+
 // A schema change by the writer, as a migration makes, reaches every
 // statement the readers keep: SQLite checks the schema each time a
 // statement starts and compiles it again when it changed, so no cached

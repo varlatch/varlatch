@@ -29,7 +29,9 @@ import (
 //     close, so nothing is parsed again;
 //   - a query whose statement is still in use on the connection (its rows
 //     are open, as when a read transaction runs the same query inside a
-//     loop over its results) runs as a one-off statement, as before;
+//     loop over its results) runs as a one-off statement, as before, and
+//     so does a new query when every slot holds a statement in use: the
+//     cache never holds more than its size;
 //   - a statement is reset when its rows close, so a cached statement holds
 //     no read transaction open and never holds a checkpoint off.
 //
@@ -124,8 +126,9 @@ func (c *cachingConn) QueryContext(ctx context.Context, query string, args []dri
 }
 
 // take returns query's cached statement, marked busy, preparing and caching
-// it first if it is not cached; nil if it is busy (the caller runs a
-// one-off statement, as it does when the cache has no room at all).
+// it first if it is not cached; nil if it is busy, or if it is not cached
+// and the cache is full of busy statements (the caller runs a one-off
+// statement, as it does when the cache has no room at all).
 func (c *cachingConn) take(ctx context.Context, query string) (*cachedStmt, error) {
 	if c.conn.size <= 0 {
 		return nil, nil // no cache (the benchmark's baseline)
@@ -143,10 +146,25 @@ func (c *cachingConn) take(ctx context.Context, query string) (*cachedStmt, erro
 		c.conn.stats.reused.Add(1)
 		return cs, nil
 	}
+	// Not cached: make room first, closing the least recently used idle
+	// statements. With every slot in use, it is not cached at all.
+	for e := c.lru.Back(); e != nil && c.lru.Len() >= c.conn.size; {
+		prev := e.Prev()
+		if old := e.Value.(*cachedStmt); !old.busy {
+			c.lru.Remove(e)
+			delete(c.byQuery, old.query)
+			_ = c.closeStmt(old)
+		}
+		e = prev
+	}
+	full := c.lru.Len() >= c.conn.size
 	c.mu.Unlock()
+	if full {
+		return nil, nil
+	}
 
-	// Not cached: prepare it. Only this goroutine uses the connection for
-	// queries, so nobody else can cache the same query meanwhile.
+	// Prepare it. Only this goroutine runs queries on the connection, so
+	// nobody else can cache a statement meanwhile: the slot stays free.
 	stmt, err := c.Conn.(driver.ConnPrepareContext).PrepareContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -156,22 +174,11 @@ func (c *cachingConn) take(ctx context.Context, query string) (*cachedStmt, erro
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.byQuery[query] = c.lru.PushFront(cs)
-	// Over the size: close the least recently used idle statements. A busy
-	// one stays until its rows close (release closes it then).
-	for e := c.lru.Back(); e != nil && c.lru.Len() > c.conn.size; {
-		prev := e.Prev()
-		if old := e.Value.(*cachedStmt); !old.busy {
-			c.lru.Remove(e)
-			delete(c.byQuery, old.query)
-			c.closeStmt(old)
-		}
-		e = prev
-	}
 	return cs, nil
 }
 
-// release marks cs idle once its rows closed, or closes it if it was
-// pushed out of the cache while they were open.
+// release marks cs idle once its rows closed. A statement leaves the cache
+// only while idle, so cs is still in it unless the connection closed.
 func (c *cachingConn) release(cs *cachedStmt) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -180,7 +187,7 @@ func (c *cachingConn) release(cs *cachedStmt) {
 		return // the connection closed it (Close)
 	}
 	if e, ok := c.byQuery[cs.query]; !ok || e.Value.(*cachedStmt) != cs {
-		c.closeStmt(cs)
+		_ = c.closeStmt(cs) // not reached: kept so that no statement leaks
 	}
 }
 
