@@ -23,6 +23,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv(asCLI) == "1" {
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	setTranscriptUmask()
 	os.Exit(m.Run())
 }
 

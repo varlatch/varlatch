@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -22,14 +22,17 @@ import { build } from "esbuild";
  * tree, standard input, and the fake server's script: each request it
  * expects, in order, and its answer. It records standard output, standard
  * error, the exit status, every request the server received, and the case
- * directory's files afterwards with their modes.
+ * directory's whole final tree (listTree): every file, directory and
+ * symbolic link with its mode, the inputs included, so a deleted input or a
+ * changed mode shows.
  *
  * `{{server}}` in a case stands for the fake server's origin and `{{dir}}`
  * for the case's directory, in every string the case gives and in what is
  * recorded, so a recording does not depend on the port or the path.
  */
 
-export const TRANSCRIPT_SCHEMA = 1;
+/** 2: the whole final tree, inputs and directories included. */
+export const TRANSCRIPT_SCHEMA = 2;
 
 /** Where the Go side reads the recordings. */
 export const TRANSCRIPT_DIR = fileURLToPath(new URL("../../../go/cmd/varlatch/testdata/transcripts/", import.meta.url));
@@ -76,7 +79,11 @@ export interface RecordedCase extends TranscriptCase {
     stdout: string;
     stderr: string;
     requests: RecordedRequest[];
-    /** Every file under the case directory afterwards: content (UTF-8) and POSIX mode. */
+    /**
+     * The case directory's final tree (listTree): a file's content (UTF-8)
+     * and POSIX mode, a directory (path ending in "/", no content), a
+     * symbolic link (mode "link", content its target).
+     */
     files: Record<string, { mode: string; content: string }>;
   };
 }
@@ -123,19 +130,38 @@ function unfillDeep(value: unknown, server: string, dir: string): unknown {
   return value;
 }
 
-function listFiles(root: string, at = ""): string[] {
-  const out: string[] = [];
+/**
+ * Everything under `root` (root itself excepted): each file with its
+ * content, each directory under its path plus "/", each symbolic link with
+ * its target (never followed), with permission bits as four octal digits.
+ * The Go replay's transcript.Tree lists the same.
+ */
+export function listTree(root: string, unfillText: (t: string) => string, at = ""): Record<string, { mode: string; content: string }> {
+  const out: Record<string, { mode: string; content: string }> = {};
   for (const name of readdirSync(join(root, at)).sort()) {
     const rel = at ? `${at}/${name}` : name;
-    const stat = lstatSync(join(root, rel));
-    if (stat.isDirectory()) out.push(...listFiles(root, rel));
-    else out.push(rel);
+    const path = join(root, rel);
+    const stat = lstatSync(path);
+    const mode = (stat.mode & 0o777).toString(8).padStart(4, "0");
+    if (stat.isSymbolicLink()) out[rel] = { mode: "link", content: unfillText(readlinkSync(path)) };
+    else if (stat.isDirectory()) {
+      out[`${rel}/`] = { mode, content: "" };
+      Object.assign(out, listTree(root, unfillText, rel));
+    } else out[rel] = { mode, content: unfillText(readFileSync(path, "utf8")) };
   }
   return out;
 }
 
+/**
+ * The umask every case runs under, here and in the Go replay (its TestMain
+ * sets the same), so the modes a recording holds do not depend on the
+ * machine that made it.
+ */
+export const TRANSCRIPT_UMASK = 0o022;
+
 /** Runs one case against the bundle and records it. */
 export async function recordCase(bundle: string, c: TranscriptCase): Promise<RecordedCase> {
+  if (process.platform !== "win32") process.umask(TRANSCRIPT_UMASK);
   const dir = mkdtempSync(join(tmpdir(), "varlatch-transcript-"));
   const script = [...(c.server ?? [])];
   const requests: RecordedRequest[] = [];
@@ -195,12 +221,7 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       child.on("close", (code, signal) => resolve({ status: code ?? (signal ? 128 : 1), stdout, stderr }));
       child.stdin.end(c.stdin ?? "");
     });
-    const files: Record<string, { mode: string; content: string }> = {};
-    for (const rel of listFiles(dir)) {
-      if (Object.hasOwn(c.files ?? {}, rel) && readFileSync(join(dir, rel), "utf8") === fill(c.files![rel]!, origin, dir)) continue;
-      const mode = (lstatSync(join(dir, rel)).mode & 0o777).toString(8).padStart(4, "0");
-      files[rel] = { mode, content: unfill(readFileSync(join(dir, rel), "utf8"), origin, dir) };
-    }
+    const files = listTree(dir, (t) => unfill(t, origin, dir));
     return {
       ...c,
       expect: {

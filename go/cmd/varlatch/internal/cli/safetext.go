@@ -96,7 +96,9 @@ func SafeTime(value any) (string, bool) {
 	if month < 1 || month > 12 || day < 1 || day > 31 || minute > 59 || second > 59 {
 		return UnrecognizedTime, true
 	}
-	if hour > 24 || hour == 24 && (minute != 0 || second != 0 || ms != 0) {
+	// Hour 24 needs the whole fraction zero, every digit V8 read, not just
+	// the milliseconds it keeps: 24:00:00.0001 is refused.
+	if hour > 24 || hour == 24 && (minute != 0 || second != 0 || strings.Trim(m[7], "0") != "") {
 		return UnrecognizedTime, true
 	}
 	offset := 0

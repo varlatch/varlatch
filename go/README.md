@@ -307,10 +307,14 @@ comes. `verify-release`, which the installers run, is Go's own.
   `apps/cli/test/go-transcripts.test.ts` records cases from the TypeScript
   CLI as users get it (its arguments, a clean environment, files, standard
   input and a scripted fake server; what it printed, its status, the
-  requests it sent and the files it wrote) into `testdata/transcripts/`,
-  and `TestTranscripts` replays every case against this CLI and compares
-  byte for byte, strictly both ways: an unexpected or missing request or
-  file fails a case. Regenerate after changing the cases with
+  requests it sent and the case directory's whole final tree) into
+  `testdata/transcripts/`, and `TestTranscripts` replays every case
+  against this CLI and compares byte for byte, strictly both ways: an
+  unexpected or missing request, and any file, directory or link added,
+  deleted, changed or given another mode, inputs included, fails a case.
+  Request bodies are compared as JSON values through `lib/jsjson`, so lone
+  surrogates stay distinct. Both sides run under umask 022; on Windows only
+  a mode's read-only bit is compared. Regenerate after changing the cases with
   `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/cli exec vitest run
   test/go-transcripts.test.ts`.
 - `testdata/vectors/framework.json`: what the TypeScript code answers for
@@ -330,6 +334,12 @@ comes. `verify-release`, which the installers run, is Go's own.
 - Conformance: `node scripts/conformance/run.mjs --target <target> --cli
   go:<path to varlatch>` runs the suites with this CLI; the features it
   does not have yet report client-lacks (`scripts/conformance/README.md`).
+
+Text the Go CLI copies byte for byte from the TypeScript CLI's output (the
+usage text in `usage.txt`, and the recordings and vectors made from it)
+keeps its original characters, the em dash in the usage banner included:
+the TypeScript line is frozen to security fixes, and parity needs the bytes
+as they are.
 
 ### The Go CLI's accepted differences
 

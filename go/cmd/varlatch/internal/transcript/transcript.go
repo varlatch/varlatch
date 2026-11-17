@@ -7,9 +7,10 @@
 // standard input and fake server, and compared byte for byte.
 //
 // The comparison is strict in both directions: a request the case does not
-// expect, an expected request never sent, a file written that the case does
-// not list, and a listed file not written each fail the case. It is test
-// infrastructure: only tests import it.
+// expect, an expected request never sent, and any difference in the case
+// directory's final tree (a file or directory added, deleted, changed, or
+// given another mode) each fail the case. It is test infrastructure: only
+// tests import it.
 package transcript
 
 import (
@@ -26,6 +27,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,8 +35,10 @@ import (
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
-// Schema is the transcript files' format version, goKit.ts's TRANSCRIPT_SCHEMA.
-const Schema = 1
+// Schema is the transcript files' format version, goKit.ts's
+// TRANSCRIPT_SCHEMA. 2: the whole final tree is recorded, inputs and
+// directories included.
+const Schema = 2
 
 // RecordedHeaders are the request headers a recording keeps (goKit.ts).
 var RecordedHeaders = []string{"authorization", "user-agent", "content-type", "accept", "idempotency-key"}
@@ -87,7 +91,9 @@ type Request struct {
 	Body    json.RawMessage   `json:"body"`
 }
 
-// FileState is a file under the case directory after the run.
+// FileState is one entry of the case directory's final tree: a file (its
+// UTF-8 content), a directory (its path ends in "/", no content) or a
+// symbolic link (mode "link", content its target), with its POSIX mode.
 type FileState struct {
 	Mode    string `json:"mode"`
 	Content string `json:"content"`
@@ -137,20 +143,20 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	fill := func(s string) string {
 		return strings.ReplaceAll(strings.ReplaceAll(s, "{{server}}", srv.origin), "{{dir}}", dir)
 	}
-	initial := map[string]string{}
+	// Inputs get Node.js's default modes (0666 and 0777, less the umask), as
+	// the recorder's writeFileSync and mkdirSync give them.
 	for rel, content := range c.Files {
 		p := filepath.Join(dir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(p), 0o777); err != nil {
 			return Outcome{}, nil, err
 		}
-		initial[rel] = fill(content)
-		if err := os.WriteFile(p, []byte(initial[rel]), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(fill(content)), 0o666); err != nil {
 			return Outcome{}, nil, err
 		}
 	}
 	cwd := filepath.Join(dir, filepath.FromSlash(c.Cwd))
 	for _, d := range []string{cwd, filepath.Join(dir, "home")} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o777); err != nil {
 			return Outcome{}, nil, err
 		}
 	}
@@ -206,27 +212,7 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		r.Body = json.RawMessage(unfill(string(r.Body)))
 		got.Requests = append(got.Requests, r)
 	}
-	err = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		rel, _ := filepath.Rel(dir, p)
-		rel = filepath.ToSlash(rel)
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		if want, ok := initial[rel]; ok && want == string(data) {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		got.Files[rel] = FileState{Mode: fmt.Sprintf("%04o", info.Mode().Perm()), Content: unfill(string(data))}
-		return nil
-	})
-	if err != nil {
+	if got.Files, err = Tree(dir, unfill); err != nil {
 		return got, nil, err
 	}
 	want := c.Expect
@@ -239,6 +225,44 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		d(&want)
 	}
 	return got, Compare(want, got), nil
+}
+
+// Tree is the final state of everything under dir, dir itself excepted,
+// as goKit.ts's listTree records it: every file with its content, every
+// directory (its path ends in "/"), every symbolic link with its target
+// (never followed), each with its permission bits.
+func Tree(dir string, unfill func(string) string) (map[string]FileState, error) {
+	out := map[string]FileState{}
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || p == dir {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		rel = filepath.ToSlash(rel)
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		mode := fmt.Sprintf("%04o", info.Mode().Perm())
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			out[rel] = FileState{Mode: "link", Content: unfill(filepath.ToSlash(target))}
+		case info.IsDir():
+			out[rel+"/"] = FileState{Mode: mode}
+		default:
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			out[rel] = FileState{Mode: mode, Content: unfill(string(data))}
+		}
+		return nil
+	})
+	return out, err
 }
 
 func asExit(err error, target **exec.ExitError) bool {
@@ -270,8 +294,8 @@ func clone(o Outcome) Outcome {
 }
 
 // Compare lists every way got differs from want; nil when they agree.
-// File modes are not compared on Windows (decision 4: Node's chmod sets
-// only the read-only bit there).
+// On Windows only the owner's write bit of a mode is compared: the
+// read-only attribute is all Node.js's chmod sets there (decision 4).
 func Compare(want, got Outcome) []string {
 	var problems []string
 	if want.Status != got.Status {
@@ -312,16 +336,30 @@ func Compare(want, got Outcome) []string {
 		g, inGot := got.Files[name]
 		switch {
 		case !inGot:
-			problems = append(problems, "expected file "+name+" was not written")
+			problems = append(problems, name+" is missing afterwards (deleted, or never written)")
 		case !inWant:
-			problems = append(problems, "unexpected file "+name+" was written")
+			problems = append(problems, name+" is there afterwards, but the case has no such entry")
 		case w.Content != g.Content:
-			problems = append(problems, "file "+name+" differs:\n"+diff(w.Content, g.Content))
-		case w.Mode != g.Mode && runtime.GOOS != "windows":
-			problems = append(problems, fmt.Sprintf("file %s has mode %s, want %s", name, g.Mode, w.Mode))
+			problems = append(problems, name+" differs:\n"+diff(w.Content, g.Content))
+		case !sameMode(w.Mode, g.Mode, runtime.GOOS):
+			problems = append(problems, fmt.Sprintf("%s has mode %s, want %s", name, g.Mode, w.Mode))
 		}
 	}
 	return problems
+}
+
+// sameMode compares two recorded modes: exactly, except on Windows, where
+// only the owner's write bit (the read-only attribute) means anything.
+func sameMode(want, got, goos string) bool {
+	if want == got {
+		return true
+	}
+	if goos != "windows" || want == "link" || got == "link" {
+		return false
+	}
+	w, err1 := strconv.ParseUint(want, 8, 32)
+	g, err2 := strconv.ParseUint(got, 8, 32)
+	return err1 == nil && err2 == nil && w&0o200 == g&0o200
 }
 
 func compareRequest(want, got Request) string {
@@ -331,11 +369,50 @@ func compareRequest(want, got Request) string {
 	if !reflect.DeepEqual(nonNil(want.Headers), nonNil(got.Headers)) {
 		return fmt.Sprintf("headers %v, want %v", got.Headers, want.Headers)
 	}
-	var wb, gb any
-	if json.Unmarshal(orNull(want.Body), &wb) != nil || json.Unmarshal(orNull(got.Body), &gb) != nil || !reflect.DeepEqual(wb, gb) {
+	// Through jsjson, which keeps lone surrogates as they are: encoding/json
+	// would turn \ud800 and \ud801 both into U+FFFD and call them equal.
+	wb, err1 := jsjson.Parse(orNull(want.Body))
+	gb, err2 := jsjson.Parse(orNull(got.Body))
+	if err1 != nil || err2 != nil || !SameJSON(wb, gb) {
 		return fmt.Sprintf("body %s, want %s", got.Body, want.Body)
 	}
 	return ""
+}
+
+// SameJSON is whether two jsjson values are equal as JSON values: object
+// members in any order, strings byte for byte (lone surrogates included),
+// numbers by value.
+func SameJSON(a, b any) bool {
+	switch x := a.(type) {
+	case nil:
+		return b == nil
+	case bool, float64, string:
+		return a == b
+	case []any:
+		y, ok := b.([]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if !SameJSON(x[i], y[i]) {
+				return false
+			}
+		}
+		return true
+	case jsjson.Object:
+		y, ok := b.(jsjson.Object)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for _, m := range x {
+			v, ok := y.Get(m.Key)
+			if !ok || !SameJSON(m.Value, v) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func nonNil(m map[string]string) map[string]string {

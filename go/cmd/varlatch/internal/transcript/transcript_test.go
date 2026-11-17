@@ -41,15 +41,15 @@ func TestCompareFailsOnEveryMismatch(t *testing.T) {
 		"request path":       {func(o *Outcome) { o.Requests[0].Path = "/v1/other" }, "request 1: GET /v1/other, want GET /v1/meta"},
 		"request header":     {func(o *Outcome) { o.Requests[0].Headers = map[string]string{"user-agent": "other"} }, "request 1: headers"},
 		"request body":       {func(o *Outcome) { o.Requests[0].Body = json.RawMessage(`{"a":1}`) }, "request 1: body"},
-		"unexpected file":    {func(o *Outcome) { o.Files["config/settings.json"] = FileState{Mode: "0600", Content: "{}"} }, "unexpected file config/settings.json was written"},
-		"missing file":       {func(o *Outcome) { delete(o.Files, "config/credentials.json") }, "expected file config/credentials.json was not written"},
-		"file content":       {func(o *Outcome) { o.Files["config/credentials.json"] = FileState{Mode: "0600", Content: "{ }\n"} }, "file config/credentials.json differs"},
+		"unexpected file":    {func(o *Outcome) { o.Files["config/settings.json"] = FileState{Mode: "0600", Content: "{}"} }, "config/settings.json is there afterwards, but the case has no such entry"},
+		"missing file":       {func(o *Outcome) { delete(o.Files, "config/credentials.json") }, "config/credentials.json is missing afterwards"},
+		"file content":       {func(o *Outcome) { o.Files["config/credentials.json"] = FileState{Mode: "0600", Content: "{ }\n"} }, "config/credentials.json differs"},
 	}
 	if runtime.GOOS != "windows" {
 		cases["file mode"] = struct {
 			change func(*Outcome)
 			want   string
-		}{func(o *Outcome) { o.Files["config/credentials.json"] = FileState{Mode: "0644", Content: "{}\n"} }, "has mode 0644, want 0600"}
+		}{func(o *Outcome) { o.Files["config/credentials.json"] = FileState{Mode: "0644", Content: "{}\n"} }, "config/credentials.json has mode 0644, want 0600"}
 	}
 	for name, c := range cases {
 		got := base()
@@ -106,10 +106,78 @@ func TestReplayReportsAnUnsentRequest(t *testing.T) {
 
 func TestLoadRefusesAnotherSchema(t *testing.T) {
 	p := t.TempDir() + "/x.json"
-	if err := os.WriteFile(p, []byte(`{"schema":2,"cases":[]}`), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(`{"schema":3,"cases":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(p); err == nil {
 		t.Fatal("loaded schema 2")
+	}
+}
+
+// Request bodies keep lone surrogates: \ud800 and \ud801 are different
+// strings, though encoding/json would read both as U+FFFD.
+func TestCompareKeepsLoneSurrogates(t *testing.T) {
+	want, got := base(), base()
+	want.Requests[0].Body = json.RawMessage(`{"value":"\ud800"}`)
+	got.Requests[0].Body = json.RawMessage(`{"value":"\ud801"}`)
+	if p := Compare(want, got); len(p) != 1 || !strings.Contains(p[0], "body") {
+		t.Fatalf("%q", p)
+	}
+	got.Requests[0].Body = json.RawMessage(`{ "value" : "\ud800" }`)
+	if p := Compare(want, got); p != nil {
+		t.Fatalf("%q", p)
+	}
+	got.Requests[0].Body = json.RawMessage(`{"value":"\ufffd"}`)
+	if p := Compare(want, got); len(p) != 1 {
+		t.Fatalf("U+FFFD equals a lone surrogate: %q", p)
+	}
+}
+
+// On Windows only the owner's write bit of a mode counts (the read-only
+// attribute); elsewhere the whole mode.
+func TestSameMode(t *testing.T) {
+	cases := []struct {
+		want, got, goos string
+		same            bool
+	}{
+		{"0600", "0600", "linux", true},
+		{"0600", "0644", "linux", false},
+		{"0600", "0666", "windows", true},
+		{"0644", "0444", "windows", false},
+		{"link", "0666", "windows", false},
+	}
+	for _, c := range cases {
+		if got := sameMode(c.want, c.got, c.goos); got != c.same {
+			t.Errorf("sameMode(%s, %s, %s) = %v", c.want, c.got, c.goos, got)
+		}
+	}
+}
+
+// The whole final tree is compared, inputs included: a program that deletes
+// an input, changes its mode or content, or adds a directory or a link,
+// fails a case whose recording left the tree as it was (Sol's round 1 on
+// #247 reproduced the first two).
+func TestReplayCatchesChangedInputs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	untouched := Outcome{Files: map[string]FileState{"input": {Mode: "0644", Content: "x"}, "home/": {Mode: "0755"}}}
+	for script, want := range map[string]string{
+		"true":                 "",
+		"rm ../input":          "input is missing afterwards",
+		"chmod 777 ../input":   "input has mode 0777, want 0644",
+		"echo y >> ../input":   "input differs",
+		"mkdir ../made":        "made/ is there afterwards",
+		"ln -s input ../alias": "alias is there afterwards",
+	} {
+		c := Case{ID: script, Args: []string{script}, Files: map[string]string{"input": "x"}, Cwd: "home", Expect: untouched}
+		_, problems, err := Replay(c, func(args []string) *exec.Cmd { return exec.Command("sh", append([]string{"-c"}, args...)...) }, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(problems, "\n")
+		if want == "" && len(problems) != 0 || want != "" && !strings.Contains(joined, want) {
+			t.Errorf("%s: %q, want %q", script, problems, want)
+		}
 	}
 }
