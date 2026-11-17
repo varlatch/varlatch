@@ -1,0 +1,12 @@
+# The Go CLI's request and response types (internal docs/design/go-cli.md,
+# decision 15): models only, from the same document as go/server/api, in an
+# Apache-2.0 package the CLI owns. The server's package is never imported.
+package: v1
+output: types.gen.go
+generate:
+  models: true
+output-options:
+  resolve-type-name-collisions: true
+  nullable-type: true
+  # The browser session's paths are not /v1, and the CLI never calls them.
+  exclude-tags: [browser-session]

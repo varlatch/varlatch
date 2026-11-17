@@ -1,0 +1,2683 @@
+{
+  "comment": "Written by apps/cli/test/go-vectors-apiclient.test.ts from the TypeScript code; do not edit.",
+  "token": "vlt_cli_vectorTokenAAAA",
+  "held": "a-held-secret-value",
+  "now": 1794916800000,
+  "answers": [
+    {
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"ok\":true,\"n\":1.5,\"list\":[1,\"a\",null]}"
+      },
+      "result": {
+        "value": {
+          "ok": true,
+          "n": 1.5,
+          "list": [
+            1,
+            "a",
+            null
+          ]
+        }
+      }
+    },
+    {
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "null"
+      },
+      "result": {
+        "value": null
+      }
+    },
+    {
+      "answer": {
+        "status": 201,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "\"text\""
+      },
+      "result": {
+        "value": "text"
+      }
+    },
+    {
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": ""
+      },
+      "result": {
+        "undefined": true
+      }
+    },
+    {
+      "answer": {
+        "status": 204
+      },
+      "result": {
+        "undefined": true
+      }
+    },
+    {
+      "answer": {
+        "status": 200,
+        "body": "﻿{\"bom\":1}"
+      },
+      "result": {
+        "value": {
+          "bom": 1
+        }
+      }
+    },
+    {
+      "answer": {
+        "status": 200,
+        "bodyHex": "7b2261223a22ff227d"
+      },
+      "result": {
+        "value": {
+          "a": "�"
+        }
+      }
+    },
+    {
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "text/plain; charset=utf-8"
+          ]
+        ],
+        "body": "hello"
+      },
+      "result": {
+        "error": {
+          "status": 200,
+          "message": "HTTP 200; the response is not JSON (text/plain)",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 200; the response is not JSON (text/plain)",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 200,
+        "body": "not json"
+      },
+      "result": {
+        "error": {
+          "status": 200,
+          "message": "HTTP 200; the response is not JSON (text/plain)",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 200; the response is not JSON (text/plain)",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "  ; x"
+          ]
+        ],
+        "body": "<"
+      },
+      "result": {
+        "error": {
+          "status": 200,
+          "message": "HTTP 200; the response is not JSON (no content type)",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 200; the response is not JSON (no content type)",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "a/b"
+          ],
+          [
+            "content-type",
+            "c/d"
+          ]
+        ],
+        "body": "{"
+      },
+      "result": {
+        "error": {
+          "status": 200,
+          "message": "HTTP 200; the response is not JSON (a/b, c/d)",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 200; the response is not JSON (a/b, c/d)",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"The credential is not valid\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 401,
+          "message": "The credential is not valid",
+          "code": "INVALID_CREDENTIAL",
+          "requestId": "req_01234567-89ab-4def-8123-456789abcdef"
+        }
+      },
+      "cli": {
+        "stderr": "Error INVALID_CREDENTIAL: The credential is not valid (request req_01234567-89ab-4def-8123-456789abcdef)",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"bad token vlt_cli_vectorTokenAAAA and vlt_svc_other_123\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 401,
+          "message": "bad token vlt_cli_vectorTokenAAAA and vlt_svc_other_123",
+          "code": "INVALID_CREDENTIAL",
+          "requestId": "req_01234567-89ab-4def-8123-456789abcdef"
+        }
+      },
+      "cli": {
+        "stderr": "Error INVALID_CREDENTIAL: bad token [redacted] and [redacted] (request req_01234567-89ab-4def-8123-456789abcdef)",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"line\\nbreak ‮\",\"requestId\":\"not-a-request-id\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "line\nbreak ‮",
+          "code": "PERMISSION_DENIED",
+          "requestId": "not-a-request-id"
+        }
+      },
+      "cli": {
+        "stderr": "Error PERMISSION_DENIED: line\\u000abreak \\u202e",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"frozen\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "frozen",
+          "code": "ORGANIZATION_FROZEN",
+          "requestId": "req_01234567-89ab-4def-8123-456789abcdef"
+        }
+      },
+      "cli": {
+        "stderr": "Error ORGANIZATION_FROZEN: frozen (request req_01234567-89ab-4def-8123-456789abcdef)",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"missing\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 404,
+          "message": "missing",
+          "code": "RESOURCE_NOT_FOUND"
+        }
+      },
+      "cli": {
+        "stderr": "Error RESOURCE_NOT_FOUND: missing",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 409,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"VERSION_CONFLICT\",\"message\":\"conflict\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\",\"details\":{\"currentVersionId\":\"ver_2\"}}}"
+      },
+      "result": {
+        "error": {
+          "status": 409,
+          "message": "conflict",
+          "code": "VERSION_CONFLICT",
+          "requestId": "req_01234567-89ab-4def-8123-456789abcdef",
+          "details": {
+            "currentVersionId": "ver_2"
+          }
+        }
+      },
+      "cli": {
+        "stderr": "Error VERSION_CONFLICT: conflict (request req_01234567-89ab-4def-8123-456789abcdef)",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"APPROVAL_INVALID\",\"message\":\"does not fit\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": "does not fit",
+          "code": "APPROVAL_INVALID"
+        }
+      },
+      "cli": {
+        "stderr": "Error APPROVAL_INVALID: does not fit",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"CONTROL_MODE_UNAVAILABLE\",\"message\":\"not offered\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": "not offered",
+          "code": "CONTROL_MODE_UNAVAILABLE"
+        }
+      },
+      "cli": {
+        "stderr": "Error CONTROL_MODE_UNAVAILABLE: not offered",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"CONTROL_MODE_UNAVAILABLE\",\"message\":\"not offered\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "not offered",
+          "code": "CONTROL_MODE_UNAVAILABLE"
+        }
+      },
+      "cli": {
+        "stderr": "Error CONTROL_MODE_UNAVAILABLE: not offered",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"PASSKEY_VERIFICATION_REQUIRED\",\"message\":\"verify\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "verify",
+          "code": "PASSKEY_VERIFICATION_REQUIRED",
+          "requestId": "req_01234567-89ab-4def-8123-456789abcdef"
+        }
+      },
+      "cli": {
+        "stderr": "Error PASSKEY_VERIFICATION_REQUIRED: verify (request req_01234567-89ab-4def-8123-456789abcdef)\nTo get a CLI credential this Organization accepts:\n  varlatch login --server <url>\nand approve the sign-in in the browser with a trusted passkey that asks for your PIN, fingerprint or face.\nA credential keeps the evidence of the sign-in that issued it, however it is passed later (--token-stdin, VARLATCH_TOKEN);\none issued without a passkey sign-in (for example by admin bootstrap or admin recover --cli-credential) is always refused here.",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"approve it\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\",\"details\":{\"approval\":{\"id\":\"apr_0123\",\"url\":\"https://varlatch.example/approve/apr_0123\",\"expiresAt\":\"2026-11-17T12:00:00Z\",\"summary\":{\"title\":\"Change the control \\u001b[31mvalues.reveal\",\"changes\":[{\"field\":\"mode\",\"from\":\"off\",\"to\":\"on\",\"loosens\":false},{\"field\":\"ttl\",\"from\":null,\"to\":3600,\"loosens\":true},{\"field\":\"note\",\"to\":\"held a-held-secret-value\"}]}}}}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "approve it",
+          "code": "STEP_UP_REQUIRED",
+          "requestId": "req_01234567-89ab-4def-8123-456789abcdef",
+          "details": {
+            "approval": {
+              "id": "apr_0123",
+              "url": "https://varlatch.example/approve/apr_0123",
+              "expiresAt": "2026-11-17T12:00:00Z",
+              "summary": {
+                "title": "Change the control \u001b[31mvalues.reveal",
+                "changes": [
+                  {
+                    "field": "mode",
+                    "from": "off",
+                    "to": "on",
+                    "loosens": false
+                  },
+                  {
+                    "field": "ttl",
+                    "from": null,
+                    "to": 3600,
+                    "loosens": true
+                  },
+                  {
+                    "field": "note",
+                    "to": "held a-held-secret-value"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "cli": {
+        "stderr": "This needs your approval with a trusted passkey: Change the control \\u001b[31mvalues.reveal\n  mode: off -> on\n  ttl: not set -> 3600 (loosens)\n  note: not set -> held [redacted]\nOpen this address in a browser where you are signed in to Varlatch as yourself, check what it says, and approve with a trusted passkey:\n  https://varlatch.example/approve/apr_0123\nIt expires at 2026-11-17T12:00:00.000Z. Only you can approve it.\nError STEP_UP_REQUIRED: approve it",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"approve it\",\"details\":{\"approval\":{\"id\":\"apr_0123\",\"url\":null,\"expiresAt\":\"garbage\",\"summary\":{\"title\":\"Change the control \\u001b[31mvalues.reveal\",\"changes\":[{\"field\":\"mode\",\"from\":\"off\",\"to\":\"on\",\"loosens\":false},{\"field\":\"ttl\",\"from\":null,\"to\":3600,\"loosens\":true},{\"field\":\"note\",\"to\":\"held a-held-secret-value\"}]}}}}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "approve it",
+          "code": "STEP_UP_REQUIRED",
+          "details": {
+            "approval": {
+              "id": "apr_0123",
+              "url": null,
+              "expiresAt": "garbage",
+              "summary": {
+                "title": "Change the control \u001b[31mvalues.reveal",
+                "changes": [
+                  {
+                    "field": "mode",
+                    "from": "off",
+                    "to": "on",
+                    "loosens": false
+                  },
+                  {
+                    "field": "ttl",
+                    "from": null,
+                    "to": 3600,
+                    "loosens": true
+                  },
+                  {
+                    "field": "note",
+                    "to": "held a-held-secret-value"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "cli": {
+        "stderr": "This needs your approval with a trusted passkey: Change the control \\u001b[31mvalues.reveal\n  mode: off -> on\n  ttl: not set -> 3600 (loosens)\n  note: not set -> held [redacted]\nOpen the Varlatch dashboard as yourself and approve request apr_0123 with a trusted passkey (this server has no public URL, so the CLI cannot print its address).\nIt expires at an unrecognized time. Only you can approve it.\nError STEP_UP_REQUIRED: approve it",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"approve it\",\"details\":{\"approval\":{\"id\":\"apr_0123\",\"url\":\"https://varlatch.example/approve/apr_0123\",\"expiresAt\":\"2026-11-17T12:00:00Z\",\"summary\":{\"title\":\"t\",\"changes\":\"ab\"}}}}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "approve it",
+          "code": "STEP_UP_REQUIRED",
+          "details": {
+            "approval": {
+              "id": "apr_0123",
+              "url": "https://varlatch.example/approve/apr_0123",
+              "expiresAt": "2026-11-17T12:00:00Z",
+              "summary": {
+                "title": "t",
+                "changes": "ab"
+              }
+            }
+          }
+        }
+      },
+      "cli": {
+        "stderr": "This needs your approval with a trusted passkey: t\n  undefined: not set -> not set\n  undefined: not set -> not set\nOpen this address in a browser where you are signed in to Varlatch as yourself, check what it says, and approve with a trusted passkey:\n  https://varlatch.example/approve/apr_0123\nIt expires at 2026-11-17T12:00:00.000Z. Only you can approve it.\nError STEP_UP_REQUIRED: approve it",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"no approval\",\"details\":{}}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "no approval",
+          "code": "STEP_UP_REQUIRED",
+          "details": {}
+        }
+      },
+      "cli": {
+        "stderr": "Error STEP_UP_REQUIRED: no approval",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"id not a string\",\"details\":{\"approval\":{\"id\":5,\"url\":\"https://varlatch.example/approve/apr_0123\",\"expiresAt\":\"2026-11-17T12:00:00Z\",\"summary\":{\"title\":\"Change the control \\u001b[31mvalues.reveal\",\"changes\":[{\"field\":\"mode\",\"from\":\"off\",\"to\":\"on\",\"loosens\":false},{\"field\":\"ttl\",\"from\":null,\"to\":3600,\"loosens\":true},{\"field\":\"note\",\"to\":\"held a-held-secret-value\"}]}}}}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "id not a string",
+          "code": "STEP_UP_REQUIRED",
+          "details": {
+            "approval": {
+              "id": 5,
+              "url": "https://varlatch.example/approve/apr_0123",
+              "expiresAt": "2026-11-17T12:00:00Z",
+              "summary": {
+                "title": "Change the control \u001b[31mvalues.reveal",
+                "changes": [
+                  {
+                    "field": "mode",
+                    "from": "off",
+                    "to": "on",
+                    "loosens": false
+                  },
+                  {
+                    "field": "ttl",
+                    "from": null,
+                    "to": 3600,
+                    "loosens": true
+                  },
+                  {
+                    "field": "note",
+                    "to": "held a-held-secret-value"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "cli": {
+        "stderr": "Error STEP_UP_REQUIRED: id not a string",
+        "exit": 77
+      }
+    },
+    {
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"approval without summary\",\"details\":{\"approval\":{\"id\":\"apr_1\"}}}}"
+      },
+      "result": {
+        "error": {
+          "status": 403,
+          "message": "approval without summary",
+          "code": "STEP_UP_REQUIRED",
+          "details": {
+            "approval": {
+              "id": "apr_1"
+            }
+          }
+        }
+      },
+      "cli": {
+        "throws": "TypeError: Cannot read properties of undefined (reading 'title')"
+      }
+    },
+    {
+      "answer": {
+        "status": 503,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"still restoring\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 503,
+          "message": "still restoring",
+          "code": "MAINTENANCE",
+          "requestId": "req_01234567-89ab-4def-8123-456789abcdef"
+        }
+      },
+      "cli": {
+        "stderr": "The installation is still in maintenance (restore or upgrade); try again later. (request req_01234567-89ab-4def-8123-456789abcdef)",
+        "exit": 69
+      }
+    },
+    {
+      "answer": {
+        "status": 500,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"boom\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 500,
+          "message": "boom",
+          "code": "INTERNAL",
+          "requestId": "req_01234567-89ab-4def-8123-456789abcdef"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: boom (request req_01234567-89ab-4def-8123-456789abcdef)",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 502,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"bad gateway\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 502,
+          "message": "bad gateway",
+          "code": "INTERNAL"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: bad gateway",
+        "exit": 69
+      }
+    },
+    {
+      "answer": {
+        "status": 504,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"MADE_UP\",\"message\":\"timeout\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 504,
+          "message": "timeout",
+          "code": "MADE_UP"
+        }
+      },
+      "cli": {
+        "stderr": "Error UNRECOGNIZED_ERROR: timeout",
+        "exit": 69
+      }
+    },
+    {
+      "answer": {
+        "status": 422,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":7,\"message\":{\"nested\":true},\"requestId\":12}}"
+      },
+      "result": {
+        "error": {
+          "status": 422,
+          "message": "[object Object]",
+          "code": 7,
+          "requestId": 12
+        }
+      },
+      "cli": {
+        "stderr": "Error UNRECOGNIZED_ERROR: [object Object]",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":[\"a\",null,2]}}"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": "a,,2",
+          "code": "VALIDATION_FAILED"
+        }
+      },
+      "cli": {
+        "stderr": "Error VALIDATION_FAILED: a,,2",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":null}}"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": "null",
+          "code": "VALIDATION_FAILED"
+        }
+      },
+      "cli": {
+        "stderr": "Error VALIDATION_FAILED: null",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\"}}"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": "",
+          "code": "VALIDATION_FAILED"
+        }
+      },
+      "cli": {
+        "stderr": "Error VALIDATION_FAILED: ",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":\"a string\"}"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": ""
+        }
+      },
+      "cli": {
+        "stderr": "Error UNRECOGNIZED_ERROR: ",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":0}"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": "HTTP 400",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 400",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":[]}"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": ""
+        }
+      },
+      "cli": {
+        "stderr": "Error UNRECOGNIZED_ERROR: ",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"notError\":1}"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": "HTTP 400",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 400",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "null"
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": "HTTP 400",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 400",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 400,
+        "body": ""
+      },
+      "result": {
+        "error": {
+          "status": 400,
+          "message": "HTTP 400",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 400",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 502,
+        "headers": [
+          [
+            "content-type",
+            "text/html"
+          ],
+          [
+            "x-request-id",
+            "req_from_proxy"
+          ]
+        ],
+        "body": "<html>"
+      },
+      "result": {
+        "error": {
+          "status": 502,
+          "message": "HTTP 502; the response is not a Varlatch API error (text/html)",
+          "code": "INTERNAL",
+          "requestId": "req_from_proxy"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 502; the response is not a Varlatch API error (text/html)",
+        "exit": 69
+      }
+    },
+    {
+      "answer": {
+        "status": 418,
+        "headers": [
+          [
+            "x-request-id",
+            ""
+          ]
+        ],
+        "body": "<"
+      },
+      "result": {
+        "error": {
+          "status": 418,
+          "message": "HTTP 418; the response is not a Varlatch API error (text/plain)",
+          "code": "INTERNAL",
+          "requestId": ""
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 418; the response is not a Varlatch API error (text/plain)",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 302,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{}"
+      },
+      "result": {
+        "error": {
+          "status": 302,
+          "message": "HTTP 302",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 302",
+        "exit": 1
+      }
+    },
+    {
+      "answer": {
+        "status": 599,
+        "headers": [
+          [
+            "content-type",
+            "text/plain"
+          ]
+        ],
+        "body": "unexpected request"
+      },
+      "result": {
+        "error": {
+          "status": 599,
+          "message": "HTTP 599; the response is not a Varlatch API error (text/plain)",
+          "code": "INTERNAL",
+          "requestId": "unknown"
+        }
+      },
+      "cli": {
+        "stderr": "Error INTERNAL: HTTP 599; the response is not a Varlatch API error (text/plain)",
+        "exit": 1
+      }
+    }
+  ],
+  "maintenance": [
+    {
+      "title": "Retry-After 0, then an answer",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "0"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 0,
+          "remainingMs": 180000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "Retry-After 2 twice",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "2"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "2"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 2000,
+          "remainingMs": 178000
+        },
+        {
+          "retryInMs": 2000,
+          "remainingMs": 176000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 3,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "the lowest jitter",
+      "random": 0,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "2"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 1600,
+          "remainingMs": 178400
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "the highest jitter",
+      "random": 0.999999,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "2"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 2400,
+          "remainingMs": 177600
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "no Retry-After: Number(null) is 0",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 0,
+          "remainingMs": 180000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "an empty Retry-After is 0",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              ""
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 0,
+          "remainingMs": 180000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "a Retry-After that is not a number: 5 s",
+      "random": 0.999,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "abc"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 5998,
+          "remainingMs": 174002
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "a negative Retry-After: 5 s",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "-1"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 5000,
+          "remainingMs": 175000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "a fractional Retry-After",
+      "random": 0.3,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "1.5"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 1380,
+          "remainingMs": 178620
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "Retry-After with spaces",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              " 3 "
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 3000,
+          "remainingMs": 177000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "Retry-After in hex",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "0x10"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 16000,
+          "remainingMs": 164000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "Retry-After 1e1",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "1e1"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 10000,
+          "remainingMs": 170000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "Retry-After Infinity: 5 s",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "Infinity"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 5000,
+          "remainingMs": 175000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "Retry-After as an HTTP date: 5 s",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "Wed, 21 Oct 2015 07:28:00 GMT"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 5000,
+          "remainingMs": 175000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "two Retry-After headers: '1, 2' is not a number",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "1"
+            ],
+            [
+              "retry-after",
+              "2"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 5000,
+          "remainingMs": 175000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "a wait longer than the budget is cut to it",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "200"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 180000,
+          "remainingMs": 0
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "the budget runs out: the MAINTENANCE error surfaces",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "60"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "60"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "60"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "60"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 60000,
+          "remainingMs": 120000
+        },
+        {
+          "retryInMs": 60000,
+          "remainingMs": 60000
+        },
+        {
+          "retryInMs": 60000,
+          "remainingMs": 0
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 4,
+      "results": [
+        {
+          "error": {
+            "status": 503,
+            "message": "m",
+            "code": "MAINTENANCE",
+            "requestId": "req_01234567-89ab-4def-8123-456789abcdef"
+          }
+        }
+      ]
+    },
+    {
+      "title": "the budget runs out with jitter",
+      "random": 0.9,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "50"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "50"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "50"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "50"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "50"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 58000,
+          "remainingMs": 122000
+        },
+        {
+          "retryInMs": 58000,
+          "remainingMs": 64000
+        },
+        {
+          "retryInMs": 58000,
+          "remainingMs": 6000
+        },
+        {
+          "retryInMs": 6000,
+          "remainingMs": 0
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 5,
+      "results": [
+        {
+          "error": {
+            "status": 503,
+            "message": "m",
+            "code": "MAINTENANCE",
+            "requestId": "req_01234567-89ab-4def-8123-456789abcdef"
+          }
+        }
+      ]
+    },
+    {
+      "title": "maintenance, then a refusal",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "1"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 401,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"INVALID_CREDENTIAL\",\"message\":\"no\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 1000,
+          "remainingMs": 179000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "error": {
+            "status": 401,
+            "message": "no",
+            "code": "INVALID_CREDENTIAL",
+            "requestId": "req_01234567-89ab-4def-8123-456789abcdef"
+          }
+        }
+      ]
+    },
+    {
+      "title": "a 503 that is not maintenance is not retried",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"INTERNAL\",\"message\":\"down\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [],
+      "notice": "",
+      "requests": 1,
+      "results": [
+        {
+          "error": {
+            "status": 503,
+            "message": "down",
+            "code": "INTERNAL"
+          }
+        }
+      ]
+    },
+    {
+      "title": "a 503 whose body is not JSON is not retried",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "1"
+            ]
+          ],
+          "body": "<html>"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [],
+      "notice": "",
+      "requests": 1,
+      "results": [
+        {
+          "error": {
+            "status": 503,
+            "message": "HTTP 503; the response is not a Varlatch API error (application/json)",
+            "code": "INTERNAL",
+            "requestId": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "title": "a 503 maintenance body with a byte order mark is maintenance",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "1"
+            ]
+          ],
+          "body": "﻿{\"error\":{\"code\":\"MAINTENANCE\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 1000,
+          "remainingMs": 179000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 2,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "a 503 with error.code MAINTENANCE but a string error is not",
+      "random": 0.5,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "1"
+            ]
+          ],
+          "body": "{\"error\":\"MAINTENANCE\"}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [],
+      "notice": "",
+      "requests": 1,
+      "results": [
+        {
+          "error": {
+            "status": 503,
+            "message": ""
+          }
+        }
+      ]
+    },
+    {
+      "title": "the budget belongs to the client: a second call continues it",
+      "random": 0.5,
+      "calls": 2,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "100"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "100"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 100000,
+          "remainingMs": 80000
+        },
+        {
+          "retryInMs": 100000,
+          "remainingMs": 80000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 4,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        },
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "the budget resets once the server answers normally",
+      "random": 0.5,
+      "calls": 3,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "60"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "60"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "60"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "60"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "60"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 60000,
+          "remainingMs": 120000
+        },
+        {
+          "retryInMs": 60000,
+          "remainingMs": 60000
+        },
+        {
+          "retryInMs": 60000,
+          "remainingMs": 120000
+        },
+        {
+          "retryInMs": 60000,
+          "remainingMs": 60000
+        },
+        {
+          "retryInMs": 60000,
+          "remainingMs": 120000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 8,
+      "results": [
+        {
+          "value": {
+            "capabilities": []
+          }
+        },
+        {
+          "value": {
+            "capabilities": []
+          }
+        },
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    },
+    {
+      "title": "a 204 ends the maintenance too",
+      "random": 0.5,
+      "calls": 2,
+      "answers": [
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "1"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 204
+        },
+        {
+          "status": 503,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "retry-after",
+              "1"
+            ]
+          ],
+          "body": "{\"error\":{\"code\":\"MAINTENANCE\",\"message\":\"m\",\"requestId\":\"req_01234567-89ab-4def-8123-456789abcdef\"}}"
+        },
+        {
+          "status": 200,
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{\"capabilities\":[]}"
+        }
+      ],
+      "waits": [
+        {
+          "retryInMs": 1000,
+          "remainingMs": 179000
+        },
+        {
+          "retryInMs": 1000,
+          "remainingMs": 179000
+        }
+      ],
+      "notice": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+      "requests": 4,
+      "results": [
+        {
+          "undefined": true
+        },
+        {
+          "value": {
+            "capabilities": []
+          }
+        }
+      ]
+    }
+  ],
+  "expiry": {
+    "stored": [
+      {
+        "credential": null,
+        "warning": null
+      },
+      {
+        "credential": {},
+        "warning": null
+      },
+      {
+        "credential": {
+          "issuedAt": "2026-11-17T00:00:00.000Z"
+        },
+        "warning": null
+      },
+      {
+        "credential": {
+          "issuedAt": "2026-11-17T00:00:00.000Z",
+          "expiresAt": "2026-11-18T00:00:00.000Z"
+        },
+        "warning": null
+      },
+      {
+        "credential": {
+          "issuedAt": "2026-11-17T00:00:00.000Z",
+          "expiresAt": "2026-11-17T14:00:00.000Z"
+        },
+        "warning": "varlatch: credential for https://s.example expires 2026-11-17T14:00:00.000Z — run `varlatch login --server https://s.example` to renew"
+      },
+      {
+        "credential": {
+          "issuedAt": "2026-11-17T00:00:00.000Z",
+          "expiresAt": "2026-11-17T12:00:00.000Z"
+        },
+        "warning": "varlatch: credential for https://s.example expired 2026-11-17T12:00:00.000Z — run `varlatch login --server https://s.example`"
+      },
+      {
+        "credential": {
+          "issuedAt": "2026-11-16T00:00:00.000Z",
+          "expiresAt": "2026-11-17T11:00:00.000Z"
+        },
+        "warning": "varlatch: credential for https://s.example expired 2026-11-17T11:00:00.000Z — run `varlatch login --server https://s.example`"
+      },
+      {
+        "credential": {
+          "issuedAt": "2026-11-17T00:00:00.000Z",
+          "expiresAt": "2026-11-17T14:00:00+02:00"
+        },
+        "warning": "varlatch: credential for https://s.example expired 2026-11-17T12:00:00.000Z — run `varlatch login --server https://s.example`"
+      },
+      {
+        "credential": {
+          "issuedAt": "2026-11-17T00:00:00.000Z",
+          "expiresAt": "Nov 17 2026 13:00 GMT"
+        },
+        "warning": "varlatch: credential for https://s.example expires an unrecognized time — run `varlatch login --server https://s.example` to renew"
+      },
+      {
+        "credential": {
+          "issuedAt": "2026-11-17T00:00:00.000Z",
+          "expiresAt": "garbage"
+        },
+        "warning": null
+      },
+      {
+        "credential": {
+          "issuedAt": "2026-11-18T00:00:00.000Z",
+          "expiresAt": "2026-11-17T00:00:00.000Z"
+        },
+        "warning": null
+      }
+    ],
+    "header": [
+      {
+        "expiresAt": "2026-11-20T00:00:00.000Z",
+        "warning": "varlatch: credential for https://s.example (VARLATCH_TOKEN) expires 2026-11-20T00:00:00.000Z; issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN before then"
+      },
+      {
+        "expiresAt": "2026-11-17T12:00:00.000Z",
+        "warning": "varlatch: credential for https://s.example (VARLATCH_TOKEN) expired 2026-11-17T12:00:00.000Z; issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN"
+      },
+      {
+        "expiresAt": "2026-11-17T11:59:59.999Z",
+        "warning": "varlatch: credential for https://s.example (VARLATCH_TOKEN) expired 2026-11-17T11:59:59.999Z; issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN"
+      },
+      {
+        "expiresAt": "2026-01-01T00:00:00Z",
+        "warning": "varlatch: credential for https://s.example (VARLATCH_TOKEN) expired 2026-01-01T00:00:00.000Z; issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN"
+      },
+      {
+        "expiresAt": "2026-11-20T01:00:00+01:00",
+        "warning": "varlatch: credential for https://s.example (VARLATCH_TOKEN) expires 2026-11-20T00:00:00.000Z; issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN before then"
+      },
+      {
+        "expiresAt": "Fri, 20 Nov 2026 00:00:00 GMT",
+        "warning": "varlatch: credential for https://s.example (VARLATCH_TOKEN) expires an unrecognized time; issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN before then"
+      },
+      {
+        "expiresAt": "1763380800000",
+        "warning": null
+      },
+      {
+        "expiresAt": "garbage",
+        "warning": null
+      },
+      {
+        "expiresAt": "",
+        "warning": null
+      }
+    ]
+  },
+  "encodeURIComponent": [
+    {
+      "text": "plain",
+      "encoded": "plain"
+    },
+    {
+      "text": "a b/c?d#e&f=g",
+      "encoded": "a%20b%2Fc%3Fd%23e%26f%3Dg"
+    },
+    {
+      "text": "-_.!~*'()",
+      "encoded": "-_.!~*'()"
+    },
+    {
+      "text": "é中😀",
+      "encoded": "%C3%A9%E4%B8%AD%F0%9F%98%80"
+    },
+    {
+      "text": "%41",
+      "encoded": "%2541"
+    },
+    {
+      "text": "@:+$,;[]",
+      "encoded": "%40%3A%2B%24%2C%3B%5B%5D"
+    }
+  ]
+}

@@ -72,7 +72,26 @@ type Exchange struct {
 	Path    string            `json:"path"`
 	Status  int               `json:"status"`
 	Headers map[string]string `json:"headers,omitempty"`
-	Answer  json.RawMessage   `json:"answer,omitempty"`
+	// Answer is the body: nil for none, and the JSON null ("null") sent as
+	// that, as the recorder sends an answer that is null.
+	Answer json.RawMessage `json:"answer,omitempty"`
+}
+
+// UnmarshalJSON keeps an answer that is null, which encoding/json would
+// read as no answer.
+func (e *Exchange) UnmarshalJSON(data []byte) error {
+	type plain Exchange
+	if err := json.Unmarshal(data, (*plain)(e)); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if answer, ok := fields["answer"]; ok {
+		e.Answer = answer
+	}
+	return nil
 }
 
 // Outcome is what a run did.
@@ -475,7 +494,7 @@ func newServer(script []Exchange, dir string) (*server, error) {
 		headers := map[string]string{}
 		for _, name := range RecordedHeaders {
 			if v := r.Header.Values(name); len(v) > 0 {
-				headers[name] = strings.Join(v, ", ")
+				headers[name] = latin1(strings.Join(v, ", "))
 			}
 		}
 		recorded := json.RawMessage("null")
@@ -516,7 +535,7 @@ func newServer(script []Exchange, dir string) (*server, error) {
 			return
 		}
 		var text string
-		if json.Unmarshal(next.Answer, &text) == nil {
+		if next.Answer[0] == '"' && json.Unmarshal(next.Answer, &text) == nil {
 			_, _ = io.WriteString(w, text) // an answer given as text is sent as it is
 			return
 		}
@@ -529,6 +548,16 @@ func newServer(script []Exchange, dir string) (*server, error) {
 	})}
 	go func() { _ = s.srv.Serve(ln) }()
 	return s, nil
+}
+
+// latin1 is a header value as Node.js's HTTP server gives it to the
+// recorder: each byte one character.
+func latin1(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		b.WriteRune(rune(s[i]))
+	}
+	return b.String()
 }
 
 func (s *server) received() []Request {

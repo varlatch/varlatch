@@ -1,0 +1,4916 @@
+{
+  "schema": 2,
+  "comment": "Recorded from the TypeScript CLI by apps/cli/test/go-transcripts.test.ts; do not edit. Regenerate with VARLATCH_WRITE_GO_VECTORS=1.",
+  "area": "5.1c-api-client",
+  "cases": [
+    {
+      "args": [
+        "status",
+        "--probe"
+      ],
+      "id": "probe.none",
+      "title": "--probe with nothing stored sends no request",
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "No stored credentials. Run: varlatch login --server <url>\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.valid",
+      "title": "a valid credential whose metadata is complete: nothing is written",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe"
+      ],
+      "id": "probe.valid.human",
+      "title": "the human format adds the probe's state",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{{server}}  (expires 2100-01-01T00:00:00.000Z, laptop, probe: valid)\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.whoami",
+      "title": "a server with identity.whoami: the identity and organization, in the JSON only",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "retrieval.strict",
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 200,
+          "answer": {
+            "identity": {
+              "id": "idn_1",
+              "name": "Ada",
+              "kind": "human",
+              "extra": "not shown"
+            },
+            "organization": {
+              "id": "org_1",
+              "slug": "acme",
+              "name": "Acme",
+              "plan": "x"
+            },
+            "credential": {
+              "id": "cred_a"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null,\n        \"identity\": {\n          \"id\": \"idn_1\",\n          \"name\": \"Ada\",\n          \"kind\": \"human\"\n        },\n        \"organization\": {\n          \"id\": \"org_1\",\n          \"slug\": \"acme\",\n          \"name\": \"Acme\"\n        }\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe"
+      ],
+      "id": "probe.whoami.human",
+      "title": "the human format does not show the identity",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "retrieval.strict",
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 200,
+          "answer": {
+            "identity": {
+              "id": "idn_1",
+              "name": "Ada",
+              "kind": "human",
+              "extra": "not shown"
+            },
+            "organization": {
+              "id": "org_1",
+              "slug": "acme",
+              "name": "Acme",
+              "plan": "x"
+            },
+            "credential": {
+              "id": "cred_a"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{{server}}  (expires 2100-01-01T00:00:00.000Z, laptop, probe: valid)\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.whoami.no-organization",
+      "title": "an identity without an Organization, and fields left out",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "retrieval.strict",
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 200,
+          "answer": {
+            "identity": {
+              "id": "idn_2",
+              "kind": "service",
+              "name": null
+            },
+            "organization": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null,\n        \"identity\": {\n          \"id\": \"idn_2\",\n          \"name\": null,\n          \"kind\": \"service\"\n        },\n        \"organization\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.whoami.odd-shapes",
+      "title": "identity fields of any JSON type are shown as they are; an organization that is a string",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "retrieval.strict",
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 200,
+          "answer": {
+            "identity": {
+              "id": 7,
+              "name": [
+                "a",
+                {
+                  "b": 1
+                }
+              ],
+              "kind": "a\u0007b "
+            },
+            "organization": "acme"
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null,\n        \"identity\": {\n          \"id\": 7,\n          \"name\": [\n            \"a\",\n            {\n              \"b\": 1\n            }\n          ],\n          \"kind\": \"a\\u0007b \"\n        },\n        \"organization\": {}\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.whoami.capability-string",
+      "title": "capabilities given as a string: includes() finds a substring",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "capabilities": "x identity.whoami y"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 200,
+          "answer": {
+            "identity": {
+              "id": "idn_1",
+              "name": "Ada",
+              "kind": "human",
+              "extra": "not shown"
+            },
+            "organization": {
+              "id": "org_1",
+              "slug": "acme",
+              "name": "Acme",
+              "plan": "x"
+            },
+            "credential": {
+              "id": "cred_a"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null,\n        \"identity\": {\n          \"id\": \"idn_1\",\n          \"name\": \"Ada\",\n          \"kind\": \"human\"\n        },\n        \"organization\": {\n          \"id\": \"org_1\",\n          \"slug\": \"acme\",\n          \"name\": \"Acme\"\n        }\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.backfill",
+      "title": "a token stored without metadata: the probe backfills it from the credential's own record",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0600",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe"
+      ],
+      "id": "probe.backfill.human",
+      "title": "the backfilled expiry shows in the human format",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{{server}}  (expires 2100-01-01T00:00:00.000Z, laptop, probe: valid)\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0600",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.backfill.keeps",
+      "title": "unknown keys and an existing issuedAt are kept; a different id and name replace the stored ones",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"7\": \"index\",\n      \"future\": {\n        \"a\": 1\n      },\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2020-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_old\",\n      \"name\": \"old\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2020-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0600",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"7\": \"index\",\n      \"future\": {\n        \"a\": 1\n      },\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2020-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.backfill.no-expiry",
+      "title": "a credential without expiry or name: only the id and issue time are added",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"expiresAt\": \"2099-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_c",
+                "current": true,
+                "createdAt": "2026-11-02T00:00:00.000Z",
+                "expiresAt": null,
+                "name": null
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": null,\n      \"issuedAt\": \"2026-11-02T00:00:00.000Z\",\n      \"expiresAt\": \"2099-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_c\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0600",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"expiresAt\": \"2099-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_c\",\n      \"issuedAt\": \"2026-11-02T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.backfill.no-id",
+      "title": "a current credential without an id removes the stored id; issuedAt null takes the record's",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"credentialId\": \"cred_a\",\n      \"issuedAt\": null\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "current": 1,
+                "createdAt": "2026-11-03T00:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": null,\n      \"issuedAt\": \"2026-11-03T00:00:00.000Z\",\n      \"expiresAt\": null,\n      \"credentialId\": null,\n      \"expired\": null,\n      \"expiring\": null,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0600",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-03T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.backfill.no-current",
+      "title": "no credential marked current: nothing is written",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              "x",
+              0,
+              {
+                "current": ""
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": null,\n      \"issuedAt\": null,\n      \"expiresAt\": null,\n      \"credentialId\": null,\n      \"expired\": null,\n      \"expiring\": null,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.backfill.no-token",
+      "title": "an entry without a token: no Authorization header, and the store still backfills",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"name\": \"tokenless\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0600",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"name\": \"laptop\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.trailing-slash",
+      "title": "a server stored with a trailing slash: the request drops it, and the entry is read under the other key",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}/\": {\n      \"token\": \"vlt_cli_probeAAAA\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}/\",\n      \"name\": null,\n      \"issuedAt\": null,\n      \"expiresAt\": null,\n      \"credentialId\": null,\n      \"expired\": null,\n      \"expiring\": null,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}/\": {\n      \"token\": \"vlt_cli_probeAAAA\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.path",
+      "title": "a server with a path: the API is under it",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}/base\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/base/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/base/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}/base\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/base/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/base/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}/base\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe"
+      ],
+      "id": "probe.several",
+      "title": "several servers, probed in order: valid, refused, unreachable",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    },\n    \"{{server}}/two\": {\n      \"token\": \"vlt_cli_probeBBBB\"\n    },\n    \"http://127.0.0.1:2\": {\n      \"token\": \"vlt_cli_probeCCCC\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/two/v1/meta",
+          "status": 401,
+          "answer": {
+            "error": {
+              "code": "INVALID_CREDENTIAL",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{{server}}  (expires 2100-01-01T00:00:00.000Z, laptop, probe: valid)\n{{server}}/two  (no expiry recorded, probe: invalid (INVALID_CREDENTIAL))\nhttp://127.0.0.1:2  (no expiry recorded, probe: unreachable (fetch failed))\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/two/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeBBBB",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    },\n    \"{{server}}/two\": {\n      \"token\": \"vlt_cli_probeBBBB\"\n    },\n    \"http://127.0.0.1:2\": {\n      \"token\": \"vlt_cli_probeCCCC\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid",
+      "title": "a refused credential: invalid, with the error's code",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 401,
+          "answer": {
+            "error": {
+              "code": "INVALID_CREDENTIAL",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"INVALID_CREDENTIAL\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe"
+      ],
+      "id": "probe.invalid.human",
+      "title": "invalid in the human format",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 401,
+          "answer": {
+            "error": {
+              "code": "INVALID_CREDENTIAL",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{{server}}  (expires 2100-01-01T00:00:00.000Z, laptop, probe: invalid (INVALID_CREDENTIAL))\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid.credentials",
+      "title": "refused at the credential listing",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 403,
+          "answer": {
+            "error": {
+              "code": "PERMISSION_DENIED",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"PERMISSION_DENIED\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid.whoami",
+      "title": "refused at /v1/me",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "retrieval.strict",
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 403,
+          "answer": {
+            "error": {
+              "code": "ORGANIZATION_FROZEN",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"ORGANIZATION_FROZEN\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid.unknown-code",
+      "title": "a code the protocol does not define",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 400,
+          "answer": {
+            "error": {
+              "code": "MADE_UP\u001b[31m",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"UNRECOGNIZED_ERROR\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid.code-not-string",
+      "title": "a code that is not a string",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 400,
+          "answer": {
+            "error": {
+              "code": 5,
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"UNRECOGNIZED_ERROR\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid.error-not-object",
+      "title": "an error that is a string: no code",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 400,
+          "answer": {
+            "error": "boom"
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"UNRECOGNIZED_ERROR\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid.error-null",
+      "title": "an error that is null: HTTP <status>, INTERNAL",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 418,
+          "answer": {
+            "error": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"INTERNAL\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid.html",
+      "title": "a proxy's HTML page",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 502,
+          "headers": {
+            "content-type": "text/html; charset=utf-8"
+          },
+          "answer": "<html>bad gateway</html>"
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"INTERNAL\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid.ok-not-json",
+      "title": "an OK answer that is not JSON",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "headers": {},
+          "answer": "hello"
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"INTERNAL\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.invalid.503",
+      "title": "a 503 that is not maintenance is not retried",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 503,
+          "headers": {
+            "content-type": "application/json",
+            "retry-after": "0"
+          },
+          "answer": {
+            "error": {
+              "code": "INTERNAL",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"INTERNAL\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.maintenance",
+      "title": "maintenance is ridden out, said once on stderr",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 503,
+          "headers": {
+            "content-type": "application/json",
+            "retry-after": "0"
+          },
+          "answer": {
+            "error": {
+              "code": "MAINTENANCE",
+              "message": "restore in progress",
+              "requestId": "req_00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 503,
+          "headers": {
+            "content-type": "application/json",
+            "retry-after": "0"
+          },
+          "answer": {
+            "error": {
+              "code": "MAINTENANCE",
+              "message": "restore in progress",
+              "requestId": "req_00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.maintenance.no-retry-after",
+      "title": "maintenance without Retry-After: retried at once (Number(null) is 0)",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 503,
+          "headers": {
+            "content-type": "application/json"
+          },
+          "answer": {
+            "error": {
+              "code": "MAINTENANCE",
+              "message": "restore in progress",
+              "requestId": "req_00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.maintenance.later-call",
+      "title": "maintenance met at a later call of the same command",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 503,
+          "headers": {
+            "content-type": "application/json",
+            "retry-after": "0"
+          },
+          "answer": {
+            "error": {
+              "code": "MAINTENANCE",
+              "message": "restore in progress",
+              "requestId": "req_00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.maintenance.two-servers",
+      "title": "two servers in maintenance: the notice still comes once per process",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}/a\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    },\n    \"{{server}}/b\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/a/v1/meta",
+          "status": 503,
+          "headers": {
+            "content-type": "application/json",
+            "retry-after": "0"
+          },
+          "answer": {
+            "error": {
+              "code": "MAINTENANCE",
+              "message": "restore in progress",
+              "requestId": "req_00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/a/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/a/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/b/v1/meta",
+          "status": 503,
+          "headers": {
+            "content-type": "application/json",
+            "retry-after": "0"
+          },
+          "answer": {
+            "error": {
+              "code": "MAINTENANCE",
+              "message": "restore in progress",
+              "requestId": "req_00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/b/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/b/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}/a\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    },\n    {\n      \"server\": \"{{server}}/b\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/a/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/a/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/a/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/b/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/b/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/b/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}/a\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    },\n    \"{{server}}/b\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.maintenance.then-refused",
+      "title": "maintenance, then a refusal",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 503,
+          "headers": {
+            "content-type": "application/json",
+            "retry-after": "0"
+          },
+          "answer": {
+            "error": {
+              "code": "MAINTENANCE",
+              "message": "restore in progress",
+              "requestId": "req_00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 401,
+          "answer": {
+            "error": {
+              "code": "INVALID_CREDENTIAL",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"invalid\",\n        \"detail\": \"INVALID_CREDENTIAL\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "varlatch: the installation is in maintenance (restore or upgrade); waiting up to 180 s…\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.expiry-header",
+      "title": "the server's Varlatch-Credential-Expires is no warning for a probe",
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_envAAAAAA"
+      },
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          },
+          "headers": {
+            "content-type": "application/json",
+            "varlatch-credential-expires": "2026-01-01T00:00:00.000Z"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ]
+          },
+          "headers": {
+            "content-type": "application/json",
+            "varlatch-credential-expires": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.redirect",
+      "title": "a redirect on the same server is followed with the credential",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 302,
+          "headers": {
+            "location": "/moved/v1/meta"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/moved/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 307,
+          "headers": {
+            "location": "credentials-moved?x=1"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials-moved?x=1",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/moved/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials-moved?x=1",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.bom",
+      "title": "an answer with a byte order mark is still JSON",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": "﻿{\"capabilities\":[]}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": "﻿ {\"items\":[]} "
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.meta-empty",
+      "title": "an empty meta answer: the TypeError's text is the detail",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 204
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Cannot read properties of undefined (reading 'capabilities')\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.meta-null",
+      "title": "a meta answer of null",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": null
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Cannot read properties of null (reading 'capabilities')\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.capabilities-missing",
+      "title": "meta without capabilities",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {}
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Cannot read properties of undefined (reading 'includes')\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.capabilities-number",
+      "title": "capabilities that are a number",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "capabilities": 3
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"meta3.capabilities.includes is not a function\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.credentials-empty",
+      "title": "an empty credential listing",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "headers": {}
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Cannot read properties of undefined (reading 'items')\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.items-missing",
+      "title": "a listing without items",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {}
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Cannot read properties of undefined (reading 'find')\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.items-string",
+      "title": "items that are a string",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": "abc"
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"credentials2.items.find is not a function\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.item-null",
+      "title": "a null item",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              null,
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Cannot read properties of null (reading 'current')\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.whoami-null",
+      "title": "/v1/me answers null",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "retrieval.strict",
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 200,
+          "answer": null
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Cannot destructure property 'identity' of '(intermediate value)' as it is null.\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.whoami-empty",
+      "title": "/v1/me answers nothing",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "retrieval.strict",
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 204
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Cannot destructure property 'identity' of '(intermediate value)' as it is undefined.\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.identity-missing",
+      "title": "/v1/me without an identity",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "retrieval.strict",
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 200,
+          "answer": {
+            "organization": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Cannot read properties of undefined (reading 'id')\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.shape.stored-string",
+      "title": "a stored entry that is a string: spread into the backfilled entry",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": \"ab\"\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0600",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"0\": \"a\",\n      \"1\": \"b\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.unreachable",
+      "title": "a server that refuses the connection: fetch failed",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"http://127.0.0.1:2\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"http://127.0.0.1:2\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"fetch failed\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"http://127.0.0.1:2\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe"
+      ],
+      "id": "probe.unreachable.human",
+      "title": "unreachable in the human format",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"http://127.0.0.1:2\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "http://127.0.0.1:2  (expires 2100-01-01T00:00:00.000Z, laptop, probe: unreachable (fetch failed))\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"http://127.0.0.1:2\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.unreachable.bad-port",
+      "title": "a port fetch never connects to",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"http://127.0.0.1:1\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"http://127.0.0.1:1\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"fetch failed\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"http://127.0.0.1:1\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.unreachable.scheme",
+      "title": "a scheme fetch cannot fetch",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"ftp://127.0.0.1:2\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"ftp://127.0.0.1:2\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"fetch failed\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"ftp://127.0.0.1:2\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.unreachable.not-a-url",
+      "title": "a stored server that is not a URL: fetch's own message",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"not a url\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"not a url\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"unreachable\",\n        \"detail\": \"Failed to parse URL from not a url/v1/meta\"\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"not a url\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.token-latin1",
+      "title": "a stored token with Latin-1 characters and surrounding spaces is sent",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \" vlt_cli_é \",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer  vlt_cli_é",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer  vlt_cli_é",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \" vlt_cli_é \",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.token-number",
+      "title": "a stored token that is a number is sent as text",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": 12345,\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer 12345",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer 12345",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": 12345,\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.in-repo",
+      "title": "inside a repository, the repository's context follows",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n",
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+      },
+      "cwd": "repo",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": {\n    \"server\": \"{{server}}\",\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev\",\n    \"environmentSource\": \"committed-default\",\n    \"repoRoot\": \"{{dir}}/repo\",\n    \"tier\": null,\n    \"tierCachedAt\": null,\n    \"serverSource\": \"repository\"\n  }\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "--assisted",
+        "status",
+        "--probe",
+        "--json"
+      ],
+      "id": "probe.assisted",
+      "title": "assisted mode marks the User-Agent",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me/credentials",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "cred_b",
+                "current": false,
+                "kind": "cli",
+                "name": "desktop",
+                "createdAt": "2026-10-01T10:00:00.000Z",
+                "expiresAt": null
+              },
+              {
+                "id": "cred_a",
+                "current": true,
+                "kind": "cli",
+                "name": "laptop",
+                "createdAt": "2026-11-01T10:00:00.000Z",
+                "expiresAt": "2100-01-01T00:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "probe.null-entry",
+      "title": "a null stored entry: TypeScript throws before probing",
+      "args": [
+        "status",
+        "--probe"
+      ],
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": null\n  }\n}\n"
+      },
+      "differences": [
+        "uncaught"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "{{uncaught TypeError: Cannot read properties of null (reading 'token')}}\n",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": null\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    }
+  ]
+}

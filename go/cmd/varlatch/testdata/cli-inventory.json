@@ -3,7 +3,8 @@
   "comment": "The Go CLI's inventory (internal docs/design/go-cli.md, decision 16): every command, option and environment variable of the TypeScript CLI, kept equal to its source both ways by apps/cli/test/cli-inventory.test.ts, and what must be covered once its slice is built, checked by go/cmd/varlatch's TestInventoryCoverage. Edited by hand; the test says what is missing.",
   "built": [
     "5.1a",
-    "5.1b"
+    "5.1b",
+    "5.1c"
   ],
   "commands": {
     "login": {
@@ -1854,7 +1855,7 @@
         "status"
       ],
       "slice": "5.1c",
-      "note": "status --probe goes online: slice 5.1c (the API client); status itself is 5.1b"
+      "note": "status --probe goes online: slice 5.1c (the API client); status itself is 5.1b. Cases: transcripts/5.1c-api-client.json"
     },
     "--profile": {
       "sources": [

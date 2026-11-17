@@ -159,22 +159,39 @@ func repoStatus(ctx *clientctx.Context, local any) (jsjson.Object, error) {
 // statusCommand is `varlatch status [--json]`: the stored credentials and
 // the repository's context, offline (ADR-0032). Its options are read
 // leniently, as TypeScript's has() reads them; --environment, -e and
-// --server reach the repository's context. --probe goes online and is
-// slice 5.1c.
+// --server reach the repository's context. --probe goes online for each
+// stored credential (probeServer).
 func statusCommand(r *Run) error {
-	if hasArg(r.Args, "--probe") {
-		return UsageError("varlatch status --probe: not in this build of the Go CLI yet (slice 5.1c); use the TypeScript CLI for it until then")
-	}
 	list, err := clientctx.ListCredentials(r.Env)
 	if err != nil {
 		return err
 	}
-	now := float64(time.Now().UnixMilli())
 	servers := []any{}
 	for _, e := range list {
-		s, err := serverStatus(e.Server, e.Credential, now)
+		credential := e.Credential
+		var probe jsjson.Object
+		if hasArg(r.Args, "--probe") {
+			if credential == nil {
+				return &clientctx.TypeError{Message: "Cannot read properties of null (reading 'token')"}
+			}
+			token, tokenOK := jsval.Get(credential, "token")
+			probe = r.probeServer(e.Server, token, tokenOK)
+			// The probe may have backfilled metadata; report the stored
+			// state as it is now, not as it was before the probe.
+			reloaded, err := clientctx.LoadCredential(e.Server, r.Env)
+			if err != nil {
+				return err
+			}
+			if reloaded != nil {
+				credential = reloaded
+			}
+		}
+		s, err := serverStatus(e.Server, credential, float64(time.Now().UnixMilli()))
 		if err != nil {
 			return err
+		}
+		if probe != nil {
+			s = append(s, jsjson.Member{Key: "probe", Value: probe})
 		}
 		servers = append(servers, s)
 	}
@@ -220,6 +237,13 @@ func formatStatusHuman(servers []any, repo any) string {
 		}
 		if name := s.Value("name"); jsjson.Truthy(name) {
 			bits = append(bits, jsjson.String(name))
+		}
+		if p, ok := s.Value("probe").(jsjson.Object); ok {
+			bit := "probe: " + jsjson.String(p.Value("state"))
+			if detail := p.Value("detail"); jsjson.Truthy(detail) {
+				bit += " (" + jsjson.String(detail) + ")"
+			}
+			bits = append(bits, bit)
 		}
 		lines = append(lines, s.Value("server").(string)+"  ("+strings.Join(bits, ", ")+")")
 	}

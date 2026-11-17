@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { TranscriptCase } from "./goKit.js";
+import type { Exchange, TranscriptCase } from "./goKit.js";
 
 /**
  * The transcript cases, by area (one file each under
@@ -248,7 +248,101 @@ const context51b: TranscriptCase[] = [
   ...TOML_CASES.map(([id, title, toml]): TranscriptCase => ({ id: `context.toml.${id}`, title: `varlatch.toml: ${title}`, args: ["context", "--json"], files: repoFiles(toml), ...IN_REPO })),
 ];
 
+
+// ---- 5.1c: the API client and status --probe ------------------------------
+
+/** Every request the Go CLI sends carries its own User-Agent (the version and the platform it runs on). */
+const ONLINE = ["user-agent"];
+
+const CURRENT = { id: "cred_a", current: true, kind: "cli", name: "laptop", createdAt: "2026-11-01T10:00:00.000Z", expiresAt: "2100-01-01T00:00:00.000Z" };
+const OTHER = { id: "cred_b", current: false, kind: "cli", name: "desktop", createdAt: "2026-10-01T10:00:00.000Z", expiresAt: null };
+const META = { serverVersion: "0.22.0", apiVersion: 1, capabilities: [] as string[] };
+const META_WHOAMI = { ...META, capabilities: ["retrieval.strict", "identity.whoami"] };
+const ME = {
+  identity: { id: "idn_1", name: "Ada", kind: "human", extra: "not shown" },
+  organization: { id: "org_1", slug: "acme", name: "Acme", plan: "x" },
+  credential: { id: "cred_a" },
+};
+const PROBED = { token: "vlt_cli_probeAAAA", issuedAt: "2026-11-01T10:00:00.000Z", expiresAt: "2100-01-01T00:00:00.000Z", credentialId: "cred_a", name: "laptop" };
+const storeAt = (entries: Record<string, unknown>): Record<string, string> => ({ "config/credentials.json": credentials(entries) });
+const ok = (path: string, answer: unknown, headers?: Record<string, string>): Exchange => ({ method: "GET", path, status: 200, answer, ...(headers ? { headers: { "content-type": "application/json", ...headers } } : {}) });
+const apiError = (status: number, code: unknown, message = "refused", requestId: unknown = "req_00000000-0000-4000-8000-000000000000"): Exchange["answer"] => ({ error: { code, message, requestId } });
+const MAINTENANCE: Exchange = { method: "GET", path: "/v1/meta", status: 503, headers: { "content-type": "application/json", "retry-after": "0" }, answer: { error: { code: "MAINTENANCE", message: "restore in progress", requestId: "req_00000000-0000-4000-8000-000000000001" } } };
+const VALID: Exchange[] = [ok("/v1/meta", META), ok("/v1/me/credentials", { items: [OTHER, CURRENT], nextCursor: null })];
+const VALID_WHOAMI: Exchange[] = [ok("/v1/meta", META_WHOAMI), ok("/v1/me/credentials", { items: [CURRENT], nextCursor: null }), ok("/v1/me", ME)];
+const probe = (c: Omit<TranscriptCase, "differences" | "args"> & { args?: string[] }): TranscriptCase => ({ args: ["status", "--probe", "--json"], ...c, differences: ONLINE });
+
+/**
+ * A stored token or server that fetch refuses to send (a character not
+ * allowed in a header, a URL with credentials) is not recorded here: the Go
+ * CLI's diagnostics never print credential values, so its message differs
+ * on purpose, and go/cmd/varlatch's TestDiagnosticsNeverPrintCredentials
+ * pins it.
+ */
+const apiClient51c: TranscriptCase[] = [
+  probe({ id: "probe.none", title: "--probe with nothing stored sends no request", args: ["status", "--probe"] }),
+  probe({ id: "probe.valid", title: "a valid credential whose metadata is complete: nothing is written", files: storeAt({ "{{server}}": PROBED }), server: VALID }),
+  probe({ id: "probe.valid.human", title: "the human format adds the probe's state", args: ["status", "--probe"], files: storeAt({ "{{server}}": PROBED }), server: VALID }),
+  probe({ id: "probe.whoami", title: "a server with identity.whoami: the identity and organization, in the JSON only", files: storeAt({ "{{server}}": PROBED }), server: VALID_WHOAMI }),
+  probe({ id: "probe.whoami.human", title: "the human format does not show the identity", args: ["status", "--probe"], files: storeAt({ "{{server}}": PROBED }), server: VALID_WHOAMI }),
+  probe({ id: "probe.whoami.no-organization", title: "an identity without an Organization, and fields left out", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META_WHOAMI), ok("/v1/me/credentials", { items: [CURRENT] }), ok("/v1/me", { identity: { id: "idn_2", kind: "service", name: null }, organization: null })] }),
+  probe({ id: "probe.whoami.odd-shapes", title: "identity fields of any JSON type are shown as they are; an organization that is a string", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META_WHOAMI), ok("/v1/me/credentials", { items: [CURRENT] }), ok("/v1/me", { identity: { id: 7, name: ["a", { b: 1 }], kind: "a\u0007b " }, organization: "acme" })] }),
+  probe({ id: "probe.whoami.capability-string", title: "capabilities given as a string: includes() finds a substring", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", { capabilities: "x identity.whoami y" }), ok("/v1/me/credentials", { items: [CURRENT] }), ok("/v1/me", ME)] }),
+  probe({ id: "probe.backfill", title: "a token stored without metadata: the probe backfills it from the credential's own record", files: storeAt({ "{{server}}": { token: "vlt_cli_probeAAAA" } }), server: VALID }),
+  probe({ id: "probe.backfill.human", title: "the backfilled expiry shows in the human format", args: ["status", "--probe"], files: storeAt({ "{{server}}": { token: "vlt_cli_probeAAAA" } }), server: VALID }),
+  probe({ id: "probe.backfill.keeps", title: "unknown keys and an existing issuedAt are kept; a different id and name replace the stored ones", files: storeAt({ "{{server}}": { future: { a: 1 }, token: "vlt_cli_probeAAAA", issuedAt: "2020-01-01T00:00:00.000Z", credentialId: "cred_old", name: "old", "7": "index" } }), server: VALID }),
+  probe({ id: "probe.backfill.no-expiry", title: "a credential without expiry or name: only the id and issue time are added", files: storeAt({ "{{server}}": { token: "vlt_cli_probeAAAA", expiresAt: "2099-01-01T00:00:00.000Z" } }), server: [ok("/v1/meta", META), ok("/v1/me/credentials", { items: [{ id: "cred_c", current: true, createdAt: "2026-11-02T00:00:00.000Z", expiresAt: null, name: null }] })] }),
+  probe({ id: "probe.backfill.no-id", title: "a current credential without an id removes the stored id; issuedAt null takes the record's", files: storeAt({ "{{server}}": { token: "vlt_cli_probeAAAA", credentialId: "cred_a", issuedAt: null } }), server: [ok("/v1/meta", META), ok("/v1/me/credentials", { items: [{ current: 1, createdAt: "2026-11-03T00:00:00.000Z" }] })] }),
+  probe({ id: "probe.backfill.no-current", title: "no credential marked current: nothing is written", files: storeAt({ "{{server}}": { token: "vlt_cli_probeAAAA" } }), server: [ok("/v1/meta", META), ok("/v1/me/credentials", { items: [OTHER, "x", 0, { current: "" }] })] }),
+  probe({ id: "probe.backfill.no-token", title: "an entry without a token: no Authorization header, and the store still backfills", files: storeAt({ "{{server}}": { name: "tokenless" } }), server: VALID }),
+  probe({ id: "probe.trailing-slash", title: "a server stored with a trailing slash: the request drops it, and the entry is read under the other key", files: storeAt({ "{{server}}/": { token: "vlt_cli_probeAAAA" } }), server: VALID }),
+  probe({ id: "probe.path", title: "a server with a path: the API is under it", files: storeAt({ "{{server}}/base": PROBED }), server: [ok("/base/v1/meta", META), ok("/base/v1/me/credentials", { items: [CURRENT] })] }),
+  probe({ id: "probe.several", title: "several servers, probed in order: valid, refused, unreachable", args: ["status", "--probe"], files: storeAt({ "{{server}}": PROBED, "{{server}}/two": { token: "vlt_cli_probeBBBB" }, "http://127.0.0.1:2": { token: "vlt_cli_probeCCCC" } }), server: [...VALID, { method: "GET", path: "/two/v1/meta", status: 401, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
+  probe({ id: "probe.invalid", title: "a refused credential: invalid, with the error's code", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 401, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
+  probe({ id: "probe.invalid.human", title: "invalid in the human format", args: ["status", "--probe"], files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 401, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
+  probe({ id: "probe.invalid.credentials", title: "refused at the credential listing", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META), { method: "GET", path: "/v1/me/credentials", status: 403, answer: apiError(403, "PERMISSION_DENIED") }] }),
+  probe({ id: "probe.invalid.whoami", title: "refused at /v1/me", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META_WHOAMI), ok("/v1/me/credentials", { items: [CURRENT] }), { method: "GET", path: "/v1/me", status: 403, answer: apiError(403, "ORGANIZATION_FROZEN") }] }),
+  probe({ id: "probe.invalid.unknown-code", title: "a code the protocol does not define", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 400, answer: apiError(400, "MADE_UP\u001b[31m") }] }),
+  probe({ id: "probe.invalid.code-not-string", title: "a code that is not a string", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 400, answer: apiError(400, 5) }] }),
+  probe({ id: "probe.invalid.error-not-object", title: "an error that is a string: no code", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 400, answer: { error: "boom" } }] }),
+  probe({ id: "probe.invalid.error-null", title: "an error that is null: HTTP <status>, INTERNAL", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 418, answer: { error: null } }] }),
+  probe({ id: "probe.invalid.html", title: "a proxy's HTML page", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 502, headers: { "content-type": "text/html; charset=utf-8" }, answer: "<html>bad gateway</html>" }] }),
+  probe({ id: "probe.invalid.ok-not-json", title: "an OK answer that is not JSON", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 200, headers: {}, answer: "hello" }] }),
+  probe({ id: "probe.invalid.503", title: "a 503 that is not maintenance is not retried", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 503, headers: { "content-type": "application/json", "retry-after": "0" }, answer: apiError(503, "INTERNAL") }] }),
+  probe({ id: "probe.maintenance", title: "maintenance is ridden out, said once on stderr", files: storeAt({ "{{server}}": PROBED }), server: [MAINTENANCE, MAINTENANCE, ...VALID] }),
+  probe({ id: "probe.maintenance.no-retry-after", title: "maintenance without Retry-After: retried at once (Number(null) is 0)", files: storeAt({ "{{server}}": PROBED }), server: [{ ...MAINTENANCE, headers: { "content-type": "application/json" } }, ...VALID] }),
+  probe({ id: "probe.maintenance.later-call", title: "maintenance met at a later call of the same command", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META), { ...MAINTENANCE, path: "/v1/me/credentials" }, ok("/v1/me/credentials", { items: [CURRENT] })] }),
+  probe({ id: "probe.maintenance.two-servers", title: "two servers in maintenance: the notice still comes once per process", files: storeAt({ "{{server}}/a": PROBED, "{{server}}/b": PROBED }), server: [{ ...MAINTENANCE, path: "/a/v1/meta" }, ok("/a/v1/meta", META), ok("/a/v1/me/credentials", { items: [] }), { ...MAINTENANCE, path: "/b/v1/meta" }, ok("/b/v1/meta", META), ok("/b/v1/me/credentials", { items: [] })] }),
+  probe({ id: "probe.maintenance.then-refused", title: "maintenance, then a refusal", files: storeAt({ "{{server}}": PROBED }), server: [MAINTENANCE, { method: "GET", path: "/v1/meta", status: 401, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
+  probe({ id: "probe.expiry-header", title: "the server's Varlatch-Credential-Expires is no warning for a probe", env: { VARLATCH_TOKEN: "vlt_svc_envAAAAAA" }, files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META, { "varlatch-credential-expires": "2026-01-01T00:00:00.000Z" }), ok("/v1/me/credentials", { items: [CURRENT] }, { "varlatch-credential-expires": "2026-01-01T00:00:00.000Z" })] }),
+  probe({ id: "probe.redirect", title: "a redirect on the same server is followed with the credential", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 302, headers: { location: "/moved/v1/meta" } }, ok("/moved/v1/meta", META), { method: "GET", path: "/v1/me/credentials", status: 307, headers: { location: "credentials-moved?x=1" } }, ok("/v1/me/credentials-moved?x=1", { items: [] })] }),
+  probe({ id: "probe.bom", title: "an answer with a byte order mark is still JSON", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 200, answer: "﻿{\"capabilities\":[]}" }, { method: "GET", path: "/v1/me/credentials", status: 200, answer: "﻿ {\"items\":[]} " }] }),
+  probe({ id: "probe.shape.meta-empty", title: "an empty meta answer: the TypeError's text is the detail", files: storeAt({ "{{server}}": PROBED }), server: [{ method: "GET", path: "/v1/meta", status: 204 }, ok("/v1/me/credentials", { items: [] })] }),
+  probe({ id: "probe.shape.meta-null", title: "a meta answer of null", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", null), ok("/v1/me/credentials", { items: [] })] }),
+  probe({ id: "probe.shape.capabilities-missing", title: "meta without capabilities", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", {}), ok("/v1/me/credentials", { items: [] })] }),
+  probe({ id: "probe.shape.capabilities-number", title: "capabilities that are a number", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", { capabilities: 3 }), ok("/v1/me/credentials", { items: [] })] }),
+  probe({ id: "probe.shape.credentials-empty", title: "an empty credential listing", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META), { method: "GET", path: "/v1/me/credentials", status: 200, headers: {} }] }),
+  probe({ id: "probe.shape.items-missing", title: "a listing without items", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META), ok("/v1/me/credentials", {})] }),
+  probe({ id: "probe.shape.items-string", title: "items that are a string", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META), ok("/v1/me/credentials", { items: "abc" })] }),
+  probe({ id: "probe.shape.item-null", title: "a null item", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META), ok("/v1/me/credentials", { items: [OTHER, null, CURRENT] })] }),
+  probe({ id: "probe.shape.whoami-null", title: "/v1/me answers null", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META_WHOAMI), ok("/v1/me/credentials", { items: [] }), ok("/v1/me", null)] }),
+  probe({ id: "probe.shape.whoami-empty", title: "/v1/me answers nothing", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META_WHOAMI), ok("/v1/me/credentials", { items: [] }), { method: "GET", path: "/v1/me", status: 204 }] }),
+  probe({ id: "probe.shape.identity-missing", title: "/v1/me without an identity", files: storeAt({ "{{server}}": PROBED }), server: [ok("/v1/meta", META_WHOAMI), ok("/v1/me/credentials", { items: [] }), ok("/v1/me", { organization: null })] }),
+  probe({ id: "probe.shape.stored-string", title: "a stored entry that is a string: spread into the backfilled entry", files: storeAt({ "{{server}}": "ab" }), server: [ok("/v1/meta", META), ok("/v1/me/credentials", { items: [CURRENT] })] }),
+  probe({ id: "probe.unreachable", title: "a server that refuses the connection: fetch failed", files: storeAt({ "http://127.0.0.1:2": PROBED }) }),
+  probe({ id: "probe.unreachable.human", title: "unreachable in the human format", args: ["status", "--probe"], files: storeAt({ "http://127.0.0.1:2": PROBED }) }),
+  probe({ id: "probe.unreachable.bad-port", title: "a port fetch never connects to", files: storeAt({ "http://127.0.0.1:1": PROBED }) }),
+  probe({ id: "probe.unreachable.scheme", title: "a scheme fetch cannot fetch", files: storeAt({ "ftp://127.0.0.1:2": PROBED }) }),
+  probe({ id: "probe.unreachable.not-a-url", title: "a stored server that is not a URL: fetch's own message", files: storeAt({ "not a url": PROBED }) }),
+  probe({ id: "probe.token-latin1", title: "a stored token with Latin-1 characters and surrounding spaces is sent", files: storeAt({ "{{server}}": { ...PROBED, token: " vlt_cli_é " } }), server: VALID }),
+  probe({ id: "probe.token-number", title: "a stored token that is a number is sent as text", files: storeAt({ "{{server}}": { ...PROBED, token: 12345 } }), server: VALID }),
+  probe({ id: "probe.in-repo", title: "inside a repository, the repository's context follows", files: { ...storeAt({ "{{server}}": PROBED }), "repo/varlatch.toml": 'server = "{{server}}"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n' }, cwd: "repo", server: VALID }),
+  probe({ id: "probe.assisted", title: "assisted mode marks the User-Agent", args: ["--assisted", "status", "--probe", "--json"], files: storeAt({ "{{server}}": PROBED }), server: VALID }),
+  { id: "probe.null-entry", title: "a null stored entry: TypeScript throws before probing", args: ["status", "--probe"], files: storeAt({ "{{server}}": null }), differences: ["uncaught"] },
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
+  "5.1c-api-client": apiClient51c,
 };
