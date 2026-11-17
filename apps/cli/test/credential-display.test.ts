@@ -221,6 +221,17 @@ describe("signing in to a server URL with a user name and password", () => {
     expect(readdirSync(cwd)).toEqual([]);
   });
 
+  it("project create never prints them, signed in or not", async () => {
+    const { config, cwd } = setup();
+    const signedOut = await cli(["project", "create", "web", "--org", "acme", "--server", server], cwd, config);
+    shows(signedOut, "project create, not signed in");
+    expect(signedOut.stderr).toContain(`Not authenticated to ${MASKED}`);
+    saveCredential(server, { token: "vlt_cli_x" }, { VARLATCH_CONFIG_DIR: config });
+    const signedIn = await cli(["project", "create", "web", "--org", "acme", "--server", server], cwd, config);
+    shows(signedIn, "project create");
+    expect(signedIn.code).toBe(1);
+  });
+
   it("varlatch mcp says it is not authenticated with them masked", async () => {
     const { config, cwd } = setup();
     const r = await cli(["mcp", "--server", server], cwd, config);

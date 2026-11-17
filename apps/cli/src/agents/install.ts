@@ -561,8 +561,12 @@ export function runInstall(opts: InstallOptions): InstallResult {
 
 function apply(opts: InstallOptions, files: Plan["files"], manual: string[], leftInPlace: string[], notices: string[]): InstallResult {
   const changes: Change[] = [];
+  // Names a removal took away with their file (a hard-linked pair): never
+  // reported twice, nor written again by a later row for the same file.
+  const gone = new Set<string>();
   for (const file of files) {
     const rel = relative(opts.root, file.path).split("\\").join("/");
+    if (gone.has(rel)) continue;
     const current = readBytes(file.path);
     if (current === undefined) {
       throw new AgentsInstallError(`${relative(opts.root, file.path)} is not a file; move it, then run this again`, false);
@@ -587,7 +591,10 @@ function apply(opts: InstallOptions, files: Plan["files"], manual: string[], lef
     changes.push({ path: rel, action });
     if (opts.mode === "check" || action === "unchanged") continue;
     if (file.desired === null) {
-      for (const alias of removeContained(opts.root, relative(opts.root, file.path))) changes.push({ path: alias.split("\\").join("/"), action: "remove" });
+      for (const alias of removeContained(opts.root, relative(opts.root, file.path))) {
+        gone.add(alias.split("\\").join("/"));
+        changes.push({ path: alias.split("\\").join("/"), action: "remove" });
+      }
     } else writeContained(opts.root, relative(opts.root, file.path), file.desired);
   }
   if (opts.mode === "remove") for (const base of [...SKILL_BASES, ".codex", ".cursor", ".vscode", ".gemini"]) pruneEmptyContained(opts.root, base);

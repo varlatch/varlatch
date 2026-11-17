@@ -437,6 +437,51 @@ describe("guided init", () => {
     expect(prompt.said[0]).toMatch(/^That is not an installation's address/);
   });
 
+  it("a server URL with a user name and password stops the run (64) before signing in, printing or writing anything", async () => {
+    const secret = "pw9secret";
+    for (const given of [`https://user:${secret}@vault.example.com`, undefined]) {
+      const out: string[] = [];
+      let signedIn = false;
+      const written: unknown[] = [];
+      const prompt = scripted(given === undefined ? [{ q: /address/, a: `https://user:${secret}@vault.example.com` }] : []);
+      const code = await guidedInit({
+        cwd: repo({}),
+        prompt,
+        out: (l) => out.push(l),
+        err: (l) => out.push(l),
+        server: given,
+        validateServer: (raw) => raw,
+        signIn: async () => {
+          signedIn = true;
+          return fake().api;
+        },
+        writeRepository: async (config) => void written.push(config),
+      });
+      expect(code).toBe(64);
+      expect(signedIn).toBe(false);
+      expect(written).toEqual([]);
+      expect(out).toEqual([
+        "varlatch init: a server URL with a user name or password can't be written to varlatch.toml; give the server's address without them. Nothing was written.",
+      ]);
+      expect([...out, ...prompt.said].join("\n")).not.toContain(secret);
+    }
+  });
+
+  it("the guided sign-in names the server with its user name and password masked", async () => {
+    const out: string[] = [];
+    await guidedSignIn("https://user:pw9secret@vault.example.com", {
+      browserLogin: async () => "handoff",
+      client: () => ({
+        exchangeCliCredential: async () => ({ token: "cli", id: "crd_1", expiresAt: "2030-01-01T00:00:00Z" }) as never,
+        listOrganizations: async () => ({ items: [], nextCursor: null }) as never,
+      }),
+      save: () => {},
+      out: (line) => out.push(line),
+    });
+    expect(out).toContain("Signed in to https://[redacted]@vault.example.com.");
+    expect(out.join("\n")).not.toContain("pw9secret");
+  });
+
   it("the guided sign-in prints nothing a server sent, even when its answers echo the bearers", async () => {
     const handoff = "HANDOFF_CANARY_4410";
     const cli = "CLI_CANARY_9902";
