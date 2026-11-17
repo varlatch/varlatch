@@ -27,3 +27,13 @@ overrides:
   # release only: 11.x is not callable from CommonJS, and Redocly's only call
   # matches remote-$ref header rules, which the protocol config does not use.
   '@redocly/openapi-core@1.34.19>minimatch': 11.0.3
+
+auditConfig:
+  ignoreGhsas:
+    # picomatch ReDoS through single-branch repeated extglobs
+    # (GHSA-fc5q-39xc-vjpf, every version up to 4.0.7, no patched release yet).
+    # It reaches only build and test tooling (vitest, vite, tinyglobby); `pnpm
+    # audit --prod` finds nothing, and those tools match repository-authored
+    # globs, never request input. Remove this entry once a patched picomatch
+    # is released and the lockfile resolves to it.
+    - GHSA-fc5q-39xc-vjpf
