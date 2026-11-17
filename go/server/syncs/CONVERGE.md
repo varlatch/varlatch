@@ -48,7 +48,7 @@ the no-op statements commit nothing either.
 | C4 cycle-open | :342 | `repair_cycle_started_at = COALESCE(…, now())` | generation (no lock: one statement) | forced runs only; then the reads of `reconcileUnderLease` |
 | C5 values-decrypted | :531-544, :1016 | the `sync.values_decrypted` event naming every version about to be decrypted | **none** (it records a decryption, not a delivery) | after the project, environment and resolved items; then D, the decryption |
 | — | :547 | the ledger read | | then **P1** `inspectUsage` (Coolify services; ungated), then **P2** `readRemote` / `readValues` (forced runs on read-back platforms; ungated) |
-| C6 adopt (× each) | :713-717 | ledger `written` for a name read back as current but not owned | generation, `FOR SHARE` | after P2; a fence ends the run (lease lost) |
+| C6 adopt (× each) | :713-717 | ledger `written` for a name read back as current but not owned; in Go, with the redeploy debt of an earlier run's unconfirmed write (defect 9) | generation, `FOR SHARE` | after P2; a fence ends the run (lease lost) |
 | C7 credit | :718, :1287 | `repaired_at = now()` for names read back as current | generation, `FOR SHARE` | after C6 |
 | — | :720-731 | nothing to write or delete: the owed redeploy only (C16's path) | | |
 | C9 drift | :757, :1212 | the Target's `last_drift_*` and the `sync.drift_detected` event | generation, `FOR NO KEY UPDATE` | forced runs with drift; after C7 |
@@ -101,18 +101,39 @@ the no-op statements commit nothing either.
 - The order of audit events within a run: C5, C9, C10, C15, then a
   disable's or a refusal's.
 
-## A defect kept for parity
+## TypeScript defect 8, fixed in Go
 
 `scanSyncTriggers` (:146-151) selects `event_order::text AS event_order`
 and orders by `event_order`, which PostgreSQL resolves to the text column.
 So a scan's batch is the 500 events after the cursor that come first as
 text ("10" before "9"), and the cursor moves to the last of those as text,
 not to the highest it read. With more than 500 events waiting, a scan can
-move the cursor past events it never read. The Targets those events would
-have marked wait for their repair pass (at most 6 hours), since delivery
-converges. `TriggerEvents` orders the same way, so the engines mark the
-same Targets. It is reported for the defect list (feature-parity.md), to
-be fixed in both or in Go alone by decision.
+move the cursor past events it never read; the Targets those events would
+have marked wait for their repair pass (at most 6 hours). A scan whose
+batch spans a change in the number of digits ("99", "100") leaves the
+cursor below events it read, and the next scan reads them again.
+
+Go orders the scan by number (`TriggerEvents`), so no event is skipped
+or read twice (`TestTriggerScanSkipsNoEvent`). This is a deliberate
+divergence: the TypeScript line takes security fixes only, and keeps the
+text order until it is retired (feature-parity.md, defect 8). The converge
+fixture is built so that none of its scans meets a batch where the two
+orders disagree: its build moves the cursor past the setup's events, and
+the fixture test checks that every tick leaves the cursor at the highest
+event it read.
+
+## TypeScript defect 9, fixed in Go
+
+A forced run that reads back a name it has an earlier run's `intent-write`
+for, and finds the value it wants, adopts the name (C6) with no redeploy
+debt (:713-717). If that earlier run's write reached the platform and the
+run died before its outcome (C12), the write's redeploy was never owed, so
+it is never paid: the application keeps running its old value until
+something else redeploys it. Go's C6 records the debt for such a name
+(an ambiguous one) on a Target that redeploys, in the same commit, and the
+run then pays it (P6, C16). TypeScript keeps the defect (security fixes
+only); feature-parity.md, defect 9. `TestInterruptedWriteKeepsItsRedeploy`
+and the G7 crash test's provider points hold it.
 
 ## Go's differences
 

@@ -2,7 +2,10 @@
 
 package syncs
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
 
 // UseClient makes s send the platforms' requests through c instead of the
 // outbound policy's clients: tests, with fake platforms. Base identities
@@ -13,3 +16,7 @@ func UseClient(s *Service, c *http.Client) { s.client = c }
 // (CONVERGE.md), right after it committed: crash and fence tests. A hook
 // that panics with Crash stops the engine there, as a process that died.
 func OnCommit(s *Service, hook func(point string)) { s.commitHook = hook }
+
+// ScanTriggers runs the engine's trigger scan alone (scanSyncTriggers):
+// tests.
+func ScanTriggers(ctx context.Context, s *Service) error { return s.scanTriggers(ctx) }

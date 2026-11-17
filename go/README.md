@@ -829,8 +829,14 @@ varlatchd runs it every 30 seconds when `sync = on`.
     (`needs_sync` kept, nothing recorded);
   - the ledger is read in last-write order, which TypeScript leaves
     unspecified.
-- **A TypeScript defect kept for parity:** the trigger scan's batch is
-  ordered by `event_order` as text. It is reported for the defect list.
+- **Two TypeScript defects, fixed in Go only** (feature-parity.md; the
+  TypeScript line takes security fixes only):
+  - **defect 8:** the trigger scan orders its batch by `event_order` as
+    text, so it can pass over events. Go orders by number
+    (`TestTriggerScanSkipsNoEvent`);
+  - **defect 9:** a forced run that adopts a write an earlier run left
+    unconfirmed drops its redeploy. Go keeps the debt
+    (`TestInterruptedWriteKeepsItsRedeploy`).
 - **Parity:**
   - `converge-v0.22.0.json` (`go-converge-fixture.test.ts`): 28 requests,
     ticks of the engine between ordinary requests, against stateful fake
@@ -847,21 +853,33 @@ varlatchd runs it every 30 seconds when `sync = on`.
     - a paused and resumed Target;
     - a new destination;
     - a revoked Connection.
-- **G7** (`converge_g7_test.go`):
-  - a crash right after each commit of the first pass, at every commit,
-    recovered both by the repair pass and by an ordinary triggered run,
-    converges to what the pass converges to without a crash;
-  - a fence (the generation moved) at every request to a platform, in the
-    middle of a batch included, stops the run's writes and records
-    nothing more under its generation.
+- **G7** (`converge_g7_test.go`), in three scenarios that together make
+  every commit CONVERGE.md maps:
+  - the first pass;
+  - changes to a converged world (deletions, a failed write, a rename,
+    drift, an outbound refusal, a trigger);
+  - a pass out of budget.
 
-  Under the race detector both take one point in seven.
+  The tests:
+  - a crash right after each commit, and right after a platform accepts
+    each request (between its success and the outcome's commit), recovered
+    both by the repair pass and by an ordinary triggered run, converges to
+    what the uncrashed pass converges to. The fake Coolify tracks what an
+    application runs (its values as of its last deploy), and the
+    application must run what it stores;
+  - a fence (the generation moved) at every request to a platform stops
+    the run's writes and records nothing more under its generation.
+
+  Each scenario's start is built once and copied for every point; the
+  points run in parallel (one in seven, one at a time, under the race
+  detector).
 - **Also tested** (`converge_test.go`):
   - a converged run's commits;
   - a refusal by the outbound policy is not a failure;
   - a run out of budget yields;
   - a freeze mid-run yields, and nothing is leased while frozen;
-  - App Connection Targets wait.
+  - App Connection Targets wait;
+  - the trigger scan skips no event (defect 8).
 
 ### The audit export's configuration (step 4.11a)
 

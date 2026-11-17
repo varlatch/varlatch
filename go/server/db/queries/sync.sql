@@ -219,13 +219,12 @@ SELECT cursor_order FROM sync_cursor WHERE singleton = 1;
 INSERT INTO sync_cursor (singleton, occurred_at, event_id) VALUES (1, ?, '') ON CONFLICT (singleton) DO NOTHING;
 
 -- name: TriggerEvents :many
--- scanSyncTriggers: the events after the cursor, delivery's own excluded,
--- ordered and limited as the TypeScript query orders them: by event_order
--- as text (its ORDER BY names the output column, event_order::text), a
--- defect kept for parity (CONVERGE.md).
+-- scanSyncTriggers: the next events after the cursor, in order, delivery's
+-- own excluded. The TypeScript query orders them as text (TypeScript
+-- defect 8, fixed here: CONVERGE.md).
 SELECT id, event_order, event_type, decision, resource FROM audit_events
 WHERE event_order > ? AND substr(event_type, 1, 5) <> 'sync.'
-ORDER BY CAST(event_order AS TEXT) LIMIT ?;
+ORDER BY event_order LIMIT ?;
 
 -- name: MarkTriggeredTargets :exec
 -- T2: Targets of the environments the events name, of their derived

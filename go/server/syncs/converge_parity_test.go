@@ -9,12 +9,14 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -67,6 +69,14 @@ type fakePlatforms struct {
 	// is answered: the fence tests.
 	onRequest func(n int)
 	sent      atomic.Int64
+	// The G7 tests' additions, unused by the fixture: activated is what a
+	// Coolify application or service runs, its stored values as of its
+	// last deploy or restart; refuse names hosts refused as the outbound
+	// policy refuses them; crashAfter, when set, stops the engine as a
+	// process that died right after the platform accepted that request.
+	activated  map[string]map[string]string
+	refuse     map[string]bool
+	crashAfter int
 }
 
 func newFakePlatforms() *fakePlatforms {
@@ -82,7 +92,35 @@ func newFakePlatforms() *fakePlatforms {
 		},
 		convex: [][2]string{{"API_KEY", "key-1"}, {"STALE", "x"}},
 		next:   1,
+		activated: map[string]map[string]string{
+			"/applications/app-uuid-1": {"PORT": "1234", "DATABASE_URL": "postgres://db/prod"},
+			"/services/svc-uuid-1":     {},
+		},
+		refuse: map[string]bool{},
 	}
+}
+
+// clone is a copy of f's state, with no hooks.
+func (f *fakePlatforms) clone() *fakePlatforms {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := &fakePlatforms{github: map[string]map[string]string{}, coolify: map[string][]map[string]any{}, convex: slices.Clone(f.convex),
+		next: f.next, activated: map[string]map[string]string{}, refuse: maps.Clone(f.refuse)}
+	for k, v := range f.github {
+		c.github[k] = maps.Clone(v)
+	}
+	for k, rows := range f.coolify {
+		list := make([]map[string]any, len(rows))
+		for i, r := range rows {
+			list[i] = maps.Clone(r)
+		}
+		c.coolify[k] = list
+	}
+	for k, v := range f.activated {
+		c.activated[k] = maps.Clone(v)
+	}
+	c.sent.Store(f.sent.Load())
+	return c
 }
 
 func (f *fakePlatforms) take() []string {
@@ -110,9 +148,24 @@ var (
 
 func (f *fakePlatforms) client() *http.Client {
 	return &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
-		if n := f.sent.Add(1); f.onRequest != nil {
-			f.onRequest(int(n))
+		n := int(f.sent.Add(1))
+		if f.onRequest != nil {
+			f.onRequest(n)
 		}
+		if f.refuse[r.URL.Host] {
+			return nil, &outbound.RefusedError{Reason: outbound.PrivateAddress, Destination: outbound.Destination{Scheme: "https", Host: r.URL.Host, Port: 443}, Addresses: []string{"10.1.2.3"}}
+		}
+		res, err := f.answer(r)
+		if n == f.crashAfter {
+			panic(syncs.Crash{})
+		}
+		return res, err
+	})}
+}
+
+// answer is the fake platforms' answer to one request, with its effect.
+func (f *fakePlatforms) answer(r *http.Request) (*http.Response, error) {
+	{
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		auth := r.Header.Get("Authorization")
@@ -207,6 +260,13 @@ func (f *fakePlatforms) client() *http.Client {
 				return answer(404, map[string]any{"message": "Not found."}, nil)
 			}
 			if m[2] == "/start" || m[2] == "/restart" {
+				running := map[string]string{}
+				for _, row := range rows {
+					k, _ := row["key"].(string)
+					v, _ := row["value"].(string)
+					running[k] = v
+				}
+				f.activated[m[1]] = running
 				return answer(200, map[string]any{"message": "Queued."}, nil)
 			}
 			switch r.Method {
@@ -287,7 +347,7 @@ func (f *fakePlatforms) client() *http.Client {
 		}
 		f.log = append(f.log, line)
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: io.ErrUnexpectedEOF}
-	})}
+	}
 }
 
 func itoa(n int) string {

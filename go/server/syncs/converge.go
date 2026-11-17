@@ -1096,9 +1096,13 @@ func (r *run) underLease(ctx context.Context, force bool, cycleStart sql.NullInt
 	runNotes := boundNotes(append(slices.Clone(heldNotes), notes...))
 	r.inspected = &runNotes
 
-	// C6, C7: ownership of names read back as current.
+	// C6, C7: ownership of names read back as current. An adopted name an
+	// earlier run had begun writing (ambiguous) may be a write the platform
+	// accepted before that run died, unconfirmed and unredeployed: it owes
+	// the redeploy that write owed (TypeScript defect 9, fixed in Go;
+	// CONVERGE.md). The TypeScript engine adopts it without the debt.
 	for _, a := range adoptions {
-		ok, err := r.ledgerSet(ctx, "adopt", a.destName, "written", &a.fingerprint, nil, false)
+		ok, err := r.ledgerSet(ctx, "adopt", a.destName, "written", &a.fingerprint, nil, redeploys && ambiguous[a.destName])
 		if err != nil {
 			return outcome{}, err
 		}

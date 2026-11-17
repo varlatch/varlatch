@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/paritytest"
 	"github.com/varlatch/varlatch/go/server/syncs"
@@ -36,10 +38,7 @@ func (w *engineWorld) targets() []paritytest.Row {
 // commits for that path, in its order, and reports them.
 func TestConvergedRunCommits(t *testing.T) {
 	w := newEngineWorld(t)
-	// The first pass's trigger scan reads the setup's events in text order
-	// (CONVERGE.md, a defect kept for parity): a second pass takes the
-	// rest, then nothing is due.
-	w.engine.RunOnce(context.Background(), syncs.RunOptions{})
+	// The first pass converges every Target; then nothing is due.
 	w.engine.RunOnce(context.Background(), syncs.RunOptions{})
 	w.exec(`UPDATE sync_targets SET needs_sync = 1 WHERE canonical_destination = '["github-actions","acme","api"]'`)
 	var points []string
@@ -51,7 +50,7 @@ func TestConvergedRunCommits(t *testing.T) {
 	if !slices.Equal(points, want) {
 		t.Errorf("commits %v, want %v", points, want)
 	}
-	if len(stats) != 1 || stats[0].Commits != len(want) || stats[0].Generation != 3 || stats[0].Duration <= 0 || stats[0].InJobs <= 0 {
+	if len(stats) != 1 || stats[0].Commits != len(want) || stats[0].Generation != 2 || stats[0].Duration <= 0 || stats[0].InJobs <= 0 {
 		t.Errorf("reports %+v", stats)
 	}
 }
@@ -151,5 +150,63 @@ func TestAppConnectionTargetsWait(t *testing.T) {
 		if strings.Contains(line, "/repos/acme/api/") {
 			t.Errorf("sent for the App Connection's Target: %s", line)
 		}
+	}
+}
+
+// TestTriggerScanSkipsNoEvent: TypeScript defect 8, fixed in Go. With 600
+// events waiting, the scan reads them in order, 500 then 100: the event at
+// event_order 99 (which comes after "100" to "599" as text) marks its
+// environment's Targets in the first scan, the 550th event in the second,
+// and the cursor ends at the last event. TypeScript's text order passes
+// over event 99 for good.
+func TestTriggerScanSkipsNoEvent(t *testing.T) {
+	w := newEngineWorld(t)
+	w.exec(`INSERT INTO sync_cursor (singleton, occurred_at, event_id, cursor_order)
+		SELECT 1, 0, '', max(event_order) FROM audit_events WHERE true
+		ON CONFLICT (singleton) DO UPDATE SET cursor_order = excluded.cursor_order`)
+	w.exec(`UPDATE sync_targets SET needs_sync = 0`)
+	rows := paritytest.Rows(t, w.store, `SELECT (SELECT max(event_order) FROM audit_events) AS base, (SELECT id FROM environments LIMIT 1) AS env,
+		(SELECT id FROM organizations LIMIT 1) AS org`)
+	base, env, org := rows[0]["base"].(int64), rows[0]["env"].(string), rows[0]["org"].(string)
+	if base >= 98 {
+		t.Fatalf("the fixture's database ends at event %d: event 99 must be one of the 600", base)
+	}
+	second := base + 550
+	if err := w.store.Write(context.Background(), func(tx *storage.Tx) error {
+		for pos := base + 1; pos <= base+600; pos++ {
+			named := "env_elsewhereaaaaaaaaaaaaaaaaa"
+			if pos == 99 || pos == second {
+				named = env
+			}
+			action := "config.value.write"
+			if _, err := audit.Record(context.Background(), tx, audit.Event{
+				Type: "value.written", Decision: audit.Info, OrganizationID: &org, Action: &action,
+				Resource: jsvalue.Object{{Key: "environmentId", Value: named}},
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	marked := func() int64 {
+		return paritytest.Rows(t, w.store, `SELECT count(*) AS n FROM sync_targets WHERE needs_sync = 1`)[0]["n"].(int64)
+	}
+	cursor := func() int64 {
+		return paritytest.Rows(t, w.store, `SELECT cursor_order FROM sync_cursor`)[0]["cursor_order"].(int64)
+	}
+	if err := syncs.ScanTriggers(context.Background(), w.engine); err != nil {
+		t.Fatal(err)
+	}
+	if marked() == 0 || cursor() != base+500 {
+		t.Fatalf("the first scan: %d Targets marked, the cursor at %d; want them marked (event 99) and the cursor at %d", marked(), cursor(), base+500)
+	}
+	w.exec(`UPDATE sync_targets SET needs_sync = 0`)
+	if err := syncs.ScanTriggers(context.Background(), w.engine); err != nil {
+		t.Fatal(err)
+	}
+	if marked() == 0 || cursor() != base+600 {
+		t.Fatalf("the second scan: %d Targets marked, the cursor at %d; want them marked (event %d) and the cursor at %d", marked(), cursor(), second, base+600)
 	}
 }

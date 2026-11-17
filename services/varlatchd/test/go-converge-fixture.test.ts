@@ -195,6 +195,18 @@ function withTicks(ctx: AppCtx, app: App, fake: FakePlatforms): App {
     if (path.startsWith("/__test/sync-tick")) {
       const repair = path.endsWith("?repair=0");
       await runSyncOnce(ctx, { fetchImpl: fake.fetch, ...(repair ? { repairIntervalMs: 0 } : {}) });
+      // TypeScript defect 8 (feature-parity.md): this server's trigger scan
+      // orders its batch by event_order as text, Go's by number. The
+      // fixture holds only scans where the two agree: each leaves the
+      // cursor at the highest event it could read.
+      const res = await ctx.db.query(
+        `SELECT c.cursor_order::text AS cursor, (SELECT max(event_order) FROM audit_events WHERE event_type NOT LIKE 'sync.%')::text AS last
+         FROM sync_cursor c`,
+      );
+      const row = res.rows[0] as { cursor: string; last: string } | undefined;
+      if (!row || row.cursor !== row.last) {
+        throw new Error(`${path}: the trigger scan's cursor is at ${row?.cursor}, not at the last event ${row?.last}: the text order (defect 8) shows`);
+      }
       return Response.json({ exchanges: fake.take() });
     }
     if (path === "/__test/platform-drift") {
@@ -345,6 +357,13 @@ async function build() {
   await db.query("INSERT INTO identities (id, kind, name, created_at) VALUES ($1, 'human', 'dave', '2026-01-01T00:00:00.000Z')", [dave]);
   await db.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ($1, $2, 'member')", [acmeId, dave]);
   tokens.dave = (await issueCredential(ctx.db, { identityId: dave, kind: "cli" })).token;
+  // The trigger scan starts after the setup (defect 8: a first scan over
+  // the setup's events would read them in text order).
+  await db.query(
+    `INSERT INTO sync_cursor (singleton, occurred_at, event_id, cursor_order)
+     SELECT true, now(), '', max(event_order) FROM audit_events
+     ON CONFLICT (singleton) DO UPDATE SET cursor_order = excluded.cursor_order`,
+  );
   await accessCountsSettled();
   return { ctx, tokens };
 }
