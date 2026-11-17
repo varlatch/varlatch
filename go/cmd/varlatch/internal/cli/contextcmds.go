@@ -115,7 +115,7 @@ func serverStatus(server string, credential any, now float64) (jsjson.Object, er
 		expiring = state == "expiring"
 	}
 	return jsjson.Object{
-		{Key: "server", Value: server},
+		{Key: "server", Value: clientctx.MaskUserinfo(server)},
 		{Key: "name", Value: field("name")},
 		{Key: "issuedAt", Value: field("issuedAt")},
 		{Key: "expiresAt", Value: field("expiresAt")},
@@ -144,7 +144,7 @@ func repoStatus(ctx *clientctx.Context, local any) (jsjson.Object, error) {
 		cachedAt, _, _ = clientctx.LocalField(local, "tierCachedAt")
 	}
 	return jsjson.Object{
-		{Key: "server", Value: ctx.Server},
+		{Key: "server", Value: clientctx.MaskServer(ctx.Server)},
 		{Key: "organization", Value: ctx.Organization},
 		{Key: "project", Value: ctx.Project},
 		{Key: "environment", Value: ctx.Environment},
@@ -316,14 +316,14 @@ func (r *Run) showServer(asJSON bool) error {
 	if asJSON {
 		var server, source, def any
 		if resolved != nil {
-			server, source = resolved.Server, resolved.Source
+			server, source = clientctx.MaskServer(resolved.Server), resolved.Source
 		}
 		if remembered != "" {
-			def = remembered
+			def = clientctx.MaskUserinfo(remembered)
 		}
 		list := make([]any, len(signedIn))
 		for i, s := range signedIn {
-			list[i] = s
+			list[i] = clientctx.MaskUserinfo(s)
 		}
 		return r.printJSON(jsjson.Object{
 			{Key: "version", Value: 1},
@@ -335,17 +335,17 @@ func (r *Run) showServer(asJSON bool) error {
 	}
 	here := "Server here: none"
 	if resolved != nil {
-		here = "Server here: " + jsjson.String(resolved.Server) + " (" + serverSourceWords[resolved.Source] + ")"
+		here = "Server here: " + jsjson.String(clientctx.MaskServer(resolved.Server)) + " (" + serverSourceWords[resolved.Source] + ")"
 	} else if problem != "" {
 		here += " (" + problem + ")"
 	}
-	def := remembered
+	def := clientctx.MaskUserinfo(remembered)
 	if def == "" {
 		def = "none"
 	}
 	in := "none"
 	if len(signedIn) > 0 {
-		in = strings.Join(signedIn, ", ")
+		in = strings.Join(maskAll(signedIn), ", ")
 	}
 	return r.println(here + "\nDefault server: " + def + "\nSigned in to: " + in)
 }
@@ -355,7 +355,7 @@ func (r *Run) showServer(asJSON bool) error {
 // (trailing slashes removed, path kept).
 func (r *Run) useServer(server string, asJSON bool) error {
 	if _, ok := whatwg.ParseURL(server); !ok {
-		return UsageError("varlatch server use: not a URL: " + server)
+		return UsageError("varlatch server use: not a URL: " + clientctx.MaskUserinfo(server))
 	}
 	key := clientctx.StoredServerKey(server)
 	signedIn, err := clientctx.StoredServers(r.Env)
@@ -363,9 +363,10 @@ func (r *Run) useServer(server string, asJSON bool) error {
 		return err
 	}
 	if !slices.Contains(signedIn, key) {
-		message := "varlatch server use: you are not signed in to " + key + ". Sign in first: varlatch login --server " + key
+		shown := clientctx.MaskUserinfo(key)
+		message := "varlatch server use: you are not signed in to " + shown + ". Sign in first: varlatch login --server " + shown
 		if len(signedIn) > 0 {
-			message += "\nSigned in to: " + strings.Join(signedIn, ", ")
+			message += "\nSigned in to: " + strings.Join(maskAll(signedIn), ", ")
 		}
 		return UsageError(message)
 	}
@@ -373,9 +374,18 @@ func (r *Run) useServer(server string, asJSON bool) error {
 		return contextError(err)
 	}
 	if asJSON {
-		return r.printJSON(jsjson.Object{{Key: "version", Value: 1}, {Key: "defaultServer", Value: key}})
+		return r.printJSON(jsjson.Object{{Key: "version", Value: 1}, {Key: "defaultServer", Value: clientctx.MaskUserinfo(key)}})
 	}
-	return r.println("Default server: " + key)
+	return r.println("Default server: " + clientctx.MaskUserinfo(key))
+}
+
+// maskAll is MaskUserinfo of each server.
+func maskAll(servers []string) []string {
+	out := make([]string, len(servers))
+	for i, s := range servers {
+		out[i] = clientctx.MaskUserinfo(s)
+	}
+	return out
 }
 
 // placeholderValue is agentRun.ts's PLACEHOLDER_VALUE.
@@ -426,7 +436,7 @@ func contextCommand(r *Run) error {
 		return r.printJSON(doc)
 	}
 	lines := []string{
-		"Server        " + jsjson.String(ctx.Server),
+		"Server        " + jsjson.String(clientctx.MaskServer(ctx.Server)),
 		"Organization  " + ctx.Organization,
 		"Project       " + ctx.Project,
 		"Environment   " + jsjson.String(ctx.Environment),

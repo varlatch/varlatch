@@ -70,7 +70,8 @@ func LoadRepoConfig(repoRoot string) (RepoConfig, error) {
 	}
 	table, err := toml.ParseString(jsval.DecodeUTF8(data))
 	if err != nil {
-		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + err.Error()}
+		// The message quotes the file's lines: a server URL there keeps its user name and password out.
+		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + MaskUserinfoInText(err.Error())}
 	}
 	str := func(key string) string {
 		v, _ := table.Get(key)
@@ -223,7 +224,7 @@ func ResolveContext(options ResolveOptions, env Env) (*Context, error) {
 		}
 		message := "No server configured. Pass --server, set VARLATCH_SERVER, or commit \"server\" in " + RepoConfigFile
 		if fallback != "" {
-			message += `, for example: server = "` + fallback + `"`
+			message += `, for example: server = "` + MaskUserinfo(fallback) + `"`
 		}
 		return nil, &ContextError{Message: message + "."}
 	}
