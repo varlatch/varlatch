@@ -207,6 +207,20 @@ describe("replacements", () => {
     expect(Object.keys(snapshot(root)).filter((p) => p.includes(".varlatch-"))).toEqual([]);
   });
 
+  it("--remove takes away both names of an AGENTS.md it created and the CLAUDE.md that is it", () => {
+    const root = fresh();
+    runInstall({ scope: "project", root, version: "1", agents: [], mode: "install" });
+    linkSync(join(root, "AGENTS.md"), join(root, "CLAUDE.md"));
+    const result = runInstall({ scope: "project", root, version: "1", agents: [], mode: "remove" });
+    expect(existsSync(join(root, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
+    expect(result.changes.filter((c) => !c.path.includes("skills/"))).toEqual([
+      { path: "AGENTS.md", action: "remove" },
+      { path: "CLAUDE.md", action: "remove" },
+    ]);
+    expect(snapshot(root)).toEqual({});
+  });
+
   it("refuse, before anything changes, a file with a name the CLI cannot see", () => {
     for (const alsoClaude of [false, true]) {
       const base = fresh();

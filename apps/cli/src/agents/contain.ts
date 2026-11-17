@@ -16,7 +16,13 @@ import { dirname, join, normalize, relative, sep } from "node:path";
  * written while only its owner can read it, synced, given the replaced
  * file's mode, then renamed over it. A file with several names (an AGENTS.md
  * and the CLAUDE.md that is it) stays one file; a file with a name the CLI
- * cannot see is refused before anything changes.
+ * cannot see is refused before anything changes; removing such a pair
+ * removes both names.
+ *
+ * The checks are best effort, not a boundary: Node.js has no openat, so a
+ * path is checked and then used by name, and a process that swaps a
+ * directory for a link between the two is not stopped. They stop links that
+ * are already there, such as those a cloned repository holds.
  */
 
 /** Thrown for a refusal; install.ts turns it into an AgentsInstallError (78). */
@@ -24,7 +30,7 @@ export class ContainmentError extends Error {
   override name = "ContainmentError";
 }
 
-/** The first component of `rel`, a path below `root`, that is a symbolic link (or a junction); null when there is none, or the path stops existing. */
+/** The first component of `rel`, a path below `root`, that is a symbolic link; null when there is none, or the path stops existing. */
 export function linkBelow(root: string, rel: string): string | null {
   let current = "";
   for (const part of normalize(rel).split(sep)) {
@@ -180,6 +186,7 @@ export function writeContained(root: string, rel: string, data: string): void {
     throw err;
   }
   for (const alias of names.slice(1)) {
+    checkBelow(root, dirname(alias));
     const link = tempName(alias);
     linkSync(join(root, rel), join(root, link));
     try {
@@ -191,10 +198,29 @@ export function writeContained(root: string, rel: string, data: string): void {
   }
 }
 
-/** Removes the file `rel` (below `root`), if it is there. */
-export function removeContained(root: string, rel: string): void {
+/**
+ * Removes the file `rel` (below `root`), if it is there. A file whose every
+ * name is one install gives it (an AGENTS.md and the CLAUDE.md that is it)
+ * goes under each of them, so no name keeps what was removed. Returns the
+ * other names removed.
+ */
+export function removeContained(root: string, rel: string): string[] {
   checkBelow(root, dirname(rel));
-  rmSync(join(root, rel), { force: true });
+  let names = [rel];
+  try {
+    const info = lstatSync(join(root, rel));
+    if (info.isFile() && info.nlink > 1) {
+      const found = aliases(root, rel);
+      if (found.complete) names = found.names;
+    }
+  } catch {
+    // Not there: nothing to remove.
+  }
+  for (const name of names) {
+    checkBelow(root, dirname(name));
+    rmSync(join(root, name), { force: true });
+  }
+  return names.slice(1);
 }
 
 /** Removes the empty directory `rel` (below `root`), never a link. */

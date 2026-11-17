@@ -586,8 +586,9 @@ function apply(opts: InstallOptions, files: Plan["files"], manual: string[], lef
     }
     changes.push({ path: rel, action });
     if (opts.mode === "check" || action === "unchanged") continue;
-    if (file.desired === null) removeContained(opts.root, relative(opts.root, file.path));
-    else writeContained(opts.root, relative(opts.root, file.path), file.desired);
+    if (file.desired === null) {
+      for (const alias of removeContained(opts.root, relative(opts.root, file.path))) changes.push({ path: alias.split("\\").join("/"), action: "remove" });
+    } else writeContained(opts.root, relative(opts.root, file.path), file.desired);
   }
   if (opts.mode === "remove") for (const base of [...SKILL_BASES, ".codex", ".cursor", ".vscode", ".gemini"]) pruneEmptyContained(opts.root, base);
   return {
