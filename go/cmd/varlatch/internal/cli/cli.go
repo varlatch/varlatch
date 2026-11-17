@@ -180,7 +180,11 @@ func (r *Run) finish(err error) int {
 		// was instead (go/README.md, the Go CLI's accepted differences).
 		e = &exitError{message: "varlatch: " + err.Error(), code: ExitFailure}
 	}
-	fmt.Fprintln(r.Stderr, jsval.NodeText(e.message))
+	// Every failure goes through the masker, whatever it echoes (an
+	// argument, a line of a file, a server's URL): no URL's user name and
+	// password reaches stderr (go/README.md, "Diagnostics never print
+	// credential values"). Text with no such URL keeps its bytes.
+	fmt.Fprintln(r.Stderr, jsval.NodeText(clientctx.MaskUserinfoInText(e.message)))
 	if r.everyFailureIsOne {
 		return ExitFailure
 	}

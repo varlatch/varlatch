@@ -100,3 +100,46 @@ func TestServerURLsNeverShowUserinfo(t *testing.T) {
 		})
 	}
 }
+
+// TestFailuresNeverEchoUserinfo: a failure that echoes what it was given (an
+// argument, an option, a command, a help topic, an approval id, a line of
+// varlatch.toml) never shows a URL's user name and password, whatever they
+// hold (spaces and quotes included). Every failure goes through the masker.
+func TestFailuresNeverEchoUserinfo(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	toml := "organization = \"acme\"\nproject = \"web\"\nserver = \"https://alice:fake pass@example.com\" x\n"
+	if err := os.WriteFile(filepath.Join(repo, "varlatch.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := MapEnv{"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config"), "HOME": filepath.Join(dir, "home")}
+	for _, c := range []struct {
+		cwd  string
+		args []string
+	}{
+		{dir, []string{"server", "https://alice:fake-pass@example.com"}},
+		{dir, []string{"server", "--json", `https:\\alice:fake-pass@example.com`}},
+		{dir, []string{"server", "--server=https://alice:fake-pass@example.com"}},
+		{dir, []string{"server", "use", "https://alice:fake pass@[bad"}},
+		{dir, []string{"server", "use", "--json", "https://alice:fake-pass@example.com", "http:/bob:fake-two@h"}},
+		{dir, []string{"https://alice:fake-pass@example.com"}},
+		{dir, []string{"help", "http:/alice:fake-pass@example.com"}},
+		{dir, []string{"--approval", "https://alice:fake-pass@example.com", "status"}},
+		{repo, []string{"context", "--json"}},
+		{repo, []string{"server"}},
+	} {
+		t.Chdir(c.cwd)
+		var stdout, stderr bytes.Buffer
+		Main(c.args, env, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+		out := stdout.String() + stderr.String()
+		if strings.Contains(out, "fake") {
+			t.Errorf("%q printed the credentials:\n%s", c.args, out)
+		}
+		if !strings.Contains(out, "[redacted]@") {
+			t.Errorf("%q shows no redacted URL:\n%s", c.args, out)
+		}
+	}
+}
