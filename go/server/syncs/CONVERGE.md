@@ -31,7 +31,7 @@ the engine's clock once in the job.
 |---|---|---|---|---|
 | T1 | `scanSyncTriggers` :140 | `INSERT INTO sync_cursor … ON CONFLICT DO NOTHING` | none | first; then reads |
 | T2 | `scanSyncTriggers` :174-188 | mark due Targets `needs_sync` (the environments named by non-`sync.*` events, their derived children, Projects of `contract.*` events) | the Targets locked `FOR UPDATE` in id order | after the event read; then T3 |
-| T3 | `scanSyncTriggers` :191 | advance `sync_cursor` to the last event read | none | after T2 |
+| T3 | `scanSyncTriggers` :191 | advance `sync_cursor` to the last event read | none | after T2; in Go, T2 and T3 again for the next batch until a batch is short, at most 200 a pass (defect 10) |
 | T4 | `runSyncOnce` :208 | `DELETE FROM sync_runs WHERE deadline <= now()` | none | then the due Targets' read, then each Target in turn |
 
 T1 happens only while the cursor row is missing in Go (once per
@@ -134,6 +134,25 @@ something else redeploys it. Go's C6 records the debt for such a name
 run then pays it (P6, C16). TypeScript keeps the defect (security fixes
 only); feature-parity.md, defect 9. `TestInterruptedWriteKeepsItsRedeploy`
 and the G7 crash test's provider points hold it.
+
+## TypeScript defect 10, fixed in Go
+
+`runSyncOnce` scans one batch of 500 audit events a pass (`SCAN_BATCH`,
+:60), a pass every 30 seconds. A backlog of events (an import that
+creates thousands of rows, a burst of disclosures, sustained load above
+about 17 events a second) then delays every Target's sync by a pass per
+500 events behind it: 48,000 events, written by the conformance plan's
+earlier suites, held a value change back for about 48 minutes.
+
+Go's scan drains: batch after batch, each TypeScript's (T2, then T3),
+until a batch is short, at most 200 batches (100,000 events) a pass so
+that a pass stays bounded; what is left waits for the next pass. A change
+behind a backlog of up to 100,000 events reaches the engine in the next
+pass. `TestTriggerScanDrainsBacklog` and `TestTriggerScanBoundedPass`
+hold it; `TestTriggerScanSkipsNoEvent` (defect 8) scans one batch a pass.
+TypeScript keeps the defect (security fixes only); feature-parity.md,
+defect 10. The conformance plan runs the `sync` suite before the suites
+that write bulk audit events, so that the TypeScript targets pass it.
 
 ## Go's differences
 

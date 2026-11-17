@@ -4,6 +4,7 @@ package syncs_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"slices"
@@ -158,9 +159,11 @@ func TestAppConnectionTargetsWait(t *testing.T) {
 // event_order 99 (which comes after "100" to "599" as text) marks its
 // environment's Targets in the first scan, the 550th event in the second,
 // and the cursor ends at the last event. TypeScript's text order passes
-// over event 99 for good.
+// over event 99 for good. The scan reads one batch a pass here, as
+// TypeScript's does (defect 10 drains them: TestTriggerScanDrainsBacklog).
 func TestTriggerScanSkipsNoEvent(t *testing.T) {
 	w := newEngineWorld(t)
+	syncs.ScanBatches(w.engine, 1)
 	w.exec(`INSERT INTO sync_cursor (singleton, occurred_at, event_id, cursor_order)
 		SELECT 1, 0, '', max(event_order) FROM audit_events WHERE true
 		ON CONFLICT (singleton) DO UPDATE SET cursor_order = excluded.cursor_order`)
@@ -208,5 +211,112 @@ func TestTriggerScanSkipsNoEvent(t *testing.T) {
 	}
 	if marked() == 0 || cursor() != base+600 {
 		t.Fatalf("the second scan: %d Targets marked, the cursor at %d; want them marked (event %d) and the cursor at %d", marked(), cursor(), second, base+600)
+	}
+}
+
+// triggerBacklog settles every Target (not due: no trigger, its repair
+// pass just run), moves the trigger cursor to the end of the audit log, and
+// writes n value.written events naming an environment no Target syncs,
+// then one naming the environment of the Targets that are its result. It
+// answers the cursor before the backlog and those Targets.
+func triggerBacklog(t *testing.T, w *engineWorld, n int) (base int64, changed map[string]bool) {
+	t.Helper()
+	w.exec(fmt.Sprintf(`UPDATE sync_targets SET needs_sync = 0, next_attempt_at = NULL, last_repair_at = %d`, w.engine.Now().UnixMicro()))
+	w.exec(`INSERT INTO sync_cursor (singleton, occurred_at, event_id, cursor_order)
+		SELECT 1, 0, '', max(event_order) FROM audit_events WHERE true
+		ON CONFLICT (singleton) DO UPDATE SET cursor_order = excluded.cursor_order`)
+	rows := paritytest.Rows(t, w.store, `SELECT (SELECT max(event_order) FROM audit_events) AS base, (SELECT environment_id FROM sync_targets WHERE revoked_at IS NULL LIMIT 1) AS env,
+		(SELECT id FROM organizations LIMIT 1) AS org`)
+	base = rows[0]["base"].(int64)
+	env, org := rows[0]["env"].(string), rows[0]["org"].(string)
+	changed = map[string]bool{}
+	for _, r := range paritytest.Rows(t, w.store, `SELECT id FROM sync_targets WHERE revoked_at IS NULL AND environment_id = ?`, env) {
+		changed[r["id"].(string)] = true
+	}
+	record := func(tx *storage.Tx, named string) error {
+		action := "config.value.write"
+		_, err := audit.Record(context.Background(), tx, audit.Event{
+			Type: "value.written", Decision: audit.Info, OrganizationID: &org, Action: &action,
+			Resource: jsvalue.Object{{Key: "environmentId", Value: named}},
+		})
+		return err
+	}
+	for written := 0; written < n; {
+		if err := w.store.Write(context.Background(), func(tx *storage.Tx) error {
+			for range min(5_000, n-written) {
+				if err := record(tx, "env_elsewhereaaaaaaaaaaaaaaaaa"); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		written += min(5_000, n-written)
+	}
+	if err := w.store.Write(context.Background(), func(tx *storage.Tx) error { return record(tx, env) }); err != nil {
+		t.Fatal(err)
+	}
+	return base, changed
+}
+
+func (w *engineWorld) cursorOrder() int64 {
+	w.t.Helper()
+	return paritytest.Rows(w.t, w.store, `SELECT cursor_order FROM sync_cursor`)[0]["cursor_order"].(int64)
+}
+
+// TestTriggerScanDrainsBacklog: TypeScript defect 10, fixed in Go. A value
+// change behind 30,000 audit events reaches the engine in the next pass:
+// the scan reads every batch to the end of the log, and the pass runs the
+// changed environment's Targets, and only those. TypeScript reads one
+// batch of 500 a pass, so the change would wait 61 passes (about 30
+// minutes).
+func TestTriggerScanDrainsBacklog(t *testing.T) {
+	w := newEngineWorld(t)
+	base, changed := triggerBacklog(t, w, 30_000)
+	if len(changed) == 0 {
+		t.Fatal("no Target syncs the changed environment")
+	}
+	var ran []string
+	w.engine.OnRun = func(st syncs.RunStats) { ran = append(ran, st.TargetID) }
+	w.engine.RunOnce(context.Background(), syncs.RunOptions{})
+	if got, want := w.cursorOrder(), base+30_001; got != want {
+		t.Fatalf("after one pass the cursor is at %d, want the end of the log, %d", got, want)
+	}
+	seen := map[string]bool{}
+	for _, id := range ran {
+		if !changed[id] {
+			t.Errorf("the pass ran Target %s, which no event changed", id)
+		}
+		seen[id] = true
+	}
+	for id := range changed {
+		if !seen[id] {
+			t.Errorf("the pass did not run Target %s, whose environment changed behind the backlog", id)
+		}
+	}
+}
+
+// TestTriggerScanBoundedPass: a pass's scan stops after its batches
+// (scanBatches; 3 here), with the rest left for the next pass, which
+// reaches the change behind them.
+func TestTriggerScanBoundedPass(t *testing.T) {
+	w := newEngineWorld(t)
+	syncs.ScanBatches(w.engine, 3)
+	base, changed := triggerBacklog(t, w, 2_000)
+	marked := func() int64 {
+		return paritytest.Rows(t, w.store, `SELECT count(*) AS n FROM sync_targets WHERE needs_sync = 1`)[0]["n"].(int64)
+	}
+	if err := syncs.ScanTriggers(context.Background(), w.engine); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.cursorOrder(); got != base+1_500 || marked() != 0 {
+		t.Fatalf("the first pass: the cursor at %d with %d Targets marked; want it at %d (three batches) and none marked", got, marked(), base+1_500)
+	}
+	if err := syncs.ScanTriggers(context.Background(), w.engine); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.cursorOrder(); got != base+2_001 || marked() != int64(len(changed)) {
+		t.Fatalf("the second pass: the cursor at %d with %d Targets marked; want it at %d and %d marked", got, marked(), base+2_001, len(changed))
 	}
 }
