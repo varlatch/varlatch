@@ -214,6 +214,21 @@ describe("extra: compose YAML as the yaml package reads it", () => {
     "a tag run into a comma": ["services:\n  app:\n    environment:\n      FOO: !!merge, x\n", "services: {app: {}}"],
     "an anchor with a comma": ["services:\n  app:\n    environment:\n      FOO: &a,b x\n", "services: {app: {}}"],
     "a tag with another !": ["services:\n  app:\n    environment:\n      !!me!ge 'anything': {FOO: \"\"}\n", "services: {app: {}}"],
+    // Seed 26 of the wide run, reduced: a comment sign run into a closing quote.
+    "a comment sign after a closing quote": ["services:\n  app:\n    environment:\n      FOO: \"x\"#\n", "services: {app: {}}"],
+    "a comment sign after a closing quote in a flow mapping": ["services: {app: {environment: {FOO: \"x\"#}}}\n", "services: {app: {}}"],
+    "text after a closing quote": ["services:\n  app:\n    environment:\n      FOO: 'x'y\n", "services: {app: {}}"],
+    // Seed 13 of the wide run, reduced: a comment sign run into a closing bracket.
+    "a comment sign after a closing bracket": ["services: {app: {environment: {FOO: x}}}", "services: {app: {}}#"],
+    // Seeds 30 and 46, reduced: a block scalar at its key's column.
+    "a block scalar at its key's column": ["x-note:\n>\n  text\nservices: {app: {environment: {FOO: x}}}\n", "services: {app: {}}"],
+    "a value on the next line at its key's column": ["services:\n  app:\n    environment:\n      FOO:\n      x\n", "services: {app: {}}"],
+    // Seed 15 of the wide run: document end markers.
+    "document end markers": ["services: {app: {}}\n...  \n...  ", "services: {app: {}}"],
+    // Seed 26 of the wide run, reduced: a comment run into a block scalar's header.
+    "a comment run into a block scalar header": ["services:\n  app:\n    environment:\n      FOO: >#-\n        x\n", "services: {app: {}}"],
+    // Seed 52 of the wide run, reduced: an escape YAML does not have.
+    "an unknown escape in a double-quoted value": ["services:\n  app:\n    environment:\n      FOO: \"\\'x\"\n", "services: {app: {}}"],
     "a named tag handle with no %TAG": ["services:\n  app:\n    environment:\n      FOO: !e!x '7'\n", "services: {app: {}}"],
   })) {
     it(`subset: ${name}`, () => {
@@ -230,12 +245,34 @@ describe("extra: compose YAML as the yaml package reads it", () => {
     "a flow sequence over indented lines": "services:\n  app:\n    command: [\n      \"a\",\n      \"b\"\n    ]\n    environment:\n      FOO: x\n",
     "a flow mapping over indented lines": "services:\n  app: {\n    environment: {FOO: x}\n  }\n",
     "a property alone on its line": "services:\n  app:\n    environment:\n      FOO: !!str\n        x\n",
+    // #218 review, fifth round (seed 137, mutant 501, reduced): JavaScript
+    // reads the key 7, yaml.v3 the key "7:".
+    "a flow key ending in a colon": "services: {app: {environment: {7:, FOO: x}}}\n",
+    "a flow sequence of unquoted ports": "services: {app: {ports: [8080:80], environment: {FOO: x}}}\n",
+    "a flow key and value without a blank": "services: {app: {environment: {FOO:x}}}\n",
+    "an explicit key in a flow mapping": "services: {app: {environment: {? FOO: x}}}\n",
+    // Seed 3 of the wide run: JavaScript reads the key "?", yaml.v3 an empty one.
+    "a question mark and a colon as a flow key": "services: {?:}\n",
+    "an empty value in a flow mapping": "services: {app: {environment: {FOO: , A: x}}}\n",
+    // Seed 49 of the wide run, reduced: a merge key tagged with a YAML 1.1
+    // type, which JavaScript reads as no merge.
+    "a merge key tagged binary": "x-a: &a {FOO: '1'}\nservices:\n  app:\n    environment:\n      !!binary <<: *a\n",
     "a tag with a star": "services:\n  app:\n    environment:\n      !!me*age 'anything': {FOO: \"\"}\n",
   })) {
     it(`divergence: ${name}`, () => {
       classifyComposeUsage(raw, "services: {app: {}}", 3, ["FOO"]);
     });
   }
+  it("divergence: a flow key ending in a colon, its Service loading .env (Sol's repro)", () => {
+    classifyComposeUsage("services: {app: {environment: {7:, FOO: x}}}", "services: {app: {env_file: [.env]}}", 3, ["FOO"]);
+  });
+  // Seed 36 of the wide run, reduced: a value tagged !!merge is the merge
+  // Symbol, which JSON.stringify drops with its key, so the key's reference
+  // does not count as the container reading the name.
+  it("a reference only in the key of a merge-tagged value", () => {
+    classifyComposeUsage("services:\n  web:\n    environment:\n      ${FOO}: !!merge x\n", "services: {app: {env_file: [.env]}}", 3, ["FOO"]);
+    classifyComposeUsage("services:\n  web:\n    labels:\n      ${FOO}: !!merge x\n", "services: {app: {env_file: [.env]}}", 3, ["FOO"]);
+  });
   it("a Compose file as people and Coolify write it stays readable", () => {
     const raw = [
       "# a comment",

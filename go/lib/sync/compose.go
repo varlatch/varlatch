@@ -579,19 +579,28 @@ func subsetCharacters(text string) bool {
 
 // inSubset reports that the tree's structure is in the subset:
 //   - every quoted or plain scalar, keys included, starts and ends on its
-//     line (yaml.v3 and the `yaml` package fold and indent continuation
+//     line, nothing is run into a quoted one's closing quote, and a
+//     double-quoted one holds only YAML 1.2's escapes (yaml.v3 and the `yaml` package fold and indent continuation
 //     lines by different rules); block scalars (| and >) span lines by
 //     design and are read;
-//   - every flow collection ({…} or […]) closes on the line it opens on;
+//   - in a block mapping, a scalar or alias value on a later line than
+//     its key is indented more than the key;
+//   - every flow collection ({…} or […]) closes on the line it opens on
+//     (nothing run into its closing bracket),
+//     holds no '?' outside quotes (an explicit key, "{?:}"), and no plain
+//     scalar in it is empty or holds a ':' (where one ends a key, as in
+//     "{7:, A: x}", the parsers disagree);
 //   - every property and alias is well formed: an anchor or alias name of
 //     letters, digits, '_', '-' and '.', a tag "!", "!name" or "!!name"
-//     with a name of letters, digits and '-'.
+//     with a name of letters, digits and '-', and none of the YAML 1.1
+//     types (on a key too: "!!binary <<" is read two ways);
+//   - a block scalar's header is strict: no comment run into it (">#-").
 //
 // Aliases are read where their anchor is.
-func (c *converter) inSubset(n *yaml.Node) bool {
+func (c *converter) inSubset(n *yaml.Node, inFlow bool) bool {
 	if n.Kind == yaml.DocumentNode {
 		for _, child := range n.Content {
-			if !c.inSubset(child) {
+			if !c.inSubset(child, false) {
 				return false
 			}
 		}
@@ -611,13 +620,17 @@ func (c *converter) inSubset(n *yaml.Node) bool {
 	}
 	switch n.Kind {
 	case yaml.MappingNode, yaml.SequenceNode:
+		flow := inFlow || n.Style&yaml.FlowStyle != 0
 		if n.Style&yaml.FlowStyle != 0 {
-			if flowEnd(rest) < 0 {
+			if end := flowEnd(rest); end < 0 || !inFlow && !quotedTail(rest[end:]) {
 				return false
 			}
 		}
+		if n.Kind == yaml.MappingNode && !flow && !valuesIndented(n) {
+			return false
+		}
 		for _, child := range n.Content {
-			if !c.inSubset(child) {
+			if !c.inSubset(child, flow) {
 				return false
 			}
 		}
@@ -625,11 +638,20 @@ func (c *converter) inSubset(n *yaml.Node) bool {
 	case yaml.ScalarNode:
 		switch {
 		case n.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0:
-			return true
+			return blockHeader.MatchString(string(rest))
 		case n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0:
-			return quotedEnd(rest) >= 0
+			end := quotedEnd(rest)
+			return end >= 0 && quotedTail(rest[end:]) && (rest[0] != '"' || validEscapes(rest[1:end-1]))
+		case inFlow && n.Value == "":
+			// An empty key or value in a flow collection ("{: a}", "{a: }").
+			return false
 		case n.Value == "":
 			return true // an empty plain scalar has no text
+		case inFlow && strings.ContainsRune(n.Value, ':'):
+			// Where a ':' ends a key in a flow collection ("{7:, A: x}")
+			// the two parsers disagree: such a scalar is quoted in the
+			// subset.
+			return false
 		default:
 			return strings.HasPrefix(string(rest), n.Value)
 		}
@@ -638,8 +660,12 @@ func (c *converter) inSubset(n *yaml.Node) bool {
 }
 
 var (
-	anchorName = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
-	tagToken   = regexp.MustCompile(`^!(?:!?[A-Za-z0-9-]+)?$`)
+	// blockHeader is a block scalar's header line: the indicator, an
+	// indentation and a chomping indicator in either order, then a comment
+	// after a blank ("|", ">-", "|2+ # c"; not ">#-").
+	blockHeader = regexp.MustCompile(`^[|>](?:[1-9][+-]?|[+-][1-9]?)?(?:[ \t]+(?:#.*)?)?$`)
+	anchorName  = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	tagToken    = regexp.MustCompile(`^!(?:!?[A-Za-z0-9-]+)?$`)
 )
 
 // lineAt is the node's line from the node's position on: yaml.v3 places a
@@ -673,7 +699,7 @@ func nextToken(rest []rune) ([]rune, []rune) {
 func afterProperties(rest []rune) ([]rune, bool) {
 	for len(rest) > 0 && (rest[0] == '&' || rest[0] == '!') {
 		t, after := nextToken(rest)
-		if t[0] == '&' && !anchorName.MatchString(string(t[1:])) || t[0] == '!' && !tagToken.MatchString(string(t)) {
+		if t[0] == '&' && !anchorName.MatchString(string(t[1:])) || t[0] == '!' && (!tagToken.MatchString(string(t)) || yaml11Tags[string(t)]) {
 			return nil, false
 		}
 		if len(after) > 0 && !isBlank(after[0]) {
@@ -709,6 +735,78 @@ func quotedEnd(rest []rune) int {
 	return -1
 }
 
+// quotedTail reports that what follows a quoted scalar, or a flow
+// collection outside any other, on its line is read alike: nothing, a
+// comment after a blank, a ':' (a key), or a flow collection's ',', ']'
+// or '}' (after blanks or not). Text run into the closing quote or
+// bracket ("\"a\"#", "{a: b}#") is read two ways.
+
+// valuesIndented reports that in a block mapping every scalar or alias
+// value that starts on a later line than its key is indented more than
+// the key: yaml.v3 also reads one at the key's column ("a:\n>\n  x"),
+// where the `yaml` package refuses it. (A block sequence there is
+// ordinary YAML and is read.)
+func valuesIndented(n *yaml.Node) bool {
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := n.Content[i], n.Content[i+1]
+		if (v.Kind == yaml.ScalarNode || v.Kind == yaml.AliasNode) && v.Line > k.Line && v.Column <= k.Column {
+			return false
+		}
+	}
+	return true
+}
+func quotedTail(tail []rune) bool {
+	i := 0
+	for i < len(tail) && isBlank(tail[i]) {
+		i++
+	}
+	switch {
+	case i == len(tail):
+		return true
+	case tail[i] == '#':
+		return i > 0
+	default:
+		return strings.ContainsRune(":,]}", tail[i])
+	}
+}
+
+// validEscapes reports that every escape in a double-quoted scalar's text
+// is one of YAML 1.2's: an unknown one ("\\'") is read two ways.
+func validEscapes(text []rune) bool {
+	hex := func(from, n int) bool {
+		if from+n > len(text) {
+			return false
+		}
+		for _, r := range text[from : from+n] {
+			if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+				return false
+			}
+		}
+		return true
+	}
+	for i := 0; i < len(text); i++ {
+		if text[i] != '\\' {
+			continue
+		}
+		if i+1 == len(text) {
+			return false
+		}
+		switch c := text[i+1]; {
+		case strings.ContainsRune("0abtnvfre \"/\\N_LP\t", c):
+			i++
+		case c == 'x' && hex(i+2, 2):
+			i += 3
+		case c == 'u' && hex(i+2, 4):
+			i += 5
+		case c == 'U' && hex(i+2, 8):
+			i += 9
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // flowEnd is the index just past the flow collection the text starts
 // with, or -1 when it does not close on this line (or a quote in it is
 // not read as one here).
@@ -734,6 +832,10 @@ func flowEnd(rest []rune) int {
 			i += end - 1
 		case r == '#' && i > 0 && isBlank(rest[i-1]):
 			return -1 // a comment before the collection closes
+		case r == '?':
+			// An explicit key ("? a", "?:") or a '?' in a plain scalar:
+			// the parsers read "{?:}" differently.
+			return -1
 		}
 	}
 	return -1
@@ -751,11 +853,20 @@ func flowEnd(rest []rune) int {
 //     directive (another version, %TAG, a reserved one, trailing text),
 //     and directives with no "---" after them, make the file unreadable:
 //     the conservative reading;
-//   - only the characters of the subset (subsetCharacters).
+//   - only the characters of the subset (subsetCharacters);
+//   - no document end marker ("...").
 func normalize(text string) (string, bool) {
 	text = strings.TrimPrefix(text, "\ufeff")
 	if !subsetCharacters(text) {
 		return "", false
+	}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if rest, marker := strings.CutPrefix(line, "..."); marker && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
+			// A document end marker: the parsers read what follows it
+			// differently ("...\n..." is one document to yaml.v3).
+			return "", false
+		}
 	}
 	lines := strings.Split(text, "\n")
 	seen := false
@@ -812,7 +923,7 @@ func parseBounded(text string) (Object, bool) {
 		return nil, false
 	}
 	c := &converter{anchors: map[*yaml.Node]*anchorData{}, active: map[*yaml.Node]bool{}, lines: strings.Split(parsed, "\n")}
-	if !c.inSubset(doc.Content[0]) {
+	if !c.inSubset(doc.Content[0], false) {
 		return nil, false
 	}
 	v, err := c.toJS(doc.Content[0])
@@ -953,6 +1064,30 @@ func scalarsOf(v any, out []string) []string {
 		for _, m := range x {
 			out = append(out, m.Key)
 			out = scalarsOf(m.Value, out)
+		}
+	}
+	return out
+}
+
+// jsonScalars is the strings JSON.stringify writes of a parsed value, keys
+// included: as scalarsOf, but a member whose value is the merge Symbol is
+// left out, key and all, as JSON.stringify leaves it out (TypeScript reads
+// a container's other settings from JSON.stringify(service)).
+func jsonScalars(v any, out []string) []string {
+	switch x := v.(type) {
+	case string:
+		out = append(out, x)
+	case []any:
+		for _, item := range x {
+			out = jsonScalars(item, out)
+		}
+	case Object:
+		for _, m := range x {
+			if _, symbol := m.Value.(mergeSymbol); symbol {
+				continue
+			}
+			out = append(out, m.Key)
+			out = jsonScalars(m.Value, out)
 		}
 	}
 	return out
@@ -1193,7 +1328,7 @@ func ClassifyComposeUsage(raw, generated *string, parsingVersion *float64, names
 				}
 			case loadsDotEnv(genServices.get(container)):
 				reaches = true
-			case referencesAny(scalarsOf(service, nil), name):
+			case referencesAny(jsonScalars(service, nil), name):
 				// The container uses the stored value inside another setting.
 				reaches = true
 			}
