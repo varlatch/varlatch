@@ -4,11 +4,13 @@ package g9a
 
 import (
 	"bufio"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -180,4 +182,105 @@ func (s Spread) text(digits int) string {
 		return fmt.Sprintf("%.*f", digits, v)
 	}
 	return f(s.Min) + " / " + f(s.Median) + " / " + f(s.Max)
+}
+
+// converge-baseline.json is the engine's cost on a smoke run (see its
+// "about"): CheckCost holds a run to it.
+//
+//go:embed converge-baseline.json
+var baselineJSON []byte
+
+// CostBaseline is converge-baseline.json.
+type CostBaseline struct {
+	About             string     `json:"about"`
+	ChangesPerRun     int        `json:"changesPerRun"`
+	CommitsPerTarget  int        `json:"commitsPerTarget"`
+	Points            []string   `json:"points"`
+	WALBytesPerTarget int64      `json:"walBytesPerTarget"`
+	WALMedian         [2]float64 `json:"walMedian"`
+	WALEach           [2]float64 `json:"walEach"`
+}
+
+// Baseline is the embedded converge-baseline.json, checked for
+// consistency (its points are its commits, 2k + 7 of them).
+func Baseline() (CostBaseline, error) {
+	var b CostBaseline
+	if err := json.Unmarshal(baselineJSON, &b); err != nil {
+		return b, fmt.Errorf("converge-baseline.json: %w", err)
+	}
+	if len(b.Points) != b.CommitsPerTarget || b.CommitsPerTarget != 2*b.ChangesPerRun+7 || b.WALBytesPerTarget <= 0 ||
+		!(0 < b.WALMedian[0] && b.WALMedian[0] < b.WALMedian[1]) || !(0 < b.WALEach[0] && b.WALEach[0] < b.WALEach[1]) {
+		return b, fmt.Errorf("converge-baseline.json is not consistent: %d points, %d commits for k = %d", len(b.Points), b.CommitsPerTarget, b.ChangesPerRun)
+	}
+	return b, nil
+}
+
+// CheckCost holds the converge runs of the run in dir to the baseline
+// (feature-parity decision 7): in every run each of the plan's Targets ran
+// once, with exactly the successful path's commits (by name and in order,
+// every one committed), and WAL bytes within the baseline's range, for
+// each Target and for the run's median Target (each run's own: one bad
+// run does not hide behind good ones). It applies to a run that is not
+// G9a's own profile (no gate criterion changes) with the baseline's k;
+// applies is false otherwise, with the reason in problems. Problems are
+// empty when the cost is within the baseline.
+func CheckCost(dir string) (problems []string, applies bool, err error) {
+	b, err := Baseline()
+	if err != nil {
+		return nil, false, err
+	}
+	p, err := ReadPlan(filepath.Join(dir, FilePlan))
+	if err != nil {
+		return nil, false, err
+	}
+	switch {
+	case len(p.NotGate()) == 0:
+		return []string{"G9a's own profile: the gate's criteria, not the smoke's baseline"}, false, nil
+	case p.ChangesPerRun != b.ChangesPerRun:
+		return []string{fmt.Sprintf("the plan changes %d values a run, the baseline %d", p.ChangesPerRun, b.ChangesPerRun)}, false, nil
+	}
+	lines, err := ReadConverge(filepath.Join(dir, FileConverge))
+	if err != nil {
+		return nil, true, err
+	}
+	if len(lines) == 0 {
+		if p.Converges() > 0 {
+			problems = append(problems, fmt.Sprintf("no converge run recorded (%s), %d planned", FileConverge, p.Converges()))
+		}
+		return problems, true, nil
+	}
+	lo, hi := float64(b.WALBytesPerTarget)*b.WALEach[0], float64(b.WALBytesPerTarget)*b.WALEach[1]
+	mlo, mhi := float64(b.WALBytesPerTarget)*b.WALMedian[0], float64(b.WALBytesPerTarget)*b.WALMedian[1]
+	for i, l := range lines {
+		run := fmt.Sprintf("run %d", i+1)
+		seen := map[string]bool{}
+		var wal []float64
+		for _, r := range l.Runs {
+			seen[r.Target] = true
+			wal = append(wal, float64(r.WALBytes))
+			var points []string
+			committed := true
+			for _, j := range r.Jobs {
+				points = append(points, j.Point)
+				committed = committed && j.Committed
+			}
+			if r.Commits != b.CommitsPerTarget || !slices.Equal(points, b.Points) || !committed {
+				problems = append(problems, fmt.Sprintf("%s, Target %s: %d commits %v (committed: %v), the baseline %d %v",
+					run, r.Target, r.Commits, points, committed, b.CommitsPerTarget, b.Points))
+			}
+			if w := float64(r.WALBytes); w < lo || w > hi {
+				problems = append(problems, fmt.Sprintf("%s, Target %s: %d WAL bytes, outside %.0f to %.0f", run, r.Target, r.WALBytes, lo, hi))
+			}
+		}
+		if len(l.Runs) != p.Targets || len(seen) != p.Targets {
+			problems = append(problems, fmt.Sprintf("%s: %d Target runs of %d Targets, the plan has %d", run, len(l.Runs), len(seen), p.Targets))
+		}
+		if len(wal) > 0 {
+			sort.Float64s(wal)
+			if m := wal[len(wal)/2]; m < mlo || m > mhi {
+				problems = append(problems, fmt.Sprintf("%s: the median Target wrote %.0f WAL bytes, outside %.0f to %.0f", run, m, mlo, mhi))
+			}
+		}
+	}
+	return problems, true, nil
 }

@@ -12,7 +12,9 @@
 # runs on the real engine against a Coolify instance it starts, paced
 # backups and the run's event log); this harness drives
 # it as a process. Exit status: the report's (0 pass, 1 fail,
-# 2 inconclusive), or 3 when the harness itself failed.
+# 2 inconclusive), 3 when the harness itself failed, or 4 when the converge
+# engine's cost is out of its baseline (g9a checkcost: a run that is not
+# G9a's own profile, a smoke).
 #
 # Environment:
 #   G9A_BIN        a built g9a (plan, report; default: go build, which
@@ -99,4 +101,7 @@ trap - EXIT
 status=0
 "$BIN" report "$OUT" || status=$?
 [ "$status" -le 2 ] || die "the report failed"
+# The converge engine's cost against its baseline (converge-baseline.json,
+# feature-parity decision 7), on a run that is not G9a's own profile.
+"$BIN" checkcost "$OUT" || { echo "run.sh: the converge cost is out of its baseline (go/bench/g9a/converge-baseline.json)" >&2; exit 4; }
 exit "$status"

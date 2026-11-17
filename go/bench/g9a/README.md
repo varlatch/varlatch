@@ -66,10 +66,13 @@ harness failed.
   otherwise). The run keeps them in `converge.jsonl`, and the report
   shows them per run and per commit point (feature-parity decision 7: a
   pull request that raises commits or WAL bytes per run by more than
-  20 % says why). CI's smoke holds each run to `converge-baseline.json`:
-  the successful path's commits by name and in order, and the WAL bytes
-  per Target within its range; a change to the engine's cost on purpose
-  updates that file and says why. A commit's time is its body's
+  20 % says why). `g9a checkcost` holds each converge run of a run
+  that is not G9a's own profile (CI's smoke) to `converge-baseline.json`:
+  each Target once, the successful path's commits by name and in order,
+  the WAL bytes of each Target and of each run's median Target within
+  its range; `run.sh` runs it after the report and exits 4 when the cost
+  is out of it. A change to the engine's cost on purpose updates that file
+  and says why. A commit's time is its body's
   (`inJobUs`), apart from its wait for its batch to complete
   (`completionUs`: the batch's later jobs, COMMIT and fsync). The period
   of a scaled plan is at least 45 s

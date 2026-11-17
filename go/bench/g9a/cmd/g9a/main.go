@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/varlatch/varlatch/go/bench/g9a"
 )
@@ -82,12 +83,33 @@ func main() {
 		default:
 			os.Exit(2)
 		}
+	case "checkcost":
+		// The converge engine's cost against converge-baseline.json
+		// (g9a.CheckCost): exit 1 when it is out of it.
+		if len(os.Args) != 3 {
+			usage()
+		}
+		problems, applies, err := g9a.CheckCost(os.Args[2])
+		if err != nil {
+			log.Fatal(err)
+		}
+		if !applies {
+			fmt.Printf("converge cost not checked: %s\n", strings.Join(problems, "; "))
+			return
+		}
+		for _, p := range problems {
+			fmt.Fprintf(os.Stderr, "converge cost: %s\n", p)
+		}
+		if len(problems) > 0 {
+			os.Exit(1)
+		}
+		fmt.Println("converge cost within the baseline (converge-baseline.json)")
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: g9a plan [-scale f] [-wal-bound bytes] [-wal-fraction f] [-wal-attempts n] | g9a report dir")
+	fmt.Fprintln(os.Stderr, "usage: g9a plan [-scale f] [-wal-bound bytes] [-wal-fraction f] [-wal-attempts n] | g9a report dir | g9a checkcost dir")
 	os.Exit(3)
 }
