@@ -83,6 +83,34 @@ test("a go-server check: its suite needs the go-server capability, it may replac
   assert.equal(evaluate({ inventory: inv, reports: reports("PASS") }).checks.find((c) => c.id === "sse.scope").outcome, "pass");
 });
 
+test("a go-client check: its suite says client go, it applies only with the Go CLI under test", () => {
+  const inv = base();
+  inv.suites.handover = { title: "handover", script: "h.mjs", client: "go" };
+  inv.checks["handover.login"] = { suite: "handover", kind: "go-client", title: "login" };
+  assert.deepEqual(validateInventory(inv), []);
+  inv.suites.handover.client = "ts";
+  assert.match(validateInventory(inv).join("\n"), /suite handover: client can only be "go"/);
+  delete inv.suites.handover.client;
+  assert.match(validateInventory(inv).join("\n"), /handover\.login: a go-client check's suite says "client": "go"/);
+  inv.suites.handover.client = "go";
+  inv.checks["handover.other"] = { suite: "handover", kind: "conformance", title: "other" };
+  assert.match(validateInventory(inv).join("\n"), /handover\.other: a suite with "client": "go" holds only go-client checks/);
+  delete inv.checks["handover.other"];
+  const reports = (status) => [
+    ...Object.entries(inv.checks).filter(([id]) => id !== "handover.login").map(([id, c]) => ({ suite: c.suite, id, status: c.kind === "ts-stack" ? "N/A" : "PASS", text: "" })),
+    { suite: "handover", id: "handover.login", status, text: "the CLI under test is not the Go CLI" },
+  ];
+  const outcome = (status, cliSpec) => evaluate({ inventory: inv, reports: reports(status), cliSpec }).checks.find((c) => c.id === "handover.login");
+  assert.equal(outcome("N/A", "source").outcome, "not-applicable");
+  assert.equal(outcome("N/A", "0.22.0").outcome, "not-applicable");
+  assert.equal(outcome("N/A", "go").outcome, "fail");
+  assert.match(outcome("N/A", "go").why, /a go-client check reported not applicable with the Go CLI under test/);
+  assert.equal(outcome("PASS", "go").outcome, "pass");
+  // Another kind's N/A is not excused by the client.
+  const other = evaluate({ inventory: inv, reports: [...reports("PASS").filter((r) => r.id !== "web.csp-strict"), { suite: "web", id: "web.csp-strict", status: "N/A", text: "" }], cliSpec: "source" });
+  assert.equal(other.checks.find((c) => c.id === "web.csp-strict").outcome, "fail");
+});
+
 test("IDs, suites, kinds, capabilities and versions are checked", () => {
   const inv = base();
   inv.checks["Web.Bad"] = { suite: "web", kind: "conformance", title: "x" };

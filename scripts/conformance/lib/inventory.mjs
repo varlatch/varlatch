@@ -20,7 +20,13 @@
  *                target lacks it, and it must pass where it has it. It may
  *                be a ts-stack check's replacement. Each is listed in
  *                `goServerChecks` with why the TypeScript server cannot
- *                pass it.
+ *                pass it;
+ *   go-client    about the Go CLI together with the TypeScript CLI (the
+ *                hand-over of internal docs/design/go-cli.md, decision 11):
+ *                its suite says `"client": "go"`, and the runner hands it
+ *                the TypeScript CLI as well (--handover-cli). Not
+ *                applicable when the CLI under test is not the Go CLI; on
+ *                every target it must pass when it is.
  *
  * External suites (`externalSuites`): the suites the runner does not run,
  * the TypeScript installation's lifecycle and installer suites
@@ -52,7 +58,10 @@
 
 import { RUNNER_STATUSES, STATUSES } from "./results.mjs";
 
-export const KINDS = ["conformance", "ts-stack", "component", "go-server"];
+export const KINDS = ["conformance", "ts-stack", "component", "go-server", "go-client"];
+
+/** The kind of the checks that need the Go CLI under test (and a TypeScript one beside it). */
+export const GO_CLIENT = "go-client";
 
 /** The kinds a target without their capability reports not applicable. */
 export const TARGET_SPECIFIC = { "ts-stack": "ts-stack", "go-server": "go-server" };
@@ -156,6 +165,7 @@ export function validateInventory(inventory) {
     for (const need of suite.needs ?? []) {
       if (!CAPABILITIES.includes(need)) problems.push(`suite ${name}: unknown capability ${need}`);
     }
+    if ("client" in suite && suite.client !== "go") problems.push(`suite ${name}: client can only be "go"`);
     // The CLI features the suite's setup uses (lib/client-lacks.mjs).
     if ("cliNeeds" in suite) {
       if (!Array.isArray(suite.cliNeeds)) problems.push(`suite ${name}: cliNeeds must list CLI features`);
@@ -197,6 +207,12 @@ export function validateInventory(inventory) {
     }
     if (check.kind === "go-server" && !(typeof goServerChecks[id] === "string" && goServerChecks[id].trim() !== "")) {
       problems.push(`${where}: a go-server check is listed in goServerChecks, with why the TypeScript server cannot pass it`);
+    }
+    if (check.kind === GO_CLIENT && check.suite in suites && suites[check.suite].client !== "go") {
+      problems.push(`${where}: a go-client check's suite says "client": "go"`);
+    }
+    if (check.kind !== GO_CLIENT && check.suite in suites && suites[check.suite].client === "go") {
+      problems.push(`${where}: a suite with "client": "go" holds only go-client checks`);
     }
     if ("reportedBy" in check && check.reportedBy !== "runner") problems.push(`${where}: reportedBy can only be "runner"`);
     if ("group" in check) {
@@ -305,7 +321,7 @@ export function predates(inventory, feature, cliVersion) {
  * needs that the client lacks), from lib/client-lacks.mjs; likewise for
  * client-lacks.
  */
-export function evaluate({ inventory, reports, errors = [], cliVersion = null, lacking = new Map(), clientLacking = new Map() }) {
+export function evaluate({ inventory, reports, errors = [], cliVersion = null, cliSpec = null, lacking = new Map(), clientLacking = new Map() }) {
   const problems = errors.map((e) => `${e.suite}: ${e.message}`);
   const byId = new Map();
   for (const r of reports) {
@@ -358,6 +374,8 @@ export function evaluate({ inventory, reports, errors = [], cliVersion = null, l
     else if (statuses.has("PASS")) judged("pass");
     else if (statuses.has("N/A")) {
       if (entry.kind in TARGET_SPECIFIC) judged("not-applicable", got[0].text);
+      else if (entry.kind === GO_CLIENT && cliSpec !== "go") judged("not-applicable", got[0].text);
+      else if (entry.kind === GO_CLIENT) reporting(`a go-client check reported not applicable with the Go CLI under test: ${got[0].text}`);
       else reporting(`a ${entry.kind} check reported not applicable: ${got[0].text}`);
     } else {
       // PREDATES-CLI: accepted only when the runner itself confirms it,

@@ -211,6 +211,24 @@
         "login-token"
       ]
     },
+    "cli-handover": {
+      "title": "the hand-over between the Go CLI and the TypeScript CLI: token sign-in both ways (internal docs/design/go-cli.md, decision 11)",
+      "script": "scripts/conformance/suites/cli-handover.mjs",
+      "client": "go",
+      "operations": [
+        "admin-recover",
+        "seed",
+        "getMeta",
+        "listOrganizations",
+        "whoami",
+        "listEnvironments"
+      ],
+      "cliNeeds": [
+        "login-token",
+        "whoami",
+        "env-list"
+      ]
+    },
     "dashboard": {
       "title": "dashboard (production container)",
       "script": "apps/web/scripts/e2e-web.mjs",
@@ -1034,6 +1052,26 @@
         "seed",
         "listEnvironments"
       ]
+    },
+    "cli-handover.ts-login-go-reads": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "signed in with the TypeScript CLI (--token-stdin), the Go CLI finds the default server and the credential: whoami and env list"
+    },
+    "cli-handover.go-login-ts-reads": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "signed in with the Go CLI (--token-stdin), the TypeScript CLI finds the default server and the credential: whoami and env list"
+    },
+    "cli-handover.store-written-alike": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "both CLIs write credentials.json and settings.json alike: the same text but the token and the time, mode 0600"
+    },
+    "cli-handover.logout-seen-by-other": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "a logout with either CLI empties the store and forgets the default server for the other: whoami is refused (77)"
     },
     "dashboard.enrollment-dashboard-origin": {
       "suite": "dashboard",

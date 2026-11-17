@@ -173,6 +173,20 @@ export function cliCommand(args) {
 }
 
 /**
+ * The program and arguments that run the hand-over's TypeScript CLI with
+ * `args` (VARLATCH_HANDOVER_CLI, set by the runner with --cli go only):
+ * the CLI the Go CLI under test hands over to and from (internal
+ * docs/design/go-cli.md, decision 11). It always runs with Node.
+ */
+export function handoverCliCommand(args) {
+  const path = process.env.VARLATCH_HANDOVER_CLI;
+  if (!path) {
+    throw new Error("VARLATCH_HANDOVER_CLI is not set: the runner sets it with --cli go:<path> (and --handover-cli)");
+  }
+  return [process.execPath, [path, ...args]];
+}
+
+/**
  * Runs one operation of the target under test (scripts/conformance/target-op.mjs)
  * and returns its standard output; throws when the operation fails.
  * `input` is passed on standard input, `env` is added to the environment.
