@@ -19,7 +19,7 @@
  *   target-op.mjs object-store start                 JSON
  *   target-op.mjs host-admin audit-export <args...>  JSON { status, stdout, stderr }
  *   target-op.mjs oidc-issuer start|keys <json>|counts  JSON
- *   target-op.mjs platform-fakes start|state|drift <resource> <key> <value>  JSON
+ *   target-op.mjs platform-fakes start|state|drift <resource> <key> <value>|github <json>  JSON
  *
  * An optional operation the target does not have exits 3.
  */
@@ -102,7 +102,7 @@ switch (operation) {
     break;
   case "platform-fakes":
     needs("platform-fakes");
-    if (!["start", "state", "drift"].includes(args[0])) throw new Error("platform-fakes start|state|drift <resource> <key> <value>");
+    if (!["start", "state", "drift", "github"].includes(args[0])) throw new Error("platform-fakes start|state|drift <resource> <key> <value>|github <json>");
     print(JSON.stringify(await target.platformFakes(state, ...args)));
     break;
   case "ts-stack": {

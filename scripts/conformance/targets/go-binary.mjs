@@ -417,7 +417,7 @@ export async function maintenance(state, ttlMs) {
 
 /** A fixed, named probe of server state (the target contract): `varlatchd admin conformance-probe`. */
 export async function probe(state, probeName, ...args) {
-  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses", "deletion-due", "sync-repair-due", "sync-trigger-position"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
+  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses", "deletion-due", "sync-repair-due", "sync-trigger-position", "github-app-pending-expired"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
   return JSON.parse(admin(state, ["conformance-probe", probeName, ...args]));
 }
 
@@ -475,7 +475,8 @@ async function platformFakesControl(state, method, path, body) {
  * (lib/platform-fakes.cjs) on the loopback port varlatchd.conf allows and
  * the host override leads to, when they are not running; `state` what they
  * hold and every request they saw; `drift <resource> <key> <value>` changes
- * a Coolify value behind Varlatch's back. A process of its own, stopped by
+ * a Coolify value behind Varlatch's back; `github <json>` sets up the fake
+ * GitHub's App side (POST /_github). A process of its own, stopped by
  * `down` by its recorded PID, and gone by itself once the installation
  * directory is.
  */
@@ -489,6 +490,11 @@ export async function platformFakes(state, action, ...args) {
     const [resource, key, value] = args;
     const got = await platformFakesControl(state, "POST", "/_drift", JSON.stringify({ resource, key, value }));
     if (!got) throw new Error(`the fake platforms could not drift ${resource} ${key}`);
+    return got;
+  }
+  if (action === "github") {
+    const got = await platformFakesControl(state, "POST", "/_github", args[0]);
+    if (!got) throw new Error(`the fake GitHub refused ${args[0]?.slice(0, 80)}`);
     return got;
   }
   if (action !== "start") throw new Error(`unknown platform-fakes action ${action}`);

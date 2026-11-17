@@ -858,12 +858,13 @@
       ]
     },
     "sync": {
-      "title": "Sync Targets delivered by the converge engine to fake GitHub, Coolify and Convex services: a push, the redeploy debt, credential expiry, a partial failure, pushSyncTarget, a deletion, the pause fence, drift put back by a repair pass, the repair cycle closing",
+      "title": "Sync Targets delivered by the converge engine to fake GitHub, Coolify and Convex services: a push, the redeploy debt, credential expiry, a partial failure, pushSyncTarget, a deletion, the pause fence, drift put back by a repair pass, the repair cycle closing; a GitHub App against the fake GitHub: the manifest flow, an owner mismatch refused, an import, its installations, a Connection on one pushed with narrowed installation tokens, the key rotated, a pending conversion discarded and one ended by the sweep, the App removed",
       "script": "scripts/conformance/suites/sync.mjs",
       "needs": [
         "platform-fakes",
         "probe:sync-repair-due",
-        "probe:sync-trigger-position"
+        "probe:sync-trigger-position",
+        "probe:github-app-pending-expired"
       ],
       "operations": [
         "admin-recover",
@@ -882,7 +883,18 @@
         "pushSyncTarget",
         "pauseSyncTarget",
         "resumeSyncTarget",
-        "listAuditEvents"
+        "listAuditEvents",
+        "startGitHubAppRegistration",
+        "completeGitHubAppRegistration",
+        "getGitHubApp",
+        "listGitHubAppInstallations",
+        "rotateGitHubAppKey",
+        "removeGitHubApp",
+        "importGitHubApp",
+        "discardGitHubAppRegistration",
+        "attachGitHubAppRegistration",
+        "changeSecurityControl",
+        "cancelApproval"
       ]
     }
   },
@@ -3821,6 +3833,51 @@
       "suite": "sync",
       "kind": "conformance",
       "title": "after its repair pass a converged Target is not due again: the next passes send its destination nothing"
+    },
+    "sync.github-app-registered": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "a registration started for a GitHub account names GitHub's form and a single-use state; completing it with GitHub's code stores the App GitHub handed over, never showing its key, and the state cannot complete again"
+    },
+    "sync.github-app-installations": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "the App's installations are listed as GitHub answers them to the App, each with its account"
+    },
+    "sync.github-app-connection-pushes": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "a Connection on an installation of the App takes the installation's account as its base identity, and its Target is pushed with installation tokens minted narrowed to the Target's repository"
+    },
+    "sync.github-app-key-rotation": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "rotating the App's key verifies the new key as the App first (a key GitHub does not know is refused, nothing changes), takes it at the App's version, refuses a stale version, and pushes with it"
+    },
+    "sync.github-app-removed": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "removing the App revokes every Connection on it and disables their Targets; the Organization has no App afterwards"
+    },
+    "sync.github-app-owner-mismatch": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "an App GitHub created on another account than the one named is refused with where to delete it, and nothing is kept"
+    },
+    "sync.github-app-import": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "an App is imported by its id and private key, verified as the App first: a key that does not sign for it is refused; the slug, client id and owner come from GitHub"
+    },
+    "sync.github-app-pending-discard": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "under admin-step-up at enforce, completing a registration keeps GitHub's App pending and asks for an approval to attach it; the person who started it discards it, with where to delete the App; discarding again changes nothing, and attaching it then is refused before any approval"
+    },
+    "sync.github-app-sweep": {
+      "suite": "sync",
+      "kind": "conformance",
+      "title": "a pending conversion not attached within its hour is ended by the registration sweep (recorded with reason expired, its key deleted); discarding it afterwards changes nothing"
     }
   },
   "goServerChecks": {

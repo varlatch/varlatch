@@ -22,19 +22,31 @@
  * it runs: its values at that time) and a service svc-conformance with
  * compose files. Convex: the variable list and the batch update.
  *
- * GitHub's endpoints are a route table (GITHUB_ROUTES) so that a GitHub
- * App's (the app's JWT, its installations, installation tokens) can be
- * added beside the repository secrets.
+ * GitHub's endpoints are a route table (GITHUB_ROUTES). Beside the
+ * repository secrets, a GitHub App's, as GitHub documents them and as
+ * services/varlatchd/test/helpers/fake-github-app.ts answers them: the
+ * manifest flow's conversion (a code the suite set up hands over an App
+ * with a key generated here), GET /app and the installations with the
+ * App's JWT (RS256, issued as the client id or the App id, verified
+ * against the App's current keys, iat in the past and exp at most ten
+ * minutes ahead), installation tokens minted narrowed to repositories and
+ * permissions, and the endpoints such a token reads and writes.
  *
  * Control: GET /_state (the platforms' state and every request, without
  * credentials' values), POST /_drift {"resource", "key", "value"} (a
  * Coolify value changed and redeployed behind Varlatch's back: what the
- * resource stores and what it runs).
+ * resource stores and what it runs), POST /_github {"op", ...} (a GitHub
+ * App's side: "manifest-code" {code, app} sets up a code the conversion
+ * hands over; "app" {app} registers one directly and answers its private
+ * key; "add-key" {appId}, "delete-key" {appId, pem} and "keep-only-key"
+ * {appId, pem} change its keys;
+ * "install" {appId, account, repos, selection} installs it).
  */
 "use strict";
 const http = require("node:http");
 const https = require("node:https");
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 
 const args = process.argv.slice(1).filter((a) => !a.endsWith("platform-fakes.cjs"));
 const [httpsPort, controlPort, certFile, keyFile, dir] = args;
@@ -52,6 +64,15 @@ const state = {
   convex: {},
   requests: [],
   next: 1,
+  // A GitHub App's side: codes the conversion hands over (code -> app,
+  // used once), Apps by id (their public keys), installations by id, and
+  // the installation tokens minted.
+  codes: {},
+  apps: {},
+  installations: {},
+  tokens: {},
+  mints: [],
+  nextInstallation: 169698431,
 };
 
 function answer(res, status, value, extra = {}) {
@@ -73,15 +94,127 @@ function record(req, body, note) {
 // minted here would be recognised. Each route is { method, path (a regular
 // expression over the path, without the query), handle(req, res, match, body, credential) }.
 const GITHUB_ROUTES = [
+  // The manifest flow: the code hands over the App once, with a key made now.
+  {
+    method: "POST",
+    path: /^\/app-manifests\/([^/]+)\/conversions$/,
+    handle: (req, res, m) => {
+      const code = decodeURIComponent(m[1]);
+      const spec = state.codes[code];
+      if (!spec || spec.used) return answer(res, 404, { message: "Not Found" }, DATE());
+      spec.used = true;
+      const key = newKey();
+      state.apps[spec.id] = { ...spec, keys: [key.pub] };
+      delete state.apps[spec.id].used;
+      return answer(res, 201, { ...appView(spec), pem: key.pem, webhook_secret: null, client_secret: "conformance-client-secret" }, DATE());
+    },
+  },
+  {
+    method: "GET",
+    path: /^\/app$/,
+    handle: (req, res) => {
+      const got = appFromJwt(req);
+      if (!got.app) return answer(res, got.status, got.body, DATE());
+      return answer(res, 200, appView(got.app), DATE());
+    },
+  },
+  {
+    method: "GET",
+    path: /^\/app\/installations$/,
+    handle: (req, res) => {
+      const got = appFromJwt(req);
+      if (!got.app) return answer(res, got.status, got.body, DATE());
+      const url = new URL(req.url, "https://api.github.com");
+      const perPage = Math.min(Number(url.searchParams.get("per_page") ?? 30), 100);
+      const page = Number(url.searchParams.get("page") ?? 1);
+      const all = Object.values(state.installations).filter((i) => i.appId === got.app.id);
+      return answer(res, 200, all.slice((page - 1) * perPage, page * perPage).map(installationView), DATE());
+    },
+  },
+  {
+    method: "GET",
+    path: /^\/app\/installations\/(\d+)$/,
+    handle: (req, res, m) => {
+      const got = appFromJwt(req);
+      if (!got.app) return answer(res, got.status, got.body, DATE());
+      const i = state.installations[m[1]];
+      if (!i || i.appId !== got.app.id) return answer(res, 404, { message: "Not Found" }, DATE());
+      return answer(res, 200, installationView(i), DATE());
+    },
+  },
+  {
+    method: "POST",
+    path: /^\/app\/installations\/(\d+)\/access_tokens$/,
+    handle: (req, res, m, body) => {
+      const got = appFromJwt(req);
+      if (!got.app) return answer(res, got.status, got.body, DATE());
+      const i = state.installations[m[1]];
+      if (!i || i.appId !== got.app.id) return answer(res, 404, { message: "Not Found" }, DATE());
+      let asked;
+      try {
+        asked = body ? JSON.parse(body) : {};
+      } catch {
+        return answer(res, 422, { message: "Invalid request" }, DATE());
+      }
+      const permissions = asked.permissions ?? got.app.permissions;
+      for (const [name, level] of Object.entries(permissions)) {
+        if (!allows(got.app.permissions[name], level)) return answer(res, 422, { message: "The permissions requested are not granted to this installation." }, DATE());
+      }
+      let repos = null;
+      if (asked.repositories) {
+        for (const name of asked.repositories) {
+          if (!i.repos.some((r) => r.toLowerCase() === name.toLowerCase())) {
+            return answer(res, 422, { message: "There is at least one repository that does not exist or is not accessible to the parent installation." }, DATE());
+          }
+        }
+        repos = asked.repositories.map((n) => n.toLowerCase());
+      }
+      const token = `ghs_${crypto.randomBytes(18).toString("base64url")}`;
+      state.tokens[token] = { installationId: i.id, repos, permissions };
+      state.mints.push({ installationId: i.id, repositories: repos, permissions });
+      return answer(res, 201, { token, expires_at: new Date(Date.now() + 3600_000).toISOString(), permissions, repository_selection: repos ? "selected" : i.selection }, DATE());
+    },
+  },
+  {
+    method: "GET",
+    path: /^\/installation\/repositories$/,
+    handle: (req, res, m, body, credential) => {
+      if (!credential.token) return answer(res, 401, { message: "Bad credentials" }, DATE());
+      const i = state.installations[credential.token.installationId];
+      const all = i.repos.filter((r) => !credential.token.repos || credential.token.repos.includes(r.toLowerCase()));
+      return answer(res, 200, {
+        total_count: all.length,
+        repository_selection: i.selection,
+        repositories: all.map((r) => ({ name: r, full_name: `${i.account.login}/${r}`, owner: { login: i.account.login }, private: true, archived: false })),
+      }, DATE());
+    },
+  },
+  {
+    method: "GET",
+    path: /^\/repos\/([^/]+)\/([^/]+)$/,
+    handle: (req, res, m, body, credential) => {
+      if (!credential.token) return answer(res, credential.token === null ? 401 : 404, { message: credential.token === null ? "Bad credentials" : "Not Found" }, DATE());
+      if (!tokenReaches(credential, m[1], m[2], "metadata", "read") && !tokenReaches(credential, m[1], m[2], "secrets", "read")) {
+        return answer(res, 404, { message: "Not Found" }, DATE());
+      }
+      return answer(res, 200, { name: m[2], full_name: `${m[1]}/${m[2]}`, private: true, archived: false }, DATE());
+    },
+  },
   {
     method: "GET",
     path: /^\/repos\/([^/]+)\/([^/]+)\/actions\/secrets\/public-key$/,
-    handle: (req, res, m, body, credential) => answer(res, 200, { key_id: "conformance-key", key: PUBLIC_KEY }, credential.expiry),
+    handle: (req, res, m, body, credential) => {
+      if (credential.token === null) return answer(res, 401, { message: "Bad credentials" });
+      if (!tokenReaches(credential, m[1], m[2], "secrets", "read")) return answer(res, 403, { message: "Resource not accessible by integration" });
+      return answer(res, 200, { key_id: "conformance-key", key: PUBLIC_KEY }, credential.expiry);
+    },
   },
   {
     method: "PUT",
     path: /^\/repos\/([^/]+)\/([^/]+)\/actions\/secrets\/([^/]+)$/,
     handle: (req, res, m, body, credential) => {
+      if (credential.token === null) return answer(res, 401, { message: "Bad credentials" });
+      if (!tokenReaches(credential, m[1], m[2], "secrets", "write")) return answer(res, 403, { message: "Resource not accessible by integration" });
       const secrets = (state.github[`${m[1]}/${m[2]}`] ??= {});
       const name = decodeURIComponent(m[3]);
       if (name.startsWith("BROKEN")) return answer(res, 500, { message: "boom" });
@@ -97,7 +230,9 @@ const GITHUB_ROUTES = [
   {
     method: "DELETE",
     path: /^\/repos\/([^/]+)\/([^/]+)\/actions\/secrets\/([^/]+)$/,
-    handle: (req, res, m) => {
+    handle: (req, res, m, body, credential) => {
+      if (credential.token === null) return answer(res, 401, { message: "Bad credentials" });
+      if (!tokenReaches(credential, m[1], m[2], "secrets", "write")) return answer(res, 403, { message: "Resource not accessible by integration" });
       const secrets = (state.github[`${m[1]}/${m[2]}`] ??= {});
       const name = decodeURIComponent(m[3]);
       if (!(name in secrets)) return answer(res, 404, { message: "Not Found" });
@@ -112,8 +247,60 @@ const GITHUB_ROUTES = [
 // containing "expiring" is answered with an expiry header.
 function githubCredential(req) {
   const [scheme = "", value = ""] = (req.headers.authorization || "").split(" ");
-  return { scheme, expiry: value.includes("expiring") ? { "github-authentication-token-expiration": EXPIRES } : {} };
+  // An installation token minted here: its installation, repositories and
+  // permissions; one this fake did not mint is refused.
+  const token = value.startsWith("ghs_") ? state.tokens[value] ?? null : undefined;
+  return { scheme, token, expiry: value.includes("expiring") ? { "github-authentication-token-expiration": EXPIRES } : {} };
 }
+
+// An installation token reaches only its installation's account's
+// repositories it was narrowed to, with the permission asked.
+const LEVELS = ["read", "write", "admin"];
+const allows = (granted, needed) => granted !== undefined && LEVELS.indexOf(granted) >= LEVELS.indexOf(needed);
+function tokenReaches(credential, owner, repo, permission, level) {
+  if (credential.token === undefined) return true; // a fine-grained token: the existing routes' own rules
+  const t = credential.token;
+  if (!t) return false;
+  const inst = state.installations[t.installationId];
+  if (!inst || inst.account.login.toLowerCase() !== owner.toLowerCase()) return false;
+  if (!inst.repos.some((r) => r.toLowerCase() === repo.toLowerCase())) return false;
+  if (t.repos && !t.repos.includes(repo.toLowerCase())) return false;
+  return allows(t.permissions[permission], level);
+}
+
+// The App a request's JWT names, verified as GitHub verifies it, or the
+// answer GitHub gives.
+function appFromJwt(req) {
+  const jwt = (req.headers.authorization || "").match(/^Bearer (.+)$/)?.[1];
+  const parts = jwt?.split(".");
+  const undecodable = { status: 401, body: { message: "A JSON web token could not be decoded" } };
+  if (!parts || parts.length !== 3) return undecodable;
+  let header, payload;
+  try {
+    header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch {
+    return undecodable;
+  }
+  if (header.alg !== "RS256") return undecodable;
+  const app = Object.values(state.apps).find((a) => a.clientId === payload.iss || String(a.id) === String(payload.iss));
+  const signed = Buffer.from(`${parts[0]}.${parts[1]}`);
+  const signature = Buffer.from(parts[2], "base64url");
+  if (!app || !app.keys.some((k) => crypto.verify("RSA-SHA256", signed, crypto.createPublicKey(k), signature))) return undecodable;
+  const at = Math.floor(Date.now() / 1000);
+  if (typeof payload.iat !== "number" || typeof payload.exp !== "number" || payload.iat > at || payload.exp <= at || payload.exp > at + 600) {
+    return { status: 401, body: { message: "Bad credentials" } };
+  }
+  return { app };
+}
+
+const appView = (app) => ({ id: app.id, slug: app.slug, client_id: app.clientId, owner: app.owner, name: app.slug, permissions: app.permissions, events: [] });
+const installationView = (i) => ({ id: i.id, app_id: i.appId, account: i.account, target_type: i.account.type, repository_selection: i.selection, suspended_at: null });
+function newKey() {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return { pem: privateKey.export({ type: "pkcs1", format: "pem" }), pub: publicKey.export({ type: "spki", format: "pem" }) };
+}
+const DATE = () => ({ date: new Date().toUTCString() });
 
 function github(req, res, body) {
   const path = req.url.split("?")[0];
@@ -209,7 +396,51 @@ const control = http.createServer((req, res) => {
       return answer(res, 200, {
         github: Object.fromEntries(Object.entries(state.github).map(([repo, secrets]) => [repo, Object.keys(secrets).sort()])),
         coolify: coolifyState, running: state.running, convex: state.convex, requests: state.requests,
+        githubApps: Object.fromEntries(Object.values(state.apps).map((a) => [a.id, { slug: a.slug, keys: a.keys.length }])),
+        codesUsed: Object.entries(state.codes).filter(([, v]) => v.used).map(([k]) => k),
+        mints: state.mints,
       });
+    }
+    if (req.method === "POST" && req.url === "/_github") {
+      let c;
+      try {
+        c = JSON.parse(body);
+      } catch {
+        return answer(res, 422, { message: "not JSON" });
+      }
+      const spec = (a) => ({ id: a.id, slug: a.slug, clientId: a.clientId, owner: a.owner, permissions: a.permissions ?? { secrets: "write", environments: "write", metadata: "read" } });
+      if (c.op === "manifest-code") {
+        state.codes[c.code] = spec(c.app);
+        return answer(res, 200, { code: c.code });
+      }
+      if (c.op === "app") {
+        const key = newKey();
+        state.apps[c.app.id] = { ...spec(c.app), keys: [key.pub] };
+        return answer(res, 200, { pem: key.pem });
+      }
+      const app = state.apps[c.appId];
+      if (!app) return answer(res, 404, { message: "no such App" });
+      if (c.op === "add-key") {
+        const key = newKey();
+        app.keys.push(key.pub);
+        return answer(res, 200, { pem: key.pem });
+      }
+      if (c.op === "delete-key") {
+        const der = crypto.createPublicKey(c.pem).export({ type: "spki", format: "pem" });
+        app.keys = app.keys.filter((k) => k !== der);
+        return answer(res, 200, { keys: app.keys.length });
+      }
+      if (c.op === "keep-only-key") {
+        const der = crypto.createPublicKey(c.pem).export({ type: "spki", format: "pem" });
+        app.keys = app.keys.filter((k) => k === der);
+        return answer(res, 200, { keys: app.keys.length });
+      }
+      if (c.op === "install") {
+        const id = state.nextInstallation++;
+        state.installations[id] = { id, appId: app.id, account: c.account, selection: c.selection ?? "selected", repos: c.repos ?? [] };
+        return answer(res, 200, { installationId: id });
+      }
+      return answer(res, 404, { message: "unknown op" });
     }
     if (req.method === "POST" && req.url === "/_drift") {
       const { resource, key, value } = JSON.parse(body);

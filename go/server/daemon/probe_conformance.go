@@ -33,11 +33,15 @@ import (
 //	                                 {"needsSync", "nextAttemptAt"}, which it leaves as they are
 //	sync-trigger-position            {"cursor", "latest"}: the converge engine's trigger scan's
 //	                                 position, and the last audit event it reads (not sync.*)
+//	github-app-pending-expired <ghr_...>  a pending GitHub App conversion's hour over (converted
+//	                                 two hours ago, expired a second ago), so the registration
+//	                                 sweep's next pass, within a minute, ends it; true
 
 var (
 	probeName    = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
 	deletionID   = regexp.MustCompile(`^odl_[a-z2-7]{26}$`)
 	syncTargetID = regexp.MustCompile(`^snt_[a-z0-9]{26}$`)
+	ghrID        = regexp.MustCompile(`^ghr_[a-z0-9]{26}$`)
 )
 
 func init() {
@@ -94,6 +98,35 @@ func init() {
 				return nil
 			})
 			out = settled
+		case "github-app-pending-expired":
+			// The pending conversion's material is written once, by a
+			// trigger; the probe drops it for this one update and creates
+			// it again from its own SQL, in the same transaction.
+			if len(rest) != 2 || !ghrID.MatchString(rest[1]) {
+				return fail(fmt.Errorf("github-app-pending-expired: a GitHub App registration id (ghr_...)"))
+			}
+			now := time.Now()
+			err = store.Write(ctx, func(tx *storage.Tx) error {
+				var trigger string
+				if err := tx.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'github_app_registrations_pending_once'`).Scan(&trigger); err != nil {
+					return fmt.Errorf("the pending_once trigger: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `DROP TRIGGER github_app_registrations_pending_once`); err != nil {
+					return err
+				}
+				res, err := tx.ExecContext(ctx, `UPDATE github_app_registrations SET converted_at = ?, pending_expires_at = ?
+					WHERE id = ? AND converted_at IS NOT NULL AND ended_at IS NULL`,
+					now.Add(-2*time.Hour).UnixMicro(), now.Add(-time.Second).UnixMicro(), rest[1])
+				if err != nil {
+					return err
+				}
+				if n, _ := res.RowsAffected(); n != 1 {
+					return fmt.Errorf("no pending GitHub App conversion %s", rest[1])
+				}
+				_, err = tx.ExecContext(ctx, trigger)
+				return err
+			})
+			out = true
 		case "expire-pending-device-sign-ins":
 			err = store.Write(ctx, func(tx *storage.Tx) error {
 				return query.New(tx).ExpirePendingDeviceSignIns(ctx, time.Now().Add(-time.Second).UnixMicro())
