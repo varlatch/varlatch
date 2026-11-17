@@ -176,6 +176,22 @@ describe("extra: compose YAML as the yaml package reads it", () => {
       classifyComposeUsage(raw, generated(["app"]), 5, names);
     });
   }
+  // Bare carriage returns (#218 review, third round): unreadable on both
+  // sides, so the Services are not checked.
+  for (const [name, raw] of Object.entries({
+    "a trailing bare carriage return": "services: {app: {}}\r",
+    "a bare carriage return after a byte order mark": "\ufeffservices: {app: {}}\r",
+    "CRLF and a bare carriage return": "services:\r\n  app: {}\r  db: {}\r\n",
+    "a bare carriage return as the line break": "services:\r  app:\r    environment:\r      FOO: x\r",
+  })) {
+    it(`carriage return: ${name}`, () => {
+      classifyComposeUsage(raw, "services: {app: {}}", 3, ["FOO"]);
+    });
+  }
+  it("divergence: a bare carriage return in a quoted value", () => {
+    // The `yaml` package folds it into the value; here it is unreadable too.
+    classifyComposeUsage("services: {app: {environment: {FOO: \"a\rb\"}}}\n", "services: {app: {}}", 3, ["FOO"]);
+  });
   it("divergence: a sequence as a key", () => {
     classifyComposeUsage("services:\n  app:\n    environment:\n      ? [A, B]\n      : x\n", generated(["app"]), 5, names);
   });

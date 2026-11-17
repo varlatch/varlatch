@@ -551,12 +551,21 @@ var yamlDirective = regexp.MustCompile(`^%YAML[ \t]+1\.2(?:[ \t]+(?:#.*)?)?$`)
 //     1.1 and any repeat as a comment, at the same length. Any other
 //     directive (another version, %TAG, a reserved one, trailing text),
 //     and directives with no "---" after them, make the file unreadable:
-//     the conservative reading.
+//     the conservative reading;
+//   - a carriage return anywhere but before a line feed makes the file
+//     unreadable.
 func normalize(text string) (string, bool) {
 	text = strings.TrimPrefix(text, "\ufeff")
 	if strings.Contains(text, "\ufeff") {
 		// The `yaml` package keeps any other one as text (a second at the
 		// start becomes part of the first key); yaml.v3 drops some.
+		return "", false
+	}
+	if strings.Contains(strings.ReplaceAll(text, "\r\n", ""), "\r") {
+		// A carriage return outside a CRLF pair: the `yaml` package cannot
+		// read the file (it keeps one inside a quoted value as text),
+		// while yaml.v3 reads it and can find Services the `yaml` package
+		// never sees. Unreadable here: the conservative reading.
 		return "", false
 	}
 	lines := strings.Split(text, "\n")
