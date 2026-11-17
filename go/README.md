@@ -865,7 +865,14 @@ serves the tailnet listener on the node's own addresses
   cancelled at once; a peer lookup that was in flight returns no Tailnet
   Context; and a Tailnet Context resolved in the period stops counting at
   the next authorization decision that reads it (`authz.TailnetFrom`), also
-  after access reopens.
+  after access reopens. A write a request had already started is stopped
+  at the write boundary: its context carries a commit guard
+  (`storage.WithCommitGuard`), which the single writer checks after the
+  job's function and before its savepoint's release, and which rolls the
+  job back (403 `TAILNET_CONTEXT_UNAVAILABLE`) once the request's period
+  ended. Closing access waits for any write between that check and its
+  release, so each write of the period is either released before access
+  closes or refused. Requests on the ordinary listener carry no guard.
 - **Re-pin.** `varlatchd admin tailnet repin [--yes [--adopt]] [--json]`
   (host authority, through the running daemon only) runs a fresh check,
   which must succeed, and shows the pin, the observation and the latched

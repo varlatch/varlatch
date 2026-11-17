@@ -41,7 +41,7 @@ type TailnetListener struct {
 // TailnetClosedMessage is the refusal of every request on a tailnet
 // listener while tailnet access is closed. The TypeScript server pins its
 // tailnet in its configuration and has no such state.
-const TailnetClosedMessage = "Tailnet access is closed: this installation's tailnet is not the one it pinned, or cannot be checked now. An operator re-pins it on the host."
+const TailnetClosedMessage = tailnet.ClosedMessage
 
 // BrowserEndpoint is the browser endpoint's gate (ADR-0046 Decisions 3
 // and 4).

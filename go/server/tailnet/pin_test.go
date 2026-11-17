@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/domainerr"
 )
 
 // statusNode is a node that says what the test sets. block, when set,
@@ -432,5 +434,119 @@ func TestNodeTakesItsSettingsFromTheConfigOnly(t *testing.T) {
 				t.Fatalf("StartNode with %s set", name)
 			}
 		})
+	}
+}
+
+// #220 re-check P1: a write that started while access was open, during
+// which access closes, is rolled back at the write boundary, whatever the
+// request's context; a write admitted before a closure stays refused after
+// a re-pin reopens access; one admitted in an open period commits.
+func TestAWriteDoesNotCommitAfterAccessCloses(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, storage.Options{Path: filepath.Join(t.TempDir(), "w.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Write(ctx, func(tx *storage.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE TABLE w (n INTEGER) STRICT`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(actx context.Context, n int, during func()) error {
+		return store.Write(actx, func(tx *storage.Tx) error {
+			if during != nil {
+				during()
+			}
+			_, err := tx.ExecContext(actx, `INSERT INTO w (n) VALUES (?)`, n)
+			return err
+		})
+	}
+	rows := func() int {
+		var n int
+		if err := store.Reader().QueryRowContext(ctx, `SELECT count(*) FROM w`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	status := &statusNode{st: running("Tabc123", "corp.ts.net")}
+	m := enrolling(t, status, "", t.TempDir(), nil)
+	m.Check(ctx)
+
+	open1, release1, ok := m.Admit(ctx)
+	if !ok {
+		t.Fatal("not admitted")
+	}
+	defer release1()
+	if err := insert(open1, 1, nil); err != nil || rows() != 1 {
+		t.Fatalf("a write while open: %v, %d rows", err, rows())
+	}
+	// Sol's sequence: access closes inside the started job, and the job
+	// goes on with the cancelled context.
+	err = insert(open1, 2, func() {
+		status.set(running("Tother9", "corp.ts.net"), nil)
+		m.Check(ctx)
+		if open1.Err() == nil {
+			t.Error("the request was not cancelled when access closed")
+		}
+	})
+	var de *domainerr.Error
+	if !errors.As(err, &de) || de.Code != "TAILNET_CONTEXT_UNAVAILABLE" || rows() != 1 {
+		t.Fatalf("a write during which access closed: %v, %d rows", err, rows())
+	}
+	// Reopened by a re-pin (the tailnet changed back): the old admission
+	// stays refused, a new one commits.
+	status.set(running("Tabc123", "corp.ts.net"), nil)
+	if _, _, err := m.Repin(ctx, false); err != nil || !open(m) {
+		t.Fatalf("the re-pin: %v", err)
+	}
+	// Its context was cancelled when access closed, so the write is
+	// abandoned before it starts; were it started, its guard refuses.
+	if err := insert(open1, 3, nil); err == nil || rows() != 1 {
+		t.Fatalf("a write of an earlier period: %v, %d rows", err, rows())
+	}
+	stale := storage.WithCommitGuard(ctx, admissionGuard{m: m, live: 1})
+	if err := insert(stale, 3, nil); !errors.As(err, &de) || rows() != 1 {
+		t.Fatalf("a started write of an earlier period: %v, %d rows", err, rows())
+	}
+	open2, release2, ok := m.Admit(ctx)
+	if !ok {
+		t.Fatal("not admitted after the re-pin")
+	}
+	defer release2()
+	if err := insert(open2, 4, nil); err != nil || rows() != 2 {
+		t.Fatalf("a write of the new period: %v, %d rows", err, rows())
+	}
+}
+
+// #220 re-check P2: the listeners file is written with access as it is
+// after the check that changed it, on every path.
+func TestTheWrittenReportFollowsAccess(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	status := &statusNode{st: running("Tabc123", "corp.ts.net")}
+	m := enrolling(t, status, "", dir, nil)
+	file := func() string {
+		b, err := os.ReadFile(filepath.Join(dir, ListenersFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	m.Check(ctx)
+	if f := file(); !strings.Contains(f, `"node":{"status":"pass"}`) {
+		t.Fatalf("after enrolment: %s", f)
+	}
+	status.set(running("Tabc123", "corp-new.ts.net"), nil)
+	m.Check(ctx)
+	if f := file(); !strings.Contains(f, `"node":{"status":"fail","reason":"OTHER_TAILNET"}`) {
+		t.Fatalf("after a mismatch: %s", f)
+	}
+	if _, _, err := m.Repin(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if f := file(); !strings.Contains(f, `"node":{"status":"pass"}`) {
+		t.Fatalf("after the re-pin: %s", f)
 	}
 }

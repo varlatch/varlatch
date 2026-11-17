@@ -13,9 +13,12 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 )
 
@@ -84,6 +87,13 @@ type Manager struct {
 	open     bool
 	gen      uint64
 	admitted map[*admission]struct{}
+	// The write boundary (admissionGuard): live is the open period's
+	// generation plus one, 0 while closed, changed only under cut held
+	// exclusively; a write's guard holds cut shared from its check to its
+	// savepoint's release. So each write admitted in a period is either
+	// released before access closes, or checked after and rolled back.
+	cut  sync.RWMutex
+	live atomic.Uint64
 }
 
 type admission struct{ cancel context.CancelFunc }
@@ -127,11 +137,20 @@ func (m *Manager) openLocked() bool {
 func (m *Manager) settleLocked() {
 	if open := m.openLocked(); open != m.open {
 		m.open = open
+		m.gen++
+		live := uint64(0)
+		if open {
+			live = m.gen + 1
+		}
+		// Waits for every write between its guard's check and its
+		// savepoint's release.
+		m.cut.Lock()
+		m.live.Store(live)
+		m.cut.Unlock()
 		for a := range m.admitted {
 			a.cancel()
 		}
 		clear(m.admitted)
-		m.gen++
 	}
 }
 
@@ -169,6 +188,8 @@ func (m *Manager) Admit(ctx context.Context) (context.Context, func(), bool) {
 		return nil, nil, false
 	}
 	rctx, cancel := context.WithCancel(ctx)
+	// Every write the request makes is checked again at the write boundary.
+	rctx = storage.WithCommitGuard(rctx, admissionGuard{m: m, live: m.gen + 1})
 	a := &admission{cancel: cancel}
 	m.admitted[a] = struct{}{}
 	return rctx, func() {
@@ -178,6 +199,35 @@ func (m *Manager) Admit(ctx context.Context) (context.Context, func(), bool) {
 		cancel()
 	}, true
 }
+
+// ClosedMessage is the refusal of a request on a tailnet listener while
+// tailnet access is closed, and of a write it made once access closed. The
+// TypeScript server pins its tailnet in its configuration and has no such
+// state.
+const ClosedMessage = "Tailnet access is closed: this installation's tailnet is not the one it pinned, or cannot be checked now. An operator re-pins it on the host."
+
+// errAccessClosed is a write of a tailnet-listener request that access
+// closed under: rolled back (403 TAILNET_CONTEXT_UNAVAILABLE).
+func errAccessClosed() error { return domainerr.New("TAILNET_CONTEXT_UNAVAILABLE", ClosedMessage) }
+
+// admissionGuard is a tailnet-listener request's write boundary
+// (storage.CommitGuard): its writes commit only while access is still
+// open in the period the request was admitted in.
+type admissionGuard struct {
+	m    *Manager
+	live uint64
+}
+
+func (g admissionGuard) Hold() error {
+	g.m.cut.RLock()
+	if g.m.live.Load() != g.live {
+		g.m.cut.RUnlock()
+		return errAccessClosed()
+	}
+	return nil
+}
+
+func (g admissionGuard) Release() { g.m.cut.RUnlock() }
 
 // Closed is why tailnet access is closed ("" while open): not enrolled
 // yet, the pin missing, the closure latched (the tailnet changed), the
@@ -223,7 +273,6 @@ func (m *Manager) checkLocked(ctx context.Context) {
 	cancel()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	defer m.settleLocked()
 	now := m.now()
 	m.checkedAt = &now
 	// Trust rests on this reading only.
@@ -476,6 +525,9 @@ func all(list []string, ok func(string) bool) bool {
 // persistLocked writes the report for host commands, when its checks or
 // node changed, or the file is older than refreshFile.
 func (m *Manager) persistLocked() {
+	// Access settled first: the report never says what access was before
+	// this change.
+	m.settleLocked()
 	report := m.reportLocked()
 	observed, _ := report.Get("observed")
 	checks, _ := observed.(jsvalue.Object).Get("checks")

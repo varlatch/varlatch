@@ -15,6 +15,7 @@ import (
 func TestReleaseJobSize(t *testing.T) {
 	type before struct {
 		fn    func(*Tx) error
+		guard CommitGuard
 		done  chan error
 		state atomic.Int32
 	}
