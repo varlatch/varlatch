@@ -15,6 +15,10 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 )
 
+// goTestAll matches go.yml running every package's tests: go test, any
+// flags without a package pattern (such as -count=1), then ./... .
+var goTestAll = regexp.MustCompile(`go test (-[a-z]+(=\S+)? )*\./\.\.\.`)
+
 // G3's matrix (testdata/g3-matrix.json): one entry per encryption class
 // (each envelope purpose go/lib/envelope defines) × fixture release ×
 // envelope version × direction, saying at which level it is proven
@@ -115,7 +119,7 @@ func checkProof(t *testing.T, p g3Proof, workflow string) error {
 		if sub != "" && !strings.Contains(src, sub) {
 			return fmt.Errorf("%s: test %s has no subtest %q", p.Go, name, sub)
 		}
-		if !strings.Contains(workflow, "go test ./...") {
+		if !goTestAll.MatchString(workflow) {
 			return fmt.Errorf("go.yml no longer runs go test ./...")
 		}
 	case p.Vitest != "":
