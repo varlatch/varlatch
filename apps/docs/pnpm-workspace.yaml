@@ -11,3 +11,12 @@ overrides:
   # Expressive Code (Starlight's code blocks) still asks for postcss-nested 6,
   # which uses the 6.x parser. postcss-nested 7 is the same plugin on parser 7.
   postcss-nested@^6: 7.0.2
+auditConfig:
+  ignoreGhsas:
+    # picomatch ReDoS through single-branch repeated extglobs
+    # (GHSA-fc5q-39xc-vjpf, every version up to 4.0.7, no patched release yet).
+    # It reaches only the site's build tooling (Astro, Vite), which matches
+    # globs written in this repository, never request input; nothing here
+    # ships in a release. Remove this entry together with the one in the
+    # repository's pnpm-workspace.yaml once a patched picomatch resolves.
+    - GHSA-fc5q-39xc-vjpf
