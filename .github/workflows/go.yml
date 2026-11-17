@@ -103,9 +103,8 @@ jobs:
     # Drafts run nothing, as in ci.yml.
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    # About 20 minutes on a typical runner and close to 30 on a slow one (the
-    # build cache is off, so every run compiles every target from scratch);
-    # the cross-platform builds run in go-platforms, beside this job.
+    # The race detector's run (go-race) and the cross-platform builds
+    # (go-platforms) run beside this job.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -114,6 +113,22 @@ jobs:
         with:
           go-version: 1.27.4
           cache: false
+
+      # Go's module and build caches, keyed per job (each job compiles
+      # different targets). Pull requests only restore; pushes to main save,
+      # so a pull request starts from main's last build. Test results are
+      # never reused: every go test that a cached result could stand in for
+      # runs with -count=1.
+      - name: Restore Go's caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-go-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-go-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-go-
 
       - name: Formatted
         working-directory: go
@@ -178,7 +193,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
           VARLATCH_REQUIRE_DASHBOARD: "1"
-        run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test ./...
+        run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test -count=1 ./...
 
       # The conformance build's own tests: its host override, which the
       # sync suite's fake platforms rely on, is still decided by the
@@ -187,17 +202,7 @@ jobs:
         working-directory: go
         env:
           CGO_ENABLED: "0"
-        run: go test -tags conformance ./server/outbound
-
-      # The storage engine is concurrent (writer, checkpointer, snapshots);
-      # the race detector needs cgo, which only this step uses.
-      - name: Test with the race detector
-        working-directory: go
-        env:
-          CGO_ENABLED: "1"
-          VARLATCH_REQUIRE_DASHBOARD: "1"
-        # The installer tests run shells, not Go concurrency; once is enough.
-        run: go test -race $(go list ./... | grep -v '/go/install$')
+        run: go test -count=1 -tags conformance ./server/outbound
 
       # G7 against the server (ADR-0059 step 3.6): a full disk refuses
       # writes, keeps reads and recovers, and a disk-full error in a
@@ -413,13 +418,24 @@ jobs:
       - name: Every file matches the license map
         run: node scripts/check-licenses.mjs
 
-  # The cross-platform builds, in their own job so that they run beside the
-  # tests instead of after them. They need no dashboard: go:embed takes the
-  # committed dist/.gitkeep and the placeholder.
-  go-platforms:
+      - name: Save Go's caches
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-go-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+
+  # The storage engine is concurrent (writer, checkpointer, snapshots):
+  # every package but the installer's under the race detector, in a job of
+  # its own so that it runs beside go instead of after it. The race detector
+  # needs cgo, which only this job uses. It embeds the dashboard, as go's
+  # tests do (go generate ./server/web builds it).
+  go-race:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -428,25 +444,121 @@ jobs:
           go-version: 1.27.4
           cache: false
 
+      # Go's module and build caches, keyed per job (each job compiles
+      # different targets). Pull requests only restore; pushes to main save,
+      # so a pull request starts from main's last build. Test results are
+      # never reused: every go test that a cached result could stand in for
+      # runs with -count=1.
+      - name: Restore Go's caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-race-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-race-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-race-
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Build the dashboard varlatchd embeds
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go generate ./server/web
+
+      - name: Test with the race detector
+        working-directory: go
+        env:
+          CGO_ENABLED: "1"
+          VARLATCH_REQUIRE_DASHBOARD: "1"
+        # The installer tests run shells, not Go concurrency; go runs them once.
+        run: |
+          # shellcheck disable=SC2046 # one argument per package
+          go test -count=1 -race $(go list ./... | grep -v '/go/install$')
+
+      - name: Save Go's caches
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-race-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+
+  # The cross-platform builds, in their own jobs (one per OS, each for
+  # amd64 and arm64) so that they run beside the tests instead of after
+  # them. They need no dashboard: go:embed takes the committed
+  # dist/.gitkeep and the placeholder.
+  go-platforms:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+
+      # Go's module and build caches, keyed per job (each job compiles
+      # different targets). Pull requests only restore; pushes to main save,
+      # so a pull request starts from main's last build. Test results are
+      # never reused: every go test that a cached result could stand in for
+      # runs with -count=1.
+      - name: Restore Go's caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-platforms-${{ matrix.goos }}-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-platforms-${{ matrix.goos }}-${{ hashFiles('go/go.sum') }}-
+            go-platforms-${{ matrix.goos }}-
+
       # ADR-0059 Decision 1: varlatchd for Linux, varlatch for Linux, macOS
       # and Windows, each on amd64 and arm64; static, no cgo. Every package
       # builds and vets on every platform, since the CLI may use any of the
       # shared ones.
-      - name: Both binaries build for every platform
+      - name: Both binaries build for ${{ matrix.goos }}
         working-directory: go
         env:
           CGO_ENABLED: "0"
+          GOOS_UNDER_TEST: ${{ matrix.goos }}
         run: |
           build() {
             GOOS=${2%/*} GOARCH=${2#*/} go build -trimpath -o /dev/null "./cmd/$1"
             echo "built $1 for $2"
           }
-          for p in linux/amd64 linux/arm64; do build varlatchd "$p"; done
-          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+          for arch in amd64 arm64; do
+            p="$GOOS_UNDER_TEST/$arch"
+            [ "$GOOS_UNDER_TEST" != linux ] || build varlatchd "$p"
             build varlatch "$p"
-            GOOS=${p%/*} GOARCH=${p#*/} go vet ./...
-            GOOS=${p%/*} GOARCH=${p#*/} go build ./...
+            GOOS=$GOOS_UNDER_TEST GOARCH=$arch go vet ./...
+            GOOS=$GOOS_UNDER_TEST GOARCH=$arch go build ./...
           done
+
+      - name: Save Go's caches
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-platforms-${{ matrix.goos }}-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
 
   # The conformance harness's go-binary target (ADR-0059 step 3,
   # varlatchd-core decision 5) against this commit's varlatchd: the adapter
