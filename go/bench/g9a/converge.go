@@ -59,7 +59,8 @@ type PointCost struct {
 	Shared int `json:"shared"`
 }
 
-// Spread is a set of values' median and extremes.
+// Spread is a set of values' median and extremes. The median is the upper
+// middle of an even count (upperMedian), as CheckCost reads it.
 type Spread struct {
 	Min    float64 `json:"min"`
 	Median float64 `json:"median"`
@@ -72,8 +73,14 @@ func spread(v []float64) Spread {
 	}
 	s := slices.Clone(v)
 	sort.Float64s(s)
-	return Spread{Min: s[0], Median: rank(s, 0.5), Max: s[len(s)-1]}
+	return Spread{Min: s[0], Median: upperMedian(s), Max: s[len(s)-1]}
 }
+
+// upperMedian is the median of sorted values, non-empty: the middle one,
+// or of an even count the upper of the two middle ones (not their mean,
+// and not rank's nearest-rank 50th percentile, the lower one). The report
+// and the cost check both read it, so they agree on every run.
+func upperMedian(sorted []float64) float64 { return sorted[len(sorted)/2] }
 
 // ReadConverge reads FileConverge: nil if the run wrote none (a run of a
 // varlatchd before 4.9d's real engine).
@@ -277,7 +284,7 @@ func CheckCost(dir string) (problems []string, applies bool, err error) {
 		}
 		if len(wal) > 0 {
 			sort.Float64s(wal)
-			if m := wal[len(wal)/2]; m < mlo || m > mhi {
+			if m := upperMedian(wal); m < mlo || m > mhi {
 				problems = append(problems, fmt.Sprintf("%s: the median Target wrote %.0f WAL bytes, outside %.0f to %.0f", run, m, mlo, mhi))
 			}
 		}
