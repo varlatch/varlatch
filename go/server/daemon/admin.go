@@ -403,6 +403,10 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 // the conformance tag only (probe_conformance.go); nil otherwise.
 var conformanceProbe func(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int
 
+// conformanceWarnings logs a conformance build's warnings at startup
+// (redirect_conformance.go); nil in a release.
+var conformanceWarnings func(log *slog.Logger)
+
 // conformanceFixture is `varlatchd admin conformance-fixture`, in a build
 // with the conformance tag only (fixture_conformance.go); nil otherwise.
 var conformanceFixture func(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int

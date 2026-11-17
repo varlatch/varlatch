@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Checks that a release build of varlatchd keeps no per-stage timing in its
-# request path or its storage engine (step 4 decision 7). Run from go/ by
+# request path or its storage engine (step 4 decision 7), and none of the
+# conformance build's host override. Run from go/ by
 # go.yml; needs only the Go toolchain.
 #
 # For each function that holds marks, the release build must make exactly
@@ -88,4 +89,21 @@ if grep -E "$timing" "$dir/nm.release" > "$dir/found"; then
   fail "the release binary holds timing code: $(tr '\n' ' ' < "$dir/found")"
 fi
 grep -qE "$timing" "$dir/nm.g9a" || fail "the g9a binary holds no timing symbol: the symbol check would not see them"
+
+# The conformance build's host override (server/outbound/redirect_conformance.go,
+# which redirects api.github.com and the like to the harness's fake
+# services): a release binary must hold none of it, neither its code nor
+# the name of the variable that turns it on. The conformance build must
+# hold both, so this check sees them.
+go build -tags conformance -o "$dir/conformance" ./cmd/varlatchd
+go tool nm "$dir/conformance" > "$dir/nm.conformance" || { echo "check-release.sh: go tool nm failed" >&2; exit 2; }
+override='server/outbound\.(parseConformanceHosts|ConformanceRedirects|conformanceHosts)'
+if grep -E "$override" "$dir/nm.release" > "$dir/found"; then
+  fail "the release binary holds the conformance host override: $(tr '\n' ' ' < "$dir/found")"
+fi
+if grep -q VARLATCH_CONFORMANCE_OUTBOUND_HOSTS "$dir/release"; then
+  fail "the release binary names VARLATCH_CONFORMANCE_OUTBOUND_HOSTS: the conformance host override is in it"
+fi
+grep -qE "$override" "$dir/nm.conformance" || fail "the conformance binary holds no host override symbol: the check would not see it"
+grep -q VARLATCH_CONFORMANCE_OUTBOUND_HOSTS "$dir/conformance" || fail "the conformance binary does not name VARLATCH_CONFORMANCE_OUTBOUND_HOSTS: the check would not see it"
 exit "$status"

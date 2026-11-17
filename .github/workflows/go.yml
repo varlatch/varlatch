@@ -180,6 +180,15 @@ jobs:
           VARLATCH_REQUIRE_DASHBOARD: "1"
         run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test ./...
 
+      # The conformance build's own tests: its host override, which the
+      # sync suite's fake platforms rely on, is still decided by the
+      # outbound policy (a release has none of it: check-release.sh).
+      - name: Test the conformance build's host override
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -tags conformance ./server/outbound
+
       # The storage engine is concurrent (writer, checkpointer, snapshots);
       # the race detector needs cgo, which only this step uses.
       - name: Test with the race detector
