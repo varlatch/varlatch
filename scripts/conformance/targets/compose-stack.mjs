@@ -268,12 +268,16 @@ const PROBES = {
       WHERE id = '${deletionId}' AND cancelled_at IS NULL AND completed_at IS NULL`);
     return true;
   },
-  // The sync suite's repair pass: the Target is due for repair now (its
-  // last one hours ago), as six hours later.
+  // The sync suite's repair pass: the Target's last repair hours ago, as
+  // six hours later, and nothing else changed, so that only the periodic
+  // schedule can make it due. Answers what would also have made it due,
+  // for the suite to see the Target was settled.
   "sync-repair-due": (state, targetId) => {
     if (!/^snt_[a-z0-9]{26}$/.test(targetId ?? "")) throw new Error("sync-repair-due: a Sync Target id");
-    psql(state, `UPDATE sync_targets SET last_repair_at = clock_timestamp() - interval '7 hours', needs_sync = true, next_attempt_at = NULL WHERE id = '${targetId}'`);
-    return true;
+    const got = psql(state, `UPDATE sync_targets SET last_repair_at = clock_timestamp() - interval '7 hours' WHERE id = '${targetId}'
+      RETURNING json_build_object('needsSync', needs_sync, 'nextAttemptAt', next_attempt_at)`);
+    if (!got) throw new Error(`sync-repair-due: no Sync Target ${targetId}`);
+    return JSON.parse(got);
   },
   "proxy-addresses": (state) => {
     const id = mustCompose(state, ["ps", "-q", "varlatch-web"]).trim();

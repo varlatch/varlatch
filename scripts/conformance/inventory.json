@@ -3814,7 +3814,7 @@
     "sync.drift-put-back": {
       "suite": "sync",
       "kind": "conformance",
-      "title": "a repair pass finds a value changed on the platform, records sync.drift_detected (names, never values) and the Target's last drift, and puts the value back"
+      "title": "a repair pass finds a value changed on the platform, records sync.drift_detected (names, never values) and the Target's last drift, puts the value back and redeploys the application"
     },
     "sync.repair-cycle-closes": {
       "suite": "sync",

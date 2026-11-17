@@ -28,7 +28,8 @@
  *
  * Control: GET /_state (the platforms' state and every request, without
  * credentials' values), POST /_drift {"resource", "key", "value"} (a
- * Coolify value changed behind Varlatch's back).
+ * Coolify value changed and redeployed behind Varlatch's back: what the
+ * resource stores and what it runs).
  */
 "use strict";
 const http = require("node:http");
@@ -214,7 +215,9 @@ const control = http.createServer((req, res) => {
       const { resource, key, value } = JSON.parse(body);
       const row = (state.coolify[resource] || []).find((r) => r.key === key);
       if (!row) return answer(res, 404, { message: "no such value" });
+      // Changed and redeployed outside Varlatch: the application runs it.
       row.value = value;
+      if (state.running[resource]) state.running[resource][key] = value;
       return answer(res, 200, { drifted: true });
     }
     answer(res, 404, {});

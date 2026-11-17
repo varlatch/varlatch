@@ -146,7 +146,7 @@ of reaching into Compose or the database:
 | `probe:device-sign-in-addresses` | `probe device-sign-in-addresses <name>`: `[{ "requesterIp": ... }]` for the sign-ins requested under that name |
 | `probe:proxy-addresses` | `probe proxy-addresses`: the addresses of any proxy in front of the server (`[]` when none) |
 | `probe:deletion-due` | `probe deletion-due <odl_...>`: an Organization's open deletion request made due now (as if scheduled 40 days ago, due a second ago), so the deletion loop's next pass, within a minute, runs it (ADR-0051) |
-| `probe:sync-repair-due` | `probe sync-repair-due <target id>`: the Sync Target is due for its repair pass now, as if its last one were hours ago (the TypeScript stacks: SQL in the database container; go-binary: the conformance build's probe) |
+| `probe:sync-repair-due` | `probe sync-repair-due <target id>`: the Sync Target's last repair pass moved hours into the past and nothing else changed, so that only the periodic repair schedule makes it due; answers `{"needsSync", "nextAttemptAt"}`, which it leaves as they are (the TypeScript stacks: SQL in the database container; go-binary: the conformance build's probe) |
 | `maintenance` | `maintenance <ttl ms>`: the `503 MAINTENANCE` admission a restore uses, for a lease |
 | `serve-cli` | `serve-cli on\|off`: the server serves the CLI and install scripts, or not (ADR-0058 Decision 3) |
 | `ts-stack` | `ts-stack compose <args...>` and `ts-stack compose-env`: Compose control for the ts-stack checks |

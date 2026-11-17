@@ -193,26 +193,44 @@ try {
     JSON.stringify({ paused: paused.json?.state, drained: paused.json?.drained, sentWhilePaused, resumed: resumed.state, convexPort: fakes().convex.PORT }),
   );
 
-  // Drift: a value changed behind Varlatch's back is found by a repair
-  // pass, recorded and put back, and the application redeployed.
+  // Drift: a value changed and redeployed behind Varlatch's back (the
+  // application stores and runs it) is found by a repair pass, recorded
+  // and put back, and the application redeployed with it. The Target
+  // starts settled and the probe moves only its last repair into the
+  // past, so only the periodic repair schedule can make it due.
+  const settled = await waitFor(async () => (await targetOf(tApp)).needsSync === false);
+  const baseline = fakes().requests.length;
   JSON.parse(targetOp("platform-fakes", ["drift", APP, "API_KEY", "changed-outside"]));
-  JSON.parse(targetOp("probe", ["sync-repair-due", tApp]));
+  const drifted = fakes();
+  const due = JSON.parse(targetOp("probe", ["sync-repair-due", tApp]));
+  const appRequests = (s) => s.requests.slice(baseline).filter((r) => r.path.startsWith("/api/v1/applications/app-conformance"));
+  // The repair: a write of the application's variables, then a redeploy
+  // after it, and the application runs the value Varlatch stores. The
+  // redeploy is a run's last call, so once it is seen the run sends nothing
+  // more.
   const repaired = await waitFor(() => {
     const s = fakes();
-    return s.coolify[APP]?.API_KEY === want.API_KEY && s.running[APP]?.API_KEY === want.API_KEY && s;
+    const sent = appRequests(s);
+    const write = sent.findIndex((r) => (r.method === "PATCH" || r.method === "POST") && /\/envs(\/|\?|$)/.test(r.path));
+    const redeploy = sent.findIndex((r, i) => i > write && /\/(start|restart)(\?|$)/.test(r.path));
+    return write >= 0 && redeploy > write && s.coolify[APP]?.API_KEY === want.API_KEY && s.running[APP]?.API_KEY === want.API_KEY &&
+      { write: `${sent[write].method} ${sent[write].path}`, redeploy: `${sent[redeploy].method} ${sent[redeploy].path}` };
   });
   const drift = (await targetOf(tApp)).lastDrift;
   const events = ok(await api("GET", `${base}/audit-events?eventType=sync.drift_detected&limit=100`), "listing drift events").items;
   const event = events.find((e) => e.resource?.targetId === tApp);
   check(
     "sync.drift-put-back",
-    "a repair pass finds a value changed on the platform, records sync.drift_detected (names, never values) and the Target's last drift, and puts the value back",
-    Boolean(repaired) && drift?.count === 1 && JSON.stringify(drift?.names) === '["API_KEY"]' && Boolean(event) &&
+    "a repair pass finds a value changed on the platform, records sync.drift_detected (names, never values) and the Target's last drift, puts the value back and redeploys the application",
+    Boolean(settled) && drifted.coolify[APP]?.API_KEY === "changed-outside" && drifted.running[APP]?.API_KEY === "changed-outside" &&
+      due.needsSync === false && due.nextAttemptAt === null &&
+      Boolean(repaired) && drift?.count === 1 && JSON.stringify(drift?.names) === '["API_KEY"]' && Boolean(event) &&
       event.metadata?.changed === "API_KEY" && !JSON.stringify(event).includes("changed-outside") && !JSON.stringify(event).includes(want.API_KEY),
-    JSON.stringify({ repaired: Boolean(repaired), drift, event: event && { metadata: event.metadata } }),
+    JSON.stringify({ settled: Boolean(settled), due, repaired, running: fakes().running[APP]?.API_KEY === want.API_KEY, drift, event: event && { metadata: event.metadata } }),
   );
 
-  // The repair cycle closes: once repaired, the Target is not due again.
+  // The repair cycle closes: once repaired (its run ended with the
+  // redeploy above), the Target is not due again.
   const after = fakes().requests.length;
   await sleep(65_000); // two passes
   const sentAfter = fakes().requests.slice(after).filter((r) => r.path.startsWith("/api/v1/applications/app-conformance"));

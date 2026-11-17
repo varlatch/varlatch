@@ -29,7 +29,8 @@ import (
 //	proxy-addresses                  [] (nothing stands in front of varlatchd)
 //	deletion-due <odl_...>           the open deletion request made due now (as if scheduled
 //	                                 40 days ago, due a second ago)
-//	sync-repair-due <target id>      true: the Sync Target is due for its repair pass now
+//	sync-repair-due <target id>      the Sync Target's last repair pass hours ago; answers
+//	                                 {"needsSync", "nextAttemptAt"}, which it leaves as they are
 
 var (
 	probeName    = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
@@ -56,17 +57,30 @@ func init() {
 		var out any
 		switch rest[0] {
 		case "sync-repair-due":
-			// The sync suite's repair pass: the Target is due for repair
-			// now (its last one hours ago), as six hours later.
+			// The sync suite's repair pass: the Target's last repair hours
+			// ago, as six hours later, and nothing else changed, so that
+			// only the periodic schedule can make it due. Answers what would
+			// also have made it due, for the suite to see the Target was
+			// settled.
 			if len(rest) != 2 || !syncTargetID.MatchString(rest[1]) {
 				return fail(fmt.Errorf("sync-repair-due: a Sync Target id"))
 			}
+			var settled struct {
+				NeedsSync     bool   `json:"needsSync"`
+				NextAttemptAt *int64 `json:"nextAttemptAt"`
+			}
 			err = store.Write(ctx, func(tx *storage.Tx) error {
-				_, err := tx.ExecContext(ctx, `UPDATE sync_targets SET last_repair_at = ?, needs_sync = 1, next_attempt_at = NULL WHERE id = ?`,
-					time.Now().Add(-7*time.Hour).UnixMicro(), rest[1])
-				return err
+				var next sql.NullInt64
+				if err := tx.QueryRowContext(ctx, `UPDATE sync_targets SET last_repair_at = ? WHERE id = ? RETURNING needs_sync, next_attempt_at`,
+					time.Now().Add(-7*time.Hour).UnixMicro(), rest[1]).Scan(&settled.NeedsSync, &next); err != nil {
+					return err
+				}
+				if next.Valid {
+					settled.NextAttemptAt = &next.Int64
+				}
+				return nil
 			})
-			out = true
+			out = settled
 		case "expire-pending-device-sign-ins":
 			err = store.Write(ctx, func(tx *storage.Tx) error {
 				return query.New(tx).ExpirePendingDeviceSignIns(ctx, time.Now().Add(-time.Second).UnixMicro())
