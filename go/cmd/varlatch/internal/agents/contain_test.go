@@ -250,9 +250,6 @@ func TestReplacementsAreAtomic(t *testing.T) {
 		}
 	}
 
-	if runtime.GOOS == "windows" {
-		return
-	}
 	shared := t.TempDir()
 	writeAt(t, filepath.Join(shared, "AGENTS.md"), "# Rules\n")
 	if err := os.Link(filepath.Join(shared, "AGENTS.md"), filepath.Join(shared, "CLAUDE.md")); err != nil {
@@ -264,6 +261,98 @@ func TestReplacementsAreAtomic(t *testing.T) {
 	a, _ := os.ReadFile(filepath.Join(shared, "AGENTS.md"))
 	c, _ := os.ReadFile(filepath.Join(shared, "CLAUDE.md"))
 	if string(a) != string(c) || !strings.Contains(string(c), "<!-- varlatch:begin -->") {
-		t.Errorf("the hard link no longer shares AGENTS.md: %q / %q", a, c)
+		t.Errorf("CLAUDE.md no longer shows AGENTS.md: %q / %q", a, c)
+	}
+	ai, _ := os.Stat(filepath.Join(shared, "AGENTS.md"))
+	ci, _ := os.Stat(filepath.Join(shared, "CLAUDE.md"))
+	if !os.SameFile(ai, ci) {
+		t.Errorf("AGENTS.md and CLAUDE.md are no longer one file")
+	}
+	for path := range snapshot(t, shared) {
+		if strings.Contains(path, ".varlatch-") {
+			t.Errorf("a temporary file stayed: %s", path)
+		}
+	}
+}
+
+// TestHardLinkWithAnUnseenName: a file install would change that has a
+// name the CLI cannot see (here, outside the root) is refused before
+// anything changes, so the other name's file is never written: in place
+// it would change, and renamed over it would split from it.
+func TestHardLinkWithAnUnseenName(t *testing.T) {
+	for _, alsoClaude := range []bool{false, true} {
+		dir := t.TempDir()
+		root, outside := filepath.Join(dir, "root"), filepath.Join(dir, "outside")
+		writeAt(t, filepath.Join(outside, "notes.md"), "# Mine\n")
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Link(filepath.Join(outside, "notes.md"), filepath.Join(root, "AGENTS.md")); err != nil {
+			t.Skip(err)
+		}
+		if alsoClaude {
+			// The CLAUDE.md alias is install's own, but a third name is not.
+			if err := os.Link(filepath.Join(root, "AGENTS.md"), filepath.Join(root, "CLAUDE.md")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before := snapshot(t, dir)
+		for _, mode := range []string{"install", "remove"} {
+			_, err := RunInstall(Options{Scope: "project", Root: root, Version: "1", Mode: mode})
+			if mode == "remove" {
+				// Nothing to change: AGENTS.md holds no block.
+				if err != nil {
+					t.Fatalf("remove: %v", err)
+				}
+				continue
+			}
+			var e *Error
+			want := "AGENTS.md has another name (a hard link) the CLI cannot see, so nothing was changed; replace it with a plain copy of itself, then run this again"
+			if !errors.As(err, &e) || e.Usage || e.Message != want {
+				t.Fatalf("CLAUDE.md alias %v: %v, want %q", alsoClaude, err, want)
+			}
+		}
+		sameSnapshot(t, "everything", before, snapshot(t, dir))
+	}
+}
+
+// TestTemporaryFilesArePrivate: while a temporary file holds the new
+// content, only its owner can read it, whatever mode the file ends with.
+func TestTemporaryFilesArePrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes")
+	}
+	root := t.TempDir()
+	writeAt(t, filepath.Join(root, ".claude", "settings.json"), "{}\n")
+	if err := os.Chmod(filepath.Join(root, ".claude", "settings.json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	tempWritten = func(r *os.Root, tmp string) {
+		seen++
+		info, err := r.Lstat(tmp)
+		if err != nil {
+			t.Errorf("%s: %v", tmp, err)
+			return
+		}
+		if info.Size() == 0 || info.Mode().Perm()&^0o600 != 0 {
+			t.Errorf("%s holds %d bytes with mode %v", tmp, info.Size(), info.Mode().Perm())
+		}
+	}
+	defer func() { tempWritten = nil }()
+	if _, err := RunInstall(Options{Scope: "project", Root: root, Version: "1", Mode: "install", Guardrails: true}); err != nil {
+		t.Fatal(err)
+	}
+	if seen == 0 {
+		t.Fatal("no temporary file was written")
+	}
+	for path, want := range map[string]fs.FileMode{".claude/settings.json": 0o600, "AGENTS.md": newFileMode()} {
+		info, err := os.Stat(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != want {
+			t.Errorf("%s: mode %v, want %v", path, info.Mode().Perm(), want)
+		}
 	}
 }

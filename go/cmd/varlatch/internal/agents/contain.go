@@ -23,7 +23,7 @@ import (
 // (the human gets the edit), as before.
 
 // linkBelow is the first component of rel, a path below root, that is a
-// symbolic link; "" when there is none (or the path stops existing).
+// symbolic link (or a junction); "" when there is none (or the path stops existing).
 func linkBelow(root, rel string) string {
 	current := ""
 	for _, part := range strings.Split(filepath.Clean(rel), string(filepath.Separator)) {
@@ -35,7 +35,9 @@ func linkBelow(root, rel string) string {
 		if err != nil {
 			return ""
 		}
-		if info.Mode()&fs.ModeSymlink != 0 {
+		// A Windows junction (or another reparse point) reads as irregular:
+		// it leads elsewhere as a link does.
+		if info.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
 			return current
 		}
 	}
@@ -130,11 +132,112 @@ func (w *writer) close() {
 	}
 }
 
+// aliasCandidates are the names install itself may give one file: an
+// AGENTS.md and the CLAUDE.md that is that file.
+var aliasCandidates = []string{"AGENTS.md", "CLAUDE.md", filepath.Join(".claude", "CLAUDE.md")}
+
+// hardLinkRefusal refuses a file with a name the CLI cannot see.
+func hardLinkRefusal(rel string, nothingChanged bool) error {
+	what := "the CLI stopped before changing it"
+	if nothingChanged {
+		what = "nothing was changed"
+	}
+	return &Error{filepath.ToSlash(rel) + " has another name (a hard link) the CLI cannot see, so " + what +
+		"; replace it with a plain copy of itself, then run this again", false}
+}
+
+// aliases are the names of the regular file rel inside the root, rel
+// first: every name the file has must be one of aliasCandidates found in
+// the root, or there is a name the CLI cannot see (ok false).
+func aliases(root, rel string) (names []string, ok bool, err error) {
+	at := func(name string) string { return filepath.Join(root, name) }
+	f, err := os.Open(at(rel))
+	if err != nil {
+		return nil, false, err
+	}
+	n, err := linkCount(f)
+	f.Close()
+	if err != nil {
+		return nil, false, err
+	}
+	names = []string{rel}
+	if n <= 1 {
+		return names, true, nil
+	}
+	info, err := os.Lstat(at(rel))
+	if err != nil {
+		return nil, false, err
+	}
+	for _, candidate := range aliasCandidates {
+		if candidate == rel {
+			continue
+		}
+		other, err := os.Lstat(at(candidate))
+		if err == nil && other.Mode().IsRegular() && os.SameFile(info, other) {
+			names = append(names, candidate)
+		}
+	}
+	return names, uint64(len(names)) == n, nil
+}
+
+// checkHardLinks refuses, before anything changes, a file the run would
+// change that has a name the CLI cannot see.
+func checkHardLinks(root, rel string) error {
+	info, err := os.Lstat(filepath.Join(root, rel))
+	if err != nil || !info.Mode().IsRegular() {
+		return nil
+	}
+	if _, ok, err := aliases(root, rel); err != nil || !ok {
+		return hardLinkRefusal(rel, true)
+	}
+	return nil
+}
+
+// tempWritten, when set (only by tests), is called with each temporary
+// file's name once its content is written and synced, before its mode is
+// set.
+var tempWritten func(root *os.Root, tmp string)
+
+// temp writes data into a new temporary file next to rel, created 0600 so
+// that nobody else can read it while it is written, synced, then given
+// mode; its name, for a rename.
+func (w *writer) temp(rel string, data []byte, mode os.FileMode) (string, error) {
+	var suffix [6]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	tmp := filepath.Join(filepath.Dir(rel), "."+filepath.Base(rel)+".varlatch-"+hex.EncodeToString(suffix[:])+".tmp")
+	f, err := w.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	_, err = f.Write(data)
+	if err == nil && syncWrites {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil && tempWritten != nil {
+		tempWritten(w.root, tmp)
+	}
+	if err == nil {
+		err = w.root.Chmod(tmp, mode)
+	}
+	if err != nil {
+		w.root.Remove(tmp)
+		return "", err
+	}
+	return tmp, nil
+}
+
 // write replaces rel with data: a temporary file in the same directory,
-// synced, then renamed over it, with the replaced file's mode, or the
-// default mode less the umask for a new one. A file with more than one
-// name (a hard link, such as a CLAUDE.md that is AGENTS.md) is written in
-// place, so that every name keeps seeing it.
+// written while only its owner can read it, synced, given the replaced
+// file's mode (or, for a new file, the default mode less the umask), then
+// renamed over it. A file with several names is replaced only when every
+// name is one install gives it (an AGENTS.md and the CLAUDE.md that is
+// it): each name is renamed onto the new file, so they stay one file.
+// One with a name the CLI cannot see is refused.
 func (w *writer) write(rel string, data []byte) error {
 	if err := checkBelow(w.path, filepath.Dir(rel)); err != nil {
 		return err
@@ -147,51 +250,38 @@ func (w *writer) write(rel string, data []byte) error {
 			return err
 		}
 	}
-	info, err := w.root.Lstat(rel)
-	existing := err == nil && info.Mode().IsRegular()
-	if existing && linkCount(info) > 1 {
-		f, err := w.root.OpenFile(rel, os.O_WRONLY|os.O_TRUNC, 0)
-		if err != nil {
-			return err
+	mode, names := newFileMode(), []string{rel}
+	if info, err := w.root.Lstat(rel); err == nil && info.Mode().IsRegular() {
+		mode = info.Mode().Perm()
+		found, ok, err := aliases(w.path, rel)
+		if err != nil || !ok {
+			return hardLinkRefusal(rel, false)
 		}
-		if _, err := f.Write(data); err != nil {
-			f.Close()
-			return err
-		}
-		if syncWrites {
-			if err := f.Sync(); err != nil {
-				f.Close()
-				return err
-			}
-		}
-		return f.Close()
+		names = found
 	}
-	var suffix [6]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return err
-	}
-	tmp := filepath.Join(filepath.Dir(rel), "."+filepath.Base(rel)+".varlatch-"+hex.EncodeToString(suffix[:])+".tmp")
-	f, err := w.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	tmp, err := w.temp(rel, data, mode)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(data)
-	if err == nil && syncWrites {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil && existing {
-		err = w.root.Chmod(tmp, info.Mode().Perm())
-	}
-	if err == nil {
-		err = w.root.Rename(tmp, rel)
-	}
-	if err != nil {
+	if err := w.root.Rename(tmp, rel); err != nil {
 		w.root.Remove(tmp)
+		return err
 	}
-	return err
+	for _, alias := range names[1:] {
+		var suffix [6]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return err
+		}
+		link := filepath.Join(filepath.Dir(alias), "."+filepath.Base(alias)+".varlatch-"+hex.EncodeToString(suffix[:])+".tmp")
+		if err := w.root.Link(rel, link); err != nil {
+			return err
+		}
+		if err := w.root.Rename(link, alias); err != nil {
+			w.root.Remove(link)
+			return err
+		}
+	}
+	return nil
 }
 
 // remove removes the file rel, if it is there.

@@ -799,8 +799,18 @@ func RunInstall(opts Options) (*Result, error) {
 		return nil, err
 	}
 	for _, file := range p.files {
-		if link := linkBelow(opts.Root, filepath.Dir(relative(opts.Root, file.path))); link != "" {
+		rel := relative(opts.Root, file.path)
+		if link := linkBelow(opts.Root, filepath.Dir(rel)); link != "" {
 			return nil, refuseBefore(opts, link)
+		}
+		// A file it would change that has a name it cannot see (a hard link,
+		// perhaps outside the root).
+		if opts.Mode != "check" && file.desired != nil && !isSymlink(file.path) {
+			if current, st, err := readBytes(file.path); err == nil && st == isText && !sameBytes(current, *file.desired) {
+				if err := checkHardLinks(opts.Root, rel); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	w := &writer{path: opts.Root}

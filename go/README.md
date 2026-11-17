@@ -429,15 +429,23 @@ comes. `verify-release`, which the installers run, is Go's own.
   region of `.codex/config.toml`) and `--mcp` (each coding agent's MCP
   file), with `--check` and `--remove`. Files get the TypeScript CLI's
   bytes and modes (a new file the default mode less the umask, a changed
-  one its own mode kept), replaced atomically (a temporary file in the
-  same directory, synced, renamed over it; a file with a second name, a
-  hard link, is written in place so both names keep seeing it). Nothing is
-  read, written, removed or pruned through a symbolic link below the
-  scope's root (the project, or the home directory for `--scope user`):
-  such a directory on the way refuses the run before anything is touched
-  (78), and every write and removal checks again and goes through an
-  `os.Root` at that root (`contain.go`). A settings file is edited only
-  when the edit keeps its formatting. JSON is read and written as
+  one its own mode kept). A file is replaced by a temporary file in the
+  same directory, created readable by its owner only, synced, given its
+  final mode, then renamed over it. A file with several names (hard links)
+  is replaced only when every name is one install itself gives it (an
+  `AGENTS.md` and the `CLAUDE.md` that is it, found in the root); each name
+  is then renamed onto the new file, so they stay one file. A file with a
+  name the CLI cannot see is refused before anything changes (78). A
+  directory below the scope's root (the project, or the home directory
+  for `--scope user`) that is a symbolic link or a Windows junction, on
+  the way to a file the run reads, writes, removes or prunes, refuses the
+  run before anything is touched (78). Every write and removal checks the
+  path again and goes through an `os.Root` at that root, which confines
+  path resolution to the root (not other names of the same file: that is
+  the hard-link rule's job). Planning reads use ordinary file calls,
+  after that check; an `AGENTS.md` or `CLAUDE.md` that is itself a link is
+  read, never written through, as before (`contain.go`). A settings file
+  is edited only when the edit keeps its formatting. JSON is read and written as
   JavaScript does (`lib/jsjson`), and `config.toml` is judged by
   `internal/toml`, which keeps every value as smol-toml gives it, so a
   change is made only when the parser shows the file then says exactly
@@ -491,8 +499,8 @@ it to the recording.
 | Request headers decision 2 does not compare | `accept-language: *`, `sec-fetch-mode: cors`, `accept-encoding: gzip, deflate` | none of the first two; `accept-encoding: gzip` (Go decompresses it) | Neither the server nor any consumer reads them |
 | `skill-version` (how transcripts compare, not a behaviour) | the skill files `agents install` writes name `varlatch 0.22.0` (`SKILL.md`'s `metadata.generator`, each reference's first line) | this build's version | Each CLI names itself, so `--check` after an upgrade reports the skill as changed; the replay puts this build's version in a case's inputs and expected files alike |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
-| `agents install` never writes or removes through a symbolic link | not compared | a directory below the project root (or the home directory, for `--scope user`) that is a symbolic link, on the way to a file the run reads, writes, removes or prunes, refuses the run before anything is touched, `--check` included: `<path> is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. Replace it with a directory, then run this again`, 78; a refused `--remove` also lists the skill files it would have removed, for removing by hand | Installing agent files never changes anything outside the project or the home directory; `internal/agents` `TestNothingThroughALinkBelowTheRoot` |
-| How `agents install` replaces a file | in place (`writeFileSync`) | a temporary file in the same directory, synced, then renamed over it, with the file's mode kept; a hard-linked file in place | A crash or a full disk never leaves a settings file empty or half written; bytes and modes are the same |
+| `agents install` never writes or removes through a symbolic link | not compared | a directory below the project root (or the home directory, for `--scope user`) that is a symbolic link or a Windows junction, on the way to a file the run reads, writes, removes or prunes, refuses the run before anything is touched, `--check` included: `<path> is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. Replace it with a directory, then run this again`, 78; a refused `--remove` also lists the skill files it would have removed, for removing by hand | Installing agent files never changes anything outside the project or the home directory; `internal/agents` `TestNothingThroughALinkBelowTheRoot` |
+| How `agents install` replaces a file | in place (`writeFileSync`) | a temporary file in the same directory, readable by its owner only until it is complete, synced, given the file's mode, then renamed over it; the names of a hard-linked `AGENTS.md`/`CLAUDE.md` pair are each renamed onto the new file; a file with any other name is refused (78) | A crash or a full disk never leaves a settings file empty or half written, and no other file shares the change; bytes and modes are the same |
 | A redirect's relative `Location` | resolved by the WHATWG URL parser | resolved by `apiclient`'s own resolver (absolute, `//host`, `/path`, `?query` and path-relative references), then parsed by `lib/whatwg` | varlatchd sends no redirect; a proxy's is absolute or root-relative |
 
 ## varlatchd
