@@ -2,29 +2,29 @@
   "comment": "Written by services/varlatchd/test/go-project-deletion-fixture.test.ts from the TypeScript server's own answers; do not edit.",
   "ref": "v0.22.0",
   "serverVersion": "0.22.0",
-  "rootKek": "d9f7509aa5a40b7421ad1d9f16230499a71be3cf9b025adc19a6f63854e0feec",
+  "rootKek": "0fade92174b4608ed56a9a2401117a7ad8bffc832426d24d7ebe4a8eede48313",
   "tokens": {
-    "alice": "vlt_cli_TLY-SUW2e-gcORgMxdp4Wudp7K4fFKr8ipwFHNy__Cc",
-    "alice2": "vlt_cli_FgMldC1jdeu4qHFxOtS8OQsGiEKDxhKbnMco-eiDnsc",
-    "bob": "vlt_cli_949HSGTXF8O8Y1lIvDTiQffuKI-EVJKOuArmixwcba4",
-    "carol": "vlt_cli_uE16FEZkG9Ci8lhR68k_3C0IMI7l-ayFl4uf2Hsn168",
-    "broker": "vlt_svc_z3JlvnHDF16rOVdy3Znuxq9jH0Pyt-lxp0Ewh0kU8Gs",
+    "alice": "vlt_cli_w-jczhg2ROjyUEhAUw-RT1YvVaiOMVg3O6J9cSOMmbk",
+    "alice2": "vlt_cli_F1mqleJn0GwhayynqtRxR2MDK56Am8ecZuzE3RrzTFQ",
+    "bob": "vlt_cli_lZ4glNc_4Av9-1P-lQRae46wLVjdZocfg7FQJp9Simk",
+    "carol": "vlt_cli_dfcPjpqqzIkJcHBfrslxDHlyxCgkhYTssS5dvRrEPZk",
+    "broker": "vlt_svc_PaCUiTz1LRK69-zIx_QYDKKL32vKh3MJqrRSs_MlhR4",
     "agent": null,
-    "svc": "vlt_svc_XF3ZkZCtlwY_voK7EDMzS8O5TCNDBACDFwrR9p8_Spc"
+    "svc": "vlt_svc_kgGF6_XxfLkXA-jVbBPBPXA2prbT92iBsgshlZiun9I"
   },
   "rows": {
     "installation": [
       {
-        "id": "inst_gcv5jgnoyroh7jfrpkdodjnb4a",
+        "id": "inst_k7k2k32mxnzo3h7b5mtkv6qhsy",
         "kek_canary": {
-          "nonce": "swdriR5dAJ7d+Yo9",
-          "authTag": "FXfGYeQZAMx6P3d5tbqh3A==",
+          "nonce": "StBLd5syWALkLGNp",
+          "authTag": "kEWNdRYFTl96Ksk6uU/EIg==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "PW1b8Baxw0qgUYTIx1JOUvgfsFhdUpibjtBkoxpoUng=",
+          "ciphertext": "aZt3a0t+eqnu7voy6LuY225PkVlRAhIcDmAT/D8d/Hs=",
           "formatVersion": 1
         },
-        "bootstrapped_at": "2026-11-17T02:21:14.256Z",
-        "created_at": "2026-11-17T02:21:14.186Z",
+        "bootstrapped_at": "2026-11-17T08:01:31.035Z",
+        "created_at": "2026-11-17T08:01:30.977Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "public_url": null
@@ -32,18 +32,18 @@
     ],
     "identities": [
       {
-        "id": "idn_5vffsj2ameueagxrqrccpnxpr4",
-        "kind": "broker",
-        "name": "broker",
+        "id": "idn_3tpi6t5ghqjcxpo3hducnic2da",
+        "kind": "human",
+        "name": "carol",
         "disabled": false,
         "installation_admin": false,
-        "created_at": "2026-11-17T02:21:14.987Z",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
         "last_seen_at": null,
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "id": "idn_ibw3cip66ld2s4wy6hz4i6kpwq",
         "kind": "human",
         "name": "bob",
         "disabled": false,
@@ -54,58 +54,58 @@
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_iqaxiisgsalmqzjjt66azugq4q",
+        "id": "idn_jebd7o7ut4nc25oysfvj2rxp6y",
         "kind": "agent",
         "name": "agent",
         "disabled": false,
         "installation_admin": false,
-        "created_at": "2026-11-17T02:21:15.016Z",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "created_at": "2026-11-17T08:01:32.061Z",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "last_seen_at": null,
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "kind": "human",
         "name": "Alice",
         "disabled": false,
         "installation_admin": true,
-        "created_at": "2026-11-17T02:21:14.256Z",
+        "created_at": "2026-11-17T08:01:31.035Z",
         "organization_id": null,
-        "last_seen_at": "2026-11-17T02:21:14.338Z",
+        "last_seen_at": "2026-11-17T08:01:31.121Z",
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_kmolx2mhvmjf5i4tqnut2a2f2i",
+        "id": "idn_ojo5ujjgtv2bxtkux6abbeuwb4",
         "kind": "service",
         "name": "svc",
         "disabled": false,
         "installation_admin": false,
-        "created_at": "2026-11-17T02:21:15.445Z",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "created_at": "2026-11-17T08:01:32.569Z",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "last_seen_at": null,
         "suspended_by_deletion": null
       },
       {
-        "id": "idn_q4ikzpueamz3fhn3h44dixdhie",
-        "kind": "human",
-        "name": "carol",
+        "id": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
+        "kind": "broker",
+        "name": "broker",
         "disabled": false,
         "installation_admin": false,
-        "created_at": "2026-01-01T00:00:00.000Z",
-        "organization_id": null,
+        "created_at": "2026-11-17T08:01:32.030Z",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "last_seen_at": null,
         "suspended_by_deletion": null
       }
     ],
     "credentials": [
       {
-        "id": "crd_5itvcydl6da67r4z6h3qwis7eu",
-        "identity_id": "idn_kmolx2mhvmjf5i4tqnut2a2f2i",
+        "id": "crd_3zuizdwnwalbkuylmn4iietkry",
+        "identity_id": "idn_ojo5ujjgtv2bxtkux6abbeuwb4",
         "kind": "service",
         "name": "svc credential",
-        "token_hash": "2d5625757f63c318336df4f0e1367b61fed55ed8abac8c25d8fad2f5b13b5b7b",
-        "created_at": "2026-11-17T02:21:15.445Z",
+        "token_hash": "550bcf48431552139db859f3f9719061718695a5723d7a54ac87afc6a68b4bb1",
+        "created_at": "2026-11-17T08:01:32.569Z",
         "expires_at": null,
         "revoked_at": null,
         "max_uses": null,
@@ -113,17 +113,17 @@
         "last_used_at": null,
         "client": null,
         "auth_session_id": null,
-        "issued_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "issued_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "evidence_user_verified": null,
         "evidence_passkey_id": null
       },
       {
-        "id": "crd_7dotnskrrhj4dq7ykj4l74wqny",
-        "identity_id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "id": "crd_4jfwwgh3izbmoiu5oiqfwisnua",
+        "identity_id": "idn_ibw3cip66ld2s4wy6hz4i6kpwq",
         "kind": "cli",
         "name": null,
-        "token_hash": "e0997d66fa1bb75b450dbb0f82f6724b906d7f2b9ac900284186560c06b6117f",
-        "created_at": "2026-11-17T02:21:14.439Z",
+        "token_hash": "e93d37bd6e88a9614d42e5ccdd741398b8947746b4ccb904db51b35a8b2894e3",
+        "created_at": "2026-11-17T08:01:31.262Z",
         "expires_at": null,
         "revoked_at": null,
         "max_uses": null,
@@ -131,17 +131,17 @@
         "last_used_at": null,
         "client": null,
         "auth_session_id": null,
-        "issued_by": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "issued_by": "idn_ibw3cip66ld2s4wy6hz4i6kpwq",
         "evidence_user_verified": null,
         "evidence_passkey_id": null
       },
       {
-        "id": "crd_ap3riblxgcvat4jdwyee7lt2zm",
-        "identity_id": "idn_q4ikzpueamz3fhn3h44dixdhie",
+        "id": "crd_dvlswsut6qxmqh7cam63xcplki",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "kind": "cli",
         "name": null,
-        "token_hash": "9fe832689d735a05ea2918def7c5a5082906571cc595ae29bb8d677d631e9ff1",
-        "created_at": "2026-11-17T02:21:14.447Z",
+        "token_hash": "2e2a98ffda2984ad854bf1c8dd7721075c333b0c26087f2f9fbce5cbabc58eba",
+        "created_at": "2026-11-17T08:01:31.055Z",
         "expires_at": null,
         "revoked_at": null,
         "max_uses": null,
@@ -149,17 +149,53 @@
         "last_used_at": null,
         "client": null,
         "auth_session_id": null,
-        "issued_by": "idn_q4ikzpueamz3fhn3h44dixdhie",
+        "issued_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "evidence_user_verified": null,
         "evidence_passkey_id": null
       },
       {
-        "id": "crd_cemogxqqrclfq3t77jj2t2ug3a",
-        "identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "bf1c11013b350f0a727c02d9b64ff3f5fbad04214153070cc916182bda9e7f2f",
+        "created_at": "2026-11-17T08:01:31.071Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-11-17T08:01:31.105Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_nukqeco4k3guuogg22bs7mnrzy",
+        "identity_id": "idn_3tpi6t5ghqjcxpo3hducnic2da",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "503deeb869b41a8b2bd1db8da44ccfe1ec3060ec60c7dd92e59fa85aa7697de0",
+        "created_at": "2026-11-17T08:01:31.273Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_3tpi6t5ghqjcxpo3hducnic2da",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_sfdeofzmard2k4bkiyzpueld3a",
+        "identity_id": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
         "kind": "service",
         "name": "broker credential",
-        "token_hash": "31d12ced56a39f5d6c83fa086cf66d5d3f844bea98b227bac26b27ed6c9e1bc8",
-        "created_at": "2026-11-17T02:21:14.987Z",
+        "token_hash": "45665e79303e2082aabb353e1be0167784b0077fe25e4d108e526e2881f6bd7f",
+        "created_at": "2026-11-17T08:01:32.030Z",
         "expires_at": null,
         "revoked_at": null,
         "max_uses": null,
@@ -167,151 +203,115 @@
         "last_used_at": null,
         "client": null,
         "auth_session_id": null,
-        "issued_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "evidence_user_verified": null,
-        "evidence_passkey_id": null
-      },
-      {
-        "id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "kind": "cli",
-        "name": null,
-        "token_hash": "40226a21388bcc00b8ca18a63dbb8e51dd78fc9fd2d949d8db5a72efee5e4621",
-        "created_at": "2026-11-17T02:21:14.295Z",
-        "expires_at": null,
-        "revoked_at": null,
-        "max_uses": null,
-        "use_count": 0,
-        "last_used_at": "2026-11-17T02:21:14.328Z",
-        "client": null,
-        "auth_session_id": null,
-        "issued_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "evidence_user_verified": null,
-        "evidence_passkey_id": null
-      },
-      {
-        "id": "crd_qruv76njtosmo7tlnzayoy42xy",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "kind": "cli",
-        "name": null,
-        "token_hash": "a492402b0cefeccc4fab6610055a0cbad8ec0162d840eb478048d71c063c05cf",
-        "created_at": "2026-11-17T02:21:14.280Z",
-        "expires_at": null,
-        "revoked_at": null,
-        "max_uses": null,
-        "use_count": 0,
-        "last_used_at": null,
-        "client": null,
-        "auth_session_id": null,
-        "issued_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "issued_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "evidence_user_verified": null,
         "evidence_passkey_id": null
       }
     ],
     "organizations": [
       {
-        "id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "id": "org_3pwh4ed3w23oasx4nerm7ryyum",
         "slug": "deleting",
         "name": "Deleting",
         "wrapped_org_kek": {
-          "nonce": "VvgVvoluRp18n6fX",
-          "authTag": "9W7cG1pHpafml19HlaWh9Q==",
+          "nonce": "ZlEc+JljdzsC5GRc",
+          "authTag": "8EeAdcmxyVpSPQILvwz2iA==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "UzRwZHVYHJOait1iQVvasAKHp51Ml2qETn58a43XGqM=",
+          "ciphertext": "JCPnGoD0swboyzvehD38f2HEL1YfkyT9YUA14PRCepc=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.413Z",
+        "created_at": "2026-11-17T08:01:31.233Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
         "security_epoch": 0
       },
       {
-        "id": "org_konfc3vikvz5xvgp6tc2dxhnru",
-        "slug": "rep",
-        "name": "Rep",
+        "id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "slug": "acme",
+        "name": "Acme",
         "wrapped_org_kek": {
-          "nonce": "HJspd3U4MV/recPc",
-          "authTag": "LHnDL2FY8p3Qf9drwvWR9w==",
+          "nonce": "bKTjaW+Ja9aW24Op",
+          "authTag": "aPQkoXQNsAnPUXSqYeev4w==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "49nUUCDpXF/arFqr1WPh9lh/e18s4JKWAA+Yk7QmQy8=",
+          "ciphertext": "AwxogmMd47AlIAspUSBHIIDa/HfqYzsVx+4WStxWnAU=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.366Z",
+        "created_at": "2026-11-17T08:01:31.132Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
+        "slug": "rep",
+        "name": "Rep",
+        "wrapped_org_kek": {
+          "nonce": "A2Mf0H17/NBo5jWP",
+          "authTag": "h+amLWTRDY1Jde01MC5Bog==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "Hwa0KOxsBBoqeDUvIRXVs/gvjwytJ29iJcxubSOlOU4=",
+          "formatVersion": 1
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T08:01:31.171Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
         "security_epoch": 1
       },
       {
-        "id": "org_strudq63wz4o5ezbtlkao46xma",
-        "slug": "acme",
-        "name": "Acme",
-        "wrapped_org_kek": {
-          "nonce": "zEq53A450pcJMxjM",
-          "authTag": "qXL0yZSB8FIP9meyv6f4hA==",
-          "algorithm": "aes-256-gcm",
-          "ciphertext": "aKZyLhxNpkyfIqzUkJWPJywz2CAsxfm4K1h15yu5UEo=",
-          "formatVersion": 1
-        },
-        "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.344Z",
-        "root_kek_version": 1,
-        "key_rotation_state": "idle",
-        "org_kek_destroyed_at": null,
-        "security_epoch": 0
-      },
-      {
-        "id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "id": "org_e5le3tdodiyyr6xhroqu6iu37u",
         "slug": "beta",
         "name": "Beta",
         "wrapped_org_kek": {
-          "nonce": "z5Xx0F1UH0QN1ulB",
-          "authTag": "XHFh+R5C0D2jTgmTqdE6kg==",
+          "nonce": "+aYiyBxH3LJ4y24E",
+          "authTag": "wS7GoFuh+UFJI2XEs1dGhA==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "vTv6KF9tGpAwVnh4AM0G36bXmefaKgVnrTwaYTkVWF8=",
+          "ciphertext": "ov59q1Qfe59HFAHJoEMYLPlJM5Z5Cq4+sBSM0pxaw/Q=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.426Z",
+        "created_at": "2026-11-17T08:01:31.247Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
         "security_epoch": 0
       },
       {
-        "id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "id": "org_j2qkqtcom735if3jc2o57tbgxe",
         "slug": "frozen",
         "name": "Frozen",
         "wrapped_org_kek": {
-          "nonce": "ve0BSI0ilfXFpvwK",
-          "authTag": "vugU4wYePTs6ykw1dG3Umg==",
+          "nonce": "KSrOs2f8zF4Xpqmh",
+          "authTag": "PraFUBi/Uje+wEZS9BGR8g==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "voGihusdu21AE5oOpNrY2h2Bv8Vq8FianqKbyz3TAP4=",
+          "ciphertext": "J/sGFoLn3AiT2JaEzZe74WNSG/6Bqs31uRA5RPdjrE8=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.396Z",
+        "created_at": "2026-11-17T08:01:31.211Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
         "security_epoch": 0
       },
       {
-        "id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "slug": "enf",
         "name": "Enf",
         "wrapped_org_kek": {
-          "nonce": "WUxh+gsIb7jIQReS",
-          "authTag": "4+bq0tZsAfG/uFzdnqnSpw==",
+          "nonce": "A2RsU8jw3YlAZ53F",
+          "authTag": "IY6mMWt5isrIRtNFe6Qnjw==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "Mb+ig8r23aGhYfexinQ8Jh/xDvcgJI3Zdje2bzwn0ws=",
+          "ciphertext": "fiXr8XhvVogd4CgO7fZmUNu9uZyvJ24o97z898EGpg8=",
           "formatVersion": 1
         },
         "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.382Z",
+        "created_at": "2026-11-17T08:01:31.195Z",
         "root_kek_version": 1,
         "key_rotation_state": "idle",
         "org_kek_destroyed_at": null,
@@ -320,70 +320,70 @@
     ],
     "org_memberships": [
       {
-        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "organization_id": "org_3pwh4ed3w23oasx4nerm7ryyum",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "role": "admin",
-        "created_at": "2026-11-17T02:21:14.413Z",
+        "created_at": "2026-11-17T08:01:31.233Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "role": "admin",
-        "created_at": "2026-11-17T02:21:14.366Z",
-        "removed_at": null,
-        "version": 0
-      },
-      {
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "identity_id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "identity_id": "idn_ibw3cip66ld2s4wy6hz4i6kpwq",
         "role": "member",
-        "created_at": "2026-11-17T02:21:14.436Z",
+        "created_at": "2026-11-17T08:01:31.258Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "role": "admin",
-        "created_at": "2026-11-17T02:21:14.344Z",
+        "created_at": "2026-11-17T08:01:31.132Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "role": "admin",
-        "created_at": "2026-11-17T02:21:14.426Z",
+        "created_at": "2026-11-17T08:01:31.171Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "organization_id": "org_e5le3tdodiyyr6xhroqu6iu37u",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "role": "admin",
-        "created_at": "2026-11-17T02:21:14.396Z",
+        "created_at": "2026-11-17T08:01:31.247Z",
         "removed_at": null,
         "version": 0
       },
       {
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "organization_id": "org_j2qkqtcom735if3jc2o57tbgxe",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "role": "admin",
-        "created_at": "2026-11-17T02:21:14.382Z",
+        "created_at": "2026-11-17T08:01:31.211Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "role": "admin",
+        "created_at": "2026-11-17T08:01:31.195Z",
         "removed_at": null,
         "version": 0
       }
     ],
     "groups": [
       {
-        "id": "tem_46kcxutp2vwsay4uaydfsw5uie",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "id": "tem_lwimbyhl7hefvwiocb7mzmcgu4",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "name": "core",
         "kind": "team",
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:15.124Z",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:32.199Z",
         "revoked_at": null,
         "version": 1,
         "updated_at": null
@@ -391,18 +391,18 @@
     ],
     "grants": [
       {
-        "id": "grt_dpyqfcxtqvsr74dxp67ldeyblu",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
-        "subject_identity_id": "idn_kmolx2mhvmjf5i4tqnut2a2f2i",
+        "id": "grt_2e6crrermdpmvp4bgqtfsrl6bi",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
+        "subject_identity_id": "idn_ojo5ujjgtv2bxtkux6abbeuwb4",
         "scope": {
           "kind": "project",
-          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a"
+          "projectId": "prj_dbbii77tbqcr3q2ekbxhm3wmze"
         },
         "actions": [
           "project.manage"
         ],
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:15.466Z",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:32.592Z",
         "revoked_at": null,
         "subject_group_id": null,
         "role_id": null
@@ -410,112 +410,112 @@
     ],
     "projects": [
       {
-        "id": "prj_3mzwzc6uqa3y7qxhfmlsxj5kia",
-        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
-        "slug": "web",
-        "name": "WEB",
-        "contract_authority": "git",
-        "active_contract_revision_id": null,
-        "created_at": "2026-11-17T02:21:15.199Z",
-        "deleted_at": null
-      },
-      {
-        "id": "prj_4sgzvm4qgxbu67w3ftjp43grvy",
-        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "id": "prj_6onntdmkj5exphnknxos6ndma4",
+        "organization_id": "org_3pwh4ed3w23oasx4nerm7ryyum",
         "slug": "dp",
         "name": "DP",
         "contract_authority": "git",
         "active_contract_revision_id": null,
-        "created_at": "2026-11-17T02:21:15.409Z",
+        "created_at": "2026-11-17T08:01:32.527Z",
         "deleted_at": null
       },
       {
-        "id": "prj_7bm35l2ba5uusfl35ejwudpjkq",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "slug": "keep",
-        "name": "KEEP",
-        "contract_authority": "git",
-        "active_contract_revision_id": null,
-        "created_at": "2026-11-17T02:21:15.083Z",
-        "deleted_at": null
-      },
-      {
-        "id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "id": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "slug": "ep",
         "name": "EP",
         "contract_authority": "git",
         "active_contract_revision_id": null,
-        "created_at": "2026-11-17T02:21:15.278Z",
+        "created_at": "2026-11-17T08:01:32.372Z",
         "deleted_at": null
       },
       {
-        "id": "prj_h44yrfcvnlt6e67oex6ulp4fja",
-        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
-        "slug": "rp",
-        "name": "RP",
-        "contract_authority": "git",
-        "active_contract_revision_id": null,
-        "created_at": "2026-11-17T02:21:15.238Z",
-        "deleted_at": null
-      },
-      {
-        "id": "prj_oqk5kl4ecpddujqqjeapmqg22y",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "id": "prj_fas6en4hrxxdpniamfp7lhgalq",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "slug": "ep2",
         "name": "EP2",
         "contract_authority": "git",
         "active_contract_revision_id": null,
-        "created_at": "2026-11-17T02:21:15.335Z",
+        "created_at": "2026-11-17T08:01:32.440Z",
         "deleted_at": null
       },
       {
-        "id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "slug": "full",
-        "name": "FULL",
-        "contract_authority": "git",
-        "active_contract_revision_id": "rev_et2px6g2nxphm4lwjwqjlugl4i",
-        "created_at": "2026-11-17T02:21:14.470Z",
-        "deleted_at": null
-      },
-      {
-        "id": "prj_xwxumzzcdzzcrty5enwm7ie7ki",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "slug": "empty",
-        "name": "EMPTY",
-        "contract_authority": "git",
-        "active_contract_revision_id": null,
-        "created_at": "2026-11-17T02:21:15.065Z",
-        "deleted_at": null
-      },
-      {
-        "id": "prj_y77zeqbyztkznyl7em3cnhpce4",
-        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "id": "prj_mwvwv3pxokiqo562fbwvz2fk3y",
+        "organization_id": "org_j2qkqtcom735if3jc2o57tbgxe",
         "slug": "fp",
         "name": "FP",
         "contract_authority": "git",
         "active_contract_revision_id": null,
-        "created_at": "2026-11-17T02:21:15.372Z",
+        "created_at": "2026-11-17T08:01:32.485Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_ni7lzbkroe7fkz52l4e3wwku7e",
+        "organization_id": "org_e5le3tdodiyyr6xhroqu6iu37u",
+        "slug": "web",
+        "name": "WEB",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T08:01:32.279Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_pwrzymdh76tetoquxscdbdtjh4",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "slug": "keep",
+        "name": "KEEP",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T08:01:32.150Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_vn6e6hw4mmq2uy2cgif25zia5m",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "slug": "empty",
+        "name": "EMPTY",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T08:01:32.121Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_vwdi5ckjnuiccbq22mbw3zlxyq",
+        "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
+        "slug": "rp",
+        "name": "RP",
+        "contract_authority": "git",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T08:01:32.326Z",
+        "deleted_at": null
+      },
+      {
+        "id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "slug": "full",
+        "name": "FULL",
+        "contract_authority": "git",
+        "active_contract_revision_id": "rev_oyxp4lho26mtzaluil5n5s6atq",
+        "created_at": "2026-11-17T08:01:31.300Z",
         "deleted_at": null
       }
     ],
     "team_projects": [
       {
-        "team_id": "tem_46kcxutp2vwsay4uaydfsw5uie",
-        "project_id": "prj_7bm35l2ba5uusfl35ejwudpjkq",
-        "created_at": "2026-11-17T02:21:15.177Z"
+        "team_id": "tem_lwimbyhl7hefvwiocb7mzmcgu4",
+        "project_id": "prj_pwrzymdh76tetoquxscdbdtjh4",
+        "created_at": "2026-11-17T08:01:32.253Z"
       },
       {
-        "team_id": "tem_46kcxutp2vwsay4uaydfsw5uie",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "created_at": "2026-11-17T02:21:15.148Z"
+        "team_id": "tem_lwimbyhl7hefvwiocb7mzmcgu4",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "created_at": "2026-11-17T08:01:32.223Z"
       }
     ],
     "contract_revisions": [
       {
-        "id": "rev_et2px6g2nxphm4lwjwqjlugl4i",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "id": "rev_oyxp4lho26mtzaluil5n5s6atq",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
         "content_hash": "sha256:2789214da361977c7cad48eaddcb565c0e3f7738af236271e34c6e8e793fb5a8",
         "contract": {
           "items": [
@@ -548,460 +548,410 @@
           "semanticsVersion": 3
         },
         "provenance": null,
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:14.629Z"
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:31.510Z"
       }
     ],
     "environments": [
       {
-        "id": "env_2wbjjreukterlvmklntz32dlz4",
-        "project_id": "prj_oqk5kl4ecpddujqqjeapmqg22y",
+        "id": "env_3c7jymz66w46ylsgcg322sbbcm",
+        "project_id": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
         "name": "development",
         "kind": "shared",
         "tier": "development",
         "parent_environment_id": null,
         "owner_identity_id": null,
         "expires_at": null,
-        "created_at": "2026-11-17T02:21:15.353Z",
+        "created_at": "2026-11-17T08:01:32.394Z",
         "deleted_at": null
       },
       {
-        "id": "env_3c2gae2ltjk2m52mvn762ijh3u",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+        "id": "env_762f3y2ldbzntx5pfjwmcozrl4",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "name": "production",
+        "kind": "shared",
+        "tier": "production",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T08:01:31.385Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_grdd3lbd7frvrjarifif6qpgkm",
+        "project_id": "prj_6onntdmkj5exphnknxos6ndma4",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T08:01:32.548Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_lpshikwuyfafu2mtkj24cg6chm",
+        "project_id": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
+        "name": "production",
+        "kind": "shared",
+        "tier": "production",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T08:01:32.418Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_ndognhskarewfclsxqm4t253iu",
+        "project_id": "prj_fas6en4hrxxdpniamfp7lhgalq",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T08:01:32.462Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_olhfr6a73wt2hxiie57jvjs7gi",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "name": "development/feature-x",
+        "kind": "preview",
+        "tier": "development",
+        "parent_environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T08:01:31.422Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_p23maefbwvssnq6pkcexy7jcha",
+        "project_id": "prj_pwrzymdh76tetoquxscdbdtjh4",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T08:01:32.174Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T08:01:31.339Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_sncwpca3jngmmlb6cxo3thvwgy",
+        "project_id": "prj_mwvwv3pxokiqo562fbwvz2fk3y",
+        "name": "development",
+        "kind": "shared",
+        "tier": "development",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T08:01:32.505Z",
+        "deleted_at": null
+      },
+      {
+        "id": "env_vvbgit7ikqiivvvfp3fe7xvxru",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
         "name": "old",
         "kind": "shared",
         "tier": "development",
         "parent_environment_id": null,
         "owner_identity_id": null,
         "expires_at": null,
-        "created_at": "2026-11-17T02:21:14.600Z",
-        "deleted_at": "2026-11-17T02:21:14.961Z"
+        "created_at": "2026-11-17T08:01:31.466Z",
+        "deleted_at": "2026-11-17T08:01:31.996Z"
       },
       {
-        "id": "env_aad7bkhnmsfqj6fp2caepmn3wy",
-        "project_id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+        "id": "env_y56mwzludd2havwql77zhqw2wq",
+        "project_id": "prj_ni7lzbkroe7fkz52l4e3wwku7e",
         "name": "development",
         "kind": "shared",
         "tier": "development",
         "parent_environment_id": null,
         "owner_identity_id": null,
         "expires_at": null,
-        "created_at": "2026-11-17T02:21:15.296Z",
+        "created_at": "2026-11-17T08:01:32.302Z",
         "deleted_at": null
       },
       {
-        "id": "env_br2gtxmi6npwpxpdrf7wypej6m",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "name": "production",
-        "kind": "shared",
-        "tier": "production",
-        "parent_environment_id": null,
-        "owner_identity_id": null,
-        "expires_at": null,
-        "created_at": "2026-11-17T02:21:14.536Z",
-        "deleted_at": null
-      },
-      {
-        "id": "env_c2oqkn6qvl54z72kn44um75d4a",
-        "project_id": "prj_4sgzvm4qgxbu67w3ftjp43grvy",
+        "id": "env_zjhw5vxry62255dhlcv37dryi4",
+        "project_id": "prj_vwdi5ckjnuiccbq22mbw3zlxyq",
         "name": "development",
         "kind": "shared",
         "tier": "development",
         "parent_environment_id": null,
         "owner_identity_id": null,
         "expires_at": null,
-        "created_at": "2026-11-17T02:21:15.426Z",
-        "deleted_at": null
-      },
-      {
-        "id": "env_hujfqmpbe6yhk76fdgz32cnhna",
-        "project_id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
-        "name": "production",
-        "kind": "shared",
-        "tier": "production",
-        "parent_environment_id": null,
-        "owner_identity_id": null,
-        "expires_at": null,
-        "created_at": "2026-11-17T02:21:15.316Z",
-        "deleted_at": null
-      },
-      {
-        "id": "env_keexwsutmg7sojej4nrkppafxy",
-        "project_id": "prj_7bm35l2ba5uusfl35ejwudpjkq",
-        "name": "development",
-        "kind": "shared",
-        "tier": "development",
-        "parent_environment_id": null,
-        "owner_identity_id": null,
-        "expires_at": null,
-        "created_at": "2026-11-17T02:21:15.103Z",
-        "deleted_at": null
-      },
-      {
-        "id": "env_krplpytbz7nd6tspsahmfvruom",
-        "project_id": "prj_3mzwzc6uqa3y7qxhfmlsxj5kia",
-        "name": "development",
-        "kind": "shared",
-        "tier": "development",
-        "parent_environment_id": null,
-        "owner_identity_id": null,
-        "expires_at": null,
-        "created_at": "2026-11-17T02:21:15.218Z",
-        "deleted_at": null
-      },
-      {
-        "id": "env_njahli6f72utsmjrc6fobqwliy",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "name": "development",
-        "kind": "shared",
-        "tier": "development",
-        "parent_environment_id": null,
-        "owner_identity_id": null,
-        "expires_at": null,
-        "created_at": "2026-11-17T02:21:14.499Z",
-        "deleted_at": null
-      },
-      {
-        "id": "env_smiqyndfiakcrfpoajtolnfscy",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "name": "development/feature-x",
-        "kind": "preview",
-        "tier": "development",
-        "parent_environment_id": "env_njahli6f72utsmjrc6fobqwliy",
-        "owner_identity_id": null,
-        "expires_at": null,
-        "created_at": "2026-11-17T02:21:14.566Z",
-        "deleted_at": null
-      },
-      {
-        "id": "env_xewdnsbp32abgtwcx37r7uy22y",
-        "project_id": "prj_y77zeqbyztkznyl7em3cnhpce4",
-        "name": "development",
-        "kind": "shared",
-        "tier": "development",
-        "parent_environment_id": null,
-        "owner_identity_id": null,
-        "expires_at": null,
-        "created_at": "2026-11-17T02:21:15.389Z",
-        "deleted_at": null
-      },
-      {
-        "id": "env_yyhqsu7inhpnikvm7gwzcg2f74",
-        "project_id": "prj_h44yrfcvnlt6e67oex6ulp4fja",
-        "name": "development",
-        "kind": "shared",
-        "tier": "development",
-        "parent_environment_id": null,
-        "owner_identity_id": null,
-        "expires_at": null,
-        "created_at": "2026-11-17T02:21:15.258Z",
+        "created_at": "2026-11-17T08:01:32.350Z",
         "deleted_at": null
       }
     ],
     "env_values": [
       {
-        "id": "val_34jpcoagqh6f7h2pgmcnslaz64",
-        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "id": "val_e6kssk6be5dweq2gtptdfzhju4",
+        "environment_id": "env_762f3y2ldbzntx5pfjwmcozrl4",
         "item_name": "SECRET_A",
-        "current_version_id": "ver_3hglvrwrdsirpjidmgim3se22i",
+        "current_version_id": "ver_5k6c45pgwbbzyoxqchmsmd5tuq",
         "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.689Z",
+        "created_at": "2026-11-17T08:01:31.789Z",
         "retiring_version_id": null,
         "rotation_deadline": null,
         "rotation_started_at": null
       },
       {
-        "id": "val_bnjhmvr4ubtcuqlmulsw4clyz4",
-        "environment_id": "env_smiqyndfiakcrfpoajtolnfscy",
-        "item_name": "SECRET_A",
-        "current_version_id": "ver_d2ohal3emo5lytj2kmlwcwyci4",
+        "id": "val_eeo7g6dz2zzl3a6umiver43k34",
+        "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+        "item_name": "PLAIN",
+        "current_version_id": "ver_amdnp3xasfwnmlfpvvcpoyprtq",
         "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.864Z",
+        "created_at": "2026-11-17T08:01:31.748Z",
         "retiring_version_id": null,
         "rotation_deadline": null,
         "rotation_started_at": null
       },
       {
-        "id": "val_g3wd7k4htttcw2sk2rxor4qjyq",
-        "environment_id": "env_3c2gae2ltjk2m52mvn762ijh3u",
+        "id": "val_kgcpsx4kixt5smmrd5d6mrcwpm",
+        "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+        "item_name": "SECRET_A",
+        "current_version_id": "ver_jwny32xmxbbklokcahvzo4ulce",
+        "deleted_at": null,
+        "created_at": "2026-11-17T08:01:31.612Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_np3lqlzcnua6mgwz7rlda2z3z4",
+        "environment_id": "env_olhfr6a73wt2hxiie57jvjs7gi",
+        "item_name": "SECRET_A",
+        "current_version_id": "ver_npbtjoeudwti73qwnl67suga54",
+        "deleted_at": null,
+        "created_at": "2026-11-17T08:01:31.842Z",
+        "retiring_version_id": null,
+        "rotation_deadline": null,
+        "rotation_started_at": null
+      },
+      {
+        "id": "val_szkpm4m26uwgfycxv7rc4jofcq",
+        "environment_id": "env_vvbgit7ikqiivvvfp3fe7xvxru",
         "item_name": "SECRET_A",
         "current_version_id": null,
-        "deleted_at": "2026-11-17T02:21:14.961Z",
-        "created_at": "2026-11-17T02:21:14.898Z",
+        "deleted_at": "2026-11-17T08:01:31.996Z",
+        "created_at": "2026-11-17T08:01:31.900Z",
         "retiring_version_id": null,
         "rotation_deadline": null,
         "rotation_started_at": null
       },
       {
-        "id": "val_hcf3wob4y6jofewbmveyzuerju",
-        "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
-        "item_name": "SECRET_A",
-        "current_version_id": "ver_rm6lqudaqljubbomk7n72pomiy",
-        "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.831Z",
-        "retiring_version_id": null,
-        "rotation_deadline": null,
-        "rotation_started_at": null
-      },
-      {
-        "id": "val_ojefqympv723xtsbas3syz3xee",
-        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
-        "item_name": "PLAIN",
-        "current_version_id": "ver_seymwabgn6n3hnl5dmp4h7spbe",
-        "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.800Z",
-        "retiring_version_id": null,
-        "rotation_deadline": null,
-        "rotation_started_at": null
-      },
-      {
-        "id": "val_xtoe5ehligqrz6vqapoqofrdeu",
-        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "id": "val_yi5ig2fh2qytqgyijjxi6owaly",
+        "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
         "item_name": "SECRET_B",
-        "current_version_id": "ver_yxg3fj7g7xhllwc3ukpjuzug2i",
+        "current_version_id": "ver_qsrnla7uwzq3h3ejrxq4zlp54m",
         "deleted_at": null,
-        "created_at": "2026-11-17T02:21:14.767Z",
-        "retiring_version_id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
-        "rotation_deadline": "2026-11-18T02:21:14.938Z",
-        "rotation_started_at": "2026-11-17T02:21:14.928Z"
+        "created_at": "2026-11-17T08:01:31.706Z",
+        "retiring_version_id": "ver_25axw36iuph2fg4m4u3jxvw3ka",
+        "rotation_deadline": "2026-11-18T08:01:31.968Z",
+        "rotation_started_at": "2026-11-17T08:01:31.950Z"
       }
     ],
     "value_versions": [
       {
-        "id": "ver_3hglvrwrdsirpjidmgim3se22i",
-        "value_id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+        "id": "ver_25axw36iuph2fg4m4u3jxvw3ka",
+        "value_id": "val_yi5ig2fh2qytqgyijjxi6owaly",
         "payload": {
-          "nonce": "NEZvq7hVOuBDtpgO",
-          "authTag": "oHytvjzStm+M8qzYvK9QBw==",
+          "nonce": "8/amA66LIx17/1nw",
+          "authTag": "19vDLXRYN3kZ1HHpfjyRLw==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "EDsj",
+          "ciphertext": "Iroc3O8=",
           "formatVersion": 1
         },
         "wrapped_dek": {
-          "nonce": "41s/HTPD3rfbHEzi",
-          "authTag": "adFRa+8JnBuibzUQlaS/hw==",
+          "nonce": "OGsN+Mk4NBWqu8Ms",
+          "authTag": "3h+1Qq/pLyMf1lKDNGQRFg==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "GXCrPJ68kz3t5jPs9gIzhgU5dMxkdP1kkNNm71QXrhc=",
-          "formatVersion": 1
-        },
-        "previous_version_id": "ver_enc3dnh5ge3torz42wingzi4g4",
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:14.731Z",
-        "erased_at": null
-      },
-      {
-        "id": "ver_57uqfdbvd4hwvsopm42bbrsy2y",
-        "value_id": "val_g3wd7k4htttcw2sk2rxor4qjyq",
-        "payload": {
-          "nonce": "YX4iZsopY7iPfNV7",
-          "authTag": "hn0Pp0unPMSi5zWaIB+1BA==",
-          "algorithm": "aes-256-gcm",
-          "ciphertext": "hunZbug=",
-          "formatVersion": 1
-        },
-        "wrapped_dek": {
-          "nonce": "xa/dWgbe8e2Ks230",
-          "authTag": "OCbUaSwtUSaOFNNwOIj7xg==",
-          "algorithm": "aes-256-gcm",
-          "ciphertext": "8nQpLsEZSAojqC+11/oP7bL+GCV+qxZFgQK7CdWbBo0=",
+          "ciphertext": "7ONQOiFZEJASyPLDkyqV7iUqzIfd/v7Prxac/N/6+iA=",
           "formatVersion": 1
         },
         "previous_version_id": null,
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:14.898Z",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:31.706Z",
         "erased_at": null
       },
       {
-        "id": "ver_d2ohal3emo5lytj2kmlwcwyci4",
-        "value_id": "val_bnjhmvr4ubtcuqlmulsw4clyz4",
+        "id": "ver_5k6c45pgwbbzyoxqchmsmd5tuq",
+        "value_id": "val_e6kssk6be5dweq2gtptdfzhju4",
         "payload": {
-          "nonce": "pkR3Vo5EDWv0oW9f",
-          "authTag": "ZYIYGLno8B/MLxTA6CXUPQ==",
+          "nonce": "8mIe73zLp7TWxb2p",
+          "authTag": "2c3ePcM5OA9lRzEsB2fdrA==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "ap+wTNLNVQ==",
+          "ciphertext": "4rX+aQGc",
           "formatVersion": 1
         },
         "wrapped_dek": {
-          "nonce": "Crrf0vOqQ+ixT/5s",
-          "authTag": "IJFeeruTDtIoDVooUkcd8A==",
+          "nonce": "NO1N8eZEvICv0MHA",
+          "authTag": "Up6JfTMxwMxKgO95TDcdRQ==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "YI050sF+cUOX+3T2AJDx9hPzb8Sl5y473mRe8EXaXFw=",
+          "ciphertext": "cZgL8am0jYOkzaopBoQWX1JhNFq42TmN4Ux8tF5dbQU=",
           "formatVersion": 1
         },
         "previous_version_id": null,
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:14.864Z",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:31.789Z",
         "erased_at": null
       },
       {
-        "id": "ver_enc3dnh5ge3torz42wingzi4g4",
-        "value_id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+        "id": "ver_amdnp3xasfwnmlfpvvcpoyprtq",
+        "value_id": "val_eeo7g6dz2zzl3a6umiver43k34",
         "payload": {
-          "nonce": "qxeoJHW7yd0DZB55",
-          "authTag": "5hy32bpksy6BZLjLytPkAw==",
+          "nonce": "MZ7DfMSLZ71oycat",
+          "authTag": "TwGJhd4Tplg15rZFUrGeFg==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "GW5b",
+          "ciphertext": "+5XH7V8=",
           "formatVersion": 1
         },
         "wrapped_dek": {
-          "nonce": "cz5ye/sDPdNVeBVz",
-          "authTag": "eC3aGXNJGjI5L5yatrXQRA==",
+          "nonce": "z5L44P12R1bdhbOK",
+          "authTag": "CIt8t6GNhAtOWRXJtbmJhw==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "gTsFDYhQew/AConZPQdIyrZGHHqqhdQLW2vPpFG1wlQ=",
+          "ciphertext": "cv7AiXcAPLxJvKFhCDDQYTJCm1yGu6FqNbboIIZU4n4=",
           "formatVersion": 1
         },
         "previous_version_id": null,
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:14.689Z",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:31.748Z",
         "erased_at": null
       },
       {
-        "id": "ver_rm6lqudaqljubbomk7n72pomiy",
-        "value_id": "val_hcf3wob4y6jofewbmveyzuerju",
+        "id": "ver_bpa6atxvhvptyd642ciavmrx6i",
+        "value_id": "val_kgcpsx4kixt5smmrd5d6mrcwpm",
         "payload": {
-          "nonce": "PgYBdASf6syXtYIb",
-          "authTag": "g3sK/ltKBXtzAHjb4LcC2g==",
+          "nonce": "PhUX2FZjrzxMlFcn",
+          "authTag": "YflZ9DXk3D4rz7eCKFrccQ==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "F0FcxxdY",
+          "ciphertext": "UTCp",
           "formatVersion": 1
         },
         "wrapped_dek": {
-          "nonce": "i4WljIqJ7EP/HY5m",
-          "authTag": "ODzNWzRdkcEnRaurydIacg==",
+          "nonce": "rZTVdUcwwvoITlFP",
+          "authTag": "agAY7dL0k1DIg+RFitcPlA==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "LHh6w6xoG/cbY5H6j6BkYzK48t/UbY3bXdrPYpanGF4=",
+          "ciphertext": "Mi+JAZ5uS0kpUVg9y8W0gETcWnA2y2oioskAYcS/c5Q=",
           "formatVersion": 1
         },
         "previous_version_id": null,
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:14.831Z",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:31.612Z",
         "erased_at": null
       },
       {
-        "id": "ver_seymwabgn6n3hnl5dmp4h7spbe",
-        "value_id": "val_ojefqympv723xtsbas3syz3xee",
+        "id": "ver_jwny32xmxbbklokcahvzo4ulce",
+        "value_id": "val_kgcpsx4kixt5smmrd5d6mrcwpm",
         "payload": {
-          "nonce": "4f7J/AfULITIhXYz",
-          "authTag": "7NNWA1No/svLwFWoPcZY+A==",
+          "nonce": "p+OVAIuWgPWZrpur",
+          "authTag": "qMaSCWaQHjitms1DApXcxA==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "+1TIS1U=",
+          "ciphertext": "bW3d",
           "formatVersion": 1
         },
         "wrapped_dek": {
-          "nonce": "eVdzEqTN1/tAe4mH",
-          "authTag": "zmatfLlbi03ctnGTPMaUUw==",
+          "nonce": "NJ3b9peENwM0E1Sy",
+          "authTag": "d76BQGl9lbhcGiI9JwNc5g==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "V6zktGagB4pBYM/m0fx9oyJamseCZppAr2NyLzGjMUo=",
+          "ciphertext": "DdOV/M6JdoR810O/a/1rnTfi0+qSaed5jnBYMK6UKrk=",
+          "formatVersion": 1
+        },
+        "previous_version_id": "ver_bpa6atxvhvptyd642ciavmrx6i",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:31.665Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_npbtjoeudwti73qwnl67suga54",
+        "value_id": "val_np3lqlzcnua6mgwz7rlda2z3z4",
+        "payload": {
+          "nonce": "bP5BqMkhLlQeZWIL",
+          "authTag": "4MFQZ2Ffhpd/s1Dn+XF8WA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "pY9MHyzzWw==",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "z/od8vmVfvJJlllF",
+          "authTag": "HjqsHllqRuxM6yw8AFBtQg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "cMJj/UJVPAnmffnv8+1piwzyLsju17eDZw3OUgphWyE=",
           "formatVersion": 1
         },
         "previous_version_id": null,
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:14.800Z",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:31.842Z",
         "erased_at": null
       },
       {
-        "id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
-        "value_id": "val_xtoe5ehligqrz6vqapoqofrdeu",
+        "id": "ver_qsrnla7uwzq3h3ejrxq4zlp54m",
+        "value_id": "val_yi5ig2fh2qytqgyijjxi6owaly",
         "payload": {
-          "nonce": "XCh4jaOx37ZYIWOH",
-          "authTag": "AuvSqp3WFW/c+Gt5J/Wo+A==",
+          "nonce": "zjfAtsh07lXVfIbG",
+          "authTag": "HTcyrzxmF90ptYrDkRdlPQ==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "pmB6Rmg=",
+          "ciphertext": "VvH3k14=",
           "formatVersion": 1
         },
         "wrapped_dek": {
-          "nonce": "7ZEZ4Fc9jqA2Lv9A",
-          "authTag": "Vr4T4/Kiif7M+bqkcinWUg==",
+          "nonce": "B0EzIUN2wjdFNWv0",
+          "authTag": "Vf7otaWFOFZi9pyyHV+BxA==",
           "algorithm": "aes-256-gcm",
-          "ciphertext": "hcQaHo9WDjklkQNaaQsIHMWczlYnIgwE9fv/pxK8KIE=",
+          "ciphertext": "V/seOa7uSRvHVDSAyemrpJzgjaU6RKl7853iEoBg1xk=",
+          "formatVersion": 1
+        },
+        "previous_version_id": "ver_25axw36iuph2fg4m4u3jxvw3ka",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:31.950Z",
+        "erased_at": null
+      },
+      {
+        "id": "ver_vwcditzdloxrqryfvt5x2epwzy",
+        "value_id": "val_szkpm4m26uwgfycxv7rc4jofcq",
+        "payload": {
+          "nonce": "1aQ8ubJYuZj8Iz8d",
+          "authTag": "Ny6/9LhvBsh/+6I/FkGBUg==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "NIPK+rQ=",
+          "formatVersion": 1
+        },
+        "wrapped_dek": {
+          "nonce": "lvh934PbqoxIygZb",
+          "authTag": "kkman/ZUhx9BM4HxYNYzbA==",
+          "algorithm": "aes-256-gcm",
+          "ciphertext": "MAtpYOfUqmOoW54/xQVfseZi8+2DWnUOIGBXSb2bLTE=",
           "formatVersion": 1
         },
         "previous_version_id": null,
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:14.767Z",
-        "erased_at": null
-      },
-      {
-        "id": "ver_yxg3fj7g7xhllwc3ukpjuzug2i",
-        "value_id": "val_xtoe5ehligqrz6vqapoqofrdeu",
-        "payload": {
-          "nonce": "VJMpXVXgVyVX/50V",
-          "authTag": "LgscMbkbOWj8r0ddjsw13g==",
-          "algorithm": "aes-256-gcm",
-          "ciphertext": "fqHOXo4=",
-          "formatVersion": 1
-        },
-        "wrapped_dek": {
-          "nonce": "jEoO7+2+wbxL+iUE",
-          "authTag": "/B1+1dwdTGGVgw4QHdxnqw==",
-          "algorithm": "aes-256-gcm",
-          "ciphertext": "/+L+xCqu7wO8VIzz27SHVWPObRRSNiMeneq9y4ecCgQ=",
-          "formatVersion": 1
-        },
-        "previous_version_id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-11-17T02:21:14.928Z",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-11-17T08:01:31.900Z",
         "erased_at": null
       }
     ],
     "capabilities": [
       {
-        "id": "cap_2rvxe6eyq7ekhpapwvkan3u2qm",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
-        "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
-        "items": [
-          "SECRET_A"
-        ],
-        "destinations": [
-          "api.example.com:443"
-        ],
-        "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-        "run_id": "prod-live",
-        "expires_at": "2099-01-01T00:00:00.000Z",
-        "revoked_at": null,
-        "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
-        "created_at": "2026-02-01T00:00:00.000Z",
-        "targets": {
-          "SECRET_A": [
-            "header:authorization"
-          ]
-        }
-      },
-      {
-        "id": "cap_fkufd6odcwtdrwfehi53xaptbe",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
-        "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
-        "items": [
-          "SECRET_A"
-        ],
-        "destinations": [
-          "api.example.com:443"
-        ],
-        "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-        "run_id": "dev-revoked",
-        "expires_at": "2099-01-01T00:00:00.000Z",
-        "revoked_at": "2026-02-02T00:00:00.000Z",
-        "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
-        "created_at": "2026-02-01T00:00:00.000Z",
-        "targets": {
-          "SECRET_A": [
-            "header:authorization"
-          ]
-        }
-      },
-      {
-        "id": "cap_nfo27mymnpwnaqz3q77ufcibk4",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
-        "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+        "id": "cap_cywjfrjtsyjhhpdrrclcujpnyi",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "broker_identity_id": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
+        "agent_identity_id": "idn_jebd7o7ut4nc25oysfvj2rxp6y",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
         "items": [
           "SECRET_A"
         ],
@@ -1012,7 +962,57 @@
         "run_id": "dev-live",
         "expires_at": "2099-01-01T00:00:00.000Z",
         "revoked_at": null,
-        "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
+        "created_by": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "targets": {
+          "SECRET_A": [
+            "header:authorization"
+          ]
+        }
+      },
+      {
+        "id": "cap_g5l4hsyt6nl4upqfiqdw275kde",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "broker_identity_id": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
+        "agent_identity_id": "idn_jebd7o7ut4nc25oysfvj2rxp6y",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+        "items": [
+          "SECRET_A"
+        ],
+        "destinations": [
+          "api.example.com:443"
+        ],
+        "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "run_id": "dev-revoked",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": "2026-02-02T00:00:00.000Z",
+        "created_by": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "targets": {
+          "SECRET_A": [
+            "header:authorization"
+          ]
+        }
+      },
+      {
+        "id": "cap_pbskmpjlnvchzen2xqkrvumc2e",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "broker_identity_id": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
+        "agent_identity_id": "idn_jebd7o7ut4nc25oysfvj2rxp6y",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "environment_id": "env_762f3y2ldbzntx5pfjwmcozrl4",
+        "items": [
+          "SECRET_A"
+        ],
+        "destinations": [
+          "api.example.com:443"
+        ],
+        "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "run_id": "prod-live",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "revoked_at": null,
+        "created_by": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
         "created_at": "2026-02-01T00:00:00.000Z",
         "targets": {
           "SECRET_A": [
@@ -1023,15 +1023,15 @@
     ],
     "platform_connections": [
       {
-        "id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "id": "pcn_pwa2ingctgchgb73yhz5y2lxem",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "platform": "coolify",
         "base_identity": "https://coolify.example.com",
         "name": "Coolify",
         "credential_envelope": {
           "fixture": "not opened"
         },
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "created_at": "2026-02-01T00:00:00.000Z",
         "revoked_at": null,
         "version": 1,
@@ -1045,48 +1045,11 @@
     ],
     "sync_targets": [
       {
-        "id": "snt_d2dt3xivt2nzketvequwx55cei",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
-        "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
-        "destination": {
-          "application": "app-gone"
-        },
-        "canonical_destination": "coolify:app-gone",
-        "mapping": {},
-        "remove_orphans": false,
-        "redeploy": false,
-        "state": "active",
-        "disabled_reason": null,
-        "failure_count": 0,
-        "needs_sync": true,
-        "next_attempt_at": null,
-        "last_attempt_at": null,
-        "last_result": null,
-        "last_repair_at": null,
-        "generation": 3,
-        "lease_expires_at": "2026-02-01T01:00:00.000Z",
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "created_at": "2026-02-01T00:00:00.000Z",
-        "revoked_at": "2026-02-02T00:00:00.000Z",
-        "version": 1,
-        "updated_at": "2026-02-01T00:00:00.000Z",
-        "last_notes": null,
-        "repair_cycle_started_at": null,
-        "redeploy_owed": 0,
-        "redeploy_paid": 0,
-        "last_drift_at": null,
-        "last_drift_count": null,
-        "last_drift_names": null,
-        "last_drift_event_id": null
-      },
-      {
-        "id": "snt_enxxtxspv2fvkqu42ixojr4sv4",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
-        "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+        "id": "snt_37s2opikijelmjrvc5j5kx7vci",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "environment_id": "env_762f3y2ldbzntx5pfjwmcozrl4",
+        "connection_id": "pcn_pwa2ingctgchgb73yhz5y2lxem",
         "destination": {
           "application": "app-prod"
         },
@@ -1104,7 +1067,7 @@
         "last_repair_at": null,
         "generation": 3,
         "lease_expires_at": "2026-02-01T01:00:00.000Z",
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "created_at": "2026-02-01T00:00:00.000Z",
         "revoked_at": null,
         "version": 1,
@@ -1119,11 +1082,11 @@
         "last_drift_event_id": null
       },
       {
-        "id": "snt_w7sdljw6n7ycnrhcqtyofcy64i",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-        "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-        "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
-        "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+        "id": "snt_csxrq4yarjoujshh4zhdq3o6xe",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+        "connection_id": "pcn_pwa2ingctgchgb73yhz5y2lxem",
         "destination": {
           "application": "app-dev"
         },
@@ -1141,9 +1104,46 @@
         "last_repair_at": null,
         "generation": 3,
         "lease_expires_at": "2026-02-01T01:00:00.000Z",
-        "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "created_at": "2026-02-01T00:00:00.000Z",
         "revoked_at": null,
+        "version": 1,
+        "updated_at": "2026-02-01T00:00:00.000Z",
+        "last_notes": null,
+        "repair_cycle_started_at": null,
+        "redeploy_owed": 0,
+        "redeploy_paid": 0,
+        "last_drift_at": null,
+        "last_drift_count": null,
+        "last_drift_names": null,
+        "last_drift_event_id": null
+      },
+      {
+        "id": "snt_yjf2kxs4ntbjwzu2jhtwjrc2pu",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+        "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+        "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+        "connection_id": "pcn_pwa2ingctgchgb73yhz5y2lxem",
+        "destination": {
+          "application": "app-gone"
+        },
+        "canonical_destination": "coolify:app-gone",
+        "mapping": {},
+        "remove_orphans": false,
+        "redeploy": false,
+        "state": "active",
+        "disabled_reason": null,
+        "failure_count": 0,
+        "needs_sync": true,
+        "next_attempt_at": null,
+        "last_attempt_at": null,
+        "last_result": null,
+        "last_repair_at": null,
+        "generation": 3,
+        "lease_expires_at": "2026-02-01T01:00:00.000Z",
+        "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "created_at": "2026-02-01T00:00:00.000Z",
+        "revoked_at": "2026-02-02T00:00:00.000Z",
         "version": 1,
         "updated_at": "2026-02-01T00:00:00.000Z",
         "last_notes": null,
@@ -1158,40 +1158,40 @@
     ],
     "security_controls": [
       {
-        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
         "control": "admin-step-up",
         "mode": "report",
         "config": null,
         "version": 1,
-        "changed_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "changed_at": "2026-11-17T02:21:15.495Z"
+        "changed_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "changed_at": "2026-11-17T08:01:32.624Z"
       },
       {
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "control": "admin-step-up",
         "mode": "enforce",
         "config": null,
         "version": 2,
-        "changed_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-        "changed_at": "2026-11-17T02:21:15.537Z"
+        "changed_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+        "changed_at": "2026-11-17T08:01:32.666Z"
       }
     ],
     "approval_intents": [
       {
         "id": "apr_epaaaaaaaaaaaaaaaaaaaaaaaa",
-        "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "credential_id": "crd_dvlswsut6qxmqh7cam63xcplki",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "auth_session_id": null,
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "operation": "project.delete",
         "target": {
-          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a"
+          "projectId": "prj_dbbii77tbqcr3q2ekbxhm3wmze"
         },
-        "body_hash": "hmac-v1:778b14fb7d1d22b83bca64f8c69f6424791fcd9281842ffaada9da0f0ee1655e",
-        "query_hash": "hmac-v1:cb3dcc9afc45c7442e2fa70dc53ce546ae82cb198c1d0d13ec7e17384902183c",
+        "body_hash": "hmac-v1:71aed4a18f013f9056115069d36ff2880846ef8215d9a928ac5030913cbe8518",
+        "query_hash": "hmac-v1:0e1a88fe6188fd71d6a4780f88a69d60e10a4bebee76e23048ad271f6afc9911",
         "expected_version": null,
         "summary": {
-          "title": "Delete the project \"EP\" (prj_d5fdeh72xeh7oceg4wiwa3rb3a), slug \"ep\", now: 2 environments and their values erased. This cannot be undone",
+          "title": "Delete the project \"EP\" (prj_dbbii77tbqcr3q2ekbxhm3wmze), slug \"ep\", now: 2 environments and their values erased. This cannot be undone",
           "changes": []
         },
         "origin": "cli",
@@ -1208,19 +1208,19 @@
       },
       {
         "id": "apr_eptwoaaaaaaaaaaaaaaaaaaaaa",
-        "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
-        "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "credential_id": "crd_dvlswsut6qxmqh7cam63xcplki",
+        "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "auth_session_id": null,
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "operation": "project.delete",
         "target": {
-          "projectId": "prj_oqk5kl4ecpddujqqjeapmqg22y"
+          "projectId": "prj_fas6en4hrxxdpniamfp7lhgalq"
         },
-        "body_hash": "hmac-v1:778b14fb7d1d22b83bca64f8c69f6424791fcd9281842ffaada9da0f0ee1655e",
-        "query_hash": "hmac-v1:cb3dcc9afc45c7442e2fa70dc53ce546ae82cb198c1d0d13ec7e17384902183c",
+        "body_hash": "hmac-v1:71aed4a18f013f9056115069d36ff2880846ef8215d9a928ac5030913cbe8518",
+        "query_hash": "hmac-v1:0e1a88fe6188fd71d6a4780f88a69d60e10a4bebee76e23048ad271f6afc9911",
         "expected_version": null,
         "summary": {
-          "title": "Delete the project \"EP2\" (prj_oqk5kl4ecpddujqqjeapmqg22y), slug \"ep2\", now: 1 environment and their values erased. This cannot be undone",
+          "title": "Delete the project \"EP2\" (prj_fas6en4hrxxdpniamfp7lhgalq), slug \"ep2\", now: 1 environment and their values erased. This cannot be undone",
           "changes": []
         },
         "origin": "cli",
@@ -1238,9 +1238,9 @@
     ],
     "organization_freezes": [
       {
-        "id": "ofz_qwlpwdbdq2toyrbuh7okypwwfe",
-        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
-        "frozen_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "id": "ofz_p2m3zszyci7mf3mjxwxwagvncy",
+        "organization_id": "org_j2qkqtcom735if3jc2o57tbgxe",
+        "frozen_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "frozen_at": "2026-03-01T00:00:00.000Z",
         "reason": "incident drill",
         "lifted_at": null,
@@ -1250,9 +1250,9 @@
     ],
     "organization_deletions": [
       {
-        "id": "odl_4v5wcd25iddyed63iqd5it3jom",
-        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
-        "requested_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "id": "odl_zx3t6vepgqp2ridujtb6b7rjse",
+        "organization_id": "org_3pwh4ed3w23oasx4nerm7ryyum",
+        "requested_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "scheduled_at": "2026-03-01T00:00:00.000Z",
         "run_after": "2099-03-01T00:00:00.000Z",
         "approval_required": false,
@@ -1265,10 +1265,10 @@
     ],
     "audit_events": [
       {
-        "id": "evt_ulq5ejtazikpidptcmxhzbblqm",
+        "id": "evt_qorcyaxgg6uhaszh3xtp6yqmte",
         "schema_version": 1,
         "event_type": "installation.initialized",
-        "occurred_at": "2026-11-17T02:21:14.186Z",
+        "occurred_at": "2026-11-17T08:01:30.977Z",
         "actor_identity_id": null,
         "authentication_method_id": null,
         "credential_id": null,
@@ -1281,16 +1281,16 @@
         "listener": null,
         "request_id": null,
         "metadata": {
-          "installationId": "inst_gcv5jgnoyroh7jfrpkdodjnb4a"
+          "installationId": "inst_k7k2k32mxnzo3h7b5mtkv6qhsy"
         },
         "event_order": 1,
         "client": null
       },
       {
-        "id": "evt_6pal7z3su57fgxgh76pmg7vnpa",
+        "id": "evt_2p2dd6zht6nm2rdbp5c2g6fhsa",
         "schema_version": 1,
         "event_type": "bootstrap.grant_issued",
-        "occurred_at": "2026-11-17T02:21:14.239Z",
+        "occurred_at": "2026-11-17T08:01:31.019Z",
         "actor_identity_id": null,
         "authentication_method_id": null,
         "credential_id": null,
@@ -1303,23 +1303,23 @@
         "listener": null,
         "request_id": null,
         "metadata": {
-          "expiresAt": "2026-11-17T02:36:14.240Z"
+          "expiresAt": "2026-11-17T08:16:31.020Z"
         },
         "event_order": 2,
         "client": null
       },
       {
-        "id": "evt_oqxzk36bobr3n7difzdwohjenu",
+        "id": "evt_urh3bqt3ftceta6q35hexdm2xa",
         "schema_version": 1,
         "event_type": "bootstrap.completed",
-        "occurred_at": "2026-11-17T02:21:14.256Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.035Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
         "credential_id": null,
         "organization_id": null,
         "action": null,
         "resource": {
-          "identityId": "idn_klxvmokh74e7qwb5g4goesb3mi"
+          "identityId": "idn_lbh5ix4vejiwrkqev6343ar6g4"
         },
         "decision": "info",
         "authz": null,
@@ -1331,17 +1331,17 @@
         "client": null
       },
       {
-        "id": "evt_t7anwt6f7j7bjoolfcf5a7v3da",
+        "id": "evt_v4zzuw4gfekrsbbuwrtzoddsue",
         "schema_version": 1,
         "event_type": "credential.issued",
-        "occurred_at": "2026-11-17T02:21:14.280Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.055Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
+        "credential_id": "crd_dvlswsut6qxmqh7cam63xcplki",
         "organization_id": null,
         "action": null,
         "resource": {
-          "identityId": "idn_klxvmokh74e7qwb5g4goesb3mi"
+          "identityId": "idn_lbh5ix4vejiwrkqev6343ar6g4"
         },
         "decision": "info",
         "authz": null,
@@ -1355,17 +1355,17 @@
         "client": null
       },
       {
-        "id": "evt_s4c2m4ycbiq6r5jc37hngbwi5e",
+        "id": "evt_eskfid2y7hpfhyks3auct64bwy",
         "schema_version": 1,
         "event_type": "credential.issued",
-        "occurred_at": "2026-11-17T02:21:14.295Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.071Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
         "organization_id": null,
         "action": null,
         "resource": {
-          "identityId": "idn_klxvmokh74e7qwb5g4goesb3mi"
+          "identityId": "idn_lbh5ix4vejiwrkqev6343ar6g4"
         },
         "decision": "info",
         "authz": null,
@@ -1379,14 +1379,14 @@
         "client": null
       },
       {
-        "id": "evt_h5lgdwpju6tvq7xlfm6h54zr3y",
+        "id": "evt_rtzfcbgndsbh3qqu5xqj7c2cv4",
         "schema_version": 1,
         "event_type": "organization.created",
-        "occurred_at": "2026-11-17T02:21:14.344Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.132Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
           "organizationSlug": "acme"
@@ -1401,14 +1401,14 @@
         "client": null
       },
       {
-        "id": "evt_vvawwsmz26oo7u7fu5dqhnaukq",
+        "id": "evt_33oarj5utypynuftbhciijcs2e",
         "schema_version": 1,
         "event_type": "organization.created",
-        "occurred_at": "2026-11-17T02:21:14.366Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.171Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
         "action": null,
         "resource": {
           "organizationSlug": "rep"
@@ -1423,14 +1423,14 @@
         "client": null
       },
       {
-        "id": "evt_pstk7brlocgsjljhxnb6uhbcce",
+        "id": "evt_h4qkt3a6q24tbesutl6ieyfnpi",
         "schema_version": 1,
         "event_type": "organization.created",
-        "occurred_at": "2026-11-17T02:21:14.382Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.195Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": null,
         "resource": {
           "organizationSlug": "enf"
@@ -1445,14 +1445,14 @@
         "client": null
       },
       {
-        "id": "evt_6a5y7ntbg6mds7iu2htuq4tei4",
+        "id": "evt_h2ztrygnsippmg44l27umrjmvi",
         "schema_version": 1,
         "event_type": "organization.created",
-        "occurred_at": "2026-11-17T02:21:14.396Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.211Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_j2qkqtcom735if3jc2o57tbgxe",
         "action": null,
         "resource": {
           "organizationSlug": "frozen"
@@ -1467,14 +1467,14 @@
         "client": null
       },
       {
-        "id": "evt_voavqmo25n2mnppzmdbcjgdtwq",
+        "id": "evt_z74chxnszy3inj2j2c4rcyfyia",
         "schema_version": 1,
         "event_type": "organization.created",
-        "occurred_at": "2026-11-17T02:21:14.413Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.233Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_3pwh4ed3w23oasx4nerm7ryyum",
         "action": null,
         "resource": {
           "organizationSlug": "deleting"
@@ -1489,14 +1489,14 @@
         "client": null
       },
       {
-        "id": "evt_ry5u3qqwad2kdhdvco2lahwnee",
+        "id": "evt_tm2wg6equqbiryh723yjgmvt3e",
         "schema_version": 1,
         "event_type": "organization.created",
-        "occurred_at": "2026-11-17T02:21:14.426Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.247Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_e5le3tdodiyyr6xhroqu6iu37u",
         "action": null,
         "resource": {
           "organizationSlug": "beta"
@@ -1511,17 +1511,17 @@
         "client": null
       },
       {
-        "id": "evt_zacj5jkxz3bntry7bmwci5l6fm",
+        "id": "evt_sy5tizriaxxf3ifc6dqzhbjinu",
         "schema_version": 1,
         "event_type": "credential.issued",
-        "occurred_at": "2026-11-17T02:21:14.439Z",
-        "actor_identity_id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+        "occurred_at": "2026-11-17T08:01:31.262Z",
+        "actor_identity_id": "idn_ibw3cip66ld2s4wy6hz4i6kpwq",
         "authentication_method_id": null,
-        "credential_id": "crd_7dotnskrrhj4dq7ykj4l74wqny",
+        "credential_id": "crd_4jfwwgh3izbmoiu5oiqfwisnua",
         "organization_id": null,
         "action": null,
         "resource": {
-          "identityId": "idn_h2vyo7nlyfemdys6tbmbrw57q4"
+          "identityId": "idn_ibw3cip66ld2s4wy6hz4i6kpwq"
         },
         "decision": "info",
         "authz": null,
@@ -1535,17 +1535,17 @@
         "client": null
       },
       {
-        "id": "evt_x7qcwxzbpopmwryet6dnxzrjky",
+        "id": "evt_hqnaodoc5fnexxiaitq2sxsi3q",
         "schema_version": 1,
         "event_type": "credential.issued",
-        "occurred_at": "2026-11-17T02:21:14.447Z",
-        "actor_identity_id": "idn_q4ikzpueamz3fhn3h44dixdhie",
+        "occurred_at": "2026-11-17T08:01:31.273Z",
+        "actor_identity_id": "idn_3tpi6t5ghqjcxpo3hducnic2da",
         "authentication_method_id": null,
-        "credential_id": "crd_ap3riblxgcvat4jdwyee7lt2zm",
+        "credential_id": "crd_nukqeco4k3guuogg22bs7mnrzy",
         "organization_id": null,
         "action": null,
         "resource": {
-          "identityId": "idn_q4ikzpueamz3fhn3h44dixdhie"
+          "identityId": "idn_3tpi6t5ghqjcxpo3hducnic2da"
         },
         "decision": "info",
         "authz": null,
@@ -1559,17 +1559,17 @@
         "client": null
       },
       {
-        "id": "evt_iw2634sakdsvob32qjio5ws2fy",
+        "id": "evt_e4fc3cjizsx77gkre2ijbkb4hu",
         "schema_version": 1,
         "event_type": "project.created",
-        "occurred_at": "2026-11-17T02:21:14.470Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.300Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
           "projectSlug": "full"
         },
         "decision": "info",
@@ -1584,18 +1584,18 @@
         "client": null
       },
       {
-        "id": "evt_kgq3sph4t2bxqj5znn2qjvimum",
+        "id": "evt_6hd3ikwbrozuepawxj6ls232na",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:14.499Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.339Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "environmentId": "env_qco6k4pzj2mxywhpgwwirmg5wa",
           "environmentName": "development"
         },
         "decision": "info",
@@ -1612,18 +1612,18 @@
         "client": null
       },
       {
-        "id": "evt_d5k6r2l5frretn3qpxr2a34hle",
+        "id": "evt_6ddmmr6yjj5tc7d6676s7jw7p4",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:14.536Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.385Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "environmentId": "env_br2gtxmi6npwpxpdrf7wypej6m",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "environmentId": "env_762f3y2ldbzntx5pfjwmcozrl4",
           "environmentName": "production"
         },
         "decision": "info",
@@ -1640,18 +1640,18 @@
         "client": null
       },
       {
-        "id": "evt_cfggg6ucbtssudnaooiyi2qfs4",
+        "id": "evt_ycrfkjt7j5ddxqm7u4kg565hv4",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:14.566Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.422Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "environmentId": "env_smiqyndfiakcrfpoajtolnfscy",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "environmentId": "env_olhfr6a73wt2hxiie57jvjs7gi",
           "environmentName": "development/feature-x"
         },
         "decision": "info",
@@ -1668,18 +1668,18 @@
         "client": null
       },
       {
-        "id": "evt_kzdbcvxiaa5okpvyhx5o4h7r2y",
+        "id": "evt_lgwsessbnh4hzhen2dry4r2uqi",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:14.600Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.466Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "environmentId": "env_3c2gae2ltjk2m52mvn762ijh3u",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "environmentId": "env_vvbgit7ikqiivvvfp3fe7xvxru",
           "environmentName": "old"
         },
         "decision": "info",
@@ -1696,18 +1696,18 @@
         "client": null
       },
       {
-        "id": "evt_p5fs32chglrew3s7yvynkxzdqi",
+        "id": "evt_afftpiagqdwkd3yg3i45jaepfm",
         "schema_version": 1,
         "event_type": "contract.revision_pushed",
-        "occurred_at": "2026-11-17T02:21:14.629Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.510Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "contract.submit",
         "resource": {
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "contractRevisionId": "rev_et2px6g2nxphm4lwjwqjlugl4i"
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "contractRevisionId": "rev_oyxp4lho26mtzaluil5n5s6atq"
         },
         "decision": "info",
         "authz": null,
@@ -1723,18 +1723,18 @@
         "client": null
       },
       {
-        "id": "evt_i4lj4w72ylklkqixo6upld2cgy",
+        "id": "evt_u5cqrw2uhpsrex2xvw4x3kkvqq",
         "schema_version": 1,
         "event_type": "contract.activated",
-        "occurred_at": "2026-11-17T02:21:14.659Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.556Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "contract.activate",
         "resource": {
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "contractRevisionId": "rev_et2px6g2nxphm4lwjwqjlugl4i"
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "contractRevisionId": "rev_oyxp4lho26mtzaluil5n5s6atq"
         },
         "decision": "info",
         "authz": null,
@@ -1748,20 +1748,20 @@
         "client": null
       },
       {
-        "id": "evt_7flbhfg4aebyb3iokjontfvmwm",
+        "id": "evt_k7ylrdh2eymhgzt67oah4kiqjm",
         "schema_version": 1,
         "event_type": "value.written",
-        "occurred_at": "2026-11-17T02:21:14.689Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.612Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "config.value.write",
         "resource": {
           "itemName": "SECRET_A",
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "versionId": "ver_enc3dnh5ge3torz42wingzi4g4",
-          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "versionId": "ver_bpa6atxvhvptyd642ciavmrx6i",
+          "environmentId": "env_qco6k4pzj2mxywhpgwwirmg5wa",
           "previousVersionId": null
         },
         "decision": "info",
@@ -1776,21 +1776,21 @@
         "client": null
       },
       {
-        "id": "evt_sctbslvv3tvb3xivknmh3hj7pm",
+        "id": "evt_qyecncwkujwvp27rumr6p7gp7i",
         "schema_version": 1,
         "event_type": "value.written",
-        "occurred_at": "2026-11-17T02:21:14.731Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.665Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "config.value.write",
         "resource": {
           "itemName": "SECRET_A",
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "versionId": "ver_3hglvrwrdsirpjidmgim3se22i",
-          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
-          "previousVersionId": "ver_enc3dnh5ge3torz42wingzi4g4"
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "versionId": "ver_jwny32xmxbbklokcahvzo4ulce",
+          "environmentId": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+          "previousVersionId": "ver_bpa6atxvhvptyd642ciavmrx6i"
         },
         "decision": "info",
         "authz": null,
@@ -1804,20 +1804,20 @@
         "client": null
       },
       {
-        "id": "evt_3i2df2m2etkeqfc2ul3nfucsue",
+        "id": "evt_e4qp2elcuowus6d5mqp66p4gyi",
         "schema_version": 1,
         "event_type": "value.written",
-        "occurred_at": "2026-11-17T02:21:14.767Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.706Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "config.value.write",
         "resource": {
           "itemName": "SECRET_B",
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "versionId": "ver_vrnxraqo72n64qo54dtqs3pmjy",
-          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "versionId": "ver_25axw36iuph2fg4m4u3jxvw3ka",
+          "environmentId": "env_qco6k4pzj2mxywhpgwwirmg5wa",
           "previousVersionId": null
         },
         "decision": "info",
@@ -1832,20 +1832,20 @@
         "client": null
       },
       {
-        "id": "evt_oakokgk7ddqtrzbkorko6lq77e",
+        "id": "evt_nkhp2gmqdl4auydilowi5hig5u",
         "schema_version": 1,
         "event_type": "value.written",
-        "occurred_at": "2026-11-17T02:21:14.800Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.748Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "config.value.write",
         "resource": {
           "itemName": "PLAIN",
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "versionId": "ver_seymwabgn6n3hnl5dmp4h7spbe",
-          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "versionId": "ver_amdnp3xasfwnmlfpvvcpoyprtq",
+          "environmentId": "env_qco6k4pzj2mxywhpgwwirmg5wa",
           "previousVersionId": null
         },
         "decision": "info",
@@ -1860,20 +1860,20 @@
         "client": null
       },
       {
-        "id": "evt_x5rrjw5cp3c6w2e7nuiza65abm",
+        "id": "evt_3xe6y6cns3up3cl3racjy7h2li",
         "schema_version": 1,
         "event_type": "value.written",
-        "occurred_at": "2026-11-17T02:21:14.831Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.789Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "config.value.write",
         "resource": {
           "itemName": "SECRET_A",
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "versionId": "ver_rm6lqudaqljubbomk7n72pomiy",
-          "environmentId": "env_br2gtxmi6npwpxpdrf7wypej6m",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "versionId": "ver_5k6c45pgwbbzyoxqchmsmd5tuq",
+          "environmentId": "env_762f3y2ldbzntx5pfjwmcozrl4",
           "previousVersionId": null
         },
         "decision": "info",
@@ -1888,20 +1888,20 @@
         "client": null
       },
       {
-        "id": "evt_neqvdt4im73zigo5fqfriws7ha",
+        "id": "evt_rhvxhcnlrraz3xllbfrjomfdmy",
         "schema_version": 1,
         "event_type": "value.written",
-        "occurred_at": "2026-11-17T02:21:14.864Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.842Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "config.value.write",
         "resource": {
           "itemName": "SECRET_A",
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "versionId": "ver_d2ohal3emo5lytj2kmlwcwyci4",
-          "environmentId": "env_smiqyndfiakcrfpoajtolnfscy",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "versionId": "ver_npbtjoeudwti73qwnl67suga54",
+          "environmentId": "env_olhfr6a73wt2hxiie57jvjs7gi",
           "previousVersionId": null
         },
         "decision": "info",
@@ -1916,20 +1916,20 @@
         "client": null
       },
       {
-        "id": "evt_3c73lg5azscerlv25e7gvlqvym",
+        "id": "evt_ebblqu2us7ji5vc2qalj4jn7qm",
         "schema_version": 1,
         "event_type": "value.written",
-        "occurred_at": "2026-11-17T02:21:14.898Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.900Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "config.value.write",
         "resource": {
           "itemName": "SECRET_A",
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "versionId": "ver_57uqfdbvd4hwvsopm42bbrsy2y",
-          "environmentId": "env_3c2gae2ltjk2m52mvn762ijh3u",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "versionId": "ver_vwcditzdloxrqryfvt5x2epwzy",
+          "environmentId": "env_vvbgit7ikqiivvvfp3fe7xvxru",
           "previousVersionId": null
         },
         "decision": "info",
@@ -1944,21 +1944,21 @@
         "client": null
       },
       {
-        "id": "evt_pwmrbe5jtt6szexjasyg5xzdui",
+        "id": "evt_fpzgrvmojjgqwxaf6tisgfwmwq",
         "schema_version": 1,
         "event_type": "value.rotation_started",
-        "occurred_at": "2026-11-17T02:21:14.928Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.950Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "config.value.write",
         "resource": {
           "itemName": "SECRET_B",
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "versionId": "ver_yxg3fj7g7xhllwc3ukpjuzug2i",
-          "environmentId": "env_njahli6f72utsmjrc6fobqwliy",
-          "previousVersionId": "ver_vrnxraqo72n64qo54dtqs3pmjy"
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "versionId": "ver_qsrnla7uwzq3h3ejrxq4zlp54m",
+          "environmentId": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+          "previousVersionId": "ver_25axw36iuph2fg4m4u3jxvw3ka"
         },
         "decision": "info",
         "authz": null,
@@ -1966,26 +1966,26 @@
         "listener": "ordinary",
         "request_id": null,
         "metadata": {
-          "deadline": "2026-11-18T02:21:14.938Z",
-          "retiring": "SECRET_B@ver_vrnxraqo72n64qo54dtqs3pmjy",
+          "deadline": "2026-11-18T08:01:31.968Z",
+          "retiring": "SECRET_B@ver_25axw36iuph2fg4m4u3jxvw3ka",
           "sensitive": true
         },
         "event_order": 28,
         "client": null
       },
       {
-        "id": "evt_nn4a4t6b6mhqxsuvljzynkblji",
+        "id": "evt_niea3xaihg6bwdh7a2l7kyfj4y",
         "schema_version": 1,
         "event_type": "environment.deleted",
-        "occurred_at": "2026-11-17T02:21:14.961Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:31.996Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
-          "environmentId": "env_3c2gae2ltjk2m52mvn762ijh3u",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+          "environmentId": "env_vvbgit7ikqiivvvfp3fe7xvxru",
           "environmentName": "old"
         },
         "decision": "info",
@@ -2004,17 +2004,17 @@
         "client": null
       },
       {
-        "id": "evt_jktepnctnuabwqijcbi44tcwae",
+        "id": "evt_klqt7rgasrbzou66bjisgslk6m",
         "schema_version": 1,
         "event_type": "identity.created",
-        "occurred_at": "2026-11-17T02:21:14.987Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.030Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "identity.manage",
         "resource": {
-          "identityId": "idn_5vffsj2ameueagxrqrccpnxpr4"
+          "identityId": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe"
         },
         "decision": "info",
         "authz": null,
@@ -2028,17 +2028,17 @@
         "client": null
       },
       {
-        "id": "evt_ktxbvpunh6kdkz4nncf4ig2hwq",
+        "id": "evt_ho3td3diwliyt22ckew2gs2dcy",
         "schema_version": 1,
         "event_type": "credential.issued",
-        "occurred_at": "2026-11-17T02:21:14.987Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.030Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_cemogxqqrclfq3t77jj2t2ug3a",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_sfdeofzmard2k4bkiyzpueld3a",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "identityId": "idn_5vffsj2ameueagxrqrccpnxpr4"
+          "identityId": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe"
         },
         "decision": "info",
         "authz": null,
@@ -2052,17 +2052,17 @@
         "client": null
       },
       {
-        "id": "evt_mz7r53kdwhapxlxb2snlrrqnpi",
+        "id": "evt_cpo57ty6wz7npbyhtngoqyib6a",
         "schema_version": 1,
         "event_type": "identity.created",
-        "occurred_at": "2026-11-17T02:21:15.016Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.061Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "identity.manage",
         "resource": {
-          "identityId": "idn_iqaxiisgsalmqzjjt66azugq4q"
+          "identityId": "idn_jebd7o7ut4nc25oysfvj2rxp6y"
         },
         "decision": "info",
         "authz": null,
@@ -2076,17 +2076,17 @@
         "client": null
       },
       {
-        "id": "evt_iv2fcssrv2wufxceewqz3k4ncm",
+        "id": "evt_e5ifhtye7t7jvlilndlsqh74g4",
         "schema_version": 1,
         "event_type": "project.created",
-        "occurred_at": "2026-11-17T02:21:15.065Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.121Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "projectId": "prj_xwxumzzcdzzcrty5enwm7ie7ki",
+          "projectId": "prj_vn6e6hw4mmq2uy2cgif25zia5m",
           "projectSlug": "empty"
         },
         "decision": "info",
@@ -2101,17 +2101,17 @@
         "client": null
       },
       {
-        "id": "evt_2bligsfgicexm2fdpjxlytbuxq",
+        "id": "evt_ic2cafsg2ovkwhf4hap24tx4x4",
         "schema_version": 1,
         "event_type": "project.created",
-        "occurred_at": "2026-11-17T02:21:15.083Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.150Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "projectId": "prj_7bm35l2ba5uusfl35ejwudpjkq",
+          "projectId": "prj_pwrzymdh76tetoquxscdbdtjh4",
           "projectSlug": "keep"
         },
         "decision": "info",
@@ -2126,18 +2126,18 @@
         "client": null
       },
       {
-        "id": "evt_zplevru3x5dtq65x43wrqoeyli",
+        "id": "evt_zuvmbll6o3qf7o6cnlqeqi56za",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:15.103Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.174Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": null,
         "resource": {
-          "projectId": "prj_7bm35l2ba5uusfl35ejwudpjkq",
-          "environmentId": "env_keexwsutmg7sojej4nrkppafxy",
+          "projectId": "prj_pwrzymdh76tetoquxscdbdtjh4",
+          "environmentId": "env_p23maefbwvssnq6pkcexy7jcha",
           "environmentName": "development"
         },
         "decision": "info",
@@ -2154,17 +2154,17 @@
         "client": null
       },
       {
-        "id": "evt_5iyrvdt2qmj5xf4ghoovd7uyw4",
+        "id": "evt_euymehzyzvakh4wm7bgxebq5km",
         "schema_version": 1,
         "event_type": "team.created",
-        "occurred_at": "2026-11-17T02:21:15.124Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.199Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "policy.manage",
         "resource": {
-          "groupId": "tem_46kcxutp2vwsay4uaydfsw5uie"
+          "groupId": "tem_lwimbyhl7hefvwiocb7mzmcgu4"
         },
         "decision": "info",
         "authz": null,
@@ -2178,18 +2178,18 @@
         "client": null
       },
       {
-        "id": "evt_pgf7vl2es2zqnpgjclfuv6dqxu",
+        "id": "evt_b4vgnkn4oxic2iprhosxcgpr4u",
         "schema_version": 1,
         "event_type": "team.project_added",
-        "occurred_at": "2026-11-17T02:21:15.148Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.223Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "policy.manage",
         "resource": {
-          "groupId": "tem_46kcxutp2vwsay4uaydfsw5uie",
-          "projectId": "prj_qkati2n4qooc4ifxesoxior2su"
+          "groupId": "tem_lwimbyhl7hefvwiocb7mzmcgu4",
+          "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke"
         },
         "decision": "info",
         "authz": null,
@@ -2201,18 +2201,18 @@
         "client": null
       },
       {
-        "id": "evt_cgrm24o34iu2afh4viwu54ejmm",
+        "id": "evt_iobu6bqvixf7sb3xhrrci2uxqq",
         "schema_version": 1,
         "event_type": "team.project_added",
-        "occurred_at": "2026-11-17T02:21:15.177Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.253Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
         "action": "policy.manage",
         "resource": {
-          "groupId": "tem_46kcxutp2vwsay4uaydfsw5uie",
-          "projectId": "prj_7bm35l2ba5uusfl35ejwudpjkq"
+          "groupId": "tem_lwimbyhl7hefvwiocb7mzmcgu4",
+          "projectId": "prj_pwrzymdh76tetoquxscdbdtjh4"
         },
         "decision": "info",
         "authz": null,
@@ -2224,17 +2224,17 @@
         "client": null
       },
       {
-        "id": "evt_d44bcvoe5c4mpoxbqejw747zhi",
+        "id": "evt_rrm46oqwks6p62n6hoekgbloju",
         "schema_version": 1,
         "event_type": "project.created",
-        "occurred_at": "2026-11-17T02:21:15.199Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.279Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_e5le3tdodiyyr6xhroqu6iu37u",
         "action": null,
         "resource": {
-          "projectId": "prj_3mzwzc6uqa3y7qxhfmlsxj5kia",
+          "projectId": "prj_ni7lzbkroe7fkz52l4e3wwku7e",
           "projectSlug": "web"
         },
         "decision": "info",
@@ -2249,18 +2249,18 @@
         "client": null
       },
       {
-        "id": "evt_qwnrnwwklbxqcettzudv2ye4gm",
+        "id": "evt_tzvtorrpdvq3i3yhyeduuvoudu",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:15.218Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.302Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_svuxe3tngjo6w2uagdyuq2mtze",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_e5le3tdodiyyr6xhroqu6iu37u",
         "action": null,
         "resource": {
-          "projectId": "prj_3mzwzc6uqa3y7qxhfmlsxj5kia",
-          "environmentId": "env_krplpytbz7nd6tspsahmfvruom",
+          "projectId": "prj_ni7lzbkroe7fkz52l4e3wwku7e",
+          "environmentId": "env_y56mwzludd2havwql77zhqw2wq",
           "environmentName": "development"
         },
         "decision": "info",
@@ -2277,17 +2277,17 @@
         "client": null
       },
       {
-        "id": "evt_phhynugmikth6oxqa4aewggaom",
+        "id": "evt_mgqzpurna3qrlbtvb6cqjlp2yu",
         "schema_version": 1,
         "event_type": "project.created",
-        "occurred_at": "2026-11-17T02:21:15.238Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.326Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
         "action": null,
         "resource": {
-          "projectId": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+          "projectId": "prj_vwdi5ckjnuiccbq22mbw3zlxyq",
           "projectSlug": "rp"
         },
         "decision": "info",
@@ -2302,18 +2302,18 @@
         "client": null
       },
       {
-        "id": "evt_b7hqnolgz3jzmwnlfojbyvygl4",
+        "id": "evt_yme2vpxttt5yj7ipbovczhdyma",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:15.258Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.350Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
         "action": null,
         "resource": {
-          "projectId": "prj_h44yrfcvnlt6e67oex6ulp4fja",
-          "environmentId": "env_yyhqsu7inhpnikvm7gwzcg2f74",
+          "projectId": "prj_vwdi5ckjnuiccbq22mbw3zlxyq",
+          "environmentId": "env_zjhw5vxry62255dhlcv37dryi4",
           "environmentName": "development"
         },
         "decision": "info",
@@ -2330,17 +2330,17 @@
         "client": null
       },
       {
-        "id": "evt_dh5qfjd7vemyxmy7b4l7zlg3cu",
+        "id": "evt_btqjiym57scdzi2qrtdmcbwrji",
         "schema_version": 1,
         "event_type": "project.created",
-        "occurred_at": "2026-11-17T02:21:15.278Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.372Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": null,
         "resource": {
-          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+          "projectId": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
           "projectSlug": "ep"
         },
         "decision": "info",
@@ -2355,18 +2355,18 @@
         "client": null
       },
       {
-        "id": "evt_pn3sn3amd7hot4vajuergyuhgi",
+        "id": "evt_harodjwadd62izafqymyc5gnmm",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:15.296Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.394Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": null,
         "resource": {
-          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
-          "environmentId": "env_aad7bkhnmsfqj6fp2caepmn3wy",
+          "projectId": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
+          "environmentId": "env_3c7jymz66w46ylsgcg322sbbcm",
           "environmentName": "development"
         },
         "decision": "info",
@@ -2383,18 +2383,18 @@
         "client": null
       },
       {
-        "id": "evt_7iuzaaprz3yuhvfeec52usdwuy",
+        "id": "evt_eegwzxuajwqkzakrgs3fkfynkm",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:15.316Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.418Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": null,
         "resource": {
-          "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
-          "environmentId": "env_hujfqmpbe6yhk76fdgz32cnhna",
+          "projectId": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
+          "environmentId": "env_lpshikwuyfafu2mtkj24cg6chm",
           "environmentName": "production"
         },
         "decision": "info",
@@ -2411,17 +2411,17 @@
         "client": null
       },
       {
-        "id": "evt_dxdrtkqbacyvmyqjxqu32gt3wa",
+        "id": "evt_zbrcomhcwxuruxx2ecawzyz4um",
         "schema_version": 1,
         "event_type": "project.created",
-        "occurred_at": "2026-11-17T02:21:15.335Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.440Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": null,
         "resource": {
-          "projectId": "prj_oqk5kl4ecpddujqqjeapmqg22y",
+          "projectId": "prj_fas6en4hrxxdpniamfp7lhgalq",
           "projectSlug": "ep2"
         },
         "decision": "info",
@@ -2436,18 +2436,18 @@
         "client": null
       },
       {
-        "id": "evt_appqkch6l2k56dftyh3f4k4ly4",
+        "id": "evt_s47fusem3d6col7t2vtjlk2oci",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:15.353Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.462Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": null,
         "resource": {
-          "projectId": "prj_oqk5kl4ecpddujqqjeapmqg22y",
-          "environmentId": "env_2wbjjreukterlvmklntz32dlz4",
+          "projectId": "prj_fas6en4hrxxdpniamfp7lhgalq",
+          "environmentId": "env_ndognhskarewfclsxqm4t253iu",
           "environmentName": "development"
         },
         "decision": "info",
@@ -2464,17 +2464,17 @@
         "client": null
       },
       {
-        "id": "evt_c7nhzsewla3s7queohyxeskgbi",
+        "id": "evt_yhjcdciujfxj3avs52cbaw6nwq",
         "schema_version": 1,
         "event_type": "project.created",
-        "occurred_at": "2026-11-17T02:21:15.372Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.485Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_j2qkqtcom735if3jc2o57tbgxe",
         "action": null,
         "resource": {
-          "projectId": "prj_y77zeqbyztkznyl7em3cnhpce4",
+          "projectId": "prj_mwvwv3pxokiqo562fbwvz2fk3y",
           "projectSlug": "fp"
         },
         "decision": "info",
@@ -2489,18 +2489,18 @@
         "client": null
       },
       {
-        "id": "evt_7ci7wqu7hsbp3n2her7fuzrgpe",
+        "id": "evt_j5edrmejcw5jqpjfaar5vqydqy",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:15.389Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.505Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_j2qkqtcom735if3jc2o57tbgxe",
         "action": null,
         "resource": {
-          "projectId": "prj_y77zeqbyztkznyl7em3cnhpce4",
-          "environmentId": "env_xewdnsbp32abgtwcx37r7uy22y",
+          "projectId": "prj_mwvwv3pxokiqo562fbwvz2fk3y",
+          "environmentId": "env_sncwpca3jngmmlb6cxo3thvwgy",
           "environmentName": "development"
         },
         "decision": "info",
@@ -2517,17 +2517,17 @@
         "client": null
       },
       {
-        "id": "evt_xkipaomgbzvp4c6dwzvofedd6m",
+        "id": "evt_yhq27nibyzgoggzf7j7atccszu",
         "schema_version": 1,
         "event_type": "project.created",
-        "occurred_at": "2026-11-17T02:21:15.409Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.527Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_3pwh4ed3w23oasx4nerm7ryyum",
         "action": null,
         "resource": {
-          "projectId": "prj_4sgzvm4qgxbu67w3ftjp43grvy",
+          "projectId": "prj_6onntdmkj5exphnknxos6ndma4",
           "projectSlug": "dp"
         },
         "decision": "info",
@@ -2542,18 +2542,18 @@
         "client": null
       },
       {
-        "id": "evt_zk7axxcx2t6iucqog4cisfsfgy",
+        "id": "evt_u7qi5v6a2vyfsuafu4dh2llala",
         "schema_version": 1,
         "event_type": "environment.created",
-        "occurred_at": "2026-11-17T02:21:15.426Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.548Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_cwoy6nfn4mn6xmwxvodr4ljake",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_3pwh4ed3w23oasx4nerm7ryyum",
         "action": null,
         "resource": {
-          "projectId": "prj_4sgzvm4qgxbu67w3ftjp43grvy",
-          "environmentId": "env_c2oqkn6qvl54z72kn44um75d4a",
+          "projectId": "prj_6onntdmkj5exphnknxos6ndma4",
+          "environmentId": "env_grdd3lbd7frvrjarifif6qpgkm",
           "environmentName": "development"
         },
         "decision": "info",
@@ -2570,17 +2570,17 @@
         "client": null
       },
       {
-        "id": "evt_4wrjymjmnqeijlqc5ltenfaecm",
+        "id": "evt_clorjzvrumnacgyjkftbxcphye",
         "schema_version": 1,
         "event_type": "identity.created",
-        "occurred_at": "2026-11-17T02:21:15.445Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.569Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": "identity.manage",
         "resource": {
-          "identityId": "idn_kmolx2mhvmjf5i4tqnut2a2f2i"
+          "identityId": "idn_ojo5ujjgtv2bxtkux6abbeuwb4"
         },
         "decision": "info",
         "authz": null,
@@ -2594,17 +2594,17 @@
         "client": null
       },
       {
-        "id": "evt_pbws2mq6dceo3mwjpwv5yuwrmi",
+        "id": "evt_ohjk3ebozo56y4v4i5snsdnuku",
         "schema_version": 1,
         "event_type": "credential.issued",
-        "occurred_at": "2026-11-17T02:21:15.445Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.569Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_5itvcydl6da67r4z6h3qwis7eu",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_3zuizdwnwalbkuylmn4iietkry",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": null,
         "resource": {
-          "identityId": "idn_kmolx2mhvmjf5i4tqnut2a2f2i"
+          "identityId": "idn_ojo5ujjgtv2bxtkux6abbeuwb4"
         },
         "decision": "info",
         "authz": null,
@@ -2618,18 +2618,18 @@
         "client": null
       },
       {
-        "id": "evt_rppo6tvuqsjvk5fphyvkvlug74",
+        "id": "evt_ywjhsolxfzxkxfypmk7lflmlzi",
         "schema_version": 1,
         "event_type": "grant.created",
-        "occurred_at": "2026-11-17T02:21:15.466Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.592Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": "policy.manage",
         "resource": {
-          "grantId": "grt_dpyqfcxtqvsr74dxp67ldeyblu",
-          "subjectIdentityId": "idn_kmolx2mhvmjf5i4tqnut2a2f2i"
+          "grantId": "grt_2e6crrermdpmvp4bgqtfsrl6bi",
+          "subjectIdentityId": "idn_ojo5ujjgtv2bxtkux6abbeuwb4"
         },
         "decision": "info",
         "authz": null,
@@ -2643,14 +2643,14 @@
         "client": null
       },
       {
-        "id": "evt_pviw3kte2w2vticzz3gii3yseu",
+        "id": "evt_6bjpzjkytkvwnbhmlvk2yo3l74",
         "schema_version": 1,
         "event_type": "security_control.changed",
-        "occurred_at": "2026-11-17T02:21:15.487Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.616Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
         "action": "organization.manage",
         "resource": {
           "control": "admin-step-up"
@@ -2659,7 +2659,7 @@
         "authz": null,
         "tailnet": null,
         "listener": "ordinary",
-        "request_id": "req_983c9980-6c5c-4288-9848-9fd385fbe917",
+        "request_id": "req_505cecf1-510f-40ca-a650-67921944148d",
         "metadata": {
           "toMode": "report",
           "control": "admin-step-up",
@@ -2678,14 +2678,14 @@
         "client": null
       },
       {
-        "id": "evt_ajue4z2xelvgnaypkiibq6nf5y",
+        "id": "evt_yt5oyb3znxgq7iqctdy3ny45du",
         "schema_version": 1,
         "event_type": "security_control.changed",
-        "occurred_at": "2026-11-17T02:21:15.509Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.638Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": "organization.manage",
         "resource": {
           "control": "admin-step-up"
@@ -2694,7 +2694,7 @@
         "authz": null,
         "tailnet": null,
         "listener": "ordinary",
-        "request_id": "req_9aa0fa25-2a91-4293-a311-461f55948b8c",
+        "request_id": "req_b9a674ec-4b46-483e-9303-e769962b4583",
         "metadata": {
           "toMode": "report",
           "control": "admin-step-up",
@@ -2713,14 +2713,14 @@
         "client": null
       },
       {
-        "id": "evt_fifp7ahvfcdfmp4cvprk6j6u6y",
+        "id": "evt_ibu6tg7gmqwvpiiu537vaka6ta",
         "schema_version": 1,
         "event_type": "security_control.changed",
-        "occurred_at": "2026-11-17T02:21:15.529Z",
-        "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+        "occurred_at": "2026-11-17T08:01:32.659Z",
+        "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
         "authentication_method_id": null,
-        "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
-        "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+        "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
+        "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
         "action": "organization.manage",
         "resource": {
           "control": "admin-step-up"
@@ -2729,7 +2729,7 @@
         "authz": null,
         "tailnet": null,
         "listener": "ordinary",
-        "request_id": "req_12ac6ae7-9555-4133-9526-f78ce06a92ad",
+        "request_id": "req_2f36ea64-87fe-4791-9872-21d36772c891",
         "metadata": {
           "toMode": "enforce",
           "control": "admin-step-up",
@@ -2878,22 +2878,22 @@
       "audit": [
         {
           "action": "project.manage",
-          "actor_identity_id": "idn_h2vyo7nlyfemdys6tbmbrw57q4",
+          "actor_identity_id": "idn_ibw3cip66ld2s4wy6hz4i6kpwq",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_7dotnskrrhj4dq7ykj4l74wqny",
+          "credential_id": "crd_4jfwwgh3izbmoiu5oiqfwisnua",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
-            "projectId": "prj_qkati2n4qooc4ifxesoxior2su"
+            "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke"
           },
           "schema_version": 1,
           "tailnet": null
@@ -2916,23 +2916,23 @@
       },
       "audit": [
         {
-          "action": "project.manage",
-          "actor_identity_id": "idn_q4ikzpueamz3fhn3h44dixdhie",
+          "action": null,
+          "actor_identity_id": "idn_3tpi6t5ghqjcxpo3hducnic2da",
           "authz": {
             "denial": "no-grant",
             "requirements": []
           },
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_ap3riblxgcvat4jdwyee7lt2zm",
+          "credential_id": "crd_nukqeco4k3guuogg22bs7mnrzy",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": null,
-          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
           "request_id": "{requestId}",
           "resource": {
             "environmentId": null,
-            "projectId": "prj_qkati2n4qooc4ifxesoxior2su"
+            "projectId": null
           },
           "schema_version": 1,
           "tailnet": null
@@ -3000,28 +3000,28 @@
           "Retry-After": "300",
           "Content-Type": "application/json"
         },
-        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_qwlpwdbdq2toyrbuh7okypwwfe\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_p2m3zszyci7mf3mjxwxwagvncy\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
           "decision": "deny",
           "event_type": "authorization.denied",
           "listener": "ordinary",
           "metadata": {
-            "freezeId": "ofz_qwlpwdbdq2toyrbuh7okypwwfe",
+            "freezeId": "ofz_p2m3zszyci7mf3mjxwxwagvncy",
             "method": "DELETE",
             "reason": "organization_frozen",
             "route": "/v1/organizations/:org/projects/:project"
           },
-          "organization_id": "org_wxwgadjm4hccq5smeoonxdabfu",
+          "organization_id": "org_j2qkqtcom735if3jc2o57tbgxe",
           "request_id": "{requestId}",
           "resource": {
-            "freezeId": "ofz_qwlpwdbdq2toyrbuh7okypwwfe"
+            "freezeId": "ofz_p2m3zszyci7mf3mjxwxwagvncy"
           },
           "schema_version": 1,
           "tailnet": null
@@ -3040,7 +3040,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_4v5wcd25iddyed63iqd5it3jom\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_zx3t6vepgqp2ridujtb6b7rjse\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
       },
       "audit": [],
       "side": {}
@@ -3056,15 +3056,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"projectId\":\"prj_qkati2n4qooc4ifxesoxior2su\",\"slug\":\"full\",\"environments\":3,\"values\":6,\"versionsErased\":8,\"capabilitiesRevoked\":2,\"targetsRevoked\":2,\"teamLinksRemoved\":1}"
+        "body": "{\"projectId\":\"prj_y6rrxqsb6xbhqlgwedtzjmycke\",\"slug\":\"full\",\"environments\":3,\"values\":6,\"versionsErased\":8,\"capabilitiesRevoked\":2,\"targetsRevoked\":2,\"teamLinksRemoved\":1}"
       },
       "audit": [
         {
           "action": "project.manage",
-          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
           "decision": "info",
           "event_type": "project.deleted",
           "listener": "ordinary",
@@ -3077,10 +3077,10 @@
             "values": 6,
             "versionsErased": 8
           },
-          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
           "request_id": null,
           "resource": {
-            "projectId": "prj_qkati2n4qooc4ifxesoxior2su",
+            "projectId": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
             "projectSlug": "full"
           },
           "schema_version": 1,
@@ -3091,13 +3091,13 @@
         "projects": {
           "updated": [
             {
-              "active_contract_revision_id": "rev_et2px6g2nxphm4lwjwqjlugl4i",
+              "active_contract_revision_id": "rev_oyxp4lho26mtzaluil5n5s6atq",
               "contract_authority": "git",
-              "created_at": "2026-11-17T02:21:14.470Z",
+              "created_at": "2026-11-17T08:01:31.300Z",
               "deleted_at": "{fresh}",
-              "id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
               "name": "FULL",
-              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
               "slug": "full"
             }
           ]
@@ -3105,39 +3105,39 @@
         "environments": {
           "updated": [
             {
-              "created_at": "2026-11-17T02:21:14.499Z",
+              "created_at": "2026-11-17T08:01:31.339Z",
               "deleted_at": "{fresh}",
               "expires_at": null,
-              "id": "env_njahli6f72utsmjrc6fobqwliy",
+              "id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
               "kind": "shared",
               "name": "development",
               "owner_identity_id": null,
               "parent_environment_id": null,
-              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
               "tier": "development"
             },
             {
-              "created_at": "2026-11-17T02:21:14.536Z",
+              "created_at": "2026-11-17T08:01:31.385Z",
               "deleted_at": "{fresh}",
               "expires_at": null,
-              "id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+              "id": "env_762f3y2ldbzntx5pfjwmcozrl4",
               "kind": "shared",
               "name": "production",
               "owner_identity_id": null,
               "parent_environment_id": null,
-              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
               "tier": "production"
             },
             {
-              "created_at": "2026-11-17T02:21:14.566Z",
+              "created_at": "2026-11-17T08:01:31.422Z",
               "deleted_at": "{fresh}",
               "expires_at": null,
-              "id": "env_smiqyndfiakcrfpoajtolnfscy",
+              "id": "env_olhfr6a73wt2hxiie57jvjs7gi",
               "kind": "preview",
               "name": "development/feature-x",
               "owner_identity_id": null,
-              "parent_environment_id": "env_njahli6f72utsmjrc6fobqwliy",
-              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "parent_environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+              "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
               "tier": "development"
             }
           ]
@@ -3145,55 +3145,55 @@
         "env_values": {
           "updated": [
             {
-              "created_at": "2026-11-17T02:21:14.689Z",
+              "created_at": "2026-11-17T08:01:31.612Z",
               "current_version_id": null,
               "deleted_at": "{fresh}",
-              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
-              "id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+              "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+              "id": "val_kgcpsx4kixt5smmrd5d6mrcwpm",
               "item_name": "SECRET_A",
               "retiring_version_id": null,
               "rotation_deadline": null,
               "rotation_started_at": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.767Z",
+              "created_at": "2026-11-17T08:01:31.706Z",
               "current_version_id": null,
               "deleted_at": "{fresh}",
-              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
-              "id": "val_xtoe5ehligqrz6vqapoqofrdeu",
+              "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+              "id": "val_yi5ig2fh2qytqgyijjxi6owaly",
               "item_name": "SECRET_B",
               "retiring_version_id": null,
               "rotation_deadline": null,
               "rotation_started_at": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.800Z",
+              "created_at": "2026-11-17T08:01:31.748Z",
               "current_version_id": null,
               "deleted_at": "{fresh}",
-              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
-              "id": "val_ojefqympv723xtsbas3syz3xee",
+              "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
+              "id": "val_eeo7g6dz2zzl3a6umiver43k34",
               "item_name": "PLAIN",
               "retiring_version_id": null,
               "rotation_deadline": null,
               "rotation_started_at": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.831Z",
+              "created_at": "2026-11-17T08:01:31.789Z",
               "current_version_id": null,
               "deleted_at": "{fresh}",
-              "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
-              "id": "val_hcf3wob4y6jofewbmveyzuerju",
+              "environment_id": "env_762f3y2ldbzntx5pfjwmcozrl4",
+              "id": "val_e6kssk6be5dweq2gtptdfzhju4",
               "item_name": "SECRET_A",
               "retiring_version_id": null,
               "rotation_deadline": null,
               "rotation_started_at": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.864Z",
+              "created_at": "2026-11-17T08:01:31.842Z",
               "current_version_id": null,
               "deleted_at": "{fresh}",
-              "environment_id": "env_smiqyndfiakcrfpoajtolnfscy",
-              "id": "val_bnjhmvr4ubtcuqlmulsw4clyz4",
+              "environment_id": "env_olhfr6a73wt2hxiie57jvjs7gi",
+              "id": "val_np3lqlzcnua6mgwz7rlda2z3z4",
               "item_name": "SECRET_A",
               "retiring_version_id": null,
               "rotation_deadline": null,
@@ -3204,83 +3204,83 @@
         "value_versions": {
           "updated": [
             {
-              "created_at": "2026-11-17T02:21:14.689Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "created_at": "2026-11-17T08:01:31.612Z",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "erased_at": "{fresh}",
-              "id": "ver_enc3dnh5ge3torz42wingzi4g4",
+              "id": "ver_bpa6atxvhvptyd642ciavmrx6i",
               "payload": null,
               "previous_version_id": null,
-              "value_id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+              "value_id": "val_kgcpsx4kixt5smmrd5d6mrcwpm",
               "wrapped_dek": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.731Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "created_at": "2026-11-17T08:01:31.665Z",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "erased_at": "{fresh}",
-              "id": "ver_3hglvrwrdsirpjidmgim3se22i",
+              "id": "ver_jwny32xmxbbklokcahvzo4ulce",
               "payload": null,
-              "previous_version_id": "ver_enc3dnh5ge3torz42wingzi4g4",
-              "value_id": "val_34jpcoagqh6f7h2pgmcnslaz64",
+              "previous_version_id": "ver_bpa6atxvhvptyd642ciavmrx6i",
+              "value_id": "val_kgcpsx4kixt5smmrd5d6mrcwpm",
               "wrapped_dek": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.767Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "created_at": "2026-11-17T08:01:31.706Z",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "erased_at": "{fresh}",
-              "id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
-              "payload": null,
-              "previous_version_id": null,
-              "value_id": "val_xtoe5ehligqrz6vqapoqofrdeu",
-              "wrapped_dek": null
-            },
-            {
-              "created_at": "2026-11-17T02:21:14.800Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
-              "erased_at": "{fresh}",
-              "id": "ver_seymwabgn6n3hnl5dmp4h7spbe",
+              "id": "ver_25axw36iuph2fg4m4u3jxvw3ka",
               "payload": null,
               "previous_version_id": null,
-              "value_id": "val_ojefqympv723xtsbas3syz3xee",
+              "value_id": "val_yi5ig2fh2qytqgyijjxi6owaly",
               "wrapped_dek": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.831Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "created_at": "2026-11-17T08:01:31.748Z",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "erased_at": "{fresh}",
-              "id": "ver_rm6lqudaqljubbomk7n72pomiy",
+              "id": "ver_amdnp3xasfwnmlfpvvcpoyprtq",
               "payload": null,
               "previous_version_id": null,
-              "value_id": "val_hcf3wob4y6jofewbmveyzuerju",
+              "value_id": "val_eeo7g6dz2zzl3a6umiver43k34",
               "wrapped_dek": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.864Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "created_at": "2026-11-17T08:01:31.789Z",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "erased_at": "{fresh}",
-              "id": "ver_d2ohal3emo5lytj2kmlwcwyci4",
+              "id": "ver_5k6c45pgwbbzyoxqchmsmd5tuq",
               "payload": null,
               "previous_version_id": null,
-              "value_id": "val_bnjhmvr4ubtcuqlmulsw4clyz4",
+              "value_id": "val_e6kssk6be5dweq2gtptdfzhju4",
               "wrapped_dek": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.898Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "created_at": "2026-11-17T08:01:31.842Z",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "erased_at": "{fresh}",
-              "id": "ver_57uqfdbvd4hwvsopm42bbrsy2y",
+              "id": "ver_npbtjoeudwti73qwnl67suga54",
               "payload": null,
               "previous_version_id": null,
-              "value_id": "val_g3wd7k4htttcw2sk2rxor4qjyq",
+              "value_id": "val_np3lqlzcnua6mgwz7rlda2z3z4",
               "wrapped_dek": null
             },
             {
-              "created_at": "2026-11-17T02:21:14.928Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "created_at": "2026-11-17T08:01:31.900Z",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "erased_at": "{fresh}",
-              "id": "ver_yxg3fj7g7xhllwc3ukpjuzug2i",
+              "id": "ver_vwcditzdloxrqryfvt5x2epwzy",
               "payload": null,
-              "previous_version_id": "ver_vrnxraqo72n64qo54dtqs3pmjy",
-              "value_id": "val_xtoe5ehligqrz6vqapoqofrdeu",
+              "previous_version_id": null,
+              "value_id": "val_szkpm4m26uwgfycxv7rc4jofcq",
+              "wrapped_dek": null
+            },
+            {
+              "created_at": "2026-11-17T08:01:31.950Z",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
+              "erased_at": "{fresh}",
+              "id": "ver_qsrnla7uwzq3h3ejrxq4zlp54m",
+              "payload": null,
+              "previous_version_id": "ver_25axw36iuph2fg4m4u3jxvw3ka",
+              "value_id": "val_yi5ig2fh2qytqgyijjxi6owaly",
               "wrapped_dek": null
             }
           ]
@@ -3288,21 +3288,21 @@
         "capabilities": {
           "updated": [
             {
-              "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
-              "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+              "agent_identity_id": "idn_jebd7o7ut4nc25oysfvj2rxp6y",
+              "broker_identity_id": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
               "created_at": "2026-02-01T00:00:00.000Z",
-              "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
+              "created_by": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
               "destinations": [
                 "api.example.com:443"
               ],
-              "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+              "environment_id": "env_762f3y2ldbzntx5pfjwmcozrl4",
               "expires_at": "2099-01-01T00:00:00.000Z",
-              "id": "cap_2rvxe6eyq7ekhpapwvkan3u2qm",
+              "id": "cap_pbskmpjlnvchzen2xqkrvumc2e",
               "items": [
                 "SECRET_A"
               ],
-              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+              "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
               "revoked_at": "{fresh}",
               "run_id": "prod-live",
               "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -3313,21 +3313,21 @@
               }
             },
             {
-              "agent_identity_id": "idn_iqaxiisgsalmqzjjt66azugq4q",
-              "broker_identity_id": "idn_5vffsj2ameueagxrqrccpnxpr4",
+              "agent_identity_id": "idn_jebd7o7ut4nc25oysfvj2rxp6y",
+              "broker_identity_id": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
               "created_at": "2026-02-01T00:00:00.000Z",
-              "created_by": "idn_5vffsj2ameueagxrqrccpnxpr4",
+              "created_by": "idn_qgfou7vi4rmmi6lhmrqd6ppgqe",
               "destinations": [
                 "api.example.com:443"
               ],
-              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+              "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
               "expires_at": "2099-01-01T00:00:00.000Z",
-              "id": "cap_nfo27mymnpwnaqz3q77ufcibk4",
+              "id": "cap_cywjfrjtsyjhhpdrrclcujpnyi",
               "items": [
                 "SECRET_A"
               ],
-              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+              "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
               "revoked_at": "{fresh}",
               "run_id": "dev-live",
               "secret_hash": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -3343,17 +3343,17 @@
           "updated": [
             {
               "canonical_destination": "coolify:app-dev",
-              "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+              "connection_id": "pcn_pwa2ingctgchgb73yhz5y2lxem",
               "created_at": "2026-02-01T00:00:00.000Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "destination": {
                 "application": "app-dev"
               },
               "disabled_reason": null,
-              "environment_id": "env_njahli6f72utsmjrc6fobqwliy",
+              "environment_id": "env_qco6k4pzj2mxywhpgwwirmg5wa",
               "failure_count": 0,
               "generation": 4,
-              "id": "snt_w7sdljw6n7ycnrhcqtyofcy64i",
+              "id": "snt_csxrq4yarjoujshh4zhdq3o6xe",
               "last_attempt_at": null,
               "last_drift_at": null,
               "last_drift_count": null,
@@ -3366,8 +3366,8 @@
               "mapping": {},
               "needs_sync": true,
               "next_attempt_at": null,
-              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+              "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
               "redeploy": false,
               "redeploy_owed": 0,
               "redeploy_paid": 0,
@@ -3380,17 +3380,17 @@
             },
             {
               "canonical_destination": "coolify:app-prod",
-              "connection_id": "pcn_vunohba44tqos5wvvwjgqw7jdi",
+              "connection_id": "pcn_pwa2ingctgchgb73yhz5y2lxem",
               "created_at": "2026-02-01T00:00:00.000Z",
-              "created_by": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "created_by": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "destination": {
                 "application": "app-prod"
               },
               "disabled_reason": null,
-              "environment_id": "env_br2gtxmi6npwpxpdrf7wypej6m",
+              "environment_id": "env_762f3y2ldbzntx5pfjwmcozrl4",
               "failure_count": 0,
               "generation": 4,
-              "id": "snt_enxxtxspv2fvkqu42ixojr4sv4",
+              "id": "snt_37s2opikijelmjrvc5j5kx7vci",
               "last_attempt_at": null,
               "last_drift_at": null,
               "last_drift_count": null,
@@ -3403,8 +3403,8 @@
               "mapping": {},
               "needs_sync": true,
               "next_attempt_at": null,
-              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
-              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
+              "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
+              "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
               "redeploy": false,
               "redeploy_owed": 0,
               "redeploy_paid": 0,
@@ -3420,9 +3420,9 @@
         "team_projects": {
           "deleted": [
             {
-              "created_at": "2026-11-17T02:21:15.148Z",
-              "project_id": "prj_qkati2n4qooc4ifxesoxior2su",
-              "team_id": "tem_46kcxutp2vwsay4uaydfsw5uie"
+              "created_at": "2026-11-17T08:01:32.223Z",
+              "project_id": "prj_y6rrxqsb6xbhqlgwedtzjmycke",
+              "team_id": "tem_lwimbyhl7hefvwiocb7mzmcgu4"
             }
           ]
         }
@@ -3487,7 +3487,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"items\":[{\"id\":\"prj_xwxumzzcdzzcrty5enwm7ie7ki\",\"organizationId\":\"org_strudq63wz4o5ezbtlkao46xma\",\"slug\":\"empty\",\"name\":\"EMPTY\",\"contractAuthority\":\"git\",\"activeContractRevisionId\":null,\"createdAt\":\"2026-11-17T02:21:15.065Z\"},{\"id\":\"prj_7bm35l2ba5uusfl35ejwudpjkq\",\"organizationId\":\"org_strudq63wz4o5ezbtlkao46xma\",\"slug\":\"keep\",\"name\":\"KEEP\",\"contractAuthority\":\"git\",\"activeContractRevisionId\":null,\"createdAt\":\"2026-11-17T02:21:15.083Z\"}],\"nextCursor\":null}"
+        "body": "{\"items\":[{\"id\":\"prj_vn6e6hw4mmq2uy2cgif25zia5m\",\"organizationId\":\"org_73v7psgje6343fufe5pu6qtxpm\",\"slug\":\"empty\",\"name\":\"EMPTY\",\"contractAuthority\":\"git\",\"activeContractRevisionId\":null,\"createdAt\":\"2026-11-17T08:01:32.121Z\"},{\"id\":\"prj_pwrzymdh76tetoquxscdbdtjh4\",\"organizationId\":\"org_73v7psgje6343fufe5pu6qtxpm\",\"slug\":\"keep\",\"name\":\"KEEP\",\"contractAuthority\":\"git\",\"activeContractRevisionId\":null,\"createdAt\":\"2026-11-17T08:01:32.150Z\"}],\"nextCursor\":null}"
       },
       "audit": [],
       "side": {}
@@ -3503,7 +3503,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"items\":[{\"projectId\":\"prj_7bm35l2ba5uusfl35ejwudpjkq\"}],\"nextCursor\":null}"
+        "body": "{\"items\":[{\"projectId\":\"prj_pwrzymdh76tetoquxscdbdtjh4\"}],\"nextCursor\":null}"
       },
       "audit": [],
       "side": {}
@@ -3519,15 +3519,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"projectId\":\"prj_xwxumzzcdzzcrty5enwm7ie7ki\",\"slug\":\"empty\",\"environments\":0,\"values\":0,\"versionsErased\":0,\"capabilitiesRevoked\":0,\"targetsRevoked\":0,\"teamLinksRemoved\":0}"
+        "body": "{\"projectId\":\"prj_vn6e6hw4mmq2uy2cgif25zia5m\",\"slug\":\"empty\",\"environments\":0,\"values\":0,\"versionsErased\":0,\"capabilitiesRevoked\":0,\"targetsRevoked\":0,\"teamLinksRemoved\":0}"
       },
       "audit": [
         {
           "action": "project.manage",
-          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
           "decision": "info",
           "event_type": "project.deleted",
           "listener": "ordinary",
@@ -3540,10 +3540,10 @@
             "values": 0,
             "versionsErased": 0
           },
-          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
           "request_id": null,
           "resource": {
-            "projectId": "prj_xwxumzzcdzzcrty5enwm7ie7ki",
+            "projectId": "prj_vn6e6hw4mmq2uy2cgif25zia5m",
             "projectSlug": "empty"
           },
           "schema_version": 1,
@@ -3556,11 +3556,11 @@
             {
               "active_contract_revision_id": null,
               "contract_authority": "git",
-              "created_at": "2026-11-17T02:21:15.065Z",
+              "created_at": "2026-11-17T08:01:32.121Z",
               "deleted_at": "{fresh}",
-              "id": "prj_xwxumzzcdzzcrty5enwm7ie7ki",
+              "id": "prj_vn6e6hw4mmq2uy2cgif25zia5m",
               "name": "EMPTY",
-              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
               "slug": "empty"
             }
           ]
@@ -3583,22 +3583,22 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{prj#1}\",\"organizationId\":\"org_strudq63wz4o5ezbtlkao46xma\",\"slug\":\"full\",\"name\":\"Full again\",\"contractAuthority\":\"managed\",\"activeContractRevisionId\":null,\"createdAt\":\"{time}\"}"
+        "body": "{\"id\":\"{prj#1}\",\"organizationId\":\"org_73v7psgje6343fufe5pu6qtxpm\",\"slug\":\"full\",\"name\":\"Full again\",\"contractAuthority\":\"managed\",\"activeContractRevisionId\":null,\"createdAt\":\"{time}\"}"
       },
       "audit": [
         {
           "action": null,
-          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
           "decision": "info",
           "event_type": "project.created",
           "listener": "ordinary",
           "metadata": {
             "contractAuthority": "managed"
           },
-          "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+          "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
           "request_id": null,
           "resource": {
             "projectId": "{prj#1}",
@@ -3618,7 +3618,7 @@
               "deleted_at": null,
               "id": "{prj#1}",
               "name": "Full again",
-              "organization_id": "org_strudq63wz4o5ezbtlkao46xma",
+              "organization_id": "org_73v7psgje6343fufe5pu6qtxpm",
               "slug": "full"
             }
           ]
@@ -3636,15 +3636,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"projectId\":\"prj_h44yrfcvnlt6e67oex6ulp4fja\",\"slug\":\"rp\",\"environments\":1,\"values\":0,\"versionsErased\":0,\"capabilitiesRevoked\":0,\"targetsRevoked\":0,\"teamLinksRemoved\":0}"
+        "body": "{\"projectId\":\"prj_vwdi5ckjnuiccbq22mbw3zlxyq\",\"slug\":\"rp\",\"environments\":1,\"values\":0,\"versionsErased\":0,\"capabilitiesRevoked\":0,\"targetsRevoked\":0,\"teamLinksRemoved\":0}"
       },
       "audit": [
         {
           "action": "project.manage",
-          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+          "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
           "decision": "info",
           "event_type": "project.deleted",
           "listener": "ordinary",
@@ -3657,10 +3657,10 @@
             "values": 0,
             "versionsErased": 0
           },
-          "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+          "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
           "request_id": null,
           "resource": {
-            "projectId": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+            "projectId": "prj_vwdi5ckjnuiccbq22mbw3zlxyq",
             "projectSlug": "rp"
           },
           "schema_version": 1,
@@ -3673,11 +3673,11 @@
             {
               "active_contract_revision_id": null,
               "contract_authority": "git",
-              "created_at": "2026-11-17T02:21:15.238Z",
+              "created_at": "2026-11-17T08:01:32.326Z",
               "deleted_at": "{fresh}",
-              "id": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+              "id": "prj_vwdi5ckjnuiccbq22mbw3zlxyq",
               "name": "RP",
-              "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+              "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
               "slug": "rp"
             }
           ]
@@ -3685,15 +3685,15 @@
         "environments": {
           "updated": [
             {
-              "created_at": "2026-11-17T02:21:15.258Z",
+              "created_at": "2026-11-17T08:01:32.350Z",
               "deleted_at": "{fresh}",
               "expires_at": null,
-              "id": "env_yyhqsu7inhpnikvm7gwzcg2f74",
+              "id": "env_zjhw5vxry62255dhlcv37dryi4",
               "kind": "shared",
               "name": "development",
               "owner_identity_id": null,
               "parent_environment_id": null,
-              "project_id": "prj_h44yrfcvnlt6e67oex6ulp4fja",
+              "project_id": "prj_vwdi5ckjnuiccbq22mbw3zlxyq",
               "tier": "development"
             }
           ]
@@ -3711,7 +3711,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#1} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#1}\",\"operation\":\"project.delete\",\"organization\":{\"id\":\"org_yc7pzijmirml54aqh7jjpufkrm\",\"slug\":\"enf\",\"name\":\"Enf\"},\"summary\":{\"title\":\"Delete the project \\\"EP\\\" (prj_d5fdeh72xeh7oceg4wiwa3rb3a), slug \\\"ep\\\", now: 2 environments and their values erased. This cannot be undone\",\"changes\":[]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#1}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#1} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#1}\",\"operation\":\"project.delete\",\"organization\":{\"id\":\"org_pnhpgvbbzy7zwmphw252ti43ru\",\"slug\":\"enf\",\"name\":\"Enf\"},\"summary\":{\"title\":\"Delete the project \\\"EP\\\" (prj_dbbii77tbqcr3q2ekbxhm3wmze), slug \\\"ep\\\", now: 2 environments and their values erased. This cannot be undone\",\"changes\":[]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#1}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
       },
       "audit": [],
       "side": {
@@ -3722,28 +3722,28 @@
               "approved_at": null,
               "approved_with_passkey_id": null,
               "auth_session_id": null,
-              "body_hash": "hmac-v1:778b14fb7d1d22b83bca64f8c69f6424791fcd9281842ffaada9da0f0ee1655e",
+              "body_hash": "hmac-v1:71aed4a18f013f9056115069d36ff2880846ef8215d9a928ac5030913cbe8518",
               "close_reason": null,
               "closed_at": null,
               "consumed_at": null,
               "created_at": "{fresh}",
-              "credential_id": "crd_f3x3tabps54gptjhotblsdrdem",
+              "credential_id": "crd_elswqcrstfanmlq7fkyubwl7ji",
               "expected_version": null,
               "expires_at": "{fresh}",
               "id": "{apr#1}",
-              "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "last_polled_at": null,
               "operation": "project.delete",
-              "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+              "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
               "origin": "cli",
               "poll_interval": 5,
-              "query_hash": "hmac-v1:cb3dcc9afc45c7442e2fa70dc53ce546ae82cb198c1d0d13ec7e17384902183c",
+              "query_hash": "hmac-v1:0e1a88fe6188fd71d6a4780f88a69d60e10a4bebee76e23048ad271f6afc9911",
               "summary": {
                 "changes": [],
-                "title": "Delete the project \"EP\" (prj_d5fdeh72xeh7oceg4wiwa3rb3a), slug \"ep\", now: 2 environments and their values erased. This cannot be undone"
+                "title": "Delete the project \"EP\" (prj_dbbii77tbqcr3q2ekbxhm3wmze), slug \"ep\", now: 2 environments and their values erased. This cannot be undone"
               },
               "target": {
-                "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a"
+                "projectId": "prj_dbbii77tbqcr3q2ekbxhm3wmze"
               }
             }
           ]
@@ -3818,15 +3818,15 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"projectId\":\"prj_d5fdeh72xeh7oceg4wiwa3rb3a\",\"slug\":\"ep\",\"environments\":2,\"values\":0,\"versionsErased\":0,\"capabilitiesRevoked\":0,\"targetsRevoked\":0,\"teamLinksRemoved\":0}"
+        "body": "{\"projectId\":\"prj_dbbii77tbqcr3q2ekbxhm3wmze\",\"slug\":\"ep\",\"environments\":2,\"values\":0,\"versionsErased\":0,\"capabilitiesRevoked\":0,\"targetsRevoked\":0,\"teamLinksRemoved\":0}"
       },
       "audit": [
         {
           "action": "project.manage",
-          "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+          "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
           "authz": null,
           "client": "varlatch CLI 0.22.0 on Linux",
-          "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
+          "credential_id": "crd_dvlswsut6qxmqh7cam63xcplki",
           "decision": "info",
           "event_type": "project.deleted",
           "listener": "ordinary",
@@ -3842,10 +3842,10 @@
             "values": 0,
             "versionsErased": 0
           },
-          "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+          "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
           "request_id": null,
           "resource": {
-            "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+            "projectId": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
             "projectSlug": "ep"
           },
           "schema_version": 1,
@@ -3858,11 +3858,11 @@
             {
               "active_contract_revision_id": null,
               "contract_authority": "git",
-              "created_at": "2026-11-17T02:21:15.278Z",
+              "created_at": "2026-11-17T08:01:32.372Z",
               "deleted_at": "{fresh}",
-              "id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+              "id": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
               "name": "EP",
-              "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+              "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
               "slug": "ep"
             }
           ]
@@ -3870,27 +3870,27 @@
         "environments": {
           "updated": [
             {
-              "created_at": "2026-11-17T02:21:15.296Z",
+              "created_at": "2026-11-17T08:01:32.394Z",
               "deleted_at": "{fresh}",
               "expires_at": null,
-              "id": "env_aad7bkhnmsfqj6fp2caepmn3wy",
+              "id": "env_3c7jymz66w46ylsgcg322sbbcm",
               "kind": "shared",
               "name": "development",
               "owner_identity_id": null,
               "parent_environment_id": null,
-              "project_id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+              "project_id": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
               "tier": "development"
             },
             {
-              "created_at": "2026-11-17T02:21:15.316Z",
+              "created_at": "2026-11-17T08:01:32.418Z",
               "deleted_at": "{fresh}",
               "expires_at": null,
-              "id": "env_hujfqmpbe6yhk76fdgz32cnhna",
+              "id": "env_lpshikwuyfafu2mtkj24cg6chm",
               "kind": "shared",
               "name": "production",
               "owner_identity_id": null,
               "parent_environment_id": null,
-              "project_id": "prj_d5fdeh72xeh7oceg4wiwa3rb3a",
+              "project_id": "prj_dbbii77tbqcr3q2ekbxhm3wmze",
               "tier": "production"
             }
           ]
@@ -3902,28 +3902,28 @@
               "approved_at": "2026-01-10T00:01:00.000Z",
               "approved_with_passkey_id": "PasskeyConf001",
               "auth_session_id": null,
-              "body_hash": "hmac-v1:778b14fb7d1d22b83bca64f8c69f6424791fcd9281842ffaada9da0f0ee1655e",
+              "body_hash": "hmac-v1:71aed4a18f013f9056115069d36ff2880846ef8215d9a928ac5030913cbe8518",
               "close_reason": null,
               "closed_at": null,
               "consumed_at": "{fresh}",
               "created_at": "2026-01-10T00:00:00.000Z",
-              "credential_id": "crd_qruv76njtosmo7tlnzayoy42xy",
+              "credential_id": "crd_dvlswsut6qxmqh7cam63xcplki",
               "expected_version": null,
               "expires_at": "2099-01-01T00:00:00.000Z",
               "id": "apr_epaaaaaaaaaaaaaaaaaaaaaaaa",
-              "identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+              "identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
               "last_polled_at": null,
               "operation": "project.delete",
-              "organization_id": "org_yc7pzijmirml54aqh7jjpufkrm",
+              "organization_id": "org_pnhpgvbbzy7zwmphw252ti43ru",
               "origin": "cli",
               "poll_interval": 5,
-              "query_hash": "hmac-v1:cb3dcc9afc45c7442e2fa70dc53ce546ae82cb198c1d0d13ec7e17384902183c",
+              "query_hash": "hmac-v1:0e1a88fe6188fd71d6a4780f88a69d60e10a4bebee76e23048ad271f6afc9911",
               "summary": {
                 "changes": [],
-                "title": "Delete the project \"EP\" (prj_d5fdeh72xeh7oceg4wiwa3rb3a), slug \"ep\", now: 2 environments and their values erased. This cannot be undone"
+                "title": "Delete the project \"EP\" (prj_dbbii77tbqcr3q2ekbxhm3wmze), slug \"ep\", now: 2 environments and their values erased. This cannot be undone"
               },
               "target": {
-                "projectId": "prj_d5fdeh72xeh7oceg4wiwa3rb3a"
+                "projectId": "prj_dbbii77tbqcr3q2ekbxhm3wmze"
               }
             }
           ]
@@ -3960,7 +3960,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"items\":[{\"id\":\"prj_oqk5kl4ecpddujqqjeapmqg22y\",\"organizationId\":\"org_yc7pzijmirml54aqh7jjpufkrm\",\"slug\":\"ep2\",\"name\":\"EP2\",\"contractAuthority\":\"git\",\"activeContractRevisionId\":null,\"createdAt\":\"2026-11-17T02:21:15.335Z\"}],\"nextCursor\":null}"
+        "body": "{\"items\":[{\"id\":\"prj_fas6en4hrxxdpniamfp7lhgalq\",\"organizationId\":\"org_pnhpgvbbzy7zwmphw252ti43ru\",\"slug\":\"ep2\",\"name\":\"EP2\",\"contractAuthority\":\"git\",\"activeContractRevisionId\":null,\"createdAt\":\"2026-11-17T08:01:32.440Z\"}],\"nextCursor\":null}"
       },
       "audit": [],
       "side": {}
@@ -3968,12 +3968,12 @@
   ],
   "counters": [
     {
-      "actor_identity_id": "idn_klxvmokh74e7qwb5g4goesb3mi",
+      "actor_identity_id": "idn_lbh5ix4vejiwrkqev6343ar6g4",
       "config_version": 1,
       "control": "admin-step-up",
       "count": 1,
       "operation": "project.delete",
-      "organization_id": "org_konfc3vikvz5xvgp6tc2dxhnru",
+      "organization_id": "org_7pyhxle6dr4dd23e5wte4gqkhm",
       "reason": "no-approval"
     }
   ]
