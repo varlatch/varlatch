@@ -10,12 +10,17 @@ import (
 
 // HomeDir is the home directory as Node.js's os.homedir() finds it
 // (libuv's uv_os_homedir): USERPROFILE, else the profile directory of the
-// process's user. An empty USERPROFILE counts as unset, so the default
-// store is never placed relative to the working directory.
+// process's user. An empty USERPROFILE counts as unset.
 func HomeDir(env Env) (string, error) {
 	if home := getenv(env, "USERPROFILE"); home != "" {
 		return home, nil
 	}
+	return systemHomeDir()
+}
+
+// systemHomeDir is the profile directory of the process's user; a
+// variable so tests can replace it.
+var systemHomeDir = func() (string, error) {
 	token, err := windows.OpenCurrentProcessToken()
 	if err != nil {
 		return "", err

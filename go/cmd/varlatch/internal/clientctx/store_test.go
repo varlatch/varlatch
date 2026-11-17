@@ -47,12 +47,20 @@ func TestEmptyHomeIsUnset(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		homeVar = "USERPROFILE"
 	}
-	home, err := HomeDir(mapEnv{homeVar: ""})
-	if err != nil {
-		t.Skipf("no home directory for this user: %v", err)
+	saved := systemHomeDir
+	defer func() { systemHomeDir = saved }()
+	systemHomeDir = func() (string, error) { return "/from-the-system", nil }
+	for _, env := range []mapEnv{{homeVar: ""}, {}} {
+		if home, err := HomeDir(env); err != nil || home != "/from-the-system" {
+			t.Errorf("%v: %q (%v), want the system's home directory", env, home, err)
+		}
+		dir, err := ConfigDir(env)
+		if want := filepath.Join("/from-the-system", ".config", "varlatch"); err != nil || dir != want {
+			t.Errorf("%v: configuration directory %q (%v), want %q", env, dir, err, want)
+		}
 	}
-	if home == "" || !filepath.IsAbs(home) {
-		t.Fatalf("an empty %s gave %q, want the user's own home directory", homeVar, home)
+	if home, _ := HomeDir(mapEnv{homeVar: "/set"}); home != "/set" {
+		t.Errorf("a set %s gave %q", homeVar, home)
 	}
 }
 

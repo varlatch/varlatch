@@ -57,8 +57,7 @@ func defaultConfigDir(env Env) (string, error) {
 }
 
 // ConfigDir is the configuration directory: VARLATCH_CONFIG_DIR, else the
-// default. An empty value counts as unset, so the store is never placed
-// relative to the working directory.
+// default. An empty value counts as unset.
 func ConfigDir(env Env) (string, error) {
 	if dir := getenv(env, "VARLATCH_CONFIG_DIR"); dir != "" {
 		return dir, nil
