@@ -221,6 +221,22 @@ describe("replacements", () => {
     expect(snapshot(root)).toEqual({});
   });
 
+  it("--remove reports a hard-linked pair of CLAUDE.md files once each", () => {
+    const root = fresh();
+    writeAt(join(root, "AGENTS.md"), "# Rules\n");
+    runInstall({ scope: "project", root, version: "1", agents: ["claude-code"], mode: "install" });
+    mkdirSync(join(root, ".claude"), { recursive: true });
+    linkSync(join(root, "CLAUDE.md"), join(root, ".claude", "CLAUDE.md"));
+    const result = runInstall({ scope: "project", root, version: "1", agents: [], mode: "remove" });
+    expect(result.changes.filter((c) => c.path.endsWith("CLAUDE.md"))).toEqual([
+      { path: "CLAUDE.md", action: "remove" },
+      { path: ".claude/CLAUDE.md", action: "remove" },
+    ]);
+    expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(root, ".claude", "CLAUDE.md"))).toBe(false);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe("# Rules\n");
+  });
+
   it("refuse, before anything changes, a file with a name the CLI cannot see", () => {
     for (const alsoClaude of [false, true]) {
       const base = fresh();

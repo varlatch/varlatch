@@ -5,7 +5,7 @@ import { CONTRACT_SCHEMA_VERSION, LATEST_SEMANTICS_VERSION, type ConfigurationCo
 import type { ResolvedContext } from "@varlatch/context";
 import type { Environment, Project } from "@varlatch/protocol";
 import type { VarlatchClient } from "@varlatch/sdk";
-import { VarlatchApiError } from "@varlatch/sdk";
+import { VarlatchApiError, maskUserinfo } from "@varlatch/sdk";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
 import { printable, safeApiCode } from "./safeText.js";
 import { checkEntries, formatRows, ImportError, planRows, readActiveContract, readPresent, readSource, storeValues, finishSource, type Row } from "./importCommand.js";
@@ -141,6 +141,10 @@ export async function guidedInit(raw: GuidedInitDeps): Promise<number> {
   }
 }
 
+/** init's refusal of a server URL with a user name or password (64), for the flag path and the guided one. */
+export const INIT_CREDENTIALED_SERVER =
+  "varlatch init: a server URL with a user name or password can't be written to varlatch.toml; give the server's address without them. Nothing was written.";
+
 async function guidedSteps(deps: GuidedInitDeps, phase: Phase): Promise<number> {
   const { prompt, out } = deps;
   const command = (line: string) => out(`  $ ${line}`);
@@ -159,7 +163,13 @@ async function guidedSteps(deps: GuidedInitDeps, phase: Phase): Promise<number> 
       }
     }
   }
-  out(`Server: ${server}`);
+  // varlatch.toml is committed: a user name or password in the URL never
+  // goes there, so the run stops before signing in or printing it.
+  if (maskUserinfo(server) !== server) {
+    deps.err(INIT_CREDENTIALED_SERVER);
+    return EXIT.usage;
+  }
+  out(`Server: ${maskUserinfo(server)}`);
   phase.label = "signing in";
   const api = await deps.signIn(server);
   phase.label = "reading or creating the organization";
@@ -235,7 +245,7 @@ async function guidedSteps(deps: GuidedInitDeps, phase: Phase): Promise<number> 
   // 5. varlatch.toml and the agent files.
   phase.label = "writing varlatch.toml";
   await deps.writeRepository({ server, organization, project, defaultEnvironment });
-  command(`varlatch init --org ${organization} --project ${project} --server ${server}${defaultEnvironment !== "development" ? ` --default-environment ${defaultEnvironment}` : ""}`);
+  command(`varlatch init --org ${organization} --project ${project} --server ${maskUserinfo(server)}${defaultEnvironment !== "development" ? ` --default-environment ${defaultEnvironment}` : ""}`);
 
   // 6. .env files: plan everything first.
   const files = findEnvFiles(deps.cwd);
@@ -479,7 +489,7 @@ export async function guidedSignIn(server: string, parts: SignInParts): Promise<
   const api = parts.client(issued.token);
   await api.listOrganizations(); // verifies the credential before it is stored
   parts.save({ token: issued.token, issuedAt: new Date().toISOString(), expiresAt: issued.expiresAt, credentialId: issued.id });
-  parts.out(`Signed in to ${server}.`);
+  parts.out(`Signed in to ${maskUserinfo(server)}.`);
   return api;
 }
 

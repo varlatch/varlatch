@@ -2719,7 +2719,7 @@ async function main(): Promise<void> {
             contractAuthority: has(args, "--managed") ? "managed" : "git",
           });
           console.log(safe`Project ${project.slug} created in ${org} (${project.contractAuthority} contract authority).`);
-          console.log(safe`Set up a repo with: varlatch init --org ${org} --project ${project.slug} --server ${server}`);
+          console.log(safe`Set up a repo with: varlatch init --org ${org} --project ${project.slug} --server ${maskUserinfo(server)}`);
           return;
         }
         const ctx = context(args);
