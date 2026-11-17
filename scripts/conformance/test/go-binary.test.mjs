@@ -79,7 +79,8 @@ test("a real varlatchd: up, the operations, restart with its data, the request l
 // The probe against a real varlatchd: every operation expect/go-binary.json
 // lists answers the stub, so nothing is stale; an operation with a handler
 // (here /v1/meta, which this varlatchd serves) listed as lacking is stale,
-// named, and fails the run.
+// named, and fails the run. serve-cli stays unbuilt until step 6, so it is
+// the one that is not stale.
 test("the stale-lacks probe against a real varlatchd", needBinary, async () => {
   const lacks = [...lacksFor(JSON.parse(readFileSync(join(here, "..", "expect", "go-binary.json"), "utf8")), "go-binary").keys()];
   let state;
@@ -87,7 +88,7 @@ test("the stale-lacks probe against a real varlatchd", needBinary, async () => {
     state = await goBinary.up({ argument: binary, onState: (s) => (state = s) });
     const ask = (list) => probeLacks({ inventory, openapi, lacks: list, origin: state.origin, target: goBinary, state });
     assert.deepEqual(await ask(lacks), []);
-    const stale = await ask(["getGitHubApp", "getMeta", "whoami"]);
+    const stale = await ask(["serve-cli", "getMeta", "whoami"]);
     assert.deepEqual(stale.map((s) => s.operation), ["getMeta", "whoami"]);
     assert.match(stale[0].why, /answered 200, not 501 NOT_IMPLEMENTED_YET/);
     // The runner turns a stale entry into a problem: the run fails.
