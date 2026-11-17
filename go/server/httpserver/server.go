@@ -260,6 +260,9 @@ var BuiltOperations = []string{
 	// Step 4.9b: Platform Connections (connections.go).
 	listConnectionsPattern, createConnectionPattern, checkPlatformPattern, listDestinationsPattern,
 	getConnectionPattern, replaceCredentialPattern, revokeConnectionPattern,
+	// Step 4.9c: Sync Targets (targets.go).
+	listOrgSyncTargetsPattern, listSyncTargetsPattern, createSyncTargetPattern, getSyncTargetPattern,
+	updateSyncTargetPattern, revokeSyncTargetPattern, pauseSyncTargetPattern, resumeSyncTargetPattern,
 }
 
 // Server is the handler.

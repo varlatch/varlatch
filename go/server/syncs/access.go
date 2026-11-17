@@ -253,7 +253,7 @@ func (s *Service) Check(ctx context.Context, req Request, org authz.Organization
 	var dest *vsync.Destination
 	for _, m := range destination {
 		if m.Value != nil && m.Value != "" {
-			d, err := c.adapter.CanonicalizeDestination(syncObject(destination))
+			d, err := c.adapter.CanonicalizeDestination(SyncObject(destination))
 			if err != nil {
 				return nil, nil, validation(err)
 			}
@@ -326,8 +326,8 @@ func resourceObject(connectionID string) jsvalue.Object {
 	return jsvalue.Object{{Key: "connectionId", Value: connectionID}}
 }
 
-// syncObject is a request's destination record for the adapters.
-func syncObject(o jsvalue.Object) vsync.Object {
+// SyncObject is a request's destination record for the adapters.
+func SyncObject(o jsvalue.Object) vsync.Object {
 	out := make(vsync.Object, len(o))
 	for i, m := range o {
 		out[i] = vsync.Member{Key: m.Key, Value: syncValue(m.Value)}
@@ -338,7 +338,7 @@ func syncObject(o jsvalue.Object) vsync.Object {
 func syncValue(v any) any {
 	switch x := v.(type) {
 	case jsvalue.Object:
-		return syncObject(x)
+		return SyncObject(x)
 	case []any:
 		out := make([]any, len(x))
 		for i, e := range x {

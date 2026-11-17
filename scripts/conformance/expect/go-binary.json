@@ -24,10 +24,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "createSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "deleteProject": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -48,10 +44,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "getSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "importGitHubApp": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -68,18 +60,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "listOrgSyncTargets": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "listSyncTargets": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "pauseSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "pushSyncTarget": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -92,14 +72,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "resumeSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "revokeSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "rotateGitHubAppKey": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
@@ -109,10 +81,6 @@
         "step": "ADR-0059 step 4"
       },
       "startGitHubAppRegistration": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "updateSyncTarget": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       }

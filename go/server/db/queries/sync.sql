@@ -105,3 +105,97 @@ ON CONFLICT (organization_id, identity_id, kind, resource_id) DO UPDATE SET
     ORDER BY value)),
   first_at = min(member_integrations.first_at, excluded.first_at),
   last_at = max(member_integrations.last_at, excluded.last_at);
+
+-- Sync Targets (ADR-0031 sections 1 to 6, ADR-0050; ADR-0059 step 4.9c).
+
+-- name: OrganizationTargets :many
+-- listTargets of an Organization: oldest first.
+SELECT id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping,
+       remove_orphans, redeploy, state, disabled_reason, failure_count, needs_sync, next_attempt_at, last_attempt_at,
+       last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at, redeploy_owed, redeploy_paid,
+       last_drift_at, last_drift_count, last_drift_names, last_drift_event_id
+FROM sync_targets WHERE organization_id = ? AND revoked_at IS NULL ORDER BY created_at, id;
+
+-- name: EnvironmentTargets :many
+-- listTargets of an environment: oldest first.
+SELECT id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping,
+       remove_orphans, redeploy, state, disabled_reason, failure_count, needs_sync, next_attempt_at, last_attempt_at,
+       last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at, redeploy_owed, redeploy_paid,
+       last_drift_at, last_drift_count, last_drift_names, last_drift_event_id
+FROM sync_targets WHERE organization_id = ? AND environment_id = ? AND revoked_at IS NULL ORDER BY created_at, id;
+
+-- name: LiveTarget :one
+-- getTarget: a live Target of the Organization.
+SELECT id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping,
+       remove_orphans, redeploy, state, disabled_reason, failure_count, needs_sync, next_attempt_at, last_attempt_at,
+       last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at, redeploy_owed, redeploy_paid,
+       last_drift_at, last_drift_count, last_drift_names, last_drift_event_id
+FROM sync_targets WHERE id = ? AND organization_id = ? AND revoked_at IS NULL;
+
+-- name: TargetLedger :many
+-- targetLedger: per-name delivery state, never fingerprints or values.
+SELECT dest_name, state, updated_at, last_error FROM sync_ledger WHERE target_id = ? ORDER BY dest_name;
+
+-- name: AnyConnection :one
+-- lockConnectionsAndApps' read of one Connection, revoked or not.
+SELECT id, organization_id, platform, base_identity, name, created_at, revoked_at, version, updated_at,
+       credential_expires_at, credential_expiry_seen_at, credential_kind, github_app_id, github_installation_id
+FROM platform_connections WHERE id = ? AND organization_id = ?;
+
+-- name: LiveGitHubApp :one
+SELECT count(*) FROM github_apps WHERE id = ? AND organization_id = ? AND removed_at IS NULL;
+
+-- name: DestinationClaimed :one
+-- The destination claim (sync_targets_destination_claim): another live
+-- Target with the canonical destination.
+SELECT count(*) FROM sync_targets WHERE canonical_destination = sqlc.arg(canonical) AND revoked_at IS NULL AND id <> sqlc.arg(id);
+
+-- name: InsertTarget :exec
+INSERT INTO sync_targets (id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination,
+  mapping, remove_orphans, redeploy, created_by, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: UpdateTarget :exec
+-- updateTarget: queued for a converge; a destination change takes the
+-- notes and drift observed at the old one, and settles an owed redeploy
+-- (as does turning redeploys off).
+UPDATE sync_targets
+SET connection_id = sqlc.arg(connection_id), destination = sqlc.arg(destination), canonical_destination = sqlc.arg(canonical),
+    mapping = sqlc.arg(mapping), remove_orphans = sqlc.arg(remove_orphans), redeploy = sqlc.arg(redeploy), needs_sync = 1,
+    next_attempt_at = NULL, version = version + 1, updated_at = sqlc.arg(at),
+    last_notes = CASE WHEN CAST(sqlc.arg(changed) AS INTEGER) <> 0 THEN NULL ELSE last_notes END,
+    last_drift_at = CASE WHEN CAST(sqlc.arg(changed) AS INTEGER) <> 0 THEN NULL ELSE last_drift_at END,
+    last_drift_count = CASE WHEN CAST(sqlc.arg(changed) AS INTEGER) <> 0 THEN NULL ELSE last_drift_count END,
+    last_drift_names = CASE WHEN CAST(sqlc.arg(changed) AS INTEGER) <> 0 THEN NULL ELSE last_drift_names END,
+    last_drift_event_id = CASE WHEN CAST(sqlc.arg(changed) AS INTEGER) <> 0 THEN NULL ELSE last_drift_event_id END,
+    redeploy_paid = CASE WHEN CAST(sqlc.arg(changed) AS INTEGER) <> 0 OR NOT sqlc.arg(redeploy) THEN redeploy_owed ELSE redeploy_paid END
+WHERE id = sqlc.arg(id);
+
+-- name: FenceTarget :exec
+-- A fence: a run holding the old generation sends and records nothing more.
+UPDATE sync_targets SET generation = generation + 1, lease_expires_at = NULL WHERE id = ?;
+
+-- name: FenceTargetCycle :exec
+UPDATE sync_targets SET generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL WHERE id = ?;
+
+-- name: ClearLedger :exec
+DELETE FROM sync_ledger WHERE target_id = ?;
+
+-- name: PauseTarget :exec
+UPDATE sync_targets
+SET state = 'paused', generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
+    version = version + 1, updated_at = sqlc.arg(at)
+WHERE id = sqlc.arg(id);
+
+-- name: ResumeTargetState :exec
+-- Resumption queues an immediate converge (ADR-0031 section 5).
+UPDATE sync_targets
+SET state = 'active', disabled_reason = NULL, failure_count = 0, needs_sync = 1, next_attempt_at = NULL,
+    version = version + 1, updated_at = sqlc.arg(at)
+WHERE id = sqlc.arg(id);
+
+-- name: RevokeTarget :exec
+UPDATE sync_targets
+SET revoked_at = sqlc.arg(at), generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
+    version = version + 1, updated_at = sqlc.arg(at)
+WHERE id = sqlc.arg(id);
