@@ -179,6 +179,12 @@ func (r *Run) finish(err error) int {
 		return ExitOK
 	}
 	err = r.mapClientError(err)
+	// No home directory to find the configuration in: the command line (or
+	// the environment) must give one, as in main.ts's catch.
+	var noHome *clientctx.HomeDirectoryError
+	if errors.As(err, &noHome) {
+		err = Fail(noHome.Error(), ExitUsage)
+	}
 	var e *exitError
 	if !errors.As(err, &e) {
 		// An error no command turned into a message: TypeScript lets it

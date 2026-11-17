@@ -318,7 +318,10 @@ comes. `verify-release`, which the installers run, is Go's own.
   does not know, so a sign-in made by either CLI works with the other
   (internal `docs/design/go-cli.md`, decision 11). Inside an agent-safe run
   (`VARLATCH_AGENT_RUN`) the operator's default store is never read or
-  written. Files are read with no schema, as JavaScript reads them: a
+  written. When neither `HOME` (`USERPROFILE` on Windows) nor the system's
+  user record names a home directory, a command that needs one exits 64:
+  `varlatch: the home directory is unknown: HOME is empty or unset, and the
+  system records none for this user. Set HOME, or VARLATCH_CONFIG_DIR`. Files are read with no schema, as JavaScript reads them: a
   hand-edited file holding JSON of another shape gives what the TypeScript
   code gives (`lib/jsjson` values, `internal/jsval`'s property reads), and
   where that code throws a `TypeError`, a `*TypeError` (the `uncaught`
@@ -435,7 +438,10 @@ comes. `verify-release`, which the installers run, is Go's own.
   is replaced only when every name is one install itself gives it (an
   `AGENTS.md` and the `CLAUDE.md` that is it, found in the root); each name
   is then renamed onto the new file, so they stay one file. A file with a
-  name the CLI cannot see is refused before anything changes (78). The
+  name the CLI cannot see is refused before anything changes (78).
+  `--remove` takes such a pair away under both names, reporting each once;
+  a file with a name the CLI cannot see loses only the name install
+  manages. The
   names are counted before the replacement, not as one snapshot with it:
   a name created during the run may keep the old content, and nothing
   outside the root is ever changed. A pair is renamed one name at a time,
