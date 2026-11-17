@@ -743,12 +743,12 @@ the converge engine follow in 4.9c and 4.9d.
   read at. A stored credential's recorded expiry stands in when an answer
   says nothing.
 - **GitHub App Connections** (ADR-0047) are listed, read and revoked here.
-  What mints a token from their App comes with step 4.10 (the owner,
+  What mints a token from their App comes with step 4.10b (the owner,
   2026-11-17), and answers 501 `NOT_IMPLEMENTED_YET` until then:
   - creating one, after its body is validated;
   - a check or a listing with one.
 
-  `TestAppMintingNotBuiltYet` pins those answers; 4.10 replaces it.
+  `TestAppMintingNotBuiltYet` pins those answers; 4.10b replaces it.
 - **Parity.**
   - `connections-v0.22.0.json` and `connections-v0.21.0.json`
     (`go-connections-fixture.test.ts`): 113 requests on fake GitHub,
@@ -1669,9 +1669,8 @@ The server's packages:
   cancel and the run take the Organization's gate exclusive and the
   machine identities they change exclusive; the people a job gates are read
   before it and again inside it, and read again if they changed between.
-  The GitHub App's part (`GitHubAppTeardown`) is the TypeScript server's
-  row changes until step 4.10 builds the App
-  (`TestGitHubAppTeardownWaitsForStep410` fails once it does). Served by
+  The GitHub App's part is `server/githubapps`' own
+  (`EndRegistrationsForDeletion`, `RemoveForDeletion`; step 4.10a). Served by
   `server/httpserver/orgdeletion.go` (`getOrganizationDeletion`,
   `scheduleOrganizationDeletion`, `approveOrganizationDeletion`,
   `cancelOrganizationDeletion`; and the tombstone's
@@ -1691,6 +1690,57 @@ The server's packages:
   restart. The `deletion` conformance suite runs it over the API, with a
   second admin enrolled in a browser and the target's `deletion-due`
   probe.
+- `server/githubapps` (step 4.10a): the Organization's GitHub App
+  (ADR-0047, `domain/githubapps.ts`), registered through GitHub's manifest
+  flow, staged as ADR-0054 amendment D stages it:
+  - **Start** (not protected): a single-use state (only its SHA-256 kept),
+    bound to the person, the Organization and the intended GitHub account,
+    and the manifest; ended registrations a day past their expiry go.
+  - **The callback** (`Complete`): an external effect (`write.RunEffect`)
+    holding the Organization's gate and the person's shared, and the
+    registration's resource gate across GitHub's code exchange (decision
+    4). A second completion waits on that gate, then reads the first one's
+    outcome. The claim is written with GitHub's answer in the final job, so
+    a call that got no answer leaves the state free. The owner is checked
+    against the intended account; a match is stored as pending (written
+    once), its key sealed under the registration's id, then attached in
+    the same job while no approval is needed.
+  - **Attachment** (`github_app.register`, protected): the pending key
+    unwrapped and sealed again for the App row. Terminal refusals (expired,
+    ended, another App in the Organization, an App another Organization
+    uses) roll the attempt back, then end the registration in a job of
+    their own.
+  - **Discard** and the **sweep** (`RunSweepLoop`: a pass at once, then
+    every minute, in every serving varlatchd) take the registration's gate.
+    A completion claims only an unconverted registration, which is never
+    the sweep's, so the sweep never waits for GitHub, as TypeScript's
+    `SKIP LOCKED` never does.
+  - **Import** (`github_app.import`, protected, an external effect without a
+    resource gate): GET /app signed with the key as the App id (RS256, an
+    App JWT, `jwt.go`), the permissions checked; under enforce GitHub is
+    asked only after a precheck found an approved intent
+    (`security.Start`), and the approval is consumed in the final job
+    (`Started.Finish`).
+  - **Removal** (`github_app.remove`, protected, bound to the App and its
+    version): its Connections revoked, their Targets disabled and fenced,
+    its key deleted.
+
+  Served by `server/httpserver/githubapp.go`. `github-app-v0.22.0.json` and
+  `github-app-v0.21.0.json` (`go-github-app-fixture.test.ts`) replay 63
+  requests and two sweeps on a fake GitHub that verifies each App JWT's
+  signature, with every request each one sent it; an attachment opens a
+  pending key the fixture's release sealed, and the stored keys open to the
+  PEMs given: G3 at the database level for GitHub App keys, both directions
+  (`TestGoSealedFixture`, go.yml), so `TestG3Gate` runs unconditionally.
+  Decision 4's tests (`effect_test.go`): two simultaneous completions, a
+  completion without an answer, one admitted just before the
+  registration's expiry, a discard and the sweep during a blocked call,
+  two simultaneous imports, an import without an answer, and a Security
+  Control change during a blocked import. An Organization's deletion ends
+  its App through this package (`deletion.go`): scheduling deletes its
+  unfinished registrations, finalizing removes the App's local
+  registration and key, after which the App can be imported elsewhere
+  (`TestOrganizationDeletionEndsTheApp`).
 - `server/access` (step 4.4b): the access structure (ADR-0015, ADR-0028,
   ADR-0029; `http/app.ts`, `domain/policy.ts`, `accessstepup.ts`), served
   by `server/httpserver/access.go`: Grants (listed, created, revoked, and

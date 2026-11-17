@@ -24,6 +24,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
+	"github.com/varlatch/varlatch/go/server/githubapps"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/security"
@@ -295,7 +296,7 @@ func Schedule(ctx context.Context, w *write.Writer, in ScheduleRequest, organiza
 		if err != nil {
 			return err
 		}
-		if err := GitHubAppTeardown.Schedule(ctx, tx, organizationID); err != nil {
+		if err := githubapps.EndRegistrationsForDeletion(ctx, tx, organizationID); err != nil {
 			return err
 		}
 		// Report mode (ADR-0054 Decision 9), before the audit insert.

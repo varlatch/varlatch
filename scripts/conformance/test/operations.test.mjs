@@ -220,6 +220,9 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "listDeletedOrganizationAuditEvents", "exportDeletedOrganizationAuditEvents", "listDeletedOrganizations", "removeDeletedOrganizationReader",
     // Step 4.9d: pushing, the converge engine's trigger.
     "pushSyncTarget",
+    // Step 4.10a: the GitHub App, its registration and import.
+    "getGitHubApp", "removeGitHubApp", "startGitHubAppRegistration", "completeGitHubAppRegistration",
+    "attachGitHubAppRegistration", "discardGitHubAppRegistration", "importGitHubApp",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is

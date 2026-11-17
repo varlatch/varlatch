@@ -151,12 +151,12 @@ func TestStartStopRestart(t *testing.T) {
 	}
 	// A request in flight finishes before the stop completes.
 	res, err := http.Post("http://"+r.addr+"/v1/organizations/acme/github-app/registrations", "application/json", strings.NewReader("{}"))
-	if err != nil || res.StatusCode != http.StatusNotImplemented {
-		t.Errorf("stub: %v %v", res, err)
+	if err != nil || res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("no credential: %v %v", res, err)
 	}
 	r.stop(t)
 	log, _ := os.ReadFile(in.accessLog)
-	if !strings.Contains(string(log), `"method":"POST","path":"/v1/organizations/acme/github-app/registrations","status":501`) {
+	if !strings.Contains(string(log), `"method":"POST","path":"/v1/organizations/acme/github-app/registrations","status":401`) {
 		t.Errorf("access log: %s", log)
 	}
 }

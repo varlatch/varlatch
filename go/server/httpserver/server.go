@@ -273,6 +273,9 @@ var BuiltOperations = []string{
 	listDeletedOrganizationsPattern, removeDeletedReaderPattern,
 	// Step 4.9d: pushing (targets.go; the engine in syncs/converge.go).
 	pushSyncTargetPattern,
+	// Step 4.10a: the GitHub App, its registration and import (githubapp.go).
+	getGitHubAppPattern, removeGitHubAppPattern, startRegistrationPattern, completeRegistrationPattern,
+	attachRegistrationPattern, discardRegistrationPattern, importGitHubAppPattern,
 }
 
 // Server is the handler.
