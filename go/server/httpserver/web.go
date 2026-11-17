@@ -7,20 +7,39 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 )
 
-// ContentSecurityPolicy is the dashboard's policy, as the dashboard's
-// container writes it today (apps/web/docker-entrypoint.d/
-// 10-varlatch-config.sh): scripts and styles from this origin only, nothing
-// inline, no framing. Its connect-src is this origin alone: the Go server
-// has no Convex backend (ADR-0059 Decision 4; the dashboard's realtime
-// comes from this origin with server-sent events, step 3.5), and no tailnet
-// browser endpoint yet.
+// ContentSecurityPolicy is the dashboard's policy without a tailnet
+// browser endpoint, as the dashboard's container writes it
+// (apps/web/docker-entrypoint.d/10-varlatch-config.sh): scripts and styles
+// from this origin only, nothing inline, no framing. Its connect-src is
+// this origin: the Go server has no Convex backend (ADR-0059 Decision 4;
+// the dashboard's realtime comes from this origin with server-sent events,
+// step 3.5). With a browser endpoint, contentSecurityPolicy adds it.
 const ContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; " +
 	"font-src 'self' data:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; " +
 	"form-action 'self' https://github.com; frame-ancestors 'none'; object-src 'none'"
+
+// endpointOrigin is an https origin and nothing else, the form the
+// dashboard container's script requires of VARLATCH_TAILNET_ENDPOINT
+// before it writes it into connect-src.
+var endpointOrigin = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$`)
+
+// contentSecurityPolicy is the dashboard's policy for a browser endpoint
+// (ADR-0046): its origin added to connect-src, as the TypeScript
+// installation adds VARLATCH_TAILNET_ENDPOINT, so the dashboard can Connect
+// to it. endpoint is the endpoint as getTailnetEndpoint answers it now
+// (from the pin: none before enrolment or once the pin is closed); one
+// that is not exactly an https origin is left out.
+func contentSecurityPolicy(endpoint string) string {
+	if endpoint == "" || !endpointOrigin.MatchString(endpoint) {
+		return ContentSecurityPolicy
+	}
+	return strings.Replace(ContentSecurityPolicy, "connect-src 'self';", "connect-src 'self' "+endpoint+";", 1)
+}
 
 // serveWeb serves the dashboard as nginx did (try_files $uri /index.html):
 // a file of the build when the path names one, the app's index.html for
@@ -34,7 +53,7 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("405 Method Not Allowed"))
 		return
 	}
-	w.Header().Set("Content-Security-Policy", ContentSecurityPolicy)
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy(s.opts.browserEndpoint()))
 	if r.URL.Path == "/device" {
 		w.Header().Set("Cache-Control", "no-store")
 	}

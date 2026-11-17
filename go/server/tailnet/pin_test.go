@@ -557,6 +557,54 @@ func TestTheWrittenReportFollowsAccess(t *testing.T) {
 // the tailnet is known), checks its certificate (browserTls) and both
 // listeners, and fails the node when its name is no longer the endpoint's
 // host (observe.ts).
+// The browser endpoint as getTailnetEndpoint and the dashboard's policy
+// read it follows the pin: none before enrolment, the pinned tailnet's
+// host once enrolled, none once the pin closes (the tailnet changed),
+// across a restart too, and the new tailnet's host after a re-pin; none
+// again when the node is seen on another tailnet. The host for the
+// endpoint's own gate and certificate is unchanged.
+func TestTheBrowserEndpointFollowsThePin(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	node := &statusNode{st: Status{BackendState: "NeedsLogin"}}
+	m := enrolling(t, node, "", dir, nil)
+	m.SetBrowser("varlatch", 8443)
+	m.Check(ctx)
+	if got := m.BrowserEndpoint(); got != "" {
+		t.Fatalf("before enrolment: %q", got)
+	}
+	node.set(running("Tabc123", "corp.ts.net"), nil)
+	m.Check(ctx)
+	if got := m.BrowserEndpoint(); got != "https://varlatch.corp.ts.net:8443" {
+		t.Fatalf("enrolled: %q", got)
+	}
+	node.set(running("Tabc123", "corp-new.ts.net"), nil)
+	m.Check(ctx)
+	if got := m.BrowserEndpoint(); m.Closed() != PinSuffix || got != "" {
+		t.Fatalf("the pin closed (%q): the endpoint %q", m.Closed(), got)
+	}
+	m, err := NewManager(node, "", dir, 8687, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetBrowser("varlatch", 8443)
+	m.Check(ctx)
+	if got := m.BrowserEndpoint(); m.Closed() != PinSuffix || got != "" {
+		t.Fatalf("closed, after a restart (%q): the endpoint %q", m.Closed(), got)
+	}
+	if _, _, err := m.Repin(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.BrowserEndpoint(); got != "https://varlatch.corp-new.ts.net:8443" {
+		t.Fatalf("re-pinned: %q", got)
+	}
+	node.set(running("Tother9", "corp-new.ts.net"), nil)
+	m.Check(ctx)
+	if got := m.BrowserEndpoint(); m.Closed() != PinTailnet || got != "" {
+		t.Fatalf("another tailnet (%q): the endpoint %q", m.Closed(), got)
+	}
+}
+
 func TestReportWithTheBrowserEndpoint(t *testing.T) {
 	ctx := context.Background()
 	node := &statusNode{st: Status{BackendState: "NeedsLogin"}}
