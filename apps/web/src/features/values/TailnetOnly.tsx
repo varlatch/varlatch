@@ -137,6 +137,11 @@ export function TailnetConnectStatus({ connection, connect, deviceRefused }: { c
             local network.
           </span>
           <span className="mt-2 block">{action(connection.status === "connecting" ? "Connecting" : "Connect to tailnet")}</span>
+          {connection.status === "connecting" && connection.awaitingPermission && (
+            <span className="mt-1 block text-muted" data-testid="tailnet-connect-waiting">
+              Waiting for this browser to allow local network access.
+            </span>
+          )}
         </span>
       );
     case "unreachable":

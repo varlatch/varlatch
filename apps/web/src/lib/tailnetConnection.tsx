@@ -25,6 +25,8 @@ import { useCapability } from "../features/projects/hooks";
 
 /** The Connect probe gives up after this long: off the tailnet, a request can hang until the page aborts it (spike S5). */
 export const PROBE_TIMEOUT_MS = 4_000;
+/** The first Connect probe where the browser may ask for local network access first. */
+export const PERMISSION_PROBE_TIMEOUT_MS = 30_000;
 /** A protected read through the endpoint gives up after this long. */
 export const READ_TIMEOUT_MS = 15_000;
 
@@ -33,7 +35,8 @@ export type TailnetConnection =
   | { status: "unavailable" }
   /** Configured; this tab has not connected. */
   | { status: "idle"; endpoint: string }
-  | { status: "connecting"; endpoint: string }
+  /** `awaitingPermission`: the probe has waited past the usual limit, likely on the browser's local network prompt. */
+  | { status: "connecting"; endpoint: string; awaitingPermission?: true }
   /** The endpoint answered from this browser and Varlatch recognized this device. */
   | { status: "connected"; endpoint: string; device: TailnetDevice; checkedAt: number }
   /** The endpoint answered, but Varlatch did not recognize this device. */
@@ -90,29 +93,31 @@ async function withTimeout<T>(ms: number, given: AbortSignal | null | undefined,
 }
 
 /**
- * Whether this browser takes fetch's `targetAddressSpace` (Chromium's Local
- * Network Access): it reads the option while building a Request, where a
- * browser without it never looks. The value is "local"; older drafts named
- * it "private", and a browser that rejects "local" is treated as without it.
+ * Whether this browser takes fetch's `targetAddressSpace` with Local Network
+ * Access's address spaces ("loopback", "local", "public"): it reads the option
+ * while building a Request, where a browser without it never looks. Older
+ * Chromium read it too, but there "local" meant loopback and "loopback" did
+ * not exist, so a browser must accept both values to count.
  */
 export function supportsTargetAddressSpace(RequestImpl: typeof Request | undefined = globalThis.Request): boolean {
   if (typeof RequestImpl !== "function") return false;
-  let read = false;
-  const init = {
-    get targetAddressSpace() {
-      read = true;
-      return "local";
-    },
+  const accepts = (value: string) => {
+    let read = false;
+    const init = {
+      get targetAddressSpace() {
+        read = true;
+        return value;
+      },
+    };
+    try {
+      new RequestImpl("https://tailnet-endpoint.invalid/", init as RequestInit);
+    } catch {
+      return false;
+    }
+    return read;
   };
-  try {
-    new RequestImpl("https://tailnet-endpoint.invalid/", init as RequestInit);
-  } catch {
-    return false;
-  }
-  return read;
+  return accepts("loopback") && accepts("local");
 }
-
-let localAddressSpace: boolean | undefined;
 
 /**
  * The options of every request to the tailnet endpoint: no cookies, and, where
@@ -120,8 +125,17 @@ let localAddressSpace: boolean | undefined;
  * browser asks for permission up front (the endpoint is a tailnet address,
  * and the dashboard may be on a public origin).
  */
-export function endpointRequestInit(init: RequestInit | undefined, supported = (localAddressSpace ??= supportsTargetAddressSpace())): RequestInit {
-  return { ...init, credentials: "omit", ...(supported ? { targetAddressSpace: "local" } : {}) } as RequestInit;
+export function endpointRequestInit(init: RequestInit | undefined, localAddressSpace: boolean): RequestInit {
+  return { ...init, credentials: "omit", ...(localAddressSpace ? { targetAddressSpace: "local" } : {}) } as RequestInit;
+}
+
+/**
+ * How long a Connect probe waits. Where the browser may be showing its local
+ * network permission prompt (it takes targetAddressSpace, and this tab has
+ * not connected yet), the person gets time to answer it.
+ */
+export function probeTimeout(localAddressSpace: boolean, connectedBefore: boolean): number {
+  return localAddressSpace && !connectedBefore ? PERMISSION_PROBE_TIMEOUT_MS : PROBE_TIMEOUT_MS;
 }
 
 /** No answer: a network error, or this side gave up waiting (not a session change, which is its own abort). */
@@ -144,10 +158,14 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
   const [probe, setProbe] = useState<Exclude<TailnetConnection, { status: "unavailable" | "idle" }> | null>(null);
   // Bumped by every connect and every reset: an older probe's answer is dropped.
   const generation = useRef(0);
+  const [localAddressSpace] = useState(() => supportsTargetAddressSpace());
+  // Whether a probe has connected since the last reset: later probes need no time for a permission prompt.
+  const connectedBefore = useRef(false);
 
   // Another identity, or another endpoint: start over, unconnected.
   useEffect(() => {
     generation.current++;
+    connectedBefore.current = false;
     setProbe(null);
   }, [identityId, endpoint]);
 
@@ -160,10 +178,17 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
       if (e.blockedURI.startsWith(endpoint)) blockedByPolicy = true;
     };
     globalThis.document?.addEventListener("securitypolicyviolation", onViolation);
+    const timeout = probeTimeout(localAddressSpace, connectedBefore.current);
+    const slow =
+      timeout > PROBE_TIMEOUT_MS
+        ? setTimeout(() => {
+            if (generation.current === mine) setProbe({ status: "connecting", endpoint, awaitingPermission: true });
+          }, PROBE_TIMEOUT_MS)
+        : undefined;
     let next: TailnetConnection;
     try {
-      const body = await withTimeout(PROBE_TIMEOUT_MS, null, async (signal) => {
-        const res = await sessionFetch(`${endpoint}/v1/tailnet/context`, endpointRequestInit({ signal }));
+      const body = await withTimeout(timeout, null, async (signal) => {
+        const res = await sessionFetch(`${endpoint}/v1/tailnet/context`, endpointRequestInit({ signal }, localAddressSpace));
         return res.ok ? ((await res.json()) as TailnetDevice) : null;
       });
       next = !body
@@ -176,10 +201,13 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
       await new Promise((r) => setTimeout(r, 0));
       next = { status: "unreachable", endpoint, blockedByPolicy, checkedAt: Date.now() };
     } finally {
+      clearTimeout(slow);
       globalThis.document?.removeEventListener("securitypolicyviolation", onViolation);
     }
-    if (generation.current === mine) setProbe(next);
-  }, [endpoint, sessionFetch]);
+    if (generation.current !== mine) return;
+    if (next.status === "connected") connectedBefore.current = true;
+    setProbe(next);
+  }, [endpoint, sessionFetch, localAddressSpace]);
 
   const connection = useMemo<TailnetConnection>(
     () => (!endpoint ? { status: "unavailable" } : probe && probe.endpoint === endpoint ? probe : { status: "idle", endpoint }),
@@ -206,7 +234,7 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
         try {
           // The whole response, body included, within the time limit.
           const res = await withTimeout(READ_TIMEOUT_MS, init?.signal, async (signal) => {
-            const answer = await sessionFetch(input, endpointRequestInit({ ...init, signal }));
+            const answer = await sessionFetch(input, endpointRequestInit({ ...init, signal }, localAddressSpace));
             const body = await answer.arrayBuffer();
             return new Response([101, 204, 205, 304].includes(answer.status) ? null : body, {
               status: answer.status,
@@ -223,7 +251,7 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
         }
       },
     });
-  }, [connection, sessionFetch, runProbe, onStepUp]);
+  }, [connection, sessionFetch, runProbe, onStepUp, localAddressSpace]);
 
   const value = useMemo(() => ({ connection, connect: () => void runProbe(), client }), [connection, client, runProbe]);
   return <TailnetConnectionContext.Provider value={value}>{children}</TailnetConnectionContext.Provider>;
