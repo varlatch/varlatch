@@ -11,8 +11,10 @@ vi.mock("better-auth/client", () => ({ createAuthClient: () => ({ signOut: async
 vi.mock("@better-auth/passkey/client", () => ({ passkeyClient: () => ({}) }));
 import { SessionProvider } from "../src/lib/session";
 import {
+  endpointRequestInit,
   PROBE_TIMEOUT_MS,
   READ_TIMEOUT_MS,
+  supportsTargetAddressSpace,
   TailnetConnectionProvider,
   TailnetUnreachableError,
   useTailnetConnection,
@@ -142,6 +144,12 @@ describe("the tailnet browser endpoint, from the dashboard", () => {
     await act(async () => void (await vi.advanceTimersByTimeAsync(2)));
     expect(state.connection).toMatchObject({ status: "unreachable", blockedByPolicy: false });
     expect(PROBE_TIMEOUT_MS).toBe(4_000);
+    vi.useRealTimers();
+    const shown = await statusText(state.connection);
+    expect(shown).toContain("The tailnet endpoint did not answer from this browser.");
+    expect(shown).toContain(
+      "The browser may need permission to reach devices on your local network: allow it in the prompt or in this site's settings, then press Try again.",
+    );
   });
 
   it("tells a block by the page's own security policy apart", async () => {
@@ -272,5 +280,55 @@ describe("the tailnet browser endpoint, from the dashboard", () => {
       expect(toEndpoint().filter((r) => r.url.endsWith("/disclosures"))).toHaveLength(1);
       expect(toEndpoint().filter((r) => r.url.includes("/effective-configuration"))).toHaveLength(1);
     });
+  });
+});
+
+/**
+ * Chromium's Local Network Access: a public page reaching the endpoint on a
+ * tailnet address asks the user first. Requests to the endpoint say so up
+ * front with targetAddressSpace "local", only where the browser takes it.
+ */
+describe("the endpoint's request options", () => {
+  /** A Request that reads RequestInit as a browser does: only the members it knows. */
+  const browserRequest = (known: string[], accepts: (value: unknown) => boolean = () => true) =>
+    class {
+      constructor(_url: string, init: Record<string, unknown> = {}) {
+        for (const member of known) {
+          const value = init[member];
+          if (member === "targetAddressSpace" && value !== undefined && !accepts(value)) throw new TypeError(`bad targetAddressSpace: ${String(value)}`);
+        }
+      }
+    } as unknown as typeof Request;
+
+  it("finds targetAddressSpace where the browser reads it", () => {
+    expect(supportsTargetAddressSpace(browserRequest(["credentials", "signal", "targetAddressSpace"]))).toBe(true);
+  });
+
+  it("finds none where the browser never reads it, or has no Request", () => {
+    expect(supportsTargetAddressSpace(browserRequest(["credentials", "signal"]))).toBe(false);
+    expect(supportsTargetAddressSpace(undefined)).toBe(false);
+  });
+
+  it("finds none where the browser rejects \"local\" (an older draft's values)", () => {
+    expect(supportsTargetAddressSpace(browserRequest(["targetAddressSpace"], (v) => v === "private" || v === "public"))).toBe(false);
+  });
+
+  it("declares the local network only where supported, and never sends cookies", () => {
+    const signal = new AbortController().signal;
+    expect(endpointRequestInit({ method: "POST", signal }, true)).toEqual({ method: "POST", signal, credentials: "omit", targetAddressSpace: "local" });
+    expect(endpointRequestInit({ method: "POST", signal }, false)).toEqual({ method: "POST", signal, credentials: "omit" });
+    expect(endpointRequestInit({ credentials: "include" } as RequestInit, false)).toEqual({ credentials: "omit" });
+  });
+
+  it("sends Connect with targetAddressSpace where this runtime takes it", async () => {
+    let init: RequestInit | undefined;
+    endpoint = async (_url, given) => {
+      init = given;
+      return Response.json(DEVICE);
+    };
+    await mount();
+    await connect();
+    expect(init?.credentials).toBe("omit");
+    expect((init as { targetAddressSpace?: string }).targetAddressSpace).toBe(supportsTargetAddressSpace() ? "local" : undefined);
   });
 });

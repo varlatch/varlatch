@@ -37,7 +37,7 @@ export function deviceOutcome(connection: TailnetConnection, requestedAt: number
         kind: "failed",
         message: connection.blockedByPolicy
           ? "The dashboard's security policy stopped the request to the tailnet endpoint. Nothing was added."
-          : "The tailnet endpoint did not answer from this browser. Nothing was added.",
+          : "The tailnet endpoint did not answer from this browser. If the browser asks to reach devices on your local network, allow it, then try again. Nothing was added.",
       };
     case "unrecognized":
       if (connection.checkedAt < requestedAt) return { kind: "waiting" };

@@ -143,7 +143,7 @@ describe('"This device"', () => {
     await clickThisDevice();
     await connection({ status: "unreachable", endpoint: ENDPOINT, blockedByPolicy: false, checkedAt: Date.now() + 1 });
     expect(entries("nodes")).toEqual(["nAbc123CNTRL"]);
-    expect(text(one("req-this-device-notice"))).toContain("did not answer from this browser. Nothing was added.");
+    expect(text(one("req-this-device-notice"))).toContain("did not answer from this browser. If the browser asks to reach devices on your local network, allow it, then try again. Nothing was added.");
     await clickThisDevice();
     await connection({ status: "unrecognized", endpoint: ENDPOINT, reason: "shared", checkedAt: Date.now() + 1 });
     expect(entries("nodes")).toEqual(["nAbc123CNTRL"]);

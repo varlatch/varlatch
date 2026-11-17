@@ -133,3 +133,47 @@ func TestTailnetListenerAdmission(t *testing.T) {
 		t.Fatalf("while open: %d, %d resolved", w.Code, resolved)
 	}
 }
+
+// A dashboard on a public origin reaching the browser endpoint on its
+// tailnet address: Chromium's Private Network Access preflight asks for
+// Access-Control-Allow-Private-Network, which only the browser endpoint
+// gives, and only to an origin it already allows.
+func TestPrivateNetworkPreflight(t *testing.T) {
+	const allowed = "https://dash.example.com"
+	browser := func(o *Options) {
+		tailnetListener(tailnet.Refusal(tailnet.Unrecognized))(o)
+		o.Tailnet.Browser = &BrowserEndpoint{Host: func() string { return "varlatch.corp.ts.net" }, Port: 8443, Origins: []string{allowed}}
+	}
+	endpoint, _, _, _ := newTestServer(t, browser)
+	plainTailnet, _, _, _ := newTestServer(t, tailnetListener(tailnet.Refusal(tailnet.Unrecognized)))
+	ordinary, _, _, _ := newTestServer(t, nil)
+	preflight := func(origin string) map[string]string {
+		return map[string]string{
+			"Origin":                                 origin,
+			"Access-Control-Request-Method":          "GET",
+			"Access-Control-Request-Headers":         "authorization",
+			"Access-Control-Request-Private-Network": "true",
+		}
+	}
+	const url = "https://varlatch.corp.ts.net:8443/v1/tailnet/context"
+
+	w := do(endpoint, "OPTIONS", url, "", preflight(allowed))
+	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Private-Network") != "true" ||
+		w.Header().Get("Access-Control-Allow-Origin") != allowed {
+		t.Errorf("an allowed origin's preflight: %d %v", w.Code, w.Header())
+	}
+	plain := preflight(allowed)
+	delete(plain, "Access-Control-Request-Private-Network")
+	if w := do(endpoint, "OPTIONS", url, "", plain); w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Private-Network") != "" {
+		t.Errorf("a preflight that does not ask: %d %v", w.Code, w.Header())
+	}
+	if w := do(endpoint, "OPTIONS", url, "", preflight("https://elsewhere.example.com")); w.Code != http.StatusForbidden ||
+		w.Header().Get("Access-Control-Allow-Private-Network") != "" || w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Errorf("another origin's preflight: %d %v", w.Code, w.Header())
+	}
+	for name, s := range map[string]http.Handler{"the plain tailnet listener": plainTailnet, "the ordinary listener": ordinary} {
+		if w := do(s, "OPTIONS", url, "", preflight(allowed)); w.Header().Get("Access-Control-Allow-Private-Network") != "" {
+			t.Errorf("%s: %d %v", name, w.Code, w.Header())
+		}
+	}
+}

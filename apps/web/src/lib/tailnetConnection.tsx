@@ -89,6 +89,41 @@ async function withTimeout<T>(ms: number, given: AbortSignal | null | undefined,
   }
 }
 
+/**
+ * Whether this browser takes fetch's `targetAddressSpace` (Chromium's Local
+ * Network Access): it reads the option while building a Request, where a
+ * browser without it never looks. The value is "local"; older drafts named
+ * it "private", and a browser that rejects "local" is treated as without it.
+ */
+export function supportsTargetAddressSpace(RequestImpl: typeof Request | undefined = globalThis.Request): boolean {
+  if (typeof RequestImpl !== "function") return false;
+  let read = false;
+  const init = {
+    get targetAddressSpace() {
+      read = true;
+      return "local";
+    },
+  };
+  try {
+    new RequestImpl("https://tailnet-endpoint.invalid/", init as RequestInit);
+  } catch {
+    return false;
+  }
+  return read;
+}
+
+let localAddressSpace: boolean | undefined;
+
+/**
+ * The options of every request to the tailnet endpoint: no cookies, and, where
+ * the browser takes it, the endpoint declared as on the local network, so the
+ * browser asks for permission up front (the endpoint is a tailnet address,
+ * and the dashboard may be on a public origin).
+ */
+export function endpointRequestInit(init: RequestInit | undefined, supported = (localAddressSpace ??= supportsTargetAddressSpace())): RequestInit {
+  return { ...init, credentials: "omit", ...(supported ? { targetAddressSpace: "local" } : {}) } as RequestInit;
+}
+
 /** No answer: a network error, or this side gave up waiting (not a session change, which is its own abort). */
 const isNetworkFailure = (err: unknown) =>
   err instanceof TypeError ||
@@ -128,7 +163,7 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
     let next: TailnetConnection;
     try {
       const body = await withTimeout(PROBE_TIMEOUT_MS, null, async (signal) => {
-        const res = await sessionFetch(`${endpoint}/v1/tailnet/context`, { credentials: "omit", signal });
+        const res = await sessionFetch(`${endpoint}/v1/tailnet/context`, endpointRequestInit({ signal }));
         return res.ok ? ((await res.json()) as TailnetDevice) : null;
       });
       next = !body
@@ -171,7 +206,7 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
         try {
           // The whole response, body included, within the time limit.
           const res = await withTimeout(READ_TIMEOUT_MS, init?.signal, async (signal) => {
-            const answer = await sessionFetch(input, { ...init, credentials: "omit", signal });
+            const answer = await sessionFetch(input, endpointRequestInit({ ...init, signal }));
             const body = await answer.arrayBuffer();
             return new Response([101, 204, 205, 304].includes(answer.status) ? null : body, {
               status: answer.status,
