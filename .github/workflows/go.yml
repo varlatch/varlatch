@@ -4,8 +4,8 @@ name: Go
 # and ADR-0059 amendment 2 routed CI by branch: pull requests into rewrite/go
 # ran these checks instead of ci.yml. Since the branch merged into main
 # (Order, step 1), CI is routed by path: these checks run on pull requests
-# into main (and into rewrite/go while it exists) and on pushes to them,
-# whenever a change touches go/, this workflow, the TypeScript crypto
+# into main and rewrite/go, merge groups, pushes to rewrite/go, and nightly
+# on main (which also saves the Go caches), whenever a change touches go/, this workflow, the TypeScript crypto
 # code the cross-language envelope step loads, or the OpenAPI document
 # go/server/api is generated from (the openapi job checks a pull request's
 # change to it for breaking ones). ci.yml classifies Go-only
@@ -26,8 +26,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
     types: [checks_requested]
+  # Main gets no push run: each merge commit was tested in the merge queue.
   push:
-    branches: [main, rewrite/go]
+    branches: [rewrite/go]
     # The same paths as the changes job's patterns.
     paths:
       - "go/**"
@@ -57,6 +58,9 @@ on:
       - "services/varlatchd/test/go-backup-vectors.test.ts"
       - "packages/backup/src/**"
   workflow_dispatch:
+  # Nightly on main: every Go job, and the cache every pull request restores.
+  schedule:
+    - cron: "47 2 * * *"
 
 permissions:
   contents: read
@@ -149,8 +153,10 @@ jobs:
           cache: false
 
       # Go's module and build caches, keyed per job (each job compiles
-      # different targets). Pull requests only restore; pushes to main save,
-      # so a pull request starts from main's last build. Test results are
+      # different targets). Pull requests and merge groups only restore; the
+      # nightly run on main saves (main runs no Go push run: the merge queue
+      # already tested each merge commit), so a pull request starts from at
+      # most a day-old build of main. Test results are
       # never reused: every go test that a cached result could stand in for
       # runs with -count=1.
       - name: Restore Go's caches
@@ -453,7 +459,7 @@ jobs:
         run: node scripts/check-licenses.mjs
 
       - name: Save Go's caches
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: success() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -480,8 +486,10 @@ jobs:
           cache: false
 
       # Go's module and build caches, keyed per job (each job compiles
-      # different targets). Pull requests only restore; pushes to main save,
-      # so a pull request starts from main's last build. Test results are
+      # different targets). Pull requests and merge groups only restore; the
+      # nightly run on main saves (main runs no Go push run: the merge queue
+      # already tested each merge commit), so a pull request starts from at
+      # most a day-old build of main. Test results are
       # never reused: every go test that a cached result could stand in for
       # runs with -count=1.
       - name: Restore Go's caches
@@ -520,7 +528,7 @@ jobs:
           go test -count=1 -race $(go list ./... | grep -v '/go/install$')
 
       - name: Save Go's caches
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: success() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -550,8 +558,10 @@ jobs:
           cache: false
 
       # Go's module and build caches, keyed per job (each job compiles
-      # different targets). Pull requests only restore; pushes to main save,
-      # so a pull request starts from main's last build. Test results are
+      # different targets). Pull requests and merge groups only restore; the
+      # nightly run on main saves (main runs no Go push run: the merge queue
+      # already tested each merge commit), so a pull request starts from at
+      # most a day-old build of main. Test results are
       # never reused: every go test that a cached result could stand in for
       # runs with -count=1.
       - name: Restore Go's caches
@@ -588,7 +598,7 @@ jobs:
           done
 
       - name: Save Go's caches
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: success() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -833,15 +843,22 @@ jobs:
   # succeeded or was skipped because no Go path changed.
   go-ok:
     name: go-ok
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    # On a draft it runs too, and fails: every other job is skipped then, and
+    # a skipped required check would read as passed.
+    if: always()
     needs: [changes, go, go-race, go-platforms, go-binary, openapi, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Every Go job passed or was skipped
         env:
+          DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
           RESULTS: ${{ toJSON(needs.*.result) }}
         run: |
+          if [ "$DRAFT" = true ]; then
+            echo "::error::A draft runs no CI, so there is no verdict. Mark it ready for review (pnpm ready) to run it."
+            exit 1
+          fi
           echo "$RESULTS"
           if echo "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
             echo "::error::A Go job failed or was cancelled."
