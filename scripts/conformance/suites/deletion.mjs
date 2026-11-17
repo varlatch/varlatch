@@ -249,6 +249,9 @@ try {
   };
   const dexport = await exportOf(D, `deleted-${suffix}`, true);
 
+  const fakeState = () => JSON.parse(targetOp("platform-fakes", ["state"]));
+  const fakeGitHub = (op) => JSON.parse(targetOp("platform-fakes", ["github", JSON.stringify(op)]));
+
   const botBefore = (await api("GET", "/v1/organizations", { bearer: bot.credential })).status;
   const scheduled = await api("POST", `${D}/deletion`, { body: { afterDays: 1 } });
   const request = scheduled.json ?? {};
@@ -260,7 +263,7 @@ try {
   const pausedTarget = await api("GET", `${D}/projects/app/environments/production/sync-targets/${dtarget.id}`);
   check(
     "deletion.teardown-suspended",
-    "scheduling the deletion pauses the Organization's Sync Targets (fenced: a Target that was pushed is paused) and suspends its webhooks, and organization.deletion_scheduled counts them",
+    "scheduling the deletion pauses the Organization's Sync Targets (a Target that was pushed is paused) and suspends its webhooks, and organization.deletion_scheduled counts them",
     Boolean(pushedBefore) && scheduledEvent?.metadata?.targetsPaused === 1 && scheduledEvent.metadata.webhooksSuspended === 1 &&
       pausedTarget.status === 200 && pausedTarget.json?.state === "paused",
     JSON.stringify({ pushedBefore: Boolean(pushedBefore), scheduled: scheduledEvent?.metadata ?? null, target: [pausedTarget.status, pausedTarget.json?.state] }),
@@ -289,13 +292,60 @@ try {
   const corg = ok(await api("POST", "/v1/organizations", { body: { name: `Kept ${suffix}`, slug: `kept-${suffix}` } }), "creating the Organization to keep");
   const C = `/v1/organizations/${corg.slug}`;
   const keptBot = ok(await api("POST", `${C}/identities`, { body: { name: "bot", kind: "service" } }), "creating its machine identity");
+  // A Sync Target with a run in flight across the scheduling: its write is
+  // held at the fake GitHub while the deletion is scheduled, then answered.
+  // The fence must refuse that stale run's commit, so the Target's ledger
+  // never records the change: once the deletion is cancelled and the
+  // Target resumed and pushed, the value is written again. Had the stale
+  // run committed, the Target would already be converged and nothing would
+  // be written.
+  ok(await api("POST", `${C}/projects`, { body: { name: "App", slug: "app", contractAuthority: "managed" } }), "creating the kept Project");
+  ok(await api("POST", `${C}/projects/app/environments`, { body: { name: "production", tier: "production" } }), "creating its environment");
+  const crev = ok(await api("POST", `${C}/projects/app/contract/revisions`, { body: { contract: { schemaVersion: 1, items: [item("SECRET", true)] } } }), "its Contract");
+  ok(await api("POST", `${C}/projects/app/contract/revisions/${crev.id}/activate`), "activating it");
+  const CE = `${C}/projects/app/environments/production`;
+  ok(await api("PUT", `${CE}/values/SECRET`, { body: { value: `kept-${suffix}` } }), "setting SECRET");
+  const cconn = ok(await api("POST", `${C}/platform-connections`, { body: { platform: "github-actions", baseIdentity: hosts.github, name: "GitHub", credential: `conformance-kept-${suffix}` } }), "its Connection");
+  const ctarget = ok(await api("POST", `${CE}/sync-targets`, { body: { connectionId: cconn.id, destination: { repo: `kept-${suffix}` }, mapping: { kind: "wildcard" } } }), "its Sync Target");
+  const keptRepo = `${hosts.github}/kept-${suffix}`;
+  const writes = () => fakeState().writes[keptRepo] ?? 0;
+  const firstPush = await waitFor(async () => writes() >= 1 && (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json?.runStartedAt === null, 90_000);
+  fakeGitHub({ op: "hold", repo: keptRepo });
+  ok(await api("PUT", `${CE}/values/SECRET`, { body: { value: `changed-${suffix}` } }), "changing SECRET");
+  ok(await api("POST", `${CE}/sync-targets/${ctarget.id}/push`, { body: {} }), "pushing the Target");
+  let inFlight = null;
+  for (const until = Date.now() + 90_000; Date.now() < until && !inFlight; await sleep(250)) {
+    inFlight = fakeState().held.find((h) => h.repo === keptRepo) ?? null;
+  }
+  const writesBeforeRelease = writes();
   const toCancel = ok(await api("POST", `${C}/deletion`, { body: {} }), "scheduling its deletion");
+  const released = fakeGitHub({ op: "release", repo: keptRepo }).released;
+  const reached = await waitFor(() => writes() > writesBeforeRelease, 30_000);
+  const reachedAt = writes();
+  await sleep(10_000); // the stale run tries to commit, and is refused
   const keptBotDuring = (await api("GET", "/v1/organizations", { bearer: keptBot.credential })).status;
   const cancelled = await api("POST", `${C}/deletion/${toCancel.id}/cancel`);
   const cancelledAgain = await api("POST", `${C}/deletion/${toCancel.id}/cancel`);
   const keptBotAfter = (await api("GET", "/v1/organizations", { bearer: keptBot.credential })).status;
   const afterCancel = ok(await api("GET", `${C}/deletion`), "reading its request").deletion;
   const writable = await api("POST", `${C}/projects`, { body: { name: "Kept", slug: "kept", contractAuthority: "managed" } });
+  const pausedAfterCancel = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
+  const resumed = await api("POST", `${CE}/sync-targets/${ctarget.id}/resume`, { body: {} });
+  const repushed = await api("POST", `${CE}/sync-targets/${ctarget.id}/push`, { body: {} });
+  const writtenAgain = await waitFor(() => writes() > reachedAt, 90_000);
+  // The control: a push with nothing changed runs and writes nothing, so
+  // the write above came from the ledger lacking the change, not from the
+  // push itself.
+  const idle = await waitFor(async () => {
+    const t = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
+    return t?.runStartedAt === null && t.needsSync === false && t;
+  }, 90_000);
+  const writesSettled = writes();
+  ok(await api("POST", `${CE}/sync-targets/${ctarget.id}/push`, { body: {} }), "pushing it again");
+  const ranAgain = await waitFor(async () => {
+    const t = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
+    return idle && t?.lastAttemptAt !== idle.lastAttemptAt && t.runStartedAt === null && t;
+  }, 90_000);
   check(
     "deletion.organization-cancelled",
     "cancelling a scheduled deletion ends the request, restores the machine identities it suspended and writes again; a second cancel is refused",
@@ -303,6 +353,15 @@ try {
       cancelledAgain.status === 409 && cancelledAgain.json?.error?.code === "STATE_CHANGED" && keptBotAfter === 200 && afterCancel === null &&
       writable.status === 201,
     JSON.stringify({ during: keptBotDuring, cancelled: cancelled.status, again: cancelledAgain.status, after: keptBotAfter, writable: writable.status }),
+  );
+  check(
+    "deletion.scheduling-fences-runs",
+    "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing",
+    Boolean(firstPush) && inFlight?.name === "SECRET" && Array.isArray(released) && released.includes("SECRET") && Boolean(reached) &&
+      pausedAfterCancel?.state === "paused" && resumed.status === 200 && repushed.status === 202 && Boolean(writtenAgain) &&
+      Boolean(ranAgain) && writes() === writesSettled,
+    JSON.stringify({ firstPush: Boolean(firstPush), inFlight, released, reached: Boolean(reached), pausedAfterCancel: pausedAfterCancel?.state,
+      resumed: resumed.status, repushed: repushed.status, writes: writes(), reachedAt, control: { ran: Boolean(ranAgain), writesSettled } }),
   );
 
   // ---- The due run: made due, then run by the deletion loop's next pass
@@ -326,12 +385,18 @@ try {
     JSON.stringify({ gone, botAfter, page: page.status, deleted: orgDeleted ?? null }),
   );
 
+  // What is stored, read beside the audit's counts (the Organization's
+  // routes answer 404 now).
+  const stored = JSON.parse(targetOp("probe", ["deletion-teardown", dorg.id]));
+  const allRevoked = (rows) => Array.isArray(rows) && rows.length === 1 && rows.every((r) => r.revoked === true);
   check(
     "deletion.teardown-ended",
-    "the due run revokes the Organization's Sync Targets and their Connections, removes its webhooks and its GitHub App, and organization.deleted counts them",
+    "the due run revokes the Organization's Sync Targets and their Connections, removes its webhooks and its GitHub App (its key deleted), as stored, and organization.deleted counts them",
     orgDeleted?.metadata?.targetsRevoked === 1 && orgDeleted.metadata.connectionsRevoked === 1 && orgDeleted.metadata.webhooksRemoved === 1 &&
-      orgDeleted.metadata.githubAppRemoved === true,
-    JSON.stringify(orgDeleted?.metadata ?? null),
+      orgDeleted.metadata.githubAppRemoved === true &&
+      allRevoked(stored.targets) && stored.targets[0].id === dtarget.id && allRevoked(stored.connections) && stored.connections[0].id === dconn.id &&
+      allRevoked(stored.webhooks) && stored.githubApps?.length === 1 && stored.githubApps[0].removed === true && stored.githubApps[0].keyKept === false,
+    JSON.stringify({ audit: orgDeleted?.metadata ?? null, stored }),
   );
 
   // The audit export drains: its final events, organization.deleted among

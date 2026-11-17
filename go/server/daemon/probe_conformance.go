@@ -33,6 +33,9 @@ import (
 //	                                 {"needsSync", "nextAttemptAt"}, which it leaves as they are
 //	sync-trigger-position            {"cursor", "latest"}: the converge engine's trigger scan's
 //	                                 position, and the last audit event it reads (not sync.*)
+//	deletion-teardown <org_...>      read only: the Organization's Sync Targets, Platform
+//	                                 Connections and webhooks, each {id, revoked}, and its
+//	                                 GitHub Apps, each {id, removed, keyKept}, as stored
 //	audit-export-drain-due <org_...>  a deleted Organization's draining audit export past its
 //	                                 deadline (a second ago), so the deletion loop's next pass,
 //	                                 within a minute, abandons it; true
@@ -102,6 +105,63 @@ func init() {
 				return nil
 			})
 			out = settled
+		case "deletion-teardown":
+			if len(rest) != 2 || !orgID.MatchString(rest[1]) {
+				return fail(fmt.Errorf("deletion-teardown: an Organization id (org_...)"))
+			}
+			type row struct {
+				ID      string `json:"id"`
+				Revoked bool   `json:"revoked"`
+			}
+			type app struct {
+				ID      string `json:"id"`
+				Removed bool   `json:"removed"`
+				KeyKept bool   `json:"keyKept"`
+			}
+			read := store.Reader()
+			rows := func(sqlText string) ([]row, error) {
+				r, err := read.QueryContext(ctx, sqlText, rest[1])
+				if err != nil {
+					return nil, err
+				}
+				defer r.Close()
+				out := []row{}
+				for r.Next() {
+					var x row
+					if err := r.Scan(&x.ID, &x.Revoked); err != nil {
+						return nil, err
+					}
+					out = append(out, x)
+				}
+				return out, r.Err()
+			}
+			got := map[string]any{}
+			for _, t := range []struct{ key, table string }{{"targets", "sync_targets"}, {"connections", "platform_connections"}, {"webhooks", "webhooks"}} {
+				var rs []row
+				if rs, err = rows(`SELECT id, revoked_at IS NOT NULL FROM ` + t.table + ` WHERE organization_id = ? ORDER BY id`); err != nil {
+					break
+				}
+				got[t.key] = rs
+			}
+			if err == nil {
+				var r *sql.Rows
+				if r, err = read.QueryContext(ctx, `SELECT id, removed_at IS NOT NULL, key_envelope IS NOT NULL FROM github_apps WHERE organization_id = ? ORDER BY id`, rest[1]); err == nil {
+					apps := []app{}
+					for r.Next() {
+						var a app
+						if err = r.Scan(&a.ID, &a.Removed, &a.KeyKept); err != nil {
+							break
+						}
+						apps = append(apps, a)
+					}
+					if err == nil {
+						err = r.Err()
+					}
+					r.Close()
+					got["githubApps"] = apps
+				}
+			}
+			out = got
 		case "audit-export-drain-due":
 			if len(rest) != 2 || !orgID.MatchString(rest[1]) {
 				return fail(fmt.Errorf("audit-export-drain-due: an Organization id (org_...)"))

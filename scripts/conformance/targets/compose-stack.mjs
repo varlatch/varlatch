@@ -284,6 +284,13 @@ const PROBES = {
     if (!got) throw new Error(`sync-repair-due: no Sync Target ${targetId}`);
     return JSON.parse(got);
   },
+  "deletion-teardown": (state, organizationId) => {
+    if (!/^org_[a-z0-9]{26}$/.test(organizationId ?? "")) throw new Error("deletion-teardown: an Organization id (org_...)");
+    const list = (table) => `COALESCE((SELECT json_agg(json_build_object('id', id, 'revoked', revoked_at IS NOT NULL) ORDER BY id) FROM ${table} WHERE organization_id = '${organizationId}'), '[]'::json)`;
+    return JSON.parse(psql(state, `SELECT json_build_object('targets', ${list("sync_targets")}, 'connections', ${list("platform_connections")}, 'webhooks', ${list("webhooks")},
+      'githubApps', COALESCE((SELECT json_agg(json_build_object('id', id, 'removed', removed_at IS NOT NULL, 'keyKept', key_envelope IS NOT NULL) ORDER BY id)
+        FROM github_apps WHERE organization_id = '${organizationId}'), '[]'::json))`));
+  },
   "audit-export-drain-due": (state, organizationId) => {
     if (!/^org_[a-z0-9]{26}$/.test(organizationId ?? "")) throw new Error("audit-export-drain-due: an Organization id (org_...)");
     const got = psql(state, `UPDATE audit_exports SET drain_deadline = clock_timestamp() - interval '1 second'

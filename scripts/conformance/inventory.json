@@ -723,7 +723,8 @@
         "platform-fakes",
         "webhook-receiver",
         "object-store",
-        "probe:audit-export-drain-due"
+        "probe:audit-export-drain-due",
+        "probe:deletion-teardown"
       ],
       "operations": [
         "createOrganization",
@@ -762,7 +763,9 @@
         "getSyncTarget",
         "createWebhook",
         "importGitHubApp",
-        "createAuditExport"
+        "createAuditExport",
+        "pushSyncTarget",
+        "resumeSyncTarget"
       ]
     },
     "doctor": {
@@ -3469,6 +3472,11 @@
       "kind": "conformance",
       "title": "cancelling a scheduled deletion ends the request, restores the machine identities it suspended and writes again; a second cancel is refused"
     },
+    "deletion.scheduling-fences-runs": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing"
+    },
     "deletion.organization-deleted-when-due": {
       "suite": "deletion",
       "kind": "conformance",
@@ -3482,12 +3490,12 @@
     "deletion.teardown-suspended": {
       "suite": "deletion",
       "kind": "conformance",
-      "title": "scheduling the deletion pauses the Organization's Sync Targets (fenced: a Target that was pushed is paused) and suspends its webhooks, and organization.deletion_scheduled counts them"
+      "title": "scheduling the deletion pauses the Organization's Sync Targets (a Target that was pushed is paused) and suspends its webhooks, and organization.deletion_scheduled counts them"
     },
     "deletion.teardown-ended": {
       "suite": "deletion",
       "kind": "conformance",
-      "title": "the due run revokes the Organization's Sync Targets and their Connections, removes its webhooks and its GitHub App, and organization.deleted counts them"
+      "title": "the due run revokes the Organization's Sync Targets and their Connections, removes its webhooks and its GitHub App (its key deleted), as stored, and organization.deleted counts them"
     },
     "deletion.audit-export-drained": {
       "suite": "deletion",
