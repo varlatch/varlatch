@@ -820,7 +820,14 @@ serves the tailnet listener on the node's own addresses
   the background: the ordinary listener serves at once, the tailnet
   listener once the node runs.
 - **Coordination server.** This release joins Tailscale's only:
-  `tailnet_control_url` other than Tailscale's is refused at startup.
+  `tailnet_control_url` other than Tailscale's is refused at startup, and
+  the node is always given Tailscale's control URL explicitly (an empty
+  one would let tsnet read `TS_CONTROL_URL`). varlatchd refuses to start
+  the node while any environment variable tsnet reads in place of its
+  settings is set (`TS_CONTROL_URL`, `TS_AUTHKEY`, `TS_AUTH_KEY`,
+  `TS_CLIENT_SECRET`, `TS_CLIENT_ID`, `TS_ID_TOKEN`, `TS_AUDIENCE`,
+  `TSNET_FORCE_LOGIN`): its control server and enrolment come from
+  `varlatchd.conf` alone.
   Decision 5 requires a self-hosted (Headscale) control server's host name
   never to reach Tailscale, and the tsnet release in use always keeps its
   bootstrap DNS fallback (Tailscale's DERP servers resolve the control
@@ -835,23 +842,42 @@ serves the tailnet listener on the node's own addresses
   pin's Headscale rules are in place and unit-tested
   (`TestHeadscalePin`) for that day.
 - **The pin** (`<data_dir>/tailnet-pin.json`, `server/tailnet/pin.go`)
-  is recorded at enrolment, the first time the node runs on a tailnet: the
-  control URL, the tailnet's StableID (Tailscale) and its MagicDNS suffix
-  (Headscale's `base_domain`), never the display name. Every minute the
-  node is checked against it. A different control URL or StableID is a
-  different tailnet; a changed suffix under the same tailnet is the one
-  change a re-pin takes. Any change closes tailnet access (every peer
-  `other-tailnet`, fail closed) and is logged; until the first check, and
-  while the node cannot say, every peer is `resolver-unavailable`.
-- **Re-pin.** `varlatchd admin tailnet repin [--yes] [--json]` (host
-  authority, through the running daemon only, since it compares the pin
-  with what the node observes now) shows the pin and the observation; with
-  `--yes` it pins the observed suffix and reopens access. A different
-  tailnet is refused: that means enrolling the node again (remove
-  `<data_dir>/tailnet` and the pin, give an auth key). Each re-pin is kept
-  in the pin's `history` and logged. An audit event for it waits for step
-  6's `varlatch tailnet repin`: the TypeScript server has no event type
-  for it, and the Go audit types equal the TypeScript ones.
+  is the control URL, the tailnet's StableID (Tailscale) and its MagicDNS
+  suffix (Headscale's `base_domain`), never the display name. It is taken
+  at enrolment only: before a node without state of its own starts, the
+  pin file is marked as enrolling, and the first tailnet that node runs on
+  becomes the pin. A node that has state but no pin file is never pinned
+  silently: access stays closed (`pin-missing`) until the host adopts the
+  tailnet the node is on.
+- **Tailnet access** is open only while the pin is recorded and not
+  closed, and the last check of the node (at start, every minute, and
+  before any re-pin; checks are serialized) succeeded on the pinned
+  tailnet. A check that fails, or finds the node not running or without a
+  tailnet, closes access until a check succeeds. A mismatch (a different
+  control URL, StableID or suffix) closes it and is latched: written into
+  the pin file, it holds across restarts and even if the tailnet changes
+  back, until a re-pin.
+- **While access is closed** the tailnet listener refuses every request,
+  whatever it asks for, with 403 `TAILNET_CONTEXT_UNAVAILABLE`, before the
+  peer is looked up (the TypeScript server pins its tailnet in its
+  configuration and has no such state). Each open period has a
+  generation: when access closes, every request admitted in the period is
+  cancelled at once; a peer lookup that was in flight returns no Tailnet
+  Context; and a Tailnet Context resolved in the period stops counting at
+  the next authorization decision that reads it (`authz.TailnetFrom`), also
+  after access reopens.
+- **Re-pin.** `varlatchd admin tailnet repin [--yes [--adopt]] [--json]`
+  (host authority, through the running daemon only) runs a fresh check,
+  which must succeed, and shows the pin, the observation and the latched
+  closure. With `--yes` it pins the observed suffix when the suffix is the
+  only change, or reopens access when the tailnet matches the pin again;
+  with `--yes --adopt` it pins the tailnet an enrolled node without a pin
+  is on. A different StableID or control URL is refused: that means
+  enrolling the node again (remove `<data_dir>/tailnet` and the pin, give
+  an auth key). Each re-pin is kept in the pin's `history`, with the
+  closure it ended, and logged. An audit event for it waits for step 6's
+  `varlatch tailnet repin`: the TypeScript server has no event type for
+  it, and the Go audit types equal the TypeScript ones.
 - **The listeners report** (`getInstallationListeners`, and
   `<data_dir>/tailnet-listeners.json`, rewritten when a check changes and
   at least every 5 minutes) is what varlatchd last observed: the listener
@@ -866,8 +892,12 @@ serves the tailnet listener on the node's own addresses
   `tailnet = on` (the `tailnetControl` hook points it at the test server):
   a tagged peer's request over the tailnet carries its Tailnet Context
   into the audit; restarted without the auth key it rejoins; a changed
-  suffix closes access until `admin tailnet repin --yes`. The live checks
-  on a real tailnet are run by hand (the PR lists them).
+  suffix refuses the whole listener (a write never commits) until `admin
+  tailnet repin --yes`; a removed pin file is adopted only with
+  `--adopt`. The pin's rules (failed checks, serialized checks, the latch,
+  a missing pin, lookups and contexts across a closure, the admission) are
+  unit tests in `pin_test.go`. The live checks on a real tailnet are run
+  by hand (the PR lists them).
 
 The server's packages:
 

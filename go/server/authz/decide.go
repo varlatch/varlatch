@@ -298,12 +298,24 @@ type tailnetKey struct{}
 // (ADR-0014 §7). Every authorization decision made under ctx evaluates
 // Requirements against it, as the TypeScript server's decide reads the
 // request's.
-func WithTailnet(ctx context.Context, c *TailnetContext) context.Context {
-	return context.WithValue(ctx, tailnetKey{}, c)
+//
+// valid, when set, is asked at every read: once it says false (tailnet
+// access closed after the context was resolved), ctx carries none.
+func WithTailnet(ctx context.Context, c *TailnetContext, valid func() bool) context.Context {
+	return context.WithValue(ctx, tailnetKey{}, tailnetValue{c, valid})
 }
 
-// TailnetFrom is the Tailnet Context ctx carries, nil for none.
+type tailnetValue struct {
+	c     *TailnetContext
+	valid func() bool
+}
+
+// TailnetFrom is the Tailnet Context ctx carries, nil for none, or for one
+// that no longer counts.
 func TailnetFrom(ctx context.Context) *TailnetContext {
-	c, _ := ctx.Value(tailnetKey{}).(*TailnetContext)
-	return c
+	v, _ := ctx.Value(tailnetKey{}).(tailnetValue)
+	if v.c == nil || v.valid != nil && !v.valid() {
+		return nil
+	}
+	return v.c
 }

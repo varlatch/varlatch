@@ -7,6 +7,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -186,14 +187,11 @@ func TestTailnetListener(t *testing.T) {
 	}
 	r = startWith(t, in, h)
 	waitReport(t, r, bearer, `"node":{"status":"fail","reason":"OTHER_TAILNET"}`)
-	if code := do(t, peer.HTTPClient(), "POST", base+"/v1/organizations", bearer, `{"name":"Pin changed","slug":"pin-changed"}`, nil); code != 201 {
-		t.Fatalf("creating an Organization over the tailnet with the pin changed: %d", code)
-	}
-	if listener, ctxJSON := tailnetAuditOf(t, r, bearer, "pin-changed"); listener != "tailnet" || ctxJSON != `{"refused":"other-tailnet"}` {
-		t.Fatalf("the audit with the pin changed: %s %s", listener, ctxJSON)
-	}
+	// #220 review P1: the whole tailnet listener refuses, and nothing the
+	// request asked for is written.
+	refusedWhileClosed(t, r, peer, base, bearer, "pin-changed")
 	code, out, errOut = runAdmin(t, "tailnet", "repin", "--json", "--config", in.conf)
-	if code != ExitOK || !strings.Contains(out, `"reason":"suffix-changed","offered":true`) {
+	if code != ExitOK || !strings.Contains(out, `"reason":"suffix-changed","closed":"suffix-changed","missing":false,"offered":true`) {
 		t.Fatalf("repin --json: %d %q %q", code, out, errOut)
 	}
 	code, out, errOut = runAdmin(t, "tailnet", "repin", "--config", in.conf)
@@ -215,6 +213,45 @@ func TestTailnetListener(t *testing.T) {
 		t.Fatalf("the pin after the re-pin: %+v %v", pin, err)
 	}
 	r.stop(t)
+
+	// #220 review P6: the pin file is gone, but the node was enrolled: it
+	// is never pinned again silently; the host adopts what it is on.
+	if err := os.Remove(filepath.Join(in.data, tailnet.PinFile)); err != nil {
+		t.Fatal(err)
+	}
+	r = startWith(t, in, h)
+	waitReport(t, r, bearer, `"node":{"status":"fail","reason":"OTHER_TAILNET"}`)
+	refusedWhileClosed(t, r, peer, base, bearer, "pin-missing")
+	if _, err := os.Stat(filepath.Join(in.data, tailnet.PinFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a pin was taken silently: %v", err)
+	}
+	if code, _, errOut := runAdmin(t, "tailnet", "repin", "--yes", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "run again with --yes --adopt") {
+		t.Fatalf("repin --yes of a missing pin: %d %q", code, errOut)
+	}
+	if code, out, errOut := runAdmin(t, "tailnet", "repin", "--yes", "--adopt", "--config", in.conf); code != ExitOK || !strings.Contains(out, "Adopted corp.ts.net as the pinned tailnet; tailnet access is open.") {
+		t.Fatalf("repin --yes --adopt: %d %q %q", code, out, errOut)
+	}
+	if code := do(t, peer.HTTPClient(), "POST", base+"/v1/organizations", bearer, `{"name":"Adopted","slug":"adopted"}`, nil); code != 201 {
+		t.Fatalf("creating an Organization over the tailnet after adopting: %d", code)
+	}
+	r.stop(t)
+}
+
+// refusedWhileClosed: with tailnet access closed, the tailnet listener
+// refuses a write (403 TAILNET_CONTEXT_UNAVAILABLE), which never commits.
+func refusedWhileClosed(t *testing.T, r *running, peer *tsnet.Server, base, bearer, slug string) {
+	t.Helper()
+	var refusal struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if code := do(t, peer.HTTPClient(), "POST", base+"/v1/organizations", bearer, `{"name":"Closed","slug":"`+slug+`"}`, &refusal); code != 403 || refusal.Error.Code != "TAILNET_CONTEXT_UNAVAILABLE" {
+		t.Fatalf("a write over the tailnet with access closed: %d %+v", code, refusal)
+	}
+	if code := do(t, http.DefaultClient, "GET", "http://"+r.addr+"/v1/organizations/"+slug, bearer, "", nil); code != 404 {
+		t.Fatalf("the refused write committed: GET %s answers %d", slug, code)
+	}
 }
 
 // varlatchdAddr is varlatchd's tailnet address, as the peer sees it.

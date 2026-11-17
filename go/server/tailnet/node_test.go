@@ -144,6 +144,9 @@ func TestPeersThroughThePinnedNode(t *testing.T) {
 	control := startControl(t)
 	node := startVarlatchd(t, control, ctx)
 	dir := t.TempDir()
+	if err := BeginEnrolment(dir); err != nil {
+		t.Fatal(err)
+	}
 	m, err := NewManager(node, control.BaseURL(), dir, 8687, nil, nil)
 	if err != nil {
 		t.Fatal(err)

@@ -474,6 +474,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if t.Browser != nil && !t.Browser.gate(rec, r, p) {
 				return
 			}
+			// The listener's admission: nothing is served while tailnet
+			// access is closed, and what was admitted stops when it closes.
+			if t.Admit != nil {
+				actx, release, ok := t.Admit(r.Context())
+				if !ok {
+					writeError(rec, r, http.StatusForbidden, "TAILNET_CONTEXT_UNAVAILABLE", TailnetClosedMessage)
+					return
+				}
+				defer release()
+				r = r.WithContext(actx)
+			}
 			res := t.Resolve(r.Context(), r.RemoteAddr)
 			r = withResolution(r, res)
 			if res.Context != nil {

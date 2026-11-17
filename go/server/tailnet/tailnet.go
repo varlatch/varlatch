@@ -72,7 +72,14 @@ type Node interface {
 type Resolution struct {
 	Context *authz.TailnetContext
 	Refused string
+	// valid says whether the Context still counts: false once tailnet
+	// access closed after it was resolved (a pin change). Nil: always.
+	valid func() bool
 }
+
+// Valid is whether the resolution's Context still counts: an
+// authorization decision reads it at decision time (authz.WithTailnet).
+func (r Resolution) Valid() bool { return r.valid == nil || r.valid() }
 
 // Refusal is the resolution for a refused peer.
 func Refusal(reason string) Resolution { return Resolution{Refused: reason} }
@@ -130,16 +137,30 @@ func tags(t []string) []any {
 // pinned by its MagicDNS suffix, the node itself refused, tagged devices
 // known by their tags only.
 type Resolver struct {
-	node Node
-	// pinned is the pinned tailnet, every peer's name must end in it, and
-	// whether tailnet access is open.
-	pinned func() (string, bool)
-	// closed says why access is closed: a pin change refuses every peer as
-	// of another tailnet; anything else (not enrolled yet, the tailnet not
-	// known) as resolver-unavailable.
-	closed func() string
-	self   *selfReader
+	node  Node
+	state pinState
+	self  *selfReader
 }
+
+// pinState is where a resolver's pin comes from: the Manager, or a fixed
+// suffix (tests and the stand-in node).
+type pinState interface {
+	// Current is the pinned suffix, every peer's name must end in it, the
+	// open period's generation, and whether tailnet access is open.
+	Current() (string, uint64, bool)
+	// Valid is whether access is still open in the period gen was taken in.
+	Valid(gen uint64) bool
+	// Closed says why access is closed: a pin change refuses every peer
+	// as of another tailnet; anything else (not enrolled yet, the tailnet
+	// not known) as resolver-unavailable.
+	Closed() string
+}
+
+type fixedPin string
+
+func (f fixedPin) Current() (string, uint64, bool) { return string(f), 0, true }
+func (fixedPin) Valid(uint64) bool                 { return true }
+func (fixedPin) Closed() string                    { return "" }
 
 // NewResolver returns a resolver over node, pinned to suffix (the
 // MagicDNS suffix, e.g. "example.ts.net").
@@ -147,15 +168,25 @@ func NewResolver(node Node, suffix string, log *slog.Logger) *Resolver {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Resolver{node: node, pinned: func() (string, bool) { return suffix, true }, self: &selfReader{node: node, log: log}}
+	return &Resolver{node: node, state: fixedPin(suffix), self: &selfReader{node: node, log: log}}
 }
 
 // NewPinnedResolver returns a resolver over node whose pin is m's: while
-// m has tailnet access closed, every peer is refused before WhoIs.
+// m has tailnet access closed, every peer is refused before WhoIs, and a
+// resolution made before access closed no longer counts.
 func NewPinnedResolver(node Node, m *Manager, log *slog.Logger) *Resolver {
 	r := NewResolver(node, "", log)
-	r.pinned, r.closed = m.Pinned, m.Closed
+	r.state = m
 	return r
+}
+
+// closedRefusal is the refusal while access is closed.
+func (r *Resolver) closedRefusal() Resolution {
+	switch r.state.Closed() {
+	case PinControlURL, PinTailnet, PinSuffix:
+		return Refusal(OtherTailnet)
+	}
+	return Refusal(ResolverUnavailable)
 }
 
 // lookupTimeout bounds one question to the node (the local API's).
@@ -164,13 +195,9 @@ const lookupTimeout = 3 * time.Second
 // Resolve is resolveWhois: the peer behind remote ("ip:port", the
 // accepted socket's own), or why it has none.
 func (r *Resolver) Resolve(ctx context.Context, remote string) Resolution {
-	suffix, open := r.pinned()
+	suffix, gen, open := r.state.Current()
 	if !open {
-		switch r.closed() {
-		case PinControlURL, PinTailnet, PinSuffix:
-			return Refusal(OtherTailnet)
-		}
-		return Refusal(ResolverUnavailable)
+		return r.closedRefusal()
 	}
 	lctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	peer, err := r.node.WhoIs(lctx, remote)
@@ -202,6 +229,11 @@ func (r *Resolver) Resolve(ctx context.Context, remote string) Resolution {
 	if peer.StableID == self {
 		return Refusal(Self)
 	}
+	// Access may have closed while the node answered: nothing it said in
+	// an earlier open period counts.
+	if !r.state.Valid(gen) {
+		return r.closedRefusal()
+	}
 	c := &authz.TailnetContext{Tailnet: tailnet, NodeID: peer.StableID, NodeName: &host, Tags: append([]string{}, peer.Tags...)}
 	// A tagged device's identity is its tag set; its user profile is a
 	// pseudo-user, never a person.
@@ -209,7 +241,7 @@ func (r *Resolver) Resolve(ctx context.Context, remote string) Resolution {
 		login := peer.LoginName
 		c.UserLogin = &login
 	}
-	return Resolution{Context: c}
+	return Resolution{Context: c, valid: func() bool { return r.state.Valid(gen) }}
 }
 
 // selfReader is selfNodeResolver: the node's own StableID, read fresh for

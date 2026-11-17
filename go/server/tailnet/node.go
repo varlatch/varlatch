@@ -14,6 +14,7 @@ import (
 
 	"tailscale.com/client/local"
 	"tailscale.com/envknob"
+	"tailscale.com/ipn"
 	"tailscale.com/logtail"
 	"tailscale.com/net/netns"
 	"tailscale.com/tsnet"
@@ -63,13 +64,50 @@ type TSNode struct {
 	lc  *local.Client
 }
 
-// StartNode starts the node: tagged, never ephemeral, network-namespace
-// binding off (userspace tsnet has no TUN device, and the binding makes
-// every control connection hang on a host without a default route), and
-// tsnet's log uploads off. It returns at once; Up waits for the tailnet.
-func StartNode(cfg NodeConfig) (*TSNode, error) {
+// TailscaleControlURL is Tailscale's coordination server: the node's,
+// given explicitly, when the configuration names none.
+const TailscaleControlURL = ipn.DefaultControlURL
+
+// tsnetEnv are the environment variables tsnet reads in place of a field
+// left empty: a control server, an auth key, OAuth or workload identity
+// credentials, a forced login. varlatchd's node takes all of that from
+// varlatchd.conf alone, so it refuses to start while one is set.
+var tsnetEnv = []string{"TS_CONTROL_URL", "TS_AUTHKEY", "TS_AUTH_KEY", "TS_CLIENT_SECRET", "TS_CLIENT_ID", "TS_ID_TOKEN", "TS_AUDIENCE", "TSNET_FORCE_LOGIN"}
+
+// newServer is the node's tsnet server for cfg, not started.
+func newServer(cfg NodeConfig) (*tsnet.Server, error) {
 	if len(cfg.Tags) == 0 {
 		return nil, errors.New("tailnet: the node must be tagged")
+	}
+	for _, name := range tsnetEnv {
+		if _, set := os.LookupEnv(name); set {
+			return nil, fmt.Errorf("tailnet: %s is set in varlatchd's environment; the node takes its control server and enrolment from varlatchd.conf only. Unset it", name)
+		}
+	}
+	controlURL := cfg.ControlURL
+	if controlURL == "" {
+		// Never left empty: tsnet would read TS_CONTROL_URL.
+		controlURL = TailscaleControlURL
+	}
+	logf := cfg.Logf
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	return &tsnet.Server{
+		Dir: cfg.Dir, Hostname: cfg.Hostname, ControlURL: controlURL, AuthKey: cfg.AuthKey,
+		Ephemeral: false, AdvertiseTags: slices.Clone(cfg.Tags), Logf: logf, UserLogf: logf,
+	}, nil
+}
+
+// StartNode starts the node: tagged, never ephemeral, its control server
+// explicit, network-namespace binding off (userspace tsnet has no TUN
+// device, and the binding makes every control connection hang on a host
+// without a default route), and tsnet's log uploads off. It returns at
+// once; Up waits for the tailnet.
+func StartNode(cfg NodeConfig) (*TSNode, error) {
+	srv, err := newServer(cfg)
+	if err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, err
@@ -81,14 +119,6 @@ func StartNode(cfg NodeConfig) (*TSNode, error) {
 	// Nothing about this node goes to Tailscale's log service.
 	envknob.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
 	logtail.Disable()
-	logf := cfg.Logf
-	if logf == nil {
-		logf = func(string, ...any) {}
-	}
-	srv := &tsnet.Server{
-		Dir: cfg.Dir, Hostname: cfg.Hostname, ControlURL: cfg.ControlURL, AuthKey: cfg.AuthKey,
-		Ephemeral: false, AdvertiseTags: slices.Clone(cfg.Tags), Logf: logf, UserLogf: logf,
-	}
 	if err := srv.Start(); err != nil {
 		return nil, fmt.Errorf("tailnet: starting the node: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/varlatch/varlatch/go/server/authz"
@@ -87,5 +88,48 @@ func TestRequestWindowPerDevice(t *testing.T) {
 	current = dev("nB")
 	if w := do(tl, "GET", "/v1/meta", "", nil); w.Code != http.StatusOK {
 		t.Fatalf("device B's first request: %d", w.Code)
+	}
+}
+
+// #220 review P1: while its admission refuses (tailnet access closed),
+// a tailnet listener answers every request 403 TAILNET_CONTEXT_UNAVAILABLE
+// before resolving the peer; an admitted request runs under the
+// admission's context.
+func TestTailnetListenerAdmission(t *testing.T) {
+	resolved := 0
+	var admitted context.Context
+	open := false
+	type key struct{}
+	tl, _, _, _ := newTestServer(t, func(o *Options) {
+		o.PublicURL = nil
+		o.Tailnet = &TailnetListener{
+			Resolve: func(ctx context.Context, _ string) tailnet.Resolution {
+				resolved++
+				admitted = ctx
+				return tailnet.Refusal(tailnet.Unrecognized)
+			},
+			Admit: func(ctx context.Context) (context.Context, func(), bool) {
+				if !open {
+					return nil, nil, false
+				}
+				return context.WithValue(ctx, key{}, "admitted"), func() {}, true
+			},
+		}
+	})
+	for _, p := range []string{"/healthz", "/v1/meta", "/v1/organizations"} {
+		w := do(tl, "GET", p, "", nil)
+		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), `"code":"TAILNET_CONTEXT_UNAVAILABLE"`) || !strings.Contains(w.Body.String(), TailnetClosedMessage) {
+			t.Errorf("GET %s while closed: %d %s", p, w.Code, w.Body.String())
+		}
+	}
+	if w := do(tl, "POST", "/v1/organizations", `{"name":"A","slug":"a"}`, nil); w.Code != http.StatusForbidden {
+		t.Errorf("POST while closed: %d", w.Code)
+	}
+	if resolved != 0 {
+		t.Fatalf("a peer was resolved while closed: %d", resolved)
+	}
+	open = true
+	if w := do(tl, "GET", "/healthz", "", nil); w.Code != http.StatusOK || resolved != 1 || admitted.Value(key{}) != "admitted" {
+		t.Fatalf("while open: %d, %d resolved", w.Code, resolved)
 	}
 }

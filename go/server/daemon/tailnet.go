@@ -48,7 +48,16 @@ func startTailnet(cfg *config.Config, controlURL string, log *slog.Logger) (*tai
 	t := cfg.Tailnet
 	dir := filepath.Join(cfg.DataDir, tailnet.StateDir)
 	authKey := ""
-	if _, err := os.Stat(filepath.Join(dir, "tailscaled.state")); errors.Is(err, os.ErrNotExist) && t.AuthKeyFile != "" {
+	_, err := os.Stat(filepath.Join(dir, "tailscaled.state"))
+	fresh := errors.Is(err, os.ErrNotExist)
+	if fresh {
+		// A node with no state of its own enrols: its first tailnet becomes
+		// the pin. A node with state and no pin is never pinned silently.
+		if err := tailnet.BeginEnrolment(cfg.DataDir); err != nil {
+			return nil, fmt.Errorf("recording the tailnet enrolment: %w", err)
+		}
+	}
+	if fresh && t.AuthKeyFile != "" {
 		b, err := os.ReadFile(t.AuthKeyFile)
 		switch {
 		case errors.Is(err, os.ErrNotExist):
@@ -139,36 +148,47 @@ func (r *tailnetRunner) stop(ctx context.Context) {
 }
 
 // tailnetUsage is `admin tailnet`'s usage.
-const tailnetUsage = "Usage: varlatchd admin tailnet repin [--yes] [--json]"
+const tailnetUsage = "Usage: varlatchd admin tailnet repin [--yes [--adopt]] [--json]"
 
-// tailnetArgs checks `admin tailnet` arguments: whether to apply, and to
-// print JSON; a non-empty message is a usage error.
-func tailnetArgs(rest []string) (yes, asJSON bool, msg string) {
+// repinArgs are `admin tailnet repin`'s flags.
+type repinArgs struct{ yes, adopt, asJSON bool }
+
+// tailnetArgs checks `admin tailnet` arguments; a non-empty message is a
+// usage error.
+func tailnetArgs(rest []string) (repinArgs, string) {
+	var a repinArgs
 	if len(rest) == 0 || rest[0] != "repin" {
-		return false, false, tailnetUsage
+		return a, tailnetUsage
 	}
-	for _, a := range rest[1:] {
-		switch a {
+	for _, arg := range rest[1:] {
+		switch arg {
 		case "--yes":
-			yes = true
+			a.yes = true
+		case "--adopt":
+			a.adopt = true
 		case "--json":
-			asJSON = true
+			a.asJSON = true
 		default:
-			return false, false, tailnetUsage
+			return repinArgs{}, tailnetUsage
 		}
 	}
-	return yes, asJSON, ""
+	if a.adopt && !a.yes {
+		return repinArgs{}, tailnetUsage
+	}
+	return a, ""
 }
 
 // runTailnetRepin is `varlatchd admin tailnet repin`, the host's re-pin
 // primitive (step 6's `varlatch tailnet repin` runs it): in the running
-// daemon only, since it compares the pin with what the node observes now.
-// It shows both; with --yes it takes the observed suffix when that is the
-// only change, and refuses a different tailnet (StableID or control URL),
-// which means enrolling the node again. Every re-pin is kept in the pin's
-// history and logged.
+// daemon only, since it compares the pin with what the node observes now,
+// from a fresh check that must succeed. It shows both; with --yes it
+// takes the observed suffix when that is the only change, or reopens a
+// pin the tailnet matches again after a change; with --yes --adopt it pins
+// the tailnet an enrolled node without a pin is on. A different tailnet
+// (StableID or control URL) is refused: that means enrolling the node
+// again. Every re-pin is kept in the pin's history and logged.
 func runTailnetRepin(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io.Writer) int {
-	yes, asJSON, msg := tailnetArgs(rest)
+	a, msg := tailnetArgs(rest)
 	if msg != "" {
 		fmt.Fprintln(stderr, msg)
 		return 64
@@ -179,43 +199,56 @@ func runTailnetRepin(ctx context.Context, env *hostEnv, rest []string, stdout, s
 		return ExitFailure
 	}
 	v := env.tailnet.RepinView(ctx)
-	if asJSON && !yes {
+	if a.asJSON && !a.yes {
 		b, _ := json.Marshal(v)
 		fmt.Fprintln(stdout, string(b))
 		return ExitOK
 	}
 	pinned, observed := "none", "unknown"
-	if v.Pinned != nil {
+	if v.Pinned != nil && !v.Pinned.Enrolling {
 		pinned = describePin(v.Pinned.ControlURL, v.Pinned.TailnetID, v.Pinned.Suffix)
 	}
 	if v.Observed != nil {
 		observed = describePin(v.Observed.ControlURL, v.Observed.TailnetID, v.Observed.Suffix)
 	}
 	fmt.Fprintf(stdout, "pinned:   %s\nobserved: %s\n", pinned, observed)
-	switch {
-	case v.Pinned == nil || v.Observed == nil:
-		fmt.Fprintln(stderr, "varlatchd admin tailnet repin: "+tailnet.ErrNothingToRepin.Error())
+	refuse := func(msg string) int {
+		fmt.Fprintln(stderr, "varlatchd admin tailnet repin: "+msg)
 		return ExitFailure
-	case v.Reason == "":
+	}
+	switch {
+	case v.Observed == nil:
+		return refuse(tailnet.ErrNothingToRepin.Error())
+	case v.Missing && !a.adopt:
+		return refuse("the pin is missing, but this node was enrolled before: tailnet access stays closed. If the observed tailnet is the one this installation trusts, run again with --yes --adopt.")
+	case v.Pinned != nil && v.Pinned.Enrolling:
+		fmt.Fprintln(stdout, "The node is enrolling: its tailnet is pinned the first time it runs on one.")
+		return ExitOK
+	case !v.Missing && v.Reason == "" && v.Closed == "":
 		fmt.Fprintln(stdout, "The pin holds: nothing to re-pin.")
 		return ExitOK
 	case !v.Offered:
-		fmt.Fprintf(stderr, "varlatchd admin tailnet repin: %s (%s). Tailnet access stays closed.\n", tailnet.ErrNotRepinnable.Error(), v.Reason)
-		return ExitFailure
-	case !yes:
+		return refuse(fmt.Sprintf("%s (%s). Tailnet access stays closed.", tailnet.ErrNotRepinnable.Error(), v.Reason))
+	case !a.yes && v.Reason == tailnet.PinSuffix:
 		fmt.Fprintln(stdout, "The tailnet's MagicDNS suffix changed under the same tailnet. Run again with --yes to pin the observed suffix and reopen tailnet access.")
 		return ExitOK
-	}
-	old, next, err := env.tailnet.Repin(ctx)
-	if err != nil {
-		fmt.Fprintf(stderr, "varlatchd admin tailnet repin: %s\n", err.Error())
-		return ExitFailure
-	}
-	if next == nil {
-		fmt.Fprintln(stdout, "The pin holds: nothing to re-pin.")
+	case !a.yes:
+		fmt.Fprintf(stdout, "The tailnet matches its pin again, but access stays closed since it changed (%s). Run again with --yes to reopen tailnet access.\n", v.Closed)
 		return ExitOK
 	}
-	fmt.Fprintf(stdout, "Re-pinned the tailnet from %s to %s; tailnet access is open.\n", old.Suffix, next.Suffix)
+	old, next, err := env.tailnet.Repin(ctx, a.adopt)
+	switch {
+	case err != nil:
+		return refuse(err.Error())
+	case next == nil:
+		fmt.Fprintln(stdout, "The pin holds: nothing to re-pin.")
+	case old == nil:
+		fmt.Fprintf(stdout, "Adopted %s as the pinned tailnet; tailnet access is open.\n", next.Suffix)
+	case old.Suffix != next.Suffix:
+		fmt.Fprintf(stdout, "Re-pinned the tailnet from %s to %s; tailnet access is open.\n", old.Suffix, next.Suffix)
+	default:
+		fmt.Fprintf(stdout, "Reopened tailnet access on %s.\n", next.Suffix)
+	}
 	return ExitOK
 }
 

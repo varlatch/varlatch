@@ -89,7 +89,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			return 64
 		}
 	case sub == "tailnet":
-		if _, _, msg := tailnetArgs(rest); msg != "" {
+		if _, msg := tailnetArgs(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
@@ -142,7 +142,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] | "+
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
-		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes] [--json]  (each with [--config <file>])\n", msg)
+		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt]] [--json]  (each with [--config <file>])\n", msg)
 	return 64
 }
 

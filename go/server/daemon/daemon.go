@@ -442,7 +442,7 @@ func serve(opts Options, h *hooks) int {
 		// tailnet peer's, resolved from its connection.
 		topts := hopts
 		topts.PublicURL, topts.TrustedProxies, topts.Web, topts.Realtime = nil, nil, nil, nil
-		topts.Tailnet = &httpserver.TailnetListener{Resolve: tn.resolver.Resolve}
+		topts.Tailnet = &httpserver.TailnetListener{Resolve: tn.resolver.Resolve, Admit: tn.manager.Admit}
 		th, err := httpserver.New(topts)
 		if err != nil {
 			return fail(ExitFailure, "building the tailnet listener's HTTP handler", "error", err)
