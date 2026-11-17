@@ -3219,10 +3219,9 @@
     "HOME": {
       "slice": "5.1b",
       "sources": [
-        "apps/cli/src/agents/hook.ts",
-        "apps/cli/src/findFiles.ts"
+        "apps/cli/src/agents/hook.ts"
       ],
-      "note": "the home directory as Node's os.homedir() finds it; the guardrail hook reads it too"
+      "note": "the home directory as Node's os.homedir() finds it, an empty value counting as unset (@varlatch/context homeDirectory, which scan --find-files uses too); the guardrail hook reads it too"
     },
     "HTTPS_PROXY": {
       "slice": "5.5b",

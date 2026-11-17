@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { AGENT_RUN_ENV, ContextError, agentRunOf, loadToken, resolveContext } from "@varlatch/context";
-import { VarlatchClient } from "@varlatch/sdk";
+import { VarlatchClient, maskUserinfo } from "@varlatch/sdk";
 import { createVarlatchMcpServer, type McpDefaults } from "./server.js";
 
 /**
@@ -158,14 +158,14 @@ export function prepareMcpServer(args: McpArgs, env: NodeJS.ProcessEnv, cwd: str
   const token = loadToken(server, env);
   if (!token && agentRun) {
     throw new McpStartError(
-      `not authenticated to ${server}: this runs inside agent-safe run ${agentRun}, which gives the Agent no ` +
+      `not authenticated to ${maskUserinfo(server)}: this runs inside agent-safe run ${agentRun}, which gives the Agent no ` +
         `Varlatch credential and never uses the operator's (${AGENT_RUN_ENV} is set). For read access to ` +
         "configuration metadata, the operator relaunches the run with --agent-metadata.",
       MCP_EXIT.denied,
     );
   }
   if (!token) {
-    throw new McpStartError(`not authenticated to ${server}; run \`varlatch login\` or set VARLATCH_TOKEN`, MCP_EXIT.denied);
+    throw new McpStartError(`not authenticated to ${maskUserinfo(server)}; run \`varlatch login\` or set VARLATCH_TOKEN`, MCP_EXIT.denied);
   }
   return {
     client: new VarlatchClient({ server, token, ...(version ? { userAgent: mcpUserAgent(version) } : {}) }),

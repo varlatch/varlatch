@@ -86,9 +86,22 @@ The CLI never writes through a symbolic link:
 - Any other file the CLI would edit that is a symbolic link (a `CLAUDE.md`
   that links elsewhere, a linked `.aider.conf.yml`) is left as it is, with
   the edit printed for you to make, as for a file whose edit would
-  reformat it. `--remove` leaves every link in place. An unknown option, a missing option value, or an
-extra argument exits 64 before anything is written, so a mistyped `--check`
-never installs.
+  reformat it. `--remove` leaves every link in place.
+- A directory that is a symbolic link, below the project (or, with
+  `--scope user`, below the home directory) on the way to a file the
+  command reads, writes or removes, stops the command with status 78
+  before anything is read or changed, `--check` included. Replace it with
+  a directory, then run the command again.
+
+A file the CLI changes is replaced as a whole: it keeps its permission
+bits; ownership, ACLs and extended attributes are not carried over.
+`AGENTS.md` and a `CLAUDE.md` that is the same file stay one file, and
+`--remove` removes both names when it removes the file; a file with any
+other second name (a hard link) stops the command with status 78 before
+anything is changed.
+
+An unknown option, a missing option value, or an extra argument exits 64
+before anything is written, so a mistyped `--check` never installs.
 
 ### Options
 
