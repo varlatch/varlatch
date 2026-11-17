@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { LocalState, ResolvedContext, StoredCredential } from "@varlatch/context";
+import { maskServer, maskUserinfo } from "@varlatch/sdk";
 import { printable, safeTime } from "./safeText.js";
 
 /**
@@ -85,7 +86,7 @@ export function serverStatus(
 ): ServerStatus {
   const state = expiryState(credential, now);
   return {
-    server,
+    server: maskUserinfo(server),
     name: credential.name ?? null,
     issuedAt: credential.issuedAt ?? null,
     expiresAt: credential.expiresAt ?? null,
@@ -101,7 +102,7 @@ export function repoStatus(ctx: ResolvedContext, local: LocalState): RepoStatus 
   const tierApplies =
     local.selectedTier !== undefined && local.selectedEnvironment === ctx.environment;
   return {
-    server: ctx.server,
+    server: maskServer(ctx.server),
     organization: ctx.organization,
     project: ctx.project,
     environment: ctx.environment,
@@ -123,10 +124,10 @@ export function expiryWarning(
   const state = expiryState(credential, now);
   const expiresAt = safeTime(credential?.expiresAt);
   if (state === "expired") {
-    return `varlatch: credential for ${server} expired ${expiresAt} — run \`varlatch login --server ${server}\``;
+    return `varlatch: credential for ${maskUserinfo(server)} expired ${expiresAt} — run \`varlatch login --server ${maskUserinfo(server)}\``;
   }
   if (state === "expiring") {
-    return `varlatch: credential for ${server} expires ${expiresAt} — run \`varlatch login --server ${server}\` to renew`;
+    return `varlatch: credential for ${maskUserinfo(server)} expires ${expiresAt} — run \`varlatch login --server ${maskUserinfo(server)}\` to renew`;
   }
   return null;
 }
@@ -147,8 +148,8 @@ export function envTokenExpiryWarning(
   const remedy = "issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN";
   // The header's text is the server's: only a timestamp is shown (issue #119).
   const shown = safeTime(expiresAt);
-  if (at <= now) return `varlatch: credential for ${server} (VARLATCH_TOKEN) expired ${shown}; ${remedy}`;
-  return `varlatch: credential for ${server} (VARLATCH_TOKEN) expires ${shown}; ${remedy} before then`;
+  if (at <= now) return `varlatch: credential for ${maskUserinfo(server)} (VARLATCH_TOKEN) expired ${shown}; ${remedy}`;
+  return `varlatch: credential for ${maskUserinfo(server)} (VARLATCH_TOKEN) expires ${shown}; ${remedy} before then`;
 }
 
 export function formatStatusHuman(doc: StatusDocument): string {

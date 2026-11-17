@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ContextError, resolveServer } from "@varlatch/context";
 import type { TailnetDevice, VarlatchClient, WhoAmI } from "@varlatch/sdk";
+import { maskUserinfo } from "@varlatch/sdk";
 import { printable, safeTime, safeVersion } from "./safeText.js";
 
 /**
@@ -80,7 +81,7 @@ export function formatWhoamiHuman(server: string, caller: WhoAmI): string {
     `Organization  ${org}`,
     `Credential    ${credential.name ?? "unnamed"} (${credential.kind}, ${credential.id}), ` +
       (credential.expiresAt ? `expires ${safeTime(credential.expiresAt)}` : "no expiry"),
-    `Server        ${server} (${caller.listener} listener)`,
+    `Server        ${maskUserinfo(server)} (${caller.listener} listener)`,
     ...(caller.tailnet ? [`Device        ${describeDevice(caller.tailnet)}`] : []),
   ];
   // Names, IDs and the device's details come from the server: escaped (issue #119).

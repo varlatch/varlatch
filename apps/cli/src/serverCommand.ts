@@ -9,6 +9,7 @@ import {
   storedServerKey,
   type ServerSource,
 } from "@varlatch/context";
+import { maskServer, maskUserinfo, maskUserinfoInText } from "@varlatch/sdk";
 
 /**
  * The remembered default server (ADR-0058 Decision 1). `varlatch login`
@@ -41,7 +42,7 @@ export const SERVER_SOURCE_WORDS: Record<ServerSource, string> = {
 export function noteDefaultServer(server: string, err: (line: string) => void, env: NodeJS.ProcessEnv = process.env): void {
   try {
     if (rememberServerIfUnset(server, env)) {
-      err(`Default server: ${storedServerKey(server)}, for commands outside a repository. Change it with: varlatch server use <url>`);
+      err(`Default server: ${maskUserinfo(storedServerKey(server))}, for commands outside a repository. Change it with: varlatch server use <url>`);
     }
   } catch (error) {
     err(`varlatch: the default server was not saved (${error instanceof Error ? error.message : String(error)}); the sign-in is stored.`);
@@ -66,23 +67,23 @@ export function showServer(cwd: string, io: ServerIo, env: NodeJS.ProcessEnv = p
   } catch (error) {
     if (!(error instanceof ContextError)) throw error;
     resolved = null;
-    problem = error.message;
+    problem = maskUserinfoInText(error.message);
   }
   const remembered = defaultServer(env);
   const signedIn = listCredentials(env).map((c) => c.server);
   if (io.json) {
     io.json({
       version: 1,
-      server: resolved?.server ?? null,
+      server: resolved ? maskServer(resolved.server) : null,
       serverSource: resolved?.source ?? null,
-      defaultServer: remembered,
-      signedIn,
+      defaultServer: remembered === null ? null : maskUserinfo(remembered),
+      signedIn: signedIn.map(maskUserinfo),
     });
     return;
   }
-  io.out(resolved ? `Server here: ${resolved.server} (${SERVER_SOURCE_WORDS[resolved.source]})` : `Server here: none${problem ? ` (${problem})` : ""}`);
-  io.out(`Default server: ${remembered ?? "none"}`);
-  io.out(`Signed in to: ${signedIn.length > 0 ? signedIn.join(", ") : "none"}`);
+  io.out(resolved ? `Server here: ${maskServer(resolved.server)} (${SERVER_SOURCE_WORDS[resolved.source]})` : `Server here: none${problem ? ` (${problem})` : ""}`);
+  io.out(`Default server: ${remembered === null ? "none" : maskUserinfo(remembered)}`);
+  io.out(`Signed in to: ${signedIn.length > 0 ? signedIn.map(maskUserinfo).join(", ") : "none"}`);
 }
 
 /**
@@ -95,17 +96,17 @@ export function useServer(server: string, io: ServerIo, env: NodeJS.ProcessEnv =
   try {
     new URL(server);
   } catch {
-    throw new ServerCommandError(`varlatch server use: not a URL: ${server}`);
+    throw new ServerCommandError(`varlatch server use: not a URL: ${maskUserinfo(server)}`);
   }
   const key = storedServerKey(server);
   const signedIn = listCredentials(env).map((c) => c.server);
   if (!signedIn.includes(key)) {
     throw new ServerCommandError(
-      `varlatch server use: you are not signed in to ${key}. Sign in first: varlatch login --server ${key}` +
-        (signedIn.length > 0 ? `\nSigned in to: ${signedIn.join(", ")}` : ""),
+      `varlatch server use: you are not signed in to ${maskUserinfo(key)}. Sign in first: varlatch login --server ${maskUserinfo(key)}` +
+        (signedIn.length > 0 ? `\nSigned in to: ${signedIn.map(maskUserinfo).join(", ")}` : ""),
     );
   }
   setDefaultServer(key, env);
-  if (io.json) io.json({ version: 1, defaultServer: key });
-  else io.out(`Default server: ${key}`);
+  if (io.json) io.json({ version: 1, defaultServer: maskUserinfo(key) });
+  else io.out(`Default server: ${maskUserinfo(key)}`);
 }
