@@ -29,9 +29,19 @@ type TailnetListener struct {
 	// Resolve is the device check on the connection's own peer address
 	// ("ip:port"): tailnet.Resolver's, or a stand-in in tests.
 	Resolve func(ctx context.Context, remote string) tailnet.Resolution
+	// Admit, when set, is the listener's admission (tailnet.Manager's):
+	// while tailnet access is closed (the pin broken, missing, or not
+	// known now) every request is refused, whatever it asks for; an
+	// admitted request runs under a context cancelled when access closes.
+	Admit func(ctx context.Context) (context.Context, func(), bool)
 	// Browser, when set, makes it the browser endpoint.
 	Browser *BrowserEndpoint
 }
+
+// TailnetClosedMessage is the refusal of every request on a tailnet
+// listener while tailnet access is closed. The TypeScript server pins its
+// tailnet in its configuration and has no such state.
+const TailnetClosedMessage = tailnet.ClosedMessage
 
 // BrowserEndpoint is the browser endpoint's gate (ADR-0046 Decisions 3
 // and 4).
@@ -63,7 +73,7 @@ func resolutionOf(ctx context.Context) (tailnet.Resolution, bool) {
 func withResolution(r *http.Request, res tailnet.Resolution) *http.Request {
 	ctx := context.WithValue(r.Context(), resolutionKey{}, res)
 	if res.Context != nil {
-		ctx = authz.WithTailnet(ctx, res.Context)
+		ctx = authz.WithTailnet(ctx, res.Context, res.Valid)
 	}
 	return r.WithContext(ctx)
 }

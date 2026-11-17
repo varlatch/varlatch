@@ -489,6 +489,15 @@ func writeConfiguration(path string, cfg *config.Config) error {
 	if cfg.SyncAdapters != nil {
 		settings["sync_adapters"] = strings.Join(cfg.SyncAdapters, ",")
 	}
+	// The tailnet listener's settings, never its node: the node's keys and
+	// its pin stay on this host, and a restored installation's node enrols
+	// again (and pins its tailnet then).
+	if t := cfg.Tailnet; t != nil {
+		settings["tailnet"] = "on"
+		settings["tailnet_hostname"] = t.Hostname
+		settings["tailnet_tags"] = strings.Join(t.Tags, ",")
+		settings["tailnet_port"] = fmt.Sprint(t.Port)
+	}
 	b, err := json.Marshal(Configuration{FormatVersion: 1, Settings: settings})
 	if err != nil {
 		return err

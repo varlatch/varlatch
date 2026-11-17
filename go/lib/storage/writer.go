@@ -24,7 +24,10 @@ type job struct {
 	// being empty it takes no space.
 	timing jobTiming
 	fn     func(*Tx) error
-	done   chan error // buffered: the writer never blocks on it
+	// guard, when the caller's context has one, is held before the job's
+	// savepoint is released (CommitGuard).
+	guard CommitGuard
+	done  chan error // buffered: the writer never blocks on it
 	// state moves from queued to started (the writer took it) or to
 	// cancelled (the caller gave up first), never both.
 	state atomic.Int32
@@ -121,7 +124,7 @@ func jobOwnError(err error) bool {
 // batch. ctx only abandons a job the writer has not started yet; once it
 // started, Write waits for its outcome.
 func (db *DB) Write(ctx context.Context, fn func(tx *Tx) error) error {
-	j := &job{fn: fn, done: make(chan error, 1)}
+	j := &job{fn: fn, guard: guardOf(ctx), done: make(chan error, 1)}
 	j.timing.queue(ctx)
 	err := db.submit(ctx, j)
 	j.timing.report()
@@ -293,7 +296,16 @@ func (db *DB) runBatch(batch []*job) {
 		ws.inJob.Store(true)
 		err := runJob(j.fn, &Tx{conn: db.wconn, ws: ws})
 		ws.inJob.Store(false)
+		held := false
+		if err == nil && j.guard != nil {
+			if err = j.guard.Hold(); err == nil {
+				held = true
+			}
+		}
 		if lost("job") {
+			if held {
+				j.guard.Release()
+			}
 			break
 		}
 		if err != nil {
@@ -307,8 +319,12 @@ func (db *DB) runBatch(batch []*job) {
 			}
 			results[i] = err
 		}
-		if _, err := db.wconn.ExecContext(bg, "RELEASE "+sp); err != nil {
-			fail("release", err)
+		_, rerr := db.wconn.ExecContext(bg, "RELEASE "+sp)
+		if held {
+			j.guard.Release()
+		}
+		if rerr != nil {
+			fail("release", rerr)
 			break
 		}
 		if lost("release") {

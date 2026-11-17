@@ -884,9 +884,9 @@ may use; it never adds to the Agent's Grants.
   disclosures), and references are resolved or the exercise denied, one
   audited level at a time (`secret.disclosed` and `value.disclosed`, mode
   `reference-expansion`). A rotation's retiring value is returned beside
-  the current one, unexpanded. The Go server has no tailnet listener yet
-  (step 4.13): an exercise a Requirement covers is
-  `TAILNET_CONTEXT_REQUIRED`.
+  the current one, unexpanded. An exercise a Requirement covers is
+  `TAILNET_CONTEXT_REQUIRED` without a device: on the ordinary listener,
+  always (see "The tailnet listeners").
 - **Parity.** `capabilities-v0.22.0.json`
   (go-capabilities-fixture.test.ts) replays 154 requests: issuance in
   every form and refusal (every target rule, every zod issue, the
@@ -970,10 +970,9 @@ the drains and `admin audit-export discard-plan`.
 listeners' HTTP side (ADR-0014 §7, ADR-0046; `tailnet/whois.ts`,
 `tailnet/listener.ts`, `http/tailnet-browser.ts`), on a `tailnet.Node`:
 what varlatchd's own node answers about a peer (WhoIs) and about itself.
-The tsnet node itself, the pin and its re-pin, the listeners report and
-the Headscale tests are step 4.13b; the browser endpoint's HTTPS with
-Tailscale certificates is 4.13c. Until then a Node is a stand-in, and no
-tailnet listener is started.
+The node, its pin and the listeners report are step 4.13b (next
+section); the browser endpoint's HTTPS with Tailscale certificates is
+4.13c.
 
 - **Listeners.** A tailnet listener is a server of its own
   (`Options.Tailnet`): the API alone, with no nginx in front, no dashboard,
@@ -1015,6 +1014,115 @@ tailnet listener is started.
   a request to the listener it names (`listener`), and compares the CORS
   headers. `/v1/meta`'s document is the Go server's own, so its tailnet
   capability is a unit test.
+
+### The tailnet node and its pin (step 4.13b)
+
+With `tailnet = on`, varlatchd runs its own Tailscale node in process
+(tsnet, `tailscale.com`, BSD-3-Clause; `server/tailnet/node.go`) and
+serves the tailnet listener on the node's own addresses
+(`server/daemon/tailnet.go`), beside the ordinary listener.
+
+- **Settings** (`varlatchd.conf`): `tailnet = on` needs
+  `tailnet_hostname`, `tailnet_tags` (the node is always tagged) and
+  `tailnet_port`; `tailnet_auth_key_file` defaults to the
+  `tailnet-auth-key` systemd credential. The key is read only while the
+  node has no state of its own, to enrol it; after that it is never
+  needed. Any `tailnet_*` setting with `tailnet = off` is a configuration
+  error. Archives keep the settings, never the node: a restored
+  installation's node enrols again.
+- **The node** keeps its state (its keys) in `<data_dir>/tailnet`, mode
+  0700, never in a backup; it is never ephemeral and never logged out, so
+  a restart rejoins as the same device. Nothing goes to Tailscale's log
+  service (`TS_NO_LOGS_NO_SUPPORT`, logtail off), and network-namespace
+  binding is off (a userspace node has no TUN device). The node joins in
+  the background: the ordinary listener serves at once, the tailnet
+  listener once the node runs.
+- **Coordination server.** This release joins Tailscale's only:
+  `tailnet_control_url` other than Tailscale's is refused at startup, and
+  the node is always given Tailscale's control URL explicitly (an empty
+  one would let tsnet read `TS_CONTROL_URL`). varlatchd refuses to start
+  the node while any environment variable tsnet reads in place of its
+  settings is set (`TS_CONTROL_URL`, `TS_AUTHKEY`, `TS_AUTH_KEY`,
+  `TS_CLIENT_SECRET`, `TS_CLIENT_ID`, `TS_ID_TOKEN`, `TS_AUDIENCE`,
+  `TSNET_FORCE_LOGIN`): its control server and enrolment come from
+  `varlatchd.conf` alone.
+  Decision 5 requires a self-hosted (Headscale) control server's host name
+  never to reach Tailscale, and the tsnet release in use always keeps its
+  bootstrap DNS fallback (Tailscale's DERP servers resolve the control
+  host when the system resolver fails), with no way to turn it off. ADR-0059
+  lists a Headscale version as supported only once G10 shows no such
+  query, so none is yet. The plan's Headscale end-to-end tests (G10's step
+  4 cases against a Headscale 0.29.7 container: WhoIs, tagged peers, a
+  changed `base_domain`, a different control URL, and no bootstrap DNS
+  query while the control server is down) are deferred until a tsnet
+  release can turn the fallback off: the last of them cannot pass before
+  then, and the others would test a configuration varlatchd refuses. The
+  pin's Headscale rules are in place and unit-tested
+  (`TestHeadscalePin`) for that day.
+- **The pin** (`<data_dir>/tailnet-pin.json`, `server/tailnet/pin.go`)
+  is the control URL, the tailnet's StableID (Tailscale) and its MagicDNS
+  suffix (Headscale's `base_domain`), never the display name. It is taken
+  at enrolment only: before a node without state of its own starts, the
+  pin file is marked as enrolling, and the first tailnet that node runs on
+  becomes the pin. A node that has state but no pin file is never pinned
+  silently: access stays closed (`pin-missing`) until the host adopts the
+  tailnet the node is on.
+- **Tailnet access** is open only while the pin is recorded and not
+  closed, and the last check of the node (at start, every minute, and
+  before any re-pin; checks are serialized) succeeded on the pinned
+  tailnet. A check that fails, or finds the node not running or without a
+  tailnet, closes access until a check succeeds. A mismatch (a different
+  control URL, StableID or suffix) closes it and is latched: written into
+  the pin file, it holds across restarts and even if the tailnet changes
+  back, until a re-pin.
+- **While access is closed** the tailnet listener refuses every request,
+  whatever it asks for, with 403 `TAILNET_CONTEXT_UNAVAILABLE`, before the
+  peer is looked up (the TypeScript server pins its tailnet in its
+  configuration and has no such state). Each open period has a
+  generation: when access closes, every request admitted in the period is
+  cancelled at once; a peer lookup that was in flight returns no Tailnet
+  Context; and a Tailnet Context resolved in the period stops counting at
+  the next authorization decision that reads it (`authz.TailnetFrom`), also
+  after access reopens. A write a request had already started is stopped
+  at the write boundary: its context carries a commit guard
+  (`storage.WithCommitGuard`), which the single writer checks after the
+  job's function and before its savepoint's release, and which rolls the
+  job back (403 `TAILNET_CONTEXT_UNAVAILABLE`) once the request's period
+  ended. Closing access waits for any write between that check and its
+  release, so each write of the period is either released before access
+  closes or refused. Requests on the ordinary listener carry no guard.
+- **Re-pin.** `varlatchd admin tailnet repin [--yes [--adopt]] [--json]`
+  (host authority, through the running daemon only) runs a fresh check,
+  which must succeed, and shows the pin, the observation and the latched
+  closure. With `--yes` it pins the observed suffix when the suffix is the
+  only change, or reopens access when the tailnet matches the pin again;
+  with `--yes --adopt` it pins the tailnet an enrolled node without a pin
+  is on. A different StableID or control URL is refused: that means
+  enrolling the node again (remove `<data_dir>/tailnet` and the pin, give
+  an auth key). Each re-pin is kept in the pin's `history`, with the
+  closure it ended, and logged. An audit event for it waits for step 6's
+  `varlatch tailnet repin`: the TypeScript server has no event type for
+  it, and the Go audit types equal the TypeScript ones.
+- **The listeners report** (`getInstallationListeners`, and
+  `<data_dir>/tailnet-listeners.json`, rewritten when a check changes and
+  at least every 5 minutes) is what varlatchd last observed: the listener
+  bound, the node's local API answering, the node running on the pinned
+  tailnet, and its name, tailnet, tags and addresses where each passes
+  observe.ts's checks. Never reachability, which only a client sees.
+- **Tests, with no real tailnet.** Tailscale's own control server
+  (`tstest/integration/testcontrol`) and a DERP relay run in process on
+  loopback: `TestPeersThroughThePinnedNode` drives every device check
+  through a real node (tagged, a person's, shared in, another tailnet,
+  itself, unknown) and `TestTailnetListener` runs varlatchd with
+  `tailnet = on` (the `tailnetControl` hook points it at the test server):
+  a tagged peer's request over the tailnet carries its Tailnet Context
+  into the audit; restarted without the auth key it rejoins; a changed
+  suffix refuses the whole listener (a write never commits) until `admin
+  tailnet repin --yes`; a removed pin file is adopted only with
+  `--adopt`. The pin's rules (failed checks, serialized checks, the latch,
+  a missing pin, lookups and contexts across a closure, the admission) are
+  unit tests in `pin_test.go`. The live checks on a real tailnet are run
+  by hand (the PR lists them).
 
 The server's packages:
 
@@ -1490,8 +1598,9 @@ The server's packages:
   kind of confirmation; `TestCoverageWhileTheBackfillRuns` the coverage
   of an unfinished backfill.
 
-- `server/tailnet` (step 4.13a): the tailnet listeners' device check on a
-  node (see "The tailnet listeners").
+- `server/tailnet` (steps 4.13a and 4.13b): the tailnet listeners'
+  device check, varlatchd's tsnet node, its pin and the listeners report
+  (see "The tailnet listeners" and "The tailnet node and its pin").
 - `server/capabilities` (step 4.6): broker Capabilities' issuance, list
   and revocation; their exercise is `server/values`' (see "Broker
   Capabilities").
@@ -1801,4 +1910,6 @@ blocked`, but that error reaches its generic handler, which prints
   covers npm packages only, so no Go binary ships before it lists the
   modules each binary links, go-webauthn and its dependencies
   (fxamacker/cbor, go-webauthn/x, golang-jwt/jwt, google/go-tpm,
-  tinylib/msgp, philhofer/fwd, x448/float16) included.
+  tinylib/msgp, philhofer/fwd, x448/float16) and tailscale.com and its
+  dependencies (step 4.13b: BSD-3-Clause, BSD-2-Clause, Apache-2.0, MIT
+  and ISC; see its PR) included.

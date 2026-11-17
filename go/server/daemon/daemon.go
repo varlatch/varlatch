@@ -119,6 +119,9 @@ type hooks struct {
 	writer func(*write.Writer)
 	// backups tunes the backup service (tests: a slower sealing pace).
 	backups func(*backups.Options)
+	// tailnetControl replaces the tailnet node's control server (tests: an
+	// in-process one).
+	tailnetControl string
 }
 
 // productionStorage is the storage engine's options for serving: the
@@ -284,6 +287,23 @@ func serve(opts Options, h *hooks) int {
 	}
 	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups}
 	env.backups = newBackups(env)
+	// The tailnet listener (step 4.13b), when tailnet = on: its node starts
+	// now and joins its tailnet in the background; the ordinary listener
+	// reports what it observes (GET /v1/installation/listeners).
+	var tn *tailnetRunner
+	if cfg.Tailnet != nil {
+		var err error
+		controlURL := cfg.Tailnet.ControlURL
+		if h.tailnetControl != "" {
+			controlURL = h.tailnetControl
+		}
+		if tn, err = startTailnet(cfg, controlURL, log); err != nil {
+			return fail(ExitFailure, "cannot start the tailnet node", "error", err)
+		}
+		env.tailnet = tn.manager
+		// A start that fails after this point leaves the tailnet too.
+		defer tn.stop(context.Background())
+	}
 	control, err := listenControl(env, log)
 	if err != nil {
 		return fail(ExitFailure, "cannot open the control socket in the data directory", "socket", ControlSocket, "error", err)
@@ -388,7 +408,7 @@ func serve(opts Options, h *hooks) int {
 		}()
 		defer func() { cancel(); <-exportDone }()
 	}
-	handler, err := httpserver.New(httpserver.Options{
+	hopts := httpserver.Options{
 		Outbound:       policy,
 		Version:        buildinfo.Version,
 		PublicURL:      cfg.PublicURL,
@@ -407,9 +427,27 @@ func serve(opts Options, h *hooks) int {
 		Maintenance:    admission,
 		Backups:        env.backups,
 		Log:            log,
-	})
+	}
+	if tn != nil {
+		hopts.TailnetListeners = tn.manager.Report
+	}
+	handler, err := httpserver.New(hopts)
 	if err != nil {
 		return fail(ExitFailure, "building the HTTP handler", "error", err)
+	}
+	var tailnetHandler http.Handler
+	if tn != nil {
+		// The same API, without the dashboard, the browser session, the
+		// live updates, the public URL or proxies: every request is a
+		// tailnet peer's, resolved from its connection.
+		topts := hopts
+		topts.PublicURL, topts.TrustedProxies, topts.Web, topts.Realtime = nil, nil, nil, nil
+		topts.Tailnet = &httpserver.TailnetListener{Resolve: tn.resolver.Resolve, Admit: tn.manager.Admit}
+		th, err := httpserver.New(topts)
+		if err != nil {
+			return fail(ExitFailure, "building the tailnet listener's HTTP handler", "error", err)
+		}
+		tailnetHandler = th
 	}
 	if _, ok := web.Embedded(); !ok {
 		log.Warn("this varlatchd was built without the dashboard; it serves a placeholder page (go generate ./server/web)")
@@ -436,6 +474,9 @@ func serve(opts Options, h *hooks) int {
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	log.Info("varlatchd is serving", "version", buildinfo.Version, "address", ln.Addr().String(), "installationId", inst.ID)
+	if tn != nil {
+		go tn.serve(ctx, tailnetHandler)
+	}
 	if opts.Ready != nil {
 		opts.Ready(ln.Addr())
 	}
@@ -465,6 +506,10 @@ func serve(opts Options, h *hooks) int {
 		h.stopped()
 	}
 	cancel()
+	if tn != nil {
+		tn.stop(stopCtx)
+		<-tn.done
+	}
 	log.Info("stopped")
 	return ExitOK
 }

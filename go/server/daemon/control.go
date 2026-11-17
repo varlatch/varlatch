@@ -20,6 +20,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/maintenance"
+	"github.com/varlatch/varlatch/go/server/tailnet"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -69,6 +70,9 @@ type hostEnv struct {
 	log       *slog.Logger
 	// tune adjusts the backup service's options (tests).
 	tune func(*backups.Options)
+	// tailnet is the tailnet node's pin and report, in a running varlatchd
+	// with tailnet = on; nil otherwise.
+	tailnet *tailnet.Manager
 }
 
 type controlRequest struct {
