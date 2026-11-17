@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/bench/g9a"
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -103,9 +104,28 @@ func runBench(args []string, stderr io.Writer) int {
 	out := fs.String("out", "", "the output directory for the run's files")
 	listen := fs.String("listen", "127.0.0.1:8080", "the address the load connects to")
 	profile := fs.Int("profile", 0, "seconds of CPU profile to take from the load's start (POST /run/start), into cpu.pprof in the output directory (0: none)")
-	if err := fs.Parse(args); err != nil || *planPath == "" || *data == "" || *out == "" {
-		fmt.Fprintln(stderr, "usage: varlatchd g9a -plan <plan.json> -data <dir> -out <dir> [-listen <addr>]")
+	var dest benchDestination
+	fs.StringVar(&dest.File, "backup-destinations", "", "a destinations file (absolute): the plan's backups upload to its destination named by -backup-destination, as backup_destinations_file sets it")
+	fs.StringVar(&dest.Name, "backup-destination", "", "the destination in -backup-destinations the backups upload to")
+	if err := fs.Parse(args); err != nil || *planPath == "" || *data == "" || *out == "" || fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "usage: varlatchd g9a -plan <plan.json> -data <dir> -out <dir> [-listen <addr>] [-profile <s>] [-backup-destinations <file> -backup-destination <name>]")
 		return 64
+	}
+	if (dest.File == "") != (dest.Name == "") {
+		fmt.Fprintln(stderr, "varlatchd g9a: -backup-destinations and -backup-destination go together")
+		return 64
+	}
+	if dest.File != "" {
+		// The destination must be in the file, before anything is seeded:
+		// a run that names one never falls back to local archives.
+		if !filepath.IsAbs(dest.File) {
+			fmt.Fprintf(stderr, "varlatchd g9a: -backup-destinations: %s is not an absolute path\n", dest.File)
+			return 64
+		}
+		if _, err := backup.ReadDestination(dest.File, dest.Name); err != nil {
+			fmt.Fprintf(stderr, "varlatchd g9a: -backup-destination %s: %v\n", dest.Name, err)
+			return ExitConfig
+		}
 	}
 	p, err := g9a.ReadPlan(*planPath)
 	if err != nil {
@@ -122,7 +142,7 @@ func runBench(args []string, stderr io.Writer) int {
 		return ExitFailure
 	}
 	defer coolify.close()
-	conf, err := benchInstallation(*data, *out, *listen, coolify.Port())
+	conf, err := benchInstallation(*data, *out, *listen, coolify.Port(), dest)
 	if err != nil {
 		fmt.Fprintf(stderr, "varlatchd g9a: %v\n", err)
 		return ExitFailure
@@ -130,10 +150,17 @@ func runBench(args []string, stderr io.Writer) int {
 	return benchServe(Options{ConfigPath: conf, Stderr: stderr}, p, *data, *out, time.Duration(*profile)*time.Second, coolify)
 }
 
+// benchDestination is where the run's backups upload (ADR-0059 amendment
+// 6: G9's backups are the shipped backup path, writing to an S3-compatible
+// server on the same host): a destinations file and the name of one of its
+// destinations, as varlatchd.conf's backup_destinations_file and
+// backup_destination. Empty, the archives stay in the data directory.
+type benchDestination struct{ File, Name string }
+
 // benchInstallation makes a fresh installation for the run: a Root KEK in
 // the data directory, and varlatchd.conf in the output directory (kept
 // with the report), with the access log there too.
-func benchInstallation(data, out, listen string, coolifyPort int) (string, error) {
+func benchInstallation(data, out, listen string, coolifyPort int, dest benchDestination) (string, error) {
 	for _, d := range []string{data, out} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return "", err
@@ -157,6 +184,11 @@ func benchInstallation(data, out, listen string, coolifyPort int) (string, error
 	conf := filepath.Join(out, g9a.FileConfig)
 	text := fmt.Sprintf("# Written by varlatchd g9a for one run.\nlisten = %s\ndata_dir = %s\nroot_kek_file = %s\naccess_log = %s\nbackup_key_file = %s\nbackup_interval = off\nbackup_keep = 2\nsync = off\noutbound_allow = 127.0.0.1/32:%d\n",
 		listen, data, kekFile, filepath.Join(out, g9a.FileAccessLog), bekFile, coolifyPort)
+	if dest.File != "" {
+		// Each backup then uploads its archive, and a failed upload fails
+		// the backup (backups.Service.Run returns the upload's error).
+		text += fmt.Sprintf("backup_destinations_file = %s\nbackup_destination = %s\n", dest.File, dest.Name)
+	}
 	return conf, os.WriteFile(conf, []byte(text), 0o644)
 }
 
@@ -385,7 +417,16 @@ func (t *benchTarget) WALSize() int64 { return t.store.Metrics().WALBytes }
 // and local retention, into the run's data directory.
 func (t *benchTarget) Backup(ctx context.Context, _ int, o storage.SnapshotOptions) (g9a.BackupStats, error) {
 	res, err := backups.New(backups.Options{Config: t.cfg, Store: t.store, RootKEK: t.rootKEK, Log: t.log, Snapshot: o}).Run(ctx)
-	return g9a.BackupStats{Snapshot: res.Snapshot, Seal: time.Duration(res.Capture.DumpMs) * time.Millisecond, ArchiveBytes: res.Bytes}, err
+	if err == nil && t.cfg.BackupDestinationsFile != "" && res.Delivery == nil {
+		// Run returns the upload's error; a backup with a destination and
+		// no recorded delivery is a failed one all the same.
+		err = fmt.Errorf("the archive %s was not uploaded to %s", res.ArchiveID, t.cfg.BackupDestination)
+	}
+	st := g9a.BackupStats{Snapshot: res.Snapshot, Seal: time.Duration(res.Capture.DumpMs) * time.Millisecond, ArchiveBytes: res.Bytes}
+	if res.Delivery != nil {
+		st.UploadedTo = res.Delivery.Destination
+	}
+	return st, err
 }
 
 // seedW1 writes W1 in the production tables, in jobs of the size an

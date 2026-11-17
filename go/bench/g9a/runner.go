@@ -109,11 +109,13 @@ type Target interface {
 }
 
 // BackupStats is what a backup did: its snapshot, how long its sealing
-// and check took, and the archive's size (0 for a bare snapshot).
+// and check took, the archive's size (0 for a bare snapshot) and the
+// destination it was uploaded to (empty when none is configured).
 type BackupStats struct {
 	Snapshot     storage.SnapshotStats
 	Seal         time.Duration
 	ArchiveBytes int64
+	UploadedTo   string
 }
 
 // ConvergeResult summarizes one converge run: with the real engine,
@@ -644,7 +646,7 @@ func (r *Runner) timedBackup(ctx, work context.Context, phaseEnd time.Time, b Ba
 // start is its backup_start event, numbered and timed here and given the
 // WAL size unless it has one; backup returns it. Its backup_end carries
 // the snapshot's pages, steps, restarts and duration, the sealing's
-// duration and the archive's size.
+// duration, the archive's size and the destination it was uploaded to.
 func (r *Runner) backup(ctx context.Context, start Event) Event {
 	t := time.Now()
 	start.Ev, start.T, start.Backup = EvBackupStart, us(t), int(r.backups.Add(1))
@@ -656,7 +658,7 @@ func (r *Runner) backup(ctx context.Context, start Event) Event {
 	st := b.Snapshot
 	e := Event{Ev: EvBackupEnd, Backup: start.Backup, Phase: start.Phase, Attempt: start.Attempt,
 		Pages: st.Pages, Steps: st.Steps, Restarts: st.Restarts, DurUs: st.Duration.Microseconds(),
-		SealUs: b.Seal.Microseconds(), ArchiveBytes: b.ArchiveBytes}
+		SealUs: b.Seal.Microseconds(), ArchiveBytes: b.ArchiveBytes, UploadedTo: b.UploadedTo}
 	if err != nil {
 		e.Err = err.Error()
 	}

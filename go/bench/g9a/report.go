@@ -728,6 +728,10 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			if b.WaitUs > 0 {
 				w.Note = fmt.Sprintf("started %.1fs late, after waiting for a running backup", float64(b.WaitUs)/1e6)
 			}
+			if e.UploadedTo != "" {
+				// The window runs to backup_end, so it includes the upload.
+				w.Note = strings.TrimPrefix(w.Note+"; uploaded to "+e.UploadedTo, "; ")
+			}
 			backups = append(backups, w)
 			backupEnds = append(backupEnds, e)
 			backupSpans = append(backupSpans, [2]int64{b.T, e.T})
