@@ -15,6 +15,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/security"
 )
 
 // Contracts (ADR-0059 step 4.1b): getActiveContract, pushContractRevision,
@@ -59,6 +60,18 @@ func (o *operations) enterProject(ctx context.Context, route, exception string) 
 	q, err := o.enterRoute(ctx, route, exception)
 	if err != nil {
 		return nil, err
+	}
+	// Whether the principal can see the Organization first: an outsider gets
+	// the same answer whether the Project (or environment) exists or not.
+	denied, event, err := authz.RequireVisible(ctx, o.s.opts.Auth.Store().Reader(), authzPrincipal(q.p), q.org.ID, requestIDOf(q.r))
+	if err != nil {
+		return nil, err
+	}
+	if denied != nil {
+		if event != nil {
+			return nil, q.refused(ctx, &security.DeferredDenial{Err: denied, Event: *event})
+		}
+		return nil, denied
 	}
 	segs := strings.Split(strings.TrimPrefix(q.r.URL.Path, "/"), "/")
 	project, err := query.New(o.s.opts.Auth.Store().Reader()).LiveProject(ctx, query.LiveProjectParams{OrganizationID: q.org.ID, SlugOrID: tryDecodeURIComponent(segs[4])})

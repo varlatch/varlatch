@@ -129,6 +129,45 @@ func Decide(ctx context.Context, db query.DBTX, p Principal, action string, r Re
 	return d, nil
 }
 
+// RequireVisible is requireOrganizationVisible (http/support.ts): before a
+// route looks anything up inside the Organization (a Project, an
+// environment), the principal must be able to see the Organization at
+// all, as Decide judges it before hiding existence: a role in it, a Grant
+// in it (one scoped to a Project or an environment counts), or a machine
+// identity of it. Anyone else gets the answer an unknown Organization
+// gets, whether or not what the route names exists. nil when it is
+// visible; otherwise the error, and for a person the denial's audit event
+// (no action was decided yet), which the caller records once the read or
+// job that refused it ended. A machine of another Organization is refused
+// with no event, as Decide refuses it.
+func RequireVisible(ctx context.Context, db query.DBTX, p Principal, organizationID, requestID string) (*domainerr.Error, *audit.Event, error) {
+	if !p.human() {
+		if p.OrganizationID == organizationID {
+			return nil, nil, nil
+		}
+		return domainerr.NotFound("Organization"), nil, nil
+	}
+	role, err := OrgRole(ctx, db, organizationID, p.IdentityID)
+	if err != nil || role != "" {
+		return nil, nil, err
+	}
+	grants, err := LoadGrants(ctx, db, organizationID, p.IdentityID)
+	if err != nil || len(grants) > 0 {
+		return nil, nil, err
+	}
+	org, reqID := organizationID, requestID
+	return domainerr.NotFound("Organization"), &audit.Event{
+		Type:            "authorization.denied",
+		Decision:        audit.Deny,
+		ActorIdentityID: &p.IdentityID,
+		CredentialID:    audit.Value(p.CredentialID),
+		OrganizationID:  &org,
+		Resource:        jsvalue.Object{{Key: "projectId", Value: nil}, {Key: "environmentId", Value: nil}},
+		Authz:           jsvalue.Object{{Key: "denial", Value: "no-grant"}, {Key: "requirements", Value: []any{}}},
+		RequestID:       &reqID,
+	}, nil
+}
+
 func orNull(s string) any {
 	if s == "" {
 		return nil

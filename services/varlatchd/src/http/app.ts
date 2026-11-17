@@ -204,6 +204,7 @@ import {
   decide,
   recordDenial,
   reject,
+  requireOrganizationVisible,
   type Decision,
   decodeCursor,
   encodeCursor,
@@ -520,6 +521,9 @@ async function scope(ctx: AppCtx, c: Context, during: ResolveOptions = {}) {
 
 async function projectScope(ctx: AppCtx, c: Context, during: ResolveOptions = {}) {
   const org = await resolveOrganization(ctx, c, during);
+  // Whether the principal can see the Organization first: an outsider gets
+  // the same answer whether the Project (or environment) exists or not.
+  await requireOrganizationVisible(ctx, c, org.id);
   const project = await getProject(ctx, org.id, routeParam(c, "project"));
   return { org, project };
 }

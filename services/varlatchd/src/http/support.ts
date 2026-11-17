@@ -302,6 +302,44 @@ export async function decide(
   };
 }
 
+/**
+ * Before a route looks anything up inside the Organization (a Project, an
+ * environment), the principal must be able to see the Organization at
+ * all, as {@link decide} judges it before hiding existence: a role in it,
+ * a Grant in it (one scoped to a Project or an environment counts), or a
+ * machine identity of it. Anyone else gets the answer an unknown
+ * Organization gets, whether or not what the route names exists. A
+ * person's refusal is audited as decide's denial is, with no action (no
+ * action was decided yet); it is kept on the request and recorded once
+ * the request ended (auditDeferredDenial), so this also works inside a
+ * retrieval snapshot. A machine of another Organization is refused with
+ * no event, as decide refuses it.
+ */
+export async function requireOrganizationVisible(ctx: AppCtx, c: Context, organizationId: string): Promise<void> {
+  const principal = c.get("principal") as Principal | undefined;
+  if (!principal) return;
+  const notFound = () => new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
+  if (principal.identity.kind !== "human") {
+    if (principal.identity.organization_id === organizationId) return;
+    throw notFound();
+  }
+  if ((await getOrgRole(ctx, organizationId, principal.identity.id)) !== null) return;
+  if ((await loadGrants(ctx, organizationId, principal.identity.id)).length > 0) return;
+  const event: AuditEventInput = {
+    eventType: "authorization.denied",
+    decision: "deny",
+    actorIdentityId: principal.identity.id,
+    credentialId: principal.credentialId,
+    organizationId,
+    action: null,
+    resource: { projectId: null, environmentId: null },
+    authz: { denial: "no-grant", requirements: [] },
+    requestId: c.get("requestId") as string,
+  };
+  c.set(DEFERRED_DENIAL, event);
+  throw notFound();
+}
+
 /** Record a denial's audit event, if it has one. Allowed decisions record nothing. */
 export async function recordDenial(ctx: AppCtx, decision: Decision): Promise<void> {
   if (!decision.allowed && decision.denialEvent) await recordAuditEvent(ctx.db, decision.denialEvent);
