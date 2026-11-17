@@ -381,6 +381,52 @@ type App = { request: (path: string, init: RequestInit) => Response | Promise<Re
  * with the others). `path` fills a request's path (ids of the file's own
  * rows).
  */
+/**
+ * Runs `fn` with `Date.now()` and `new Date()` reading `now` (PGlite's
+ * now() and clock_timestamp() read Date.now() too); `new Date(x)`,
+ * `Date()`, the statics and `instanceof Date` are as before, and the Date
+ * it found is back once `fn` settles.
+ */
+export async function onClock<T>(now: () => number, fn: () => Promise<T>): Promise<T> {
+  const Found = globalThis.Date;
+  const moved: DateConstructor = new Proxy(Found, {
+    construct: (target, args, newTarget) =>
+      Reflect.construct(target, args.length === 0 ? [now()] : args, newTarget === moved ? target : newTarget),
+    apply: () => new Found(now()).toString(),
+    get: (target, prop) => (prop === "now" ? now : Reflect.get(target, prop, target)),
+  });
+  globalThis.Date = moved;
+  try {
+    return await fn();
+  } finally {
+    globalThis.Date = Found;
+  }
+}
+
+const HOUR_MS = 3_600_000;
+const HOUR_MARGIN_MS = 30 * 60_000;
+
+/**
+ * Runs `fn` (a replay of `rows`) on the recording's clock, as the Go
+ * replay runs on paritytest.RecordedClock: the rows' last audit event,
+ * moved on by the time the replay takes (forward to the next hour with
+ * less than 30 minutes of that hour left, as paritytest.HourClock). The
+ * rows' lifetimes, counted from their recording (a plan retained a day,
+ * an invitation valid a week), then mean what they meant when the fixture
+ * was recorded, whatever the date: replays on the real clock had them run
+ * out in real time (varlatch run 44049762382).
+ */
+export function onRecordedClock<T>(rows: Record<string, Row[]>, fn: () => Promise<T>): Promise<T> {
+  const times = (rows.audit_events ?? []).map((e) => Date.parse(String(e.occurred_at)));
+  if (times.length === 0 || times.some(Number.isNaN)) throw new Error("the rows have no audit event to date their recording");
+  let start = Math.max(...times);
+  const left = HOUR_MS - (start % HOUR_MS);
+  if (left < HOUR_MARGIN_MS) start += left;
+  const wall = Date;
+  const offset = start - wall.now();
+  return onClock(() => wall.now() + offset, fn);
+}
+
 export async function record(
   ctx: AppCtx,
   app: App | ((listener?: string) => App),

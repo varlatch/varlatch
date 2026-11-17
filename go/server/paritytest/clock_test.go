@@ -114,3 +114,38 @@ func TestCheckTimesSeesEveryExposureTimeARequestSet(t *testing.T) {
 		t.Errorf("errors:\n%s", strings.Join(e.got, "\n"))
 	}
 }
+
+// RecordedClock runs from the rows' last audit event, moved on by the
+// time the replay takes on its wall clock, whatever date that says; and
+// like HourClock it moves forward to the next hour with less than
+// HourMargin of the recording's hour left.
+func TestRecordedClock(t *testing.T) {
+	rows := func(last string) map[string][]Row {
+		return map[string][]Row{"audit_events": {{"occurred_at": "2026-11-16T09:00:00.000Z"}, {"occurred_at": last}, {"occurred_at": "2026-11-16T09:10:00.000Z"}}}
+	}
+	for _, c := range []struct {
+		name, last string
+		want       time.Time
+	}{
+		{"with the margin left", "2026-11-16T09:20:00.000Z", time.Date(2026, 11, 16, 9, 20, 0, 0, time.UTC)},
+		{"too little of the hour left", "2026-11-16T09:40:00.000Z", time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			wall := time.Date(2027, 3, 1, 12, 0, 0, 0, time.UTC) // a later date
+			clock, err := RecordedClock(rows(c.last), func() time.Time { return wall })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := clock(); !got.Equal(c.want) {
+				t.Fatalf("at the start: %s, want %s", got, c.want)
+			}
+			wall = wall.Add(90 * time.Second)
+			if got := clock(); !got.Equal(c.want.Add(90 * time.Second)) {
+				t.Fatalf("90 s on: %s, want %s", got, c.want.Add(90*time.Second))
+			}
+		})
+	}
+	if _, err := RecordedClock(map[string][]Row{}, time.Now); err == nil {
+		t.Fatal("rows without an audit event dated a recording")
+	}
+}

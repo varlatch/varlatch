@@ -455,6 +455,38 @@ func checkTimes(t testing.TB, name string, store *storage.DB, before int64, expo
 // would then put the replay's new rows before the file's).
 func HourClock() func() time.Time { return hourClock(time.Now) }
 
+// RecordedClock is the clock a replay of rows runs its server on when they
+// hold lifetimes counted from their recording (a plan retained a day, an
+// invitation valid a week): HourClock, with the recording's time for the
+// real one. The recording's time is its last audit event; the clock moves
+// on from it by the time the replay takes on wall (time.Now; a test may
+// pass a later date), so that each lifetime means what it meant when the
+// fixture was recorded, whatever the date the replay runs on. Replays on
+// the real clock had their rows' lifetimes run out in real time: the
+// audit export worker's plans a day after recording (varlatch run
+// 44049762382), the Organization deletion's invitations a week after.
+func RecordedClock(rows map[string][]Row, wall func() time.Time) (func() time.Time, error) {
+	var recorded time.Time
+	for _, e := range rows["audit_events"] {
+		s, ok := e["occurred_at"].(string)
+		if !ok {
+			return nil, fmt.Errorf("an audit event's occurred_at is %T, not a time", e["occurred_at"])
+		}
+		at, err := time.Parse(time.RFC3339Nano, s)
+		if err != nil {
+			return nil, err
+		}
+		if at.After(recorded) {
+			recorded = at
+		}
+	}
+	if recorded.IsZero() {
+		return nil, fmt.Errorf("the rows have no audit event to date their recording")
+	}
+	start := wall()
+	return hourClock(func() time.Time { return recorded.Add(wall().Sub(start)) }), nil
+}
+
 // HourMargin is how much of its hour a replay may take.
 const HourMargin = 30 * time.Minute
 
