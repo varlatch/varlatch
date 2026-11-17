@@ -79,6 +79,31 @@ func TestBackupAndMaintenanceCommands(t *testing.T) {
 	if code != ExitOK || json.Unmarshal([]byte(out), &st) != nil || len(st.Archives) != 1 || st.Archives[0].ArchiveID != m[2] {
 		t.Errorf("backup status: %d %q", code, out)
 	}
+	// A lease ends by itself on the running server: it is ready again once
+	// the lease expired, and the expired lease's id ends nothing.
+	code, out, errOut = runAdmin(t, "maintenance", "begin", "--ttl", "2s", "--config", in.conf)
+	if code != ExitOK || json.Unmarshal([]byte(out), &gate) != nil {
+		t.Fatalf("a short lease: %d %q %q", code, out, errOut)
+	}
+	if code := getJSON(t, base+"/readyz", nil); code != 503 {
+		t.Errorf("readyz during the short lease: %d", code)
+	}
+	ready := false
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if getJSON(t, base+"/readyz", nil) == 200 {
+			ready = true
+			break
+		}
+	}
+	if !ready {
+		t.Fatal("not ready after the lease expired")
+	}
+	if code, _, errOut := runAdmin(t, "maintenance", "end", gate.ID, "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "Maintenance ownership lost") {
+		t.Errorf("ending the expired lease: %d %q", code, errOut)
+	}
+	if code := getJSON(t, base+"/readyz", nil); code != 200 {
+		t.Errorf("readyz after the expired lease's end was refused: %d", code)
+	}
 	// Usage errors never reach the daemon.
 	for _, args := range [][]string{{"backup"}, {"backup", "run", "--now"}, {"maintenance", "begin"}, {"maintenance", "begin", "--ttl", "soon"}, {"maintenance", "end"}} {
 		if code, _, errOut := runAdmin(t, append(args, "--config", in.conf)...); code != 64 || !strings.Contains(errOut, "Usage: varlatchd admin "+args[0]) {

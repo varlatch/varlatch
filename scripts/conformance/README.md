@@ -411,7 +411,15 @@ upgrade, backup, move, ingress, sidecar, installers, the manual tailnet and
 Coolify checks) test the TypeScript installation and do not run under the
 runner. `inventory.json` lists each in `externalSuites`, with its
 `replacement` the way a ts-stack check names one: the Go counterparts come
-in ADR-0059 steps 4, 6 and 7, so each is `{ "open": "<the step>" }` today.
+in ADR-0059 steps 4, 6 and 7, so each is `{ "open": "<the step>" }` until
+its counterpart lands. A counterpart that runs in the Go workflow
+(`.github/workflows/go.yml`) rather than under the runner is named in a
+`{ "none": "<why>" }`: `backup-e2e`'s are Go tests (the backup and
+restore end to end, the maintenance lease) and the step that restores a
+Go archive in a fresh container and runs the conformance suites against
+it; `backup-s3`'s is the step that runs the S3 client's tests against a
+local S3 server with `VARLATCH_REQUIRE_S3=1`. `test/repository.test.mjs`
+checks that every Go test and go.yml step such a reason names exists.
 `pnpm test:conformance` fails when a `scripts/test-*.mjs` is not listed.
 
 ## Gate mode
@@ -465,8 +473,8 @@ workflow run gives the same assurance.
 
 The report's `gate` holds the verdict and each problem; a gate failure
 prints `CONFORMANCE GATE FAILED` and exits 1. Gate mode fails today on every
-target: doctor's replacements (step 6) and every external suite's are
-still open; on `go-binary`, its declared gaps too. The Convex realtime
+target: doctor's replacements (step 6) and every external suite's but the
+two backup suites' are still open; on `go-binary`, its declared gaps too. The Convex realtime
 checks' replacements are the `realtime-degraded` checks (step 3.5), and
 G11's own checks on the Go server's events are the `realtime-events`
 go-server checks, which a gate run on `go-binary` needs passing. `test/gate.test.mjs`
