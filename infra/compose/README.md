@@ -280,7 +280,7 @@ varlatchd (adjust the network and image to yours):
 ```sh
 docker run --rm --network <compose-project>_default \
   -e VARLATCH_DATABASE_URL=postgres://varlatchd_runtime:<password>@postgres:5432/varlatch \
-  ghcr.io/varlatch/varlatchd:0.22.1 admin outbound check
+  ghcr.io/varlatch/varlatchd:0.22.2 admin outbound check
 ```
 
 OIDC issuers whose discovery document or JWKS answers with a redirect stop
