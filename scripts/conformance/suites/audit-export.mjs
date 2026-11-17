@@ -77,7 +77,21 @@ try {
   const store = JSON.parse(targetOp("object-store", ["start"]));
   const s3 = { endpoint: store.hostEndpoint, region: store.region, accessKeyId: store.accessKeyId, secretAccessKey: store.secretAccessKey };
   const bucket = `audit-${suffix}`;
-  const made = await s3Request(s3, "PUT", `/${bucket}`, { headers: { "x-amz-bucket-object-lock-enabled": "true" } });
+  // MinIO can answer /minio/health/ready before it finishes initializing, and
+  // then refuses requests with 503 XMinioServerNotInitialized for a moment.
+  // Retry only that answer, within one 30-second deadline: each request and
+  // each pause is capped to the time that is left.
+  const deadline = Date.now() + 30_000;
+  const lockHeaders = { "x-amz-bucket-object-lock-enabled": "true" };
+  let made = await s3Request(s3, "PUT", `/${bucket}`, { headers: lockHeaders });
+  while (made.status === 503 && made.text.includes("XMinioServerNotInitialized")) {
+    const left = deadline - Date.now();
+    if (left <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(500, left)));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    made = await s3Request(s3, "PUT", `/${bucket}`, { headers: lockHeaders, timeoutMs: remaining });
+  }
   if (made.status !== 200) throw new Error(`creating the bucket: ${made.status} ${made.text.slice(0, 300)}`);
   const destination = { endpoint: store.endpoint, region: store.region, bucket, prefix: "varlatch", pathStyle: true };
   const credential = { accessKeyId: store.accessKeyId, secretAccessKey: store.secretAccessKey };
