@@ -144,6 +144,9 @@ func TestLoginNeverShowsTheCredential(t *testing.T) {
 // credential values"), and nothing is sent to it.
 func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 	const withPassword = "http://user:hunter2pass@127.0.0.1:2"
+	const tripleSlash = "http:///user:hunter2pass@127.0.0.1:2"
+	const backslashes = "http:\\\\user:hunter2pass@127.0.0.1:3"
+	const noSlashes = "http:user:hunter2pass@127.0.0.1:4"
 	type check struct {
 		name   string
 		store  map[string]map[string]any
@@ -164,6 +167,17 @@ func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 			"credentials are stored for http://[redacted]@127.0.0.1:2, https://b.example;"},
 		{"whoami refuses it", map[string]map[string]any{withPassword: {"token": "vlt_cli_x"}}, []string{"whoami"}, 1,
 			"Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:2/v1/meta"},
+		// WHATWG's authority variants for a special scheme: any run of "/"
+		// and "\\" after the scheme, or none, starts the authority.
+		{"logout of a stored one, three slashes", map[string]map[string]any{tripleSlash: {"token": "vlt_cli_x", "credentialId": "cred_1"}}, []string{"logout"}, 0,
+			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed ("},
+		{"logout --all, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout", "--all"}, 0,
+			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n" +
+				"http:\\\\[redacted]@127.0.0.1:3: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n"},
+		{"logout naming several, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout"}, 64,
+			"Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\\\[redacted]@127.0.0.1:3)."},
+		{"whoami naming several, three slashes and no slashes", map[string]map[string]any{tripleSlash: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami"}, 64,
+			"credentials are stored for http:///[redacted]@127.0.0.1:2, http:[redacted]@127.0.0.1:4;"},
 	}
 	for _, c := range checks {
 		t.Run(c.name, func(t *testing.T) {
