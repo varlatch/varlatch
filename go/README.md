@@ -1402,7 +1402,10 @@ The server's packages:
   - the dashboard: a file of its build where the path names one, its
     `index.html` for every other path (single-page routing), with the
     dashboard's Content-Security-Policy (`connect-src 'self'`: there is no
-    Convex in the Go server). `/v1`, `/auth`, `/enroll`, `/healthz`,
+    Convex in the Go server; with a tailnet browser endpoint, its origin
+    too, as `getTailnetEndpoint` answers it now from the pin, so the
+    dashboard can Connect to it, as the TypeScript dashboard's container
+    adds `VARLATCH_TAILNET_ENDPOINT`). `/v1`, `/auth`, `/enroll`, `/healthz`,
     `/readyz` and `/.well-known` never serve it;
   - the browser session (`browser.go`), generated from the OpenAPI
     document's browser-session section (`server/api/browser`), served at
