@@ -453,3 +453,57 @@ func TestControlChangeWaitsForAnImport(t *testing.T) {
 		t.Fatalf("the import: %v", err)
 	}
 }
+
+// With passkey-verification in report mode and a requester without
+// passkey evidence, every protected App operation hands its checkpoint's
+// count to the route: the callback (attaching in its job), the attachment
+// on its own route, the import and the removal.
+func TestProtectedOperationsReportTheirCounts(t *testing.T) {
+	wd := newWorld(t)
+	ctx := context.Background()
+	wd.exec(`INSERT INTO security_controls (organization_id, control, mode, version) VALUES (?, 'passkey-verification', 'report', 1)`, wd.org.ID)
+	one := func(what string, reports []auth.PendingReport) {
+		t.Helper()
+		if len(reports) != 1 || reports[0].OrganizationID != wd.org.ID {
+			t.Fatalf("%s: got %d reports, want 1 for the Organization: %+v", what, len(reports), reports)
+		}
+	}
+
+	// The callback attaches in its own job when no approval is needed.
+	wd.registration("direct", time.Hour)
+	res, err := wd.complete("direct")
+	if err != nil || res.Deferred != nil || res.Outcome.Kind != "registered" {
+		t.Fatalf("the callback: %+v, %v", res, err)
+	}
+	one("the callback", res.Reports)
+	reports, err := wd.s.Remove(ctx, githubapps.Request{Principal: alice, RequestID: "req_r"}, wd.org, res.Outcome.App.ID)
+	if err != nil {
+		t.Fatalf("the removal: %v", err)
+	}
+	one("the removal", reports)
+
+	// Under admin-step-up the callback leaves the registration pending;
+	// with the control off again, the attachment runs on its own route.
+	wd.exec(`INSERT INTO security_controls (organization_id, control, mode, version) VALUES (?, 'admin-step-up', 'enforce', 1)`, wd.org.ID)
+	id := wd.registration("deferred", time.Hour)
+	res, err = wd.complete("deferred")
+	var needed *auth.ApprovalNeeded
+	if err != nil || !errors.As(res.Deferred, &needed) {
+		t.Fatalf("the deferred callback: %+v, %v", res, err)
+	}
+	wd.exec(`UPDATE security_controls SET mode = 'off', version = 2 WHERE organization_id = ? AND control = 'admin-step-up'`, wd.org.ID)
+	attached, err := wd.s.Attach(ctx, githubapps.Request{Principal: alice, RequestID: "req_a"}, wd.org, id)
+	if err != nil || attached.Outcome.Kind != "registered" {
+		t.Fatalf("the attachment: %+v, %v", attached, err)
+	}
+	one("the attachment", attached.Reports)
+	if _, err := wd.s.Remove(ctx, githubapps.Request{Principal: alice, RequestID: "req_r2"}, wd.org, attached.Outcome.App.ID); err != nil {
+		t.Fatalf("the second removal: %v", err)
+	}
+
+	out, reports, err := wd.s.Import(ctx, githubapps.Request{Principal: alice, RequestID: "req_i"}, wd.org, 4004, wd.key)
+	if err != nil || !out.Registered {
+		t.Fatalf("the import: %+v, %v", out, err)
+	}
+	one("the import", reports)
+}

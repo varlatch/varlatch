@@ -438,9 +438,9 @@ func endRefusedIn(ctx context.Context, db query.DBTX, organizationID string, ref
 // checks (github_app.register; refusals before an approval is asked for),
 // then the registration's checks by the live clock, the key unwrapped and
 // sealed again for the App row, the App inserted, the registration ended
-// as attached, the count and the audit event. A *TerminalRefusal is the
-// caller's to end.
-func (s *Service) attachIn(ctx context.Context, tx query.DBTX, r security.Request, org authz.Organization, id string, authorizeIn func(context.Context, query.DBTX) error) (Outcome, error) {
+// as attached, the count and the audit event; with the passkey-verification
+// counts its checkpoint found. A *TerminalRefusal is the caller's to end.
+func (s *Service) attachIn(ctx context.Context, tx query.DBTX, r security.Request, org authz.Organization, id string, authorizeIn func(context.Context, query.DBTX) error) (Outcome, []auth.PendingReport, error) {
 	actor := r.Principal.Identity.ID
 	p, err := security.Prepare(ctx, tx, r, security.Protected{
 		Scope:  write.Scope{OrganizationID: org.ID},
@@ -472,33 +472,33 @@ func (s *Service) attachIn(ctx context.Context, tx query.DBTX, r security.Reques
 		AuthorizeIn: authorizeIn,
 	}, s.now)
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
 	row, err := registration(ctx, tx, org.ID, id, actor)
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
 	now := s.now().UnixMicro()
 	refusal, err := attachRefusal(ctx, tx, org.ID, row, now)
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
 	if refusal != nil {
-		return Outcome{}, refusal
+		return Outcome{}, nil, refusal
 	}
 	pending := pendingFrom(*row)
 	kek, err := s.orgKEK(ctx, tx, org.ID)
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
 	pemText, err := OpenKey(kek, org.ID, id, row.PendingKeyEnvelope.String)
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
 	appID := ids.New(ids.GitHubApp)
 	sealed, err := SealKey(kek, org.ID, appID, pemText)
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
 	q := query.New(tx)
 	inserted, err := q.InsertGitHubApp(ctx, query.InsertGitHubAppParams{
@@ -509,28 +509,28 @@ func (s *Service) attachIn(ctx context.Context, tx query.DBTX, r security.Reques
 	if errors.Is(err, sql.ErrNoRows) {
 		a, lerr := liveApp(ctx, tx, org.ID)
 		if lerr != nil {
-			return Outcome{}, lerr
+			return Outcome{}, nil, lerr
 		}
 		reason := "app-in-use"
 		if a != nil {
 			reason = "organization-has-app"
 		}
-		return Outcome{}, &TerminalRefusal{reason, *row}
+		return Outcome{}, nil, &TerminalRefusal{reason, *row}
 	}
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
 	if _, err := q.EndPendingGitHubAppRegistration(ctx, query.EndPendingGitHubAppRegistrationParams{EndedAt: nullInt(now), EndReason: nullStr("attached"), ID: id}); err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
 	// Report mode (ADR-0054 Decision 9), before the audit insert.
 	if err := p.Count(ctx, tx); err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
 	if _, err := audit.Record(ctx, tx, registeredEvent(org.ID, actor, appID, "manifest", pending.GitHubAppID, pending.Slug, pending.owner(), "", p.Approval)); err != nil {
-		return Outcome{}, err
+		return Outcome{}, nil, err
 	}
-	return Outcome{Kind: "registered", App: insertedApp(inserted)}, nil
+	return Outcome{Kind: "registered", App: insertedApp(inserted)}, p.Access, nil
 }
 
 // AttachResult is an attachment's outcome and the report counts.
@@ -550,8 +550,8 @@ func (s *Service) Attach(ctx context.Context, req Request, org authz.Organizatio
 	gates := r.Gates(org.ID, registrationGate(id))
 	var out AttachResult
 	err := s.Writer.Job(ctx, gates, func(ctx context.Context, tx *storage.Tx) error {
-		o, err := s.attachIn(ctx, tx, r, org, id, ManageIn(req.Principal, org.ID, req.RequestID))
-		out = AttachResult{Outcome: o}
+		o, reports, err := s.attachIn(ctx, tx, r, org, id, ManageIn(req.Principal, org.ID, req.RequestID))
+		out = AttachResult{Outcome: o, Reports: reports}
 		return err
 	})
 	var refusal *TerminalRefusal
@@ -752,7 +752,9 @@ func (s *Service) Complete(ctx context.Context, req Request, org authz.Organizat
 				return Outcome{}, err
 			}
 			// The attachment (step 3), in this job while it needs no approval.
-			o, err := s.attachIn(ctx, tx, attachReq, org, reg.ID, ManageIn(req.Principal, org.ID, req.RequestID))
+			// Its checkpoint's counts are the effect's own (the same
+			// requester and Organization), so they are not added again.
+			o, _, err := s.attachIn(ctx, tx, attachReq, org, reg.ID, ManageIn(req.Principal, org.ID, req.RequestID))
 			var refusal *TerminalRefusal
 			var needed *auth.ApprovalNeeded
 			var de *domainerr.Error
