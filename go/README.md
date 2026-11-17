@@ -761,6 +761,47 @@ the converge engine follow in 4.9c and 4.9d.
   - `effect_test.go` holds decision 4's tests for the check and the
     listing.
 
+### Sync Targets (step 4.9c)
+
+`server/syncs` (`targets.go`) and `server/httpserver` (`targets.go`) are
+the Target part of `domain/sync.ts` and its routes: a Target maps an
+Environment's items onto one destination of a Platform Connection.
+Pushing (`pushSyncTarget`) and the converge engine are 4.9d's and answer
+501 `NOT_IMPLEMENTED_YET` until then.
+
+- **The operations.** Each needs config.sync.manage on the Environment,
+  existence hidden.
+  - `listOrgSyncTargets` and `listSyncTargets` (inspection while frozen),
+    `getSyncTarget` (with the ledger's per-name state, notes, drift and
+    whether a run is live).
+  - `createSyncTarget` and `updateSyncTarget`: the body (zod), the
+    destination canonicalized by the adapter, the mapping normalized
+    against it (wildcard with exclusions, or explicit items with
+    renames; duplicates, collisions and names the platform sets or
+    refuses are invalid), the write-time disclosure gate for what the
+    mapping would push, then the Target in one job. A destination has
+    exactly one writer (`VERSION_CONFLICT` when another live Target
+    claims it). An update is versioned. A new canonical destination
+    (another destination, or a Connection with another base identity)
+    fences runs and clears the ledger; re-pointing across platforms is
+    refused.
+  - `pauseSyncTarget` (a recovery operation while frozen) fences runs;
+    with `?wait=true` it answers once no run of the Target is live, for
+    at most 30 s. `resumeSyncTarget` refuses a Target whose Connection
+    was revoked. `revokeSyncTarget` releases the destination.
+
+  Creating, changing and resuming need `sync = on`; reading, pausing and
+  revoking do not, as in TypeScript.
+- **Parity.**
+  - `targets-v0.22.0.json` (`go-targets-fixture.test.ts`): 83 requests,
+    with their audit events and side rows (Targets, ledger, member
+    integrations), and no request to a platform.
+  - The TypeScript route answers a create body that is not JSON with 500
+    `INTERNAL`. Go answers the same, and the fixture holds it.
+  - `TestPauseWaitsForALiveRun` and `TestSyncOffRefusesTargetWrites` hold
+    the two behaviors the fixture cannot (a run that ends while the pause
+    waits; `sync = off`).
+
 ### The audit export's configuration (step 4.11a)
 
 `server/auditexport` is the configuration side of `domain/auditexport.ts`

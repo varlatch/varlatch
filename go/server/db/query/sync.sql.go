@@ -12,6 +12,66 @@ import (
 	"database/sql"
 )
 
+const anyConnection = `-- name: AnyConnection :one
+SELECT id, organization_id, platform, base_identity, name, created_at, revoked_at, version, updated_at,
+       credential_expires_at, credential_expiry_seen_at, credential_kind, github_app_id, github_installation_id
+FROM platform_connections WHERE id = ? AND organization_id = ?
+`
+
+type AnyConnectionParams struct {
+	ID             string
+	OrganizationID string
+}
+
+type AnyConnectionRow struct {
+	ID                     string
+	OrganizationID         string
+	Platform               string
+	BaseIdentity           string
+	Name                   string
+	CreatedAt              int64
+	RevokedAt              sql.NullInt64
+	Version                int64
+	UpdatedAt              sql.NullInt64
+	CredentialExpiresAt    sql.NullInt64
+	CredentialExpirySeenAt sql.NullInt64
+	CredentialKind         string
+	GithubAppID            sql.NullString
+	GithubInstallationID   sql.NullInt64
+}
+
+// lockConnectionsAndApps' read of one Connection, revoked or not.
+func (q *Queries) AnyConnection(ctx context.Context, arg AnyConnectionParams) (AnyConnectionRow, error) {
+	row := q.db.QueryRowContext(ctx, anyConnection, arg.ID, arg.OrganizationID)
+	var i AnyConnectionRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Platform,
+		&i.BaseIdentity,
+		&i.Name,
+		&i.CreatedAt,
+		&i.RevokedAt,
+		&i.Version,
+		&i.UpdatedAt,
+		&i.CredentialExpiresAt,
+		&i.CredentialExpirySeenAt,
+		&i.CredentialKind,
+		&i.GithubAppID,
+		&i.GithubInstallationID,
+	)
+	return i, err
+}
+
+const clearLedger = `-- name: ClearLedger :exec
+DELETE FROM sync_ledger WHERE target_id = ?
+`
+
+func (q *Queries) ClearLedger(ctx context.Context, targetID string) error {
+	_, err := q.db.ExecContext(ctx, clearLedger, targetID)
+	return err
+}
+
 const connectionCredential = `-- name: ConnectionCredential :one
 SELECT credential_envelope, version, credential_expires_at FROM platform_connections WHERE id = ?
 `
@@ -135,6 +195,24 @@ func (q *Queries) CountConnectionTargets(ctx context.Context, connectionID strin
 	return count, err
 }
 
+const destinationClaimed = `-- name: DestinationClaimed :one
+SELECT count(*) FROM sync_targets WHERE canonical_destination = ?1 AND revoked_at IS NULL AND id <> ?2
+`
+
+type DestinationClaimedParams struct {
+	Canonical string
+	ID        string
+}
+
+// The destination claim (sync_targets_destination_claim): another live
+// Target with the canonical destination.
+func (q *Queries) DestinationClaimed(ctx context.Context, arg DestinationClaimedParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, destinationClaimed, arg.Canonical, arg.ID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const disableTarget = `-- name: DisableTarget :one
 UPDATE sync_targets
 SET state = 'disabled', disabled_reason = 'connection-revoked', generation = generation + 1, lease_expires_at = NULL,
@@ -154,6 +232,124 @@ func (q *Queries) DisableTarget(ctx context.Context, arg DisableTargetParams) (s
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const environmentTargets = `-- name: EnvironmentTargets :many
+SELECT id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping,
+       remove_orphans, redeploy, state, disabled_reason, failure_count, needs_sync, next_attempt_at, last_attempt_at,
+       last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at, redeploy_owed, redeploy_paid,
+       last_drift_at, last_drift_count, last_drift_names, last_drift_event_id
+FROM sync_targets WHERE organization_id = ? AND environment_id = ? AND revoked_at IS NULL ORDER BY created_at, id
+`
+
+type EnvironmentTargetsParams struct {
+	OrganizationID string
+	EnvironmentID  string
+}
+
+type EnvironmentTargetsRow struct {
+	ID                   string
+	OrganizationID       string
+	ProjectID            string
+	EnvironmentID        string
+	ConnectionID         string
+	Destination          string
+	CanonicalDestination string
+	Mapping              string
+	RemoveOrphans        bool
+	Redeploy             bool
+	State                string
+	DisabledReason       sql.NullString
+	FailureCount         int64
+	NeedsSync            bool
+	NextAttemptAt        sql.NullInt64
+	LastAttemptAt        sql.NullInt64
+	LastResult           sql.NullString
+	LastNotes            sql.NullString
+	LastRepairAt         sql.NullInt64
+	CreatedAt            int64
+	RevokedAt            sql.NullInt64
+	Version              int64
+	UpdatedAt            sql.NullInt64
+	RedeployOwed         int64
+	RedeployPaid         int64
+	LastDriftAt          sql.NullInt64
+	LastDriftCount       sql.NullInt64
+	LastDriftNames       sql.NullString
+	LastDriftEventID     sql.NullString
+}
+
+// listTargets of an environment: oldest first.
+func (q *Queries) EnvironmentTargets(ctx context.Context, arg EnvironmentTargetsParams) ([]EnvironmentTargetsRow, error) {
+	rows, err := q.db.QueryContext(ctx, environmentTargets, arg.OrganizationID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EnvironmentTargetsRow
+	for rows.Next() {
+		var i EnvironmentTargetsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.ConnectionID,
+			&i.Destination,
+			&i.CanonicalDestination,
+			&i.Mapping,
+			&i.RemoveOrphans,
+			&i.Redeploy,
+			&i.State,
+			&i.DisabledReason,
+			&i.FailureCount,
+			&i.NeedsSync,
+			&i.NextAttemptAt,
+			&i.LastAttemptAt,
+			&i.LastResult,
+			&i.LastNotes,
+			&i.LastRepairAt,
+			&i.CreatedAt,
+			&i.RevokedAt,
+			&i.Version,
+			&i.UpdatedAt,
+			&i.RedeployOwed,
+			&i.RedeployPaid,
+			&i.LastDriftAt,
+			&i.LastDriftCount,
+			&i.LastDriftNames,
+			&i.LastDriftEventID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const fenceTarget = `-- name: FenceTarget :exec
+UPDATE sync_targets SET generation = generation + 1, lease_expires_at = NULL WHERE id = ?
+`
+
+// A fence: a run holding the old generation sends and records nothing more.
+func (q *Queries) FenceTarget(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, fenceTarget, id)
+	return err
+}
+
+const fenceTargetCycle = `-- name: FenceTargetCycle :exec
+UPDATE sync_targets SET generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL WHERE id = ?
+`
+
+func (q *Queries) FenceTargetCycle(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, fenceTargetCycle, id)
+	return err
 }
 
 const insertConnection = `-- name: InsertConnection :exec
@@ -180,6 +376,45 @@ func (q *Queries) InsertConnection(ctx context.Context, arg InsertConnectionPara
 		arg.BaseIdentity,
 		arg.Name,
 		arg.CredentialEnvelope,
+		arg.CreatedBy,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertTarget = `-- name: InsertTarget :exec
+INSERT INTO sync_targets (id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination,
+  mapping, remove_orphans, redeploy, created_by, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertTargetParams struct {
+	ID                   string
+	OrganizationID       string
+	ProjectID            string
+	EnvironmentID        string
+	ConnectionID         string
+	Destination          string
+	CanonicalDestination string
+	Mapping              string
+	RemoveOrphans        bool
+	Redeploy             bool
+	CreatedBy            sql.NullString
+	CreatedAt            int64
+}
+
+func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) error {
+	_, err := q.db.ExecContext(ctx, insertTarget,
+		arg.ID,
+		arg.OrganizationID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ConnectionID,
+		arg.Destination,
+		arg.CanonicalDestination,
+		arg.Mapping,
+		arg.RemoveOrphans,
+		arg.Redeploy,
 		arg.CreatedBy,
 		arg.CreatedAt,
 	)
@@ -237,6 +472,22 @@ func (q *Queries) LiveConnection(ctx context.Context, arg LiveConnectionParams) 
 	return i, err
 }
 
+const liveGitHubApp = `-- name: LiveGitHubApp :one
+SELECT count(*) FROM github_apps WHERE id = ? AND organization_id = ? AND removed_at IS NULL
+`
+
+type LiveGitHubAppParams struct {
+	ID             string
+	OrganizationID string
+}
+
+func (q *Queries) LiveGitHubApp(ctx context.Context, arg LiveGitHubAppParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, liveGitHubApp, arg.ID, arg.OrganizationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const liveRunStarts = `-- name: LiveRunStarts :many
 SELECT target_id, CAST(min(started_at) AS INTEGER) AS started_at FROM sync_runs
 WHERE target_id IN (SELECT value FROM json_each(?1)) AND deadline > ?2
@@ -275,6 +526,89 @@ func (q *Queries) LiveRunStarts(ctx context.Context, arg LiveRunStartsParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const liveTarget = `-- name: LiveTarget :one
+SELECT id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping,
+       remove_orphans, redeploy, state, disabled_reason, failure_count, needs_sync, next_attempt_at, last_attempt_at,
+       last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at, redeploy_owed, redeploy_paid,
+       last_drift_at, last_drift_count, last_drift_names, last_drift_event_id
+FROM sync_targets WHERE id = ? AND organization_id = ? AND revoked_at IS NULL
+`
+
+type LiveTargetParams struct {
+	ID             string
+	OrganizationID string
+}
+
+type LiveTargetRow struct {
+	ID                   string
+	OrganizationID       string
+	ProjectID            string
+	EnvironmentID        string
+	ConnectionID         string
+	Destination          string
+	CanonicalDestination string
+	Mapping              string
+	RemoveOrphans        bool
+	Redeploy             bool
+	State                string
+	DisabledReason       sql.NullString
+	FailureCount         int64
+	NeedsSync            bool
+	NextAttemptAt        sql.NullInt64
+	LastAttemptAt        sql.NullInt64
+	LastResult           sql.NullString
+	LastNotes            sql.NullString
+	LastRepairAt         sql.NullInt64
+	CreatedAt            int64
+	RevokedAt            sql.NullInt64
+	Version              int64
+	UpdatedAt            sql.NullInt64
+	RedeployOwed         int64
+	RedeployPaid         int64
+	LastDriftAt          sql.NullInt64
+	LastDriftCount       sql.NullInt64
+	LastDriftNames       sql.NullString
+	LastDriftEventID     sql.NullString
+}
+
+// getTarget: a live Target of the Organization.
+func (q *Queries) LiveTarget(ctx context.Context, arg LiveTargetParams) (LiveTargetRow, error) {
+	row := q.db.QueryRowContext(ctx, liveTarget, arg.ID, arg.OrganizationID)
+	var i LiveTargetRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.ConnectionID,
+		&i.Destination,
+		&i.CanonicalDestination,
+		&i.Mapping,
+		&i.RemoveOrphans,
+		&i.Redeploy,
+		&i.State,
+		&i.DisabledReason,
+		&i.FailureCount,
+		&i.NeedsSync,
+		&i.NextAttemptAt,
+		&i.LastAttemptAt,
+		&i.LastResult,
+		&i.LastNotes,
+		&i.LastRepairAt,
+		&i.CreatedAt,
+		&i.RevokedAt,
+		&i.Version,
+		&i.UpdatedAt,
+		&i.RedeployOwed,
+		&i.RedeployPaid,
+		&i.LastDriftAt,
+		&i.LastDriftCount,
+		&i.LastDriftNames,
+		&i.LastDriftEventID,
+	)
+	return i, err
 }
 
 const organizationConnectionTargets = `-- name: OrganizationConnectionTargets :many
@@ -448,6 +782,119 @@ func (q *Queries) OrganizationConnections(ctx context.Context, organizationID st
 	return items, nil
 }
 
+const organizationTargets = `-- name: OrganizationTargets :many
+
+SELECT id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping,
+       remove_orphans, redeploy, state, disabled_reason, failure_count, needs_sync, next_attempt_at, last_attempt_at,
+       last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at, redeploy_owed, redeploy_paid,
+       last_drift_at, last_drift_count, last_drift_names, last_drift_event_id
+FROM sync_targets WHERE organization_id = ? AND revoked_at IS NULL ORDER BY created_at, id
+`
+
+type OrganizationTargetsRow struct {
+	ID                   string
+	OrganizationID       string
+	ProjectID            string
+	EnvironmentID        string
+	ConnectionID         string
+	Destination          string
+	CanonicalDestination string
+	Mapping              string
+	RemoveOrphans        bool
+	Redeploy             bool
+	State                string
+	DisabledReason       sql.NullString
+	FailureCount         int64
+	NeedsSync            bool
+	NextAttemptAt        sql.NullInt64
+	LastAttemptAt        sql.NullInt64
+	LastResult           sql.NullString
+	LastNotes            sql.NullString
+	LastRepairAt         sql.NullInt64
+	CreatedAt            int64
+	RevokedAt            sql.NullInt64
+	Version              int64
+	UpdatedAt            sql.NullInt64
+	RedeployOwed         int64
+	RedeployPaid         int64
+	LastDriftAt          sql.NullInt64
+	LastDriftCount       sql.NullInt64
+	LastDriftNames       sql.NullString
+	LastDriftEventID     sql.NullString
+}
+
+// Sync Targets (ADR-0031 sections 1 to 6, ADR-0050; ADR-0059 step 4.9c).
+// listTargets of an Organization: oldest first.
+func (q *Queries) OrganizationTargets(ctx context.Context, organizationID string) ([]OrganizationTargetsRow, error) {
+	rows, err := q.db.QueryContext(ctx, organizationTargets, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OrganizationTargetsRow
+	for rows.Next() {
+		var i OrganizationTargetsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.ConnectionID,
+			&i.Destination,
+			&i.CanonicalDestination,
+			&i.Mapping,
+			&i.RemoveOrphans,
+			&i.Redeploy,
+			&i.State,
+			&i.DisabledReason,
+			&i.FailureCount,
+			&i.NeedsSync,
+			&i.NextAttemptAt,
+			&i.LastAttemptAt,
+			&i.LastResult,
+			&i.LastNotes,
+			&i.LastRepairAt,
+			&i.CreatedAt,
+			&i.RevokedAt,
+			&i.Version,
+			&i.UpdatedAt,
+			&i.RedeployOwed,
+			&i.RedeployPaid,
+			&i.LastDriftAt,
+			&i.LastDriftCount,
+			&i.LastDriftNames,
+			&i.LastDriftEventID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pauseTarget = `-- name: PauseTarget :exec
+UPDATE sync_targets
+SET state = 'paused', generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
+    version = version + 1, updated_at = ?1
+WHERE id = ?2
+`
+
+type PauseTargetParams struct {
+	At sql.NullInt64
+	ID string
+}
+
+func (q *Queries) PauseTarget(ctx context.Context, arg PauseTargetParams) error {
+	_, err := q.db.ExecContext(ctx, pauseTarget, arg.At, arg.ID)
+	return err
+}
+
 const queueConnectionTargets = `-- name: QueueConnectionTargets :exec
 UPDATE sync_targets SET needs_sync = 1, next_attempt_at = NULL WHERE connection_id = ? AND revoked_at IS NULL
 `
@@ -525,6 +972,24 @@ func (q *Queries) ResumeTarget(ctx context.Context, arg ResumeTargetParams) erro
 	return err
 }
 
+const resumeTargetState = `-- name: ResumeTargetState :exec
+UPDATE sync_targets
+SET state = 'active', disabled_reason = NULL, failure_count = 0, needs_sync = 1, next_attempt_at = NULL,
+    version = version + 1, updated_at = ?1
+WHERE id = ?2
+`
+
+type ResumeTargetStateParams struct {
+	At sql.NullInt64
+	ID string
+}
+
+// Resumption queues an immediate converge (ADR-0031 section 5).
+func (q *Queries) ResumeTargetState(ctx context.Context, arg ResumeTargetStateParams) error {
+	_, err := q.db.ExecContext(ctx, resumeTargetState, arg.At, arg.ID)
+	return err
+}
+
 const revokeConnection = `-- name: RevokeConnection :one
 UPDATE platform_connections SET revoked_at = ?1, version = version + 1, updated_at = ?1
 WHERE id = ?2 AND organization_id = ?3 AND revoked_at IS NULL RETURNING id
@@ -541,6 +1006,63 @@ func (q *Queries) RevokeConnection(ctx context.Context, arg RevokeConnectionPara
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const revokeTarget = `-- name: RevokeTarget :exec
+UPDATE sync_targets
+SET revoked_at = ?1, generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
+    version = version + 1, updated_at = ?1
+WHERE id = ?2
+`
+
+type RevokeTargetParams struct {
+	At sql.NullInt64
+	ID string
+}
+
+func (q *Queries) RevokeTarget(ctx context.Context, arg RevokeTargetParams) error {
+	_, err := q.db.ExecContext(ctx, revokeTarget, arg.At, arg.ID)
+	return err
+}
+
+const targetLedger = `-- name: TargetLedger :many
+SELECT dest_name, state, updated_at, last_error FROM sync_ledger WHERE target_id = ? ORDER BY dest_name
+`
+
+type TargetLedgerRow struct {
+	DestName  string
+	State     string
+	UpdatedAt int64
+	LastError sql.NullString
+}
+
+// targetLedger: per-name delivery state, never fingerprints or values.
+func (q *Queries) TargetLedger(ctx context.Context, targetID string) ([]TargetLedgerRow, error) {
+	rows, err := q.db.QueryContext(ctx, targetLedger, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TargetLedgerRow
+	for rows.Next() {
+		var i TargetLedgerRow
+		if err := rows.Scan(
+			&i.DestName,
+			&i.State,
+			&i.UpdatedAt,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const targetScope = `-- name: TargetScope :one
@@ -574,6 +1096,50 @@ func (q *Queries) TargetScope(ctx context.Context, arg TargetScopeParams) (Targe
 		&i.Tier,
 	)
 	return i, err
+}
+
+const updateTarget = `-- name: UpdateTarget :exec
+UPDATE sync_targets
+SET connection_id = ?1, destination = ?2, canonical_destination = ?3,
+    mapping = ?4, remove_orphans = ?5, redeploy = ?6, needs_sync = 1,
+    next_attempt_at = NULL, version = version + 1, updated_at = ?7,
+    last_notes = CASE WHEN CAST(?8 AS INTEGER) <> 0 THEN NULL ELSE last_notes END,
+    last_drift_at = CASE WHEN CAST(?8 AS INTEGER) <> 0 THEN NULL ELSE last_drift_at END,
+    last_drift_count = CASE WHEN CAST(?8 AS INTEGER) <> 0 THEN NULL ELSE last_drift_count END,
+    last_drift_names = CASE WHEN CAST(?8 AS INTEGER) <> 0 THEN NULL ELSE last_drift_names END,
+    last_drift_event_id = CASE WHEN CAST(?8 AS INTEGER) <> 0 THEN NULL ELSE last_drift_event_id END,
+    redeploy_paid = CASE WHEN CAST(?8 AS INTEGER) <> 0 OR NOT ?6 THEN redeploy_owed ELSE redeploy_paid END
+WHERE id = ?9
+`
+
+type UpdateTargetParams struct {
+	ConnectionID  string
+	Destination   string
+	Canonical     string
+	Mapping       string
+	RemoveOrphans bool
+	Redeploy      bool
+	At            sql.NullInt64
+	Changed       int64
+	ID            string
+}
+
+// updateTarget: queued for a converge; a destination change takes the
+// notes and drift observed at the old one, and settles an owed redeploy
+// (as does turning redeploys off).
+func (q *Queries) UpdateTarget(ctx context.Context, arg UpdateTargetParams) error {
+	_, err := q.db.ExecContext(ctx, updateTarget,
+		arg.ConnectionID,
+		arg.Destination,
+		arg.Canonical,
+		arg.Mapping,
+		arg.RemoveOrphans,
+		arg.Redeploy,
+		arg.At,
+		arg.Changed,
+		arg.ID,
+	)
+	return err
 }
 
 const upsertIntegration = `-- name: UpsertIntegration :exec

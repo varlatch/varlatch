@@ -53,6 +53,8 @@ const (
 	OIDCBinding = "oib"
 	// Step 4.9b: Platform Connections.
 	PlatformConnection = "pcn"
+	// Step 4.9c: Sync Targets.
+	SyncTarget = "snt"
 )
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz234567"

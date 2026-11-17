@@ -179,10 +179,11 @@ func DisclosureGate(p *auth.Principal, organizationID, requestID, refusal string
 			}
 			return true
 		}
-		actions, err := requiredDisclosureActions(t.Mapping, sensitive)
+		mapping, err := ParseMapping(t.Mapping)
 		if err != nil {
 			return nil, err
 		}
+		actions := RequiredDisclosureActions(mapping, sensitive)
 		root := scope.EnvironmentID
 		if scope.ParentEnvironmentID.Valid {
 			root = scope.ParentEnvironmentID.String
@@ -207,36 +208,6 @@ func DisclosureGate(p *auth.Principal, organizationID, requestID, refusal string
 		}
 		return decisions, nil
 	}
-}
-
-// requiredDisclosureActions is requiredDisclosureActions: a wildcard needs
-// both; explicit items each need their class's, in their order.
-func requiredDisclosureActions(mappingText string, sensitive func(string) bool) ([]string, error) {
-	v, err := jsvalue.Parse([]byte(mappingText))
-	if err != nil {
-		return nil, err
-	}
-	m, _ := v.(jsvalue.Object)
-	kind, _ := m.Get("kind")
-	if kind == "wildcard" {
-		return []string{"secret.reveal", "config.value.read"}, nil
-	}
-	var out []string
-	items, _ := m.Get("items")
-	list, _ := items.([]any)
-	for _, it := range list {
-		o, _ := it.(jsvalue.Object)
-		name, _ := o.Get("name")
-		s, _ := name.(string)
-		action := "config.value.read"
-		if sensitive(s) {
-			action = "secret.reveal"
-		}
-		if !strings.Contains(" "+strings.Join(out, " ")+" ", " "+action+" ") {
-			out = append(out, action)
-		}
-	}
-	return out, nil
 }
 
 // ReplaceInput is replaceConnectionCredential's input.
