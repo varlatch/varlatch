@@ -251,7 +251,7 @@ export type {
 import { refusedHeader, refusedUrl } from "./userinfo.js";
 
 /** Diagnostics never print credential values (userinfo.ts). */
-export { maskServer, maskUserinfo, maskUserinfoInText } from "./userinfo.js";
+export { maskServer, maskUserinfo, maskUserinfoInText, refusedHeader, refusedUrl } from "./userinfo.js";
 
 /**
  * fetch's own refusals, made before it is called, so that its message never

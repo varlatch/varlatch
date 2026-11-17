@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { saveCredential, setDefaultServer } from "@varlatch/context";
+import { saveCredential, savePendingSignIn, setDefaultServer } from "@varlatch/context";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EXIT } from "../src/exitCodes.js";
@@ -42,17 +42,27 @@ interface Result {
   stderr: string;
 }
 
-function cli(args: string[], cwd: string, config: string): Promise<Result> {
+/** Runs the CLI; with `until`, stops it once its output satisfies `until` (a command that would wait). */
+function cli(args: string[], cwd: string, config: string, env: Record<string, string> = {}, until?: (out: string) => boolean): Promise<Result> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [bundle, ...args], {
       cwd,
-      env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), VARLATCH_CONFIG_DIR: config },
+      env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), VARLATCH_CONFIG_DIR: config, VARLATCH_NO_BROWSER: "1", ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    const check = () => {
+      if (until?.(`${stdout}\n${stderr}`)) child.kill();
+    };
+    child.stdout.on("data", (d: Buffer) => {
+      stdout += d.toString();
+      check();
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      stderr += d.toString();
+      check();
+    });
     child.on("error", reject);
     child.on("close", (code) => resolve({ code, stdout, stderr }));
   });
@@ -153,6 +163,91 @@ describe("a server URL with a user name and password", () => {
     expect(JSON.parse(status.stdout).servers[0].server).toBe("http://127.0.0.1:9");
     const shown = await cli(["server"], cwd, config);
     expect(shown.stdout).toContain("Signed in to: http://127.0.0.1:9");
+  });
+});
+
+describe("signing in to a server URL with a user name and password", () => {
+  const server = `http://user:${SECRET}@127.0.0.1:9`;
+
+  it("the browser sign-in shows the address to open with them masked", async () => {
+    const { config, cwd } = setup();
+    const r = await cli(["login", "--server", server], cwd, config, {}, (out) => out.includes("/enroll?callback="));
+    shows(r, "login");
+    expect(r.stdout).toContain("Complete passkey sign-in in your browser:");
+    expect(r.stdout).toContain(`  ${MASKED}/enroll?callback=`);
+  });
+
+  it("device sign-in's refusals and messages mask them, for a scheme-less address too", async () => {
+    const { config, cwd } = setup();
+    const http = await cli(["login", "--server", `http://user:${SECRET}@varlatch.example`, "--start"], cwd, config);
+    shows(http, "login --start over http");
+    expect(http.stderr).toContain("http://[redacted]@varlatch.example: device sign-in sends a code");
+    const bare = await cli(["login", "--server", `user:${SECRET}@varlatch.example`, "--start"], cwd, config);
+    shows(bare, "login --start without a scheme");
+    expect(bare.stderr).toContain("[redacted]@varlatch.example: device sign-in sends a code");
+    const start = await cli(["login", "--server", server, "--start"], cwd, config);
+    shows(start, "login --start to loopback");
+    expect(start.code).not.toBe(0);
+    const wait = await cli(["login", "--server", server, "--wait", "--timeout", "1"], cwd, config);
+    shows(wait, "login --wait without a pending sign-in");
+    expect(wait.stderr).toContain(`no sign-in was started from this CLI for ${MASKED}. Start one: varlatch login --server ${MASKED} --start`);
+  });
+
+  it("device sign-in's wait for a pending sign-in masks them", async () => {
+    const { config, cwd } = setup();
+    savePendingSignIn(
+      {
+        server,
+        deviceCode: "dc_x",
+        userCode: "ABCD-EFGH",
+        verificationUri: "https://varlatch.example/device",
+        expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        interval: 1,
+        startedAt: new Date().toISOString(),
+      },
+      { VARLATCH_CONFIG_DIR: config },
+    );
+    const r = await cli(["login", "--server", server, "--wait", "--timeout", "1"], cwd, config);
+    shows(r, "login --wait");
+    expect(r.code).not.toBe(0);
+  });
+
+  it("init refuses to write them into varlatch.toml (64), and writes nothing", async () => {
+    const { config, cwd } = setup();
+    const r = await cli(["init", "--org", "acme", "--project", "web", "--server", server], cwd, config);
+    shows(r, "init");
+    expect(r.code).toBe(EXIT.usage);
+    expect(r.stderr).toContain("varlatch init: a server URL with a user name or password can't be written to varlatch.toml");
+    expect(readdirSync(cwd)).toEqual([]);
+  });
+
+  it("varlatch mcp says it is not authenticated with them masked", async () => {
+    const { config, cwd } = setup();
+    const r = await cli(["mcp", "--server", server], cwd, config);
+    shows(r, "mcp");
+    expect(r.stderr).toContain(`not authenticated to ${MASKED}`);
+  });
+});
+
+describe("login --oidc from GitHub Actions", () => {
+  const login = ["login", "--server", "http://127.0.0.1:9", "--oidc", "--org", "acme"];
+
+  it("a request token with a line break inside is refused without quoting it (exit 1, as before)", async () => {
+    const { config, cwd } = setup();
+    const r = await cli(login, cwd, config, { ACTIONS_ID_TOKEN_REQUEST_URL: "http://127.0.0.1:9/token", ACTIONS_ID_TOKEN_REQUEST_TOKEN: `tok_${SECRET}\r\nx` });
+    shows(r, "login --oidc");
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("ACTIONS_ID_TOKEN_REQUEST_TOKEN contains a character that is not allowed in an HTTP header");
+  });
+
+  it("a request URL with a user name and password, or one that does not parse, is shown masked", async () => {
+    const { config, cwd } = setup();
+    const withCredentials = await cli(login, cwd, config, { ACTIONS_ID_TOKEN_REQUEST_URL: `http://user:${SECRET}@127.0.0.1:9/token`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "tok_x" });
+    shows(withCredentials, "login --oidc, URL with credentials");
+    expect(withCredentials.stderr).toContain("Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:9/token");
+    const broken = await cli(login, cwd, config, { ACTIONS_ID_TOKEN_REQUEST_URL: `http://user:${SECRET}@[::1/token`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "tok_x" });
+    shows(broken, "login --oidc, URL that does not parse");
+    expect(broken.stderr).toContain("Failed to parse URL from http://[redacted]@[::1/token");
   });
 });
 

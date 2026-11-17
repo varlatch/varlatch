@@ -556,7 +556,7 @@ async function browserLogin(server: string): Promise<string> {
       const port = typeof address === "object" && address ? address.port : 0;
       const url = `${server.replace(/\/+$/, "")}/enroll?callback=${encodeURIComponent(`http://127.0.0.1:${port}/`)}`;
       console.log("Complete passkey sign-in in your browser:");
-      console.log(`  ${url}`);
+      console.log(`  ${maskUserinfo(url)}`);
       const opener = browserCommand(process.platform, url, process.env);
       if (opener) {
         spawn(opener.command, opener.args, {
@@ -1429,6 +1429,10 @@ async function main(): Promise<void> {
         }
         // Writes varlatch.toml and, unless --no-agent-files, the files coding agents read.
         const writeRepository = async (config: { server: string; organization: string; project: string; defaultEnvironment: string }, said: string) => {
+          // varlatch.toml is committed: a user name or password in the URL never goes there.
+          if (maskUserinfo(config.server) !== config.server) {
+            usageError(`varlatch init: a server URL with a user name or password can't be written to ${REPO_CONFIG_FILE}; give the server's address without them. Nothing was written.`);
+          }
           const lines = [
             `server = "${config.server}"`,
             `organization = "${config.organization}"`,

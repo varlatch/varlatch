@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { refusedHeader, refusedUrl } from "@varlatch/sdk";
+
 /**
  * OIDC login for CI (capability auth.oidc): obtain the platform's OIDC ID
  * token and exchange it at /v1/oidc/token for a short-lived Varlatch
@@ -28,6 +30,14 @@ export async function obtainOidcIdToken(opts: {
   const requestUrl = env.ACTIONS_ID_TOKEN_REQUEST_URL;
   const requestToken = env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
   if (requestUrl && requestToken) {
+    // fetch's own refusals, made here so that neither the request token nor
+    // the URL's user name and password is ever quoted (diagnostics never
+    // print credential values).
+    const badUrl = refusedUrl(requestUrl);
+    if (badUrl) throw badUrl;
+    if (refusedHeader("Authorization", `Bearer ${requestToken}`)) {
+      throw new TypeError("ACTIONS_ID_TOKEN_REQUEST_TOKEN contains a character that is not allowed in an HTTP header");
+    }
     const url = new URL(requestUrl);
     if (opts.audience) url.searchParams.set("audience", opts.audience);
     const fetchImpl = opts.fetchImpl ?? fetch;
