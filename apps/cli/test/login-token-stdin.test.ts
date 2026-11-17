@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EXIT } from "../src/exitCodes.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch login --token-stdin` (ADR-0043 Decision 2): the credential
@@ -66,7 +67,7 @@ interface Result {
 
 function cli(args: string[], stdin: string, config: string): Promise<Result> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd: dir,
       env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: config },
       stdio: ["pipe", "pipe", "pipe"],

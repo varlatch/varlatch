@@ -5,7 +5,8 @@
     "5.1a",
     "5.1b",
     "5.1c",
-    "5.1d"
+    "5.1d",
+    "5.1e"
   ],
   "commands": {
     "login": {
@@ -3470,7 +3471,15 @@
         "transcripts/5.1b-context.json#context.no-server-default",
         "transcripts/5.1b-context.json#server.default",
         "transcripts/5.1b-context.json#server.only-credential",
-        "transcripts/5.1b-context.json#server.several-no-default"
+        "transcripts/5.1b-context.json#server.several-no-default",
+        "transcripts/5.1e-session.json#env.list.server-flag",
+        "transcripts/5.1e-session.json#env.list.server-env",
+        "transcripts/5.1e-session.json#env.list.server-local",
+        "transcripts/5.1e-session.json#env.list.server-none",
+        "transcripts/5.1e-session.json#login.token.local-override",
+        "transcripts/5.1e-session.json#login.token.default-server",
+        "transcripts/5.1e-session.json#login.token.only-credential",
+        "transcripts/5.1e-session.json#whoami.default"
       ]
     },
     {
@@ -3495,7 +3504,14 @@
         "transcripts/5.1b-context.json#context.local-selection",
         "transcripts/5.1b-context.json#status.repo.tier",
         "transcripts/5.1b-context.json#context.committed-default",
-        "transcripts/5.1b-context.json#context.no-environment"
+        "transcripts/5.1b-context.json#context.no-environment",
+        "transcripts/5.1e-session.json#env.list.flag",
+        "transcripts/5.1e-session.json#env.list.short-flag",
+        "transcripts/5.1e-session.json#env.list.env-var",
+        "transcripts/5.1e-session.json#env.list.local",
+        "transcripts/5.1e-session.json#env.list.default",
+        "transcripts/5.1e-session.json#env.list.flag-over-env",
+        "transcripts/5.1e-session.json#env.list.env-over-local"
       ]
     },
     {
@@ -3506,7 +3522,13 @@
         "the stored credential for the server"
       ],
       "source": "packages/context/src/index.ts loadToken",
-      "cases": []
+      "cases": [
+        "transcripts/5.1e-session.json#env.list.token-env",
+        "transcripts/5.1e-session.json#env.list.token-stored",
+        "transcripts/5.1e-session.json#whoami.env-token",
+        "transcripts/5.1e-session.json#env.list.not-signed-in",
+        "transcripts/5.1e-session.json#env.use.env-token"
+      ]
     },
     {
       "name": "oidc-token",

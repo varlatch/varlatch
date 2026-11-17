@@ -18,15 +18,15 @@ type command struct {
 
 // commands is the table, in the TypeScript CLI's dispatch order.
 var commands = []command{
-	{name: "login", slice: "5.1e"},
+	{name: "login", slice: "5.1e", run: loginCommand},
 	{name: "init", slice: "5.1d", run: initCommand},
 	{name: "agents", slice: "5.1d", run: agentsCommand},
-	{name: "logout", slice: "5.1e"},
+	{name: "logout", slice: "5.1e", run: logoutCommand},
 	{name: "status", slice: "5.1b", run: statusCommand},
-	{name: "whoami", slice: "5.1e"},
+	{name: "whoami", slice: "5.1e", run: whoamiCommand},
 	{name: "server", slice: "5.1b", run: serverCommand},
 	{name: "context", slice: "5.1b", run: contextCommand},
-	{name: "env", slice: "5.1e"},
+	{name: "env", slice: "5.1e", run: envCommand},
 	{name: "run", slice: "5.4b"},
 	{name: "validate", slice: "5.3a"},
 	{name: "scan", slice: "5.4d"},

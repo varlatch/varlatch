@@ -509,9 +509,263 @@ const agentFiles51d: TranscriptCase[] = [
   ].map(([id, title, rest]): TranscriptCase => ({ id: `init.usage.${id}`, title: title as string, args: ["init", ...(rest as string[])] })),
 ];
 
+
+// ---- 5.1e: session commands ------------------------------------------------
+//
+// login with a token, logout, whoami, env list and env use, against the
+// fake server. login and env use write the time of the run: those cases
+// list the "now" pattern (goKit.ts). Every request names the CLI in its
+// User-Agent ("user-agent"). Tokens are fakes.
+
+const LOGIN_META = { serverVersion: "0.22.0", apiMajor: 1, capabilities: ["identity.whoami"] };
+const ORGS = ok("/v1/organizations", { items: [{ id: "org_1", slug: "acme", name: "Acme" }], nextCursor: null });
+const LOGIN_OK: Exchange[] = [ok("/v1/meta", LOGIN_META), ORGS];
+const del = (path: string, status = 204, answer?: unknown): Exchange => ({ method: "DELETE", path, status, ...(answer === undefined ? { headers: {} } : { answer }) });
+const NOW = ["now"];
+const session = (c: TranscriptCase): TranscriptCase => ({ ...c, differences: [...(c.differences ?? []), ...ONLINE] });
+const TOKEN = "vlt_cli_fakeNEWW";
+const loginArgs = (...rest: string[]) => ["login", "--server", "{{server}}", ...rest];
+const STORED_LIVE = { token: "vlt_cli_fakeOLDD", issuedAt: "2026-11-01T10:00:00.000Z", expiresAt: "2100-01-01T00:00:00.000Z", credentialId: "cred_old", name: "laptop" };
+const SETTINGS_DEFAULT = (server: string) => `${JSON.stringify({ defaultServer: server }, null, 2)}\n`;
+const TOML_HERE = 'server = "{{server}}"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n';
+const ENVS_PATH = "/v1/organizations/acme/projects/web/environments";
+
+/** Every tier, kind and selection: the frozen human format of env list (robotsson parses it). */
+const TIERS = ["development", "staging", "production"];
+const KINDS = ["shared", "personal", "preview"];
+const ALL_ENVS = TIERS.flatMap((tier) => KINDS.map((kind) => ({ id: `env_${tier}_${kind}`, name: `${tier}-${kind}`, tier, kind, createdAt: "2026-11-01T10:00:00.000Z" })));
+const envList = (items: unknown, extra: Partial<Exchange> = {}): Exchange => ({ ...ok(ENVS_PATH, { items, nextCursor: null }), ...extra });
+const ME_FULL = {
+  identity: { id: "idn_1", name: "Ada", kind: "human", email: "ada@example.com" },
+  organization: null,
+  credential: { id: "cred_a", name: "laptop", kind: "cli", expiresAt: "2100-01-01T00:00:00.000Z" },
+  listener: "ordinary",
+};
+const ME_SERVICE = {
+  identity: { id: "idn_2", name: "deployer", kind: "service" },
+  organization: { id: "org_1", slug: "acme", name: "Acme" },
+  credential: { id: "cred_s", name: null, kind: "service", expiresAt: null },
+  listener: "tailnet",
+  tailnet: { recognized: true, tailnet: "example.ts.net", nodeId: "nABC", nodeName: "ci-runner", tags: ["tag:ci", "tag:deploy"] },
+};
+const WHOAMI_OK = (me: unknown): Exchange[] => [ok("/v1/meta", LOGIN_META), ok("/v1/me", me)];
+const STORE_HERE = storeAt({ "{{server}}": STORED_LIVE });
+const inRepo = (extra: Record<string, string> = {}, local?: unknown): Record<string, string> => ({ ...repoFiles(TOML_HERE, local), ...extra });
+
+const session51e: TranscriptCase[] = [
+  // login --token
+  session({ id: "login.token", title: "login --token: verified, stored with the time, and the server becomes the default", args: loginArgs("--token", TOKEN), server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.trailing-slash", title: "a server given with a trailing slash: stored and remembered without it, said as given", args: ["login", "--server", "{{server}}/", "--token", TOKEN], server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.path", title: "a server with a path: the API is under it", args: ["login", "--server", "{{server}}/base", "--token", TOKEN], server: [ok("/base/v1/meta", LOGIN_META), { ...ORGS, path: "/base/v1/organizations" }], patterns: NOW }),
+  session({ id: "login.token.default-kept", title: "a default server already set is kept, and nothing is said about it", args: loginArgs("--token", TOKEN), files: { "config/settings.json": SETTINGS_DEFAULT("https://other.example") }, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.settings-kept", title: "other settings are kept when the default is set", args: loginArgs("--token", TOKEN), files: { "config/settings.json": '{"future": [1, 2]}\n' }, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.other-entries", title: "other stored servers and unknown keys are kept", args: loginArgs("--token", TOKEN), files: { "config/credentials.json": `${JSON.stringify({ version: 9, servers: { "https://a.example": { token: "vlt_cli_fakeAAAA", future: true } }, extra: "kept" }, null, 2)}\n` }, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.repo-server", title: "without --server, inside a repository: its server", args: ["login", "--token", TOKEN], files: inRepo(), ...IN_REPO, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.local-override", title: "without --server: the repository's local override comes before varlatch.toml", args: ["login", "--token", TOKEN], files: { ...repoFiles('server = "https://repo.example"\norganization = "acme"\nproject = "web"\n', { serverOverride: "{{server}}" }) }, ...IN_REPO, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.env-server", title: "without --server: VARLATCH_SERVER", args: ["login", "--token", TOKEN], env: { VARLATCH_SERVER: "{{server}}" }, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.default-server", title: "without --server, outside a repository: the default server", args: ["login", "--token", TOKEN], files: { "config/settings.json": SETTINGS_DEFAULT("{{server}}") }, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.only-credential", title: "without --server: the only stored credential's server; the same token replaces nothing", args: ["login", "--token", "vlt_cli_fakeOLDD"], files: STORE_HERE, server: LOGIN_OK, patterns: NOW }),
+  { id: "login.no-server", title: "no server anywhere: a usage error", args: ["login", "--token", TOKEN] },
+  { id: "login.no-server.repo", title: "inside a repository without a server: a usage error, never the default", args: ["login", "--token", TOKEN], files: { ...repoFiles(TOML_NO_SERVER), "config/settings.json": SETTINGS_DEFAULT("https://a.example") }, ...IN_REPO },
+  { id: "login.no-server.several", title: "several stored credentials and no default: a usage error", args: ["login", "--token", TOKEN], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "login.bad-toml", title: "an unreadable varlatch.toml without --server: the context error", args: ["login", "--token", TOKEN], files: repoFiles('organization = "acme\n'), ...IN_REPO },
+  session({ id: "login.bad-toml.flag", title: "an unreadable varlatch.toml does not block --server", args: loginArgs("--token", TOKEN), files: repoFiles('organization = "acme\n'), ...IN_REPO, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.ignores-oidc-options", title: "--ttl, --org, --audience and --oidc-token belong to other sign-ins; with --token they change nothing", args: loginArgs("--token", TOKEN, "--ttl", "600", "--org", "acme", "--audience", "x", "--oidc-token", "y"), server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.assisted", title: "in assisted mode, --token signs in; the User-Agent says assisted", args: ["--assisted", ...loginArgs("--token", TOKEN)], server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.token.marker", title: "a coding agent's marker: --token still signs in", args: loginArgs("--token", TOKEN), env: { CLAUDECODE: "1" }, server: LOGIN_OK, patterns: NOW }),
+  // replacing a stored credential (ADR-0032)
+  session({ id: "login.replaces", title: "a live stored credential is revoked after the new one is stored", args: loginArgs("--token", TOKEN), files: STORE_HERE, server: [...LOGIN_OK, del("/v1/me/credentials/cred_old")], patterns: NOW }),
+  session({ id: "login.replaces.refused", title: "the revocation refused: said on stderr with the old expiry, the sign-in stands", args: loginArgs("--token", TOKEN), files: STORE_HERE, server: [...LOGIN_OK, del("/v1/me/credentials/cred_old", 401, apiError(401, "INVALID_CREDENTIAL"))], patterns: NOW }),
+  session({ id: "login.replaces.unknown-code", title: "a refusal with a code the protocol does not define", args: loginArgs("--token", TOKEN), files: STORE_HERE, server: [...LOGIN_OK, del("/v1/me/credentials/cred_old", 400, apiError(400, "MADE_UP"))], patterns: NOW }),
+  session({ id: "login.replaces.no-id", title: "a stored credential without an id cannot be revoked: said, without an expiry", args: loginArgs("--token", TOKEN), files: storeAt({ "{{server}}": { token: "vlt_cli_fakeOLDD" } }), server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.replaces.expired", title: "an expired stored credential is replaced without revoking it", args: loginArgs("--token", TOKEN), files: storeAt({ "{{server}}": { ...STORED_LIVE, expiresAt: "2020-01-01T00:00:00.000Z" } }), server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.replaces.odd-entry", title: "a stored entry with odd fields: a numeric id, an expiry that does not parse", args: loginArgs("--token", TOKEN), files: storeAt({ "{{server}}": { token: 5, credentialId: 7, expiresAt: "soon" } }), server: [...LOGIN_OK, { ...del("/v1/me/credentials/7"), status: 204 }], patterns: NOW }),
+  session({ id: "login.replaces.maintenance", title: "the revocation waits out maintenance, said once", args: loginArgs("--token", TOKEN), files: STORE_HERE, server: [...LOGIN_OK, { ...MAINTENANCE, method: "DELETE", path: "/v1/me/credentials/cred_old" }, del("/v1/me/credentials/cred_old")], patterns: NOW }),
+  // --token-stdin (ADR-0043 Decision 2)
+  session({ id: "login.stdin", title: "--token-stdin: one line break at the end is dropped", args: loginArgs("--token-stdin"), stdin: `${TOKEN}\n`, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.stdin.crlf", title: "--token-stdin: a CRLF at the end is dropped", args: loginArgs("--token-stdin"), stdin: `${TOKEN}\r\n`, server: LOGIN_OK, patterns: NOW }),
+  session({ id: "login.stdin.no-newline", title: "--token-stdin without a line break", args: loginArgs("--token-stdin"), stdin: TOKEN, server: LOGIN_OK, patterns: NOW }),
+  { id: "login.stdin.empty", title: "--token-stdin with nothing piped", args: loginArgs("--token-stdin"), stdin: "" },
+  { id: "login.stdin.only-newline", title: "--token-stdin with only a line break", args: loginArgs("--token-stdin"), stdin: "\n" },
+  { id: "login.stdin.two-lines", title: "--token-stdin with two lines: whitespace, and the credential is not shown", args: loginArgs("--token-stdin"), stdin: `${TOKEN}\nvlt_cli_fakeSECOND\n` },
+  { id: "login.stdin.two-newlines", title: "--token-stdin ending in two line breaks: only one is dropped", args: loginArgs("--token-stdin"), stdin: `${TOKEN}\n\n` },
+  { id: "login.stdin.space", title: "--token-stdin with a space inside", args: loginArgs("--token-stdin"), stdin: "vlt_cli_fake NEWW\n" },
+  { id: "login.stdin.tab", title: "--token-stdin with a leading tab", args: loginArgs("--token-stdin"), stdin: `\t${TOKEN}\n` },
+  { id: "login.stdin.nbsp", title: "--token-stdin with a no-break space: JavaScript's \\s", args: loginArgs("--token-stdin"), stdin: `${TOKEN} \n` },
+  { id: "login.stdin.bom", title: "--token-stdin with a byte order mark: JavaScript's \\s", args: loginArgs("--token-stdin"), stdin: `﻿${TOKEN}\n` },
+  { id: "login.stdin.line-separator", title: "--token-stdin with U+2028", args: loginArgs("--token-stdin"), stdin: `${TOKEN} x\n` },
+  { id: "login.stdin.cr-only", title: "--token-stdin ending in a lone CR: not dropped, whitespace", args: loginArgs("--token-stdin"), stdin: `${TOKEN}\r` },
+  // usage errors
+  { id: "login.usage.two-methods", title: "--token and --token-stdin together", args: loginArgs("--token", TOKEN, "--token-stdin") },
+  { id: "login.usage.token-oidc", title: "--token and --oidc together", args: loginArgs("--token", TOKEN, "--oidc") },
+  { id: "login.usage.start-wait", title: "--start and --wait together", args: loginArgs("--start", "--wait") },
+  { id: "login.usage.three-methods", title: "three methods, listed in their order", args: loginArgs("--wait", "--oidc", "--token-stdin") },
+  { id: "login.usage.empty-token-oidc", title: "--token with an empty value still counts as a method", args: loginArgs("--token", "", "--oidc") },
+  { id: "login.usage.json", title: "--json applies to --start and --wait", args: loginArgs("--token", TOKEN, "--json") },
+  { id: "login.usage.timeout", title: "--timeout applies to --wait", args: loginArgs("--token", TOKEN, "--timeout", "5") },
+  { id: "login.usage.unknown-option", title: "login is parsed strictly: an unknown option", args: loginArgs("--token", TOKEN, "--tokn", "x") },
+  { id: "login.usage.argument", title: "login takes no argument", args: loginArgs("--token", TOKEN, "extra") },
+  { id: "login.usage.token-missing", title: "--token without a value", args: loginArgs("--token") },
+  { id: "login.usage.token-twice", title: "--token given twice", args: loginArgs("--token", TOKEN, "--token", TOKEN) },
+  { id: "login.usage.server-twice", title: "--server given twice", args: ["login", "--server", "https://a.example", "--server", "https://b.example", "--token", TOKEN] },
+  { id: "login.usage.before-server", title: "a usage error comes before the server is looked for", args: ["login", "--tokn"] },
+  { id: "login.agent-run", title: "inside an agent-safe run: refused before anything else", args: loginArgs("--token", TOKEN), env: { VARLATCH_AGENT_RUN: "run_0123" } },
+  { id: "login.agent-run.bad-options", title: "inside an agent-safe run even a malformed command line gets the refusal", args: ["login", "--nosuch"], env: { VARLATCH_AGENT_RUN: "run_0123" } },
+  // the server refuses or cannot be reached
+  session({ id: "login.refused.meta", title: "the credential refused at /v1/meta: nothing stored", args: loginArgs("--token", TOKEN), server: [{ method: "GET", path: "/v1/meta", status: 401, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
+  session({ id: "login.refused.organizations", title: "refused at /v1/organizations: nothing stored, and the server's echo of the token is masked", args: loginArgs("--token", TOKEN), server: [ok("/v1/meta", LOGIN_META), { method: "GET", path: "/v1/organizations", status: 403, answer: apiError(403, "PERMISSION_DENIED", `token ${TOKEN} is not allowed`) }] }),
+  session({ id: "login.refused.frozen", title: "an Organization frozen", args: loginArgs("--token", TOKEN), server: [ok("/v1/meta", LOGIN_META), { method: "GET", path: "/v1/organizations", status: 403, answer: apiError(403, "ORGANIZATION_FROZEN") }] }),
+  session({ id: "login.refused.html", title: "a proxy's HTML page", args: loginArgs("--token", TOKEN), server: [{ method: "GET", path: "/v1/meta", status: 502, headers: { "content-type": "text/html" }, answer: "<html>bad gateway</html>" }] }),
+  { id: "login.unreachable", title: "a server that refuses the connection: 69", args: ["login", "--server", "http://127.0.0.1:2", "--token", TOKEN] },
+  session({ id: "login.maintenance", title: "maintenance is waited out, said once on stderr", args: loginArgs("--token", TOKEN), server: [MAINTENANCE, MAINTENANCE, ...LOGIN_OK], patterns: NOW }),
+  session({ id: "login.maintenance.later", title: "maintenance at the verification request", args: loginArgs("--token", TOKEN), server: [ok("/v1/meta", LOGIN_META), { ...MAINTENANCE, path: "/v1/organizations" }, ORGS], patterns: NOW }),
+  session({ id: "login.meta.version-odd", title: "a version that is not one and no API version: said as unrecognized", args: loginArgs("--token", TOKEN), server: [ok("/v1/meta", { serverVersion: "x\u001b[31m", apiMajor: "1" }), ORGS], patterns: NOW }),
+  session({ id: "login.meta.version-missing", title: "no version at all", args: loginArgs("--token", TOKEN), server: [ok("/v1/meta", { apiMajor: 1000 }), ORGS], patterns: NOW }),
+  session({ id: "login.meta.version-prerelease", title: "a prerelease version and API 0", args: loginArgs("--token", TOKEN), server: [ok("/v1/meta", { serverVersion: "1.2.3-rc.1+build.5", apiMajor: 0 }), ORGS], patterns: NOW }),
+  session({ id: "login.meta.empty", title: "an empty meta answer: the credential is stored, then TypeScript throws", args: loginArgs("--token", TOKEN), server: [{ method: "GET", path: "/v1/meta", status: 204 }, ORGS], patterns: NOW, differences: ["uncaught"] }),
+  session({ id: "login.expiry-header", title: "Varlatch-Credential-Expires is no warning at sign-in", args: loginArgs("--token", TOKEN), env: { VARLATCH_TOKEN: TOKEN }, server: [ok("/v1/meta", LOGIN_META, { "varlatch-credential-expires": "2026-01-01T00:00:00.000Z" }), ORGS], patterns: NOW }),
+
+  // logout (ADR-0032)
+  { id: "logout.none", title: "nothing stored", args: ["logout"] },
+  { id: "logout.none.all", title: "nothing stored, --all", args: ["logout", "--all"] },
+  session({ id: "logout.only", title: "the only stored credential: revoked and removed, and the default forgotten", args: ["logout"], files: { ...STORE_HERE, "config/settings.json": SETTINGS_DEFAULT("{{server}}") }, server: [del("/v1/me/credentials/cred_old")] }),
+  session({ id: "logout.default", title: "several stored: the default server's", args: ["logout"], files: { ...storeAt({ "{{server}}": STORED_LIVE, "https://a.example": { token: "vlt_cli_fakeAAAA" } }), "config/settings.json": SETTINGS_DEFAULT("{{server}}") }, server: [del("/v1/me/credentials/cred_old")] }),
+  session({ id: "logout.default-other", title: "another server's logout keeps the default", args: ["logout", "--server", "{{server}}"], files: { ...storeAt({ "{{server}}": STORED_LIVE, "https://a.example": { token: "vlt_cli_fakeAAAA" } }), "config/settings.json": SETTINGS_DEFAULT("https://a.example") }, server: [del("/v1/me/credentials/cred_old")] }),
+  session({ id: "logout.server", title: "--server names it; a trailing slash finds it", args: ["logout", "--server", "{{server}}/"], files: storeAt({ "{{server}}": STORED_LIVE, "https://a.example": { token: "vlt_cli_fakeAAAA" } }), server: [del("/v1/me/credentials/cred_old")] }),
+  session({ id: "logout.repo", title: "inside a repository: its server", args: ["logout"], files: { ...inRepo(), ...storeAt({ "{{server}}": STORED_LIVE, "https://a.example": { token: "vlt_cli_fakeAAAA" } }) }, ...IN_REPO, server: [del("/v1/me/credentials/cred_old")] }),
+  session({ id: "logout.env-server", title: "VARLATCH_SERVER names it", args: ["logout"], env: { VARLATCH_SERVER: "{{server}}" }, files: storeAt({ "{{server}}": STORED_LIVE, "https://a.example": { token: "vlt_cli_fakeAAAA" } }), server: [del("/v1/me/credentials/cred_old")] }),
+  { id: "logout.multiple", title: "several stored and no default: a usage error naming them", args: ["logout"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "logout.no-server-here", title: "inside a repository without a server: a usage error naming what is stored", args: ["logout"], files: { ...repoFiles(TOML_NO_SERVER), ...STORE_HERE }, ...IN_REPO },
+  { id: "logout.bad-toml", title: "an unreadable varlatch.toml names no server", args: ["logout"], files: { ...repoFiles('organization = "acme\n'), ...STORE_HERE }, ...IN_REPO },
+  { id: "logout.not-stored", title: "--server with nothing stored for it", args: ["logout", "--server", "https://nosuch.example"], files: STORE_HERE },
+  session({ id: "logout.all", title: "--all: each in order, one without an id, one refused", args: ["logout", "--all"], files: { ...storeAt({ "{{server}}": STORED_LIVE, "{{server}}/two": { token: "vlt_cli_fakeTWOO", expiresAt: "2100-01-01T00:00:00.000Z" }, "{{server}}/three": { token: "vlt_cli_fakeTHRE", credentialId: "cred_3", expiresAt: "2100-01-01T00:00:00.000Z" } }), "config/settings.json": SETTINGS_DEFAULT("{{server}}/three") }, server: [del("/v1/me/credentials/cred_old"), del("/three/v1/me/credentials/cred_3", 403, apiError(403, "PERMISSION_DENIED"))] }),
+  session({ id: "logout.refused", title: "the revocation refused: removed locally, said with the expiry", args: ["logout"], files: STORE_HERE, server: [del("/v1/me/credentials/cred_old", 401, apiError(401, "INVALID_CREDENTIAL"))] }),
+  { id: "logout.unreachable", title: "a server that cannot be reached: removed locally, fetch failed", args: ["logout"], files: storeAt({ "http://127.0.0.1:2": STORED_LIVE }) },
+  session({ id: "logout.maintenance", title: "maintenance at the revocation is waited out", args: ["logout"], files: STORE_HERE, server: [{ ...MAINTENANCE, method: "DELETE", path: "/v1/me/credentials/cred_old" }, del("/v1/me/credentials/cred_old")] }),
+  session({ id: "logout.odd-entry", title: "an entry without a token: no Authorization header", args: ["logout"], files: storeAt({ "{{server}}": { credentialId: "cred_x" } }), server: [del("/v1/me/credentials/cred_x")] }),
+  { id: "logout.null-entry", title: "a null stored entry: TypeScript throws, nothing removed", args: ["logout"], files: storeAt({ "{{server}}": null }), differences: ["uncaught"] },
+  session({ id: "logout.agent-run", title: "inside an agent-safe run the operator's store is not read: nothing stored", args: ["logout"], env: { VARLATCH_AGENT_RUN: "run_0123" }, unset: ["VARLATCH_CONFIG_DIR"], files: { "home/.config/varlatch/credentials.json": credentials({ "{{server}}": STORED_LIVE }) } }),
+
+  // whoami (identity.whoami)
+  session({ id: "whoami.human", title: "a person: email, no Organization, a credential with a name and expiry", args: ["whoami", "--server", "{{server}}"], files: STORE_HERE, server: WHOAMI_OK(ME_FULL) }),
+  session({ id: "whoami.json", title: "--json: the server and /v1/me's answer as it is", args: ["whoami", "--server", "{{server}}", "--json"], files: STORE_HERE, server: WHOAMI_OK(ME_FULL) }),
+  session({ id: "whoami.service", title: "a service in an Organization, from a tailnet device with tags", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK(ME_SERVICE) }),
+  session({ id: "whoami.service.json", title: "the same in JSON", args: ["whoami", "--json"], files: STORE_HERE, server: WHOAMI_OK(ME_SERVICE) }),
+  session({ id: "whoami.devices", title: "a device by user login, without a name", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK({ ...ME_SERVICE, tailnet: { recognized: true, tailnet: "t.ts.net", nodeId: "n1", tags: [], userLogin: "ada@github" } }) }),
+  session({ id: "whoami.device-untagged", title: "a device without tags or user", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK({ ...ME_SERVICE, tailnet: { recognized: true, tailnet: "t.ts.net", nodeId: "n1", nodeName: "box" } }) }),
+  session({ id: "whoami.device-unrecognized", title: "a device not recognized, with and without a reason", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK({ ...ME_SERVICE, tailnet: { recognized: false, reason: "other-tailnet" } }) }),
+  session({ id: "whoami.device-no-reason", title: "a device not recognized without a reason", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK({ ...ME_SERVICE, tailnet: { recognized: false } }) }),
+  session({ id: "whoami.machine-no-org", title: "a machine identity without an Organization", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK({ ...ME_SERVICE, organization: null, tailnet: undefined }) }),
+  session({ id: "whoami.escaped", title: "names with control and bidirectional characters are escaped", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK({ ...ME_FULL, identity: { id: "idn_1", name: "A\u001b[31mda‮", kind: "human" }, credential: { id: "c", name: "lap\u0007top", kind: "cli", expiresAt: "garbage" } }) }),
+  session({ id: "whoami.odd-shapes", title: "fields missing or of other types are shown as JavaScript writes them", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK({ identity: { id: 7, name: ["a", null, "b"] }, organization: { slug: "acme" }, credential: { kind: { x: 1 } } }) }),
+  session({ id: "whoami.json.server-key", title: "--json: a server key in the answer replaces the server, in its place", args: ["whoami", "--json"], files: STORE_HERE, server: WHOAMI_OK({ listener: "ordinary", server: "theirs" }) }),
+  session({ id: "whoami.json.empty", title: "--json with an empty answer: the server only", args: ["whoami", "--json"], files: STORE_HERE, server: [ok("/v1/meta", LOGIN_META), { method: "GET", path: "/v1/me", status: 204 }] }),
+  session({ id: "whoami.null", title: "an answer of null: TypeScript throws", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK(null), differences: ["uncaught"] }),
+  session({ id: "whoami.no-identity", title: "an answer without an identity: TypeScript throws", args: ["whoami"], files: STORE_HERE, server: WHOAMI_OK({ credential: {} }), differences: ["uncaught"] }),
+  session({ id: "whoami.unsupported", title: "a server without identity.whoami: said, 1", args: ["whoami"], files: STORE_HERE, server: [ok("/v1/meta", { serverVersion: "0.16.0", capabilities: ["x"] })] }),
+  session({ id: "whoami.unsupported.no-version", title: "an older server without a version", args: ["whoami"], files: STORE_HERE, server: [ok("/v1/meta", { capabilities: [] })] }),
+  session({ id: "whoami.unsupported.odd-version", title: "a version that is not one", args: ["whoami"], files: STORE_HERE, server: [ok("/v1/meta", { serverVersion: 7, capabilities: "" })] }),
+  session({ id: "whoami.trailing-slash", title: "--server with a trailing slash: shown without it", args: ["whoami", "--server", "{{server}}/"], files: STORE_HERE, server: WHOAMI_OK(ME_FULL) }),
+  session({ id: "whoami.env-token", title: "VARLATCH_TOKEN comes before the stored credential, and its expiry header warns", args: ["whoami"], env: { VARLATCH_TOKEN: "vlt_svc_envAAAAAA" }, files: STORE_HERE, server: [ok("/v1/meta", LOGIN_META, { "varlatch-credential-expires": "2026-01-01T00:00:00.000Z" }), ok("/v1/me", ME_SERVICE, { "varlatch-credential-expires": "2026-01-01T00:00:00.000Z" })] }),
+  session({ id: "whoami.expiring", title: "a stored credential in the last fifth of its lifetime warns once", args: ["whoami"], files: storeAt({ "{{server}}": { token: "vlt_cli_fakeOLDD", ...EXPIRING } }), server: WHOAMI_OK(ME_FULL) }),
+  session({ id: "whoami.expired", title: "an expired stored credential warns, and is still sent", args: ["whoami"], files: storeAt({ "{{server}}": { token: "vlt_cli_fakeOLDD", ...EXPIRED } }), server: [{ method: "GET", path: "/v1/meta", status: 401, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
+  session({ id: "whoami.repo", title: "inside a repository: its server", args: ["whoami"], files: { ...inRepo(), ...storeAt({ "{{server}}": STORED_LIVE, "https://a.example": { token: "vlt_cli_fakeAAAA" } }) }, ...IN_REPO, server: WHOAMI_OK(ME_FULL) }),
+  session({ id: "whoami.env-server", title: "VARLATCH_SERVER", args: ["whoami"], env: { VARLATCH_SERVER: "{{server}}" }, files: STORE_HERE, server: WHOAMI_OK(ME_FULL) }),
+  session({ id: "whoami.default", title: "outside a repository: the default server", args: ["whoami"], files: { ...storeAt({ "{{server}}": STORED_LIVE, "https://a.example": { token: "vlt_cli_fakeAAAA" } }), "config/settings.json": SETTINGS_DEFAULT("{{server}}") }, server: WHOAMI_OK(ME_FULL) }),
+  { id: "whoami.no-server", title: "no server: a usage error", args: ["whoami"] },
+  { id: "whoami.several", title: "several stored and no default: a usage error naming them", args: ["whoami"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "whoami.bad-toml", title: "an unreadable varlatch.toml names no server", args: ["whoami"], files: { ...repoFiles('organization = "acme\n'), ...STORE_HERE }, ...IN_REPO },
+  { id: "whoami.not-signed-in", title: "no credential for the server: 77", args: ["whoami", "--server", "https://a.example"] },
+  { id: "whoami.agent-run", title: "inside an agent-safe run without a credential: 77, never the operator's", args: ["whoami", "--server", "{{server}}"], env: { VARLATCH_AGENT_RUN: "run_0123" }, unset: ["VARLATCH_CONFIG_DIR"], files: { "home/.config/varlatch/credentials.json": credentials({ "{{server}}": STORED_LIVE }) } },
+  { id: "whoami.usage.option", title: "whoami is parsed strictly", args: ["whoami", "--nosuch"] },
+  { id: "whoami.usage.argument", title: "whoami takes no argument", args: ["whoami", "me"] },
+  { id: "whoami.usage.server-missing", title: "--server without a value", args: ["whoami", "--server"] },
+  session({ id: "whoami.refused", title: "refused at /v1/me: the error line, 77", args: ["whoami"], files: STORE_HERE, server: [ok("/v1/meta", LOGIN_META), { method: "GET", path: "/v1/me", status: 401, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
+  { id: "whoami.unreachable", title: "a server that cannot be reached: 69", args: ["whoami", "--server", "http://127.0.0.1:2"], env: { VARLATCH_TOKEN: "vlt_svc_envAAAAAA" } },
+  session({ id: "whoami.maintenance", title: "maintenance is waited out", args: ["whoami"], files: STORE_HERE, server: [MAINTENANCE, ...WHOAMI_OK(ME_FULL)] }),
+
+  // env list: the frozen human format, every tier, kind and selection
+  ...[
+    ["flag", "--environment selects", ["env", "list", "--environment", "staging-personal"], {}, undefined],
+    ["short-flag", "-e selects", ["env", "list", "-e", "production-preview"], {}, undefined],
+    ["env-var", "VARLATCH_ENV selects", ["env", "list"], { VARLATCH_ENV: "development-shared" }, undefined],
+    ["local", "the local selection", ["env", "list"], {}, { selectedEnvironment: "staging-shared" }],
+    ["default", "the committed default", ["env", "list"], {}, undefined],
+    ["flag-over-env", "--environment comes before VARLATCH_ENV", ["env", "list", "-e", "production-shared"], { VARLATCH_ENV: "development-shared" }, { selectedEnvironment: "staging-shared" }],
+    ["env-over-local", "VARLATCH_ENV comes before the local selection", ["env", "list"], { VARLATCH_ENV: "development-preview" }, { selectedEnvironment: "staging-shared" }],
+    ["none-selected", "an Environment the server does not list: none selected", ["env", "list", "-e", "nosuch"], {}, undefined],
+  ].flatMap(([id, title, args, env, local]): TranscriptCase[] => [
+    session({ id: `env.list.${id}`, title: `env list: ${title as string}`, args: args as string[], env: env as Record<string, string>, files: { ...inRepo({}, local), ...STORE_HERE }, ...IN_REPO, server: [envList(ALL_ENVS)] }),
+    session({ id: `env.list.${id}.json`, title: `env list --json: ${title as string}`, args: [...(args as string[]), "--json"], env: env as Record<string, string>, files: { ...inRepo({}, local), ...STORE_HERE }, ...IN_REPO, server: [envList(ALL_ENVS)] }),
+  ]),
+  session({ id: "env.list.dev-default", title: "env list with the committed default dev", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev", tier: "development", kind: "shared" }, { name: "prod", tier: "production", kind: "shared" }])] }),
+  session({ id: "env.list.odd-marks", title: "missing, empty and odd tiers and kinds: only truthy marks, as JavaScript writes them", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev" }, { name: "a", tier: "", kind: null }, { name: "b", tier: 0, kind: ["x", null, 2] }, { name: "c", tier: { t: 1 }, kind: true }, { name: 5, tier: "staging" }, { tier: "production", kind: "shared" }, {}])] }),
+  session({ id: "env.list.odd-marks.json", title: "the same in JSON: missing fields left out", args: ["env", "list", "--json"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev" }, { name: "a", tier: "", kind: null }, { name: "b", tier: 0, kind: ["x", null, 2] }, { name: 5, tier: "staging" }, {}])] }),
+  session({ id: "env.list.selected-number", title: "a local selection that is a number never equals a name", args: ["env", "list"], files: { ...inRepo({}, { selectedEnvironment: 5 }), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: 5, tier: "staging" }, { name: "5" }])] }),
+  session({ id: "env.list.escaped", title: "names and marks with control characters are escaped", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "d\u001b[31mev", tier: "development‮", kind: "shared\u0007" }])] }),
+  session({ id: "env.list.empty", title: "no Environments: nothing printed", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([])] }),
+  session({ id: "env.list.empty.json", title: "no Environments in JSON", args: ["env", "list", "--json"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([])] }),
+  session({ id: "env.list.items-string", title: "items that are a string: each character an Environment without a name", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [ok(ENVS_PATH, { items: "ab" })] }),
+  session({ id: "env.list.items-missing", title: "no items: TypeScript throws", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [ok(ENVS_PATH, {})], differences: ["uncaught"] }),
+  session({ id: "env.list.items-missing.json", title: "no items, --json: TypeScript throws", args: ["env", "list", "--json"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [ok(ENVS_PATH, {})], differences: ["uncaught"] }),
+  session({ id: "env.list.item-null", title: "a null item: the lines before it are printed, then TypeScript throws", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev", tier: "development", kind: "shared" }, null, { name: "prod" }])], differences: ["uncaught"] }),
+  session({ id: "env.list.answer-empty", title: "an empty answer: TypeScript throws", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [{ method: "GET", path: ENVS_PATH, status: 204 }], differences: ["uncaught"] }),
+  session({ id: "env.list.encoded", title: "an Organization and Project that need encoding in the path", args: ["env", "list"], files: { ...repoFiles('server = "{{server}}"\norganization = "a c/m"\nproject = "wéb?"\ndefault_environment = "dev"\n'), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev" }], { path: "/v1/organizations/a%20c%2Fm/projects/w%C3%A9b%3F/environments" })] }),
+  // the server and the credential: precedence (inventory)
+  session({ id: "env.list.server-flag", title: "--server comes before VARLATCH_SERVER, the local override and varlatch.toml", args: ["env", "list", "--server", "{{server}}"], env: { VARLATCH_SERVER: "https://env.example" }, files: { ...repoFiles(TOML_FULL, { serverOverride: "https://local.example" }), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev" }])] }),
+  session({ id: "env.list.server-env", title: "VARLATCH_SERVER comes before the local override and varlatch.toml", args: ["env", "list"], env: { VARLATCH_SERVER: "{{server}}" }, files: { ...repoFiles(TOML_FULL, { serverOverride: "https://local.example" }), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev" }])] }),
+  session({ id: "env.list.server-local", title: "the local override comes before varlatch.toml", args: ["env", "list"], files: { ...repoFiles(TOML_FULL, { serverOverride: "{{server}}" }), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev" }])] }),
+  { id: "env.list.server-none", title: "a repository without a server never falls back to the default", args: ["env", "list"], files: { ...repoFiles(TOML_NO_SERVER), ...STORE_HERE, "config/settings.json": SETTINGS_DEFAULT("{{server}}") }, ...IN_REPO },
+  session({ id: "env.list.token-env", title: "VARLATCH_TOKEN comes before the stored credential", args: ["env", "list"], env: { VARLATCH_TOKEN: "vlt_svc_envAAAAAA" }, files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev" }])] }),
+  session({ id: "env.list.token-stored", title: "without VARLATCH_TOKEN, the stored credential", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev" }])] }),
+  session({ id: "env.list.token-expiring", title: "an expiring stored credential warns once on stderr", args: ["env", "list"], files: { ...inRepo(), ...storeAt({ "{{server}}": { token: "vlt_cli_fakeOLDD", ...EXPIRING } }) }, ...IN_REPO, server: [envList([{ name: "dev" }])] }),
+  session({ id: "env.list.token-env-expiry", title: "VARLATCH_TOKEN near its expiry: the server's header warns once", args: ["env", "list"], env: { VARLATCH_TOKEN: "vlt_svc_envAAAAAA" }, files: inRepo(), ...IN_REPO, server: [envList([{ name: "dev" }], { headers: { "content-type": "application/json", "varlatch-credential-expires": "2999-01-01T00:00:00.000Z" } })] }),
+  session({ id: "env.list.token-env-expired", title: "VARLATCH_TOKEN already expired and refused: the warning, then the error", args: ["env", "list"], env: { VARLATCH_TOKEN: "vlt_svc_envAAAAAA" }, files: inRepo(), ...IN_REPO, server: [{ method: "GET", path: ENVS_PATH, status: 401, headers: { "content-type": "application/json", "varlatch-credential-expires": "2020-01-01T00:00:00.000Z" }, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
+  { id: "env.list.not-signed-in", title: "no credential: 77", args: ["env", "list"], files: inRepo(), ...IN_REPO },
+  { id: "env.list.agent-run", title: "inside an agent-safe run the operator's store (the default directory) is never read: 77", args: ["env", "list"], env: { VARLATCH_AGENT_RUN: "run_0123" }, unset: ["VARLATCH_CONFIG_DIR"], files: { ...inRepo(), "home/.config/varlatch/credentials.json": credentials({ "{{server}}": STORED_LIVE }) }, ...IN_REPO },
+  session({ id: "env.list.agent-run.own-store", title: "inside an agent-safe run with a configuration directory of its own, its store is used", args: ["env", "list"], env: { VARLATCH_AGENT_RUN: "run_0123" }, files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev" }])] }),
+  session({ id: "env.list.agent-run.token", title: "inside an agent-safe run, its own VARLATCH_TOKEN: no expiry warning", args: ["env", "list"], env: { VARLATCH_AGENT_RUN: "run_0123", VARLATCH_TOKEN: "vlt_agt_runAAAAAA" }, files: inRepo(), ...IN_REPO, server: [envList([{ name: "dev" }], { headers: { "content-type": "application/json", "varlatch-credential-expires": "2026-01-01T00:00:00.000Z" } })] }),
+  { id: "env.list.outside", title: "outside a repository: the context error", args: ["env", "list"], files: STORE_HERE },
+  { id: "env.list.no-environment", title: "no Environment selected anywhere: the context error", args: ["env", "list"], files: { ...repoFiles(TOML_NO_ENV.replace("https://repo.example", "{{server}}")), ...STORE_HERE }, ...IN_REPO },
+  session({ id: "env.list.refused", title: "refused: the error line with its request id, 77", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [{ method: "GET", path: ENVS_PATH, status: 403, answer: apiError(403, "PERMISSION_DENIED", "no access to vlt_cli_fakeOLDD") }] }),
+  session({ id: "env.list.not-found", title: "a Project the server does not have", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [{ method: "GET", path: ENVS_PATH, status: 404, answer: apiError(404, "NOT_FOUND", "no such project") }] }),
+  session({ id: "env.list.maintenance", title: "maintenance is waited out, said once, stdout untouched", args: ["env", "list"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [{ ...MAINTENANCE, path: ENVS_PATH }, { ...MAINTENANCE, path: ENVS_PATH }, envList([{ name: "dev", tier: "development", kind: "shared" }])] }),
+  session({ id: "env.list.maintenance.json", title: "maintenance with --json: the document unchanged", args: ["env", "list", "--json"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [{ ...MAINTENANCE, path: ENVS_PATH }, envList([{ name: "dev", tier: "development", kind: "shared" }])] }),
+  { id: "env.list.unreachable", title: "a server that cannot be reached: 69", args: ["env", "list", "--server", "http://127.0.0.1:2"], env: { VARLATCH_TOKEN: "vlt_svc_envAAAAAA" }, files: inRepo(), ...IN_REPO },
+  // env, and its usage
+  { id: "env.usage.none", title: "env with no subcommand, in a repository: the usage", args: ["env"], files: inRepo(), ...IN_REPO },
+  { id: "env.usage.unknown", title: "an unknown subcommand: the usage", args: ["env", "show"], files: inRepo(), ...IN_REPO },
+  { id: "env.usage.outside", title: "outside a repository the context error comes first", args: ["env", "show"] },
+  // env use (the tier cache, ADR-0032)
+  session({ id: "env.use", title: "env use: selected, its tier cached with the time, .varlatch ignores itself", args: ["env", "use", "staging-shared"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList(ALL_ENVS)], patterns: NOW }),
+  session({ id: "env.use.keeps", title: "other keys of local.json are kept; an old tier is replaced at the end", args: ["env", "use", "production-preview"], files: { ...inRepo({}, { selectedTier: "development", serverOverride: "{{server}}", tierCachedAt: "2020-01-01T00:00:00.000Z", selectedEnvironment: "old", "1": "index" }), ...STORE_HERE, "repo/.varlatch/.gitignore": "custom\n" }, ...IN_REPO, server: [envList(ALL_ENVS)], patterns: NOW }),
+  session({ id: "env.use.not-listed", title: "an Environment the server does not list: selected, no tier, an old one removed", args: ["env", "use", "nosuch"], files: { ...inRepo({}, { selectedTier: "development", tierCachedAt: "2020-01-01T00:00:00.000Z" }), ...STORE_HERE }, ...IN_REPO, server: [envList(ALL_ENVS)] }),
+  { id: "env.use.offline", title: "no credential: selected without asking anyone", args: ["env", "use", "dev"], files: inRepo(), ...IN_REPO },
+  { id: "env.use.unreachable", title: "a server that cannot be reached: selected without a tier", args: ["env", "use", "dev"], env: { VARLATCH_SERVER: "http://127.0.0.1:2", VARLATCH_TOKEN: "vlt_svc_envAAAAAA" }, files: inRepo(), ...IN_REPO },
+  session({ id: "env.use.refused", title: "refused by the server: selected without a tier, nothing said", args: ["env", "use", "dev"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [{ method: "GET", path: ENVS_PATH, status: 403, answer: apiError(403, "PERMISSION_DENIED") }] }),
+  session({ id: "env.use.env-token", title: "VARLATCH_TOKEN asks for the tier; its expiry header warns", args: ["env", "use", "dev"], env: { VARLATCH_TOKEN: "vlt_svc_envAAAAAA" }, files: inRepo(), ...IN_REPO, server: [envList([{ name: "dev", tier: "development", kind: "shared" }], { headers: { "content-type": "application/json", "varlatch-credential-expires": "2026-01-01T00:00:00.000Z" } })], patterns: NOW }),
+  session({ id: "env.use.maintenance", title: "maintenance is waited out before the tier is cached", args: ["env", "use", "dev"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [{ ...MAINTENANCE, path: ENVS_PATH }, envList([{ name: "dev", tier: "development", kind: "shared" }])], patterns: NOW }),
+  session({ id: "env.use.odd-tier", title: "a tier of another type is cached as it is and shown as JavaScript writes it", args: ["env", "use", "dev"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev", tier: ["a\u001b", 2] }])], patterns: NOW }),
+  session({ id: "env.use.falsy-tier", title: "a tier that is empty: no tier", args: ["env", "use", "dev"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "dev", tier: "" }])] }),
+  session({ id: "env.use.items-odd", title: "items that are not a list: no tier", args: ["env", "use", "dev"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [ok(ENVS_PATH, { items: { dev: 1 } })] }),
+  session({ id: "env.use.item-null", title: "a null item before the match: no tier", args: ["env", "use", "dev"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([null, { name: "dev", tier: "development" }])] }),
+  session({ id: "env.use.first-match", title: "the first Environment of that name", args: ["env", "use", "dev"], files: { ...inRepo(), ...STORE_HERE }, ...IN_REPO, server: [envList([{ name: "x", tier: "production" }, { name: "dev", tier: "staging" }, { name: "dev", tier: "production" }])], patterns: NOW }),
+  { id: "env.use.local-null", title: "a local.json holding null is replaced", args: ["env", "use", "dev"], files: inRepo({}, "null\n"), ...IN_REPO },
+  { id: "env.use.local-array", title: "a local.json holding an array: its elements spread by index", args: ["env", "use", "dev"], files: inRepo({}, '["a", "b"]\n'), ...IN_REPO },
+  { id: "env.use.local-broken", title: "a local.json that is not JSON is replaced", args: ["env", "use", "dev"], files: inRepo({}, "{oops\n"), ...IN_REPO },
+  { id: "env.use.name-raw", title: "the name is said as given (it is the person's own argument)", args: ["env", "use", "d\u0007ev"], files: inRepo(), ...IN_REPO },
+  { id: "env.use.name-option", title: "a name that looks like an option is still a name", args: ["env", "use", "--json"], files: inRepo(), ...IN_REPO },
+  { id: "env.use.subdirectory", title: "from a subdirectory: the repository root's local.json", args: ["env", "use", "dev"], files: { ...inRepo(), "repo/a/b/.keep": "" }, cwd: "repo/a/b" },
+  { id: "env.use.no-name", title: "env use without a name: the usage", args: ["env", "use"], files: inRepo(), ...IN_REPO },
+  { id: "env.use.outside", title: "outside a repository: no varlatch.toml found", args: ["env", "use", "dev"] },
+  { id: "env.use.no-name.outside", title: "the name is checked before the repository", args: ["env", "use"] },
+  { id: "env.use.agent-run", title: "inside an agent-safe run the operator's credential is not used: no tier", args: ["env", "use", "dev"], env: { VARLATCH_AGENT_RUN: "run_0123" }, unset: ["VARLATCH_CONFIG_DIR"], files: { ...inRepo(), "home/.config/varlatch/credentials.json": credentials({ "{{server}}": STORED_LIVE }) }, ...IN_REPO },
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
   "5.1c-api-client": apiClient51c,
   "5.1d-agent-files": agentFiles51d,
+  "5.1e-session": session51e,
 };

@@ -66,6 +66,13 @@ export interface TranscriptCase {
    * differences") the Go replay applies to this case's recording.
    */
   differences?: string[];
+  /**
+   * Named patterns for values that depend on when the case ran, matched in
+   * the recording and the replay alike (never ignored wholesale). "now": an
+   * ISO 8601 timestamp with milliseconds (Date.prototype.toISOString's
+   * form) between the start and the end of the run, written as {{now}}.
+   */
+  patterns?: string[];
 }
 
 export interface RecordedRequest {
@@ -175,6 +182,17 @@ function uncaught(stderr: string): string {
   return error ? `{{uncaught ${error[1]}: ${error[2]}}}\n` : "{{uncaught}}\n";
 }
 
+/** Date.prototype.toISOString's form, as `login` and `env use` write the time. */
+const ISO_TIMESTAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
+
+/** The "now" pattern: each timestamp from `start` to `end` (milliseconds) as {{now}}. */
+export function nowPattern(text: string, start: number, end: number): string {
+  return text.replace(ISO_TIMESTAMP, (t) => {
+    const at = Date.parse(t);
+    return at >= start && at <= end ? "{{now}}" : t;
+  });
+}
+
 /** Runs one case against the bundle and records it. */
 export async function recordCase(bundle: string, c: TranscriptCase): Promise<RecordedCase> {
   if (process.platform !== "win32") process.umask(TRANSCRIPT_UMASK);
@@ -229,6 +247,7 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
     };
     for (const name of c.unset ?? []) delete env[name];
     for (const [k, v] of Object.entries(c.env ?? {})) env[k] = fill(v, origin, dir);
+    const start = Date.now();
     const result = await new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(process.execPath, [bundle, ...c.args.map((a) => fill(a, origin, dir))], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "";
@@ -239,14 +258,17 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       child.on("close", (code, signal) => resolve({ status: code ?? (signal ? 128 : 1), stdout, stderr }));
       child.stdin.end(c.stdin ?? "");
     });
-    const files = listTree(dir, (t) => unfill(t, origin, dir));
+    const end = Date.now();
+    const now = c.patterns?.includes("now") ? (t: string) => nowPattern(t, start, end) : (t: string) => t;
+    for (const name of c.patterns ?? []) if (name !== "now") throw new Error(`case ${c.id}: no pattern ${name}`);
+    const files = listTree(dir, (t) => now(unfill(t, origin, dir)));
     return {
       ...c,
       expect: {
         status: result.status,
-        stdout: unfill(result.stdout, origin, dir),
-        stderr: unfill(result.status === 1 && UNCAUGHT.test(result.stderr) ? uncaught(result.stderr) : result.stderr, origin, dir),
-        requests: unfillDeep(requests, origin, dir) as RecordedRequest[],
+        stdout: now(unfill(result.stdout, origin, dir)),
+        stderr: now(unfill(result.status === 1 && UNCAUGHT.test(result.stderr) ? uncaught(result.stderr) : result.stderr, origin, dir)),
+        requests: JSON.parse(now(JSON.stringify(unfillDeep(requests, origin, dir)))) as RecordedRequest[],
         files,
       },
     };

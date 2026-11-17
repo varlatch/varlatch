@@ -11,6 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { contractItem, revision } from "./fixtures.js";
 import { EXIT } from "../src/exitCodes.js";
 import { commandHelp } from "../src/usage.js";
+import { cliCommand, goLacksCommand } from "./cliUnderTest.js";
 
 /**
  * The CLI's machine interface (ADR-0043 Decision 10) end to end: help on
@@ -181,7 +182,7 @@ interface Result {
 
 function cli(args: string[], env: Record<string, string> = {}): Promise<Result> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd: repo,
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", VARLATCH_ASSISTED: "0", ...env },
       stdio: ["ignore", "pipe", "pipe"],
@@ -213,7 +214,7 @@ describe("help", () => {
     expect(requests).toEqual([]);
   });
 
-  it("a --help after `--` belongs to the command run starts", async () => {
+  it.skipIf(goLacksCommand("run"))("a --help after `--` belongs to the command run starts", async () => {
     const script = join(dir, "argv.cjs");
     writeFileSync(script, "console.log('ran ' + process.argv.slice(2).join(' '))");
     const r = await cli(["run", "--", process.execPath, script, "--help"]);
@@ -261,7 +262,9 @@ describe("exit statuses", () => {
     ["an unknown security subcommand", ["security", "bogus"]],
     ["security status with an argument", ["security", "status", "acme"]],
     ["an unknown security status option", ["security", "status", "--jsno"]],
-  ];
+    // Against the Go CLI, only the commands it has: a command not built yet
+    // answers 64 too, which would pass without testing anything.
+  ].filter(([, args]) => !goLacksCommand(args[0] as string)) as [string, string[]][];
 
   it.each(malformed)("%s: 64 (usage) with a credential, before any request", async (_name, args) => {
     const r = await cli(args);
@@ -276,13 +279,13 @@ describe("exit statuses", () => {
     expect(requests).toEqual([]);
   });
 
-  it("not signed in: 77", async () => {
+  it.skipIf(goLacksCommand("values"))("not signed in: 77", async () => {
     const r = await cli(["values", "list"], { VARLATCH_TOKEN: "" });
     expect(r.code).toBe(EXIT.denied);
     expect(r.stderr).toMatch(/Not authenticated to/);
   });
 
-  it.each([
+  it.skipIf(goLacksCommand("values")).each([
     ["an unauthenticated credential (401)", "vlt_bad", EXIT.denied],
     ["a denied request (403)", "vlt_denied", EXIT.denied],
     ["an overloaded server (503)", "vlt_overloaded", EXIT.unavailable],
@@ -305,7 +308,7 @@ describe("exit statuses", () => {
     ["values list", ["values", "list"]],
     ["an agent-safe run", ["run", "--agent-safe", "--agent", "coder", "--allow-host", "api.example.com", "--", "true"]],
     ["an agent-safe strict run", ["run", "--agent-safe", "--strict", "--agent", "coder", "--allow-host", "api.example.com", "--", "true"]],
-  ])("a server that cannot be reached: 69 for %s, naming the cause, without a stack trace", async (_name, args) => {
+  ].filter(([, args]) => !goLacksCommand((args as string[])[0] as string)) as [string, string[]][])("a server that cannot be reached: 69 for %s, naming the cause, without a stack trace", async (_name, args) => {
     const port = await closedPort();
     const sep = args.indexOf("--");
     const withServer = sep < 0 ? [...args, "--server", `http://127.0.0.1:${port}`] : [...args.slice(0, sep), "--server", `http://127.0.0.1:${port}`, ...args.slice(sep)];
@@ -315,7 +318,7 @@ describe("exit statuses", () => {
     expect(r.stderr).not.toMatch(/at .*\.cjs:\d+|fetch failed/);
   });
 
-  it.each([
+  it.skipIf(goLacksCommand("values")).each([
     ["a gateway's HTML 502", "vlt_html502", EXIT.unavailable, /^Error INTERNAL: HTTP 502; the response is not a Varlatch API error \(text\/html\)/],
     ["a portal's HTML 200", "vlt_html200", EXIT.failure, /^Error INTERNAL: HTTP 200; the response is not JSON \(text\/html\)/],
   ])("%s: %i, one line, the page never echoed and no stack trace", async (_name, token, code, message) => {
@@ -326,7 +329,7 @@ describe("exit statuses", () => {
     expect(r.stdout + r.stderr).not.toMatch(/page-marker|SyntaxError|at .*\.cjs:\d+/);
   });
 
-  it.each([
+  it.skipIf(goLacksCommand("validate")).each([
     ["development", 0, "valid"],
     ["staging", 1, "invalid"],
     ["production", 2, "incomplete"],
@@ -341,7 +344,7 @@ describe("exit statuses", () => {
     if (env === "production") expect(doc).toMatchObject({ complete: false, notEvaluated: [{ name: "API_TOKEN" }] });
   });
 
-  it("scan keeps 1 for every failure, as documented: usage and authentication included", async () => {
+  it.skipIf(goLacksCommand("scan"))("scan keeps 1 for every failure, as documented: usage and authentication included", async () => {
     expect((await cli(["scan", "--bogus"])).code).toBe(EXIT.failure);
     expect((await cli(["scan", "."], { VARLATCH_TOKEN: "" })).code).toBe(EXIT.failure);
     expect((await cli(["scan", "."], { VARLATCH_TOKEN: "vlt_denied" })).code).toBe(EXIT.failure);
@@ -355,7 +358,7 @@ describe("--json documents", () => {
     return JSON.parse(r.stdout) as Record<string, unknown>;
   };
 
-  it("values list: names, classification and rotation, never a value", async () => {
+  it.skipIf(goLacksCommand("values"))("values list: names, classification and rotation, never a value", async () => {
     const d = await doc(["values", "list"]);
     expect(d).toEqual({
       version: 1,
@@ -368,7 +371,7 @@ describe("--json documents", () => {
     expect(requests.some((r) => r.url.includes("include=values") || r.url.endsWith("/disclosures"))).toBe(false);
   });
 
-  it("values list keeps its human format and notes a rotation on stderr, with the context to complete it", async () => {
+  it.skipIf(goLacksCommand("values"))("values list keeps its human format and notes a rotation on stderr, with the context to complete it", async () => {
     const r = await cli(["values", "list"]);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toBe("API_TOKEN  (secret, self)\nPORT  (plain, self)\n");
@@ -378,7 +381,7 @@ describe("--json documents", () => {
     expect(explicit.stderr).toContain(`(varlatch values rotate-complete API_TOKEN -e development --server ${origin})`);
   });
 
-  it("values list sends an inherited rotation to the parent environment, where it can be completed", async () => {
+  it.skipIf(goLacksCommand("values"))("values list sends an inherited rotation to the parent environment, where it can be completed", async () => {
     const r = await cli(["values", "list", "-e", "preview"]);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toBe("API_TOKEN  (secret, parent)\nPORT  (plain, self)\n");
@@ -388,7 +391,7 @@ describe("--json documents", () => {
     expect(r.stderr).not.toMatch(/-e preview/);
   });
 
-  it("org, project, identity, and credential lists", async () => {
+  it.skipIf(goLacksCommand("org", "project", "identity", "credential"))("org, project, identity, and credential lists", async () => {
     expect(await doc(["org", "list"])).toEqual({ version: 1, organizations: [{ id: "org_1", slug: "acme", name: "Acme" }] });
     expect(await doc(["project", "list"])).toEqual({ version: 1, organization: "acme", projects: [{ slug: "web", name: "Web", contractAuthority: "git" }] });
     expect(await doc(["identity", "list"])).toEqual({
@@ -411,19 +414,19 @@ describe("--json documents", () => {
     expect(requests.map((r) => r.url)).toEqual(["/v1/meta", "/v1/me"]);
   });
 
-  it("audit list and tailnet requirements carry the server's records", async () => {
+  it.skipIf(goLacksCommand("audit", "tailnet"))("audit list and tailnet requirements carry the server's records", async () => {
     expect(await doc(["audit", "list"])).toMatchObject({ version: 1, organization: "acme", events: [{ id: "evt_1", eventType: "value.set" }] });
     expect(await doc(["tailnet", "requirements"])).toMatchObject({ version: 1, organization: "acme", requirements: [{ id: "req_t1" }] });
   });
 
-  it("contract push: the new revision", async () => {
+  it.skipIf(goLacksCommand("contract"))("contract push: the new revision", async () => {
     expect(await doc(["contract", "push", "--file", join(repo, "contract.json")])).toMatchObject({
       version: 1,
       revision: { id: "crv_new", active: false, semanticsVersion: 2 },
     });
   });
 
-  it("import: the plan as a dry run, and what was stored, never a value", async () => {
+  it.skipIf(goLacksCommand("import"))("import: the plan as a dry run, and what was stored, never a value", async () => {
     const file = join(dir, ".env-json");
     writeFileSync(file, "API_TOKEN=import-json-canary-17\nPORT=3000\n");
     const plan = await cli(["import", file, "--dry-run", "--json"]);
@@ -474,7 +477,7 @@ describe("whoami", () => {
     const elsewhere = mkdtempSync(join(tmpdir(), "varlatch-whoami-"));
     try {
       const r = await new Promise<Result>((resolve) => {
-        const child = spawn(process.execPath, [bundle, "whoami", "--server", `${origin}/`, "--json"], {
+        const child = spawn(...cliCommand(bundle, ["whoami", "--server", `${origin}/`, "--json"]), {
           cwd: elsewhere,
           env: { PATH: process.env.PATH, HOME: elsewhere, VARLATCH_CONFIG_DIR: join(elsewhere, "config"), VARLATCH_TOKEN: "vlt_test", VARLATCH_ASSISTED: "0" },
           stdio: ["ignore", "pipe", "pipe"],
