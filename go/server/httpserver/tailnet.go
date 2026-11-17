@@ -157,6 +157,12 @@ func (b *BrowserEndpoint) gate(w http.ResponseWriter, r *http.Request, p string)
 		h.Set("Access-Control-Allow-Methods", "GET, POST")
 		h.Set("Access-Control-Allow-Headers", allow)
 		h.Set("Access-Control-Max-Age", "300")
+		// A public dashboard reaching this tailnet address: Chromium's
+		// Private Network Access preflight asks whether that is allowed.
+		// (Its successor, Local Network Access, asks the user instead.)
+		if strings.EqualFold(strings.TrimSpace(headerValue(r, "Access-Control-Request-Private-Network")), "true") {
+			h.Set("Access-Control-Allow-Private-Network", "true")
+		}
 		h.Set("Vary", "Origin")
 		w.WriteHeader(http.StatusNoContent)
 		return false

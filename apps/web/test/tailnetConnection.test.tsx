@@ -11,8 +11,12 @@ vi.mock("better-auth/client", () => ({ createAuthClient: () => ({ signOut: async
 vi.mock("@better-auth/passkey/client", () => ({ passkeyClient: () => ({}) }));
 import { SessionProvider } from "../src/lib/session";
 import {
+  endpointRequestInit,
+  PERMISSION_PROBE_TIMEOUT_MS,
   PROBE_TIMEOUT_MS,
+  probeTimeout,
   READ_TIMEOUT_MS,
+  supportsTargetAddressSpace,
   TailnetConnectionProvider,
   TailnetUnreachableError,
   useTailnetConnection,
@@ -142,6 +146,12 @@ describe("the tailnet browser endpoint, from the dashboard", () => {
     await act(async () => void (await vi.advanceTimersByTimeAsync(2)));
     expect(state.connection).toMatchObject({ status: "unreachable", blockedByPolicy: false });
     expect(PROBE_TIMEOUT_MS).toBe(4_000);
+    vi.useRealTimers();
+    const shown = await statusText(state.connection);
+    expect(shown).toContain("The tailnet endpoint did not answer from this browser.");
+    expect(shown).toContain(
+      "The browser may need permission to reach devices on your local network: allow it in the prompt or in this site's settings, then press Try again.",
+    );
   });
 
   it("tells a block by the page's own security policy apart", async () => {
@@ -272,5 +282,126 @@ describe("the tailnet browser endpoint, from the dashboard", () => {
       expect(toEndpoint().filter((r) => r.url.endsWith("/disclosures"))).toHaveLength(1);
       expect(toEndpoint().filter((r) => r.url.includes("/effective-configuration"))).toHaveLength(1);
     });
+  });
+});
+
+/** A Request that reads RequestInit as a browser does: only the members it knows, and throws on a value its enum lacks. */
+const browserRequest = (known: string[], accepts: (value: unknown) => boolean = () => true) =>
+  class {
+    constructor(_url: string, init: Record<string, unknown> = {}) {
+      for (const member of known) {
+        const value = init[member];
+        if (member === "targetAddressSpace" && value !== undefined && !accepts(value)) throw new TypeError(`bad targetAddressSpace: ${String(value)}`);
+      }
+    }
+  } as unknown as typeof Request;
+/** Current Chromium: Local Network Access's address spaces. */
+const localNetworkAccess = () => browserRequest(["credentials", "signal", "targetAddressSpace"], (v) => ["loopback", "local", "public"].includes(String(v)));
+/** Older Chromium (135): reads the option, but "local" means loopback and "loopback" does not exist. */
+const olderChromium = () => browserRequest(["credentials", "signal", "targetAddressSpace"], (v) => ["local", "private", "public"].includes(String(v)));
+
+/**
+ * Chromium's Local Network Access: a public page reaching the endpoint on a
+ * tailnet address asks the user first. Requests to the endpoint say so up
+ * front with targetAddressSpace "local", only where the browser takes it
+ * with that meaning.
+ */
+describe("the endpoint's request options", () => {
+  it("finds targetAddressSpace where the browser takes Local Network Access's values", () => {
+    expect(supportsTargetAddressSpace(localNetworkAccess())).toBe(true);
+  });
+
+  it("finds none where the browser never reads it, or has no Request", () => {
+    expect(supportsTargetAddressSpace(browserRequest(["credentials", "signal"]))).toBe(false);
+    expect(supportsTargetAddressSpace(undefined)).toBe(false);
+  });
+
+  it("finds none in older Chromium, which accepts \"local\" but means loopback by it", () => {
+    expect(supportsTargetAddressSpace(olderChromium())).toBe(false);
+  });
+
+  it("finds none where the browser rejects \"local\"", () => {
+    expect(supportsTargetAddressSpace(browserRequest(["targetAddressSpace"], (v) => v === "loopback" || v === "public"))).toBe(false);
+  });
+
+  it("declares the local network only where supported, and never sends cookies", () => {
+    const signal = new AbortController().signal;
+    expect(endpointRequestInit({ method: "POST", signal }, true)).toEqual({ method: "POST", signal, credentials: "omit", targetAddressSpace: "local" });
+    expect(endpointRequestInit({ method: "POST", signal }, false)).toEqual({ method: "POST", signal, credentials: "omit" });
+    expect(endpointRequestInit({ credentials: "include" } as RequestInit, false)).toEqual({ credentials: "omit" });
+  });
+
+  for (const [browser, makeRequest, expected] of [
+    ["current Chromium", localNetworkAccess, "local"],
+    ["older Chromium", olderChromium, undefined],
+    ["a browser without the option", () => browserRequest(["credentials", "signal"]), undefined],
+  ] as const) {
+    it(`sends Connect with targetAddressSpace ${expected ?? "absent"} in ${browser}`, async () => {
+      vi.stubGlobal("Request", makeRequest());
+      let init: RequestInit | undefined;
+      endpoint = async (_url, given) => {
+        init = given;
+        return Response.json(DEVICE);
+      };
+      await mount();
+      await connect();
+      expect(state.connection.status).toBe("connected");
+      expect(init?.credentials).toBe("omit");
+      expect((init as { targetAddressSpace?: string }).targetAddressSpace).toBe(expected);
+    });
+  }
+});
+
+/**
+ * The first Connect where the browser may show its local network prompt
+ * waits long enough for the person to answer it; otherwise, and once this
+ * tab has connected, the probe keeps its short limit.
+ */
+describe("the Connect deadline", () => {
+  it("gives a pending permission prompt time only on the first connect where the browser takes targetAddressSpace", () => {
+    expect(probeTimeout(true, false)).toBe(PERMISSION_PROBE_TIMEOUT_MS);
+    expect(probeTimeout(false, false)).toBe(PROBE_TIMEOUT_MS);
+    expect(probeTimeout(true, true)).toBe(PROBE_TIMEOUT_MS);
+    expect(probeTimeout(false, true)).toBe(PROBE_TIMEOUT_MS);
+    expect(PERMISSION_PROBE_TIMEOUT_MS).toBe(30_000);
+  });
+
+  it("waits up to thirty seconds, saying so after four, where the browser may be asking", async () => {
+    vi.stubGlobal("Request", localNetworkAccess());
+    await mount();
+    vi.useFakeTimers();
+    await act(async () => state.connect());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS + 1)));
+    expect(state.connection).toEqual({ status: "connecting", endpoint: ENDPOINT, awaitingPermission: true });
+    // Still under fake timers: switching clocks would drop the probe's deadline.
+    expect(await statusText(state.connection)).toContain("Waiting for this browser to allow local network access.");
+    await act(async () => void (await vi.advanceTimersByTimeAsync(PERMISSION_PROBE_TIMEOUT_MS - PROBE_TIMEOUT_MS - 2)));
+    expect(state.connection.status).toBe("connecting");
+    await act(async () => void (await vi.advanceTimersByTimeAsync(2)));
+    expect(state.connection).toMatchObject({ status: "unreachable", blockedByPolicy: false });
+  });
+
+  it("keeps four seconds once this tab has connected", async () => {
+    vi.stubGlobal("Request", localNetworkAccess());
+    endpoint = async () => Response.json(DEVICE);
+    await mount();
+    await connect();
+    expect(state.connection.status).toBe("connected");
+    endpoint = never;
+    vi.useFakeTimers();
+    await act(async () => state.connect());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS + 1)));
+    expect(state.connection).toMatchObject({ status: "unreachable", blockedByPolicy: false });
+  });
+
+  it("keeps four seconds, with no waiting note, where the browser does not take targetAddressSpace", async () => {
+    vi.stubGlobal("Request", browserRequest(["credentials", "signal"]));
+    await mount();
+    vi.useFakeTimers();
+    await act(async () => state.connect());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS - 1)));
+    expect(state.connection).toEqual({ status: "connecting", endpoint: ENDPOINT });
+    await act(async () => void (await vi.advanceTimersByTimeAsync(2)));
+    expect(state.connection).toMatchObject({ status: "unreachable", blockedByPolicy: false });
   });
 });

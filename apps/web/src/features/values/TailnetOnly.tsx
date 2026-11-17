@@ -137,6 +137,11 @@ export function TailnetConnectStatus({ connection, connect, deviceRefused }: { c
             local network.
           </span>
           <span className="mt-2 block">{action(connection.status === "connecting" ? "Connecting" : "Connect to tailnet")}</span>
+          {connection.status === "connecting" && connection.awaitingPermission && (
+            <span className="mt-1 block text-muted" data-testid="tailnet-connect-waiting">
+              Waiting for this browser to allow local network access.
+            </span>
+          )}
         </span>
       );
     case "unreachable":
@@ -145,7 +150,7 @@ export function TailnetConnectStatus({ connection, connect, deviceRefused }: { c
           <span className="block">
             {connection.blockedByPolicy
               ? "This dashboard's security policy does not allow the tailnet endpoint, so this browser could not reach it. Ask the operator to run setup again."
-              : "The tailnet endpoint did not answer from this browser. This device may not be on the tailnet, or the tailnet's access rules may not let it reach the endpoint."}
+              : "The tailnet endpoint did not answer from this browser. The browser may need permission to reach devices on your local network: allow it in the prompt or in this site's settings, then press Try again. Otherwise this device may not be on the tailnet, or the tailnet's access rules may not let it reach the endpoint."}
           </span>
           <span className="mt-2 block">{action("Try again")}</span>
         </span>
