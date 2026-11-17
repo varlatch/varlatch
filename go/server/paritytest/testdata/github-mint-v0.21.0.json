@@ -1,0 +1,3846 @@
+{
+  "comment": "Written by services/varlatchd/test/go-github-mint-fixture.test.ts from the TypeScript server's own answers; do not edit.",
+  "ref": "v0.21.0",
+  "serverVersion": "0.22.0",
+  "rootKek": "3a557442cc46f2e06e9f170bfe23d745591df1459840a78ea2a6f0cd50438d3d",
+  "tokens": {
+    "alice": "vlt_cli_6uM0OZGejgC5T3FbJfIAYlOYdG0y0JJ0jPhUXAfro9Y",
+    "alice2": "vlt_cli_I4MP4kpYVzIisPFdu4yubB6axLyjNkb4dzimNUqUGRU",
+    "bob": "vlt_cli_lwiLfJl41p_RVc45kZu7VIhYsVeAvq1qC88gfwRtEaU",
+    "dave": "vlt_cli_ByhAdhqgpj65nmRNh-SHWZRW0xhGfxJoPrxxJW6p7os",
+    "carol": "vlt_cli_TkLckKqpSnPAS3wt23z5oMAop42pD7A8y_yrde5CoEE"
+  },
+  "rows": {
+    "installation": [
+      {
+        "id": "inst_k22j3cmqtlmzhtl2pqcafn7agq",
+        "kek_canary": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "GJTZlybu+DOkiOsN",
+          "ciphertext": "G4ufwLLMJUw7OKnufscyUvmrUy9ocsEJoyG4NZYpAn4=",
+          "authTag": "SneegprsgYfzxU0inCuFgA=="
+        },
+        "bootstrapped_at": "2026-11-17T06:31:47.099Z",
+        "created_at": "2026-11-17T06:31:47.054Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "public_url": null
+      }
+    ],
+    "identities": [
+      {
+        "id": "idn_2ufhycdx4q2yzaze5fwyuxdfru",
+        "kind": "human",
+        "name": "dave",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_bhe6p67bqptwzmwe7drjekqr74",
+        "kind": "human",
+        "name": "bob",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "kind": "human",
+        "name": "Alice",
+        "disabled": false,
+        "installation_admin": true,
+        "created_at": "2026-11-17T06:31:47.099Z",
+        "organization_id": null,
+        "last_seen_at": "2026-01-15T00:00:00.000Z",
+        "suspended_by_deletion": null
+      },
+      {
+        "id": "idn_tebjm3ha2bxx46epy2pg5mqydq",
+        "kind": "human",
+        "name": "carol",
+        "disabled": false,
+        "installation_admin": false,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "organization_id": null,
+        "last_seen_at": null,
+        "suspended_by_deletion": null
+      }
+    ],
+    "credentials": [
+      {
+        "id": "crd_2nyzqk4yp4qkni2cf354rbozza",
+        "identity_id": "idn_bhe6p67bqptwzmwe7drjekqr74",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "e558f886bdb1181b6b85fca50ac24fa6d430219d89cbb6b941e4a27564d090a2",
+        "created_at": "2026-11-17T06:31:47.254Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_bhe6p67bqptwzmwe7drjekqr74",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_o2kx5jklxbu6uv7nopb6siapsu",
+        "identity_id": "idn_tebjm3ha2bxx46epy2pg5mqydq",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "5d057fb690da5b09f324a45408081feb34c91631aee8fb1a1a3e6fb28b4a1612",
+        "created_at": "2026-11-17T06:31:47.272Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_tebjm3ha2bxx46epy2pg5mqydq",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "4f3b18af357ab3785befd3fbe79aa258d0d765d4ad3776fd62d7ce16f19a1c7e",
+        "created_at": "2026-11-17T06:31:47.122Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": "2026-01-15T00:00:00.000Z",
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_vf4rblpi4br7lwctcfh2griaaa",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "e74dfb243889ffc4f30283c9db01a0400b073e89702c063853420d348ebbd49c",
+        "created_at": "2026-11-17T06:31:47.113Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      },
+      {
+        "id": "crd_vsai4mimpl5cyvrftv6tb22ze4",
+        "identity_id": "idn_2ufhycdx4q2yzaze5fwyuxdfru",
+        "kind": "cli",
+        "name": null,
+        "token_hash": "47da9ef7633c9c6db98f2efbc348ee97ca2f568722022794701426e8be0069a3",
+        "created_at": "2026-11-17T06:31:47.264Z",
+        "expires_at": null,
+        "revoked_at": null,
+        "max_uses": null,
+        "use_count": 0,
+        "last_used_at": null,
+        "client": null,
+        "auth_session_id": null,
+        "issued_by": "idn_2ufhycdx4q2yzaze5fwyuxdfru",
+        "evidence_user_verified": null,
+        "evidence_passkey_id": null
+      }
+    ],
+    "organizations": [
+      {
+        "id": "org_2shrpg7n7tdg7f77wnaosnftrm",
+        "slug": "deleting",
+        "name": "Deleting",
+        "wrapped_org_kek": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "ixkV/aIdGaXYJ4m4",
+          "ciphertext": "yStetCyQ+Kagidh1PKg6gBcsJQ7vo8fO+JzZGx9FFYo=",
+          "authTag": "WUkdfVMj7T0klKwiM8kLzg=="
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T06:31:47.243Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_77tifjxyvoyywrwsm5ehktm35u",
+        "slug": "removed",
+        "name": "Removed",
+        "wrapped_org_kek": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "MUqyeMWMhhksbm0M",
+          "ciphertext": "yl6aFisauHWqaAysyRNgdOqu6Kb7zVaAOnGFxN5JQEM=",
+          "authTag": "tFgLerIA/ppuoiHT5PfDAQ=="
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T06:31:47.208Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_m3d4hepjn522aingbyipc732lm",
+        "slug": "acme",
+        "name": "Acme",
+        "wrapped_org_kek": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "sHFQt9Ope/ukxoy+",
+          "ciphertext": "lV85IZ51+plPx/+5i2QpYQWPhKQbT9P7mZx3GHRJMTw=",
+          "authTag": "u23QmRlnunEc+7SZMedmfw=="
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T06:31:47.162Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_qqvilwvecb3qb7qwwjd2tkzzqq",
+        "slug": "frozen",
+        "name": "Frozen",
+        "wrapped_org_kek": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "hffyaPraHPWERRSf",
+          "ciphertext": "FkeZpcW/j0vqAU4WelGGRqXKKa6TCoTd2f84Kyr2h8Y=",
+          "authTag": "omJraxFsE7jZYBuLI0D+pg=="
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T06:31:47.233Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_ty3x74mxxzv4624aqubzydxlze",
+        "slug": "noapp",
+        "name": "Noapp",
+        "wrapped_org_kek": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "rfwkYwOG+/yC4KJz",
+          "ciphertext": "aBaax3JmZ6zBjQL7j9opTuG7EPR++vZOwUSey8cznj4=",
+          "authTag": "6HXYydYEv5e4GTR77aBPQQ=="
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T06:31:47.221Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 0
+      },
+      {
+        "id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+        "slug": "enf",
+        "name": "Enf",
+        "wrapped_org_kek": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "EkG47Kib7a2p0Ulc",
+          "ciphertext": "dZF9ZatN9FQi0QhaonfzENqnKhD51fI7sgu6rvAW6bA=",
+          "authTag": "cLXAKB40xydkjmPopK4eog=="
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T06:31:47.182Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 2
+      },
+      {
+        "id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+        "slug": "rep",
+        "name": "Rep",
+        "wrapped_org_kek": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "ussi47saJqQutam8",
+          "ciphertext": "T0epEdXNMmR/rzWFA6sblbTE4cvsSOOVRg8gzZWdgrI=",
+          "authTag": "RIdk4d8rNO5gALQL8yW5lg=="
+        },
+        "deleted_at": null,
+        "created_at": "2026-11-17T06:31:47.197Z",
+        "root_kek_version": 1,
+        "key_rotation_state": "idle",
+        "org_kek_destroyed_at": null,
+        "security_epoch": 1
+      }
+    ],
+    "org_memberships": [
+      {
+        "organization_id": "org_2shrpg7n7tdg7f77wnaosnftrm",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "role": "admin",
+        "created_at": "2026-11-17T06:31:47.243Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_77tifjxyvoyywrwsm5ehktm35u",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "role": "admin",
+        "created_at": "2026-11-17T06:31:47.208Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "identity_id": "idn_2ufhycdx4q2yzaze5fwyuxdfru",
+        "role": "member",
+        "created_at": "2026-11-17T06:31:47.261Z",
+        "removed_at": null,
+        "version": 1
+      },
+      {
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "identity_id": "idn_bhe6p67bqptwzmwe7drjekqr74",
+        "role": "member",
+        "created_at": "2026-11-17T06:31:47.252Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "role": "admin",
+        "created_at": "2026-11-17T06:31:47.162Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_qqvilwvecb3qb7qwwjd2tkzzqq",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "role": "admin",
+        "created_at": "2026-11-17T06:31:47.233Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_ty3x74mxxzv4624aqubzydxlze",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "role": "admin",
+        "created_at": "2026-11-17T06:31:47.221Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "role": "admin",
+        "created_at": "2026-11-17T06:31:47.182Z",
+        "removed_at": null,
+        "version": 0
+      },
+      {
+        "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "role": "admin",
+        "created_at": "2026-11-17T06:31:47.197Z",
+        "removed_at": null,
+        "version": 0
+      }
+    ],
+    "projects": [
+      {
+        "id": "prj_szmgd723ay7anqao4tkihucpiy",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "slug": "web",
+        "name": "Web",
+        "contract_authority": "managed",
+        "active_contract_revision_id": null,
+        "created_at": "2026-11-17T06:31:47.376Z",
+        "deleted_at": null
+      }
+    ],
+    "environments": [
+      {
+        "id": "env_ncc5btdqfxppkcglb4wtuym6ly",
+        "project_id": "prj_szmgd723ay7anqao4tkihucpiy",
+        "name": "production",
+        "kind": "shared",
+        "tier": "production",
+        "parent_environment_id": null,
+        "owner_identity_id": null,
+        "expires_at": null,
+        "created_at": "2026-11-17T06:31:47.400Z",
+        "deleted_at": null
+      }
+    ],
+    "grants": [
+      {
+        "id": "grt_otp6efkcdyeavsu7lhtuzdzba4",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "subject_identity_id": "idn_2ufhycdx4q2yzaze5fwyuxdfru",
+        "scope": {
+          "kind": "organization"
+        },
+        "actions": [
+          "config.sync.manage"
+        ],
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-11-17T06:31:47.294Z",
+        "revoked_at": null,
+        "subject_group_id": null,
+        "role_id": null
+      }
+    ],
+    "security_controls": [
+      {
+        "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+        "control": "admin-step-up",
+        "mode": "enforce",
+        "config": null,
+        "version": 2,
+        "changed_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "changed_at": "2026-11-17T06:31:47.512Z"
+      },
+      {
+        "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+        "control": "admin-step-up",
+        "mode": "report",
+        "config": null,
+        "version": 1,
+        "changed_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "changed_at": "2026-11-17T06:31:47.452Z"
+      }
+    ],
+    "approval_intents": [
+      {
+        "id": "apr_createaaaaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_vf4rblpi4br7lwctcfh2griaaa",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "auth_session_id": null,
+        "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+        "operation": "connection.create",
+        "target": {
+          "githubAppId": "gha_urdei6zvoqpcvnjkqceqcvt65u",
+          "organizationId": "org_vxnt32opf2ygfmgxx3oskdiiue"
+        },
+        "body_hash": "hmac-v1:a79cd40329f565a91857dfff5c7e93d1ec492c2fe3b22642775878a21b8e5eb9",
+        "query_hash": "hmac-v1:860124fe39751dd0c559a7be0dd00d031fa74b0f08fcd3125ff751e169f9c366",
+        "expected_version": null,
+        "summary": {
+          "title": "Add connection \"Approved\" on installation 91 of GitHub App \"varlatch-enf\" (gha_urdei6zvoqpcvnjkqceqcvt65u)",
+          "changes": [
+            {
+              "to": "\"Approved\"",
+              "from": null,
+              "field": "name",
+              "loosens": false
+            },
+            {
+              "to": "91",
+              "from": null,
+              "field": "installationId",
+              "loosens": false
+            }
+          ]
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      },
+      {
+        "id": "apr_rotateaaaaaaaaaaaaaaaaaaaa",
+        "credential_id": "crd_vf4rblpi4br7lwctcfh2griaaa",
+        "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "auth_session_id": null,
+        "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+        "operation": "github_app.replace_key",
+        "target": {
+          "githubAppId": "gha_urdei6zvoqpcvnjkqceqcvt65u"
+        },
+        "body_hash": "hmac-v1:423dd8ac96e0e50c772561c9916e0e5693be0f1bd250487e51836471eef205c5",
+        "query_hash": "hmac-v1:860124fe39751dd0c559a7be0dd00d031fa74b0f08fcd3125ff751e169f9c366",
+        "expected_version": 1,
+        "summary": {
+          "title": "Replace the private key of GitHub App \"varlatch-enf\" (gha_urdei6zvoqpcvnjkqceqcvt65u). 0 Sync Targets will push with it",
+          "changes": [
+            {
+              "to": "a new value (not shown)",
+              "from": "the current value",
+              "field": "privateKey",
+              "loosens": false
+            }
+          ]
+        },
+        "origin": "cli",
+        "created_at": "2026-01-10T00:00:00.000Z",
+        "expires_at": "2099-01-01T00:00:00.000Z",
+        "approved_at": "2026-01-10T00:01:00.000Z",
+        "approved_with_passkey_id": "PasskeyConf001",
+        "approval_user_verified": true,
+        "consumed_at": null,
+        "closed_at": null,
+        "close_reason": null,
+        "poll_interval": 5,
+        "last_polled_at": null
+      }
+    ],
+    "organization_freezes": [
+      {
+        "id": "ofz_4ljnx6wcyxi6ezh2rwolnoksqm",
+        "organization_id": "org_qqvilwvecb3qb7qwwjd2tkzzqq",
+        "frozen_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "frozen_at": "2026-03-01T00:00:00.000Z",
+        "reason": "incident drill",
+        "lifted_at": null,
+        "lifted_by": null,
+        "lift_method": null
+      }
+    ],
+    "organization_deletions": [
+      {
+        "id": "odl_whkgdgrimjdsuqvxsqmde7ypw4",
+        "organization_id": "org_2shrpg7n7tdg7f77wnaosnftrm",
+        "requested_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "scheduled_at": "2026-03-01T00:00:00.000Z",
+        "run_after": "2099-03-01T00:00:00.000Z",
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "cancelled_at": null,
+        "completed_at": null
+      }
+    ],
+    "github_apps": [
+      {
+        "id": "gha_bnukh2ahdlrxwcv27tkcir5cfm",
+        "organization_id": "org_qqvilwvecb3qb7qwwjd2tkzzqq",
+        "github_app_id": 6006,
+        "slug": "varlatch-frozen",
+        "client_id": "Iv1.frozen",
+        "owner_login": "acme-inc",
+        "owner_id": 501,
+        "owner_type": "organization",
+        "key_envelope": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "awLQh2itO0NPb1r8",
+          "ciphertext": "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",
+          "authTag": "f3GxsyzCECG2+L29UKa4bA=="
+        },
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:00.000Z",
+        "removed_at": null,
+        "version": 1,
+        "updated_at": null
+      },
+      {
+        "id": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "github_app_id": 2002,
+        "slug": "varlatch-acme",
+        "client_id": "Iv1.acme",
+        "owner_login": "acme-inc",
+        "owner_id": 501,
+        "owner_type": "organization",
+        "key_envelope": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "SUl7kWdI3dtGy9a6",
+          "ciphertext": "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",
+          "authTag": "cOMhnUix1Ab3vvYaBXWKMg=="
+        },
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:00.000Z",
+        "removed_at": null,
+        "version": 1,
+        "updated_at": null
+      },
+      {
+        "id": "gha_jc5a6yze5fco65vvvjgceouqei",
+        "organization_id": "org_77tifjxyvoyywrwsm5ehktm35u",
+        "github_app_id": 7007,
+        "slug": "varlatch-removed",
+        "client_id": "Iv1.removed",
+        "owner_login": "acme-inc",
+        "owner_id": 501,
+        "owner_type": "organization",
+        "key_envelope": null,
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:00.000Z",
+        "removed_at": "2026-02-01T00:00:00.000Z",
+        "version": 1,
+        "updated_at": null
+      },
+      {
+        "id": "gha_rxqbpf3asb5evu3xpu44rgz4ua",
+        "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+        "github_app_id": 5005,
+        "slug": "varlatch-rep",
+        "client_id": "Iv1.rep",
+        "owner_login": "acme-inc",
+        "owner_id": 501,
+        "owner_type": "organization",
+        "key_envelope": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "kFvWYMoCsnM6tgXJ",
+          "ciphertext": "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",
+          "authTag": "RZqc5CsP+NgMEnY2uhxaNA=="
+        },
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:00.000Z",
+        "removed_at": null,
+        "version": 1,
+        "updated_at": null
+      },
+      {
+        "id": "gha_urdei6zvoqpcvnjkqceqcvt65u",
+        "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+        "github_app_id": 3003,
+        "slug": "varlatch-enf",
+        "client_id": "Iv1.enf",
+        "owner_login": "acme-inc",
+        "owner_id": 501,
+        "owner_type": "organization",
+        "key_envelope": {
+          "formatVersion": 1,
+          "algorithm": "aes-256-gcm",
+          "nonce": "8cfDvEAdYhrniJRx",
+          "ciphertext": "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",
+          "authTag": "EsU6LNgLV14jUa2JBEpzeA=="
+        },
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:00.000Z",
+        "removed_at": null,
+        "version": 1,
+        "updated_at": null
+      }
+    ],
+    "platform_connections": [
+      {
+        "id": "pcn_nytnu3qxyn75nkwvs2mvlxs6d4",
+        "organization_id": "org_77tifjxyvoyywrwsm5ehktm35u",
+        "platform": "github-actions",
+        "base_identity": "acme-inc",
+        "name": "Orphan",
+        "credential_envelope": null,
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:01.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "credential_expires_at": null,
+        "credential_expiry_seen_at": null,
+        "credential_kind": "github-app",
+        "github_app_id": "gha_jc5a6yze5fco65vvvjgceouqei",
+        "github_installation_id": 77
+      },
+      {
+        "id": "pcn_qweh7x2pi25yyaxxevsu5jlkp4",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "platform": "github-actions",
+        "base_identity": "acme-inc",
+        "name": "Main",
+        "credential_envelope": null,
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:01.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "credential_expires_at": null,
+        "credential_expiry_seen_at": null,
+        "credential_kind": "github-app",
+        "github_app_id": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+        "github_installation_id": 77
+      },
+      {
+        "id": "pcn_rfln5dmsplrnws5hbhord5tuxy",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "platform": "github-actions",
+        "base_identity": "acme-inc",
+        "name": "Gone",
+        "credential_envelope": null,
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:01.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "credential_expires_at": null,
+        "credential_expiry_seen_at": null,
+        "credential_kind": "github-app",
+        "github_app_id": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+        "github_installation_id": 78
+      },
+      {
+        "id": "pcn_rhoykdou3emdnf7fk3sigdraoy",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "platform": "github-actions",
+        "base_identity": "acme-inc",
+        "name": "Picky",
+        "credential_envelope": null,
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:01.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "credential_expires_at": null,
+        "credential_expiry_seen_at": null,
+        "credential_kind": "github-app",
+        "github_app_id": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+        "github_installation_id": 79
+      },
+      {
+        "id": "pcn_v7zysicyomp5nfnp6b2xpnobja",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "platform": "github-actions",
+        "base_identity": "acme-inc",
+        "name": "Broken",
+        "credential_envelope": null,
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:01.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "credential_expires_at": null,
+        "credential_expiry_seen_at": null,
+        "credential_kind": "github-app",
+        "github_app_id": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+        "github_installation_id": 80
+      }
+    ],
+    "sync_targets": [
+      {
+        "id": "snt_npylnqqzv4tnpgsfaeas6m5c7u",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "project_id": "prj_szmgd723ay7anqao4tkihucpiy",
+        "environment_id": "env_ncc5btdqfxppkcglb4wtuym6ly",
+        "connection_id": "pcn_qweh7x2pi25yyaxxevsu5jlkp4",
+        "destination": {
+          "repo": "web"
+        },
+        "canonical_destination": "[\"github-actions\",\"acme-inc\",\"web\"]",
+        "mapping": {
+          "kind": "wildcard"
+        },
+        "remove_orphans": false,
+        "redeploy": false,
+        "state": "active",
+        "disabled_reason": null,
+        "failure_count": 0,
+        "needs_sync": false,
+        "next_attempt_at": "2026-03-01T00:00:00.000Z",
+        "last_attempt_at": null,
+        "last_result": null,
+        "last_repair_at": null,
+        "generation": 0,
+        "lease_expires_at": null,
+        "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "created_at": "2026-01-02T00:00:02.000Z",
+        "revoked_at": null,
+        "version": 1,
+        "updated_at": null,
+        "last_notes": null,
+        "repair_cycle_started_at": null,
+        "redeploy_owed": 0,
+        "redeploy_paid": 0,
+        "last_drift_at": null,
+        "last_drift_count": null,
+        "last_drift_names": null,
+        "last_drift_event_id": null
+      }
+    ],
+    "audit_events": [
+      {
+        "id": "evt_bnjln2ac7l34pbekvq5kxbqkoe",
+        "schema_version": 1,
+        "event_type": "installation.initialized",
+        "occurred_at": "2026-11-17T06:31:47.054Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": null,
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "installationId": "inst_k22j3cmqtlmzhtl2pqcafn7agq"
+        },
+        "event_order": 1,
+        "client": null
+      },
+      {
+        "id": "evt_tqzbfr4u2zpe6hvp7m2n7qonka",
+        "schema_version": 1,
+        "event_type": "bootstrap.grant_issued",
+        "occurred_at": "2026-11-17T06:31:47.088Z",
+        "actor_identity_id": null,
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": null,
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "expiresAt": "2026-11-17T06:46:47.089Z"
+        },
+        "event_order": 2,
+        "client": null
+      },
+      {
+        "id": "evt_3wnvpsl2vqspoxkuz7itqshc2y",
+        "schema_version": 1,
+        "event_type": "bootstrap.completed",
+        "occurred_at": "2026-11-17T06:31:47.099Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": null,
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_cfl6vr7sjk64j2yntrdraoptca"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": null,
+        "event_order": 3,
+        "client": null
+      },
+      {
+        "id": "evt_5cz7haekzc2zos7pqyjmfepcnm",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T06:31:47.113Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_vf4rblpi4br7lwctcfh2griaaa",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_cfl6vr7sjk64j2yntrdraoptca"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 4,
+        "client": null
+      },
+      {
+        "id": "evt_3xyler5prmmd7vp2jn4xzkn2pm",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T06:31:47.122Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_cfl6vr7sjk64j2yntrdraoptca"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 5,
+        "client": null
+      },
+      {
+        "id": "evt_tgsqvkaebmhbj4kufixuql5gie",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T06:31:47.162Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "action": null,
+        "resource": {
+          "organizationSlug": "acme"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 6,
+        "client": null
+      },
+      {
+        "id": "evt_ns5g5xo23a7ont2hyhxfy6jsxm",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T06:31:47.182Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+        "action": null,
+        "resource": {
+          "organizationSlug": "enf"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 7,
+        "client": null
+      },
+      {
+        "id": "evt_nkuycy462e2rhprn2dcxqvuz5i",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T06:31:47.197Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+        "action": null,
+        "resource": {
+          "organizationSlug": "rep"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 8,
+        "client": null
+      },
+      {
+        "id": "evt_ziqbnyr266hmevac36lwuq5exe",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T06:31:47.208Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_77tifjxyvoyywrwsm5ehktm35u",
+        "action": null,
+        "resource": {
+          "organizationSlug": "removed"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 9,
+        "client": null
+      },
+      {
+        "id": "evt_vf5pogywok47inl7cmvpy4b4su",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T06:31:47.221Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_ty3x74mxxzv4624aqubzydxlze",
+        "action": null,
+        "resource": {
+          "organizationSlug": "noapp"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 10,
+        "client": null
+      },
+      {
+        "id": "evt_c5glwbljp5u5scgggzzckjar34",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T06:31:47.233Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_qqvilwvecb3qb7qwwjd2tkzzqq",
+        "action": null,
+        "resource": {
+          "organizationSlug": "frozen"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 11,
+        "client": null
+      },
+      {
+        "id": "evt_xyte2ym3t6mhlvfyqcgtcgntmu",
+        "schema_version": 1,
+        "event_type": "organization.created",
+        "occurred_at": "2026-11-17T06:31:47.243Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_2shrpg7n7tdg7f77wnaosnftrm",
+        "action": null,
+        "resource": {
+          "organizationSlug": "deleting"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": null,
+        "event_order": 12,
+        "client": null
+      },
+      {
+        "id": "evt_eb72b5lh764djh5w753wetuvoa",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T06:31:47.254Z",
+        "actor_identity_id": "idn_bhe6p67bqptwzmwe7drjekqr74",
+        "authentication_method_id": null,
+        "credential_id": "crd_2nyzqk4yp4qkni2cf354rbozza",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_bhe6p67bqptwzmwe7drjekqr74"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 13,
+        "client": null
+      },
+      {
+        "id": "evt_hqtfe2tfxjz7krpmgxfpajr5ji",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T06:31:47.264Z",
+        "actor_identity_id": "idn_2ufhycdx4q2yzaze5fwyuxdfru",
+        "authentication_method_id": null,
+        "credential_id": "crd_vsai4mimpl5cyvrftv6tb22ze4",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_2ufhycdx4q2yzaze5fwyuxdfru"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 14,
+        "client": null
+      },
+      {
+        "id": "evt_j4ykvaask42zzzgyuoepg5vbhu",
+        "schema_version": 1,
+        "event_type": "credential.issued",
+        "occurred_at": "2026-11-17T06:31:47.272Z",
+        "actor_identity_id": "idn_tebjm3ha2bxx46epy2pg5mqydq",
+        "authentication_method_id": null,
+        "credential_id": "crd_o2kx5jklxbu6uv7nopb6siapsu",
+        "organization_id": null,
+        "action": null,
+        "resource": {
+          "identityId": "idn_tebjm3ha2bxx46epy2pg5mqydq"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": null,
+        "request_id": null,
+        "metadata": {
+          "kind": "cli"
+        },
+        "event_order": 15,
+        "client": null
+      },
+      {
+        "id": "evt_gwbaqhwq4evqoap2gehyk57o34",
+        "schema_version": 1,
+        "event_type": "grant.created",
+        "occurred_at": "2026-11-17T06:31:47.294Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "action": "policy.manage",
+        "resource": {
+          "grantId": "grt_otp6efkcdyeavsu7lhtuzdzba4",
+          "subjectIdentityId": "idn_2ufhycdx4q2yzaze5fwyuxdfru"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "actions": "config.sync.manage"
+        },
+        "event_order": 16,
+        "client": null
+      },
+      {
+        "id": "evt_xkfdtlu5uusgt63dpne3e3hxvy",
+        "schema_version": 1,
+        "event_type": "project.created",
+        "occurred_at": "2026-11-17T06:31:47.376Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "action": null,
+        "resource": {
+          "projectId": "prj_szmgd723ay7anqao4tkihucpiy",
+          "projectSlug": "web"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "contractAuthority": "managed"
+        },
+        "event_order": 17,
+        "client": null
+      },
+      {
+        "id": "evt_nsnhnisrt6mzmju7k3orqsizwi",
+        "schema_version": 1,
+        "event_type": "environment.created",
+        "occurred_at": "2026-11-17T06:31:47.400Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+        "action": null,
+        "resource": {
+          "projectId": "prj_szmgd723ay7anqao4tkihucpiy",
+          "environmentId": "env_ncc5btdqfxppkcglb4wtuym6ly",
+          "environmentName": "production"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": null,
+        "metadata": {
+          "kind": "shared",
+          "tier": "production",
+          "derived": false
+        },
+        "event_order": 18,
+        "client": null
+      },
+      {
+        "id": "evt_l6g3uawg2yfml5ly5c5a7dfpi4",
+        "schema_version": 1,
+        "event_type": "security_control.changed",
+        "occurred_at": "2026-11-17T06:31:47.436Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+        "action": "organization.manage",
+        "resource": {
+          "control": "admin-step-up"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": "req_eda82988-cb69-4fb2-9b2c-336e2bbbd03e",
+        "metadata": {
+          "toMode": "report",
+          "control": "admin-step-up",
+          "fromMode": "off",
+          "loosened": false,
+          "toVersion": 1,
+          "approvalId": null,
+          "fromVersion": 0,
+          "loosenedFields": "",
+          "toMaxTtlSeconds": null,
+          "fromMaxTtlSeconds": null,
+          "toDefaultTtlSeconds": null,
+          "fromDefaultTtlSeconds": null
+        },
+        "event_order": 19,
+        "client": null
+      },
+      {
+        "id": "evt_d2nse4z6udyyuwdtvegryxsesu",
+        "schema_version": 1,
+        "event_type": "security_control.changed",
+        "occurred_at": "2026-11-17T06:31:47.469Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+        "action": "organization.manage",
+        "resource": {
+          "control": "admin-step-up"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": "req_3dc9bfed-1b53-4dd6-8042-bf8f24cc71f4",
+        "metadata": {
+          "toMode": "report",
+          "control": "admin-step-up",
+          "fromMode": "off",
+          "loosened": false,
+          "toVersion": 1,
+          "approvalId": null,
+          "fromVersion": 0,
+          "loosenedFields": "",
+          "toMaxTtlSeconds": null,
+          "fromMaxTtlSeconds": null,
+          "toDefaultTtlSeconds": null,
+          "fromDefaultTtlSeconds": null
+        },
+        "event_order": 20,
+        "client": null
+      },
+      {
+        "id": "evt_btnmzcnbep5x3h7akhmlnkaeu4",
+        "schema_version": 1,
+        "event_type": "security_control.changed",
+        "occurred_at": "2026-11-17T06:31:47.503Z",
+        "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+        "authentication_method_id": null,
+        "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+        "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+        "action": "organization.manage",
+        "resource": {
+          "control": "admin-step-up"
+        },
+        "decision": "info",
+        "authz": null,
+        "tailnet": null,
+        "listener": "ordinary",
+        "request_id": "req_32c5a925-29b2-4299-8b0f-5fe945afcf51",
+        "metadata": {
+          "toMode": "enforce",
+          "control": "admin-step-up",
+          "fromMode": "report",
+          "loosened": false,
+          "toVersion": 2,
+          "approvalId": null,
+          "fromVersion": 1,
+          "loosenedFields": "",
+          "toMaxTtlSeconds": null,
+          "fromMaxTtlSeconds": null,
+          "toDefaultTtlSeconds": null,
+          "fromDefaultTtlSeconds": null
+        },
+        "event_order": 21,
+        "client": null
+      }
+    ]
+  },
+  "sideTables": [
+    {
+      "name": "github_apps",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "github_app_id"
+      ],
+      "volatile": [
+        "key_envelope",
+        "created_at",
+        "updated_at",
+        "removed_at"
+      ]
+    },
+    {
+      "name": "platform_connections",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "name"
+      ],
+      "volatile": [
+        "credential_envelope",
+        "created_at",
+        "updated_at",
+        "revoked_at"
+      ]
+    },
+    {
+      "name": "sync_targets",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "canonical_destination"
+      ],
+      "volatile": [
+        "updated_at"
+      ]
+    },
+    {
+      "name": "security_control_counters",
+      "key": [
+        "organization_id",
+        "control",
+        "config_version",
+        "operation",
+        "actor_identity_id",
+        "reason",
+        "bucket_hour"
+      ],
+      "sortBy": [
+        "organization_id",
+        "control",
+        "config_version",
+        "operation",
+        "actor_identity_id",
+        "reason"
+      ],
+      "volatile": [
+        "bucket_hour",
+        "first_seen",
+        "last_seen",
+        "emitted_at"
+      ]
+    },
+    {
+      "name": "approval_intents",
+      "key": [
+        "id"
+      ],
+      "sortBy": [
+        "organization_id",
+        "operation",
+        "target",
+        "body_hash"
+      ],
+      "volatile": [
+        "created_at",
+        "expires_at",
+        "consumed_at",
+        "closed_at"
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "id": "GET list the installations",
+      "name": "list the installations",
+      "method": "GET",
+      "path": "/v1/organizations/acme/github-app/installations",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"check\":{\"status\":\"ok\",\"where\":\"connection\",\"message\":\"listed\"},\"items\":[{\"installationId\":77,\"account\":{\"login\":\"acme-inc\",\"id\":577,\"type\":\"organization\"},\"repositorySelection\":\"all\",\"suspended\":false},{\"installationId\":79,\"account\":{\"login\":\"acme-inc\",\"id\":579,\"type\":\"organization\"},\"repositorySelection\":\"selected\",\"suspended\":false},{\"installationId\":80,\"account\":{\"login\":\"acme-inc\",\"id\":580,\"type\":\"organization\"},\"repositorySelection\":\"all\",\"suspended\":false},{\"installationId\":81,\"account\":{\"login\":\"acme-inc\",\"id\":581,\"type\":\"organization\"},\"repositorySelection\":\"all\",\"suspended\":true},{\"installationId\":83,\"account\":{\"login\":\"alice-personal\",\"id\":583,\"type\":\"user\"},\"repositorySelection\":\"all\",\"suspended\":false}],\"truncated\":false}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.github_app_installations_listed",
+          "listener": "ordinary",
+          "metadata": {
+            "count": 5,
+            "httpStatus": null,
+            "status": "ok",
+            "truncated": false
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "githubAppId": "gha_fsapsdr6jfxc5mrnmd4hrosxrq"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET list as a member",
+      "name": "list as a member",
+      "method": "GET",
+      "path": "/v1/organizations/acme/github-app/installations",
+      "credential": "bob",
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_bhe6p67bqptwzmwe7drjekqr74",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_2nyzqk4yp4qkni2cf354rbozza",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET list as an outsider",
+      "name": "list as an outsider",
+      "method": "GET",
+      "path": "/v1/organizations/acme/github-app/installations",
+      "credential": "carol",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"Organization not found\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_tebjm3ha2bxx46epy2pg5mqydq",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_o2kx5jklxbu6uv7nopb6siapsu",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET list with no App",
+      "name": "list with no App",
+      "method": "GET",
+      "path": "/v1/organizations/noapp/github-app/installations",
+      "credential": "alice",
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"This Organization has no GitHub App\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list in a frozen Organization",
+      "name": "list in a frozen Organization",
+      "method": "GET",
+      "path": "/v1/organizations/frozen/github-app/installations",
+      "credential": "alice",
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_4ljnx6wcyxi6ezh2rwolnoksqm\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_4ljnx6wcyxi6ezh2rwolnoksqm",
+            "method": "GET",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org/github-app/installations"
+          },
+          "organization_id": "org_qqvilwvecb3qb7qwwjd2tkzzqq",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_4ljnx6wcyxi6ezh2rwolnoksqm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET list in an Organization being deleted",
+      "name": "list in an Organization being deleted",
+      "method": "GET",
+      "path": "/v1/organizations/deleting/github-app/installations",
+      "credential": "alice",
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_whkgdgrimjdsuqvxsqmde7ypw4\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "GET list at report",
+      "name": "list at report",
+      "method": "GET",
+      "path": "/v1/organizations/rep/github-app/installations",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"check\":{\"status\":\"ok\",\"where\":\"connection\",\"message\":\"listed\"},\"items\":[{\"installationId\":95,\"account\":{\"login\":\"rep-inc\",\"id\":595,\"type\":\"organization\"},\"repositorySelection\":\"all\",\"suspended\":false}],\"truncated\":false}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.github_app_installations_listed",
+          "listener": "ordinary",
+          "metadata": {
+            "count": 1,
+            "httpStatus": null,
+            "status": "ok",
+            "truncated": false
+          },
+          "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+          "request_id": null,
+          "resource": {
+            "githubAppId": "gha_rxqbpf3asb5evu3xpu44rgz4ua"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check the App Connection",
+      "name": "check the App Connection",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{main}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"ok\",\"where\":\"connection\",\"message\":\"The GitHub App is installed on acme-inc, with access to 3 repositories.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": null,
+            "httpStatus": null,
+            "platform": "github-actions",
+            "status": "ok"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_qweh7x2pi25yyaxxevsu5jlkp4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check a repository",
+      "name": "check a repository",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{main}",
+        "destination": {
+          "repo": "web"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"ok\",\"where\":\"destination\",\"message\":\"The token can read the secrets of acme-inc/web. The first push shows whether it may also write them.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": "github-actions:web",
+            "httpStatus": null,
+            "platform": "github-actions",
+            "status": "ok"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_qweh7x2pi25yyaxxevsu5jlkp4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check a repository's environment",
+      "name": "check a repository's environment",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{main}",
+        "destination": {
+          "repo": "web",
+          "environment": "prod"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"ok\",\"where\":\"destination\",\"message\":\"The token can read the secrets of acme-inc/web (environment prod). The first push shows whether it may also write them.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": "github-actions:web#prod",
+            "httpStatus": null,
+            "platform": "github-actions",
+            "status": "ok"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_qweh7x2pi25yyaxxevsu5jlkp4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check an environment that is not there",
+      "name": "check an environment that is not there",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{main}",
+        "destination": {
+          "repo": "web",
+          "environment": "nope"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"not-found\",\"where\":\"destination\",\"httpStatus\":404,\"message\":\"acme-inc/web has no environment named nope. Create it in the repository settings, or leave the field empty for repository secrets.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": "github-actions:web#nope",
+            "httpStatus": 404,
+            "platform": "github-actions",
+            "status": "not-found"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_qweh7x2pi25yyaxxevsu5jlkp4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check a repository outside the installation",
+      "name": "check a repository outside the installation",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{main}",
+        "destination": {
+          "repo": "elsewhere"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"not-found\",\"where\":\"destination\",\"httpStatus\":404,\"message\":\"GitHub cannot find acme-inc/elsewhere with this token. Check the name, and that the token's repository access includes it.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": "github-actions:elsewhere",
+            "httpStatus": 404,
+            "platform": "github-actions",
+            "status": "not-found"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_qweh7x2pi25yyaxxevsu5jlkp4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check, the App uninstalled",
+      "name": "check, the App uninstalled",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{gone}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"credential-rejected\",\"where\":\"connection\",\"httpStatus\":404,\"message\":\"The GitHub App is no longer installed on acme-inc. Install it again on GitHub, or choose another installation.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": null,
+            "httpStatus": 404,
+            "platform": "github-actions",
+            "status": "credential-rejected"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_rfln5dmsplrnws5hbhord5tuxy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check, a 422 for a repository nowhere",
+      "name": "check, a 422 for a repository nowhere",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{picky}",
+        "destination": {
+          "repo": "gone"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"not-found\",\"where\":\"destination\",\"httpStatus\":422,\"message\":\"The App's installation cannot see acme-inc/gone: it is not among the installation's repositories, or does not exist. Add it in the installation's settings on GitHub.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": "github-actions:gone",
+            "httpStatus": 422,
+            "platform": "github-actions",
+            "status": "not-found"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_rhoykdou3emdnf7fk3sigdraoy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check, a 422 for a public repository outside it",
+      "name": "check, a 422 for a public repository outside it",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{picky}",
+        "destination": {
+          "repo": "public"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"not-found\",\"where\":\"destination\",\"httpStatus\":422,\"message\":\"acme-inc/public is not among the App installation's repositories. Add it in the installation's settings on GitHub.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": "github-actions:public",
+            "httpStatus": 422,
+            "platform": "github-actions",
+            "status": "not-found"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_rhoykdou3emdnf7fk3sigdraoy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check, a 422 for a repository in it",
+      "name": "check, a 422 for a repository in it",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{picky}",
+        "destination": {
+          "repo": "web"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"failed\",\"where\":\"connection\",\"httpStatus\":422,\"message\":\"GitHub refused a token for acme-inc/web, though the App's installation includes it. The App, or its installation, may lack a permission Varlatch needs; an organization owner may need to approve the App's permissions on GitHub.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": "github-actions:web",
+            "httpStatus": 422,
+            "platform": "github-actions",
+            "status": "failed"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_rhoykdou3emdnf7fk3sigdraoy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check the installation of the 422s",
+      "name": "check the installation of the 422s",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{picky}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"ok\",\"where\":\"connection\",\"message\":\"The GitHub App is installed on acme-inc, with access to 1 repository.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": null,
+            "httpStatus": null,
+            "platform": "github-actions",
+            "status": "ok"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_rhoykdou3emdnf7fk3sigdraoy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check, GitHub fails to mint",
+      "name": "check, GitHub fails to mint",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{broken}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"failed\",\"where\":\"connection\",\"httpStatus\":500,\"message\":\"GitHub refused to issue a token for the App (HTTP 500).\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": null,
+            "httpStatus": 500,
+            "platform": "github-actions",
+            "status": "failed"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_v7zysicyomp5nfnp6b2xpnobja"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST check a Connection of a removed App",
+      "name": "check a Connection of a removed App",
+      "method": "POST",
+      "path": "/v1/organizations/removed/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{orphan}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"credential-rejected\",\"where\":\"connection\",\"message\":\"This Connection's GitHub App was removed from Varlatch, so Varlatch can no longer act for it.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": null,
+            "httpStatus": null,
+            "platform": "github-actions",
+            "status": "credential-rejected"
+          },
+          "organization_id": "org_77tifjxyvoyywrwsm5ehktm35u",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_nytnu3qxyn75nkwvs2mvlxs6d4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST list the installation's repositories",
+      "name": "list the installation's repositories",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/destinations",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{main}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"check\":{\"status\":\"ok\",\"where\":\"connection\",\"message\":\"The GitHub App's installation includes 2 repositories in acme-inc.\"},\"items\":[{\"destination\":{\"repo\":\"web\"},\"label\":\"web\",\"detail\":\"private\"},{\"destination\":{\"repo\":\"api\"},\"label\":\"api\",\"detail\":\"public\"}],\"truncated\":false}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.destinations_listed",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "count": 2,
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "httpStatus": null,
+            "platform": "github-actions",
+            "status": "ok",
+            "truncated": false
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_qweh7x2pi25yyaxxevsu5jlkp4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST list, the App uninstalled",
+      "name": "list, the App uninstalled",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/destinations",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{gone}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"check\":{\"status\":\"credential-rejected\",\"where\":\"connection\",\"httpStatus\":404,\"message\":\"The GitHub App is no longer installed on acme-inc. Install it again on GitHub, or choose another installation.\"},\"items\":[],\"truncated\":false}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.destinations_listed",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "count": 0,
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "httpStatus": 404,
+            "platform": "github-actions",
+            "status": "credential-rejected",
+            "truncated": false
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_rfln5dmsplrnws5hbhord5tuxy"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST list a Connection of a removed App",
+      "name": "list a Connection of a removed App",
+      "method": "POST",
+      "path": "/v1/organizations/removed/platform-connections/destinations",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{orphan}"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"check\":{\"status\":\"credential-rejected\",\"where\":\"connection\",\"message\":\"This Connection's GitHub App was removed from Varlatch, so Varlatch can no longer act for it.\"},\"items\":[],\"truncated\":false}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.destinations_listed",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "count": 0,
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "httpStatus": null,
+            "platform": "github-actions",
+            "status": "credential-rejected",
+            "truncated": false
+          },
+          "organization_id": "org_77tifjxyvoyywrwsm5ehktm35u",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_nytnu3qxyn75nkwvs2mvlxs6d4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST rotate, not an RSA key",
+      "name": "rotate, not an RSA key",
+      "method": "POST",
+      "path": "/v1/organizations/acme/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN PRIVATE KEY-----\nnope\n-----END PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"privateKey: not an RSA private key in PEM, as GitHub issues them\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST rotate, version 0",
+      "name": "rotate, version 0",
+      "method": "POST",
+      "path": "/v1/organizations/acme/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 0
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"expectedVersion: Too small: expected number to be >=1\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST rotate, a stale version",
+      "name": "rotate, a stale version",
+      "method": "POST",
+      "path": "/v1/organizations/acme/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 2
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VERSION_CONFLICT\",\"message\":\"The GitHub App was changed concurrently; reload and retry\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST rotate, a key GitHub does not hold",
+      "name": "rotate, a key GitHub does not hold",
+      "method": "POST",
+      "path": "/v1/organizations/acme/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAqCe4kdYXRW8mQNaw5l8zLeTGwnAoo0wrTbaGRMGODfIvZTjW\nSQVVkhoCydOmCn7T9XaZ0OCfOq9hKGsfgE2OFyZyNlRQoQiRvzQutkjEbpNqOet9\nFfm5QJBnopj4VdO58sO7HgI4QnXwkq0G6Y6lluDUqXgu1cPHEZIdv/kVVsEVv3jH\nG++okpDIEOg0MLGOiDqYvpKX7/ru+BuibOjK5ODaLkAYivo7giLfECkxYnqBnxBL\nHqxB9WSWfb2hVmfWrKf0+EtPBaCpGSPe4spGejSoRx8M4FBXI8QQVcED8GwJh1Sd\n/hQh0IRrigB3EKe4LXLZ2+Cbw6EzkStTvMgqiwIDAQABAoIBADUXIWdt/DfwYVf8\nUKrTaNG3FufhyHrSPCPTmm3P3H1btwoS2VkBpaQ0sSeuupA6vcoUkXjIyo0ZPSgp\nNi9ojRGTEmFD2pcVIQsIuyzTKa2tvk6eIoaTKyGO1iGYgWN7rwxOLuBJHCEjonp0\nxads4awSvSHqb4MPRmUuSFVJm6qhVZ44qaU7T2dmrt1wmb3oJ2790YThrb4fHPsL\njDTs+P5tq5A8QIogp2g6w08vk+I0a+0GAIHLhDXl45myQk1ydmKJqNOLHVPsyq3e\nc3s4CdU0T4V3G8ClStADjoO75o0636ML1pd/gxIjzINkIvoGEkIKtsyQkXNumCNz\nqiM9vg0CgYEA1Ztrm+v/OfkcuJMFneQ1kMTcP/m7Qmqdb287nqL0KIbEkpDiU6RI\nJhRIQDm6tdGJn5nzUCLk1y6NrwAoUOmwGMB8D/kho+rcsL1kiBdOKe9hDb5V3GjV\nHqsjOduuLioXX/RDCTn4jS0Bxp8aal62DlVwGhSdkTyFtLX1+7TYul0CgYEAyYcO\nhm117T0si7UYu18/hIz1YwXkUshxbCIPvNDgKlbze3+zMJctSskqRbvDvrtEzVcp\nGT+dmVDgDbUTDzCGCEeW3dMTNuEcBA3pf9AZctEpMrjB8ulnfluvX/QW7T5EngUS\nqXeA+F6PvpgCTzTKx71pKYhhtJva5jUG6n0KOgcCgYA6M7P5cy9C25aw0BaKtADI\nZmtg3ynf6e7lyxginGIMnNP435NbmPqzrXkWTuSJ4AMwwqDiZ++UljGyykcx7Mq3\no9LqA0bgRAFIAwLedgMtN/Vo6kC44rOXPKhHfo0SNRPTaFnPrMUFqoq+VOG8s/vF\nIhB+ermINkZ0O9Q/dkJLXQKBgCh+tAN9IVIvlbDpDfQwuoG3FWP1fiDIWEpDOehW\nDIVVfY2WZnpgFmDNtWnXxgigdr3QQtjo+JEjODJo7VCDDpvBTuZ6EIVZjJif9wiQ\n11xD/URM7eQS1JIGeGIOmUDI317lZA+bjNXbooTI5MXntMuYGvaWihORsdXKV/5s\na86nAoGBAMZcv2oUKg8Swj/kmLEPRNU/smIr1Np8M7VElZEkBYep8Q7lSRyISBw8\nGWaLXry4IefLl26ru8tsSYm8BaYzg2/FySjjYQDgDiTPe5tJqKo2t2Kd8UzCCvUP\nZYlSN9mz6xVq8rSIOESfxw4TJel3BHuaW1ztyRN1LFB2mj+qhu24\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"outcome\":\"failed\",\"status\":\"credential-rejected\",\"where\":\"connection\",\"httpStatus\":401,\"message\":\"GitHub refused the App's key, though the request was valid at GitHub's time: the key was deleted on GitHub, or belongs to another App.\"}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST rotate, GitHub fails",
+      "name": "rotate, GitHub fails",
+      "method": "POST",
+      "path": "/v1/organizations/acme/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEA4CUzeU+sGo125HmOzYZ1vWj9Tl3tpz9XbqBcIw4cTZ9yHYhx\nPsyRGpXhxm3CXTc1QsBLnr5laxTNB15hJnQ8Oc7pvIrGwKUGivclC2C5GPESLpaY\nvKd9yXlT33kUCg8iLYilzo712/T8cMAMwUyk3FFmOXzLKOaqQr8NrzzmksIdHJB7\nnhVds+eHrYnJmh9n+gbonO7+lgm7IzgHbHpaYWdc1rZVGvD5Vua8zydc6X3BBXri\n0L5Cyh63YFAUwzDd8m9zlDzuaUyONvICg42nPB6DsfnAey7/Jp11Ephh9GISzl+/\nkHQDGmfZ2OaCc2eIYaX7LWSUU/6CvJMefJ2f2wIDAQABAoIBAApM6CZa6QuyIY5G\nIC/4tGA9oWctcNaFPI7azReKHMN1oG7HNORDNI3ctZ3pSfIy4pf/mNoILnmMk9ys\nhr/K8Q0uoYlZ261bSBQw+SGI0qi/RB8ikFoaQyRAygAHvLCDpoXu9POrmGFnZJ+h\na7sJIYn2yA3vQRgCYnBwmDMYraqwk+Z+1lio+0k/lBklePi+BVc4A7vpS06NOy8b\nsJLIwaOuQz6DyQDKfdlv7kAjh6tAOq/YZYpKzuKICxzF6N0FhBCahUZqNBwUF+8a\nkKY4fUmDBEaVQc4/Z7uHpz6FMhBvjCulip+HzdaolA0VgFEMv3LyrMLBurCLTKOC\nlYAhj9kCgYEA/XlYoJomCNen23aOMtXgPNA89NiQxeAH+v1RQiyeYvPveCCkFH0e\nqG8wm4vJtYPWEE/PBobI+JE/BKtllDy7n9jz5iMmm5YNSCteIYuYnDQ8UmW6b115\nt4/IAHochiINwLBHeTYJr5hfhMTlhvgTGChdG9WWGe3kHrd0JCYWZBkCgYEA4mEI\nVgE2Y5sJz8TYROZrChx0tThz4OIYE9iT2COaI5vAbGBEmPPRfyBtJf3pmamUhObh\nWndwQ5aySU/A4/uz6DZIULJJEUpRRHbkfXDv39MDGQv93c1a35YjU+xVsbWDREnL\nEfo5lrsGXAancysiNf1Ho6Bj9VkFsbgojoMMAhMCgYB5pDFnKXLVTYEtrhCBzugE\n5z5JlmCrxV6vEcBcTINaI4ypjqiPeJgs5udhzkznwjQJsfM9Q5PQzgt7FzHxWNAF\n3xz1NatCgVkwaDeNS6vaUqscM9urtCVEdUjbCb8Ek/Ubor06KzeswCge1Er+YbDw\nJ/a+89pL6UFPiGTBMFIQiQKBgATjQXHR7uGxrEGPJ3g9XVxHhwGOqXnWh9yN1Yta\nIW7ZYwsz/OcshH5xLcofNFb8AVfpQD5ay9K5wzmv/iMuARFncqJDZy53Y0/OHVrU\nAGndvXhh+OY8E9U2AadDOApxN9dWnIrT00B840NDZYQoD0IJKO3QfbgDZwsSRdXl\n4HF/AoGAGURfegXtBrR0Moyd2Ii2p9Ejf0OqVFs/C5PIKWbmPOpa0B2ND84AYZBq\nWfeYup7Pm8jNw2BMSQAnIZrSyFlcIcyXlec4OO/dd5l4X4eJGLTqV5aO5L/rjVgR\nsrME/4qDJ5LWb+ijZL7LSmRgtqSjAYzFLnNLCQnk7mZAUNTEurQ=\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"outcome\":\"failed\",\"status\":\"failed\",\"where\":\"connection\",\"httpStatus\":500,\"message\":\"GitHub did not confirm the new key for the App varlatch-acme (HTTP 500).\"}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST rotate without disclosure authority",
+      "name": "rotate without disclosure authority",
+      "method": "POST",
+      "path": "/v1/organizations/acme/github-app/key",
+      "credential": "dave",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Rotating the GitHub App's key re-authorizes every Sync Target on its Connections; you lack disclosure authority for at least one\",\"requestId\":\"{requestId}\",\"details\":{\"targetId\":\"snt_npylnqqzv4tnpgsfaeas6m5c7u\",\"environmentId\":\"env_ncc5btdqfxppkcglb4wtuym6ly\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST rotate",
+      "name": "rotate",
+      "method": "POST",
+      "path": "/v1/organizations/acme/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"outcome\":\"rotated\",\"app\":{\"id\":\"gha_fsapsdr6jfxc5mrnmd4hrosxrq\",\"organizationId\":\"org_m3d4hepjn522aingbyipc732lm\",\"githubAppId\":2002,\"slug\":\"varlatch-acme\",\"clientId\":\"Iv1.acme\",\"owner\":{\"login\":\"acme-inc\",\"id\":501,\"type\":\"organization\"},\"htmlUrl\":\"https://github.com/apps/varlatch-acme\",\"version\":2,\"createdAt\":\"2026-01-02T00:00:00.000Z\",\"updatedAt\":\"{time}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": {
+            "reauthorizedTargets": {
+              "snt_npylnqqzv4tnpgsfaeas6m5c7u": {
+                "config.value.read": {
+                  "grantIds": [],
+                  "requirements": [],
+                  "role": "admin"
+                },
+                "secret.reveal": {
+                  "grantIds": [],
+                  "requirements": [],
+                  "role": "admin"
+                }
+              }
+            }
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.github_app_key_rotated",
+          "listener": "ordinary",
+          "metadata": {
+            "appId": 2002,
+            "connections": "pcn_qweh7x2pi25yyaxxevsu5jlkp4,pcn_rfln5dmsplrnws5hbhord5tuxy,pcn_rhoykdou3emdnf7fk3sigdraoy,pcn_v7zysicyomp5nfnp6b2xpnobja",
+            "reauthorizedTargets": "snt_npylnqqzv4tnpgsfaeas6m5c7u",
+            "slug": "varlatch-acme",
+            "version": 2
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "githubAppId": "gha_fsapsdr6jfxc5mrnmd4hrosxrq"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "github_apps": {
+          "updated": [
+            {
+              "client_id": "Iv1.acme",
+              "created_at": "2026-01-02T00:00:00.000Z",
+              "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "github_app_id": 2002,
+              "id": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+              "key_envelope": "{fresh}",
+              "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+              "owner_id": 501,
+              "owner_login": "acme-inc",
+              "owner_type": "organization",
+              "removed_at": null,
+              "slug": "varlatch-acme",
+              "updated_at": "{fresh}",
+              "version": 2
+            }
+          ]
+        },
+        "sync_targets": {
+          "updated": [
+            {
+              "canonical_destination": "[\"github-actions\",\"acme-inc\",\"web\"]",
+              "connection_id": "pcn_qweh7x2pi25yyaxxevsu5jlkp4",
+              "created_at": "2026-01-02T00:00:02.000Z",
+              "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "destination": {
+                "repo": "web"
+              },
+              "disabled_reason": null,
+              "environment_id": "env_ncc5btdqfxppkcglb4wtuym6ly",
+              "failure_count": 0,
+              "generation": 0,
+              "id": "snt_npylnqqzv4tnpgsfaeas6m5c7u",
+              "last_attempt_at": null,
+              "last_drift_at": null,
+              "last_drift_count": null,
+              "last_drift_event_id": null,
+              "last_drift_names": null,
+              "last_notes": null,
+              "last_repair_at": null,
+              "last_result": null,
+              "lease_expires_at": null,
+              "mapping": {
+                "kind": "wildcard"
+              },
+              "needs_sync": true,
+              "next_attempt_at": null,
+              "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+              "project_id": "prj_szmgd723ay7anqao4tkihucpiy",
+              "redeploy": false,
+              "redeploy_owed": 0,
+              "redeploy_paid": 0,
+              "remove_orphans": false,
+              "repair_cycle_started_at": null,
+              "revoked_at": null,
+              "state": "active",
+              "updated_at": null,
+              "version": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST rotate again at the old version",
+      "name": "rotate again at the old version",
+      "method": "POST",
+      "path": "/v1/organizations/acme/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VERSION_CONFLICT\",\"message\":\"The GitHub App was changed concurrently; reload and retry\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST check with the new key",
+      "name": "check with the new key",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections/check",
+      "credential": "alice",
+      "body": {
+        "connectionId": "{main}",
+        "destination": {
+          "repo": "web"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"status\":\"ok\",\"where\":\"destination\",\"message\":\"The token can read the secrets of acme-inc/web. The first push shows whether it may also write them.\"}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_checked",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credential": "stored",
+            "credentialKind": "github-app",
+            "destination": "github-actions:web",
+            "httpStatus": null,
+            "platform": "github-actions",
+            "status": "ok"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "pcn_qweh7x2pi25yyaxxevsu5jlkp4"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "GET list with the new key",
+      "name": "list with the new key",
+      "method": "GET",
+      "path": "/v1/organizations/acme/github-app/installations",
+      "credential": "alice",
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"check\":{\"status\":\"ok\",\"where\":\"connection\",\"message\":\"listed\"},\"items\":[{\"installationId\":77,\"account\":{\"login\":\"acme-inc\",\"id\":577,\"type\":\"organization\"},\"repositorySelection\":\"all\",\"suspended\":false},{\"installationId\":79,\"account\":{\"login\":\"acme-inc\",\"id\":579,\"type\":\"organization\"},\"repositorySelection\":\"selected\",\"suspended\":false},{\"installationId\":80,\"account\":{\"login\":\"acme-inc\",\"id\":580,\"type\":\"organization\"},\"repositorySelection\":\"all\",\"suspended\":false},{\"installationId\":81,\"account\":{\"login\":\"acme-inc\",\"id\":581,\"type\":\"organization\"},\"repositorySelection\":\"all\",\"suspended\":true},{\"installationId\":83,\"account\":{\"login\":\"alice-personal\",\"id\":583,\"type\":\"user\"},\"repositorySelection\":\"all\",\"suspended\":false}],\"truncated\":false}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.github_app_installations_listed",
+          "listener": "ordinary",
+          "metadata": {
+            "count": 5,
+            "httpStatus": null,
+            "status": "ok",
+            "truncated": false
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "githubAppId": "gha_fsapsdr6jfxc5mrnmd4hrosxrq"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST rotate with no App",
+      "name": "rotate with no App",
+      "method": "POST",
+      "path": "/v1/organizations/noapp/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"This Organization has no GitHub App\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST rotate in a frozen Organization",
+      "name": "rotate in a frozen Organization",
+      "method": "POST",
+      "path": "/v1/organizations/frozen/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_4ljnx6wcyxi6ezh2rwolnoksqm\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_4ljnx6wcyxi6ezh2rwolnoksqm",
+            "method": "POST",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org/github-app/key"
+          },
+          "organization_id": "org_qqvilwvecb3qb7qwwjd2tkzzqq",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_4ljnx6wcyxi6ezh2rwolnoksqm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST rotate in an Organization being deleted",
+      "name": "rotate in an Organization being deleted",
+      "method": "POST",
+      "path": "/v1/organizations/deleting/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_whkgdgrimjdsuqvxsqmde7ypw4\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST rotate at enforce, no approval",
+      "name": "rotate at enforce, no approval",
+      "method": "POST",
+      "path": "/v1/organizations/enf/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#1} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#1}\",\"operation\":\"github_app.replace_key\",\"organization\":{\"id\":\"org_vxnt32opf2ygfmgxx3oskdiiue\",\"slug\":\"enf\",\"name\":\"Enf\"},\"summary\":{\"title\":\"Replace the private key of GitHub App \\\"varlatch-enf\\\" (gha_urdei6zvoqpcvnjkqceqcvt65u). 0 Sync Targets will push with it\",\"changes\":[{\"to\":\"a new value (not shown)\",\"from\":\"the current value\",\"field\":\"privateKey\",\"loosens\":false}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#1}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:423dd8ac96e0e50c772561c9916e0e5693be0f1bd250487e51836471eef205c5",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+              "expected_version": 1,
+              "expires_at": "{fresh}",
+              "id": "{apr#1}",
+              "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "last_polled_at": null,
+              "operation": "github_app.replace_key",
+              "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:860124fe39751dd0c559a7be0dd00d031fa74b0f08fcd3125ff751e169f9c366",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "privateKey",
+                    "from": "the current value",
+                    "loosens": false,
+                    "to": "a new value (not shown)"
+                  }
+                ],
+                "title": "Replace the private key of GitHub App \"varlatch-enf\" (gha_urdei6zvoqpcvnjkqceqcvt65u). 0 Sync Targets will push with it"
+              },
+              "target": {
+                "githubAppId": "gha_urdei6zvoqpcvnjkqceqcvt65u"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST rotate at enforce, its approval",
+      "name": "rotate at enforce, its approval",
+      "method": "POST",
+      "path": "/v1/organizations/enf/github-app/key",
+      "credential": "alice2",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_rotateaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"outcome\":\"rotated\",\"app\":{\"id\":\"gha_urdei6zvoqpcvnjkqceqcvt65u\",\"organizationId\":\"org_vxnt32opf2ygfmgxx3oskdiiue\",\"githubAppId\":3003,\"slug\":\"varlatch-enf\",\"clientId\":\"Iv1.enf\",\"owner\":{\"login\":\"acme-inc\",\"id\":501,\"type\":\"organization\"},\"htmlUrl\":\"https://github.com/apps/varlatch-enf\",\"version\":2,\"createdAt\":\"2026-01-02T00:00:00.000Z\",\"updatedAt\":\"{time}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": {
+            "reauthorizedTargets": {}
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_vf4rblpi4br7lwctcfh2griaaa",
+          "decision": "info",
+          "event_type": "sync.github_app_key_rotated",
+          "listener": "ordinary",
+          "metadata": {
+            "appId": 3003,
+            "approvalId": "apr_rotateaaaaaaaaaaaaaaaaaaaa",
+            "approvalPasskeyId": "PasskeyConf001",
+            "approvalUserVerified": true,
+            "connections": null,
+            "reauthorizedTargets": null,
+            "slug": "varlatch-enf",
+            "version": 2
+          },
+          "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+          "request_id": null,
+          "resource": {
+            "githubAppId": "gha_urdei6zvoqpcvnjkqceqcvt65u"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "github_apps": {
+          "updated": [
+            {
+              "client_id": "Iv1.enf",
+              "created_at": "2026-01-02T00:00:00.000Z",
+              "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "github_app_id": 3003,
+              "id": "gha_urdei6zvoqpcvnjkqceqcvt65u",
+              "key_envelope": "{fresh}",
+              "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+              "owner_id": 501,
+              "owner_login": "acme-inc",
+              "owner_type": "organization",
+              "removed_at": null,
+              "slug": "varlatch-enf",
+              "updated_at": "{fresh}",
+              "version": 2
+            }
+          ]
+        },
+        "approval_intents": {
+          "updated": [
+            {
+              "approval_user_verified": true,
+              "approved_at": "2026-01-10T00:01:00.000Z",
+              "approved_with_passkey_id": "PasskeyConf001",
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:423dd8ac96e0e50c772561c9916e0e5693be0f1bd250487e51836471eef205c5",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": "{fresh}",
+              "created_at": "2026-01-10T00:00:00.000Z",
+              "credential_id": "crd_vf4rblpi4br7lwctcfh2griaaa",
+              "expected_version": 1,
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "apr_rotateaaaaaaaaaaaaaaaaaaaa",
+              "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "last_polled_at": null,
+              "operation": "github_app.replace_key",
+              "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:860124fe39751dd0c559a7be0dd00d031fa74b0f08fcd3125ff751e169f9c366",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "privateKey",
+                    "from": "the current value",
+                    "loosens": false,
+                    "to": "a new value (not shown)"
+                  }
+                ],
+                "title": "Replace the private key of GitHub App \"varlatch-enf\" (gha_urdei6zvoqpcvnjkqceqcvt65u). 0 Sync Targets will push with it"
+              },
+              "target": {
+                "githubAppId": "gha_urdei6zvoqpcvnjkqceqcvt65u"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST rotate at report",
+      "name": "rotate at report",
+      "method": "POST",
+      "path": "/v1/organizations/rep/github-app/key",
+      "credential": "alice",
+      "body": {
+        "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA2halhPu9s8Z2UcfBXTZOSIoipgmvofXUNkR3SsYN3DIf3Hmd\n55J33QThZ1hUSzhWa3A682gOjO3PpNqoDvdFg6x5YvI9BcUl2kE2zQq+nWHrFeZn\ni9pU5C62L2Hb8EfRSQ8y6MbyqjAvcb8Lt8FEbGa1NtaW+rhaooaoJJBW7EwjaoXC\nIF3H4fanAE55Zzg+EP6d6Ul+5JkXUIhuL+DzdduPLbcMTpQ8h2cZAFDtMS2KXGQp\nT0v/UxgjF0vsHFW2RsR9YA/F5wtVVNwniS5RaMlwjWh07a5GG3IkqGSb+I81BLPX\ndRZ005SwgZ3ZRsPG4HLK8o20TNpq0bfkDT4gZQIDAQABAoIBABEi1WehFjNRhUuA\nvB9UXItTm0xbl3rM45tN/ueXr1AdeiZrQe6HsjZiI0npBVqRtyyi+WbVxsrpBrdH\n3Qur/0DM5Q7SxNu2tXY0SJeM4BRitMOYQouZILF7QCJx+IOlSPsKIDBtLXUU6y1v\nWv7Zx0QTP+rqqptRsAF0PjL9Sm8vmR++LXl5ofcE9hPvOyxSUBP1AKrdBbhcDmei\nMjJ00OWE/VjCXNEDdTqK8bhJjd8clQlm5r9qzrqUW5JAIaV9KGEIR5y/mnTFLTAD\nSDj9FseeZWlNYM5LeHVhCmZTE655Es7YwGHBb1ycWePGmjyZxIIg47KsgAHZZXvQ\n947712ECgYEA/iDxH45uaY4o3wFxvRQVzqGnG8lNo+B3UcWBntcg5foc6/aGCjAj\n3K4I4WHGWYtBWnqJQN2DHZDbEkWnsFZN52uFgsB/McZr1JL3/d2sCyvM7D5wJk/D\nTSTP/N9rBRyY+NPovfDQDZHlzm3aSBznrU5xDDpSNLHZzxs1t1dAhFUCgYEA27HD\n5t5wWnEwLzTC4RXWoIncKaqTZzbZ0q7QuuHI9W4g+kbKhR7MVRxl70ZJPsdh06oU\nXpKq31purB5josYqHfD2g6hHXX+efGXl12FrkRi2K68mu/QIakr/VGKENxvBrIW5\n3NDq5lJ5yfwTaApQ+JcunsAtPxwQRr3rE5VIu9ECgYBGIYUpdj8WNjslP9rJmU9j\nVM0vJ+CbRwjmsiDRWwEjNmDg5YmcKijbb9PXjwoUEBAbDhHuqrLSZ/VtF3ftfAPH\nx65ypPj1HZMIeP6jOpeOBappz9lXWU/GbFBRsr5wDLJSiPiD4n8oH4lR7JL+r6tn\n8mvUOgwRqrs3IoUycYvGeQKBgDsNfWsBP5IP+rO1qux1wktEwzkv8I893y8SbmjN\naAcQoyyi+qztql72UzAN5IJLdbA/d1o0clm3JSh+wqluOsPxkVGyWfx34VHu0eki\n9pb53X3Ahtjer6RipF86W++0Nkr5ZwxD2+AtKy9v4oeEvl8TxCRH4+Gi2X0qb5XD\n+tkBAoGBAOYJ/qC/5MSHnEii5WHeFY9SkSP/mEI7Vaw4dGzaY/+fqonKS0XeYXHa\n7LvETMUJh7uxTYdK/uXa9gqaZikoCpWTOzV4SRGtIWJ3F3hSOik3ayKngfYIPsrD\n+RHr75eMbaGu++tx6jckemlSF7m/r6TEKc3Iy5mku11BNftkU0+Z\n-----END RSA PRIVATE KEY-----\n",
+        "expectedVersion": 1
+      },
+      "expect": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"outcome\":\"rotated\",\"app\":{\"id\":\"gha_rxqbpf3asb5evu3xpu44rgz4ua\",\"organizationId\":\"org_y3xfy3qco44kcucqk2ytsnbodq\",\"githubAppId\":5005,\"slug\":\"varlatch-rep\",\"clientId\":\"Iv1.rep\",\"owner\":{\"login\":\"acme-inc\",\"id\":501,\"type\":\"organization\"},\"htmlUrl\":\"https://github.com/apps/varlatch-rep\",\"version\":2,\"createdAt\":\"2026-01-02T00:00:00.000Z\",\"updatedAt\":\"{time}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": {
+            "reauthorizedTargets": {}
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.github_app_key_rotated",
+          "listener": "ordinary",
+          "metadata": {
+            "appId": 5005,
+            "connections": null,
+            "reauthorizedTargets": null,
+            "slug": "varlatch-rep",
+            "version": 2
+          },
+          "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+          "request_id": null,
+          "resource": {
+            "githubAppId": "gha_rxqbpf3asb5evu3xpu44rgz4ua"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "github_apps": {
+          "updated": [
+            {
+              "client_id": "Iv1.rep",
+              "created_at": "2026-01-02T00:00:00.000Z",
+              "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "github_app_id": 5005,
+              "id": "gha_rxqbpf3asb5evu3xpu44rgz4ua",
+              "key_envelope": "{fresh}",
+              "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+              "owner_id": 501,
+              "owner_login": "acme-inc",
+              "owner_type": "organization",
+              "removed_at": null,
+              "slug": "varlatch-rep",
+              "updated_at": "{fresh}",
+              "version": 2
+            }
+          ]
+        },
+        "security_control_counters": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "admin-step-up",
+              "count": 1,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "github_app.replace_key",
+              "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+              "reason": "no-approval"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create on an installation",
+      "name": "create on an installation",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 77,
+        "name": "Second"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{pcn#1}\",\"organizationId\":\"org_m3d4hepjn522aingbyipc732lm\",\"platform\":\"github-actions\",\"baseIdentity\":\"acme-inc\",\"name\":\"Second\",\"createdAt\":\"{time}\",\"version\":1,\"updatedAt\":null,\"credentialExpiresAt\":null,\"credentialExpirySeenAt\":null,\"credentialKind\":\"github-app\",\"githubAppId\":\"gha_fsapsdr6jfxc5mrnmd4hrosxrq\",\"installationId\":77}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_created",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "acme-inc",
+            "credentialKind": "github-app",
+            "githubAppId": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+            "installationId": 77,
+            "name": "Second",
+            "platform": "github-actions"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "{pcn#1}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "platform_connections": {
+          "inserted": [
+            {
+              "base_identity": "acme-inc",
+              "created_at": "{fresh}",
+              "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "credential_envelope": null,
+              "credential_expires_at": null,
+              "credential_expiry_seen_at": null,
+              "credential_kind": "github-app",
+              "github_app_id": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+              "github_installation_id": 77,
+              "id": "{pcn#1}",
+              "name": "Second",
+              "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+              "platform": "github-actions",
+              "revoked_at": null,
+              "updated_at": null,
+              "version": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create on a user's installation",
+      "name": "create on a user's installation",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 83,
+        "name": "Personal"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{pcn#2}\",\"organizationId\":\"org_m3d4hepjn522aingbyipc732lm\",\"platform\":\"github-actions\",\"baseIdentity\":\"alice-personal\",\"name\":\"Personal\",\"createdAt\":\"{time}\",\"version\":1,\"updatedAt\":null,\"credentialExpiresAt\":null,\"credentialExpirySeenAt\":null,\"credentialKind\":\"github-app\",\"githubAppId\":\"gha_fsapsdr6jfxc5mrnmd4hrosxrq\",\"installationId\":83}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_created",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "alice-personal",
+            "credentialKind": "github-app",
+            "githubAppId": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+            "installationId": 83,
+            "name": "Personal",
+            "platform": "github-actions"
+          },
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": null,
+          "resource": {
+            "connectionId": "{pcn#2}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "platform_connections": {
+          "inserted": [
+            {
+              "base_identity": "alice-personal",
+              "created_at": "{fresh}",
+              "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "credential_envelope": null,
+              "credential_expires_at": null,
+              "credential_expiry_seen_at": null,
+              "credential_kind": "github-app",
+              "github_app_id": "gha_fsapsdr6jfxc5mrnmd4hrosxrq",
+              "github_installation_id": 83,
+              "id": "{pcn#2}",
+              "name": "Personal",
+              "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+              "platform": "github-actions",
+              "revoked_at": null,
+              "updated_at": null,
+              "version": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create on a suspended installation",
+      "name": "create on a suspended installation",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 81,
+        "name": "Suspended"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"The GitHub App's installation on acme-inc is suspended. Unsuspend it on GitHub, then try again.\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create on an installation of no App",
+      "name": "create on an installation of no App",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 78,
+        "name": "Nowhere"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Installation 78 is not an installation of this GitHub App.\",\"requestId\":\"{requestId}\",\"details\":{\"check\":{\"status\":\"not-found\",\"where\":\"connection\",\"httpStatus\":404,\"message\":\"Installation 78 is not an installation of this GitHub App.\"}}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, GitHub answers for another App",
+      "name": "create, GitHub answers for another App",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 82,
+        "name": "Foreign"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"The answer from api.github.com was not GitHub's. A proxy between this server and GitHub may be in the way.\",\"requestId\":\"{requestId}\",\"details\":{\"check\":{\"status\":\"failed\",\"where\":\"connection\",\"httpStatus\":200,\"message\":\"The answer from api.github.com was not GitHub's. A proxy between this server and GitHub may be in the way.\"}}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create, installation 0",
+      "name": "create, installation 0",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 0,
+        "name": "Zero"
+      },
+      "expect": {
+        "status": 422,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"installationId: Too small: expected number to be >0\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create with no App",
+      "name": "create with no App",
+      "method": "POST",
+      "path": "/v1/organizations/noapp/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 77,
+        "name": "None"
+      },
+      "expect": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"RESOURCE_NOT_FOUND\",\"message\":\"This Organization has no GitHub App\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create in a frozen Organization",
+      "name": "create in a frozen Organization",
+      "method": "POST",
+      "path": "/v1/organizations/frozen/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 77,
+        "name": "Frozen"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Retry-After": "300",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_FROZEN\",\"message\":\"This Organization is frozen for an incident since 2026-03-01T00:00:00.000Z. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.\",\"requestId\":\"{requestId}\",\"details\":{\"freezeId\":\"ofz_4ljnx6wcyxi6ezh2rwolnoksqm\",\"frozenAt\":\"2026-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [
+        {
+          "action": null,
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": {
+            "freezeId": "ofz_4ljnx6wcyxi6ezh2rwolnoksqm",
+            "method": "POST",
+            "reason": "organization_frozen",
+            "route": "/v1/organizations/:org/platform-connections"
+          },
+          "organization_id": "org_qqvilwvecb3qb7qwwjd2tkzzqq",
+          "request_id": "{requestId}",
+          "resource": {
+            "freezeId": "ofz_4ljnx6wcyxi6ezh2rwolnoksqm"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST create in an Organization being deleted",
+      "name": "create in an Organization being deleted",
+      "method": "POST",
+      "path": "/v1/organizations/deleting/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 77,
+        "name": "Deleting"
+      },
+      "expect": {
+        "status": 409,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"ORGANIZATION_DELETING\",\"message\":\"This Organization is being deleted: it may be deleted from 2099-03-01T00:00:00.000Z. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.\",\"requestId\":\"{requestId}\",\"details\":{\"deletionId\":\"odl_whkgdgrimjdsuqvxsqmde7ypw4\",\"runAfter\":\"2099-03-01T00:00:00.000Z\"}}}"
+      },
+      "audit": [],
+      "side": {}
+    },
+    {
+      "id": "POST create as a member",
+      "name": "create as a member",
+      "method": "POST",
+      "path": "/v1/organizations/acme/platform-connections",
+      "credential": "bob",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 77,
+        "name": "Bob's"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"PERMISSION_DENIED\",\"message\":\"Not authorized for this action\",\"requestId\":\"{requestId}\"}}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_bhe6p67bqptwzmwe7drjekqr74",
+          "authz": {
+            "denial": "no-grant",
+            "requirements": []
+          },
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_2nyzqk4yp4qkni2cf354rbozza",
+          "decision": "deny",
+          "event_type": "authorization.denied",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_m3d4hepjn522aingbyipc732lm",
+          "request_id": "{requestId}",
+          "resource": {
+            "environmentId": null,
+            "projectId": null
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {}
+    },
+    {
+      "id": "POST create at enforce, no approval",
+      "name": "create at enforce, no approval",
+      "method": "POST",
+      "path": "/v1/organizations/enf/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 91,
+        "name": "Approved"
+      },
+      "expect": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"STEP_UP_REQUIRED\",\"message\":\"This needs your approval with a trusted passkey: open http://127.0.0.1:8686/approve/{apr#2} and approve, then repeat the request with the Varlatch-Approval header\",\"requestId\":\"{requestId}\",\"details\":{\"approval\":{\"id\":\"{apr#2}\",\"operation\":\"connection.create\",\"organization\":{\"id\":\"org_vxnt32opf2ygfmgxx3oskdiiue\",\"slug\":\"enf\",\"name\":\"Enf\"},\"summary\":{\"title\":\"Add connection \\\"Approved\\\" on installation 91 of GitHub App \\\"varlatch-enf\\\" (gha_urdei6zvoqpcvnjkqceqcvt65u)\",\"changes\":[{\"to\":\"\\\"Approved\\\"\",\"from\":null,\"field\":\"name\",\"loosens\":false},{\"to\":\"91\",\"from\":null,\"field\":\"installationId\",\"loosens\":false}]},\"state\":\"pending\",\"closeReason\":null,\"requestedBy\":{\"credentialKind\":\"cli\",\"client\":null},\"url\":\"http://127.0.0.1:8686/approve/{apr#2}\",\"interval\":5,\"createdAt\":\"{time}\",\"expiresAt\":\"{time}\",\"approvedAt\":null,\"consumedAt\":null,\"closedAt\":null}}}}"
+      },
+      "audit": [],
+      "side": {
+        "approval_intents": {
+          "inserted": [
+            {
+              "approval_user_verified": null,
+              "approved_at": null,
+              "approved_with_passkey_id": null,
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:a79cd40329f565a91857dfff5c7e93d1ec492c2fe3b22642775878a21b8e5eb9",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": null,
+              "created_at": "{fresh}",
+              "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+              "expected_version": null,
+              "expires_at": "{fresh}",
+              "id": "{apr#2}",
+              "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "last_polled_at": null,
+              "operation": "connection.create",
+              "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:860124fe39751dd0c559a7be0dd00d031fa74b0f08fcd3125ff751e169f9c366",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "name",
+                    "from": null,
+                    "loosens": false,
+                    "to": "\"Approved\""
+                  },
+                  {
+                    "field": "installationId",
+                    "from": null,
+                    "loosens": false,
+                    "to": "91"
+                  }
+                ],
+                "title": "Add connection \"Approved\" on installation 91 of GitHub App \"varlatch-enf\" (gha_urdei6zvoqpcvnjkqceqcvt65u)"
+              },
+              "target": {
+                "githubAppId": "gha_urdei6zvoqpcvnjkqceqcvt65u",
+                "organizationId": "org_vxnt32opf2ygfmgxx3oskdiiue"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create at enforce, its approval",
+      "name": "create at enforce, its approval",
+      "method": "POST",
+      "path": "/v1/organizations/enf/platform-connections",
+      "credential": "alice2",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 91,
+        "name": "Approved"
+      },
+      "headers": {
+        "Varlatch-Approval": "apr_createaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{pcn#3}\",\"organizationId\":\"org_vxnt32opf2ygfmgxx3oskdiiue\",\"platform\":\"github-actions\",\"baseIdentity\":\"enf-inc\",\"name\":\"Approved\",\"createdAt\":\"{time}\",\"version\":1,\"updatedAt\":null,\"credentialExpiresAt\":null,\"credentialExpirySeenAt\":null,\"credentialKind\":\"github-app\",\"githubAppId\":\"gha_urdei6zvoqpcvnjkqceqcvt65u\",\"installationId\":91}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_vf4rblpi4br7lwctcfh2griaaa",
+          "decision": "info",
+          "event_type": "sync.connection_created",
+          "listener": "ordinary",
+          "metadata": {
+            "approvalId": "apr_createaaaaaaaaaaaaaaaaaaaa",
+            "approvalPasskeyId": "PasskeyConf001",
+            "approvalUserVerified": true,
+            "baseIdentity": "enf-inc",
+            "credentialKind": "github-app",
+            "githubAppId": "gha_urdei6zvoqpcvnjkqceqcvt65u",
+            "installationId": 91,
+            "name": "Approved",
+            "platform": "github-actions"
+          },
+          "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+          "request_id": null,
+          "resource": {
+            "connectionId": "{pcn#3}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "platform_connections": {
+          "inserted": [
+            {
+              "base_identity": "enf-inc",
+              "created_at": "{fresh}",
+              "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "credential_envelope": null,
+              "credential_expires_at": null,
+              "credential_expiry_seen_at": null,
+              "credential_kind": "github-app",
+              "github_app_id": "gha_urdei6zvoqpcvnjkqceqcvt65u",
+              "github_installation_id": 91,
+              "id": "{pcn#3}",
+              "name": "Approved",
+              "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+              "platform": "github-actions",
+              "revoked_at": null,
+              "updated_at": null,
+              "version": 1
+            }
+          ]
+        },
+        "approval_intents": {
+          "updated": [
+            {
+              "approval_user_verified": true,
+              "approved_at": "2026-01-10T00:01:00.000Z",
+              "approved_with_passkey_id": "PasskeyConf001",
+              "auth_session_id": null,
+              "body_hash": "hmac-v1:a79cd40329f565a91857dfff5c7e93d1ec492c2fe3b22642775878a21b8e5eb9",
+              "close_reason": null,
+              "closed_at": null,
+              "consumed_at": "{fresh}",
+              "created_at": "2026-01-10T00:00:00.000Z",
+              "credential_id": "crd_vf4rblpi4br7lwctcfh2griaaa",
+              "expected_version": null,
+              "expires_at": "2099-01-01T00:00:00.000Z",
+              "id": "apr_createaaaaaaaaaaaaaaaaaaaa",
+              "identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "last_polled_at": null,
+              "operation": "connection.create",
+              "organization_id": "org_vxnt32opf2ygfmgxx3oskdiiue",
+              "origin": "cli",
+              "poll_interval": 5,
+              "query_hash": "hmac-v1:860124fe39751dd0c559a7be0dd00d031fa74b0f08fcd3125ff751e169f9c366",
+              "summary": {
+                "changes": [
+                  {
+                    "field": "name",
+                    "from": null,
+                    "loosens": false,
+                    "to": "\"Approved\""
+                  },
+                  {
+                    "field": "installationId",
+                    "from": null,
+                    "loosens": false,
+                    "to": "91"
+                  }
+                ],
+                "title": "Add connection \"Approved\" on installation 91 of GitHub App \"varlatch-enf\" (gha_urdei6zvoqpcvnjkqceqcvt65u)"
+              },
+              "target": {
+                "githubAppId": "gha_urdei6zvoqpcvnjkqceqcvt65u",
+                "organizationId": "org_vxnt32opf2ygfmgxx3oskdiiue"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "POST create at report",
+      "name": "create at report",
+      "method": "POST",
+      "path": "/v1/organizations/rep/platform-connections",
+      "credential": "alice",
+      "body": {
+        "credentialKind": "github-app",
+        "installationId": 95,
+        "name": "Reported"
+      },
+      "expect": {
+        "status": 201,
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"{pcn#4}\",\"organizationId\":\"org_y3xfy3qco44kcucqk2ytsnbodq\",\"platform\":\"github-actions\",\"baseIdentity\":\"rep-inc\",\"name\":\"Reported\",\"createdAt\":\"{time}\",\"version\":1,\"updatedAt\":null,\"credentialExpiresAt\":null,\"credentialExpirySeenAt\":null,\"credentialKind\":\"github-app\",\"githubAppId\":\"gha_rxqbpf3asb5evu3xpu44rgz4ua\",\"installationId\":95}"
+      },
+      "audit": [
+        {
+          "action": "config.sync.manage",
+          "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_uyaadn3llkoldefvb23hdsbbua",
+          "decision": "info",
+          "event_type": "sync.connection_created",
+          "listener": "ordinary",
+          "metadata": {
+            "baseIdentity": "rep-inc",
+            "credentialKind": "github-app",
+            "githubAppId": "gha_rxqbpf3asb5evu3xpu44rgz4ua",
+            "installationId": 95,
+            "name": "Reported",
+            "platform": "github-actions"
+          },
+          "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+          "request_id": null,
+          "resource": {
+            "connectionId": "{pcn#4}"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
+      "side": {
+        "platform_connections": {
+          "inserted": [
+            {
+              "base_identity": "rep-inc",
+              "created_at": "{fresh}",
+              "created_by": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "credential_envelope": null,
+              "credential_expires_at": null,
+              "credential_expiry_seen_at": null,
+              "credential_kind": "github-app",
+              "github_app_id": "gha_rxqbpf3asb5evu3xpu44rgz4ua",
+              "github_installation_id": 95,
+              "id": "{pcn#4}",
+              "name": "Reported",
+              "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+              "platform": "github-actions",
+              "revoked_at": null,
+              "updated_at": null,
+              "version": 1
+            }
+          ]
+        },
+        "security_control_counters": {
+          "inserted": [
+            {
+              "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+              "bucket_hour": "{fresh}",
+              "config_version": 1,
+              "control": "admin-step-up",
+              "count": 1,
+              "emitted_at": null,
+              "first_seen": "{fresh}",
+              "last_seen": "{fresh}",
+              "operation": "connection.create",
+              "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+              "reason": "no-approval"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "counters": [
+    {
+      "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+      "config_version": 1,
+      "control": "admin-step-up",
+      "count": 1,
+      "operation": "connection.create",
+      "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+      "reason": "no-approval"
+    },
+    {
+      "actor_identity_id": "idn_cfl6vr7sjk64j2yntrdraoptca",
+      "config_version": 1,
+      "control": "admin-step-up",
+      "count": 1,
+      "operation": "github_app.replace_key",
+      "organization_id": "org_y3xfy3qco44kcucqk2ytsnbodq",
+      "reason": "no-approval"
+    }
+  ],
+  "exchanges": {
+    "GET list the installations": [
+      "GET https://api.github.com/app/installations?per_page=100&page=1 Bearer jwt(iss=Iv1.acme,key=beta,window=600)"
+    ],
+    "GET list at report": [
+      "GET https://api.github.com/app/installations?per_page=100&page=1 Bearer jwt(iss=Iv1.rep,key=beta,window=600)"
+    ],
+    "POST check the App Connection": [
+      "POST https://api.github.com/app/installations/77/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"permissions\":{\"metadata\":\"read\"}}",
+      "GET https://api.github.com/installation/repositories?per_page=1 Bearer minted-77-all"
+    ],
+    "POST check a repository": [
+      "POST https://api.github.com/app/installations/77/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"repositories\":[\"web\"],\"permissions\":{\"secrets\":\"read\",\"metadata\":\"read\"}}",
+      "GET https://api.github.com/users/acme-inc Bearer minted-77-web",
+      "GET https://api.github.com/repos/acme-inc/web/actions/secrets/public-key Bearer minted-77-web"
+    ],
+    "POST check a repository's environment": [
+      "POST https://api.github.com/app/installations/77/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"repositories\":[\"web\"],\"permissions\":{\"environments\":\"read\",\"metadata\":\"read\"}}",
+      "GET https://api.github.com/users/acme-inc Bearer minted-77-web",
+      "GET https://api.github.com/repos/acme-inc/web/environments/prod/secrets/public-key Bearer minted-77-web"
+    ],
+    "POST check an environment that is not there": [
+      "POST https://api.github.com/app/installations/77/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"repositories\":[\"web\"],\"permissions\":{\"environments\":\"read\",\"metadata\":\"read\"}}",
+      "GET https://api.github.com/users/acme-inc Bearer minted-77-web",
+      "GET https://api.github.com/repos/acme-inc/web/environments/nope/secrets/public-key Bearer minted-77-web",
+      "GET https://api.github.com/repos/acme-inc/web Bearer minted-77-web"
+    ],
+    "POST check a repository outside the installation": [
+      "POST https://api.github.com/app/installations/77/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"repositories\":[\"elsewhere\"],\"permissions\":{\"secrets\":\"read\",\"metadata\":\"read\"}}",
+      "GET https://api.github.com/users/acme-inc Bearer minted-77-elsewhere",
+      "GET https://api.github.com/repos/acme-inc/elsewhere/actions/secrets/public-key Bearer minted-77-elsewhere"
+    ],
+    "POST check, the App uninstalled": [
+      "POST https://api.github.com/app/installations/78/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"permissions\":{\"metadata\":\"read\"}}"
+    ],
+    "POST check, a 422 for a repository nowhere": [
+      "POST https://api.github.com/app/installations/79/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"repositories\":[\"gone\"],\"permissions\":{\"secrets\":\"read\",\"metadata\":\"read\"}}",
+      "POST https://api.github.com/app/installations/79/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"permissions\":{\"metadata\":\"read\"}}",
+      "GET https://api.github.com/repos/acme-inc/gone Bearer minted-79-all"
+    ],
+    "POST check, a 422 for a public repository outside it": [
+      "POST https://api.github.com/app/installations/79/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"repositories\":[\"public\"],\"permissions\":{\"secrets\":\"read\",\"metadata\":\"read\"}}",
+      "POST https://api.github.com/app/installations/79/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"permissions\":{\"metadata\":\"read\"}}",
+      "GET https://api.github.com/repos/acme-inc/public Bearer minted-79-all",
+      "GET https://api.github.com/installation/repositories?per_page=100&page=1 Bearer minted-79-all"
+    ],
+    "POST check, a 422 for a repository in it": [
+      "POST https://api.github.com/app/installations/79/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"repositories\":[\"web\"],\"permissions\":{\"secrets\":\"read\",\"metadata\":\"read\"}}",
+      "POST https://api.github.com/app/installations/79/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"permissions\":{\"metadata\":\"read\"}}",
+      "GET https://api.github.com/repos/acme-inc/web Bearer minted-79-all",
+      "GET https://api.github.com/installation/repositories?per_page=100&page=1 Bearer minted-79-all"
+    ],
+    "POST check the installation of the 422s": [
+      "POST https://api.github.com/app/installations/79/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"permissions\":{\"metadata\":\"read\"}}",
+      "GET https://api.github.com/installation/repositories?per_page=1 Bearer minted-79-all"
+    ],
+    "POST check, GitHub fails to mint": [
+      "POST https://api.github.com/app/installations/80/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"permissions\":{\"metadata\":\"read\"}}"
+    ],
+    "POST list the installation's repositories": [
+      "POST https://api.github.com/app/installations/77/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"permissions\":{\"metadata\":\"read\"}}",
+      "GET https://api.github.com/installation/repositories?per_page=100&page=1 Bearer minted-77-all"
+    ],
+    "POST list, the App uninstalled": [
+      "POST https://api.github.com/app/installations/78/access_tokens Bearer jwt(iss=Iv1.acme,key=beta,window=600) {\"permissions\":{\"metadata\":\"read\"}}"
+    ],
+    "POST rotate, a stale version": [
+      "GET https://api.github.com/app Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST rotate, a key GitHub does not hold": [
+      "GET https://api.github.com/app Bearer jwt(iss=Iv1.acme,key=import,window=600)"
+    ],
+    "POST rotate, GitHub fails": [
+      "GET https://api.github.com/app Bearer jwt(iss=Iv1.acme,key=conversion,window=600)"
+    ],
+    "POST rotate without disclosure authority": [
+      "GET https://api.github.com/app Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST rotate": [
+      "GET https://api.github.com/app Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST rotate again at the old version": [
+      "GET https://api.github.com/app Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST check with the new key": [
+      "POST https://api.github.com/app/installations/77/access_tokens Bearer jwt(iss=Iv1.acme,key=other,window=600) {\"repositories\":[\"web\"],\"permissions\":{\"secrets\":\"read\",\"metadata\":\"read\"}}",
+      "GET https://api.github.com/users/acme-inc Bearer minted-77-web",
+      "GET https://api.github.com/repos/acme-inc/web/actions/secrets/public-key Bearer minted-77-web"
+    ],
+    "GET list with the new key": [
+      "GET https://api.github.com/app/installations?per_page=100&page=1 Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST rotate at enforce, its approval": [
+      "GET https://api.github.com/app Bearer jwt(iss=Iv1.enf,key=other,window=600)"
+    ],
+    "POST rotate at report": [
+      "GET https://api.github.com/app Bearer jwt(iss=Iv1.rep,key=other,window=600)"
+    ],
+    "POST create on an installation": [
+      "GET https://api.github.com/app/installations/77 Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST create on a user's installation": [
+      "GET https://api.github.com/app/installations/83 Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST create on a suspended installation": [
+      "GET https://api.github.com/app/installations/81 Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST create on an installation of no App": [
+      "GET https://api.github.com/app/installations/78 Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST create, GitHub answers for another App": [
+      "GET https://api.github.com/app/installations/82 Bearer jwt(iss=Iv1.acme,key=other,window=600)"
+    ],
+    "POST create at enforce, its approval": [
+      "GET https://api.github.com/app/installations/91 Bearer jwt(iss=Iv1.enf,key=other,window=600)"
+    ],
+    "POST create at report": [
+      "GET https://api.github.com/app/installations/95 Bearer jwt(iss=Iv1.rep,key=other,window=600)"
+    ]
+  }
+}

@@ -147,15 +147,6 @@ func appHasNoCredential() error {
 		"A GitHub App Connection has no credential of its own to replace or supply: its tokens are issued from the App's key. Rotate the App's key instead.")
 }
 
-// NotImplementedYet is the code of what this build answers for the GitHub
-// App paths that mint a token (step 4.10).
-const NotImplementedYet = "NOT_IMPLEMENTED_YET"
-
-func appMintingNotBuilt() error {
-	return domainerr.New(NotImplementedYet,
-		"A GitHub App Connection's tokens are not built yet in this varlatchd (ADR-0059 step 4.10: the Go server is being written)")
-}
-
 // validation is canonicalizeOrValidationError: an adapter's refusal is a
 // validation failure in its words.
 func validation(err error) error {

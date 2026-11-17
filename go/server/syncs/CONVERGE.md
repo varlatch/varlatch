@@ -137,10 +137,6 @@ and the G7 crash test's provider points hold it.
 
 ## Go's differences
 
-- **GitHub App Connections.** Minting an installation token for a push is
-  step 4.10's (`githubmint.ts`). Until then a Target on an App Connection
-  is not selected, so it keeps `needs_sync` and nothing is recorded, rather
-  than failing toward its failure budget.
 - **The ledger's order.** TypeScript reads a Target's ledger without an
   order, so the order of its deletions and of the notes for kept names is
   the table's row order, unspecified. On PostgreSQL that is, for a small

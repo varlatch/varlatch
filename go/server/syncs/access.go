@@ -16,6 +16,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
+	"github.com/varlatch/varlatch/go/server/githubapps"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/write"
@@ -36,6 +37,8 @@ type checked struct {
 	adapter      vsync.Adapter
 	baseIdentity string
 	connectionID string
+	// app: an App Connection, which mints its credential per use.
+	app bool
 }
 
 // checkInput is checkCredentialInput: what resolving the credential checks
@@ -72,10 +75,7 @@ func (s *Service) checkInput(ctx context.Context, organizationID string, in Cred
 	if !app && in.Credential != nil && whatwg.Trim(*in.Credential) == "" {
 		return out, emptyCredential()
 	}
-	if app {
-		return out, appMintingNotBuilt()
-	}
-	out.adapter, out.baseIdentity = adapter, baseIdentity
+	out.adapter, out.baseIdentity, out.app = adapter, baseIdentity, app
 	return out, nil
 }
 
@@ -87,6 +87,32 @@ type resolved struct {
 	// together; 0 and invalid for a supplied one.
 	storedVersion   int64
 	storedExpiresAt sql.NullInt64
+	// app is an App Connection's: what it mints with, nil when its App was
+	// removed (kind github-app); isApp says it is one.
+	isApp bool
+	app   *githubapps.AppCredential
+}
+
+// kind is the credential's kind, as the audit names it.
+func (r resolved) kind() vsync.CredentialKind {
+	if r.isApp {
+		return vsync.GitHubApp
+	}
+	return vsync.Token
+}
+
+// forUse is credentialForUse: a token as stored or supplied, or one minted
+// from the App, narrowed to the use; or the check that says why there is
+// none.
+func (s *Service) forUse(ctx context.Context, r resolved, c *http.Client, use githubapps.MintUse, destination vsync.Fields) (string, *vsync.AccessCheck) {
+	if !r.isApp {
+		return r.credential, nil
+	}
+	if r.app == nil {
+		check := githubapps.AppRemoved
+		return "", &check
+	}
+	return githubapps.Mint(ctx, c, *r.app, use, destination, s.now())
 }
 
 // resolve is resolveCredential's reads in the effect's snapshot, after the
@@ -95,6 +121,18 @@ type resolved struct {
 func (s *Service) resolve(ctx context.Context, tx *sql.Tx, organizationID string, in CredentialInput, connectionID string) (resolved, error) {
 	if in.Credential != nil {
 		return resolved{credential: *in.Credential, supplied: true}, nil
+	}
+	conn, err := Get(ctx, tx, organizationID, connectionID)
+	if err != nil {
+		return resolved{}, err
+	}
+	if conn.CredentialKind == "github-app" {
+		kek, err := s.orgKEK(ctx, tx, organizationID)
+		if err != nil {
+			return resolved{}, err
+		}
+		app, err := githubapps.CredentialFrom(ctx, tx, kek, organizationID, conn.GitHubAppID.String, conn.InstallationID.Int64, conn.BaseIdentity)
+		return resolved{isApp: true, app: app}, err
 	}
 	stored, err := query.New(tx).ConnectionCredential(ctx, connectionID)
 	if err != nil {
@@ -217,7 +255,7 @@ func credentialWord(supplied bool) string {
 // recordExpiry is recordCredentialExpiry, for a stored token whose check
 // or listing said when it expires.
 func recordExpiry(ctx context.Context, tx query.DBTX, connectionID string, r resolved, expiresAt string, now int64) error {
-	if r.supplied || connectionID == "" || expiresAt == "" {
+	if r.supplied || r.isApp || connectionID == "" || expiresAt == "" {
 		return nil
 	}
 	at, ok := expiryMicros(expiresAt)
@@ -279,12 +317,17 @@ func (s *Service) Check(ctx context.Context, req Request, org authz.Organization
 				return called[vsync.AccessCheck]{refusedCheck(refusal), r}, nil
 			}
 			fields := vsync.Fields{}
+			use := githubapps.UseConnectionCheck
 			if dest != nil {
-				fields = dest.Fields
+				fields, use = dest.Fields, githubapps.UseDestinationCheck
+			}
+			client := s.clientFor(org.ID, c.connectionID, outbound.SyncCheck)
+			credential, failed := s.forUse(ctx, r, client, use, fields)
+			if failed != nil {
+				return called[vsync.AccessCheck]{*failed, r}, nil
 			}
 			check := c.adapter.CheckAccess(ctx, &vsync.Request{
-				BaseIdentity: c.baseIdentity, Destination: fields, Credential: r.credential, CredentialKind: vsync.Token,
-				Client: s.clientFor(org.ID, c.connectionID, outbound.SyncCheck),
+				BaseIdentity: c.baseIdentity, Destination: fields, Credential: credential, CredentialKind: r.kind(), Client: client,
 			})
 			return called[vsync.AccessCheck]{check, r}, nil
 		},
@@ -294,7 +337,11 @@ func (s *Service) Check(ctx context.Context, req Request, org authz.Organization
 				return nil, err
 			}
 			check := got.answer
-			if !got.r.supplied {
+			switch {
+			case got.r.isApp:
+				// A minted token's expiry is not the Connection's (ADR-0047 Decision 4).
+				check.CredentialExpiresAt = ""
+			case !got.r.supplied:
 				check = withKnownExpiry(check, got.r.storedExpiresAt)
 			}
 			var described any
@@ -308,7 +355,7 @@ func (s *Service) Check(ctx context.Context, req Request, org authz.Organization
 				Metadata: jsvalue.Object{
 					{Key: "platform", Value: string(c.adapter.Platform())}, {Key: "baseIdentity", Value: c.baseIdentity},
 					{Key: "destination", Value: described}, {Key: "credential", Value: credentialWord(got.r.supplied)},
-					{Key: "credentialKind", Value: "token"}, {Key: "status", Value: string(check.Status)}, {Key: "httpStatus", Value: httpStatusOrNull(check)},
+					{Key: "credentialKind", Value: string(got.r.kind())}, {Key: "status", Value: string(check.Status)}, {Key: "httpStatus", Value: httpStatusOrNull(check)},
 				},
 			}); err != nil {
 				return nil, err
@@ -387,9 +434,13 @@ func (s *Service) Destinations(ctx context.Context, req Request, org authz.Organ
 			if refusal != nil {
 				return called[vsync.DestinationListing]{vsync.DestinationListing{Check: refusedCheck(refusal), Items: []vsync.DestinationOption{}}, r}, nil
 			}
+			client := s.clientFor(org.ID, c.connectionID, outbound.SyncListing)
+			credential, failed := s.forUse(ctx, r, client, githubapps.UseListing, vsync.Fields{})
+			if failed != nil {
+				return called[vsync.DestinationListing]{vsync.DestinationListing{Check: *failed, Items: []vsync.DestinationOption{}}, r}, nil
+			}
 			listing := lister.ListDestinations(ctx, &vsync.Request{
-				BaseIdentity: c.baseIdentity, Destination: vsync.Fields{}, Credential: r.credential, CredentialKind: vsync.Token,
-				Client: s.clientFor(org.ID, c.connectionID, outbound.SyncListing),
+				BaseIdentity: c.baseIdentity, Destination: vsync.Fields{}, Credential: credential, CredentialKind: r.kind(), Client: client,
 			})
 			return called[vsync.DestinationListing]{listing, r}, nil
 		},
@@ -424,7 +475,7 @@ func (s *Service) Destinations(ctx context.Context, req Request, org authz.Organ
 				Resource: resourceObject(c.connectionID),
 				Metadata: jsvalue.Object{
 					{Key: "platform", Value: string(c.adapter.Platform())}, {Key: "baseIdentity", Value: c.baseIdentity},
-					{Key: "credential", Value: credentialWord(got.r.supplied)}, {Key: "credentialKind", Value: "token"},
+					{Key: "credential", Value: credentialWord(got.r.supplied)}, {Key: "credentialKind", Value: string(got.r.kind())},
 					{Key: "status", Value: string(listing.Check.Status)}, {Key: "httpStatus", Value: httpStatusOrNull(listing.Check)},
 					{Key: "count", Value: len(items)}, {Key: "truncated", Value: listing.Truncated},
 				},
@@ -432,7 +483,10 @@ func (s *Service) Destinations(ctx context.Context, req Request, org authz.Organ
 				return nil, err
 			}
 			check := listing.Check
-			if !got.r.supplied {
+			switch {
+			case got.r.isApp:
+				check.CredentialExpiresAt = ""
+			case !got.r.supplied:
 				check = withKnownExpiry(check, got.r.storedExpiresAt)
 			}
 			return jsvalue.Object{{Key: "check", Value: CheckJS(check)}, {Key: "items", Value: items}, {Key: "truncated", Value: listing.Truncated}}, nil

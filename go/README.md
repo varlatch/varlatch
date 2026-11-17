@@ -742,13 +742,24 @@ the converge engine follow in 4.9c and 4.9d.
   recorded only while the Connection holds the credential version it was
   read at. A stored credential's recorded expiry stands in when an answer
   says nothing.
-- **GitHub App Connections** (ADR-0047) are listed, read and revoked here.
-  What mints a token from their App comes with step 4.10b (the owner,
-  2026-11-17), and answers 501 `NOT_IMPLEMENTED_YET` until then:
-  - creating one, after its body is validated;
-  - a check or a listing with one.
-
-  `TestAppMintingNotBuiltYet` pins those answers; 4.10b replaces it.
+- **GitHub App Connections** (ADR-0047 Decisions 2 to 4; step 4.10b):
+  - `createPlatformConnection` with `credentialKind: "github-app"`
+    (`CreateApp`, `connection.create` bound to the App, the installation
+    and the name): an external effect reading the installation as the App,
+    which must be this App's and not suspended; its account becomes the
+    base identity. Under enforce GitHub is asked only after a precheck
+    found an approved intent, and the App must still be live in the final
+    job.
+  - A check or a listing with one mints an installation token for the use
+    (`githubapps.Mint`, narrowed as `domain/githubmint.ts` narrows it,
+    never stored); a 422 is explained as TypeScript explains it. A
+    Connection whose App was removed answers `credential-rejected`.
+  - `rotateGitHubAppKey` (`RotateAppKey`, `github_app.replace_key` bound to
+    the App, the key and the version): the new key verified with GET /app
+    across the call, then, in the final job, the version checked again,
+    every live Target of the App's Connections through the re-authorization
+    gate (its decisions in the audit event), the key sealed, the version
+    moved and every Target queued.
 - **Parity.**
   - `connections-v0.22.0.json` and `connections-v0.21.0.json`
     (`go-connections-fixture.test.ts`): 113 requests on fake GitHub,
@@ -827,8 +838,6 @@ varlatchd runs it every 30 seconds when `sync = on`.
   writer and in jobs, and its duration (`Service.OnRun`, a debug log
   line).
 - **Where Go differs** (CONVERGE.md):
-  - a Target on a GitHub App Connection waits for 4.10's minting
-    (`needs_sync` kept, nothing recorded);
   - the ledger is read in last-write order, which TypeScript leaves
     unspecified.
 - **Two TypeScript defects, fixed in Go only** (feature-parity.md; the
@@ -880,7 +889,10 @@ varlatchd runs it every 30 seconds when `sync = on`.
   - a refusal by the outbound policy is not a failure;
   - a run out of budget yields;
   - a freeze mid-run yields, and nothing is leased while frozen;
-  - App Connection Targets wait;
+  - App Connection Targets push with a token minted once per run
+    (narrowed to the destination, never stored, its expiry never
+    recorded); a removed App or a refused mint fails the run as
+    `GitHub App: <reason>`;
   - the trigger scan skips no event (defect 8).
 
 ### The audit export's configuration (step 4.11a)
@@ -1741,6 +1753,19 @@ The server's packages:
   unfinished registrations, finalizing removes the App's local
   registration and key, after which the App can be imported elsewhere
   (`TestOrganizationDeletionEndsTheApp`).
+  Step 4.10b adds `listGitHubAppInstallations` (`Installations`, an
+  external effect signed as the App, audited as a use of its key) and what
+  App Connections mint with (`mint.go`, `key.go`; the Connections
+  themselves are `server/syncs`'). `github-mint-v0.22.0.json` and
+  `github-mint-v0.21.0.json` (`go-github-mint-fixture.test.ts`,
+  `TestMintFixtures`) replay 51 requests: installations, App Connections
+  created, checked and listed with tokens minted per use, and key
+  rotations, with every request sent to GitHub (bodies included, so the
+  narrowing is pinned). The rotated keys, sealed by Go, open to the PEM
+  given. Decision 4's tests (`syncs/app_effect_test.go`): a Security
+  Control change during a blocked creation, the App removed during one,
+  and the App re-keyed between a rotation's call and its final job
+  (`VERSION_CONFLICT`).
 - `server/access` (step 4.4b): the access structure (ADR-0015, ADR-0028,
   ADR-0029; `http/app.ts`, `domain/policy.ts`, `accessstepup.ts`), served
   by `server/httpserver/access.go`: Grants (listed, created, revoked, and

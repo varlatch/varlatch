@@ -159,14 +159,17 @@ func TestEveryOperationRoutedToStubOrBuilt(t *testing.T) {
 // that would not bind, all answer the same 501, and the backend is never
 // asked anything.
 func TestStubAnswersBeforeEverything(t *testing.T) {
-	s, b, _, _ := newTestServer(t, nil)
+	// Every /v1 operation is built: the test stubs three of them.
+	s, b, _, _ := newTestServer(t, func(o *Options) {
+		o.Stubbed = []string{rotateGitHubAppKeyPattern, listInstallationsPattern, pushSyncTargetPattern}
+	})
 	cases := []struct{ method, path, body string }{
 		{"POST", "/v1/organizations/acme/github-app/key", "{not json"},
 		{"POST", "/v1/organizations/acme/github-app/key", strings.Repeat("x", 4096)},
 		{"GET", "/v1/organizations/acme/github-app/installations", ""},
 		{"GET", "/v1/organizations/acme/github-app/installations?limit=not-a-number", ""},
-		{"POST", "/v1/organizations/acme/github-app/key", ""},
-		{"POST", "/v1/organizations/acme/github-app/key?wait=not-a-boolean", "{}"},
+		{"POST", "/v1/organizations/acme/projects/api/environments/development/sync-targets/core/push", "{not json"},
+		{"POST", "/v1/organizations/acme/projects/api/environments/development/sync-targets/core/push?wait=not-a-boolean", "{}"},
 	}
 	for _, c := range cases {
 		w := do(s, c.method, c.path, c.body, map[string]string{"Content-Type": "application/json", "Authorization": "Bearer nonsense"})
@@ -192,17 +195,23 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 	}
 }
 
-// A test-only wiring: an operation added to the built ones is served by
-// its generated handler, not the stub (here one this package does not
-// implement, so the handler is reached and fails as an internal error).
+// A test-only wiring: an operation stubbed, then added to the built ones,
+// is served by its generated handler, not the stub (the handler is reached
+// and refuses the bearer).
 func TestBuiltOperationLeavesTheStub(t *testing.T) {
-	s, _, _, _ := newTestServer(t, func(o *Options) { o.Built = []string{"GET /v1/organizations/{org}/github-app/installations"} })
-	w := do(s, "GET", "/v1/organizations/acme/github-app/installations", "", map[string]string{"Authorization": "Bearer x"})
+	s, _, _, _ := newTestServer(t, func(o *Options) {
+		o.Stubbed = []string{pushSyncTargetPattern}
+		o.Built = []string{pushSyncTargetPattern}
+	})
+	w := do(s, "POST", "/v1/organizations/acme/projects/api/environments/development/sync-targets/core/push", "{}", map[string]string{"Authorization": "Bearer x"})
 	if w.Code == http.StatusNotImplemented {
 		t.Fatalf("still the stub: %s", w.Body.String())
 	}
 	if _, err := New(Options{Backend: &fakeBackend{}, Built: []string{"GET /v1/nothing"}}); err == nil {
 		t.Error("an unknown operation was accepted as built")
+	}
+	if _, err := New(Options{Backend: &fakeBackend{}, Stubbed: []string{"GET /v1/nothing"}}); err == nil {
+		t.Error("an unknown operation was accepted as stubbed")
 	}
 }
 

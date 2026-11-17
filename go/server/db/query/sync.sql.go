@@ -338,7 +338,6 @@ WHERE t.revoked_at IS NULL AND t.state = 'active' AND o.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = t.organization_id AND f.lifted_at IS NULL)
   AND (t.next_attempt_at IS NULL OR t.next_attempt_at <= ?1)
   AND (t.needs_sync = 1 OR t.last_repair_at IS NULL OR t.last_repair_at < ?2)
-  AND c.credential_kind <> 'github-app'
 ORDER BY t.created_at, t.id
 `
 
@@ -348,7 +347,6 @@ type DueTargetsParams struct {
 }
 
 // runSyncOnce's candidates: ids only, every fact is read at the lease.
-// A Target on a GitHub App Connection waits for step 4.10's minting.
 func (q *Queries) DueTargets(ctx context.Context, arg DueTargetsParams) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, dueTargets, arg.Now, arg.RepairBefore)
 	if err != nil {
@@ -516,6 +514,40 @@ func (q *Queries) GuardedFailureCount(ctx context.Context, arg GuardedFailureCou
 	var failure_count int64
 	err := row.Scan(&failure_count)
 	return failure_count, err
+}
+
+const insertAppConnection = `-- name: InsertAppConnection :exec
+INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by, created_at,
+  credential_kind, github_app_id, github_installation_id)
+VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'github-app', ?, ?)
+`
+
+type InsertAppConnectionParams struct {
+	ID                   string
+	OrganizationID       string
+	Platform             string
+	BaseIdentity         string
+	Name                 string
+	CreatedBy            sql.NullString
+	CreatedAt            int64
+	GithubAppID          sql.NullString
+	GithubInstallationID sql.NullInt64
+}
+
+// An App Connection: no stored credential, the App and the installation.
+func (q *Queries) InsertAppConnection(ctx context.Context, arg InsertAppConnectionParams) error {
+	_, err := q.db.ExecContext(ctx, insertAppConnection,
+		arg.ID,
+		arg.OrganizationID,
+		arg.Platform,
+		arg.BaseIdentity,
+		arg.Name,
+		arg.CreatedBy,
+		arg.CreatedAt,
+		arg.GithubAppID,
+		arg.GithubInstallationID,
+	)
+	return err
 }
 
 const insertConnection = `-- name: InsertConnection :exec
@@ -1438,7 +1470,8 @@ func (q *Queries) RevokeTarget(ctx context.Context, arg RevokeTargetParams) erro
 }
 
 const runConnection = `-- name: RunConnection :one
-SELECT c.platform, c.base_identity, c.credential_envelope, c.version, c.revoked_at, c.credential_kind, o.wrapped_org_kek
+SELECT c.platform, c.base_identity, c.credential_envelope, c.version, c.revoked_at, c.credential_kind, c.github_app_id, c.github_installation_id,
+       o.wrapped_org_kek
 FROM platform_connections c
 JOIN organizations o ON o.id = ?1 AND o.deleted_at IS NULL
 WHERE c.id = ?2
@@ -1450,13 +1483,15 @@ type RunConnectionParams struct {
 }
 
 type RunConnectionRow struct {
-	Platform           string
-	BaseIdentity       string
-	CredentialEnvelope sql.NullString
-	Version            int64
-	RevokedAt          sql.NullInt64
-	CredentialKind     string
-	WrappedOrgKek      sql.NullString
+	Platform             string
+	BaseIdentity         string
+	CredentialEnvelope   sql.NullString
+	Version              int64
+	RevokedAt            sql.NullInt64
+	CredentialKind       string
+	GithubAppID          sql.NullString
+	GithubInstallationID sql.NullInt64
+	WrappedOrgKek        sql.NullString
 }
 
 // reconcileTarget: the Connection and the Organization's key, after the lease.
@@ -1470,6 +1505,8 @@ func (q *Queries) RunConnection(ctx context.Context, arg RunConnectionParams) (R
 		&i.Version,
 		&i.RevokedAt,
 		&i.CredentialKind,
+		&i.GithubAppID,
+		&i.GithubInstallationID,
 		&i.WrappedOrgKek,
 	)
 	return i, err

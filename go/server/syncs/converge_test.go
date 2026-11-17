@@ -131,28 +131,6 @@ func TestFreezeMidRunYields(t *testing.T) {
 	}
 }
 
-// TestAppConnectionTargetsWait: a Target on a GitHub App Connection is not
-// selected until step 4.10 mints its tokens: no lease, no failure, still
-// due.
-func TestAppConnectionTargetsWait(t *testing.T) {
-	w := newEngineWorld(t)
-	w.exec(`INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope)
-		SELECT 'gha_test', id, 1, 'varlatch-acme', 'Iv1.x', 'acme', 2, 'organization', '{}' FROM organizations`)
-	w.exec(`UPDATE platform_connections SET credential_kind = 'github-app', credential_envelope = NULL, github_app_id = 'gha_test',
-		github_installation_id = 7 WHERE name = 'GitHub'`)
-	w.engine.RunOnce(context.Background(), syncs.RunOptions{})
-	for _, r := range w.targets() {
-		if r["canonical_destination"] == `["github-actions","acme","api"]` && (r["generation"] != int64(0) || r["needs_sync"] != int64(1) || r["last_result"] != nil) {
-			t.Errorf("the App Connection's Target ran: %v", r)
-		}
-	}
-	for _, line := range w.fake.take() {
-		if strings.Contains(line, "/repos/acme/api/") {
-			t.Errorf("sent for the App Connection's Target: %s", line)
-		}
-	}
-}
-
 // TestTriggerScanSkipsNoEvent: TypeScript defect 8, fixed in Go. With 600
 // events waiting, the scan reads them in order, 500 then 100: the event at
 // event_order 99 (which comes after "100" to "599" as text) marks its
