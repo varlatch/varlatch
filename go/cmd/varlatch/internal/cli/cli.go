@@ -89,6 +89,8 @@ func (r *Run) Getenv(key string) string {
 type exitError struct {
 	message string
 	code    int
+	// silent: the command printed what it had to say (process.exitCode).
+	silent bool
 }
 
 func (e *exitError) Error() string { return e.message }
@@ -96,6 +98,10 @@ func (e *exitError) Error() string { return e.message }
 // Fail is the error that prints message on stderr and exits with code
 // (apps/cli/src/main.ts fail()).
 func Fail(message string, code int) error { return &exitError{message: message, code: code} }
+
+// ExitWith ends a command that has printed its output with code, as
+// setting process.exitCode does: nothing more is printed.
+func ExitWith(code int) error { return &exitError{code: code, silent: true} }
 
 // UsageError is a usage error: message on stderr, exit 64 (main.ts usageError()).
 func UsageError(message string) error { return Fail(message, ExitUsage) }
@@ -180,7 +186,9 @@ func (r *Run) finish(err error) int {
 		// was instead (go/README.md, the Go CLI's accepted differences).
 		e = &exitError{message: "varlatch: " + err.Error(), code: ExitFailure}
 	}
-	fmt.Fprintln(r.Stderr, jsval.NodeText(e.message))
+	if !e.silent {
+		fmt.Fprintln(r.Stderr, jsval.NodeText(e.message))
+	}
 	if r.everyFailureIsOne {
 		return ExitFailure
 	}
