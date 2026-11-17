@@ -15,6 +15,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/githubapps"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/syncs"
 )
 
 // The Organization's GitHub App (ADR-0047; ADR-0059 step 4.10a), as
@@ -34,17 +35,21 @@ const (
 	attachRegistrationPattern   = "POST /v1/organizations/{org}/github-app/registrations/{registration}/attach"
 	discardRegistrationPattern  = "DELETE /v1/organizations/{org}/github-app/registrations/{registration}"
 	importGitHubAppPattern      = "POST /v1/organizations/{org}/github-app/import"
+	rotateGitHubAppKeyPattern   = "POST /v1/organizations/{org}/github-app/key"
+	listInstallationsPattern    = "GET /v1/organizations/{org}/github-app/installations"
 	githubAppRoute              = "/v1/organizations/:org/github-app"
 	registrationsRoute          = "/v1/organizations/:org/github-app/registrations"
 	completeRoute               = "/v1/organizations/:org/github-app/registrations/complete"
 	attachRoute                 = "/v1/organizations/:org/github-app/registrations/:registration/attach"
 	registrationRoute           = "/v1/organizations/:org/github-app/registrations/:registration"
 	importRoute                 = "/v1/organizations/:org/github-app/import"
+	keyRoute                    = "/v1/organizations/:org/github-app/key"
+	installationsRoute          = "/v1/organizations/:org/github-app/installations"
 )
 
 func init() {
 	for _, p := range []string{getGitHubAppPattern, removeGitHubAppPattern, startRegistrationPattern, completeRegistrationPattern,
-		attachRegistrationPattern, discardRegistrationPattern, importGitHubAppPattern} {
+		attachRegistrationPattern, discardRegistrationPattern, importGitHubAppPattern, rotateGitHubAppKeyPattern, listInstallationsPattern} {
 		readsItself[p] = true
 	}
 	// The generated binder needs appId; the route reads the request's own.
@@ -66,6 +71,12 @@ func (r reply) VisitDiscardGitHubAppRegistrationResponse(w http.ResponseWriter) 
 	return r.visit(w)
 }
 func (r reply) VisitImportGitHubAppResponse(w http.ResponseWriter) error { return r.visit(w) }
+func (r reply) VisitRotateGitHubAppKeyResponse(w http.ResponseWriter) error {
+	return r.visit(w)
+}
+func (r reply) VisitListGitHubAppInstallationsResponse(w http.ResponseWriter) error {
+	return r.visit(w)
+}
 
 // githubAppService is the operations' server/githubapps.
 func (o *operations) githubAppService() *githubapps.Service {
@@ -137,6 +148,10 @@ var (
 		{name: "privateKey", schema: zString{min: 1, max: 10_000}},
 	}
 	removeGitHubAppQuery = zObject{{name: "appId", schema: zString{min: 1, max: 100}}}
+	rotateKeyBody        = zObject{
+		{name: "privateKey", schema: zString{min: 1, max: 10_000}},
+		{name: "expectedVersion", schema: zInt{min: 1}},
+	}
 )
 
 // parsedBody is c.req.json() through a zod schema.
@@ -351,4 +366,67 @@ func (o *operations) RemoveGitHubApp(ctx context.Context, _ api.RemoveGitHubAppR
 		return nil, err
 	}
 	return reply{status: http.StatusNoContent}, nil
+}
+
+// RotateGitHubAppKey is POST …/github-app/key: github_app.replace_key,
+// protected, behind every App Target's re-authorization gate; 200 with the
+// rotated App or the failed check, never cached.
+func (o *operations) RotateGitHubAppKey(ctx context.Context, _ api.RotateGitHubAppKeyRequestObject) (api.RotateGitHubAppKeyResponseObject, error) {
+	if err := o.assertSyncEnabled(); err != nil {
+		return nil, err
+	}
+	q, err := o.syncManage(ctx, keyRoute, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := o.assertGitHubAdapterAllowed(); err != nil {
+		return nil, err
+	}
+	body, err := parsedBody(ctx, rotateKeyBody)
+	if err != nil {
+		return nil, err
+	}
+	version, _ := body.Get("expectedVersion")
+	in := syncs.RotateInput{PrivateKey: str(body, "privateKey"), ExpectedVersion: int64(version.(float64))}
+	gate := syncs.DisclosureGate(q.p, q.org.ID, requestIDOf(q.r),
+		"Rotating the GitHub App's key re-authorizes every Sync Target on its Connections; you lack disclosure authority for at least one")
+	type result struct {
+		out     syncs.Rotation
+		reports []auth.PendingReport
+	}
+	res, err := security.WithApproval(ctx, o.s.opts.Auth, auth.RequesterOf(q.p), func() (result, error) {
+		out, reports, err := o.syncService().RotateAppKey(ctx, q.syncRequest(ctx), q.org, in, gate)
+		return result{out, reports}, err
+	})
+	if err != nil {
+		return nil, q.refused(ctx, err)
+	}
+	if err := q.written(ctx, res.reports); err != nil {
+		return nil, err
+	}
+	writerOf(ctx).Header().Set("Cache-Control", "no-store")
+	return ok(res.out.JS()), nil
+}
+
+// ListGitHubAppInstallations is GET …/github-app/installations: where the
+// App is installed, read from GitHub as the App.
+func (o *operations) ListGitHubAppInstallations(ctx context.Context, _ api.ListGitHubAppInstallationsRequestObject) (api.ListGitHubAppInstallationsResponseObject, error) {
+	if err := o.assertSyncEnabled(); err != nil {
+		return nil, err
+	}
+	q, err := o.syncManage(ctx, installationsRoute, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := o.assertGitHubAdapterAllowed(); err != nil {
+		return nil, err
+	}
+	out, reports, err := o.githubAppService().Installations(ctx, q.p, q.org)
+	if err != nil {
+		return nil, q.refused(ctx, err)
+	}
+	if err := q.written(ctx, reports); err != nil {
+		return nil, err
+	}
+	return ok(out), nil
 }

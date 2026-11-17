@@ -392,3 +392,9 @@ WHERE revoked_at IS NULL AND next_attempt_at IS NOT NULL AND substr(last_result,
 -- requestPush.
 UPDATE sync_targets SET needs_sync = 1, next_attempt_at = NULL
 WHERE id = ? AND organization_id = ? AND revoked_at IS NULL RETURNING id;
+
+-- name: InsertAppConnection :exec
+-- An App Connection: no stored credential, the App and the installation.
+INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by, created_at,
+  credential_kind, github_app_id, github_installation_id)
+VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'github-app', ?, ?);

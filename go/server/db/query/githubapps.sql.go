@@ -177,6 +177,37 @@ func (q *Queries) GitHubAppConnections(ctx context.Context, githubAppID sql.Null
 	return items, nil
 }
 
+const gitHubAppForCredential = `-- name: GitHubAppForCredential :one
+SELECT id, github_app_id, client_id, key_envelope, removed_at FROM github_apps WHERE id = ? AND organization_id = ?
+`
+
+type GitHubAppForCredentialParams struct {
+	ID             string
+	OrganizationID string
+}
+
+type GitHubAppForCredentialRow struct {
+	ID          string
+	GithubAppID int64
+	ClientID    string
+	KeyEnvelope sql.NullString
+	RemovedAt   sql.NullInt64
+}
+
+// An App Connection's App, removed or not (appCredentialFrom).
+func (q *Queries) GitHubAppForCredential(ctx context.Context, arg GitHubAppForCredentialParams) (GitHubAppForCredentialRow, error) {
+	row := q.db.QueryRowContext(ctx, gitHubAppForCredential, arg.ID, arg.OrganizationID)
+	var i GitHubAppForCredentialRow
+	err := row.Scan(
+		&i.ID,
+		&i.GithubAppID,
+		&i.ClientID,
+		&i.KeyEnvelope,
+		&i.RemovedAt,
+	)
+	return i, err
+}
+
 const gitHubAppIDInUse = `-- name: GitHubAppIDInUse :one
 SELECT count(*) FROM github_apps WHERE github_app_id = ? AND removed_at IS NULL
 `
@@ -313,6 +344,101 @@ func (q *Queries) GitHubAppRegistrationByState(ctx context.Context, arg GitHubAp
 		&i.EndedAt,
 	)
 	return i, err
+}
+
+const gitHubAppTargetRows = `-- name: GitHubAppTargetRows :many
+SELECT t.id, t.organization_id, t.project_id, t.environment_id, t.connection_id, t.destination, t.canonical_destination, t.mapping,
+       t.remove_orphans, t.redeploy, t.state, t.disabled_reason, t.failure_count, t.needs_sync, t.next_attempt_at, t.last_attempt_at,
+       t.last_result, t.last_notes, t.last_repair_at, t.created_at, t.revoked_at, t.version, t.updated_at, t.redeploy_owed, t.redeploy_paid,
+       t.last_drift_at, t.last_drift_count, t.last_drift_names, t.last_drift_event_id
+FROM sync_targets t JOIN platform_connections c ON c.id = t.connection_id
+WHERE c.github_app_id = ? AND c.revoked_at IS NULL AND t.revoked_at IS NULL ORDER BY t.id
+`
+
+type GitHubAppTargetRowsRow struct {
+	ID                   string
+	OrganizationID       string
+	ProjectID            string
+	EnvironmentID        string
+	ConnectionID         string
+	Destination          string
+	CanonicalDestination string
+	Mapping              string
+	RemoveOrphans        bool
+	Redeploy             bool
+	State                string
+	DisabledReason       sql.NullString
+	FailureCount         int64
+	NeedsSync            bool
+	NextAttemptAt        sql.NullInt64
+	LastAttemptAt        sql.NullInt64
+	LastResult           sql.NullString
+	LastNotes            sql.NullString
+	LastRepairAt         sql.NullInt64
+	CreatedAt            int64
+	RevokedAt            sql.NullInt64
+	Version              int64
+	UpdatedAt            sql.NullInt64
+	RedeployOwed         int64
+	RedeployPaid         int64
+	LastDriftAt          sql.NullInt64
+	LastDriftCount       sql.NullInt64
+	LastDriftNames       sql.NullString
+	LastDriftEventID     sql.NullString
+}
+
+// readAppTargets: the live Targets of the App's live Connections, in id order.
+func (q *Queries) GitHubAppTargetRows(ctx context.Context, githubAppID sql.NullString) ([]GitHubAppTargetRowsRow, error) {
+	rows, err := q.db.QueryContext(ctx, gitHubAppTargetRows, githubAppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GitHubAppTargetRowsRow
+	for rows.Next() {
+		var i GitHubAppTargetRowsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.ConnectionID,
+			&i.Destination,
+			&i.CanonicalDestination,
+			&i.Mapping,
+			&i.RemoveOrphans,
+			&i.Redeploy,
+			&i.State,
+			&i.DisabledReason,
+			&i.FailureCount,
+			&i.NeedsSync,
+			&i.NextAttemptAt,
+			&i.LastAttemptAt,
+			&i.LastResult,
+			&i.LastNotes,
+			&i.LastRepairAt,
+			&i.CreatedAt,
+			&i.RevokedAt,
+			&i.Version,
+			&i.UpdatedAt,
+			&i.RedeployOwed,
+			&i.RedeployPaid,
+			&i.LastDriftAt,
+			&i.LastDriftCount,
+			&i.LastDriftNames,
+			&i.LastDriftEventID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const gitHubAppTargets = `-- name: GitHubAppTargets :many
@@ -492,6 +618,17 @@ func (q *Queries) OrganizationGitHubApp(ctx context.Context, organizationID stri
 	return i, err
 }
 
+const queueGitHubAppTargets = `-- name: QueueGitHubAppTargets :exec
+UPDATE sync_targets SET needs_sync = 1, next_attempt_at = NULL
+WHERE revoked_at IS NULL AND connection_id IN (SELECT id FROM platform_connections WHERE github_app_id = ? AND revoked_at IS NULL)
+`
+
+// A key rotation enqueues every live Target of the App's live Connections directly.
+func (q *Queries) QueueGitHubAppTargets(ctx context.Context, githubAppID sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, queueGitHubAppTargets, githubAppID)
+	return err
+}
+
 const removeGitHubApp = `-- name: RemoveGitHubApp :exec
 UPDATE github_apps SET removed_at = ?1, key_envelope = NULL, version = version + 1, updated_at = ?1 WHERE id = ?2
 `
@@ -503,6 +640,22 @@ type RemoveGitHubAppParams struct {
 
 func (q *Queries) RemoveGitHubApp(ctx context.Context, arg RemoveGitHubAppParams) error {
 	_, err := q.db.ExecContext(ctx, removeGitHubApp, arg.Now, arg.ID)
+	return err
+}
+
+const replaceGitHubAppKey = `-- name: ReplaceGitHubAppKey :exec
+UPDATE github_apps SET key_envelope = ?1, version = version + 1, updated_at = ?2
+WHERE id = ?3
+`
+
+type ReplaceGitHubAppKeyParams struct {
+	KeyEnvelope sql.NullString
+	UpdatedAt   sql.NullInt64
+	ID          string
+}
+
+func (q *Queries) ReplaceGitHubAppKey(ctx context.Context, arg ReplaceGitHubAppKeyParams) error {
+	_, err := q.db.ExecContext(ctx, replaceGitHubAppKey, arg.KeyEnvelope, arg.UpdatedAt, arg.ID)
 	return err
 }
 

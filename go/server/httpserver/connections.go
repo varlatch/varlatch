@@ -154,11 +154,19 @@ func (o *operations) CreatePlatformConnection(ctx context.Context, _ api.CreateP
 	}
 	if obj, isObject := raw.(jsvalue.Object); isObject {
 		if kind, _ := obj.Get("credentialKind"); kind == "github-app" {
-			if _, err := zParse(appConnectionBody, raw); err != nil {
+			parsed, err := zParse(appConnectionBody, raw)
+			if err != nil {
 				return nil, err
 			}
-			return nil, q.refused(ctx, domainerr.New(syncs.NotImplementedYet,
-				"A GitHub App Connection is not built yet in this varlatchd (ADR-0059 step 4.10: the Go server is being written)"))
+			body := parsed.(jsvalue.Object)
+			installation, _ := body.Get("installationId")
+			name, _ := body.Get("name")
+			in := syncs.AppInput{InstallationID: int64(installation.(float64)), Name: name.(string)}
+			// Under enforce, GitHub is asked for the installation only after
+			// the precheck found an approved intent (amendment D).
+			return o.createdConnection(ctx, q, func() (syncs.Connection, []auth.PendingReport, error) {
+				return o.syncService().CreateApp(ctx, q.syncRequest(ctx), q.org, in)
+			})
 		}
 	}
 	parsed, err := zParse(tokenConnectionBody, raw)
@@ -171,12 +179,20 @@ func (o *operations) CreatePlatformConnection(ctx context.Context, _ api.CreateP
 		return nil, domainerr.New("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter")
 	}
 	in := syncs.CreateInput{Platform: str("platform"), BaseIdentity: str("baseIdentity"), Name: str("name"), Credential: str("credential")}
+	return o.createdConnection(ctx, q, func() (syncs.Connection, []auth.PendingReport, error) {
+		return o.syncService().Create(ctx, q.syncRequest(ctx), q.org, in)
+	})
+}
+
+// createdConnection runs a Connection's creation behind its approval: 201
+// with the Connection, never cached.
+func (o *operations) createdConnection(ctx context.Context, q *orgRequest, create func() (syncs.Connection, []auth.PendingReport, error)) (api.CreatePlatformConnectionResponseObject, error) {
 	type result struct {
 		c       syncs.Connection
 		reports []auth.PendingReport
 	}
 	res, err := security.WithApproval(ctx, o.s.opts.Auth, auth.RequesterOf(q.p), func() (result, error) {
-		c, reports, err := o.syncService().Create(ctx, q.syncRequest(ctx), q.org, in)
+		c, reports, err := create()
 		return result{c, reports}, err
 	})
 	if err != nil {

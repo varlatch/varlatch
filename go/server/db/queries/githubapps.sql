@@ -91,3 +91,25 @@ WHERE revoked_at IS NULL AND connection_id IN (
 
 -- name: RemoveGitHubApp :exec
 UPDATE github_apps SET removed_at = @now, key_envelope = NULL, version = version + 1, updated_at = @now WHERE id = @id;
+
+-- name: GitHubAppForCredential :one
+-- An App Connection's App, removed or not (appCredentialFrom).
+SELECT id, github_app_id, client_id, key_envelope, removed_at FROM github_apps WHERE id = ? AND organization_id = ?;
+
+-- name: GitHubAppTargetRows :many
+-- readAppTargets: the live Targets of the App's live Connections, in id order.
+SELECT t.id, t.organization_id, t.project_id, t.environment_id, t.connection_id, t.destination, t.canonical_destination, t.mapping,
+       t.remove_orphans, t.redeploy, t.state, t.disabled_reason, t.failure_count, t.needs_sync, t.next_attempt_at, t.last_attempt_at,
+       t.last_result, t.last_notes, t.last_repair_at, t.created_at, t.revoked_at, t.version, t.updated_at, t.redeploy_owed, t.redeploy_paid,
+       t.last_drift_at, t.last_drift_count, t.last_drift_names, t.last_drift_event_id
+FROM sync_targets t JOIN platform_connections c ON c.id = t.connection_id
+WHERE c.github_app_id = ? AND c.revoked_at IS NULL AND t.revoked_at IS NULL ORDER BY t.id;
+
+-- name: ReplaceGitHubAppKey :exec
+UPDATE github_apps SET key_envelope = sqlc.arg(key_envelope), version = version + 1, updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id);
+
+-- name: QueueGitHubAppTargets :exec
+-- A key rotation enqueues every live Target of the App's live Connections directly.
+UPDATE sync_targets SET needs_sync = 1, next_attempt_at = NULL
+WHERE revoked_at IS NULL AND connection_id IN (SELECT id FROM platform_connections WHERE github_app_id = ? AND revoked_at IS NULL);

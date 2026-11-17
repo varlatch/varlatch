@@ -223,6 +223,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     // Step 4.10a: the GitHub App, its registration and import.
     "getGitHubApp", "removeGitHubApp", "startGitHubAppRegistration", "completeGitHubAppRegistration",
     "attachGitHubAppRegistration", "discardGitHubAppRegistration", "importGitHubApp",
+    // Step 4.10b: the App's key rotation and installations (App Connections are createPlatformConnection's).
+    "rotateGitHubAppKey", "listGitHubAppInstallations",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is

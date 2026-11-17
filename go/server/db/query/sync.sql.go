@@ -518,6 +518,40 @@ func (q *Queries) GuardedFailureCount(ctx context.Context, arg GuardedFailureCou
 	return failure_count, err
 }
 
+const insertAppConnection = `-- name: InsertAppConnection :exec
+INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by, created_at,
+  credential_kind, github_app_id, github_installation_id)
+VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'github-app', ?, ?)
+`
+
+type InsertAppConnectionParams struct {
+	ID                   string
+	OrganizationID       string
+	Platform             string
+	BaseIdentity         string
+	Name                 string
+	CreatedBy            sql.NullString
+	CreatedAt            int64
+	GithubAppID          sql.NullString
+	GithubInstallationID sql.NullInt64
+}
+
+// An App Connection: no stored credential, the App and the installation.
+func (q *Queries) InsertAppConnection(ctx context.Context, arg InsertAppConnectionParams) error {
+	_, err := q.db.ExecContext(ctx, insertAppConnection,
+		arg.ID,
+		arg.OrganizationID,
+		arg.Platform,
+		arg.BaseIdentity,
+		arg.Name,
+		arg.CreatedBy,
+		arg.CreatedAt,
+		arg.GithubAppID,
+		arg.GithubInstallationID,
+	)
+	return err
+}
+
 const insertConnection = `-- name: InsertConnection :exec
 INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)

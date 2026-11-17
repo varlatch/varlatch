@@ -143,6 +143,10 @@ type Options struct {
 	// served by the generated strict handler: a pattern whose operation
 	// this package does not implement answers 500 if it is ever reached.
 	Built []string
+	// Stubbed takes operations, by route pattern, out of the ones this
+	// build has, for tests of the stub itself now that every /v1 operation
+	// is built: each answers the shared stub. Built wins over it.
+	Stubbed []string
 }
 
 // BuiltOperations are the /v1 operations this build serves, by the route
@@ -275,7 +279,7 @@ var BuiltOperations = []string{
 	pushSyncTargetPattern,
 	// Step 4.10a: the GitHub App, its registration and import (githubapp.go).
 	getGitHubAppPattern, removeGitHubAppPattern, startRegistrationPattern, completeRegistrationPattern,
-	attachRegistrationPattern, discardRegistrationPattern, importGitHubAppPattern,
+	attachRegistrationPattern, discardRegistrationPattern, importGitHubAppPattern, rotateGitHubAppKeyPattern, listInstallationsPattern,
 }
 
 // Server is the handler.
@@ -316,7 +320,16 @@ func New(opts Options) (*Server, error) {
 		s.oidc = &oidc.Service{Writer: opts.Writer, Policy: opts.Outbound, Verifier: &oidc.Verifier{Fetch: fetch, Now: opts.Now}, Now: opts.Now, Log: opts.Log}
 	}
 	built := map[string]bool{}
-	for _, p := range append(append([]string{}, BuiltOperations...), opts.Built...) {
+	for _, p := range BuiltOperations {
+		built[p] = true
+	}
+	for _, p := range opts.Stubbed {
+		if !built[p] {
+			return nil, fmt.Errorf("httpserver: %s is not a built operation", p)
+		}
+		delete(built, p)
+	}
+	for _, p := range opts.Built {
 		built[p] = true
 	}
 	mux := &operationMux{ServeMux: http.NewServeMux(), built: built, wrap: s.builtOperation}
