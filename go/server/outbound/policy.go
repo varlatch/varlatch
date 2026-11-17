@@ -185,6 +185,11 @@ func (p *Policy) CheckURL(ctx context.Context, u whatwg.URL, lookup Resolver) (C
 	if !ok {
 		return CheckOutcome{}, ErrNotChecked
 	}
+	if rd, address, ok := p.redirect(d); ok {
+		// The conformance build's override, decided as the dial decides it.
+		v := p.Decide(rd, []string{address})
+		return CheckOutcome{Outcome: outcome(v), Destination: rd, Addresses: []string{address}, Verdict: &v}, nil
+	}
 	if whatwg.IsIP(d.Host) != 0 {
 		v := p.Decide(d, []string{d.Host})
 		return CheckOutcome{Outcome: outcome(v), Destination: d, Addresses: []string{d.Host}, Verdict: &v}, nil
@@ -338,7 +343,11 @@ func (p *Policy) dialer(scheme string) func(ctx context.Context, network, addr s
 		}
 		d := Destination{Scheme: scheme, Host: NormalizeHost(host), Port: port}
 		var answers []Answer
-		if fam := whatwg.IsIP(d.Host); fam != 0 {
+		if rd, address, ok := p.redirect(d); ok {
+			// The conformance build's override (redirect_conformance.go):
+			// decided below like any answer.
+			d, answers, portText = rd, []Answer{{Address: address, Family: whatwg.IsIP(address)}}, strconv.Itoa(rd.Port)
+		} else if fam := whatwg.IsIP(d.Host); fam != 0 {
 			answers = []Answer{{Address: d.Host, Family: fam}}
 		} else {
 			if answers, err = p.Lookup(ctx, d.Host); err != nil {

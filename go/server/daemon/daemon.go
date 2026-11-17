@@ -244,6 +244,10 @@ func serve(opts Options, h *hooks) int {
 	if b, err := json.Marshal(settings); err == nil {
 		log.Info("storage settings", "settings", string(b))
 	}
+	// A conformance build warns when its host override is on.
+	if conformanceWarnings != nil {
+		conformanceWarnings(log)
+	}
 	if observeSettings != nil {
 		observeSettings(settings)
 	}
