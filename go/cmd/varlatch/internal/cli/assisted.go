@@ -5,6 +5,8 @@ package cli
 import (
 	"regexp"
 	"slices"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 )
 
 // Assisted mode (ADR-0043 Decision 3), a port of apps/cli/src/assisted.ts:
@@ -129,7 +131,7 @@ func TakeApprovalOption(argv []string) (rest []string, approval string, problem 
 		case given:
 			problem = approvalOption + " given twice"
 		case !approvalID.MatchString(own[i+1]):
-			problem = approvalOption + ": not an approval id: " + own[i+1]
+			problem = approvalOption + ": not an approval id: " + clientctx.MaskURLInValue(own[i+1])
 		default:
 			approval, given = own[i+1], true
 		}

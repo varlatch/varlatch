@@ -5,6 +5,8 @@ package cli
 import (
 	"slices"
 	"strings"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 )
 
 // Strict option parsing for commands that write files (ADR-0043 Decision
@@ -65,7 +67,7 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 	parsed := &ParsedOptions{Values: map[string]string{}, Lists: map[string][]string{}}
 	positional := func(arg string) error {
 		if len(parsed.Positionals) >= spec.Positionals {
-			return &OptionsError{"unexpected argument " + arg}
+			return &OptionsError{"unexpected argument " + clientctx.MaskURLInValue(arg)}
 		}
 		parsed.Positionals = append(parsed.Positionals, arg)
 		return nil
@@ -134,7 +136,7 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 			if spec.EndOfOptions {
 				hint = ` (a value that begins with "-" goes after --)`
 			}
-			return nil, &OptionsError{"unknown option " + arg + hint}
+			return nil, &OptionsError{"unknown option " + clientctx.MaskURLInValue(arg) + hint}
 		}
 		if err := positional(arg); err != nil {
 			return nil, err

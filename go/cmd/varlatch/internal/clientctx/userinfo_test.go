@@ -3,6 +3,7 @@
 package clientctx
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -49,91 +50,6 @@ func TestMaskUserinfo(t *testing.T) {
 	} {
 		if got := MaskUserinfo(in); got != want {
 			t.Errorf("MaskUserinfo(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestMaskUserinfoInText(t *testing.T) {
-	for in, want := range map[string]string{
-		"3:  server = \"https://u:p@a@h.example/x@y\" # and http://k@h2": "3:  server = \"https://[redacted]@h.example/x@y\" # and http://[redacted]@h2",
-		// A list: each URL's host ends at the separator after its "@", so each is masked on its own.
-		"or http:/u:p@h3, http:\\\\u:p@h4, HTTP:u:p@h5":                                              "or http:/[redacted]@h3, http:\\\\[redacted]@h4, HTTP:[redacted]@h5",
-		"Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\\\[redacted]@127.0.0.1:3).": "Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\\\[redacted]@127.0.0.1:3).",
-		"stored for http:///u:p@127.0.0.1:2, http:u:p@127.0.0.1:4; pass":                             "stored for http:///[redacted]@127.0.0.1:2, http:[redacted]@127.0.0.1:4; pass",
-		// But a scheme with no "@" before it is still inside the user name or password.
-		"https://alice:ftp: x@h, http:/u:p@h2": "https://[redacted]@h, http:/[redacted]@h2",
-		// Sol, 5.1b round 2 (#265): a user name or password with spaces or quotes.
-		`3:  server = "https://alice:fake pass@example.com" x`:                                                      `3:  server = "https://[redacted]@example.com" x`,
-		`3:  server = "https://alice:fa"ke@example.com" x`:                                                          `3:  server = "https://[redacted]@example.com" x`,
-		"varlatch server: unexpected argument https://alice:fake-pass@example.com\nUsage: varlatch server [--json]": "varlatch server: unexpected argument https://[redacted]@example.com\nUsage: varlatch server [--json]",
-		// Sol, #265 round 1, P1: a URL-like string inside the password does not start a second URL.
-		"varlatch server: unexpected argument https://alice:ftp:@example.com\nUsage: varlatch server [--json]": "varlatch server: unexpected argument https://[redacted]@example.com\nUsage: varlatch server [--json]",
-		`3:  server = "https://alice:ftp:@example.com" x`:                                                      `3:  server = "https://[redacted]@example.com" x`,
-		`3:  server = "https://alice:ftp://x:@example.com"`:                                                    `3:  server = "https://[redacted]@example.com"`,
-		// P2: escaped quotes and escaped "@" (TOML, Go's %q); the value is shown decoded, masked and quoted again.
-		`3:  server = "https://alice:fake\"pass@example.com" x`:        `3:  server = "https://[redacted]@example.com" x`,
-		`3:  server = "https://alice:fake\u0040pass@example.com" x`:    `3:  server = "https://[redacted]@example.com" x`,
-		`--file needs <path>=<name>, got "https://alice:fake\"pass@h"`: `--file needs <path>=<name>, got "https://[redacted]@h"`,
-		`got "https://alice:fake\\pass@h=x"`:                           `got "https://[redacted]@h=x"`,
-		// P2: authority forms: a tab in the scheme, a newline in the password, a host that does not parse.
-		"https\t:/alice:fake-pass@h":                     "https\t:/[redacted]@h",
-		"ht\ttps:/alice:fake-pass@h and more":            "ht\ttps:/[redacted]@h and more",
-		"https://alice:fa\nke-pass@h":                    "https://[redacted]@h",
-		`3:  server = "https://alice:fa\nke@h" x`:        `3:  server = "https://[redacted]@h" x`,
-		`https://[bad\alice:fake-pass@h`:                 `https://[redacted]@h`,
-		`3:  server = "https://[bad\\alice:fake-pass@h"`: `3:  server = "https://[redacted]@h"`,
-		// P2: an unescaped closing quote ends the authority: the next string's "@" is not taken.
-		`server = "https://example.com" "ops@example.net"`:  `server = "https://example.com" "ops@example.net"`,
-		`server = "https://example.com", "ops@example.net"`: `server = "https://example.com", "ops@example.net"`,
-		// A quote glued inside a value is no string boundary: masked through it.
-		`server = "https://alice:fa"ke"@example.com" x`: `server = "https://[redacted]@example.com" x`,
-		// A plain URL that runs into a quoted string masks across it.
-		`reach https://alice:fake pass "x@h"`: `reach https://[redacted]@h"`,
-		// Kept: no URL, no "@" in an authority, a special scheme's backslash path, a URL in a string followed by an email.
-		"server = \"https://h.example\" # mail@example.com":            "server = \"https://h.example\" # mail@example.com",
-		"[-d <data>|@<file>|@-]":                                       "[-d <data>|@<file>|@-]",
-		`server = "https://example.com\\path@segment"`:                 `server = "https://example.com\\path@segment"`,
-		`https://example.com\path@segment`:                             `https://example.com\path@segment`,
-		"me@example.com and https://h.example/a@b":                     "me@example.com and https://h.example/a@b",
-		`mailto:user:ftp:pw@h is not one`:                              `mailto:user:ftp:[redacted]@h is not one`,
-		"varlatch: unknown command https://h.example\n\nUsage: # x @y": "varlatch: unknown command https://h.example\n\nUsage: # x @y",
-		// Sol, #265 round 2, P1: a scheme after "--" (or any character) still starts a URL.
-		"varlatch server: unknown option --https://alice:fake-review-pass@example.com": "varlatch server: unknown option --https://[redacted]@example.com",
-		"see xhttps://alice:fake@h and a-ftp:/bob:pw@h2":                               "see xhttps://[redacted]@h and a-ftp:/[redacted]@h2",
-		// P1: tab, CR and LF never end an authority (WHATWG drops them): a "scheme:" after one is in the password.
-		"https://alice:pass\tlabel:tail@example.com":   "https://[redacted]@example.com",
-		"https://alice:pass\r\nlabel:tail@example.com": "https://[redacted]@example.com",
-		// P2: quoting. A quoted URL followed by a space and "@=x" (WHATWG reads one authority across the quote);
-		// glued; triple-quoted with \U00000040; a %q value holding a TOML string with an escaped "@" or quote.
-		`server = "https://alice:fake" @=x`:                                    `server = "https://[redacted]@=x`,
-		`server = "https://alice:fake"@=x`:                                     `server = "https://[redacted]@=x`,
-		"3:  server = \"\"\"https://alice:fake\\U00000040h\"\"\"\n4:  x = = 1": "3:  server = \"https://[redacted]@h\"\n4:  x = = 1",
-		`got "server = \"https://alice:fake\\u0040x\""`:                        `got "server = \"https://[redacted]@x\""`,
-		`got "server = \"https://alice:fa\\\"ke@x\""`:                          `got "server = \"https://[redacted]@x\""`,
-		"3:  server = 'https://alice:fake@h'":                                  "3:  server = 'https://[redacted]@h'",
-		"3:  server = '''https://alice:fake@h'''":                              "3:  server = \"https://[redacted]@h\"",
-		`unquoted https://alice:fake@h`:                                        `unquoted https://[redacted]@h`,
-		// WHATWG reads a user name across a line break (it drops newlines): masked.
-		"line one https://h.example\nnext line has me@x.example": "line one https://[redacted]@x.example",
-	} {
-		if got := MaskUserinfoInText(in); got != want {
-			t.Errorf("MaskUserinfoInText(%q) =\n %q, want\n %q", in, got, want)
-		}
-	}
-}
-
-func TestMaskUserinfoInArgument(t *testing.T) {
-	for in, want := range map[string]string{
-		"https://alice:ftp:@example.com":     "https://[redacted]@example.com",
-		`https://alice:fa"ke@h`:              `https://[redacted]@h`,
-		"--server=https://alice:fake-pass@h": "--server=https://[redacted]@h",
-		"x=https://a:b@h,y=http:/c:d@h2":     "x=https://[redacted]@h,y=http:/[redacted]@h2",
-		"https://alice:pa/ss@h":              "https://[redacted]@h",
-		"me@example.com":                     "me@example.com",
-		`https://example.com\path@segment`:   `https://example.com\path@segment`,
-	} {
-		if got := MaskUserinfoInArgument(in); got != want {
-			t.Errorf("MaskUserinfoInArgument(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -191,41 +107,162 @@ func TestMaskUserinfoAgreesWithWHATWG(t *testing.T) {
 	}
 }
 
-// TestMaskUserinfoInTextAgreesWithWHATWG: URLs (with and without credentials,
-// nested schemes, quotes, escaped quotes, "@", spaces, tabs and newlines in
-// their parts, hosts that do not parse) in the contexts failure text puts
-// them: alone, in a quoted varlatch.toml line, next to another quoted
-// string holding an email, quoted with Go's %q, in prose before an email,
-// glued to a quote, and in a list of servers. It fails on any leak, and on
-// any change to text
-// where the URL has no user name or password and the context is not
-// ambiguous.
-func TestMaskUserinfoInTextAgreesWithWHATWG(t *testing.T) {
-	schemes := []string{"https", "HTTPS", "ht\ttps", "http", "ftp", "foo", "mailto"}
+// failSafeReproducers are every leak a reviewer found in a free-text masker
+// (#251 round 2, #265 rounds 1 to 3), each with what must never show. The
+// fail-safe alone must mask every one, whatever the precise layer did.
+var failSafeReproducers = []struct{ text, secret string }{
+	// #251 round 2 and #265 round 1.
+	{`3:  server = "https://alice:fake pass@example.com" x`, "fake pass"},
+	{"varlatch server: unexpected argument https://alice:fake-pass@example.com\nUsage: varlatch server [--json]", "fake-pass"},
+	{"varlatch server: unexpected argument https://alice:ftp:@example.com", "alice"},
+	{`3:  server = "https://alice:ftp:@example.com" x`, "alice"},
+	{`3:  server = "https://alice:fake\"pass@example.com" x`, "fake"},
+	{`3:  server = "https://alice:fake\u0040pass@example.com" x`, "fake"},
+	{`--file needs <path>=<name>, got "https://alice:fake\"pass@h"`, "fake"},
+	{`got "https://alice:fake\\pass@h=x"`, "fake"},
+	{"https\t:/alice:fake-pass@h", "fake-pass"},
+	{"ht\ttps:/alice:fake-pass@h and more", "fake-pass"},
+	{"https://alice:fa\nke-pass@h", "alice"},
+	{`3:  server = "https://alice:fa\nke@h" x`, "alice"},
+	{`https://[bad\alice:fake-pass@h`, "fake-pass"},
+	{`server = "https://alice:fa"ke"@example.com" x`, "alice"},
+	{`reach https://alice:fake pass "x@h"`, "fake"},
+	{"http:/user:hunter2pass@[::1", "hunter2pass"},
+	{`http:\\user:hunter2pass@h/x`, "hunter2pass"},
+	{"http:user:hunter2pass@h", "hunter2pass"},
+	{"http:///user:hunter2pass@h/p@q", "hunter2pass"},
+	{"https://alice:pa/ss@h", "alice"},
+	{"https://alice:fake%40h", "fake"},
+	// #265 round 2.
+	{"varlatch server: unknown option --https://alice:fake-review-pass@example.com", "fake-review-pass"},
+	{"https://alice:pass\tlabel:tail@example.com", "label:tail"},
+	{"https://alice:pass\r\nlabel:tail@example.com", "label:tail"},
+	{`server = "https://alice:fake" @=x`, "fake"},
+	{`server = "https://alice:fake"@=x`, "fake"},
+	{"3:  server = \"\"\"https://alice:fake\\U00000040h\"\"\"\n4:  x = = 1", "fake"},
+	{`got "server = \"https://alice:fake\\u0040x\""`, "fake"},
+	{`got "server = \"https://alice:fa\\\"ke@x\""`, "alice"},
+	{"3:  server = '''https://alice:fake@h'''", "fake"},
+	// #265 round 3.
+	{`foohttps://alice\part:fake@host`, "fake"},
+	{"https://host,\thttps://bob:fake@host", "bob:fake"},
+	{`''' "https://alice:fake@h"`, "fake"},
+	{"https://host, https://bob:fake@host2; ftp://carol:fake3@h3", "fake"},
+	// What the fuzzer and the precise layer's own output led to: a URL with a
+	// newline in its password after one the precise layer masked.
+	{"https://[redacted]@h, https://u:fake\n@h2", "fake"},
+	{"A:[redacted]@\nhttps://u:fa\nke@h", "fa"},
+	{"https://a:b\n@h https://c:fake\n@h2", "fake"},
+}
+
+func TestFailSafeMasksEveryReproducer(t *testing.T) {
+	cases := failSafeReproducers
+	// #265 round 3, P2: an "@" five layers of quoting deep (escaped or not).
+	for _, inner := range []string{"https://alice:fake@h", `https://alice:fake\u0040h`} {
+		v := inner
+		for range 5 {
+			v = strconv.Quote(v)
+		}
+		cases = append(cases, struct{ text, secret string }{"got " + v, "fake"})
+	}
+	for _, c := range cases {
+		got := MaskUserinfoInText(c.text)
+		if strings.Contains(got, c.secret) {
+			t.Errorf("MaskUserinfoInText(%q) = %q shows %q", c.text, got, c.secret)
+		}
+		if again := MaskUserinfoInText(got); again != got {
+			t.Errorf("MaskUserinfoInText is not stable on %q: %q then %q", c.text, got, again)
+		}
+	}
+}
+
+// TestFailSafeRule: what the fail-safe does, exactly.
+func TestFailSafeRule(t *testing.T) {
+	for in, want := range map[string]string{
+		// From after the first ":" that follows a letter to the last at-sign; the leading word and the rest kept.
+		"https://u:p@h":                     "https:[redacted]@h",
+		"error: see https://u:p@h/x@y here": "error:[redacted]@y here",
+		"varlatch server: unexpected argument https://alice:pw@example.com\nUsage: varlatch server [--json]": "varlatch server:[redacted]@example.com\nUsage: varlatch server [--json]",
+		"https://alice:fake%40h":      "https:[redacted]@h",
+		`https://alice:fake\x40h`:     "https:[redacted]@h",
+		"ht\ttps:/alice:pw@h":         "ht\ttps:[redacted]@h",
+		"https\t:/alice:pw@h":         "https\t:[redacted]@h",
+		"line https://alice:fa\nke@h": "line https:[redacted]@h",
+		// An email after a colon is over-masked: accepted for error text.
+		"contact: ops@example.net": "contact:[redacted]@example.net",
+		// Kept: no ":" after a letter before an at-sign, or no at-sign.
+		"me@example.com and then: more":      "me@example.com and then: more",
+		"3:  server = \"https://h.example\"": "3:  server = \"https://h.example\"",
+		"  varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]": "  varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]",
+		"a: b\n\nc@d":     "a: b\n\nc@d",
+		"Usage: x\n  y@z": "Usage: x\n  y@z",
+		// The precise layer's own "[redacted]@" passes through: a list of masked servers is kept.
+		`Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\[redacted]@127.0.0.1:3).`: `Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\[redacted]@127.0.0.1:3).`,
+		"varlatch server: unexpected argument https://[redacted]@example.com":                      "varlatch server: unexpected argument https://[redacted]@example.com",
+		// But not when "[redacted]" is glued to a password.
+		"https://u:p[redacted]@h": "https:[redacted]@h",
+	} {
+		if got := MaskUserinfoInText(in); got != want {
+			t.Errorf("MaskUserinfoInText(%q) =\n %q, want\n %q", in, got, want)
+		}
+	}
+}
+
+// TestMaskTOMLStrings: the precise layer for a varlatch.toml parse error.
+func TestMaskTOMLStrings(t *testing.T) {
+	for in, want := range map[string]string{
+		`3:  server = "https://alice:fake pass@example.com" x`:      `3:  server = "https://[redacted]@example.com" x`,
+		`3:  server = "https://alice:fake\"pass@example.com" x`:     `3:  server = "https://[redacted]@example.com" x`,
+		`3:  server = "https://alice:fake\u0040pass@example.com" x`: `3:  server = "https://[redacted]@example.com" x`,
+		"3:  server = 'https://alice:fake@h' x":                     `3:  server = "https://[redacted]@h" x`,
+		"3:  server = \"\"\"https://alice:fake\\U00000040h\"\"\"":   `3:  server = "https://[redacted]@h"`,
+		// Kept: no user name and password, an unclosed string (the fail-safe's).
+		`3:  server = "https://example.com" "ops@example.net"`: `3:  server = "https://example.com" "ops@example.net"`,
+		`3:  server = "https://example.com\\path@segment"`:     `3:  server = "https://example.com\\path@segment"`,
+		`3:  server = "https://alice:fake@h`:                   `3:  server = "https://alice:fake@h`,
+	} {
+		if got := MaskTOMLStrings(in); got != want {
+			t.Errorf("MaskTOMLStrings(%q) =\n %q, want\n %q", in, got, want)
+		}
+	}
+}
+
+// TestFailSafeAgreesWithWHATWG: URLs (with and without credentials, nested
+// schemes, quotes, escapes, "@", spaces, tabs and newlines in their parts,
+// hosts that do not parse) in the contexts failure text puts them. Zero
+// leaks: where WHATWG reads a user name or password, or the URL does not
+// parse and holds an "@", none of it shows. Exact bytes where there is no
+// ":"...at-sign pair.
+func TestFailSafeAgreesWithWHATWG(t *testing.T) {
+	schemes := []string{"https", "HTTPS", "ht\ttps", "http", "ftp", "foo", "mailto", "foohttps"}
 	separators := []string{"//", "/", "", `\`, "///", "/\n/"}
-	userinfos := []string{"", "Us3r:Pa55word@", "Us3r:ftp:Pa55@", `Us3r:Pa55"q@`, "Us3r:Pa55 sp@", "Us3r:Pa\n55@", "Us3r:Pa\t55@", "Us3r@", ":Pa55@", "Us3r:Pa55@x@", "Us3r:ftp://Pa55:@", "Us3r:Pa55\tlabel:tail@", "Us3r:Pa55\nhttps:tail@"}
+	userinfos := []string{"", "Us3r:Pa55word@", "Us3r:ftp:Pa55@", `Us3r:Pa55"q@`, "Us3r:Pa55 sp@", "Us3r:Pa\n55@", "Us3r:Pa\t55@", "Us3r@", ":Pa55@", "Us3r:Pa55@x@", "Us3r:ftp://Pa55:@", "Us3r:Pa55\tlabel:tail@", `Us3r\part:Pa55@`, "Us3r:Pa55%40"}
 	hosts := []string{"example.com", "[bad", "h:8080"}
 	tails := []string{"", "/p", `\path@seg`, "?q@r"}
 	tomlQuote := func(v string) string {
 		r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`)
 		return `"` + r.Replace(v) + `"`
 	}
-	contexts := []struct {
-		name      string
-		build     func(string) string
-		ambiguous bool
-	}{
-		{"alone", func(v string) string { return v }, false},
-		{"toml", func(v string) string { return "3:  server = " + tomlQuote(v) + " # note" }, false},
-		{"toml-email", func(v string) string { return "3:  server = " + tomlQuote(v) + ` "ops@example.net"` }, false},
-		{"go-quoted", func(v string) string { return "--file needs <path>=<name>, got " + strconv.Quote(v) }, false},
-		{"prose-email", func(v string) string { return "reach " + v + " or mail ops@example.net" }, true},
-		{"glued", func(v string) string { return `server = "` + v + `"x@y` }, true},
-		{"after-dashes", func(v string) string { return "varlatch server: unknown option --" + v }, false},
-		{"glued-word", func(v string) string { return "x" + v + " (given)" }, false},
-		{"list-after", func(v string) string { return "servers: https://h0.example, " + v + "; done" }, false},
-		{"list-before", func(v string) string { return "stored for " + v + ", http:///[redacted]@127.0.0.1:3." }, false},
+	quote5 := func(v string) string {
+		for range 5 {
+			v = strconv.Quote(v)
+		}
+		return v
 	}
+	contexts := []func(string) string{
+		func(v string) string { return v },
+		func(v string) string { return "3:  server = " + tomlQuote(v) + " # note" },
+		func(v string) string { return "3:  server = " + tomlQuote(v) + ` "ops@example.net"` },
+		func(v string) string { return "--file needs <path>=<name>, got " + strconv.Quote(v) },
+		func(v string) string { return "got " + quote5(v) },
+		func(v string) string { return "reach " + v + " or mail ops@example.net" },
+		func(v string) string { return `server = "` + v + `"x@y` },
+		func(v string) string { return "varlatch server: unknown option --" + v },
+		func(v string) string { return "x" + v + " (given)" },
+		func(v string) string { return "servers: https://h0.example,\t" + v + "; done" },
+		func(v string) string { return `''' "` + v + `"` },
+	}
+	letterColonThenAt := regexp.MustCompile(`(?s)[A-Za-z][\t\r]*:.*(@|%40|\\[uU]0{2,6}40|\\x40)`)
 	checked := map[string]int{}
 	for _, sc := range schemes {
 		for _, sep := range separators {
@@ -235,31 +272,21 @@ func TestMaskUserinfoInTextAgreesWithWHATWG(t *testing.T) {
 						v := sc + ":" + sep + ui + h + tail
 						u, parsed := whatwg.ParseURL(v)
 						creds := parsed && (u.Username != "" || u.Password != "")
-						// A URL whose own path holds a special scheme (mailto:...ftp:..., foo:/...https:...) is
-						// ambiguous in free text: the inner one is read as a URL (when unsure, it is one).
-						nestedInPath := !creds && (strings.Contains(ui, "ftp:") || strings.Contains(ui, "https:"))
-						for _, c := range contexts {
-							text := c.build(v)
+						for _, build := range contexts {
+							text := build(v)
 							masked := MaskUserinfoInText(text)
-							switch {
-							case creds:
-								checked["credentials"]++
-								for _, secret := range []string{"Us3r", "Pa55", "Pa\n55", "Pa\t55", "label:tail", "https:tail"} {
-									if strings.Contains(v, secret) && strings.Contains(masked, secret) {
-										t.Errorf("%s: MaskUserinfoInText(%q) = %q shows %q", c.name, text, masked, secret)
+							if creds || !parsed && strings.Contains(ui, "@") {
+								checked["masked"]++
+								for _, secret := range []string{"Us3r", "Pa55", "label:tail"} {
+									if strings.Contains(ui, secret) && strings.Contains(masked, secret) {
+										t.Errorf("MaskUserinfoInText(%q) = %q shows %q", text, masked, secret)
 									}
 								}
-							case parsed && !c.ambiguous && !nestedInPath:
-								checked["kept"]++
+							}
+							if !letterColonThenAt.MatchString(text) {
+								checked["no pair"]++
 								if masked != text {
-									t.Errorf("%s: MaskUserinfoInText(%q) = %q, but %q has no user name or password", c.name, text, masked, v)
-								}
-							case !parsed && strings.Contains(ui, "@"):
-								checked["not parsed"]++
-								for _, secret := range []string{"Pa55", "Us3r"} {
-									if strings.Contains(masked, secret) {
-										t.Errorf("%s: MaskUserinfoInText(%q) = %q shows %q of a URL that does not parse", c.name, text, masked, secret)
-									}
+									t.Errorf("MaskUserinfoInText(%q) = %q, but it has no \":\"...at-sign pair", text, masked)
 								}
 							}
 						}
@@ -269,45 +296,44 @@ func TestMaskUserinfoInTextAgreesWithWHATWG(t *testing.T) {
 		}
 	}
 	t.Logf("%v", checked)
-	if checked["credentials"] < 1000 || checked["kept"] < 1000 || checked["not parsed"] < 300 {
+	if checked["masked"] < 10000 || checked["no pair"] < 500 {
 		t.Fatalf("too few cases: %v", checked)
 	}
 }
 
-// FuzzMaskUserinfoInText: no text makes the maskers panic. (Masking twice
-// may mask more: an escaped "@" in a quoted string is literal once the
-// string is shown decoded. Never less.)
+// FuzzMaskUserinfoInText: no text makes the maskers panic, and the
+// fail-safe changes nothing more on its own output.
 func FuzzMaskUserinfoInText(f *testing.F) {
-	for _, seed := range []string{
-		`3:  server = "https://alice:fake\"pass@example.com" x`,
-		"https://alice:ftp:@example.com, http:\\\\u:p@h\n\"x\\u0040y\"",
-		`server = "https://example.com" "ops@example.net"`,
-		"ht\ttps:/a:b@[bad\\c@d?e#f",
-	} {
-		f.Add(seed)
+	for _, c := range failSafeReproducers {
+		f.Add(c.text)
 	}
 	f.Fuzz(func(t *testing.T, text string) {
-		_ = MaskUserinfoInText(MaskUserinfoInText(text))
-		_ = MaskUserinfoInArgument(text)
+		once := MaskUserinfoInText(text)
+		if twice := MaskUserinfoInText(once); twice != once {
+			t.Fatalf("not stable: %q -> %q -> %q", text, once, twice)
+		}
+		_ = MaskTOMLStrings(text)
 		_ = MaskUserinfo(text)
 	})
 }
 
-// TestMaskingIsLinear: inputs that made the scanner rescan (a tab after
-// every letter, a URL every ten bytes, quotes, escapes, "@"s) take time
-// linear in their length: 200 KB in well under a second each (Sol, #265
-// round 2).
+// TestMaskingIsLinear: inputs that made the earlier scanners rescan (a tab
+// after every letter, a URL every ten bytes, quotes, escapes, "@"s, and
+// "http:u:p@h\" repeated) take time linear in their length: 200 KB in well
+// under a second each (Sol, #265 rounds 2 and 3).
 func TestMaskingIsLinear(t *testing.T) {
 	const size = 200_000
 	for _, unit := range []string{
-		"a\t", "https://h/", "https://u:p@", "https:", "@", "ht\ttps:", "--", `"https://h" `, `"x" `, `"@" `,
+		"a\t", "https://h/", "https://u:p@", "https:", "@", "ht\ttps:", "--", `"https://h" `, `"x" `, `"\u0040" `,
 		`https:"x"`, `'''a`, `a\"`, ", https:", "a:", "https://[", "http:/u:p@h, ", `"https://a:b" @`, "x\n", `"https://a:b`,
+		`http:u:p@h\`, "a:\n@b\n", "%40", `\U00000040`,
 	} {
 		in := strings.Repeat(unit, size/len(unit)+1)[:size]
 		start := time.Now()
 		MaskUserinfoInText(in)
-		MaskUserinfoInArgument(in)
-		if elapsed := time.Since(start); elapsed > 700*time.Millisecond {
+		MaskTOMLStrings(in)
+		MaskUserinfo(in)
+		if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
 			t.Errorf("%q repeated to %d bytes: %v", unit, size, elapsed)
 		}
 	}

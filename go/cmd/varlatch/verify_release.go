@@ -49,7 +49,7 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	fail := func(format string, a ...any) int {
-		// Masked as every CLI failure is: no URL's user name and password is echoed.
+		// The fail-safe, as on every CLI failure.
 		fmt.Fprintln(stderr, clientctx.MaskUserinfoInText("varlatch verify-release: "+fmt.Sprintf(format, a...)))
 		return 1
 	}
@@ -90,8 +90,8 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 	for _, f := range files {
 		path, name, ok := strings.Cut(f, "=")
 		if !ok || path == "" || name == "" {
-			// Masked before it is quoted: %q's escapes would otherwise hide a password from the masker.
-			return fail("--file needs <path>=<name>, got %q", clientctx.MaskUserinfoInArgument(f))
+			// Masked before it is quoted (the precise layer); fail is the fail-safe.
+			return fail("--file needs <path>=<name>, got %q", clientctx.MaskURLInValue(f))
 		}
 		r, err := os.Open(path)
 		if err != nil {
@@ -100,7 +100,7 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 		err = checked.Check(name, r)
 		_ = r.Close()
 		if err != nil {
-			return fail("%s: %v", clientctx.MaskUserinfoInArgument(path), err)
+			return fail("%s: %v", clientctx.MaskURLInValue(path), err)
 		}
 		fmt.Fprintf(stdout, "%s matches SHA256SUMS (%s)\n", path, name)
 	}

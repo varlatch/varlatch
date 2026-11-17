@@ -70,8 +70,9 @@ func LoadRepoConfig(repoRoot string) (RepoConfig, error) {
 	}
 	table, err := toml.ParseString(jsval.DecodeUTF8(data))
 	if err != nil {
-		// The message quotes the file's lines: a server URL there keeps its user name and password out.
-		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + MaskUserinfoInText(err.Error())}
+		// The message quotes the file's lines: each string's URL is masked (the
+		// precise layer); the fail-safe covers the failure's final text.
+		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + MaskTOMLStrings(err.Error())}
 	}
 	str := func(key string) string {
 		v, _ := table.Get(key)

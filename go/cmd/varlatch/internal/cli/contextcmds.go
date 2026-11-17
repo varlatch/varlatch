@@ -361,7 +361,7 @@ func (r *Run) showServer(asJSON bool) error {
 	if resolved != nil {
 		here = "Server here: " + jsjson.String(clientctx.MaskServer(resolved.Server)) + " (" + serverSourceWords[resolved.Source] + ")"
 	} else if problem != "" {
-		here += " (" + problem + ")"
+		here += " (" + clientctx.MaskUserinfoInText(problem) + ")" // a parse error quoting varlatch.toml
 	}
 	def := clientctx.MaskUserinfo(remembered)
 	if def == "" {

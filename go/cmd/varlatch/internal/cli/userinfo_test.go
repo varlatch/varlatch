@@ -180,19 +180,25 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 	}
 }
 
-// TestFailuresKeepTextWithoutCredentials: a varlatch.toml line quoting a
-// URL with no user name and password next to a quoted email keeps its
-// bytes (the next string's "@" is never taken).
+// TestFailuresKeepTextWithoutCredentials: a varlatch.toml parse error whose
+// lines hold no ":"...at-sign pair keeps its bytes; one that quotes a URL
+// next to an email is over-masked, which is accepted for error text, and
+// never shows the URL's or the email's middle as a password would be.
 func TestFailuresKeepTextWithoutCredentials(t *testing.T) {
-	dir := t.TempDir()
-	line := `server = "https://example.com" "ops@example.net"`
-	if err := os.WriteFile(filepath.Join(dir, "varlatch.toml"), []byte("organization = \"acme\"\nproject = \"web\"\n"+line+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(dir)
-	var stdout, stderr bytes.Buffer
-	Main([]string{"context"}, MapEnv{"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config")}, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
-	if !strings.Contains(stderr.String(), line) || strings.Contains(stderr.String(), "[redacted]") {
-		t.Errorf("the line was changed:\n%s", stderr.String())
+	for line, kept := range map[string]bool{
+		`server = "https://example.com" x`:                 true,
+		`server = "https://example.com\\path@segment" x`:   false,
+		`server = "https://example.com" "ops@example.net"`: false,
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "varlatch.toml"), []byte("organization = \"acme\"\nproject = \"web\"\n"+line+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(dir)
+		var stdout, stderr bytes.Buffer
+		Main([]string{"context"}, MapEnv{"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config")}, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+		if got := strings.Contains(stderr.String(), line); got != kept {
+			t.Errorf("%s: kept %v, want %v:\n%s", line, got, kept, stderr.String())
+		}
 	}
 }

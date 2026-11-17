@@ -130,7 +130,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 		if topic != "" {
 			help, ok := CommandHelp(topic)
 			if !ok {
-				return UsageError("varlatch: no help for " + topic + ": not a command\n\n" + Usage)
+				return UsageError("varlatch: no help for " + clientctx.MaskURLInValue(topic) + ": not a command\n\n" + Usage)
 			}
 			return r.println(help)
 		}
@@ -159,7 +159,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 	}
 	c := lookup(r.Command)
 	if c == nil {
-		return UsageError("varlatch: unknown command " + r.Command + "\n\n" + Usage)
+		return UsageError("varlatch: unknown command " + clientctx.MaskURLInValue(r.Command) + "\n\n" + Usage)
 	}
 	if c.run == nil {
 		return notBuilt(c)
@@ -180,10 +180,10 @@ func (r *Run) finish(err error) int {
 		// was instead (go/README.md, the Go CLI's accepted differences).
 		e = &exitError{message: "varlatch: " + err.Error(), code: ExitFailure}
 	}
-	// Every failure goes through the masker, whatever it echoes (an
-	// argument, a line of a file, a server's URL): no URL's user name and
-	// password reaches stderr (go/README.md, "Diagnostics never print
-	// credential values"). Text with no such URL keeps its bytes.
+	// The fail-safe on every failure, whatever it echoes: no URL's user name
+	// and password reaches stderr even where an echo site did not mask its
+	// value (go/README.md, "Diagnostics never print credential values"). A
+	// line with no ":"...at-sign pair keeps its bytes.
 	fmt.Fprintln(r.Stderr, jsval.NodeText(clientctx.MaskUserinfoInText(e.message)))
 	if r.everyFailureIsOne {
 		return ExitFailure
