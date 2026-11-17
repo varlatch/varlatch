@@ -153,6 +153,11 @@ export function validateInventory(inventory) {
     for (const need of suite.needs ?? []) {
       if (!CAPABILITIES.includes(need)) problems.push(`suite ${name}: unknown capability ${need}`);
     }
+    // The CLI features the suite's setup uses (lib/client-lacks.mjs).
+    if ("cliNeeds" in suite) {
+      if (!Array.isArray(suite.cliNeeds)) problems.push(`suite ${name}: cliNeeds must list CLI features`);
+      else for (const f of suite.cliNeeds) if (!(f in features)) problems.push(`suite ${name}: cliNeeds names unknown feature ${f}`);
+    }
     if ("groups" in suite) {
       if (!suite.groups || typeof suite.groups !== "object" || Array.isArray(suite.groups)) problems.push(`suite ${name}: groups must map group names to { "title", "operations" }`);
       else {
@@ -199,6 +204,12 @@ export function validateInventory(inventory) {
     }
     for (const key of ["introducedIn", "core"]) {
       if (key in check) problems.push(`${where}: ${key} belongs on the check's feature, not the check`);
+    }
+    // The CLI features a check without a feature of its own still needs (lib/client-lacks.mjs).
+    if ("cliNeeds" in check) {
+      if ("feature" in check) problems.push(`${where}: cliNeeds belongs to a check without a feature`);
+      if (!Array.isArray(check.cliNeeds)) problems.push(`${where}: cliNeeds must list CLI features`);
+      else for (const f of check.cliNeeds) if (!(f in features)) problems.push(`${where}: cliNeeds names unknown feature ${f}`);
     }
     if ("feature" in check) {
       if (!(check.feature in features)) problems.push(`${where}: unknown feature ${check.feature}`);
@@ -281,15 +292,17 @@ export function predates(inventory, feature, cliVersion) {
  * `reports`: every result line, { suite, id, status, text }, status one of
  * PASS, FAIL, N/A, PREDATES-CLI (the runner adds N/A lines for a suite it
  * did not start because the target lacks what the suite needs), or
- * TARGET-LACKS, which only the runner gives (`runner: true`).
+ * TARGET-LACKS or CLIENT-LACKS, which only the runner gives (`runner: true`).
  * `errors`: { suite, message } for anything outside a check.
  * `cliVersion`: the CLI's verified version, or null for a CLI built from
  * source (no `predates-cli` result is accepted then).
  * `lacking`: Map(check id → the lacking operations it needs), from
  * lib/operations.mjs lackingChecks; a target-lacks result is accepted only
- * for a check in it.
+ * for a check in it. `clientLacking`: Map(check id → the CLI features it
+ * needs that the client lacks), from lib/client-lacks.mjs; likewise for
+ * client-lacks.
  */
-export function evaluate({ inventory, reports, errors = [], cliVersion = null, lacking = new Map() }) {
+export function evaluate({ inventory, reports, errors = [], cliVersion = null, lacking = new Map(), clientLacking = new Map() }) {
   const problems = errors.map((e) => `${e.suite}: ${e.message}`);
   const byId = new Map();
   for (const r of reports) {
@@ -331,6 +344,12 @@ export function evaluate({ inventory, reports, errors = [], cliVersion = null, l
       if (got.some((r) => r.runner !== true)) reporting("a suite reported target-lacks, which only the runner can");
       else if (!lacking.has(id)) reporting("reported target-lacks, but it needs no operation the target lacks");
       else judged("target-lacks", `the target lacks ${lacking.get(id).join(", ")}`);
+    }
+    else if (statuses.has("CLIENT-LACKS")) {
+      // Only the runner, from the inventory and the client's declared gaps.
+      if (got.some((r) => r.runner !== true)) reporting("a suite reported client-lacks, which only the runner can");
+      else if (!clientLacking.has(id)) reporting("reported client-lacks, but it needs no feature the client lacks");
+      else judged("client-lacks", `the CLI lacks ${clientLacking.get(id).join(", ")}`);
     }
     else if (statuses.has("FAIL")) judged("fail", got.find((r) => r.status === "FAIL").text, "assertion");
     else if (statuses.has("PASS")) judged("pass");

@@ -50,18 +50,18 @@ func loadVectors(t *testing.T) vectors {
 	}
 	root := v.(Object)
 	var table []string
-	for _, s := range root.get("strings").([]any) {
+	for _, s := range root.Value("strings").([]any) {
 		table = append(table, expandRuns(s))
 	}
 	var cases []Object
-	for _, c := range root.get("cases").([]any) {
+	for _, c := range root.Value("cases").([]any) {
 		cases = append(cases, unpack(c, table).(Object))
 	}
 	sealSecrets = nil
-	for _, h := range root.get("sealSecrets").([]any) {
+	for _, h := range root.Value("sealSecrets").([]any) {
 		sealSecrets = append(sealSecrets, hexBytes(t, h.(string)))
 	}
-	return vectors{cases: cases, seal: root.get("seal").([]any), base64: root.get("base64").([]any)}
+	return vectors{cases: cases, seal: root.Value("seal").([]any), base64: root.Value("base64").([]any)}
 }
 
 func expandRuns(v any) string {
@@ -69,12 +69,12 @@ func expandRuns(v any) string {
 		return s
 	}
 	var b strings.Builder
-	for _, part := range v.(Object).get("$cat").([]any) {
+	for _, part := range v.(Object).Value("$cat").([]any) {
 		if s, ok := part.(string); ok {
 			b.WriteString(s)
 			continue
 		}
-		rep := part.(Object).get("$rep").([]any)
+		rep := part.(Object).Value("$rep").([]any)
 		b.WriteString(strings.Repeat(rep[0].(string), int(rep[1].(float64))))
 	}
 	return b.String()
@@ -89,7 +89,7 @@ func unpack(v any, table []string) any {
 		}
 		return out
 	case Object:
-		if i, ok := x.get("$s").(float64); ok && len(x) == 1 {
+		if i, ok := x.Value("$s").(float64); ok && len(x) == 1 {
 			return table[int(i)]
 		}
 		out := make(Object, len(x))
@@ -198,7 +198,7 @@ func encValues(m map[string]*string) any {
 
 // recordedValues is a recorded values Map in encValues's form.
 func recordedValues(v any) any {
-	entries := v.(Object).get("$map").([]any)
+	entries := v.(Object).Value("$map").([]any)
 	byKey := map[string]*string{}
 	for _, e := range entries {
 		pair := e.([]any)
@@ -226,7 +226,7 @@ func encSet(set map[string]bool) any {
 
 func recordedSet(v any) any {
 	set := map[string]bool{}
-	for _, k := range v.(Object).get("$set").([]any) {
+	for _, k := range v.(Object).Value("$set").([]any) {
 		if s, ok := k.(string); ok {
 			set[s] = true
 		}
@@ -278,23 +278,23 @@ func decodeUsage(v any) *UsageReport {
 	if !ok || isUndefined(v) {
 		return nil
 	}
-	r := &UsageReport{Checked: o.get("checked") == true}
-	r.Reason, _ = o.get("reason").(string)
-	if names, ok := o.get("names").(Object); ok {
-		for _, e := range names.get("$map").([]any) {
+	r := &UsageReport{Checked: o.Value("checked") == true}
+	r.Reason, _ = o.Value("reason").(string)
+	if names, ok := o.Value("names").(Object); ok {
+		for _, e := range names.Value("$map").([]any) {
 			pair := e.([]any)
 			u := pair[1].(Object)
 			strs := func(key string) []string {
 				var out []string
-				list, _ := u.get(key).([]any)
+				list, _ := u.Value(key).([]any)
 				for _, s := range list {
 					out = append(out, s.(string))
 				}
 				return out
 			}
 			r.set(pair[0].(string), NameUsage{
-				Owned: u.get("owned") == true, Referenced: u.get("referenced") == true,
-				GeneratedOnce: u.get("generatedOnce") == true, CopiedIntoCompose: u.get("copiedIntoCompose") == true,
+				Owned: u.Value("owned") == true, Referenced: u.Value("referenced") == true,
+				GeneratedOnce: u.Value("generatedOnce") == true, CopiedIntoCompose: u.Value("copiedIntoCompose") == true,
 				ShadowedIn: strs("shadowedIn"), UnknownIn: strs("unknownIn"), NotDeliveredTo: strs("notDeliveredTo"),
 			})
 		}
@@ -307,7 +307,7 @@ func decodeNumber(v any) (*float64, bool) {
 	case float64:
 		return &x, true
 	case Object:
-		if s, ok := x.get("$number").(string); ok {
+		if s, ok := x.Value("$number").(string); ok {
 			f := map[string]float64{"NaN": math.NaN(), "Infinity": math.Inf(1), "-Infinity": math.Inf(-1)}[s]
 			return &f, true
 		}
@@ -346,12 +346,12 @@ func (w wire) object() Object {
 
 func recordedWire(v any) Object {
 	o := v.(Object)
-	h := o.get("headers").(Object)
+	h := o.Value("headers").(Object)
 	headers := map[string]string{}
 	for _, m := range h {
 		headers[m.Key] = m.Value.(string)
 	}
-	return wire{o.get("method").(string), o.get("url").(string), headers, o.get("body")}.object()
+	return wire{o.Value("method").(string), o.Value("url").(string), headers, o.Value("body")}.object()
 }
 
 var sealedValue = regexp.MustCompile(`"encrypted_value":"([^"]*)"`)
@@ -391,10 +391,10 @@ func readChain(v any) *errorChain {
 		return nil
 	}
 	e := &errorChain{}
-	e.name, _ = o.get("name").(string)
-	e.message, _ = o.get("message").(string)
-	e.code, _ = o.get("code").(string)
-	e.cause = readChain(o.get("cause"))
+	e.name, _ = o.Value("name").(string)
+	e.message, _ = o.Value("message").(string)
+	e.code, _ = o.Value("code").(string)
+	e.cause = readChain(o.Value("cause"))
 	return e
 }
 
@@ -461,15 +461,15 @@ func (s *scripted) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 		return nil, failure
 	}
-	answer := next.get("response").(Object)
+	answer := next.Value("response").(Object)
 	s.got = append(s.got, Object{{"request", w.object()}, {"response", answer}})
 	header := http.Header{}
-	for _, h := range answer.get("headers").([]any) {
+	for _, h := range answer.Value("headers").([]any) {
 		pair := h.([]any)
 		header.Add(pair[0].(string), pair[1].(string))
 	}
-	return &http.Response{StatusCode: int(answer.get("status").(float64)), Header: header,
-		Body: io.NopCloser(strings.NewReader(answer.get("body").(string))), Request: r}, nil
+	return &http.Response{StatusCode: int(answer.Value("status").(float64)), Header: header,
+		Body: io.NopCloser(strings.NewReader(answer.Value("body").(string))), Request: r}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +492,7 @@ type replayed struct {
 }
 
 func replayCase(t *testing.T, c Object) replayed {
-	args, _ := c.get("args").([]any)
+	args, _ := c.Value("args").([]any)
 	arg := func(i int) any {
 		if i < len(args) && !isUndefined(args[i]) {
 			return args[i]
@@ -502,7 +502,7 @@ func replayCase(t *testing.T, c Object) replayed {
 	var out replayed
 	fail := func(err error) { out.throws = encThrow(err) }
 
-	if fn, ok := c.get("fn").(string); ok {
+	if fn, ok := c.Value("fn").(string); ok {
 		switch fn {
 		case "classifyComposeUsage":
 			version, _ := decodeNumber(arg(2))
@@ -518,9 +518,9 @@ func replayCase(t *testing.T, c Object) replayed {
 		return out
 	}
 
-	adapter := adapterOf(c.get("platform").(string))
-	method := c.get("method").(string)
-	request, isRequest := c.get("request").(Object)
+	adapter := adapterOf(c.Value("platform").(string))
+	method := c.Value("method").(string)
+	request, isRequest := c.Value("request").(Object)
 	if !isRequest {
 		str := func(i int) string { s, _ := arg(i).(string); return s }
 		var dest Fields
@@ -556,27 +556,27 @@ func replayCase(t *testing.T, c Object) replayed {
 	}
 
 	transport := &scripted{}
-	if list, ok := c.get("exchanges").([]any); ok {
+	if list, ok := c.Value("exchanges").([]any); ok {
 		for _, e := range list {
 			transport.script = append(transport.script, e.(Object))
 		}
 	}
-	answers, _ := c.get("aborts").([]any)
+	answers, _ := c.Value("aborts").([]any)
 	req := &Request{
-		BaseIdentity:   request.get("baseIdentity").(string),
-		Destination:    decodeFields(request.get("destination")),
-		Credential:     request.get("credential").(string),
-		CredentialKind: CredentialKind(jsStringIf(request.get("credentialKind"))),
-		Usage:          decodeUsage(request.get("usage")),
+		BaseIdentity:   request.Value("baseIdentity").(string),
+		Destination:    decodeFields(request.Value("destination")),
+		Credential:     request.Value("credential").(string),
+		CredentialKind: CredentialKind(jsStringIf(request.Value("credentialKind"))),
+		Usage:          decodeUsage(request.Value("usage")),
 	}
-	if request.get("fetchImpl") == true {
+	if request.Value("fetchImpl") == true {
 		req.Client = &http.Client{Transport: transport}
 	}
-	if ms, ok := request.get("timeoutMs").(float64); ok {
+	if ms, ok := request.Value("timeoutMs").(float64); ok {
 		req.Timeout = time.Duration(ms) * time.Millisecond
 	}
 	out.aborts, out.expiry = []any{}, []any{}
-	if request.get("shouldAbort") == true {
+	if request.Value("shouldAbort") == true {
 		req.ShouldAbort = func(context.Context) (bool, error) {
 			a := false
 			if len(answers) > 0 {
@@ -586,7 +586,7 @@ func replayCase(t *testing.T, c Object) replayed {
 			return a, nil
 		}
 	}
-	if request.get("onCredentialExpiry") == true {
+	if request.Value("onCredentialExpiry") == true {
 		req.OnCredentialExpiry = func(at string) { out.expiry = append(out.expiry, at) }
 	}
 	ctx := context.Background()
@@ -595,7 +595,7 @@ func replayCase(t *testing.T, c Object) replayed {
 	if list, ok := arg(0).([]any); ok {
 		for _, e := range list {
 			if o, ok := e.(Object); ok {
-				items = append(items, SyncItem{o.get("name").(string), o.get("value").(string)})
+				items = append(items, SyncItem{o.Value("name").(string), o.Value("value").(string)})
 			} else if s, ok := e.(string); ok {
 				names = append(names, s)
 			}
@@ -652,27 +652,27 @@ func jsStringIf(v any) string {
 
 // recordedResult is the case's result as the replay encodes it.
 func recordedResult(c Object) any {
-	result := c.get("result")
-	switch c.get("method") {
+	result := c.Value("result")
+	switch c.Value("method") {
 	case "readValues":
 		return recordedValues(result)
 	case "readRemote":
 		o := result.(Object)
-		return Object{{"values", recordedValues(o.get("values"))}, {"rewrite", recordedSet(o.get("rewrite"))}}
+		return Object{{"values", recordedValues(o.Value("values"))}, {"rewrite", recordedSet(o.Value("rewrite"))}}
 	}
 	return result
 }
 
 func recordedExchanges(c Object) []any {
-	list, _ := c.get("exchanges").([]any)
+	list, _ := c.Value("exchanges").([]any)
 	out := []any{}
 	for _, e := range list {
 		o := e.(Object)
-		x := Object{{"request", recordedWire(o.get("request"))}}
+		x := Object{{"request", recordedWire(o.Value("request"))}}
 		if v, has := o.Get("error"); has {
 			x = append(x, Member{"error", v})
 		} else {
-			x = append(x, Member{"response", o.get("response")})
+			x = append(x, Member{"response", o.Value("response")})
 		}
 		out = append(out, x)
 	}
@@ -692,9 +692,9 @@ func TestTypeScriptExchanges(t *testing.T) {
 	}
 	failures := 0
 	for i, c := range v.cases {
-		name := c.get("test").(string)
+		name := c.Value("test").(string)
 		got := replayCase(t, c)
-		label := strconv.Itoa(i) + " " + name + " (" + jsString(c.get("platform")) + jsString(c.get("fn")) + " " + jsString(c.get("method")) + ")"
+		label := strconv.Itoa(i) + " " + name + " (" + jsString(c.Value("platform")) + jsString(c.Value("fn")) + " " + jsString(c.Value("method")) + ")"
 		if strings.Contains(name, "divergence:") {
 			// Go reads the file as unreadable; TypeScript reads it.
 			want := encReport(unknownUsage("the service's compose file is too large or could not be read", namesOf(c)))
@@ -712,10 +712,10 @@ func TestTypeScriptExchanges(t *testing.T) {
 			if want := recordedExchanges(c); !same(got.exchanges, want) {
 				problems = append(problems, "exchanges:\n   got  "+string(stringify(got.exchanges))+"\n   want "+string(stringify(want)))
 			}
-			if want := c.get("aborts"); !same(got.aborts, want) {
+			if want := c.Value("aborts"); !same(got.aborts, want) {
 				problems = append(problems, "aborts: got "+string(stringify(got.aborts))+" want "+string(stringify(want)))
 			}
-			if want := c.get("expiry"); !same(got.expiry, want) {
+			if want := c.Value("expiry"); !same(got.expiry, want) {
 				problems = append(problems, "expiry: got "+string(stringify(got.expiry))+" want "+string(stringify(want)))
 			}
 		}
@@ -739,7 +739,7 @@ func TestTypeScriptExchanges(t *testing.T) {
 }
 
 func namesOf(c Object) []string {
-	args := c.get("args").([]any)
+	args := c.Value("args").([]any)
 	var names []string
 	for _, n := range args[3].([]any) {
 		names = append(names, n.(string))
@@ -769,10 +769,10 @@ func TestSealedBoxAsTypeScript(t *testing.T) {
 	v := loadVectors(t)
 	for i, e := range v.seal {
 		o := e.(Object)
-		esk := hexBytes(t, o.get("ephemeralSecret").(string))
-		recipient := hexBytes(t, o.get("recipient").(string))
-		message := hexBytes(t, o.get("message").(string))
-		want := hexBytes(t, o.get("sealed").(string))
+		esk := hexBytes(t, o.Value("ephemeralSecret").(string))
+		recipient := hexBytes(t, o.Value("recipient").(string))
+		message := hexBytes(t, o.Value("message").(string))
+		want := hexBytes(t, o.Value("sealed").(string))
 		got, err := sealWith(fixedReader(esk), message, recipient)
 		if err != nil || !bytes.Equal(got, want) {
 			t.Errorf("seal %d: got %x (%v), want %x", i, got, err, want)
@@ -787,8 +787,8 @@ func TestNodeBase64(t *testing.T) {
 	v := loadVectors(t)
 	for _, e := range v.base64 {
 		o := e.(Object)
-		input := o.get("input").(string)
-		want := hexBytes(t, o.get("bytes").(string))
+		input := o.Value("input").(string)
+		want := hexBytes(t, o.Value("bytes").(string))
 		if got := nodeBase64(input); !bytes.Equal(got, want) {
 			t.Errorf("Buffer.from(%q, base64): got %x, want %x", input, got, want)
 		}

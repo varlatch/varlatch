@@ -25,7 +25,7 @@ test("an expectations file: its own target's keys, known clients and checks, a r
   assert.deepEqual(validateExpectations(ok, { targetName: "ts-release", inventory, cliVersions }), []);
   const problems = (expected, targetName = "ts-release") => validateExpectations(file(expected), { targetName, inventory, cliVersions }).join("\n");
   assert.match(problems({ "ts-source": { "*": {} } }), /ts-source is not a ts-release target/);
-  assert.match(problems({ "ts-release:0.22.0": { latest: {} } }), /the client must be source, \*, or a CLI clients\.json pins/);
+  assert.match(problems({ "ts-release:0.22.0": { latest: {} } }), /the client must be source, go, \*, or a CLI clients\.json pins/);
   assert.match(problems({ "ts-release:0.22.0": { "0.20.0": {} } }), /the client must be/);
   assert.match(problems({ "ts-release:0.22.0": { source: { "values.no-such-check": entry() } } }), /not in the inventory/);
   assert.match(problems({ "ts-release:0.22.0": { source: { "values.grid-masks-secret": { reason: "x" } } } }), /must be \{ "reason"/);

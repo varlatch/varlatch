@@ -6,7 +6,7 @@
  *
  *   - no expected failure is in force for its target and client, and the
  *     target declares no lacking operation (expect/<target>.json `lacks`):
- *     no check reports target-lacks;
+ *     no check reports target-lacks or client-lacks;
  *   - every ts-stack check's replacement, and every outside suite's
  *     (inventory.externalSuites: the lifecycle and installer suites the
  *     runner does not run), is present and passing: a replacement check that
@@ -87,6 +87,12 @@ function runRules(inventory, run) {
   const lacked = run.checks.filter((c) => c.outcome === "target-lacks").map((c) => c.id);
   if (lacked.length > 0) {
     problems.push(`no check may report target-lacks, and ${lacked.length} do: ${lacked.slice(0, 20).join(", ")}${lacked.length > 20 ? ", ..." : ""}`);
+  }
+  // G1 at 0.50.0 runs the Go CLI with nothing left out (internal
+  // docs/design/go-cli.md, decision 13): no check may lack a CLI feature.
+  const clientLacked = run.checks.filter((c) => c.outcome === "client-lacks").map((c) => c.id);
+  if (clientLacked.length > 0) {
+    problems.push(`no check may report client-lacks, and ${clientLacked.length} do: ${clientLacked.slice(0, 20).join(", ")}${clientLacked.length > 20 ? ", ..." : ""}`);
   }
   const outcome = new Map(run.checks.map((c) => [c.id, c.outcome]));
   const open = [];

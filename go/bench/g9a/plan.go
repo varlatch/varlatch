@@ -21,14 +21,17 @@ type Plan struct {
 	// Backups start at an offset into a named phase, or from the WAL's
 	// size (WALTriggered).
 	Backups []Backup `json:"backups"`
-	// ConvergeEverySeconds is the period of the simulated converge run,
-	// counted from the start of the run.
+	// ConvergeEverySeconds is the period of the converge runs, counted from
+	// the start of the run.
 	ConvergeEverySeconds float64 `json:"convergeEverySeconds"`
 	Targets              int     `json:"targets"`
-	// ChangesPerRun is k, the destinations each converge run writes for
-	// each Target: 2k + 7 commits per Target and run (ADR-0059
-	// varlatchd-core decision 7).
+	// ChangesPerRun is k, the values changed in each Target's environment
+	// before each converge run, which the run then writes.
 	ChangesPerRun int `json:"changesPerRun"`
+	// ProviderDelayMs is how long the fake provider takes to answer each
+	// call during the load (feature-parity decision 8: Coolify-shaped,
+	// 200 ms a call).
+	ProviderDelayMs int `json:"providerDelayMs"`
 	// WALBound is the checkpointer's bound in bytes: the shipped one
 	// (storage.DefaultWALBound) for a gate run.
 	WALBound int64 `json:"walBound"`
@@ -121,6 +124,7 @@ func DefaultPlan() Plan {
 		ConvergeEverySeconds: 60,
 		Targets:              20,
 		ChangesPerRun:        5,
+		ProviderDelayMs:      200,
 		WALBound:             64 << 20,
 		ProbeIntervalMs:      100,
 		IdleProbeSeconds:     30,
@@ -134,12 +138,18 @@ func DefaultPlan() Plan {
 	}
 }
 
+// MinConvergeSeconds is the shortest converge period a scaled plan keeps:
+// the real engine (4.9d) writes each changed value with a call of its own,
+// so a run over W1's 20 Targets with k = 5 takes 20 × (5 + 1) provider
+// calls of 200 ms, about 24 s, plus its commits.
+const MinConvergeSeconds = 45
+
 // Scaled returns the plan with every duration and offset multiplied by f
 // (for smoke runs; f < 1). Rates, thresholds and the bound are unchanged,
 // and so is a WAL-triggered backup (its fraction is of the bound, and its
 // offset is 0).
-// The converge period keeps at least 10 s (a run takes a few seconds and
-// must not overlap the next) and the idle probe at least 5 s.
+// The converge period keeps at least MinConvergeSeconds (a run must not
+// overlap the next) and the idle probe at least 5 s.
 func (p Plan) Scaled(f float64) Plan {
 	q := p
 	q.Phases = append([]Phase(nil), p.Phases...)
@@ -150,7 +160,7 @@ func (p Plan) Scaled(f float64) Plan {
 	for i := range q.Backups {
 		q.Backups[i].AtSeconds = math.Round(q.Backups[i].AtSeconds*f*1000) / 1000
 	}
-	q.ConvergeEverySeconds = max(10, math.Round(p.ConvergeEverySeconds*f*1000)/1000)
+	q.ConvergeEverySeconds = max(MinConvergeSeconds, math.Round(p.ConvergeEverySeconds*f*1000)/1000)
 	q.IdleProbeSeconds = max(5, math.Round(p.IdleProbeSeconds*f*1000)/1000)
 	q.Thresholds.MemoryAfterSeconds = math.Round(p.Thresholds.MemoryAfterSeconds*f*1000) / 1000
 	return q
@@ -209,6 +219,8 @@ func (p Plan) Validate() error {
 		return errors.New("plan: targets must be positive")
 	case p.ChangesPerRun <= 0 || p.ChangesPerRun > 125:
 		return errors.New("plan: changesPerRun must be between 1 and 125 (the Secrets of a Target's environment)")
+	case p.ProviderDelayMs < 0 || p.ProviderDelayMs > 10_000:
+		return errors.New("plan: providerDelayMs must be between 0 and 10000")
 	case p.WALBound <= 0:
 		return errors.New("plan: walBound must be positive")
 	case p.ProbeIntervalMs <= 0:
@@ -241,7 +253,7 @@ func (p Plan) NotGate() []string {
 	if !slices.Equal(anyFraction(p.Backups), anyFraction(g.Backups)) || p.BackupStepPages != g.BackupStepPages || p.BackupPauseMs != g.BackupPauseMs {
 		d = append(d, "backups")
 	}
-	if p.ConvergeEverySeconds != g.ConvergeEverySeconds || p.Targets != g.Targets || p.ChangesPerRun != g.ChangesPerRun {
+	if p.ConvergeEverySeconds != g.ConvergeEverySeconds || p.Targets != g.Targets || p.ChangesPerRun != g.ChangesPerRun || p.ProviderDelayMs != g.ProviderDelayMs {
 		d = append(d, "converge")
 	}
 	if p.WALBound != g.WALBound {

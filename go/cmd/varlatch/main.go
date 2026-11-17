@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Command varlatch is the Varlatch CLI of the Go rewrite (ADR-0059). It is a
-// skeleton: only the version and verify-release (used by the installers)
-// work so far.
+// Command varlatch is the Varlatch CLI of the Go rewrite (ADR-0059 step 5).
+// It is being ported from the TypeScript CLI (apps/cli) slice by slice
+// (internal docs/design/go-cli.md); a command not ported yet says so and
+// exits 64. verify-release, which the installers run, is Go's own.
 package main
 
 import (
-	"fmt"
 	"io"
 	"os"
 
-	"github.com/varlatch/varlatch/go/lib/buildinfo"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
-		fmt.Fprintln(stdout, "varlatch", buildinfo.Version)
-		return 0
-	}
+// osEnv is the process environment.
+type osEnv struct{}
+
+func (osEnv) LookupEnv(key string) (string, bool) { return os.LookupEnv(key) }
+
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "verify-release" {
 		return verifyRelease(args[1:], stdout, stderr)
 	}
-	fmt.Fprintln(stderr, "varlatch: this Go build is not usable yet; only --version and verify-release work")
-	return 2
+	return cli.Main(args, osEnv{}, cli.IO{Stdin: stdin, Stdout: stdout, Stderr: stderr})
 }

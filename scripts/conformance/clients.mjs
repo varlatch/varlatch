@@ -22,7 +22,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   assetProblems,
   cliAsset,
@@ -188,6 +188,23 @@ export async function fetchVerifiedRelease(version, { assets, pins = {}, workDir
  * parsed clients.json), `download(url)` and `verifyBlob(args)`.
  */
 export async function resolveCli(spec, { repoRoot, workDir, cacheDir = defaultCacheDir(), log = console.log, deps = {} }) {
+  // The Go CLI (internal docs/design/go-cli.md, decision 3): a native
+  // binary, run directly, never through Node. Like source, it is built from
+  // a checkout, so it predates no feature; what it lacks is declared in
+  // client-go.json.
+  if (spec.startsWith("go:")) {
+    const path = resolve(spec.slice(3));
+    if (!spec.slice(3) || !existsSync(path)) {
+      const error = new Error(`--cli ${spec}: no Go CLI at ${path} (build it: cd go && go build -o <path> ./cmd/varlatch)`);
+      error.usage = true;
+      throw error;
+    }
+    const printed = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 60_000, env: { PATH: process.env.PATH ?? "", VARLATCH_ASSISTED: "0" } });
+    if (printed.status !== 0 || !/^varlatch \S+\n/.test(printed.stdout ?? "")) {
+      throw new Error(`--cli ${spec}: ${path} --version printed ${JSON.stringify(printed.stdout ?? "")} (status ${printed.status}), not "varlatch <version>"`);
+    }
+    return { spec: "go", path, version: null, commit: null, sha256: sha256(readFileSync(path)), verified: null, native: true };
+  }
   if (spec === "source") {
     const path = join(repoRoot, "apps/cli/dist/varlatch.cjs");
     if (!existsSync(path)) throw new Error(`${path} does not exist: build the CLI first (pnpm build)`);

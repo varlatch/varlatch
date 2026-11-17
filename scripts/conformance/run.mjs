@@ -7,7 +7,7 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  * as its own process, collects one result per check ID, and judges the run
  * against inventory.json.
  *
- *   node scripts/conformance/run.mjs --target <target> --cli source|<version>
+ *   node scripts/conformance/run.mjs --target <target> --cli source|<version>|go:<path>
  *        [--report <file.json>] [--suite <name>]...
  *        [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]
  *
@@ -18,7 +18,10 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *              version is a released CLI pinned in clients.json, downloaded
  *              and verified before anything starts (clients.mjs). The sdk
  *              suite drives packages/sdk from the same source: this
- *              checkout, or the pinned release's commit.
+ *              checkout, or the pinned release's commit. `go:<path>` is
+ *              the Go CLI (ADR-0059 step 5) at <path>, run as a native
+ *              binary; the features it lacks yet (client-go.json,
+ *              lib/client-lacks.mjs) report client-lacks.
  *   --report   also write the report as JSON to this file
  *   --suite    run only these suites (and the setup they need); the report
  *              then covers only their checks
@@ -53,6 +56,7 @@ import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
 import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
 import { judgeGate } from "./lib/gate.mjs";
 import { evaluate, TARGET_SPECIFIC, validateInventory } from "./lib/inventory.mjs";
+import { clientLackingChecks, loadClientLacks, validateClientLacks, withoutLacking } from "./lib/client-lacks.mjs";
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
@@ -68,7 +72,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function usage(message) {
   console.error(
-    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version> [--report <file.json>] [--suite <name>]...` +
+    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version>|go:<path> [--report <file.json>] [--suite <name>]...` +
       " [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]",
   );
   process.exit(64);
@@ -213,6 +217,13 @@ async function main() {
     process.exit(1);
   }
   const expected = expectationsFor(expectations, expectKey, cli.spec);
+  // What the Go CLI does not do yet; nothing for a TypeScript CLI.
+  const clientLacks = cli.spec === "go" ? loadClientLacks() : new Map();
+  if (cli.spec === "go") {
+    const problems = validateClientLacks({ schema: 1, lacksFeatures: Object.fromEntries(clientLacks) }, inventory);
+    if (problems.length > 0) usage(problems.join("\n"));
+  }
+  const clientLacking = clientLackingChecks(inventory, clientLacks);
   const report = {
     target: options.target,
     expectKey,
@@ -220,6 +231,7 @@ async function main() {
     sdk: sdk ? { from: cli.commit ? `release ${cli.version} (${cli.commit})` : "this checkout", commit: sdk.commit, sha256: sdk.sha256 } : null,
     partial: options.suites.length > 0 ? options.suites : false,
     lacks: { declared: Object.fromEntries(lacks), stale: [] },
+    clientLacks: { declared: Object.fromEntries(clientLacks), stale: [] },
     startedAt: new Date().toISOString(),
     suites: [],
   };
@@ -268,6 +280,8 @@ async function main() {
       ...process.env,
       VARLATCH_CLI: cli.path,
       VARLATCH_CLI_VERSION: cli.version ?? "",
+      // A native binary (the Go CLI) runs directly, a TypeScript one with Node (suite-kit cliCommand).
+      VARLATCH_CLI_NATIVE: cli.native ? "1" : "",
       VARLATCH_SDK: sdk?.path ?? "",
       CONFORMANCE_TARGET_STATE: stateFile,
     };
@@ -332,8 +346,12 @@ async function main() {
       // the runner; a ts-stack (or go-server) check on a target without
       // the stack (or the Go server) stays not applicable.
       const lacked = new Set(ids.filter((id) => lacking.has(id) && !(missing.length > 0 && inventory.checks[id].kind in TARGET_SPECIFIC)));
+      // A check needing a CLI feature the client lacks: client-lacks, from
+      // the runner, unless the target already lacks what it needs.
+      const clientLacked = new Set(ids.filter((id) => clientLacking.has(id) && !lacked.has(id) && !(missing.length > 0 && inventory.checks[id].kind in TARGET_SPECIFIC)));
       const reportLacks = () => {
         for (const id of lacked) reports.push({ suite: entry.suite, id, status: "TARGET-LACKS", text: `the target lacks ${lacking.get(id).join(", ")}`, runner: true });
+        for (const id of clientLacked) reports.push({ suite: entry.suite, id, status: "CLIENT-LACKS", text: `the CLI lacks ${clientLacking.get(id).join(", ")}`, runner: true });
       };
       if (missing.length > 0) {
         console.log(`--- ${suite.title}: not run, the target lacks ${missing.join(", ")}`);
@@ -349,6 +367,12 @@ async function main() {
         reportLacks();
         continue;
       }
+      if (lacked.size + clientLacked.size === ids.length) {
+        const features = [...new Set([...clientLacked].flatMap((id) => clientLacking.get(id)))].sort();
+        console.log(`--- ${suite.title}: not run, the CLI lacks ${features.join(", ")}`);
+        reportLacks();
+        continue;
+      }
       console.log(`--- ${suite.title}`);
       const args = await entry.args(ctx);
       await pace(entry.suite);
@@ -361,6 +385,15 @@ async function main() {
       (windows[entry.suite] ??= []).push({ start, end });
       if (around) await around.finish();
       const parsed = parseSuiteOutput(`${out.stdout}\n${out.stderr}`);
+      // A lacking check's result is replaced by the runner's client-lacks;
+      // one that passed shows a stale entry in client-go.json.
+      const anyFailed = parsed.results.some((r) => r.status === "FAIL");
+      const { kept, stale } = withoutLacking(parsed.results, clientLacked, clientLacking);
+      parsed.results = kept;
+      for (const { id, features } of stale) {
+        report.clientLacks.stale.push({ id, features });
+        errors.push({ suite: entry.suite, message: `${id} passed, but client-go.json says the CLI lacks ${features.join(", ")}: remove the entry` });
+      }
       // What the suite printed for a check that lacks an operation is
       // replaced by the runner's target-lacks, and for a ts-stack (or
       // go-server) check on a target without that capability, by not
@@ -383,7 +416,8 @@ async function main() {
       }
       reportLacks();
       for (const message of parsed.errors) errors.push({ suite: entry.suite, message });
-      const failedResults = parsed.results.some((r) => r.status === "FAIL");
+      // A FAIL replaced by client-lacks still explains a non-zero exit.
+      const failedResults = anyFailed;
       if (out.timedOut) errors.push({ suite: entry.suite, message: `did not finish within ${SUITE_TIMEOUT_MS / 60_000} minutes` });
       else if (out.code !== 0 && !failedResults && parsed.errors.length === 0) {
         errors.push({ suite: entry.suite, message: `exited ${out.code ?? out.signal} without reporting a failed check` });
@@ -477,6 +511,7 @@ async function main() {
       errors: errors.filter((e) => e.suite === "runner" || inScope(e.suite)),
       cliVersion: cli.version,
       lacking,
+      clientLacking,
     });
     // The expected failures of this target and client, for the checks in scope.
     const inForce = new Map([...expected].filter(([id]) => id in scoped.checks));
@@ -512,7 +547,7 @@ async function main() {
     const count = (o) => judged.checks.filter((c) => c.outcome === o).length;
     console.log(
       `--- ${judged.checks.length} checks: ${count("pass")} passed, ${count("fail")} failed, ${count("expected-fail")} failed as expected, ` +
-        `${count("not-applicable")} not applicable, ${count("predates-cli")} predate the CLI, ${count("target-lacks")} need an operation the target lacks`,
+        `${count("not-applicable")} not applicable, ${count("predates-cli")} predate the CLI, ${count("target-lacks")} need an operation the target lacks, ${count("client-lacks")} need a feature the CLI lacks`,
     );
     if (count("target-lacks") > 0) {
       // The parity tracker: which lacking operations hold back how many checks.

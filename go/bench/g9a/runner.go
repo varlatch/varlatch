@@ -24,6 +24,9 @@ const (
 	FilePlan     = "plan.json"
 	FileManifest = "manifest.json"
 	FileEvents   = "events.jsonl"
+	// FileConverge holds each converge run's Targets, a line a run: each
+	// Target's commits, one by one (ConvergeLine).
+	FileConverge = "converge.jsonl"
 	FileSystem   = "system.json"
 	// FileAccessLog is varlatchd's access log, from which the report counts
 	// each client address's requests per request window.
@@ -113,12 +116,50 @@ type BackupStats struct {
 	ArchiveBytes int64
 }
 
-// ConvergeResult summarizes one converge run.
+// ConvergeResult summarizes one converge run: with the real engine,
+// each Target's run (Runs) and the provider calls it made.
 type ConvergeResult struct {
 	Targets    int
 	Values     int
 	PushFailed int
 	Err        error
+	Runs       []TargetRun
+	Calls      int64
+}
+
+// TargetRun is one Target's run as the converge engine reports it
+// (feature-parity decision 7): its commits, in order.
+type TargetRun struct {
+	Target        string   `json:"target"`
+	Commits       int      `json:"commits"`
+	SharedCommits int      `json:"sharedCommits"`
+	WALBytes      int64    `json:"walBytes"`
+	QueuedUs      int64    `json:"queuedUs"`
+	InJobsUs      int64    `json:"inJobsUs"`
+	CompletionUs  int64    `json:"completionUs"`
+	DurationUs    int64    `json:"durationUs"`
+	Jobs          []JobRun `json:"jobs"`
+}
+
+// JobRun is one commit of a Target's run: its name (CONVERGE.md), its
+// time queued, in its own body, and from the body's end to its job's
+// return (its batch's later jobs, COMMIT and fsync), its batch's WAL bytes
+// and jobs.
+type JobRun struct {
+	Point        string `json:"point"`
+	QueuedUs     int64  `json:"queuedUs"`
+	InJobUs      int64  `json:"inJobUs"`
+	CompletionUs int64  `json:"completionUs"`
+	WALBytes     int64  `json:"walBytes"`
+	BatchJobs    int    `json:"batchJobs"`
+	Committed    bool   `json:"committed"`
+}
+
+// ConvergeLine is a line of FileConverge: a converge run's start and its
+// Targets' runs.
+type ConvergeLine struct {
+	T    int64       `json:"t"`
+	Runs []TargetRun `json:"runs"`
 }
 
 // ErrConvergeRunning is a converge tick that found the previous run still
@@ -168,6 +209,8 @@ type Runner struct {
 	stopOnce  sync.Once
 	done      chan struct{}
 	bg        sync.WaitGroup
+	// convergeMu orders writes to FileConverge.
+	convergeMu sync.Mutex
 }
 
 // NewRunner writes the plan to the output directory and opens the event
@@ -338,6 +381,25 @@ func (r *Runner) Finish() {
 // Close writes out and closes the event log.
 func (r *Runner) Close() error { return r.ev.close() }
 
+// writeConverge appends a converge run's Targets to FileConverge.
+func (r *Runner) writeConverge(line ConvergeLine) error {
+	b, err := json.Marshal(line)
+	if err != nil {
+		return err
+	}
+	r.convergeMu.Lock()
+	defer r.convergeMu.Unlock()
+	f, err := os.OpenFile(filepath.Join(r.opts.OutDir, FileConverge), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 // waitStarted is closed by the first POST /run/start.
 func (r *Runner) waitStarted() <-chan struct{} {
 	ch := make(chan struct{})
@@ -427,11 +489,26 @@ func (r *Runner) runBackground(t0 time.Time) {
 		r.bg.Add(1)
 		go func() {
 			defer r.bg.Done()
+			started := time.Now()
 			r.ev.emit(Event{Ev: EvConvergeStart})
 			res := r.opts.Target.Converge(work)
-			e := Event{Ev: EvConvergeEnd, Targets: res.Targets, Values: res.Values, Failed: res.PushFailed}
+			e := Event{Ev: EvConvergeEnd, Targets: res.Targets, Values: res.Values, Failed: res.PushFailed, Calls: res.Calls}
+			for _, run := range res.Runs {
+				e.Commits += run.Commits
+				e.SharedCommits += run.SharedCommits
+				e.WALBytes += run.WALBytes
+				e.EngineUs += run.DurationUs
+				e.QueuedUs += run.QueuedUs
+				e.InJobsUs += run.InJobsUs
+				e.CompletionUs += run.CompletionUs
+			}
 			if res.Err != nil {
 				e.Err = res.Err.Error()
+			}
+			if len(res.Runs) > 0 {
+				if err := r.writeConverge(ConvergeLine{T: started.UnixMicro(), Runs: res.Runs}); err != nil {
+					r.ev.emit(Event{Ev: EvError, Err: "converge.jsonl: " + err.Error()})
+				}
 			}
 			r.ev.emit(e)
 		}()

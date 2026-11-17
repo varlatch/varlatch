@@ -1,0 +1,137 @@
+{
+  "comment": "Written by apps/cli/test/go-vectors-framework.test.ts from Node.js's JSON.parse and JSON.stringify; do not edit.",
+  "cases": [
+    {
+      "text": "null",
+      "compact": "null",
+      "indented": "null",
+      "indented4": "null"
+    },
+    {
+      "text": "true",
+      "compact": "true",
+      "indented": "true",
+      "indented4": "true"
+    },
+    {
+      "text": "0",
+      "compact": "0",
+      "indented": "0",
+      "indented4": "0"
+    },
+    {
+      "text": "-0",
+      "compact": "0",
+      "indented": "0",
+      "indented4": "0"
+    },
+    {
+      "text": "1e21",
+      "compact": "1e+21",
+      "indented": "1e+21",
+      "indented4": "1e+21"
+    },
+    {
+      "text": "1e-7",
+      "compact": "1e-7",
+      "indented": "1e-7",
+      "indented4": "1e-7"
+    },
+    {
+      "text": "123456789012345678901234567890",
+      "compact": "1.2345678901234568e+29",
+      "indented": "1.2345678901234568e+29",
+      "indented4": "1.2345678901234568e+29"
+    },
+    {
+      "text": "0.1",
+      "compact": "0.1",
+      "indented": "0.1",
+      "indented4": "0.1"
+    },
+    {
+      "text": "5e-324",
+      "compact": "5e-324",
+      "indented": "5e-324",
+      "indented4": "5e-324"
+    },
+    {
+      "text": "1.7976931348623157e308",
+      "compact": "1.7976931348623157e+308",
+      "indented": "1.7976931348623157e+308",
+      "indented4": "1.7976931348623157e+308"
+    },
+    {
+      "text": "1e400",
+      "compact": "null",
+      "indented": "null",
+      "indented4": "null"
+    },
+    {
+      "text": "[]",
+      "compact": "[]",
+      "indented": "[]",
+      "indented4": "[]"
+    },
+    {
+      "text": "{}",
+      "compact": "{}",
+      "indented": "{}",
+      "indented4": "{}"
+    },
+    {
+      "text": "[[],{},[{}]]",
+      "compact": "[[],{},[{}]]",
+      "indented": "[\n  [],\n  {},\n  [\n    {}\n  ]\n]",
+      "indented4": "[\n    [],\n    {},\n    [\n        {}\n    ]\n]"
+    },
+    {
+      "text": "{\"b\":1,\"a\":2,\"2\":3,\"1\":4,\"01\":5,\"4294967295\":6,\"4294967294\":7}",
+      "compact": "{\"1\":4,\"2\":3,\"4294967294\":7,\"b\":1,\"a\":2,\"01\":5,\"4294967295\":6}",
+      "indented": "{\n  \"1\": 4,\n  \"2\": 3,\n  \"4294967294\": 7,\n  \"b\": 1,\n  \"a\": 2,\n  \"01\": 5,\n  \"4294967295\": 6\n}",
+      "indented4": "{\n    \"1\": 4,\n    \"2\": 3,\n    \"4294967294\": 7,\n    \"b\": 1,\n    \"a\": 2,\n    \"01\": 5,\n    \"4294967295\": 6\n}"
+    },
+    {
+      "text": "{\"a\":1,\"a\":2,\"b\":3}",
+      "compact": "{\"a\":2,\"b\":3}",
+      "indented": "{\n  \"a\": 2,\n  \"b\": 3\n}",
+      "indented4": "{\n    \"a\": 2,\n    \"b\": 3\n}"
+    },
+    {
+      "text": "{\"nested\":{\"list\":[1,\"two\",null,true,{\"x\":[]}]},\"empty\":{}}",
+      "compact": "{\"nested\":{\"list\":[1,\"two\",null,true,{\"x\":[]}]},\"empty\":{}}",
+      "indented": "{\n  \"nested\": {\n    \"list\": [\n      1,\n      \"two\",\n      null,\n      true,\n      {\n        \"x\": []\n      }\n    ]\n  },\n  \"empty\": {}\n}",
+      "indented4": "{\n    \"nested\": {\n        \"list\": [\n            1,\n            \"two\",\n            null,\n            true,\n            {\n                \"x\": []\n            }\n        ]\n    },\n    \"empty\": {}\n}"
+    },
+    {
+      "text": "\"<script>&amp;\\u2028\\u2029\"",
+      "compact": "\"<script>&amp;  \"",
+      "indented": "\"<script>&amp;  \"",
+      "indented4": "\"<script>&amp;  \""
+    },
+    {
+      "text": "\"\\ud800 lone and \\udc00 and \\ud83d\\ude42\"",
+      "compact": "\"\\ud800 lone and \\udc00 and 🙂\"",
+      "indented": "\"\\ud800 lone and \\udc00 and 🙂\"",
+      "indented4": "\"\\ud800 lone and \\udc00 and 🙂\""
+    },
+    {
+      "text": "\"\\u0000\\u001f\\u007f\\u0080\"",
+      "compact": "\"\\u0000\\u001f\"",
+      "indented": "\"\\u0000\\u001f\"",
+      "indented4": "\"\\u0000\\u001f\""
+    },
+    {
+      "text": "\"tab\\tnew\\nline\\\\quote\\\"slash\\/\"",
+      "compact": "\"tab\\tnew\\nline\\\\quote\\\"slash/\"",
+      "indented": "\"tab\\tnew\\nline\\\\quote\\\"slash/\"",
+      "indented4": "\"tab\\tnew\\nline\\\\quote\\\"slash/\""
+    },
+    {
+      "text": "{\"version\":1,\"environments\":[{\"name\":\"development\",\"tier\":\"development\",\"kind\":\"standard\",\"selected\":true}]}",
+      "compact": "{\"version\":1,\"environments\":[{\"name\":\"development\",\"tier\":\"development\",\"kind\":\"standard\",\"selected\":true}]}",
+      "indented": "{\n  \"version\": 1,\n  \"environments\": [\n    {\n      \"name\": \"development\",\n      \"tier\": \"development\",\n      \"kind\": \"standard\",\n      \"selected\": true\n    }\n  ]\n}",
+      "indented4": "{\n    \"version\": 1,\n    \"environments\": [\n        {\n            \"name\": \"development\",\n            \"tier\": \"development\",\n            \"kind\": \"standard\",\n            \"selected\": true\n        }\n    ]\n}"
+    }
+  ]
+}

@@ -27,18 +27,18 @@ func TestComposeFuzzDifferential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutants := v.(Object).get("mutants").([]any)
+	mutants := v.(Object).Value("mutants").([]any)
 	nSame, nSafer, nWorse := 0, 0, 0
 	for i, m := range mutants {
 		c := m.(Object)
-		version, _ := decodeNumber(c.get("version"))
+		version, _ := decodeNumber(c.Value("version"))
 		var names []string
-		for _, n := range c.get("names").([]any) {
+		for _, n := range c.Value("names").([]any) {
 			names = append(names, n.(string))
 		}
-		got := ClassifyComposeUsage(optString(c.get("raw")), optString(c.get("generated")), version, names)
+		got := ClassifyComposeUsage(optString(c.Value("raw")), optString(c.Value("generated")), version, names)
 		_, threw := c.Get("throws")
-		want := c.get("result")
+		want := c.Value("result")
 		switch {
 		case !threw && same(encReport(got), want):
 			nSame++
@@ -48,7 +48,7 @@ func TestComposeFuzzDifferential(t *testing.T) {
 			nWorse++
 			if nWorse <= 30 {
 				t.Errorf("mutant %d: Go %s\n  TypeScript %s (throws %s)\n  raw %s\n  generated %s", i, stringify(encReport(got)),
-					stringify(want), stringify(c.get("throws")), strconv.Quote(*optString(c.get("raw"))), strconv.Quote(*optString(c.get("generated"))))
+					stringify(want), stringify(c.Value("throws")), strconv.Quote(*optString(c.Value("raw"))), strconv.Quote(*optString(c.Value("generated"))))
 			}
 		}
 	}

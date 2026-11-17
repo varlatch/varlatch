@@ -17,7 +17,10 @@ func WithTiming(ctx context.Context, _ func(JobTiming)) context.Context { return
 // release job carries no timing state and the writer reads no clock for it.
 type jobTiming struct{}
 
-func (*jobTiming) queue(context.Context)   {}
-func (*jobTiming) begin()                  {}
-func (*jobTiming) committed(time.Duration) {}
-func (*jobTiming) report()                 {}
+func (*jobTiming) queue(context.Context)               {}
+func (*jobTiming) begin()                              {}
+func (*jobTiming) committed(time.Duration, int64, int) {}
+
+// walWritten reads nothing outside the g9a build.
+func (*DB) walWritten() int64 { return 0 }
+func (*jobTiming) report()    {}

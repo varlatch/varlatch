@@ -527,7 +527,7 @@ func TestPlan(t *testing.T) {
 	if err := s.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if s.Phases[1].Seconds != 9 || s.ConvergeEverySeconds != 10 || s.IdleProbeSeconds != 5 || s.Phases[1].Rate != 10 || s.WALBound != p.WALBound {
+	if s.Phases[1].Seconds != 9 || s.ConvergeEverySeconds != MinConvergeSeconds || s.ProviderDelayMs != 200 || s.IdleProbeSeconds != 5 || s.Phases[1].Rate != 10 || s.WALBound != p.WALBound {
 		t.Fatalf("scaled: %+v", s)
 	}
 	if s.Backups[0].AtSeconds != 4.2 || s.Backups[1] != p.Backups[1] {

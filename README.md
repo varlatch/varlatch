@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/varlatch/varlatch/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/varlatch/varlatch?sort=semver&label=release"></a>
-  <a href="https://github.com/varlatch/varlatch/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush"><img alt="CI on main" src="https://img.shields.io/github/actions/workflow/status/varlatch/varlatch/ci.yml?branch=main&event=push&label=CI"></a>
+  <a href="https://github.com/varlatch/varlatch/actions/workflows/ci.yml?query=branch%3Amain+event%3Aschedule"><img alt="Nightly CI on main" src="https://img.shields.io/github/actions/workflow/status/varlatch/varlatch/ci.yml?branch=main&event=schedule&label=CI"></a>
   <a href="LICENSE"><img alt="License: AGPL-3.0 and Apache-2.0" src="https://img.shields.io/badge/license-AGPL--3.0%20%7C%20Apache--2.0-blue"></a>
 </p>
 

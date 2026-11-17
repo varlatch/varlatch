@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
-import { cliPath as cliUnderTest, reporter } from "../../../scripts/conformance/suite-kit.mjs";
+import { cliCommand, reporter } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live E2E for `varlatch run --strict` against the clean-room stack, with the
  * bundled CLI. The child records the environment it received to a marker
@@ -21,7 +21,6 @@ if (!server || !adminToken) {
   process.exit(1);
 }
 // The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
-const cliPath = cliUnderTest();
 const P = "/v1/organizations/acme/projects/strictrun";
 const E = `${P}/environments/development`;
 const DB = "postgres://strict-db.internal/app";
@@ -88,7 +87,7 @@ async function workspace(token) {
       // VARLATCH_ASSISTED=0: a coding agent's marker in the host shell must not switch on assisted mode (ADR-0043).
       const env = { ...process.env, VARLATCH_ASSISTED: "0", VARLATCH_CONFIG_DIR: configDir, ...extraEnv };
       delete env.VARLATCH_TOKEN;
-      const child = spawn("node", [cliPath, ...args], { cwd: repoDir, env });
+      const child = spawn(...cliCommand(args), { cwd: repoDir, env });
       let out = "";
       child.stdout.on("data", (d) => (out += d));
       child.stderr.on("data", (d) => (out += d));

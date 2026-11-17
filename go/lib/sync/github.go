@@ -213,14 +213,14 @@ func (githubActions) CanonicalizeBaseIdentity(raw string) (string, error) {
 
 func (githubActions) CanonicalizeDestination(raw Object) (Destination, error) {
 	repo := ""
-	if s, ok := raw.get("repo").(string); ok {
+	if s, ok := raw.Value("repo").(string); ok {
 		repo = whatwg.Trim(s)
 	}
 	if !githubRepoPattern.MatchString(repo) {
 		return Destination{}, &AdapterError{Message: "Invalid GitHub repository name"}
 	}
 	environment, hasEnvironment := "", false
-	if s, ok := raw.get("environment").(string); ok && whatwg.Trim(s) != "" {
+	if s, ok := raw.Value("environment").(string); ok && whatwg.Trim(s) != "" {
 		environment, hasEnvironment = whatwg.Trim(s), true
 	}
 	if hasEnvironment && len(codeUnits(environment)) > 255 {
@@ -274,7 +274,7 @@ func (githubActions) WriteValues(ctx context.Context, req *Request, items []Sync
 	// its bytes, anything else (or a null answer) is a TypeError.
 	publicKey, _ := parsed.(Object)
 	var recipient []byte
-	switch key := publicKey.get("key").(type) {
+	switch key := publicKey.Value("key").(type) {
 	case string:
 		recipient = nodeBase64(key)
 	case []any:
@@ -403,7 +403,7 @@ func checkGitHubAccess(ctx context.Context, req *Request) AccessCheck {
 	account, _ := user.jsonBody()
 	if o, isObject := account.(Object); !isObject {
 		return notGitHub(where)
-	} else if _, ok := o.get("login").(string); !ok {
+	} else if _, ok := o.Value("login").(string); !ok {
 		return notGitHub(where)
 	}
 	if repo == "" {
@@ -426,8 +426,8 @@ func checkGitHubAccess(ctx context.Context, req *Request) AccessCheck {
 	if key.ok() {
 		publicKey, _ := key.jsonBody()
 		o, isObject := publicKey.(Object)
-		_, idOK := o.get("key_id").(string)
-		_, keyOK := o.get("key").(string)
+		_, idOK := o.Value("key_id").(string)
+		_, keyOK := o.Value("key").(string)
 		if !isObject || !idOK || !keyOK {
 			return notGitHub(where)
 		}
@@ -463,8 +463,8 @@ func checkGitHubAccess(ctx context.Context, req *Request) AccessCheck {
 func installationPage(res *response) (total float64, repos []any, ok bool) {
 	body, _ := res.jsonBody()
 	o, isObject := body.(Object)
-	total, totalOK := o.get("total_count").(float64)
-	repos, reposOK := o.get("repositories").([]any)
+	total, totalOK := o.Value("total_count").(float64)
+	repos, reposOK := o.Value("repositories").([]any)
 	return total, repos, isObject && totalOK && reposOK
 }
 
@@ -501,11 +501,11 @@ func repoOption(repo any, owner string) (DestinationOption, bool) {
 	if !ok {
 		return DestinationOption{}, false
 	}
-	ownerObject, ownerOK := o.get("owner").(Object)
-	if !ownerOK || o.get("archived") == true {
+	ownerObject, ownerOK := o.Value("owner").(Object)
+	if !ownerOK || o.Value("archived") == true {
 		return DestinationOption{}, false
 	}
-	name, _ := o.get("name").(string)
+	name, _ := o.Value("name").(string)
 	login := "undefined" // String(undefined)
 	if v, has := ownerObject.Get("login"); has {
 		login = jsString(v)
@@ -514,7 +514,7 @@ func repoOption(repo any, owner string) (DestinationOption, bool) {
 		return DestinationOption{}, false
 	}
 	detail := "public"
-	if o.get("private") == true {
+	if o.Value("private") == true {
 		detail = "private"
 	}
 	return DestinationOption{Destination: Fields{{"repo", name}}, Label: name, Detail: detail}, true
@@ -585,11 +585,11 @@ func listGitHubRepositories(ctx context.Context, req *Request) DestinationListin
 	}
 	account, _ := user.jsonBody()
 	o, isObject := account.(Object)
-	if _, ok := o.get("login").(string); !isObject || !ok {
+	if _, ok := o.Value("login").(string); !isObject || !ok {
 		return listingFailed(notGitHub(where))
 	}
 	listing := githubAPI + "/user/repos?affiliation=owner,collaborator&sort=full_name&per_page=100"
-	if o.get("type") == "Organization" {
+	if o.Value("type") == "Organization" {
 		listing = githubAPI + "/orgs/" + owner + "/repos?type=all&sort=full_name&per_page=100"
 	}
 	items := []DestinationOption{}

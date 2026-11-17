@@ -206,6 +206,9 @@
         "getMeta",
         "listOrganizations",
         "whoami"
+      ],
+      "cliNeeds": [
+        "login-token"
       ]
     },
     "dashboard": {
@@ -473,6 +476,9 @@
       "script": "apps/web/scripts/e2e-realtime.mjs",
       "needs": [
         "ts-stack"
+      ],
+      "cliNeeds": [
+        "login-token"
       ]
     },
     "realtime-degraded": {
@@ -526,6 +532,9 @@
         "getActiveContract",
         "issueIdentityCredential",
         "revokeIdentityCredential"
+      ],
+      "cliNeeds": [
+        "login-token"
       ]
     },
     "maintenance": {
@@ -550,6 +559,9 @@
         "getActiveContract",
         "getEffectiveConfiguration",
         "listAuditEvents"
+      ],
+      "cliNeeds": [
+        "login-token"
       ]
     },
     "server-logs": {
@@ -632,7 +644,10 @@
             "exportAuditEvents"
           ]
         }
-      }
+      },
+      "cliNeeds": [
+        "login-token"
+      ]
     },
     "strict-run": {
       "title": "strict startup (varlatch run --strict)",
@@ -672,7 +687,10 @@
             "listCapabilities"
           ]
         }
-      }
+      },
+      "cliNeeds": [
+        "login-token"
+      ]
     },
     "mcp": {
       "title": "varlatch mcp over stdio",
@@ -683,6 +701,9 @@
         "getMeta",
         "listOrganizations",
         "getEffectiveConfiguration"
+      ],
+      "cliNeeds": [
+        "login-token"
       ]
     },
     "sdk": {
@@ -2124,13 +2145,21 @@
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "no indicator while live updates work",
-      "replacement": "realtime-degraded.no-indicator-while-live"
+      "replacement": "realtime-degraded.no-indicator-while-live",
+      "cliNeeds": [
+        "env-list",
+        "run"
+      ]
     },
     "realtime.dashboard-says-live-updates-reconnecting": {
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "the dashboard says live updates are reconnecting",
-      "replacement": "realtime-degraded.says-reconnecting"
+      "replacement": "realtime-degraded.says-reconnecting",
+      "cliNeeds": [
+        "env-list",
+        "run"
+      ]
     },
     "realtime.api-accepts-change-convex-down": {
       "suite": "realtime",
@@ -2138,13 +2167,21 @@
       "title": "the API accepts a change while Convex is down",
       "replacement": {
         "none": "Convex is not part of the Go server (ADR-0059): writes through the API, the dashboard and the CLI are conformance checks in values, onboarding and client-runtime."
-      }
+      },
+      "cliNeeds": [
+        "env-list",
+        "run"
+      ]
     },
     "realtime.change-made-elsewhere-shows-up-polling": {
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "a change made elsewhere shows up by polling /v1",
-      "replacement": "realtime-degraded.change-shows-up-by-polling"
+      "replacement": "realtime-degraded.change-shows-up-by-polling",
+      "cliNeeds": [
+        "env-list",
+        "run"
+      ]
     },
     "realtime.dashboard-writes-convex-down": {
       "suite": "realtime",
@@ -2152,7 +2189,11 @@
       "title": "the dashboard writes while Convex is down",
       "replacement": {
         "none": "Convex is not part of the Go server (ADR-0059): writes through the API, the dashboard and the CLI are conformance checks in values, onboarding and client-runtime."
-      }
+      },
+      "cliNeeds": [
+        "env-list",
+        "run"
+      ]
     },
     "realtime.cli-env-list-works-convex-down": {
       "suite": "realtime",
@@ -2176,25 +2217,41 @@
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "the indicator clears when Convex returns",
-      "replacement": "realtime-degraded.indicator-clears-on-reconnect"
+      "replacement": "realtime-degraded.indicator-clears-on-reconnect",
+      "cliNeeds": [
+        "env-list",
+        "run"
+      ]
     },
     "realtime.live-signals-drive-updates-again": {
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "live signals drive updates again",
-      "replacement": "realtime-degraded.live-signals-drive-updates-again"
+      "replacement": "realtime-degraded.live-signals-drive-updates-again",
+      "cliNeeds": [
+        "env-list",
+        "run"
+      ]
     },
     "realtime.no-page-reload-throughout": {
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "no page reload throughout",
-      "replacement": "realtime-degraded.no-page-reload"
+      "replacement": "realtime-degraded.no-page-reload",
+      "cliNeeds": [
+        "env-list",
+        "run"
+      ]
     },
     "realtime.no-content-security-policy-violations": {
       "suite": "realtime",
       "kind": "ts-stack",
       "title": "no Content-Security-Policy violations",
-      "replacement": "dashboard.csp-strict"
+      "replacement": "dashboard.csp-strict",
+      "cliNeeds": [
+        "env-list",
+        "run"
+      ]
     },
     "realtime-degraded.no-indicator-while-live": {
       "suite": "realtime-degraded",
@@ -2259,7 +2316,10 @@
     "broker.agent-identity-created-no-credential": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "agent identity created with no credential"
+      "title": "agent identity created with no credential",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.run-untargeted-secret-refuses-start-naming": {
       "suite": "broker",
@@ -2438,72 +2498,114 @@
     "broker.issuance-without-targets-refused-naming-minimum": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "issuance without targets is refused, naming the minimum CLI version"
+      "title": "issuance without targets is refused, naming the minimum CLI version",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.issuance-records-returns-targets": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "issuance records and returns the targets"
+      "title": "issuance records and returns the targets",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.exercise-naming-target-capability-does-not": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "an exercise naming a target the Capability does not hold is denied"
+      "title": "an exercise naming a target the Capability does not hold is denied",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.exercise-succeeds-grant-stands": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "exercise succeeds while the Grant stands"
+      "title": "exercise succeeds while the Grant stands",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.revoking-secret-use-denies-very-next-exercise": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "revoking secret.use denies the very next exercise"
+      "title": "revoking secret.use denies the very next exercise",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.revoking-capability-denies-next-exercise": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "revoking the Capability denies the next exercise"
+      "title": "revoking the Capability denies the next exercise",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.expired-capability-fails-closed": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "expired Capability fails closed"
+      "title": "expired Capability fails closed",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.rotation-picked-up-next-exercise-model": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "rotation is picked up at the next exercise (Model B)"
+      "title": "rotation is picked up at the next exercise (Model B)",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.unbound-secret-reference-denies-exercise": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "unbound secret reference denies the exercise"
+      "title": "unbound secret reference denies the exercise",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.plain-reference-without-config-value-read-denies": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "plain reference without config.value.read denies the exercise"
+      "title": "plain reference without config.value.read denies the exercise",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.bound-secret-authorized-plain-references-expand": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "bound-secret and authorized plain references expand at exercise"
+      "title": "bound-secret and authorized plain references expand at exercise",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.only-placed-secret-returned-bound-dependency": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "only the placed Secret is returned; the bound dependency is not"
+      "title": "only the placed Secret is returned; the bound dependency is not",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.exercise-audit-identifies-agent-broker-destination": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "exercise audit identifies agent, broker, destination, item@version"
+      "title": "exercise audit identifies agent, broker, destination, item@version",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.denial-audit-records-internal-reason": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "denial audit records the internal reason"
+      "title": "denial audit records the internal reason",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.issuance-audit-records-targets-exercise-audit": {
       "suite": "broker",
@@ -2514,12 +2616,18 @@
     "broker.bound-dependency-audited-reference-expansion-before": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "a bound dependency is audited as a reference expansion before it is decrypted"
+      "title": "a bound dependency is audited as a reference expansion before it is decrypted",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.audit-export-contains-no-secret-plaintext": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "audit export contains no secret plaintext"
+      "title": "audit export contains no secret plaintext",
+      "cliNeeds": [
+        "agent-safe-run"
+      ]
     },
     "broker.convex-down-throughout": {
       "suite": "broker",
@@ -2533,17 +2641,26 @@
     "maintenance.signed-in-dashboard-shows-maintenance-banner": {
       "suite": "maintenance",
       "kind": "conformance",
-      "title": "a signed-in dashboard shows the maintenance banner"
+      "title": "a signed-in dashboard shows the maintenance banner",
+      "cliNeeds": [
+        "maintenance-wait"
+      ]
     },
     "maintenance.not-sign-in-screen": {
       "suite": "maintenance",
       "kind": "conformance",
-      "title": "…and not the sign-in screen"
+      "title": "…and not the sign-in screen",
+      "cliNeeds": [
+        "maintenance-wait"
+      ]
     },
     "maintenance.dashboard-opened-during-maintenance-shows": {
       "suite": "maintenance",
       "kind": "conformance",
-      "title": "a dashboard opened during maintenance shows the maintenance screen, not sign-in"
+      "title": "a dashboard opened during maintenance shows the maintenance screen, not sign-in",
+      "cliNeeds": [
+        "maintenance-wait"
+      ]
     },
     "maintenance.cli-waits-out-maintenance-succeeds": {
       "suite": "maintenance",
@@ -2560,17 +2677,26 @@
     "maintenance.page-opened-during-maintenance-continues-app": {
       "suite": "maintenance",
       "kind": "conformance",
-      "title": "the page opened during maintenance continues into the app by itself"
+      "title": "the page opened during maintenance continues into the app by itself",
+      "cliNeeds": [
+        "maintenance-wait"
+      ]
     },
     "maintenance.banner-clears-once-installation-answers-again": {
       "suite": "maintenance",
       "kind": "conformance",
-      "title": "the banner clears once the installation answers again"
+      "title": "the banner clears once the installation answers again",
+      "cliNeeds": [
+        "maintenance-wait"
+      ]
     },
     "maintenance.no-content-security-policy-violations": {
       "suite": "maintenance",
       "kind": "conformance",
-      "title": "no Content-Security-Policy violations"
+      "title": "no Content-Security-Policy violations",
+      "cliNeeds": [
+        "maintenance-wait"
+      ]
     },
     "server-logs.no-secret-plaintext": {
       "suite": "server-logs",
@@ -2610,7 +2736,10 @@
     "device.dashboard-passkey-sign-in": {
       "suite": "device",
       "kind": "conformance",
-      "title": "the dashboard's sign-in screen signs in with the passkey"
+      "title": "the dashboard's sign-in screen signs in with the passkey",
+      "cliNeeds": [
+        "login-device"
+      ]
     },
     "device.login-start-exits-0-address-code": {
       "suite": "device",
@@ -3084,12 +3213,28 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "group": "audit-export",
-      "title": "the audit export holds no value"
+      "title": "the audit export holds no value",
+      "cliNeeds": [
+        "run",
+        "run-export-context",
+        "run-redact",
+        "scan",
+        "types-python",
+        "types-typescript"
+      ]
     },
     "client-runtime.varlatchd-logs-hold-no-value": {
       "suite": "client-runtime",
       "kind": "conformance",
-      "title": "varlatchd logs hold no value"
+      "title": "varlatchd logs hold no value",
+      "cliNeeds": [
+        "run",
+        "run-export-context",
+        "run-redact",
+        "scan",
+        "types-python",
+        "types-typescript"
+      ]
     },
     "strict-run.valid-configuration-starts-child": {
       "suite": "strict-run",
@@ -3946,7 +4091,7 @@
       "script": "scripts/test-coolify-live.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 4: Sync Targets, with the Coolify live check against the Go server"
+        "none": "replaced by the manual Go live check go/lib/sync.TestCoolifyLiveServices (build tag coolifylive, varlatch#239), run on the lab Coolify 4.7.5 on 2026-11-17: 84 of 85, the one failure a recorded 4.7.5 difference (internal docs/evidence/adr-0059-step4-coolify-live)"
       }
     },
     "coolify-live-expands": {
@@ -3954,7 +4099,7 @@
       "script": "scripts/test-coolify-live-expands.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 4: Sync Targets, with the Coolify live check against the Go server"
+        "none": "replaced by the manual Go live check go/lib/sync.TestCoolifyLiveExpands (build tag coolifylive, varlatch#239), run on the lab Coolify 4.7.5 on 2026-11-17: 56 of 56 (internal docs/evidence/adr-0059-step4-coolify-live)"
       }
     }
   }

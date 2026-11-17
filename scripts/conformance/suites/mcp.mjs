@@ -14,7 +14,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cliPath, reporter } from "../suite-kit.mjs";
+import { cliCommand, reporter } from "../suite-kit.mjs";
 
 const [origin, token, seeded] = process.argv.slice(2);
 if (!origin || !token || !seeded) {
@@ -29,7 +29,7 @@ const env = { PATH: process.env.PATH ?? "", HOME: config, VARLATCH_CONFIG_DIR: c
 
 /** An MCP session with `varlatch mcp`: request(method, params) resolves with the response. */
 function session(args) {
-  const child = spawn(process.execPath, [cliPath(), "mcp", ...args], { cwd: repo, env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(...cliCommand(["mcp", ...args]), { cwd: repo, env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map();
   let buffer = "";
   let stderr = "";
@@ -108,7 +108,7 @@ function inJsonStrings(text, s) {
 let mcp = null;
 try {
   if (kit.supports("mcp")) {
-    const cli = (args) => spawnSync(process.execPath, [cliPath(), ...args], { cwd: repo, env, encoding: "utf8", timeout: 90_000 });
+    const cli = (args) => spawnSync(...cliCommand(args), { cwd: repo, env, encoding: "utf8", timeout: 90_000 });
     const init = cli(["init", "--org", "acme", "--project", "api", "--server", origin]);
     if (init.status !== 0) throw new Error(`init exited ${init.status}: ${(init.stdout + init.stderr).trim().slice(-300)}`);
     const login = cli(["login", "--server", origin, "--token", token]);
