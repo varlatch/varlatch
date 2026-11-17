@@ -135,8 +135,10 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
     writes mutants of every Compose input the vectors hold, with awkward
     characters and forms inserted or swapped in, each with TypeScript's
     verdict. `TestComposeFuzzDifferential` fails on each mutant where Go's
-    verdict is more confident than TypeScript's. It is opt-in, not part of
-    CI (the commands are in the test file). Its mutations include `:` and
+    verdict is more confident than TypeScript's. It runs nightly on ten
+    random seeds, printed in the log (`.github/workflows/compose-fuzz.yml`,
+    which keeps a failing seed's mutants), and by hand with the commands in
+    the test file. Its mutations include `:` and
     `?` at flow collections' delimiters, keys and values. At #218's fifth
     round, wide runs (61 seeds, 1 to 60 and 137, 366,000 mutants each)
     found nine more classes, each now outside the subset with a vector: a

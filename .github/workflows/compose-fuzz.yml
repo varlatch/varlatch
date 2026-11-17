@@ -1,0 +1,86 @@
+# The Compose reader's differential fuzz, nightly (go/README.md, "The
+# differential fuzz"; #218). packages/sync/test/go-compose-fuzz.test.ts
+# writes mutants of every Compose input the vectors hold, each with the
+# TypeScript reader's verdict; go/lib/sync's TestComposeFuzzDifferential
+# fails on any mutant where Go's verdict is more confident. Each night takes
+# random seeds, printed in the log, so a new version of yaml.v3 or of the
+# `yaml` package meets mutants it has not met before. A failing seed's
+# mutants are kept as an artifact; reproduce with the commands in the test
+# file and that seed.
+name: compose-fuzz
+
+on:
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: "Seeds to run, space-separated (empty: ten random ones)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compose-fuzz
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Fuzz
+        env:
+          SEEDS: ${{ inputs.seeds }}
+        run: |
+          set -u
+          if [ -z "${SEEDS:-}" ]; then
+            SEEDS=$(for i in 1 2 3 4 5 6 7 8 9 10; do shuf -i 1-2000000000 -n 1; done | tr '\n' ' ')
+          fi
+          echo "Seeds: $SEEDS"
+          mkdir -p "$RUNNER_TEMP/fuzz" "$RUNNER_TEMP/failed"
+          status=0
+          for seed in $SEEDS; do
+            file="$RUNNER_TEMP/fuzz/mutants-$seed.json"
+            # The yaml package warns about many mutants on stderr: not shown.
+            if ! VARLATCH_COMPOSE_FUZZ="$file" VARLATCH_COMPOSE_FUZZ_SEED="$seed" \
+              pnpm --filter @varlatch/sync exec vitest run test/go-compose-fuzz.test.ts > "$RUNNER_TEMP/ts.txt" 2>&1; then
+              echo "::error::seed $seed: the TypeScript side of the fuzz failed"
+              tail -50 "$RUNNER_TEMP/ts.txt"
+              exit 1
+            fi
+            if (cd go && VARLATCH_COMPOSE_FUZZ="$file" go test -count=1 -run TestComposeFuzzDifferential -v ./lib/sync > "$RUNNER_TEMP/out.txt" 2>&1); then
+              echo "seed $seed: $(grep -o '[0-9]* mutants:.*' "$RUNNER_TEMP/out.txt")"
+            else
+              status=1
+              echo "::error::seed $seed: Go is more confident than TypeScript on some mutants"
+              cat "$RUNNER_TEMP/out.txt"
+              mv "$file" "$RUNNER_TEMP/failed/"
+            fi
+            rm -f "$file"
+          done
+          exit $status
+      - name: Keep a failing seed's mutants
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compose-fuzz-failed
+          path: ${{ runner.temp }}/failed/
+          retention-days: 14
