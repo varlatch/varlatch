@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { checkHardLinks, ContainmentError, linkBelow, linkRefusal, pruneEmptyContained, removeContained, writeContained } from "./contain.js";
 import {
   appendOwned,
   eolOf,
@@ -37,7 +38,8 @@ import { SKILL_NAME, skillFiles } from "./skill.js";
  * another file this run also edits (a CLAUDE.md that links to AGENTS.md),
  * or a file outside the project. An AGENTS.md that links to a file in the
  * project is resolved, and that file is edited; any other link is left as
- * it is, with the edit for the human.
+ * it is, with the edit for the human. Nor is anything read, written or
+ * removed through a directory below the root that is a link (contain.ts).
  */
 
 export type Scope = "project" | "user";
@@ -490,18 +492,25 @@ function shownPath(root: string, path: string): string {
   return isInside(realRoot, target) ? relative(realRoot, target).split("\\").join("/") : target;
 }
 
-/** After --remove: the emptied skill directories go, and their parents if nothing else is in them. */
-function pruneEmpty(root: string, base: string): void {
-  const prune = (dir: string): void => {
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) if (entry.isDirectory()) prune(join(dir, entry.name));
-    if (readdirSync(dir).length === 0) rmdirSync(dir);
-  };
-  prune(join(root, base));
-  for (let dir = dirname(join(root, base)); dir !== root && dir.startsWith(root); dir = dirname(dir)) {
-    if (!existsSync(dir) || readdirSync(dir).length > 0) break;
-    rmdirSync(dir);
-  }
+/** The directories below the root that a run reads, writes, removes or prunes. */
+function scopeDirs(opts: InstallOptions): string[] {
+  const dirs = [...SKILL_BASES];
+  const remove = opts.mode === "remove";
+  if (opts.scope !== "user") dirs.push(".claude", ".gemini");
+  if (opts.guardrails || remove) dirs.push(".claude", ".codex");
+  if (opts.mcp || remove) dirs.push(".cursor", ".vscode", ".gemini", ".codex");
+  return dirs;
+}
+
+/**
+ * The refusal for a link found before anything was touched. For --remove it
+ * also lists the skill files the run would have removed that are not behind
+ * a link, so the person can remove them by hand.
+ */
+function refuseBefore(opts: InstallOptions, link: string): AgentsInstallError {
+  const files =
+    opts.mode === "remove" ? SKILL_BASES.filter((base) => linkBelow(opts.root, base) === null).flatMap((base) => filesUnder(join(opts.root, base))) : [];
+  return new AgentsInstallError(linkRefusal(link, files).message, false);
 }
 
 export function runInstall(opts: InstallOptions): InstallResult {
@@ -517,7 +526,40 @@ export function runInstall(opts: InstallOptions): InstallResult {
   if (opts.scope === "user" && opts.mcp) {
     throw new AgentsInstallError("--mcp applies to a project: it edits the project's MCP files", true);
   }
+  // Nothing is read, written, removed or pruned through a link below the
+  // root: refused before the plan reads anything, and again for every file
+  // it would change, before anything is changed.
+  for (const dir of scopeDirs(opts)) {
+    const link = linkBelow(opts.root, dir);
+    if (link !== null) throw refuseBefore(opts, link);
+  }
   const { files, manual, leftInPlace, notices } = plan(opts);
+  for (const file of files) {
+    const link = linkBelow(opts.root, dirname(relative(opts.root, file.path)));
+    if (link !== null) throw refuseBefore(opts, link);
+    // A file it would change that has a name it cannot see (a hard link,
+    // perhaps outside the root).
+    if (opts.mode !== "check" && file.desired !== null && !isSymlink(file.path)) {
+      const current = readBytes(file.path);
+      if (current instanceof Buffer && !current.equals(Buffer.from(file.desired, "utf8"))) {
+        try {
+          checkHardLinks(opts.root, relative(opts.root, file.path));
+        } catch (err) {
+          if (err instanceof ContainmentError) throw new AgentsInstallError(err.message, false);
+          throw err;
+        }
+      }
+    }
+  }
+  try {
+    return apply(opts, files, manual, leftInPlace, notices);
+  } catch (err) {
+    if (err instanceof ContainmentError) throw new AgentsInstallError(err.message, false);
+    throw err;
+  }
+}
+
+function apply(opts: InstallOptions, files: Plan["files"], manual: string[], leftInPlace: string[], notices: string[]): InstallResult {
   const changes: Change[] = [];
   for (const file of files) {
     const rel = relative(opts.root, file.path).split("\\").join("/");
@@ -544,13 +586,10 @@ export function runInstall(opts: InstallOptions): InstallResult {
     }
     changes.push({ path: rel, action });
     if (opts.mode === "check" || action === "unchanged") continue;
-    if (file.desired === null) rmSync(file.path, { force: true });
-    else {
-      mkdirSync(dirname(file.path), { recursive: true });
-      writeFileSync(file.path, file.desired);
-    }
+    if (file.desired === null) removeContained(opts.root, relative(opts.root, file.path));
+    else writeContained(opts.root, relative(opts.root, file.path), file.desired);
   }
-  if (opts.mode === "remove") for (const base of [...SKILL_BASES, ".codex", ".cursor", ".vscode", ".gemini"]) pruneEmpty(opts.root, base);
+  if (opts.mode === "remove") for (const base of [...SKILL_BASES, ".codex", ".cursor", ".vscode", ".gemini"]) pruneEmptyContained(opts.root, base);
   return {
     scope: opts.scope,
     root: opts.root,
