@@ -64,6 +64,9 @@ func TestVerifyReleaseNeverEchoesUserinfo(t *testing.T) {
 		verifyArgs("--file", `https://alice:se\cret-pw@h`),
 		verifyArgs("--file", "https://alice:fake-pw@h=Caddyfile"),
 		{"verify-release", "--version", "1.2.3", "--sums", "https://alice:fake-pw@h/SHA256SUMS", "--bundle", "x"},
+		// #265 round 4: a path imitating the marker, through the file-open error.
+		{"verify-release", "--version", "1.2.3", "--sums", "https:/alice:fake-pw/[redacted]@h/SHA256SUMS", "--bundle", "x"},
+		{"verify-release", "--version", "1.2.3", "--sums", td + "v0.21.0/SHA256SUMS", "--bundle", "https://alice:fake-pw@h/bundle.json"},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, strings.NewReader(""), &stdout, &stderr); code == 0 {

@@ -153,6 +153,15 @@ var failSafeReproducers = []struct{ text, secret string }{
 	{"https://[redacted]@h, https://u:fake\n@h2", "fake"},
 	{"A:[redacted]@\nhttps://u:fa\nke@h", "fa"},
 	{"https://a:b\n@h https://c:fake\n@h2", "fake"},
+	// #265 round 4: the marker can be imitated, and a join could stop before the delimiter.
+	{"https://alice:fake [redacted]@h", "fake"},
+	{"https://alice:fake/[redacted]@h", "fake"},
+	{"https://alice:fake:[redacted]@h", "fake"},
+	{"varlatch verify-release: open https:/alice:fake/[redacted]@h/SHA256SUMS: no such file or directory", "fake"},
+	{`open https://alice:fa ke\[redacted]@x: permission denied`, "fa ke"},
+	{"https://alice:fake\nmore words\nstill-pass@h", "still-pass"},
+	{"https://u:Pa55\nnope\n\nmore\n@h", "Pa55"},
+	{"see https://alice:pa\nss word\n\nx@h and more", "alice"},
 }
 
 func TestFailSafeMasksEveryReproducer(t *testing.T) {
@@ -176,34 +185,57 @@ func TestFailSafeMasksEveryReproducer(t *testing.T) {
 	}
 }
 
-// TestFailSafeRule: what the fail-safe does, exactly.
+// TestFailSafeRule: what the fail-safe does, exactly: from just after the
+// first ":" that follows a letter (tab, CR and LF passed over) to the last
+// at-sign of the whole message.
 func TestFailSafeRule(t *testing.T) {
 	for in, want := range map[string]string{
-		// From after the first ":" that follows a letter to the last at-sign; the leading word and the rest kept.
 		"https://u:p@h":                     "https:[redacted]@h",
 		"error: see https://u:p@h/x@y here": "error:[redacted]@y here",
 		"varlatch server: unexpected argument https://alice:pw@example.com\nUsage: varlatch server [--json]": "varlatch server:[redacted]@example.com\nUsage: varlatch server [--json]",
-		"https://alice:fake%40h":      "https:[redacted]@h",
-		`https://alice:fake\x40h`:     "https:[redacted]@h",
-		"ht\ttps:/alice:pw@h":         "ht\ttps:[redacted]@h",
-		"https\t:/alice:pw@h":         "https\t:[redacted]@h",
-		"line https://alice:fa\nke@h": "line https:[redacted]@h",
-		// An email after a colon is over-masked: accepted for error text.
+		"https://alice:fake%40h":        "https:[redacted]@h",
+		`https://alice:fake\x40h`:       "https:[redacted]@h",
+		`https://alice:fake\U00000040h`: "https:[redacted]@h",
+		"ht\ttps:/alice:pw@h":           "ht\ttps:[redacted]@h",
+		"https\t:/alice:pw@h":           "https\t:[redacted]@h",
+		"https\n:/alice:pw@h":           "https\n:[redacted]@h",
+		"line https://alice:fa\nke@h":   "line https:[redacted]@h",
+		// The whole message: newlines inside the span go too.
+		"a: b\n\nc@d":     "a:[redacted]@d",
+		"Usage: x\n  y@z": "Usage:[redacted]@z",
+		// Over-masking, accepted for error text: an email after a colon, and an
+		// already-masked message with a later at-sign (no exemption for the marker).
 		"contact: ops@example.net": "contact:[redacted]@example.net",
+		"Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\\\[redacted]@127.0.0.1:3). Pass --server <url> or --all.": "Multiple servers stored (http:[redacted]@127.0.0.1:3). Pass --server <url> or --all.",
+		"https://u:p[redacted]@h": "https:[redacted]@h",
 		// Kept: no ":" after a letter before an at-sign, or no at-sign.
 		"me@example.com and then: more":      "me@example.com and then: more",
 		"3:  server = \"https://h.example\"": "3:  server = \"https://h.example\"",
 		"  varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]": "  varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]",
-		"a: b\n\nc@d":     "a: b\n\nc@d",
-		"Usage: x\n  y@z": "Usage: x\n  y@z",
-		// The precise layer's own "[redacted]@" passes through: a list of masked servers is kept.
-		`Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\[redacted]@127.0.0.1:3).`: `Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\[redacted]@127.0.0.1:3).`,
-		"varlatch server: unexpected argument https://[redacted]@example.com":                      "varlatch server: unexpected argument https://[redacted]@example.com",
-		// But not when "[redacted]" is glued to a password.
-		"https://u:p[redacted]@h": "https:[redacted]@h",
 	} {
 		if got := MaskUserinfoInText(in); got != want {
 			t.Errorf("MaskUserinfoInText(%q) =\n %q, want\n %q", in, got, want)
+		}
+	}
+}
+
+// TestFailSafeMultiLinePasswords: a password broken over lines whose "@"
+// comes one to six lines later, with blank lines, lines without a colon and
+// lines with their own colons between, is masked whole.
+func TestFailSafeMultiLinePasswords(t *testing.T) {
+	fillers := []string{"", "plain words", "  indented", "with: a colon", "\t", "x"}
+	for lines := 1; lines <= 6; lines++ {
+		for _, filler := range fillers {
+			var b strings.Builder
+			b.WriteString("varlatch: open https://alice:SeCrEt0")
+			for i := range lines {
+				b.WriteString("\n" + filler + " SeCrEt" + strconv.Itoa(i+1))
+			}
+			b.WriteString("@example.com: denied\nnext line")
+			got := MaskUserinfoInText(b.String())
+			if strings.Contains(got, "SeCrEt") || strings.Contains(got, "alice") {
+				t.Errorf("%q -> %q", b.String(), got)
+			}
 		}
 	}
 }
@@ -262,7 +294,7 @@ func TestFailSafeAgreesWithWHATWG(t *testing.T) {
 		func(v string) string { return "servers: https://h0.example,\t" + v + "; done" },
 		func(v string) string { return `''' "` + v + `"` },
 	}
-	letterColonThenAt := regexp.MustCompile(`(?s)[A-Za-z][\t\r]*:.*(@|%40|\\[uU]0{2,6}40|\\x40)`)
+	letterColonThenAt := regexp.MustCompile(`(?s)[A-Za-z][\t\r\n]*:.*(@|%40|\\[uU]0{2,6}40|\\x40)`)
 	checked := map[string]int{}
 	for _, sc := range schemes {
 		for _, sep := range separators {
@@ -326,7 +358,7 @@ func TestMaskingIsLinear(t *testing.T) {
 	for _, unit := range []string{
 		"a\t", "https://h/", "https://u:p@", "https:", "@", "ht\ttps:", "--", `"https://h" `, `"x" `, `"\u0040" `,
 		`https:"x"`, `'''a`, `a\"`, ", https:", "a:", "https://[", "http:/u:p@h, ", `"https://a:b" @`, "x\n", `"https://a:b`,
-		`http:u:p@h\`, "a:\n@b\n", "%40", `\U00000040`,
+		`http:u:p@h\`, "a:\n@b\n", "%40", `\U00000040`, "a:\n", "[redacted]@", "\n@", "x: [redacted]@h, ",
 	} {
 		in := strings.Repeat(unit, size/len(unit)+1)[:size]
 		start := time.Now()
@@ -336,5 +368,19 @@ func TestMaskingIsLinear(t *testing.T) {
 		if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
 			t.Errorf("%q repeated to %d bytes: %v", unit, size, elapsed)
 		}
+	}
+}
+
+// TestMaskingIsLinearOnLargeMessages: a 2 MB message of URLs, colons and
+// at-signs is masked in well under a second.
+func TestMaskingIsLinearOnLargeMessages(t *testing.T) {
+	in := strings.Repeat("open https://u:p@h/x: denied\n", 2_000_000/29)
+	start := time.Now()
+	out := MaskUserinfoInText(in)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("2 MB: %v", elapsed)
+	}
+	if strings.Contains(out, "u:p") {
+		t.Error("a password survived")
 	}
 }

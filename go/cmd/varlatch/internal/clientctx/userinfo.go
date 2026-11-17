@@ -139,154 +139,78 @@ func MaskServer(v any) any {
 //     or MaskURLInValue (an echoed value) before formatting it into its
 //     message. A value without a user name and password keeps its bytes.
 //  2. A dumb fail-safe on the final text of every failure (Run.finish,
-//     verify-release's failures): MaskUserinfoInText.
+//     verify-release's failures): MaskUserinfoInText. It is the net, not
+//     the only defence.
 
-// MaskUserinfoInText is the fail-safe: a single linear pass, per line, with
-// no quoting, scheme or list rules. A line holding an at-sign ("@", or the
-// escapes \u0040, \x40, \U00000040 and %40) with a ":" that follows a letter
-// somewhere before it is masked from just after the FIRST such ":" up to and
-// including its LAST at-sign, which becomes "[redacted]@": the leading word
-// and everything after the last at-sign are kept. A line with no such pair
-// keeps its bytes. Tabs and carriage returns are passed over in finding the
-// letter before a ":"; a line whose pair is open and that ends inside the
-// word holding its ":" (a newline in a URL: WHATWG drops newlines) is read
-// together with the next line. An "@" right after "[redacted]" (not glued
-// to a letter or digit) is what the precise layer left, not an at-sign, so
-// its output passes through unchanged.
+// MaskUserinfoInText is the fail-safe: one linear pass over the whole
+// message, with no quoting, scheme, list or line rules. For detection, tab,
+// CR and LF are dropped (as WHATWG drops them from a URL), and "@", "\u0040",
+// "\x40", "\U00000040" and "%40" are at-signs. If the message has a ":" that
+// follows a letter and an at-sign anywhere after it, everything from just
+// after the FIRST such ":" up to and including the LAST at-sign of the
+// message, newlines included, becomes "[redacted]@"; what comes before and
+// after is kept. A message with no such pair keeps its bytes.
 //
-// It over-masks: an error line holding an email after a colon loses the
-// span between them. That is accepted for error text, where never leaking
-// comes before byte parity; the precise layer keeps ordinary output exact.
+// Error output may over-mask: the whole message is masked from the first
+// scheme colon to the last at-sign, so an email after a colon, or a second
+// already-masked URL, takes the text between them with it. That is
+// accepted for failure text, where never leaking comes before byte parity;
+// ordinary output keeps the precise layer's exact bytes.
 func MaskUserinfoInText(text string) string {
 	if !strings.ContainsAny(text, "@%\\") {
-		return text // no at-sign of any form: nothing to do
+		return text // no at-sign of any form
 	}
-	var b strings.Builder
-	start := 0
-	for start <= len(text) {
-		end := lineEnd(text, start)
-		// A line whose pair is open (a ":" after a letter, no at-sign after
-		// it) and that ends inside the word holding that ":" (a newline in a
-		// URL, which WHATWG drops) is read together with the next line, and
-		// so on while that holds. Each line is looked at once.
-		open := pairOpen(text[start:end])
-		for open && end < len(text) && lastWordHasLetterColon(text[start:end]) {
-			next := lineEnd(text, end+1)
-			if line := text[end+1 : next]; strings.Contains(line, "[redacted]@") || hasAtSign(line) {
-				open = pairOpen(line) // a line with an at-sign decides for itself
-			}
-			end = next
+	// The message without tab, CR and LF, and where each of its bytes is in text.
+	kept := make([]byte, 0, len(text))
+	at := make([]int, 0, len(text))
+	for i := 0; i < len(text); i++ {
+		if c := text[i]; c != '\t' && c != '\r' && c != '\n' {
+			kept = append(kept, c)
+			at = append(at, i)
 		}
-		b.WriteString(maskLine(text[start:end]))
-		if end == len(text) {
+	}
+	colon := -1
+	for i := 1; i < len(kept); i++ {
+		if kept[i] == ':' && isAlpha(kept[i-1]) {
+			colon = i
 			break
 		}
-		b.WriteByte('\n')
-		start = end + 1
 	}
-	return b.String()
-}
-
-func lineEnd(text string, from int) int {
-	if i := strings.IndexByte(text[from:], '\n'); i >= 0 {
-		return from + i
-	}
-	return len(text)
-}
-
-// maskLine applies the rule to one line (or lines read together).
-func maskLine(line string) string {
-	colon := firstLetterColon(line)
 	if colon < 0 {
-		return line
+		return text
 	}
-	at, size := lastAtSign(line)
-	if at <= colon {
-		return line
-	}
-	return line[:colon+1] + "[redacted]@" + line[at+size:]
-}
-
-// firstLetterColon is the first ":" whose previous character, tabs and
-// carriage returns passed over, is a letter; -1 when there is none.
-func firstLetterColon(line string) int {
-	prev := byte(0)
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		if c == ':' && isAlpha(prev) {
-			return i
-		}
-		if c != '\t' && c != '\r' {
-			prev = c
-		}
-	}
-	return -1
-}
-
-// lastAtSign is the last at-sign of line and its length; -1 when none.
-func lastAtSign(line string) (int, int) {
-	at, size := -1, 0
-	for i := 0; i < len(line); i++ {
-		if n := atSignAt(line, i); n > 0 {
-			at, size = i, n
+	last, size := -1, 0
+	for i := colon + 1; i < len(kept); i++ {
+		if n := atSignAt(kept, i); n > 0 {
+			last, size = i, n
 			i += n - 1
 		}
 	}
-	return at, size
+	if last < 0 {
+		return text
+	}
+	return text[:at[colon]+1] + "[redacted]@" + text[at[last+size-1]+1:]
 }
 
-// atSignAt is the length of the at-sign at line[i], 0 when there is none.
-func atSignAt(line string, i int) int {
-	switch line[i] {
+// atSignAt is the length of the at-sign at s[i] ("@", "\u0040", "\x40",
+// "\U00000040" or "%40", any case of hex digits), 0 when there is none.
+func atSignAt(s []byte, i int) int {
+	switch s[i] {
 	case '@':
-		if i >= len("[redacted]") && line[i-len("[redacted]"):i] == "[redacted]" {
-			if j := i - len("[redacted]") - 1; j < 0 || !isAlnum(line[j]) {
-				return 0 // the precise layer's own output
-			}
-		}
 		return 1
 	case '%':
-		if i+3 <= len(line) && line[i+1] == '4' && line[i+2] == '0' {
+		if i+3 <= len(s) && s[i+1] == '4' && s[i+2] == '0' {
 			return 3
 		}
 	case '\\':
-		for _, e := range []string{`\u0040`, `\x40`, `\U00000040`} {
-			if i+len(e) <= len(line) && strings.EqualFold(line[i:i+len(e)], e) {
+		for _, e := range []string{"\\" + "u0040", "\\" + "x40", "\\" + "U00000040"} {
+			if i+len(e) <= len(s) && strings.EqualFold(string(s[i:i+len(e)]), e) {
 				return len(e)
 			}
 		}
 	}
 	return 0
 }
-
-func hasAtSign(line string) bool {
-	at, _ := lastAtSign(line)
-	return at >= 0
-}
-
-// pairOpen is whether a ":" after a letter follows the line's last
-// at-sign of any kind (the precise layer's "[redacted]@" included), or the
-// line has such a ":" and no at-sign at all: a URL whose authority has not
-// ended on this line.
-func pairOpen(line string) bool {
-	last := -1
-	if at, size := lastAtSign(line); at >= 0 {
-		last = at + size - 1
-	}
-	if i := strings.LastIndex(line, "[redacted]@"); i >= 0 {
-		last = max(last, i+len("[redacted]@")-1)
-	}
-	return firstLetterColon(line[last+1:]) >= 0
-}
-
-// lastWordHasLetterColon is whether the last word of text (after its last
-// space) holds a ":" that follows a letter.
-func lastWordHasLetterColon(text string) bool {
-	i := strings.LastIndexAny(text, " \n")
-	return firstLetterColon(text[i+1:]) >= 0
-}
-
-func isAlnum(c byte) bool { return isAlpha(c) || c >= '0' && c <= '9' }
 
 // MaskURLInValue is the precise layer for one value echoed in a message
 // (an argument, a command, a help topic, an approval id, a string of

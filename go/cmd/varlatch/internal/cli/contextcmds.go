@@ -286,7 +286,7 @@ func strictOptions(command string, args []string, spec OptionSpec, usage string)
 	if err != nil {
 		var o *OptionsError
 		if errors.As(err, &o) {
-			return nil, UsageError("varlatch " + command + ": " + o.Message + "\n" + usage)
+			return nil, UsageErrorWithUsage("varlatch "+command+": "+o.Message, "\n"+usage)
 		}
 		return nil, err
 	}
