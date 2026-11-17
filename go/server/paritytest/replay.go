@@ -568,9 +568,17 @@ func readSchema() (schema, error) {
 			s.sqlite[name] = t.SQLite
 			s.cols[name] = map[string]string{}
 			for pg, raw := range t.Columns {
+				// A column is its SQLite name, or an object naming it with a
+				// note (and a default), as Prepare reads it.
 				var col string
-				if json.Unmarshal(raw, &col) == nil {
+				var named struct {
+					SQLite string `json:"sqlite"`
+				}
+				switch {
+				case json.Unmarshal(raw, &col) == nil:
 					s.cols[name][pg] = col
+				case json.Unmarshal(raw, &named) == nil && named.SQLite != "":
+					s.cols[name][pg] = named.SQLite
 				}
 			}
 		}

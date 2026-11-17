@@ -8,15 +8,7 @@
         "reason": "the Go server cannot serve the CLI and install scripts yet (ADR-0058 Decision 3): in Go they are the Go CLI's binaries and installers, which steps 5 and 6 build",
         "step": "ADR-0059 step 6"
       },
-      "approveOrganizationDeletion": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "attachGitHubAppRegistration": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "cancelOrganizationDeletion": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -28,27 +20,11 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "exportDeletedOrganizationAuditEvents": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "getGitHubApp": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "getOrganizationDeletion": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "importGitHubApp": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "listDeletedOrganizationAuditEvents": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "listDeletedOrganizations": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
@@ -60,19 +36,11 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "removeDeletedOrganizationReader": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "removeGitHubApp": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
       "rotateGitHubAppKey": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
-      "scheduleOrganizationDeletion": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },

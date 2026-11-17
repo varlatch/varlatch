@@ -39,6 +39,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/maintenance"
+	"github.com/varlatch/varlatch/go/server/orgdeletion"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/security"
@@ -412,6 +413,20 @@ func serve(opts Options, h *hooks) int {
 		}()
 		defer func() { cancel(); <-exportDone }()
 	}
+	// Organization deletions that are due (ADR-0051 Decision 6), in every
+	// serving varlatchd: a pass at once, then every minute, inside the
+	// maintenance admission; each pass also ends audit export drains past
+	// their deadline, whatever audit_export says. A stop ends it before the
+	// policy and the database close; a deletion cut short rolls back and
+	// runs again at the next start.
+	deletionDone := make(chan struct{})
+	go func() {
+		defer close(deletionDone)
+		drains := &auditexport.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Now: time.Now, Log: log}
+		deletions := &orgdeletion.Service{Writer: writer, Approvals: approvals, Drains: drains, Now: time.Now, Log: log}
+		deletions.RunLoop(ctx, orgdeletion.Interval, admission.Enter)
+	}()
+	defer func() { cancel(); <-deletionDone }()
 	hopts := httpserver.Options{
 		Outbound:       policy,
 		Version:        buildinfo.Version,

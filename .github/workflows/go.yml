@@ -214,12 +214,15 @@ jobs:
       # engine's crash points (the crashpoint tag, which no release has), is
       # killed inside a commit, during a WAL write and during a checkpoint
       # while clients ask for disclosures; every answered disclosure keeps
-      # its audit event and the database recovers consistent.
+      # its audit event and the database recovers consistent. And (step
+      # 4.12b) killed before, inside, in the commit of and after an
+      # Organization's deletion run, which ends it exactly once after a
+      # restart.
       - name: G7 against the server at crash points
         working-directory: go
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 -v -tags crashpoint -run '^TestKillAtCrashPoints$' ./server/daemon
+        run: go test -count=1 -v -tags crashpoint -run '^(TestKillAtCrashPoints|TestKillDuringOrganizationDeletion)$' ./server/daemon
 
       # The g9a build (ADR-0059 varlatchd-core decision 7): its storage
       # engine's effective settings equal the production build's (a smoke

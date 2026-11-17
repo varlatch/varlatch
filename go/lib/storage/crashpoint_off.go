@@ -8,6 +8,7 @@ package storage
 // (crashpoint.go, a build with the crashpoint tag): "open" (Open is done),
 // "commit" (inside SQLite's commit of a write batch, before its WAL frames
 // are written), "committed" (the batch's COMMIT returned), "checkpoint" and
-// "checkpointed" (around every checkpoint). In every other build it does
-// nothing, and the compiler removes the calls.
+// "checkpointed" (around every checkpoint), and the named points a server
+// package marks with CrashPoint. In every other build it does nothing, and
+// the compiler removes the calls.
 func crashPoint(*DB, string) {}

@@ -1562,6 +1562,54 @@ The server's packages:
   take the gate (`write` `TestExclusiveTakersAgainstTypeScript`): a new
   taker on either side fails the test, but the mapping is reviewed, not
   proved; the gates the Go functions take are their own tests'.
+- `server/orgdeletion` (step 4.12b): deleting an Organization (ADR-0051
+  Decisions 4 to 8, `domain/orgdeletion.ts`) and the audit-access
+  tombstone (Decision 8). Scheduling (a live built-in admin; admin-step-up's
+  `organization.delete`, bound to the Organization and the normalized
+  `afterDays`, 1 to 30, 7 by default) freezes the Organization in one job:
+  Sync Targets paused with the fence, webhooks and enabled machine
+  identities suspended under the request's marker, pending invitations
+  revoked and unfinished GitHub App registrations removed. With more than
+  one admin, another admin approves; any admin cancels, also while frozen
+  for an incident, which restores exactly what the request suspended.
+  The deletion loop (`Service.RunLoop`, in every serving varlatchd: a pass
+  at once, then every minute, inside the maintenance admission) finalizes
+  each due request in one job: claimed only while the Organization is live,
+  not frozen for an incident and, when needed, approved by a still-live
+  admin; open approvals closed; the readers of the tombstone fixed (the
+  enabled members holding Organization-level `audit.read`); every
+  membership ended as a removal ends it; Projects, environments, values,
+  versions, Capabilities, Sync Targets, Connections, the GitHub App's
+  registration, webhooks, machine identities and their credentials and
+  OIDC bindings ended; the audit export's key sealed again for its drain;
+  report counters removed; the Organization KEK destroyed; then
+  `membership.removed` for each member and `organization.deleted`. Each
+  pass also abandons audit export drains past their deadline. Schedule,
+  cancel and the run take the Organization's gate exclusive and the
+  machine identities they change exclusive; the people a job gates are read
+  before it and again inside it, and read again if they changed between.
+  The GitHub App's part (`GitHubAppTeardown`) is the TypeScript server's
+  row changes until step 4.10 builds the App
+  (`TestGitHubAppTeardownWaitsForStep410` fails once it does). Served by
+  `server/httpserver/orgdeletion.go` (`getOrganizationDeletion`,
+  `scheduleOrganizationDeletion`, `approveOrganizationDeletion`,
+  `cancelOrganizationDeletion`; and the tombstone's
+  `listDeletedOrganizationAuditEvents`,
+  `exportDeletedOrganizationAuditEvents`, `listDeletedOrganizations`,
+  `removeDeletedOrganizationReader`). `org-deletion-v0.22.0.json`
+  (`go-org-deletion-fixture.test.ts`) replays 58 requests, the due run
+  among them through the loop's own pass (a path the test answers itself
+  on both sides): who may schedule, approve and cancel, the body, a frozen
+  Organization, admin-step-up at report and enforce, the run of a deletion
+  holding every kind of row it ends (and the ones it must not run: one
+  waiting for its approval, one frozen), and the tombstone's readers and
+  their removal; every answer, audit event and changed row equal. G7
+  (`daemon` `TestKillDuringOrganizationDeletion`, the crashpoint build):
+  varlatchd killed before the run's job, inside it, inside the commit of
+  its batch and after it ends the Organization exactly once after a
+  restart. The `deletion` conformance suite runs it over the API, with a
+  second admin enrolled in a browser and the target's `deletion-due`
+  probe.
 - `server/access` (step 4.4b): the access structure (ADR-0015, ADR-0028,
   ADR-0029; `http/app.ts`, `domain/policy.ts`, `accessstepup.ts`), served
   by `server/httpserver/access.go`: Grants (listed, created, revoked, and

@@ -18,6 +18,9 @@ import (
 // file, once armed: when VARLATCH_CRASHPOINT_ARM names a file, after it
 // exists. Then:
 //
+//   - VARLATCH_CRASHPOINT_ARM_ON=<point>: the run arms itself when it
+//     reaches that point (a named point of CrashPoint), so a pause at
+//     "commit" pauses in the commit of the batch whose job reached it;
 //   - VARLATCH_CRASHPOINT_PAUSE=<point>: the first time the point is reached
 //     armed, the line "paused <point>" is written and the goroutine blocks
 //     for good, so the test kills the process exactly there ("commit":
@@ -37,8 +40,11 @@ import (
 var cp struct {
 	log   *os.File
 	arm   string
+	armOn string
 	pause string
-	size  int64
+	// armedOn is set once armOn was reached.
+	armedOn atomic.Bool
+	size    int64
 	// ballast is the large batch's phase: 0 none, 1 queued, 2 inserted,
 	// 3 its commit began, 4 its COMMIT returned.
 	ballast atomic.Int32
@@ -55,10 +61,14 @@ func init() {
 		panic(err)
 	}
 	cp.log, cp.arm, cp.pause = f, os.Getenv("VARLATCH_CRASHPOINT_ARM"), os.Getenv("VARLATCH_CRASHPOINT_PAUSE")
+	cp.armOn = os.Getenv("VARLATCH_CRASHPOINT_ARM_ON")
 	cp.size, _ = strconv.ParseInt(os.Getenv("VARLATCH_CRASHPOINT_BALLAST"), 10, 64)
 }
 
 func armed() bool {
+	if cp.armedOn.Load() {
+		return true
+	}
 	if cp.arm == "" {
 		return true
 	}
@@ -78,6 +88,9 @@ func crashPoint(db *DB, point string) {
 			go writeBallast(db)
 		}
 		return
+	}
+	if cp.armOn != "" && point == cp.armOn {
+		cp.armedOn.Store(true)
 	}
 	if !armed() {
 		return

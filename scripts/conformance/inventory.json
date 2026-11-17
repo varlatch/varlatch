@@ -716,8 +716,11 @@
       ]
     },
     "deletion": {
-      "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce",
+      "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce; an Organization's deletion scheduled, approved by a second admin, cancelled and run when due, and the audit-access tombstone's readers",
       "script": "scripts/conformance/suites/deletion.mjs",
+      "needs": [
+        "probe:deletion-due"
+      ],
       "operations": [
         "createOrganization",
         "createProject",
@@ -735,7 +738,21 @@
         "getEffectiveConfiguration",
         "listAuditEvents",
         "changeSecurityControl",
-        "cancelApproval"
+        "cancelApproval",
+        "getOrganization",
+        "createServiceIdentity",
+        "listOrganizations",
+        "createInvitation",
+        "enroll-page",
+        "browser-session",
+        "getOrganizationDeletion",
+        "scheduleOrganizationDeletion",
+        "approveOrganizationDeletion",
+        "cancelOrganizationDeletion",
+        "listDeletedOrganizationAuditEvents",
+        "exportDeletedOrganizationAuditEvents",
+        "listDeletedOrganizations",
+        "removeDeletedOrganizationReader"
       ]
     },
     "doctor": {
@@ -3386,6 +3403,31 @@
       "suite": "deletion",
       "kind": "conformance",
       "title": "under admin-step-up at enforce, deleting a Project answers STEP_UP_REQUIRED with an approval for project.delete that names the Project and its environment, and deletes nothing"
+    },
+    "deletion.organization-scheduled": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "scheduling an Organization's deletion answers the request (an approval required with two admins, due after the waiting period) and shows it; writes are refused with ORGANIZATION_DELETING and its machine identities are suspended"
+    },
+    "deletion.organization-approval-by-another-admin": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "the admin who scheduled an Organization's deletion cannot approve it; another admin can, and approving again answers the same approval"
+    },
+    "deletion.organization-cancelled": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "cancelling a scheduled deletion ends the request, restores the machine identities it suspended and writes again; a second cancel is refused"
+    },
+    "deletion.organization-deleted-when-due": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "once due and approved, the deletion loop deletes the Organization: it is not found, its machine credentials are refused, and its audit records organization.deleted with what it ended"
+    },
+    "deletion.tombstone-readers": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "a deleted Organization's audit is read and exported by the admins fixed as its readers; the Installation Admin lists the tombstone with its readers and removes one, who then reads nothing"
     },
     "doctor.exits-0": {
       "suite": "doctor",

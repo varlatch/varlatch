@@ -191,7 +191,8 @@ type ended struct {
 // snapshot first, then removed_at on the membership, the person's direct
 // Grants revoked, their group and team links removed, and the pending
 // invitations they issued revoked; the caller appends its event last.
-// Organization deletion's finalization (4.12) calls it for every member.
+// Organization deletion's finalization (4.12b, EndMembership) calls it
+// for every member.
 func endMembership(ctx context.Context, tx query.DBTX, organizationID, identityID, role, actorID string, at int64) (ended, error) {
 	q := query.New(tx)
 	out := ended{removalID: ids.New(ids.MembershipRemoval), removedAt: at}
@@ -222,6 +223,23 @@ func endMembership(ctx context.Context, tx query.DBTX, organizationID, identityI
 	}
 	out.grants, out.groups, out.invitations = int64(len(grants)), int64(len(groups)), int64(len(invitations))
 	return out, nil
+}
+
+// Ended is what EndMembership ended.
+type Ended struct {
+	RemovalID                   string
+	Grants, Groups, Invitations int64
+}
+
+// EndMembership is endMembership for Organization deletion's
+// finalization (go/server/orgdeletion), inside its job: the same cleanup a
+// removal makes, its event the caller's.
+func EndMembership(ctx context.Context, tx query.DBTX, organizationID, identityID, role, actorID string, at int64) (Ended, error) {
+	e, err := endMembership(ctx, tx, organizationID, identityID, role, actorID, at)
+	if err != nil {
+		return Ended{}, err
+	}
+	return Ended{RemovalID: e.removalID, Grants: e.grants, Groups: e.groups, Invitations: e.invitations}, nil
 }
 
 // changesOf is a review row's changes: "created" when the person created

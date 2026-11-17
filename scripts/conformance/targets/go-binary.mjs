@@ -29,7 +29,8 @@
  *             the setting it refuses it (exit 78), and this adapter answers
  *             NOT_IMPLEMENTED_YET
  *   probe     device sign-in's probes (expire-pending-device-sign-ins,
- *             device-sign-in-addresses, proxy-addresses), through
+ *             device-sign-in-addresses, proxy-addresses) and deletion's
+ *             (deletion-due), through
  *             `varlatchd admin conformance-probe`, which a varlatchd built
  *             with the conformance build tag has (go build -tags
  *             conformance); `up` refuses a binary without it
@@ -400,7 +401,7 @@ export async function maintenance(state, ttlMs) {
 
 /** A fixed, named probe of server state (the target contract): `varlatchd admin conformance-probe`. */
 export async function probe(state, probeName, ...args) {
-  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
+  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses", "deletion-due"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
   return JSON.parse(admin(state, ["conformance-probe", probeName, ...args]));
 }
 

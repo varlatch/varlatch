@@ -265,6 +265,12 @@ var BuiltOperations = []string{
 	// Step 4.9c: Sync Targets (targets.go).
 	listOrgSyncTargetsPattern, listSyncTargetsPattern, createSyncTargetPattern, getSyncTargetPattern,
 	updateSyncTargetPattern, revokeSyncTargetPattern, pauseSyncTargetPattern, resumeSyncTargetPattern,
+	// Step 4.12b: Organization deletion and the audit-access tombstone
+	// (orgdeletion.go).
+	getOrganizationDeletionPattern, scheduleOrganizationDeletionPattern,
+	approveOrganizationDeletionPattern, cancelOrganizationDeletionPattern,
+	deletedAuditEventsPattern, deletedAuditExportPattern,
+	listDeletedOrganizationsPattern, removeDeletedReaderPattern,
 }
 
 // Server is the handler.
