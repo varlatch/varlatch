@@ -248,6 +248,24 @@ export type {
   RefusedDestination,
   RefusedDestinations,
 } from "@varlatch/protocol";
+import { refusedHeader, refusedUrl } from "./userinfo.js";
+
+/** Diagnostics never print credential values (userinfo.ts). */
+export { maskServer, maskUserinfo, maskUserinfoInText } from "./userinfo.js";
+
+/**
+ * fetch's own refusals, made before it is called, so that its message never
+ * quotes a header value (the credential) or a URL's user name and password.
+ * The errors are the same TypeErrors fetch throws, with those values left out.
+ */
+function checkRequest(url: string, headers: Record<string, string>): void {
+  const badUrl = refusedUrl(url);
+  if (badUrl) throw badUrl;
+  for (const [name, value] of Object.entries(headers)) {
+    const badHeader = refusedHeader(name, value);
+    if (badHeader) throw badHeader;
+  }
+}
 
 /** Credential metadata (ADR-0034 §2); never includes token material. */
 export interface IdentityCredential {
@@ -426,14 +444,16 @@ export class VarlatchClient {
     headers: Record<string, string> = {},
     signal?: AbortSignal,
   ): Promise<Response> {
+    const sent = {
+      ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...headers,
+    };
+    checkRequest(`${this.server}${path}`, sent);
     const res = await this.fetchImpl(`${this.server}${path}`, {
       method,
-      headers: {
-        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-        ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...headers,
-      },
+      headers: sent,
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       ...(signal ? { signal } : {}),
     });
@@ -1279,12 +1299,14 @@ export class VarlatchClient {
    * DeviceSignInRedirectError. `signal` bounds the request.
    */
   private async deviceRequest(path: string, body: unknown, signal: AbortSignal | undefined): Promise<Response> {
+    const sent = {
+      ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
+      "Content-Type": "application/json",
+    };
+    checkRequest(`${this.server}${path}`, sent);
     const res = await this.fetchImpl(`${this.server}${path}`, {
       method: "POST",
-      headers: {
-        ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
-        "Content-Type": "application/json",
-      },
+      headers: sent,
       body: JSON.stringify(body),
       redirect: "manual",
       ...(signal ? { signal } : {}),
@@ -1936,15 +1958,12 @@ export class VarlatchClient {
   }
 
   private async ndjson(path: string): Promise<string> {
-    const res = await this.fetchImpl(
-      `${this.server}${path}`,
-      {
-        headers: {
-          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-          ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
-        },
-      },
-    );
+    const sent = {
+      ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
+    };
+    checkRequest(`${this.server}${path}`, sent);
+    const res = await this.fetchImpl(`${this.server}${path}`, { headers: sent });
     this.noticeCredentialExpiry(res);
     if (!res.ok) {
       const body = (await res.json().catch(() => undefined)) as ApiError | undefined;
