@@ -56,6 +56,199 @@ const framework: TranscriptCase[] = [
   { id: "help.after-arguments", title: "--help anywhere before -- asks for the command's help", args: ["values", "set", "API_KEY", "--help"] },
 ];
 
+
+// ---- 5.1b: context and the credential store ---------------------------------
+//
+// Offline commands only: no case talks to a server. Times are fixed and far
+// from the clock: an "ok" credential lives from 1900 to 2100, an expiring one
+// from 1000 to 2100 (less than a fifth of its lifetime left), an expired one
+// ended in 2020. Tokens are fakes.
+
+const OK = { issuedAt: "1900-01-01T00:00:00.000Z", expiresAt: "2100-01-01T00:00:00.000Z" };
+const EXPIRING = { issuedAt: "1000-01-01T00:00:00.000Z", expiresAt: "2100-01-01T00:00:00.000Z" };
+const EXPIRED = { issuedAt: "2020-01-01T00:00:00.000Z", expiresAt: "2020-01-02T00:00:00.000Z" };
+
+const credentials = (servers: Record<string, unknown>): string => `${JSON.stringify({ servers }, null, 2)}\n`;
+const STORE_ONE = credentials({ "https://a.example": { token: "vlt_cli_fakeAAAA", ...OK, credentialId: "cred_a", name: "laptop" } });
+const STORE_SEVERAL = credentials({
+  "https://a.example": { token: "vlt_cli_fakeAAAA", ...OK, credentialId: "cred_a", name: "laptop" },
+  "https://b.example/team": { token: "vlt_cli_fakeBBBB", ...EXPIRED, credentialId: "cred_b", name: "old" },
+  "https://c.example": { token: "vlt_cli_fakeCCCC" },
+  "http://127.0.0.1:8080": { token: "vlt_cli_fakeDDDD", ...EXPIRING, credentialId: "cred_d" },
+});
+
+/** A repository at repo/: its varlatch.toml and, optionally, its .varlatch/local.json. */
+function repoFiles(toml: string, local?: unknown): Record<string, string> {
+  const files: Record<string, string> = { "repo/varlatch.toml": toml };
+  if (local !== undefined) files["repo/.varlatch/local.json"] = typeof local === "string" ? local : `${JSON.stringify(local, null, 2)}\n`;
+  return files;
+}
+const TOML_FULL = 'server = "https://repo.example"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n';
+const TOML_NO_SERVER = 'organization = "acme"\nproject = "web"\ndefault_environment = "dev"\n';
+const TOML_NO_ENV = 'server = "https://repo.example"\norganization = "acme"\nproject = "web"\n';
+const IN_REPO = { cwd: "repo" };
+
+/** The TOML documents `context` reads, each a case: what a hand-written varlatch.toml can hold. */
+const TOML_CASES: Array<[string, string, string]> = [
+  ["unterminated-string", "unterminated string", 'organization = "acme\nproject = "web"\n'],
+  ["missing-project", "no project", 'organization = "acme"\n'],
+  ["empty-organization", "an empty organization", 'organization = ""\nproject = "web"\n'],
+  ["number-organization", "an organization that is not a string", "organization = 42\nproject = \"web\"\n"],
+  ["duplicate-key", "a key given twice", 'organization = "acme"\norganization = "beta"\nproject = "web"\n'],
+  ["bad-escape", "an escape TOML does not have", 'organization = "ac\\qme"\nproject = "web"\n'],
+  ["no-newline-between", "two keys on one line", 'organization = "acme" project = "web"\n'],
+  ["bad-date", "a date that is not one", 'organization = "acme"\nproject = "web"\nwhen = 2026-13-45\n'],
+  ["table-redefined", "a table defined twice", 'organization = "acme"\nproject = "web"\n[a]\nx = 1\n[a]\ny = 2\n'],
+  ["in-a-table", "organization inside a table, not at the top", '[varlatch]\norganization = "acme"\nproject = "web"\n'],
+  ["crlf-multiline", "CRLF line ends, a literal and a multi-line string", "organization = 'acme'\r\nproject = \"\"\"\r\nweb\"\"\"\r\ndefault_environment = \"dev\"\r\nserver = \"https://repo.example\"\r\n"],
+  ["unicode-escapes", "escapes in the values", 'organization = "\\u0061cme"\nproject = "w\\U0001F600b"\ndefault_environment = "d\\tev"\nserver = "https://repo.example"\n'],
+  ["bom-and-comments", "a byte order mark and comments", '\uFEFF# context\norganization = "acme" # the org\nproject = "web"\nserver = "https://repo.example"\ndefault_environment = "dev"\n'],
+  ["control-in-comment", "a control character in a comment", 'organization = "acme" # a\u0001b\nproject = "web"\n'],
+  ["bad-key", "a character a key cannot have", 'organ!zation = "acme"\nproject = "web"\n'],
+  ["unfinished-array", "an array never closed", 'organization = "acme"\nproject = "web"\nlist = [1, 2\n'],
+  ["inline-table", "inline tables and arrays of tables", 'organization = "acme"\nproject = "web"\nserver = "https://repo.example"\ndefault_environment = "dev"\npoint = { x = 1, y.z = 2 }\n[[items]]\nname = "a"\n[[items]]\nname = "b"\n'],
+  ["big-integer", "an integer JavaScript cannot hold", 'organization = "acme"\nproject = "web"\nn = 9007199254740993\n'],
+  ["long-line-number", "an error on line 10, past a two-digit line number", `${"# x\n".repeat(9)}organization = = "acme"\n`],
+  ["non-ascii", "values beyond ASCII, a key needing quotes", 'organization = "acm\u00e9"\nproject = "w\u00ebb \u{1F600}"\n"server" = "https://repo.example"\ndefault_environment = "d\u00e9v"\n'],
+];
+
+const context51b: TranscriptCase[] = [
+  // status: the store, offline (ADR-0032)
+  { id: "status.none", title: "status with no stored credentials, outside a repository", args: ["status"] },
+  { id: "status.none.json", title: "status --json with no servers", args: ["status", "--json"] },
+  { id: "status.one", title: "status with one credential", args: ["status"], files: { "config/credentials.json": STORE_ONE } },
+  { id: "status.one.json", title: "status --json with one credential", args: ["status", "--json"], files: { "config/credentials.json": STORE_ONE } },
+  { id: "status.several", title: "status with several: ok, expired, unknown (token only) and expiring", args: ["status"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "status.several.json", title: "status --json with several credentials", args: ["status", "--json"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "status.expired.json", title: "status --json with an expired credential", args: ["status", "--json"], files: { "config/credentials.json": credentials({ "https://a.example": { token: "vlt_cli_fakeAAAA", ...EXPIRED } }) } },
+  { id: "status.unknown.json", title: "status --json with an unknown expiry: token only, garbage timestamps, expiry before issue, expiry only", args: ["status", "--json"], files: { "config/credentials.json": credentials({
+    "https://a.example": { token: "vlt_cli_fakeAAAA" },
+    "https://b.example": { token: "vlt_cli_fakeBBBB", issuedAt: "yesterday", expiresAt: "tomorrow" },
+    "https://c.example": { token: "vlt_cli_fakeCCCC", issuedAt: "2100-01-02T00:00:00Z", expiresAt: "2100-01-01T00:00:00Z" },
+    "https://d.example": { token: "vlt_cli_fakeDDDD", expiresAt: "2020-01-01T00:00:00+02:00" },
+    "https://e.example": { token: "vlt_cli_fakeEEEE", issuedAt: "", expiresAt: "2100-01-01" },
+  }) } },
+  { id: "status.unknown", title: "status with unknown expiries, human", args: ["status"], files: { "config/credentials.json": credentials({
+    "https://a.example": { token: "vlt_cli_fakeAAAA" },
+    "https://b.example": { token: "vlt_cli_fakeBBBB", issuedAt: "yesterday", expiresAt: "tomorrow" },
+    "https://d.example": { token: "vlt_cli_fakeDDDD", expiresAt: "2020-01-01T00:00:00+02:00" },
+  }) } },
+  { id: "status.expiring.json", title: "status --json with a credential in the last fifth of its lifetime", args: ["status", "--json"], files: { "config/credentials.json": credentials({ "https://a.example": { token: "vlt_cli_fakeAAAA", ...EXPIRING } }) } },
+  { id: "status.unsafe-name", title: "a credential name with control and bidirectional characters is escaped", args: ["status"], files: { "config/credentials.json": credentials({ "https://a.example": { token: "vlt_cli_fakeAAAA", ...OK, name: "lap\u001b[31mtop\u202e" } }) } },
+  { id: "status.unsafe-name.json", title: "the same name in the JSON document", args: ["status", "--json"], files: { "config/credentials.json": credentials({ "https://a.example": { token: "vlt_cli_fakeAAAA", ...OK, name: "lap\u001b[31mtop\u202e" } }) } },
+  { id: "status.odd-fields.json", title: "metadata that is not text is passed through as it is", args: ["status", "--json"], files: { "config/credentials.json": credentials({ "https://a.example": { token: "vlt_cli_fakeAAAA", name: 7, issuedAt: ["2020"], expiresAt: { at: 1 }, credentialId: false, extra: "kept" } }) } },
+  { id: "status.odd-fields", title: "the same, human", args: ["status"], files: { "config/credentials.json": credentials({ "https://a.example": { token: "vlt_cli_fakeAAAA", name: 7, expiresAt: { at: 1 } }, "https://b.example": { token: "t", name: ["x", "y"], expiresAt: 5 } }) } },
+  { id: "status.corrupt-store", title: "a store that is not JSON reads as empty", args: ["status", "--json"], files: { "config/credentials.json": '{"servers": {"https://a.example": {"token": "vlt_cli_fake' } },
+  { id: "status.bom-store", title: "a store with a byte order mark reads as empty (JSON.parse refuses it)", args: ["status", "--json"], files: { "config/credentials.json": `\uFEFF${STORE_ONE}` } },
+  { id: "status.null-store", title: "a store holding null reads as empty", args: ["status", "--json"], files: { "config/credentials.json": "null\n" } },
+  { id: "status.array-servers", title: "servers as an array: its elements are listed by index", args: ["status", "--json"], files: { "config/credentials.json": '{"servers": [{"token": "vlt_cli_fakeAAAA", "name": "first"}]}\n' } },
+  { id: "status.string-servers", title: "servers as a string: one entry per character", args: ["status", "--json"], files: { "config/credentials.json": '{"servers": "ab"}\n' } },
+  { id: "status.array-store", title: "a store that is an array holds no servers", args: ["status", "--json"], files: { "config/credentials.json": "[1, 2]\n" } },
+  { id: "status.null-entry", title: "an entry that is null stops status (TypeScript throws a TypeError)", args: ["status", "--json"], files: { "config/credentials.json": '{"servers": {"https://a.example": null}}\n' }, differences: ["uncaught"] },
+  { id: "status.c1-name", title: "C1 control characters in a name are escaped", args: ["status"], files: { "config/credentials.json": '{"servers": {"https://a.example": {"token": "t", "name": "a\u0082b\u009fc"}}}\n' } },
+  { id: "status.lone-surrogate", title: "a lone surrogate in a server: escaped in JSON, U+FFFD in text", args: ["status", "--json"], files: { "config/credentials.json": '{"servers": {"https://a.example/\\ud800": {"token": "t"}}}\n' } },
+  { id: "status.lone-surrogate.text", title: "the same, human", args: ["status"], files: { "config/credentials.json": '{"servers": {"https://a.example/\\ud800": {"token": "t"}}}\n' } },
+  { id: "status.lenient-options", title: "status reads its options leniently: an unknown one is ignored", args: ["status", "--nosuch", "--json", "extra"] },
+  // status: the repository
+  { id: "status.repo", title: "status inside a repository: the committed default", args: ["status"], files: { ...repoFiles(TOML_FULL), "config/credentials.json": STORE_ONE }, ...IN_REPO },
+  { id: "status.repo.json", title: "status --json inside a repository", args: ["status", "--json"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "status.repo.tier", title: "the cached tier of the local selection", args: ["status"], files: repoFiles(TOML_FULL, { selectedEnvironment: "dev/jeremy", selectedTier: "production", tierCachedAt: "2026-11-17T10:00:00.000Z" }), ...IN_REPO },
+  { id: "status.repo.tier.json", title: "the cached tier in the JSON document", args: ["status", "--json"], files: repoFiles(TOML_FULL, { selectedEnvironment: "dev/jeremy", selectedTier: "production", tierCachedAt: "2026-11-17T10:00:00.000Z" }), ...IN_REPO },
+  { id: "status.repo.flag-env", title: "-e selects another Environment, whose tier is unknown", args: ["status", "--json", "-e", "prod"], files: repoFiles(TOML_FULL, { selectedEnvironment: "dev/jeremy", selectedTier: "production" }), ...IN_REPO },
+  { id: "status.repo.environment-server", title: "--environment and --server reach the repository's context", args: ["status", "--json", "--environment", "staging", "--server", "https://flag.example"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "status.repo.env-var", title: "VARLATCH_ENV and VARLATCH_SERVER", args: ["status", "--json"], env: { VARLATCH_ENV: "qa", VARLATCH_SERVER: "https://env.example" }, files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "status.repo.null-tier", title: "a selected tier of null still brings its cached time", args: ["status", "--json"], files: repoFiles(TOML_FULL, { selectedEnvironment: "dev", selectedTier: null, tierCachedAt: "then" }), ...IN_REPO },
+  { id: "status.repo.tier-control", title: "a tier holding control characters, human", args: ["status"], files: repoFiles(TOML_FULL, { selectedEnvironment: "dev", selectedTier: "pro\u0007d" }), ...IN_REPO },
+  { id: "status.repo.incomplete", title: "a repository without an Environment: the repository part is left out", args: ["status", "--json"], files: repoFiles(TOML_NO_ENV), ...IN_REPO },
+  { id: "status.repo.bad-toml", title: "a varlatch.toml that is not TOML: the repository part is left out", args: ["status"], files: repoFiles('organization = "acme\n'), ...IN_REPO },
+  { id: "status.repo.null-local", title: "a local.json holding null: the repository part is left out", args: ["status", "--json", "-e", "dev"], files: repoFiles(TOML_FULL, "null\n"), ...IN_REPO },
+  { id: "status.repo.nested", title: "from a directory inside the repository", args: ["status", "--json"], files: repoFiles(TOML_FULL), cwd: "repo/src/app" },
+  // where the store is
+  { id: "store.xdg", title: "without VARLATCH_CONFIG_DIR, the store is under XDG_CONFIG_HOME", args: ["status", "--json"], unset: ["VARLATCH_CONFIG_DIR"], env: { XDG_CONFIG_HOME: "{{dir}}/xdg" }, files: { "xdg/varlatch/credentials.json": STORE_ONE } },
+  { id: "store.home", title: "without either, under the home directory's .config", args: ["status", "--json"], unset: ["VARLATCH_CONFIG_DIR"], env: { HOME: "{{dir}}/home2", USERPROFILE: "{{dir}}/home2" }, files: { "home2/.config/varlatch/credentials.json": STORE_ONE } },
+  { id: "store.empty-xdg", title: "an empty XDG_CONFIG_HOME counts as unset", args: ["status", "--json"], unset: ["VARLATCH_CONFIG_DIR"], env: { XDG_CONFIG_HOME: "" }, files: { "home/.config/varlatch/credentials.json": STORE_ONE } },
+  { id: "store.config-dir-wins", title: "VARLATCH_CONFIG_DIR wins over XDG_CONFIG_HOME", args: ["status", "--json"], env: { VARLATCH_CONFIG_DIR: "{{dir}}/mine", XDG_CONFIG_HOME: "{{dir}}/xdg" }, files: { "mine/credentials.json": STORE_ONE, "xdg/varlatch/credentials.json": STORE_SEVERAL } },
+  { id: "store.agent-run-default", title: "inside an agent-safe run the operator's default store is never read", args: ["status", "--json"], unset: ["VARLATCH_CONFIG_DIR"], env: { VARLATCH_AGENT_RUN: "run_1", USERPROFILE: "{{dir}}/home" }, files: { "home/.config/varlatch/credentials.json": STORE_ONE } },
+  { id: "store.agent-run-default-named", title: "naming the default directory in VARLATCH_CONFIG_DIR changes nothing", args: ["status", "--json"], env: { VARLATCH_AGENT_RUN: "run_1", VARLATCH_CONFIG_DIR: "{{dir}}/home/.config/varlatch/", USERPROFILE: "{{dir}}/home" }, files: { "home/.config/varlatch/credentials.json": STORE_ONE } },
+  { id: "store.agent-run-own", title: "the run's own directory is read", args: ["status", "--json"], env: { VARLATCH_AGENT_RUN: "run_1" }, files: { "config/credentials.json": STORE_ONE } },
+  { id: "store.agent-run-empty", title: "an empty VARLATCH_AGENT_RUN is no run", args: ["status", "--json"], unset: ["VARLATCH_CONFIG_DIR"], env: { VARLATCH_AGENT_RUN: "", USERPROFILE: "{{dir}}/home" }, files: { "home/.config/varlatch/credentials.json": STORE_ONE } },
+  // server: the default server (ADR-0058 Decision 1)
+  { id: "server.none", title: "server with nothing stored", args: ["server"] },
+  { id: "server.none.json", title: "server --json with nothing stored", args: ["server", "--json"] },
+  { id: "server.default", title: "outside a repository: the default server", args: ["server"], files: { "config/credentials.json": STORE_SEVERAL, "config/settings.json": '{"defaultServer": "https://c.example"}\n' } },
+  { id: "server.default.json", title: "the same, --json", args: ["server", "--json"], files: { "config/credentials.json": STORE_SEVERAL, "config/settings.json": '{"defaultServer": "https://c.example"}\n' } },
+  { id: "server.only-credential", title: "outside a repository with no default: the only stored credential", args: ["server"], files: { "config/credentials.json": STORE_ONE } },
+  { id: "server.only-credential.json", title: "the same, --json", args: ["server", "--json"], files: { "config/credentials.json": STORE_ONE } },
+  { id: "server.several-no-default", title: "several stored and no default: none", args: ["server"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "server.env-var", title: "VARLATCH_SERVER wins over the default", args: ["server"], env: { VARLATCH_SERVER: "https://env.example" }, files: { "config/settings.json": '{"defaultServer": "https://c.example"}\n' } },
+  { id: "server.env-var.json", title: "the same, --json", args: ["server", "--json"], env: { VARLATCH_SERVER: "https://env.example" } },
+  { id: "server.repo", title: "inside a repository: varlatch.toml, whatever the default", args: ["server"], files: { ...repoFiles(TOML_FULL), "config/settings.json": '{"defaultServer": "https://c.example"}\n' }, ...IN_REPO },
+  { id: "server.repo.json", title: "the same, --json", args: ["server", "--json"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "server.repo.local-override", title: "the local override wins over varlatch.toml", args: ["server"], files: repoFiles(TOML_FULL, { serverOverride: "https://local.example" }), ...IN_REPO },
+  { id: "server.repo.no-server", title: "a repository without a server: none, never the default", args: ["server"], files: { ...repoFiles(TOML_NO_SERVER), "config/credentials.json": STORE_ONE, "config/settings.json": '{"defaultServer": "https://a.example"}\n' }, ...IN_REPO },
+  { id: "server.repo.bad-toml", title: "a varlatch.toml that is not TOML: none, with the problem", args: ["server"], files: repoFiles('organization = "acme"\nproject = web\n'), ...IN_REPO },
+  { id: "server.repo.bad-toml.json", title: "the same, --json", args: ["server", "--json"], files: repoFiles('organization = "acme"\nproject = web\n'), ...IN_REPO },
+  { id: "server.repo.bad-toml-env-var", title: "VARLATCH_SERVER is read before a malformed varlatch.toml", args: ["server"], env: { VARLATCH_SERVER: "https://env.example" }, files: repoFiles("organization = \n"), ...IN_REPO },
+  { id: "server.repo.odd-override.json", title: "a local override that is not a string is passed through", args: ["server", "--json"], files: repoFiles(TOML_FULL, { serverOverride: { url: "x" } }), ...IN_REPO },
+  { id: "server.repo.odd-override", title: "the same, human", args: ["server"], files: repoFiles(TOML_FULL, { serverOverride: 42 }), ...IN_REPO },
+  { id: "server.repo.null-local", title: "a local.json holding null stops server (TypeScript throws a TypeError)", args: ["server"], files: repoFiles(TOML_FULL, "null\n"), ...IN_REPO, differences: ["uncaught"] },
+  { id: "server.odd-settings", title: "a default that is not a non-empty string is no default", args: ["server", "--json"], files: { "config/credentials.json": STORE_SEVERAL, "config/settings.json": '{"defaultServer": ""}\n' } },
+  { id: "server.agent-run", title: "inside an agent-safe run: no default, no stored servers", args: ["server", "--json"], unset: ["VARLATCH_CONFIG_DIR"], env: { VARLATCH_AGENT_RUN: "run_1", USERPROFILE: "{{dir}}/home" }, files: { "home/.config/varlatch/credentials.json": STORE_ONE, "home/.config/varlatch/settings.json": '{"defaultServer": "https://a.example"}\n' } },
+  { id: "server.extra-argument", title: "server takes no argument", args: ["server", "list"] },
+  { id: "server.unknown-option", title: "server's options are strict", args: ["server", "--chek"] },
+  { id: "server.json-twice", title: "--json twice is allowed", args: ["server", "--json", "--json"] },
+  { id: "server.use", title: "server use makes a signed-in server the default", args: ["server", "use", "https://b.example/team/"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "server.use.json", title: "server use --json", args: ["server", "use", "--json", "https://a.example"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "server.use.keeps-settings", title: "server use keeps settings it does not know, and replaces the default", args: ["server", "use", "https://c.example"], files: { "config/credentials.json": STORE_SEVERAL, "config/settings.json": '{"theme": "dark", "defaultServer": "https://a.example", "2": true}\n' } },
+  { id: "server.use.corrupt-settings", title: "server use over a settings file that is not JSON replaces it", args: ["server", "use", "https://a.example"], files: { "config/credentials.json": STORE_ONE, "config/settings.json": "{not json" } },
+  { id: "server.use.array-settings", title: "server use over settings that are an array starts afresh", args: ["server", "use", "https://a.example"], files: { "config/credentials.json": STORE_ONE, "config/settings.json": "[1]\n" } },
+  { id: "server.use.not-signed-in", title: "server use refuses a server with no stored credential, naming those there are", args: ["server", "use", "https://z.example"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "server.use.nothing-stored", title: "server use with nothing stored", args: ["server", "use", "https://z.example"] },
+  { id: "server.use.other-path", title: "the same origin with another path is another server", args: ["server", "use", "https://b.example"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "server.use.not-a-url", title: "server use refuses what is not a URL", args: ["server", "use", "b.example"] },
+  { id: "server.use.missing", title: "server use without a URL", args: ["server", "use"] },
+  { id: "server.use.json-only", title: "server use --json without a URL", args: ["server", "use", "--json"] },
+  { id: "server.use.extra", title: "server use takes one URL", args: ["server", "use", "https://a.example", "https://b.example"], files: { "config/credentials.json": STORE_SEVERAL } },
+  { id: "server.use.unknown-option", title: "server use's options are strict", args: ["server", "use", "--yes", "https://a.example"] },
+  { id: "server.use.agent-run", title: "inside an agent-safe run the operator's store holds nothing to choose", args: ["server", "use", "https://a.example"], unset: ["VARLATCH_CONFIG_DIR"], env: { VARLATCH_AGENT_RUN: "run_1", USERPROFILE: "{{dir}}/home" }, files: { "home/.config/varlatch/credentials.json": STORE_ONE } },
+  { id: "server.use.agent-run-own", title: "an agent-safe run's own directory is written", args: ["server", "use", "https://a.example"], env: { VARLATCH_AGENT_RUN: "run_1" }, files: { "config/credentials.json": STORE_ONE } },
+  { id: "server.use.new-directory", title: "server use creates the settings in a store directory of its own", args: ["server", "use", "--json", "https://a.example"], unset: ["VARLATCH_CONFIG_DIR"], env: { XDG_CONFIG_HOME: "{{dir}}/xdg" }, files: { "xdg/varlatch/credentials.json": STORE_ONE } },
+  // context: ADR-0017 §7's order
+  { id: "context.outside", title: "context outside a repository", args: ["context"] },
+  { id: "context.committed-default", title: "context: the committed default", args: ["context"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.committed-default.json", title: "the same, --json", args: ["context", "--json"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.local-selection", title: "the local selection beats the committed default", args: ["context", "--json"], files: repoFiles(TOML_FULL, { selectedEnvironment: "dev/jeremy" }), ...IN_REPO },
+  { id: "context.env-var", title: "VARLATCH_ENV beats the local selection", args: ["context", "--json"], env: { VARLATCH_ENV: "qa" }, files: repoFiles(TOML_FULL, { selectedEnvironment: "dev/jeremy" }), ...IN_REPO },
+  { id: "context.flag", title: "--environment beats VARLATCH_ENV", args: ["context", "--json", "--environment", "prod"], env: { VARLATCH_ENV: "qa" }, files: repoFiles(TOML_FULL, { selectedEnvironment: "dev/jeremy" }), ...IN_REPO },
+  { id: "context.short-flag", title: "-e beats VARLATCH_ENV", args: ["context", "-e", "prod"], env: { VARLATCH_ENV: "qa" }, files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.both-flags", title: "--environment is read before -e", args: ["context", "--json", "-e", "short", "--environment", "long"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.empty-flag", title: "--environment \"\" is given but empty: -e is not read, and the next source decides", args: ["context", "--json", "--environment", "", "-e", "short"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.flag-last", title: "--environment last has no value: -e is read", args: ["context", "--json", "-e", "short", "--environment"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.no-environment", title: "no Environment from any source", args: ["context"], files: repoFiles(TOML_NO_ENV), ...IN_REPO },
+  { id: "context.server-flag", title: "--server beats VARLATCH_SERVER", args: ["context", "--json", "--server", "https://flag.example"], env: { VARLATCH_SERVER: "https://env.example" }, files: repoFiles(TOML_FULL, { serverOverride: "https://local.example" }), ...IN_REPO },
+  { id: "context.server-env-var", title: "VARLATCH_SERVER beats the local override", args: ["context", "--json"], env: { VARLATCH_SERVER: "https://env.example" }, files: repoFiles(TOML_FULL, { serverOverride: "https://local.example" }), ...IN_REPO },
+  { id: "context.server-local-override", title: "the local override beats varlatch.toml", args: ["context", "--json"], files: repoFiles(TOML_FULL, { serverOverride: "https://local.example" }), ...IN_REPO },
+  { id: "context.server-repository", title: "varlatch.toml's server", args: ["context", "--json"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.no-server", title: "no server: never the default, and no example without one", args: ["context"], files: { ...repoFiles(TOML_NO_SERVER), "config/credentials.json": STORE_ONE }, ...IN_REPO },
+  { id: "context.no-server-default", title: "no server, with the default as an example", args: ["context"], files: { ...repoFiles(TOML_NO_SERVER), "config/settings.json": '{"defaultServer": "https://c.example"}\n' }, ...IN_REPO },
+  { id: "context.tier", title: "the cached tier, escaped", args: ["context"], files: repoFiles(TOML_FULL, { selectedEnvironment: "dev", selectedTier: "pro\u001bd", tierCachedAt: "2026-11-17T10:00:00.000Z" }), ...IN_REPO },
+  { id: "context.tier-no-time", title: "a cached tier without a time", args: ["context"], files: repoFiles(TOML_FULL, { selectedEnvironment: "dev", selectedTier: "production" }), ...IN_REPO },
+  { id: "context.odd-local.json", title: "a local selection and override that are not strings are passed through", args: ["context", "--json"], files: repoFiles(TOML_FULL, { selectedEnvironment: 5, serverOverride: ["a", "b"], selectedTier: "x" }), ...IN_REPO },
+  { id: "context.odd-local", title: "the same, human", args: ["context"], files: repoFiles(TOML_FULL, { selectedEnvironment: 5, serverOverride: ["a", "b"] }), ...IN_REPO },
+  { id: "context.object-selection.json", title: "a selected Environment that is an object never matches itself: no tier", args: ["context", "--json"], files: repoFiles(TOML_FULL, { selectedEnvironment: { a: 1 }, selectedTier: "x" }), ...IN_REPO },
+  { id: "context.corrupt-local", title: "a local.json that is not JSON reads as empty", args: ["context", "--json"], files: repoFiles(TOML_FULL, "{"), ...IN_REPO },
+  { id: "context.null-local", title: "a local.json holding null stops context (TypeScript throws a TypeError)", args: ["context", "-e", "dev", "--server", "https://flag.example"], files: repoFiles(TOML_FULL, "null\n"), ...IN_REPO, differences: ["uncaught"] },
+  { id: "context.null-local-resolving", title: "the same, when resolving the Environment reads it", args: ["context"], files: repoFiles(TOML_FULL, "null\n"), ...IN_REPO, differences: ["uncaught"] },
+  { id: "context.nested", title: "from a directory inside the repository", args: ["context"], files: repoFiles(TOML_FULL), cwd: "repo/src/app" },
+  { id: "context.lenient-options", title: "context reads its options leniently", args: ["context", "--nosuch", "x"], files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.agent-run", title: "inside an agent-safe run: the variables holding Placeholders, names only", args: ["context"], env: { VARLATCH_AGENT_RUN: "run_7", API_KEY: "vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", B_TOKEN: "vlch_ph_v1_ffffffffffffffffffffffffffffffff", NOT_ONE: "vlch_ph_v1_short" }, files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.agent-run.json", title: "the same, --json", args: ["context", "--json"], env: { VARLATCH_AGENT_RUN: "run_7", API_KEY: "vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.agent-run-none", title: "an agent-safe run with no Placeholders", args: ["context"], env: { VARLATCH_AGENT_RUN: "run_7" }, files: repoFiles(TOML_FULL), ...IN_REPO },
+  { id: "context.toml-directory", title: "a varlatch.toml that is a directory stops context (TypeScript lets the read error escape)", args: ["context"], files: { "repo/varlatch.toml/.keep": "" }, ...IN_REPO, differences: ["uncaught"] },
+  ...TOML_CASES.map(([id, title, toml]): TranscriptCase => ({ id: `context.toml.${id}`, title: `varlatch.toml: ${title}`, args: ["context", "--json"], files: repoFiles(toml), ...IN_REPO })),
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
+  "5.1b-context": context51b,
 };

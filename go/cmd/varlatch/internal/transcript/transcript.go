@@ -57,6 +57,7 @@ type Case struct {
 	Title       string            `json:"title"`
 	Args        []string          `json:"args"`
 	Env         map[string]string `json:"env,omitempty"`
+	Unset       []string          `json:"unset,omitempty"`
 	Stdin       string            `json:"stdin,omitempty"`
 	Files       map[string]string `json:"files,omitempty"`
 	Cwd         string            `json:"cwd,omitempty"`
@@ -120,8 +121,9 @@ func Load(path string) (*File, error) {
 type Command func(args []string) *exec.Cmd
 
 // Difference rewrites a recording's expectation where the Go CLI differs on
-// purpose (go/README.md, the Go CLI's accepted differences).
-type Difference func(*Outcome)
+// purpose (go/README.md, the Go CLI's accepted differences), given what the
+// Go CLI did.
+type Difference func(want *Outcome, got Outcome)
 
 // Replay runs c against the CLI and returns what it did and every way that
 // differs from the recording.
@@ -169,6 +171,9 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	if runtime.GOOS == "windows" {
 		env["USERPROFILE"] = env["HOME"]
 		env["SYSTEMROOT"] = os.Getenv("SYSTEMROOT")
+	}
+	for _, k := range c.Unset {
+		delete(env, k)
 	}
 	for k, v := range c.Env {
 		env[k] = fill(v)
@@ -222,7 +227,7 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 			return got, nil, fmt.Errorf("case %s: no accepted difference %q", c.ID, name)
 		}
 		want = clone(want)
-		d(&want)
+		d(&want, got)
 	}
 	return got, Compare(want, got), nil
 }

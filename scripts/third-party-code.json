@@ -20,6 +20,26 @@
       "licenseFile": "go/server/pgtime/LICENSE-PostgreSQL",
       "files": ["go/server/pgtime/abbrevs.go", "go/server/pgtime/pgtime.go", "go/server/pgtime/zone.go"],
       "what": "timestamptz input (ParseDateTime, DecodeDateTime and their helpers in src/backend/utils/adt/datetime.c, tm2timestamp in timestamp.c), zone lookup (pg_tzset and pg_open_tzfile in src/timezone/pgtz.c) and the Default timezone abbreviations (src/timezone/tznames/Default), ported to Go; tzload, tzparse, pg_next_dst_boundary and pg_interpret_timezone_abbrev come from PostgreSQL's src/timezone/localtime.c, the IANA tz code, which is in the public domain."
+    },
+    {
+      "name": "smol-toml",
+      "version": "1.9.0",
+      "commit": "6f9739a5ab481f57c3112024bc4947534b580b58",
+      "source": "https://github.com/squirrelchat/smol-toml/tree/v1.9.0/src",
+      "license": "BSD-3-Clause",
+      "licenseFile": "go/cmd/varlatch/internal/toml/LICENSE-smol-toml-BSD-3-Clause",
+      "files": ["go/cmd/varlatch/internal/toml/toml.go"],
+      "what": "The TOML parser (parse, and the key, value, string, number and date readers with their error messages), ported to Go so the Go CLI reads varlatch.toml exactly as the TypeScript CLI, which bundles smol-toml, reads it."
+    },
+    {
+      "name": "V8",
+      "version": "14.6.202",
+      "commit": "e04c3a1a2543bdbee7beac8846c9cbe8f657636f",
+      "source": "https://github.com/v8/v8/tree/14.6.202/src/date",
+      "license": "BSD-3-Clause",
+      "licenseFile": "go/cmd/varlatch/internal/jsval/LICENSE-v8-BSD-3-Clause",
+      "files": ["go/cmd/varlatch/internal/jsval/date.go"],
+      "what": "The date parser behind Date.parse (src/date/dateparser.h, dateparser-inl.h and dateparser.cc, with ParseDateTimeString and MakeDay from date.cc), ported to Go so the Go CLI reads timestamps as the Node.js that runs the TypeScript CLI does."
     }
   ]
 }

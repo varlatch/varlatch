@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,7 +17,7 @@ import { build } from "esbuild";
  *
  * A case gives the arguments, the environment (added to a clean one: PATH,
  * HOME and VARLATCH_CONFIG_DIR inside the case's own directory, and
- * VARLATCH_NODE_CHECK=off, nothing
+ * VARLATCH_NODE_CHECK=off, less any the case unsets; nothing
  * from this process, so a coding agent's markers never leak in), a file
  * tree, standard input, and the fake server's script: each request it
  * expects, in order, and its answer. It records standard output, standard
@@ -53,6 +53,8 @@ export interface TranscriptCase {
   title: string;
   args: string[];
   env?: Record<string, string>;
+  /** Variables removed from the clean environment (VARLATCH_CONFIG_DIR, to reach the default directory). */
+  unset?: string[];
   stdin?: string;
   /** Files to create before the run, by path relative to the case directory. */
   files?: Record<string, string>;
@@ -159,10 +161,25 @@ export function listTree(root: string, unfillText: (t: string) => string, at = "
  */
 export const TRANSCRIPT_UMASK = 0o022;
 
+/**
+ * An error the TypeScript CLI lets escape: Node.js prints the source line,
+ * the stack (with the bundle's path) and its own version, which no
+ * recording can hold steadily. The recording keeps its name and message:
+ * `{{uncaught TypeError: ...}}`. The Go CLI says what went wrong in one line
+ * instead (the "uncaught" accepted difference).
+ */
+const UNCAUGHT = /\n\nNode\.js v[0-9.]+\n$/;
+
+function uncaught(stderr: string): string {
+  const error = /^([A-Za-z]*Error)(?: \[[A-Z_]+\])?: (.*)$/m.exec(stderr);
+  return error ? `{{uncaught ${error[1]}: ${error[2]}}}\n` : "{{uncaught}}\n";
+}
+
 /** Runs one case against the bundle and records it. */
 export async function recordCase(bundle: string, c: TranscriptCase): Promise<RecordedCase> {
   if (process.platform !== "win32") process.umask(TRANSCRIPT_UMASK);
-  const dir = mkdtempSync(join(tmpdir(), "varlatch-transcript-"));
+  // The real path, as process.cwd() reports it (macOS's temporary directory is behind a symbolic link).
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "varlatch-transcript-")));
   const script = [...(c.server ?? [])];
   const requests: RecordedRequest[] = [];
   const server = http.createServer((req, res) => {
@@ -210,6 +227,7 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       // that records, and the Go CLI has none: never part of a recording.
       VARLATCH_NODE_CHECK: "off",
     };
+    for (const name of c.unset ?? []) delete env[name];
     for (const [k, v] of Object.entries(c.env ?? {})) env[k] = fill(v, origin, dir);
     const result = await new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(process.execPath, [bundle, ...c.args.map((a) => fill(a, origin, dir))], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -227,7 +245,7 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       expect: {
         status: result.status,
         stdout: unfill(result.stdout, origin, dir),
-        stderr: unfill(result.stderr, origin, dir),
+        stderr: unfill(result.status === 1 && UNCAUGHT.test(result.stderr) ? uncaught(result.stderr) : result.stderr, origin, dir),
         requests: unfillDeep(requests, origin, dir) as RecordedRequest[],
         files,
       },

@@ -1,0 +1,3585 @@
+{
+  "comment": "Written by apps/cli/test/go-vectors-context.test.ts from the TypeScript code; do not edit.",
+  "timeZone": "America/New_York",
+  "repoConfig": [
+    {
+      "name": "base",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "full",
+      "toml": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web",
+          "server": "https://repo.example",
+          "defaultEnvironment": "dev"
+        }
+      }
+    },
+    {
+      "name": "empty",
+      "toml": "",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "only-comments",
+      "toml": "# a\n# b\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "missing-project",
+      "toml": "organization = \"acme\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "missing-organization",
+      "toml": "project = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "server-not-string",
+      "toml": "organization = \"acme\"\nproject = \"web\"\nserver = 1\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "server-empty",
+      "toml": "organization = \"acme\"\nproject = \"web\"\nserver = \"\"\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "environment-not-string",
+      "toml": "organization = \"acme\"\nproject = \"web\"\ndefault_environment = [\"dev\"]\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "bom",
+      "toml": "﻿organization = \"acme\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "bom-twice",
+      "toml": "﻿﻿organization = \"acme\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal character in key\n\n1:  ﻿﻿organization = \"acme\"\n     ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "crlf",
+      "toml": "organization = \"acme\"\r\nproject = \"web\"\r\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "lone-cr",
+      "toml": "organization = \"acme\"\rproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line\n\n1:  organization = \"acme\"\rproject = \"web\"\n                         ^\n"
+      }
+    },
+    {
+      "name": "no-final-newline",
+      "toml": "organization = \"acme\"\nproject = \"web\"",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "tabs-and-spaces",
+      "toml": "\t organization\t=\t\"acme\"  \n  project = \"web\"\t# c\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "comment-control",
+      "toml": "organization = \"acme\" # \u0000\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: control characters are not allowed in comments\n\n1:  organization = \"acme\" # \u0000\n                            ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "comment-del",
+      "toml": "organization = \"acme\" # \nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: control characters are not allowed in comments\n\n1:  organization = \"acme\" # \n                            ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "comment-tab",
+      "toml": "organization = \"acme\" # \t ok\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "nul-in-key",
+      "toml": "organ\u0000ization = \"acme\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: incomplete key-value: cannot find end of key\n\n1:  organ\u0000ization = \"acme\"\n    ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "quoted-keys",
+      "toml": "\"organization\" = \"acme\"\n'project' = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "empty-quoted-key",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n\"\" = 1\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "multiline-key",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n\"\"\"a\"\"\" = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal quoted key: multiline strings are not allowed\n\n2:  project = \"web\"\n3:  \"\"\"a\"\"\" = 1\n    ^\n"
+      }
+    },
+    {
+      "name": "dotted-keys",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na.b.c = 1\na.b.d = 2\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "dotted-spaces",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na . b = 1\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "dotted-quoted",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na.\"b.c\" = 1\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "empty-dotted",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na..b = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal empty bare key\n\n2:  project = \"web\"\n3:  a..b = 1\n      ^\n"
+      }
+    },
+    {
+      "name": "key-ends-dot",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na. = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unexpected end of key\n\n2:  project = \"web\"\n3:  a. = 1\n       ^\n"
+      }
+    },
+    {
+      "name": "key-space-inside",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na b = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal character in key\n\n2:  project = \"web\"\n3:  a b = 1\n      ^\n"
+      }
+    },
+    {
+      "name": "key-unicode",
+      "toml": "organization = \"acme\"\nproject = \"web\"\né = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal character in key\n\n2:  project = \"web\"\n3:  é = 1\n    ^\n"
+      }
+    },
+    {
+      "name": "key-no-value",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na =\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n2:  project = \"web\"\n3:  a =\n       ^\n"
+      }
+    },
+    {
+      "name": "key-no-equals",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal character in key\n\n2:  project = \"web\"\n3:  a\n     ^\n"
+      }
+    },
+    {
+      "name": "key-at-end",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: incomplete key-value: cannot find end of key\n\n2:  project = \"web\"\n3:  a\n    ^\n"
+      }
+    },
+    {
+      "name": "value-then-junk",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na = 1 x\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line\n\n2:  project = \"web\"\n3:  a = 1 x\n          ^\n"
+      }
+    },
+    {
+      "name": "value-then-comment",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na = 1 # x\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "duplicate",
+      "toml": "organization = \"acme\"\norganization = \"acme\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n1:  organization = \"acme\"\n2:  organization = \"acme\"\n    ^\n3:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "dotted-over-value",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na = 1\na.b = 2\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  a = 1\n4:  a.b = 2\n    ^\n"
+      }
+    },
+    {
+      "name": "value-over-dotted",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na.b = 1\na = 2\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  a.b = 1\n4:  a = 2\n    ^\n"
+      }
+    },
+    {
+      "name": "table",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a]\nb = 1\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "table-then-top",
+      "toml": "[a]\norganization = \"acme\"\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "table-twice",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a]\n[a]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  [a]\n4:  [a]\n     ^\n"
+      }
+    },
+    {
+      "name": "super-after",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a.b]\nc = 1\n[a]\nd = 2\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "super-twice",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a.b]\n[a]\n[a]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n4:  [a]\n5:  [a]\n     ^\n"
+      }
+    },
+    {
+      "name": "table-over-value",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na = 1\n[a]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  a = 1\n4:  [a]\n     ^\n"
+      }
+    },
+    {
+      "name": "table-over-inline",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na = {}\n[a]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  a = {}\n4:  [a]\n     ^\n"
+      }
+    },
+    {
+      "name": "table-over-dotted",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na.b = 1\n[a]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  a.b = 1\n4:  [a]\n     ^\n"
+      }
+    },
+    {
+      "name": "dotted-into-table",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a]\nb.c = 1\n[a.b]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n4:  b.c = 1\n5:  [a.b]\n     ^\n"
+      }
+    },
+    {
+      "name": "table-dotted-defined",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a.b]\nc = 1\n[a]\nb.d = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n5:  [a]\n6:  b.d = 1\n    ^\n"
+      }
+    },
+    {
+      "name": "array-tables",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[[a]]\nx = 1\n[[a]]\nx = 2\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "array-table-sub",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[[a]]\n[a.b]\nc = 1\n[[a]]\n[a.b]\nc = 2\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "array-table-over-table",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a]\n[[a]]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  [a]\n4:  [[a]]\n      ^\n"
+      }
+    },
+    {
+      "name": "table-over-array-table",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[[a]]\n[a]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  [[a]]\n4:  [a]\n     ^\n"
+      }
+    },
+    {
+      "name": "array-table-dotted",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[[a.b]]\n[[a.b]]\n[a]\nc = 1\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "array-table-over-value",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na = []\n[[a]]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  a = []\n4:  [[a]]\n      ^\n"
+      }
+    },
+    {
+      "name": "dotted-into-array-table",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[[a]]\n[b]\na.c = 1\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "array-of-tables-dotted-key",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[[a]]\nb.c = 1\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "dotted-into-array",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[[a]]\n[x]\n[[a.b]]\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "table-unclosed",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal character in key\n\n2:  project = \"web\"\n3:  [a\n      ^\n"
+      }
+    },
+    {
+      "name": "table-empty",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unexpected end of key\n\n2:  project = \"web\"\n3:  []\n     ^\n"
+      }
+    },
+    {
+      "name": "array-table-unclosed",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[[a]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: expected end of table array declaration\n\n2:  project = \"web\"\n3:  [[a]\n        ^\n"
+      }
+    },
+    {
+      "name": "array-table-space",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[ [a] ]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal character in key\n\n2:  project = \"web\"\n3:  [ [a] ]\n      ^\n"
+      }
+    },
+    {
+      "name": "table-trailing",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a] x\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line\n\n2:  project = \"web\"\n3:  [a] x\n        ^\n"
+      }
+    },
+    {
+      "name": "table-comment",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[a] # c\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "inline-then-table-dotted",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na = { b = 1 }\na.c = 2\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined table or value\n\n3:  a = { b = 1 }\n4:  a.c = 2\n    ^\n"
+      }
+    },
+    {
+      "name": "deep-arrays",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "too-deep-arrays",
+      "toml": "organization = \"acme\"\nproject = \"web\"\na = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: document contains excessively nested structures. aborting.\n\n2:  project = \"web\"\n3:  a = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                ^\n"
+      }
+    },
+    {
+      "name": "line-9",
+      "toml": "# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\norganization = = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n8 :  # x\n9 :  organization = = 1\n                    ^\n"
+      }
+    },
+    {
+      "name": "line-10",
+      "toml": "# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\norganization = = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n9 :  # x\n10:  organization = = 1\n                    ^\n"
+      }
+    },
+    {
+      "name": "line-99",
+      "toml": "# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\norganization = = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n98 :  # x\n99 :  organization = = 1\n                     ^\n"
+      }
+    },
+    {
+      "name": "line-100",
+      "toml": "# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\n# x\norganization = = 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n99 :  # x\n100:  organization = = 1\n                     ^\n"
+      }
+    },
+    {
+      "name": "error-first-line",
+      "toml": "= 1\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unexpected end of key\n\n1:  = 1\n    ^\n"
+      }
+    },
+    {
+      "name": "error-after-blank",
+      "toml": "\n\norganization = = 1\n\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n3:  organization = = 1\n                   ^\n"
+      }
+    },
+    {
+      "name": "error-astral-column",
+      "toml": "organization = \"😀😀\" x\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line\n\n1:  organization = \"😀😀\" x\n                          ^\n"
+      }
+    },
+    {
+      "name": "error-at-end",
+      "toml": "organization = \"acme",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unfinished string\n\n1:  organization = \"acme\n                   ^\n"
+      }
+    },
+    {
+      "name": "error-crlf",
+      "toml": "organization = \"acme\"\r\nproject = = 1\r\nx = 1\r\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n1:  organization = \"acme\"\n2:  project = = 1\n              ^\n3:  x = 1\n"
+      }
+    },
+    {
+      "name": "values-at-top-after-table",
+      "toml": "[t]\norganization = \"acme\"\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "proto-keys",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n__proto__ = 1\nconstructor = 2\n[toString]\nx = 1\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "organization-table",
+      "toml": "project = \"web\"\n[organization]\nname = \"acme\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "organization-dotted",
+      "toml": "project = \"web\"\norganization.name = \"acme\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "unfinished-array-at-end",
+      "toml": "organization = \"acme\"\nproject = \"web\"\nx = [1,",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unfinished array\n\n2:  project = \"web\"\n3:  x = [1,\n        ^\n"
+      }
+    },
+    {
+      "name": "unfinished-table-at-end",
+      "toml": "organization = \"acme\"\nproject = \"web\"\nx = { a = 1,",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unfinished table\n\n2:  project = \"web\"\n3:  x = { a = 1,\n        ^\n"
+      }
+    },
+    {
+      "name": "date-part-malformed",
+      "toml": "organization = \"acme\"\nproject = \"web\"\nx = 1979-05-2x\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date-time: date part is malformed\n\n2:  project = \"web\"\n3:  x = 1979-05-2x\n        ^\n"
+      }
+    },
+    {
+      "name": "table-array-unclosed-at-end",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n[[a]",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: expected end of table array declaration\n\n2:  project = \"web\"\n3:  [[a]\n        ^\n"
+      }
+    },
+    {
+      "name": "value-0",
+      "toml": "organization = \"acme\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-1",
+      "toml": "organization = 'acme'\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "acme",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-2",
+      "toml": "organization = \"\"\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-3",
+      "toml": "organization = ''\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-4",
+      "toml": "organization = \"a\\\"b\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "a\"b",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-5",
+      "toml": "organization = 'a\\b'\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "a\\b",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-6",
+      "toml": "organization = \"a\\\\b\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "a\\b",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-7",
+      "toml": "organization = \"\\b\\t\\n\\f\\r\\e\\\"\\\\\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "\b\t\n\f\r\u001b\"\\",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-8",
+      "toml": "organization = \"\\x41\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "A",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-9",
+      "toml": "organization = \"\\u00e9\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "é",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-10",
+      "toml": "organization = \"\\U0001F600\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "😀",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-11",
+      "toml": "organization = \"\\uD800\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid unicode escape\n\n1:  organization = \"\\uD800\"\n                    ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-12",
+      "toml": "organization = \"\\U00110000\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid unicode escape\n\n1:  organization = \"\\U00110000\"\n                    ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-13",
+      "toml": "organization = \"\\UFFFFFFFF\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid unicode escape\n\n1:  organization = \"\\UFFFFFFFF\"\n                    ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-14",
+      "toml": "organization = \"\\u12G4\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid non-hex character in unicode escape\n\n1:  organization = \"\\u12G4\"\n                        ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-15",
+      "toml": "organization = \"\\q\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unrecognised escape sequence\n\n1:  organization = \"\\q\"\n                     ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-16",
+      "toml": "organization = \"\\ \"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unrecognised escape sequence\n\n1:  organization = \"\\ \"\n                     ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-17",
+      "toml": "organization = \"tab\there\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "tab\there",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-18",
+      "toml": "organization = \"a\u0001b\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: control characters are not allowed in strings\n\n1:  organization = \"a\u0001b\"\n                     ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-19",
+      "toml": "organization = \"ab\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: control characters are not allowed in strings\n\n1:  organization = \"ab\"\n                     ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-20",
+      "toml": "organization = \"unterminated\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: control characters are not allowed in strings\n\n1:  organization = \"unterminated\n                                ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-21",
+      "toml": "organization = \"\"\"multi\nline\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "multi\nline",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-22",
+      "toml": "organization = \"\"\"\nfirst newline trimmed\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "first newline trimmed",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-23",
+      "toml": "organization = \"\"\"\r\ncrlf trimmed\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "crlf trimmed",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-24",
+      "toml": "organization = \"\"\"a \\\n   b\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "a b",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-25",
+      "toml": "organization = \"\"\"a \\  \n\n  b\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "a b",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-26",
+      "toml": "organization = \"\"\"a \\ x\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid escape: only line-ending whitespace may be escaped\n\n1:  organization = \"\"\"a \\ x\"\"\"\n                        ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-27",
+      "toml": "organization = \"\"\"quote\"at end\"\"\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "quote\"at end\"\"",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-28",
+      "toml": "organization = \"\"\"two\"\"quotes\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "two\"\"quotes",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-29",
+      "toml": "organization = \"\"\"ends with four\"\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "ends with four\"",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-30",
+      "toml": "organization = \"\"\"ends with six\"\"\"\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line\n\n1:  organization = \"\"\"ends with six\"\"\"\"\"\"\n                                        ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-31",
+      "toml": "organization = '''literal\n\\n'''\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "literal\n\\n",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-32",
+      "toml": "organization = '''a''''\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "a'",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-33",
+      "toml": "organization = '''unterminated\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unfinished string\n\n1:  organization = '''unterminated\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-34",
+      "toml": "organization = \"\"\"a\\\n\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "a",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-35",
+      "toml": "organization = \"\"\"\\\n  \\u0041\"\"\"\nproject = \"web\"\n",
+      "result": {
+        "config": {
+          "organization": "A",
+          "project": "web"
+        }
+      }
+    },
+    {
+      "name": "value-36",
+      "toml": "organization = true\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-37",
+      "toml": "organization = false\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-38",
+      "toml": "organization = tru\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n1:  organization = tru\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-39",
+      "toml": "organization = falsey\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line\n\n1:  organization = falsey\n                        ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-40",
+      "toml": "organization = 42\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-41",
+      "toml": "organization = +42\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-42",
+      "toml": "organization = -42\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-43",
+      "toml": "organization = 0\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-44",
+      "toml": "organization = +0\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-45",
+      "toml": "organization = -0\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-46",
+      "toml": "organization = 00\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal leading zero\n\n1:  organization = 00\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-47",
+      "toml": "organization = 0123\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal leading zero\n\n1:  organization = 0123\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-48",
+      "toml": "organization = 1_000\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-49",
+      "toml": "organization = 1__0\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal underscore\n\n1:  organization = 1__0\n                     ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-50",
+      "toml": "organization = _1\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n1:  organization = _1\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-51",
+      "toml": "organization = 1_\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unfinished numeric value\n\n1:  organization = 1_\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-52",
+      "toml": "organization = 0x1F\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-53",
+      "toml": "organization = 0xdead_beef\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-54",
+      "toml": "organization = 0X1F\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal leading zero\n\n1:  organization = 0X1F\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-55",
+      "toml": "organization = 0o17\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-56",
+      "toml": "organization = 0b101\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-57",
+      "toml": "organization = 0b102\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal character in numeric literal\n\n1:  organization = 0b102\n                       ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-58",
+      "toml": "organization = 0x\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unfinished numeric value\n\n1:  organization = 0x\n                     ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-59",
+      "toml": "organization = 0x_1\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal underscore\n\n1:  organization = 0x_1\n                     ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-60",
+      "toml": "organization = +0x1\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal leading zero\n\n1:  organization = +0x1\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-61",
+      "toml": "organization = 3.14\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-62",
+      "toml": "organization = -0.5\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-63",
+      "toml": "organization = 1e10\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-64",
+      "toml": "organization = 1E-5\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-65",
+      "toml": "organization = 6.02e+23\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-66",
+      "toml": "organization = 1.\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unfinished numeric value\n\n1:  organization = 1.\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-67",
+      "toml": "organization = .5\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n1:  organization = .5\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-68",
+      "toml": "organization = 1.e5\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: illegal character in numeric literal\n\n1:  organization = 1.e5\n                     ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-69",
+      "toml": "organization = 1e\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: unfinished numeric value\n\n1:  organization = 1e\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-70",
+      "toml": "organization = 1_0.0_1\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-71",
+      "toml": "organization = inf\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-72",
+      "toml": "organization = +inf\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-73",
+      "toml": "organization = -inf\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-74",
+      "toml": "organization = nan\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-75",
+      "toml": "organization = +nan\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-76",
+      "toml": "organization = -nan\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-77",
+      "toml": "organization = infinity\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line\n\n1:  organization = infinity\n                      ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-78",
+      "toml": "organization = 9007199254740991\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-79",
+      "toml": "organization = 9007199254740992\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: integer value cannot be represented losslessly\n\n1:  organization = 9007199254740992\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-80",
+      "toml": "organization = -9007199254740991\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-81",
+      "toml": "organization = -9007199254740992\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: integer value cannot be represented losslessly\n\n1:  organization = -9007199254740992\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-82",
+      "toml": "organization = 0x1FFFFFFFFFFFFF\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-83",
+      "toml": "organization = 0x20000000000000\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: integer value cannot be represented losslessly\n\n1:  organization = 0x20000000000000\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-84",
+      "toml": "organization = 123456789012345678901234567890\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: integer value cannot be represented losslessly\n\n1:  organization = 123456789012345678901234567890\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-85",
+      "toml": "organization = 1979-05-27\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-86",
+      "toml": "organization = 1979-05-27T07:32:00Z\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-87",
+      "toml": "organization = 1979-05-27t07:32:00z\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-88",
+      "toml": "organization = 1979-05-27 07:32:00Z\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-89",
+      "toml": "organization = 1979-05-27T07:32:00\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-90",
+      "toml": "organization = 1979-05-27T00:32:00.999999-07:00\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-91",
+      "toml": "organization = 1979-05-27T00:32:00+0700\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 1979-05-27T00:32:00+0700\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-92",
+      "toml": "organization = 07:32:00\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-93",
+      "toml": "organization = 07:32\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-94",
+      "toml": "organization = 00:32:00.5\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-95",
+      "toml": "organization = 24:00:00\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 24:00:00\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-96",
+      "toml": "organization = 25:00:00\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 25:00:00\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-97",
+      "toml": "organization = 1979-02-30\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-98",
+      "toml": "organization = 1979-13-01\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 1979-13-01\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-99",
+      "toml": "organization = 1979-00-10\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 1979-00-10\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-100",
+      "toml": "organization = 1979-01-32\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 1979-01-32\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-101",
+      "toml": "organization = 1979-05-27T24:00:00Z\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 1979-05-27T24:00:00Z\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-102",
+      "toml": "organization = 1979-05-27T23:60:00Z\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 1979-05-27T23:60:00Z\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-103",
+      "toml": "organization = 1979-05-27T25:00:00Z\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 1979-05-27T25:00:00Z\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-104",
+      "toml": "organization = 1979-ab-c7\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 1979-ab-c7\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-105",
+      "toml": "organization = 1979- 5- 7\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-106",
+      "toml": "organization = 1979-05-27T\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date-time: time part is malformed\n\n1:  organization = 1979-05-27T\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-107",
+      "toml": "organization = 1979-05-27T07\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date-time: time part is malformed\n\n1:  organization = 1979-05-27T07\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-108",
+      "toml": "organization = 1979-05-27Tab:cd:efZ\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 1979-05-27Tab:cd:efZ\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-109",
+      "toml": "organization = 1979-05-27 07:32\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-110",
+      "toml": "organization = 2000-01-01T00:00:00+24:00\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid date\n\n1:  organization = 2000-01-01T00:00:00+24:00\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-111",
+      "toml": "organization = []\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-112",
+      "toml": "organization = [\"a\", \"b\",]\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-113",
+      "toml": "organization = [1, [2, [3]]]\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-114",
+      "toml": "organization = [1 2]\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: expected comma or end of structure\n\n1:  organization = [1 2]\n                      ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-115",
+      "toml": "organization = [,]\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n1:  organization = [,]\n                    ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-116",
+      "toml": "organization = [\n  1, # one\n  2\n]\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-117",
+      "toml": "organization = [1,\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n1:  organization = [1,\n2:  project = \"web\"\n    ^\n"
+      }
+    },
+    {
+      "name": "value-118",
+      "toml": "organization = {}\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-119",
+      "toml": "organization = { a = 1 }\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-120",
+      "toml": "organization = { a = 1, }\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-121",
+      "toml": "organization = { a = 1, a = 2 }\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined value\n\n1:  organization = { a = 1, a = 2 }\n                            ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-122",
+      "toml": "organization = { a.b = 1, a.c = 2 }\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-123",
+      "toml": "organization = { a.b = 1, a = 2 }\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined value\n\n1:  organization = { a.b = 1, a = 2 }\n                              ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-124",
+      "toml": "organization = { a = { b = 1 }, a.c = 2 }\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined value\n\n1:  organization = { a = { b = 1 }, a.c = 2 }\n                                    ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-125",
+      "toml": "organization = { a = [1], a.b = 2 }\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: trying to redefine an already defined value\n\n1:  organization = { a = [1], a.b = 2 }\n                              ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-126",
+      "toml": "organization = { a = 1\n}\nproject = \"web\"\n",
+      "result": {
+        "error": "varlatch.toml must declare \"organization\" and \"project\""
+      }
+    },
+    {
+      "name": "value-127",
+      "toml": "organization = { a = 1\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: expected comma or end of structure\n\n1:  organization = { a = 1\n2:  project = \"web\"\n    ^\n"
+      }
+    },
+    {
+      "name": "value-128",
+      "toml": "organization = x\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n1:  organization = x\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-129",
+      "toml": "organization = =\nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n1:  organization = =\n                   ^\n2:  project = \"web\"\n"
+      }
+    },
+    {
+      "name": "value-130",
+      "toml": "organization = \nproject = \"web\"\n",
+      "result": {
+        "error": "Invalid varlatch.toml: Invalid TOML document: invalid value\n\n1:  organization = \n                   ^\n2:  project = \"web\"\n"
+      }
+    }
+  ],
+  "dateParse": [
+    {
+      "text": "2026-11-17T10:00:00.000Z",
+      "value": 1794909600000
+    },
+    {
+      "text": "2026-11-17T10:00:00Z",
+      "value": 1794909600000
+    },
+    {
+      "text": "2026-11-17T10:00Z",
+      "value": 1794909600000
+    },
+    {
+      "text": "2026-11-17T10:00",
+      "value": 1794927600000
+    },
+    {
+      "text": "2026-11-17T10:00:00",
+      "value": 1794927600000
+    },
+    {
+      "text": "2026-11-17",
+      "value": 1794873600000
+    },
+    {
+      "text": "2026-11",
+      "value": 1793491200000
+    },
+    {
+      "text": "2026",
+      "value": 1767225600000
+    },
+    {
+      "text": "+002026-11-17T00:00:00Z",
+      "value": 1794873600000
+    },
+    {
+      "text": "-000001-01-01T00:00:00Z",
+      "value": -62198755200000
+    },
+    {
+      "text": "-000000-01-01T00:00:00Z",
+      "value": null
+    },
+    {
+      "text": "+275760-09-13T00:00:00.000Z",
+      "value": 8640000000000000
+    },
+    {
+      "text": "+275760-09-13T00:00:00.001Z",
+      "value": null
+    },
+    {
+      "text": "-271821-04-20T00:00:00.000Z",
+      "value": -8640000000000000
+    },
+    {
+      "text": "-271821-04-19T23:59:59.999Z",
+      "value": null
+    },
+    {
+      "text": "2026-11-17t10:00:00z",
+      "value": 1794909600000
+    },
+    {
+      "text": "2026-11-17T10:00:00.1Z",
+      "value": 1794909600100
+    },
+    {
+      "text": "2026-11-17T10:00:00.12Z",
+      "value": 1794909600120
+    },
+    {
+      "text": "2026-11-17T10:00:00.1234567Z",
+      "value": 1794909600123
+    },
+    {
+      "text": "2026-11-17T10:00:00.1234567891234Z",
+      "value": 1794909600123
+    },
+    {
+      "text": "2026-11-17T10:00:00+01:00",
+      "value": 1794906000000
+    },
+    {
+      "text": "2026-11-17T10:00:00-0130",
+      "value": 1794915000000
+    },
+    {
+      "text": "2026-11-17T10:00:00+0100",
+      "value": 1794906000000
+    },
+    {
+      "text": "2026-11-17T10:00:00+24:00",
+      "value": null
+    },
+    {
+      "text": "2026-11-17T10:00:00+23:59",
+      "value": 1794823260000
+    },
+    {
+      "text": "2026-11-17T10:00:00+1:00",
+      "value": null
+    },
+    {
+      "text": "2026-11-17T24:00:00Z",
+      "value": 1794960000000
+    },
+    {
+      "text": "2026-11-17T24:00:01Z",
+      "value": null
+    },
+    {
+      "text": "2026-11-17T24:00:00.001Z",
+      "value": null
+    },
+    {
+      "text": "2026-11-17T23:59:60Z",
+      "value": null
+    },
+    {
+      "text": "2026-02-29",
+      "value": 1772323200000
+    },
+    {
+      "text": "2024-02-29",
+      "value": 1709164800000
+    },
+    {
+      "text": "2026-02-31",
+      "value": 1772496000000
+    },
+    {
+      "text": "2026-04-31T00:00:00Z",
+      "value": 1777593600000
+    },
+    {
+      "text": "2026-13-01",
+      "value": null
+    },
+    {
+      "text": "2026-00-01",
+      "value": null
+    },
+    {
+      "text": "2026-01-00",
+      "value": null
+    },
+    {
+      "text": "2026-01-32",
+      "value": null
+    },
+    {
+      "text": "2026-1-1",
+      "value": 1767243600000
+    },
+    {
+      "text": "2026-11-17T1:00Z",
+      "value": null
+    },
+    {
+      "text": "2026-11-17T10",
+      "value": null
+    },
+    {
+      "text": "2026-11-17T10:00:00Zjunk",
+      "value": null
+    },
+    {
+      "text": "20261117",
+      "value": null
+    },
+    {
+      "text": "2026/11/17",
+      "value": 1794891600000
+    },
+    {
+      "text": "11/17/2026",
+      "value": 1794891600000
+    },
+    {
+      "text": "17/11/2026",
+      "value": null
+    },
+    {
+      "text": "12/31/2020",
+      "value": 1609390800000
+    },
+    {
+      "text": "1",
+      "value": 978325200000
+    },
+    {
+      "text": "5",
+      "value": 988689600000
+    },
+    {
+      "text": "12",
+      "value": 1007182800000
+    },
+    {
+      "text": "99",
+      "value": 915166800000
+    },
+    {
+      "text": "100",
+      "value": -59011441438000
+    },
+    {
+      "text": "2020",
+      "value": 1577836800000
+    },
+    {
+      "text": "0",
+      "value": 946702800000
+    },
+    {
+      "text": "-1",
+      "value": 978325200000
+    },
+    {
+      "text": "Nov 17 2026",
+      "value": 1794891600000
+    },
+    {
+      "text": "17 Nov 2026",
+      "value": 1794891600000
+    },
+    {
+      "text": "November 17, 2026 10:00:00",
+      "value": 1794927600000
+    },
+    {
+      "text": "Tue, 17 Nov 2026 10:00:00 GMT",
+      "value": 1794909600000
+    },
+    {
+      "text": "Tue Nov 17 2026 10:00:00 GMT+0100 (Central European Standard Time)",
+      "value": 1794906000000
+    },
+    {
+      "text": "17 Nov 2026 10:00 EST",
+      "value": 1794927600000
+    },
+    {
+      "text": "17 Nov 2026 10:00 PDT",
+      "value": 1794934800000
+    },
+    {
+      "text": "17 Nov 2026 10:00 UTC",
+      "value": 1794909600000
+    },
+    {
+      "text": "17 Nov 2026 10:00 UT",
+      "value": 1794909600000
+    },
+    {
+      "text": "17 Nov 2026 10:00 Z",
+      "value": 1794909600000
+    },
+    {
+      "text": "17 Nov 2026 10:00 +0530",
+      "value": 1794889800000
+    },
+    {
+      "text": "17 Nov 2026 10:00 GMT-8",
+      "value": 1794938400000
+    },
+    {
+      "text": "17 Nov 2026 10:00 GMT+12345",
+      "value": null
+    },
+    {
+      "text": "17 Nov 2026 10:00 -5:",
+      "value": 1794927600000
+    },
+    {
+      "text": "17 Nov 2026 10:00 am",
+      "value": 1794927600000
+    },
+    {
+      "text": "17 Nov 2026 10:00 pm",
+      "value": 1794970800000
+    },
+    {
+      "text": "17 Nov 2026 12:00 am",
+      "value": 1794891600000
+    },
+    {
+      "text": "17 Nov 2026 13:00 pm",
+      "value": null
+    },
+    {
+      "text": "Nov 2026",
+      "value": 1793505600000
+    },
+    {
+      "text": "Nov",
+      "value": null
+    },
+    {
+      "text": "garbage 2026-11-17",
+      "value": 1794891600000
+    },
+    {
+      "text": "garbage2026",
+      "value": null
+    },
+    {
+      "text": "x 17 Nov 2026",
+      "value": 1794891600000
+    },
+    {
+      "text": "2026-11-17 10:00:00",
+      "value": 1794927600000
+    },
+    {
+      "text": "2026-11-17 10:00:00Z",
+      "value": 1794909600000
+    },
+    {
+      "text": "2026-11-17 10:00:00.5",
+      "value": 1794927600500
+    },
+    {
+      "text": "2026-11-17 10:00:00.",
+      "value": null
+    },
+    {
+      "text": "2026-11-17 10:00::",
+      "value": null
+    },
+    {
+      "text": "2026-11-17 10::",
+      "value": 1794927600000
+    },
+    {
+      "text": "10:00 2026-11-17",
+      "value": 1794927600000
+    },
+    {
+      "text": "2026-11-17T10:00:00 junk",
+      "value": null
+    },
+    {
+      "text": "(comment) 17 Nov 2026",
+      "value": 1794891600000
+    },
+    {
+      "text": "17 Nov 2026 (comment)",
+      "value": 1794891600000
+    },
+    {
+      "text": "17 Nov 2026)",
+      "value": null
+    },
+    {
+      "text": "17 Nov 2026 +",
+      "value": null
+    },
+    {
+      "text": "Mon, 17 Nov 2026",
+      "value": 1794891600000
+    },
+    {
+      "text": "Jan 32 2026",
+      "value": null
+    },
+    {
+      "text": "Feb 30 2026",
+      "value": 1772427600000
+    },
+    {
+      "text": "30 Feb 2026",
+      "value": 1772427600000
+    },
+    {
+      "text": "2026 Nov 17",
+      "value": 1794891600000
+    },
+    {
+      "text": "2026-Nov-17",
+      "value": 1794891600000
+    },
+    {
+      "text": "17-Nov-2026",
+      "value": 1794891600000
+    },
+    {
+      "text": "Nov-17-2026",
+      "value": 1794891600000
+    },
+    {
+      "text": "1/2/3",
+      "value": 1041483600000
+    },
+    {
+      "text": "1/2/50",
+      "value": -631047600000
+    },
+    {
+      "text": "1/2/49",
+      "value": 2493176400000
+    },
+    {
+      "text": "13/1/2026",
+      "value": null
+    },
+    {
+      "text": "2026-11-17 10:00",
+      "value": 1794927600000
+    },
+    {
+      "text": "2026-11-17 10:00",
+      "value": null
+    },
+    {
+      "text": "2026-11-17　Z",
+      "value": 1794873600000
+    },
+    {
+      "text": "é 17 Nov 2026",
+      "value": 1794891600000
+    },
+    {
+      "text": "17 Nov 2026 10:00:00.123456",
+      "value": 1794927600123
+    },
+    {
+      "text": "17 Nov 2026 10:00:00.",
+      "value": null
+    },
+    {
+      "text": "17 Nov 2026 25:00",
+      "value": null
+    },
+    {
+      "text": "17 Nov 2026 24:00",
+      "value": 1794978000000
+    },
+    {
+      "text": "17 Nov 2026 10:60",
+      "value": 1794927600000
+    },
+    {
+      "text": "Nov 17 1000000",
+      "value": null
+    },
+    {
+      "text": "Nov 17 999999",
+      "value": null
+    },
+    {
+      "text": "+999999-01-01",
+      "value": null
+    },
+    {
+      "text": "-999999-01-01",
+      "value": null
+    },
+    {
+      "text": "Jan 1 2000 10:00 +300000:",
+      "value": -133279200000
+    },
+    {
+      "text": "Jan 1 2000 10:00 +596524:",
+      "value": null
+    },
+    {
+      "text": "true",
+      "value": null
+    },
+    {
+      "text": "[object Object]",
+      "value": null
+    },
+    {
+      "text": "x,y",
+      "value": null
+    },
+    {
+      "text": "",
+      "value": null
+    },
+    {
+      "text": " ",
+      "value": null
+    },
+    {
+      "text": "2026-11-17\u0000junk",
+      "value": 1794873600000
+    },
+    {
+      "text": "yesterday",
+      "value": null
+    },
+    {
+      "text": "tomorrow",
+      "value": null
+    },
+    {
+      "text": "2026-03-08T02:30:00",
+      "value": 1772955000000
+    },
+    {
+      "text": "2026-11-01T01:30:00",
+      "value": 1793511000000
+    }
+  ],
+  "utf8": [
+    {
+      "hex": "",
+      "text": ""
+    },
+    {
+      "hex": "41",
+      "text": "A"
+    },
+    {
+      "hex": "c3a9",
+      "text": "é"
+    },
+    {
+      "hex": "e282ac",
+      "text": "€"
+    },
+    {
+      "hex": "f09f9880",
+      "text": "😀"
+    },
+    {
+      "hex": "ff",
+      "text": "�"
+    },
+    {
+      "hex": "80",
+      "text": "�"
+    },
+    {
+      "hex": "c0af",
+      "text": "��"
+    },
+    {
+      "hex": "c1bf",
+      "text": "��"
+    },
+    {
+      "hex": "c2",
+      "text": "�"
+    },
+    {
+      "hex": "e282",
+      "text": "�"
+    },
+    {
+      "hex": "e28241",
+      "text": "�A"
+    },
+    {
+      "hex": "e0809f",
+      "text": "���"
+    },
+    {
+      "hex": "e0a080",
+      "text": "ࠀ"
+    },
+    {
+      "hex": "eda080",
+      "text": "���"
+    },
+    {
+      "hex": "ed9fbf",
+      "text": "퟿"
+    },
+    {
+      "hex": "f08f8080",
+      "text": "����"
+    },
+    {
+      "hex": "f0908080",
+      "text": "𐀀"
+    },
+    {
+      "hex": "f4908080",
+      "text": "����"
+    },
+    {
+      "hex": "f48fbfbf",
+      "text": "􏿿"
+    },
+    {
+      "hex": "f5",
+      "text": "�"
+    },
+    {
+      "hex": "f8888080",
+      "text": "����"
+    },
+    {
+      "hex": "e28241808041f09f41",
+      "text": "�A��A�A"
+    },
+    {
+      "hex": "efbbbf41",
+      "text": "﻿A"
+    },
+    {
+      "hex": "41ed",
+      "text": "A�"
+    },
+    {
+      "hex": "c3",
+      "text": "�"
+    },
+    {
+      "hex": "e282e2",
+      "text": "��"
+    },
+    {
+      "hex": "fe",
+      "text": "�"
+    },
+    {
+      "hex": "f09f98",
+      "text": "�"
+    }
+  ],
+  "toNumber": [
+    {
+      "text": "",
+      "value": 0
+    },
+    {
+      "text": " ",
+      "value": 0
+    },
+    {
+      "text": "1",
+      "value": 1
+    },
+    {
+      "text": "12",
+      "value": 12
+    },
+    {
+      "text": " 1",
+      "value": 1
+    },
+    {
+      "text": "1 ",
+      "value": 1
+    },
+    {
+      "text": "+1",
+      "value": 1
+    },
+    {
+      "text": "-1",
+      "value": -1
+    },
+    {
+      "text": ".5",
+      "value": 0.5
+    },
+    {
+      "text": "1.",
+      "value": 1
+    },
+    {
+      "text": "1e",
+      "value": null
+    },
+    {
+      "text": "0x",
+      "value": null
+    },
+    {
+      "text": "0x1",
+      "value": 1
+    },
+    {
+      "text": "ab",
+      "value": null
+    },
+    {
+      "text": "\t2",
+      "value": 2
+    },
+    {
+      "text": "1 ",
+      "value": 1
+    },
+    {
+      "text": "In",
+      "value": null
+    },
+    {
+      "text": "07",
+      "value": 7
+    },
+    {
+      "text": "1_",
+      "value": null
+    },
+    {
+      "text": "　",
+      "value": 0
+    }
+  ],
+  "store": [
+    {
+      "name": "fresh-save",
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example/",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        },
+        {
+          "op": "list"
+        },
+        {
+          "op": "load",
+          "server": "https://a.example"
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": [
+            {
+              "server": "https://a.example",
+              "credential": {
+                "token": "vlt_cli_fakeAAAA",
+                "issuedAt": "2026-11-17T10:00:00.000Z",
+                "expiresAt": "2026-11-18T10:00:00.000Z",
+                "credentialId": "cred_a",
+                "name": "laptop"
+              }
+            }
+          ]
+        },
+        {
+          "value": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "save-keeps-others",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"https://b.example\": {\n      \"token\": \"vlt_cli_fakeBBBB\",\n      \"future\": {\n        \"x\": 1\n      }\n    }\n  },\n  \"top\": \"kept\"\n}\n"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        },
+        {
+          "op": "list"
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": [
+            {
+              "server": "https://b.example",
+              "credential": {
+                "token": "vlt_cli_fakeBBBB",
+                "future": {
+                  "x": 1
+                }
+              }
+            },
+            {
+              "server": "https://a.example",
+              "credential": {
+                "token": "vlt_cli_fakeAAAA",
+                "issuedAt": "2026-11-17T10:00:00.000Z",
+                "expiresAt": "2026-11-18T10:00:00.000Z",
+                "credentialId": "cred_a",
+                "name": "laptop"
+              }
+            }
+          ]
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {\n    \"https://b.example\": {\n      \"token\": \"vlt_cli_fakeBBBB\",\n      \"future\": {\n        \"x\": 1\n      }\n    },\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  },\n  \"top\": \"kept\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "save-replaces",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"old\",\n      \"extra\": 1\n    },\n    \"https://b.example\": {\n      \"token\": \"vlt_cli_fakeBBBB\"\n    }\n  }\n}\n"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example//",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    },\n    \"https://b.example\": {\n      \"token\": \"vlt_cli_fakeBBBB\"\n    }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "save-integer-like-keys",
+      "files": {
+        "config/credentials.json": "{\"servers\": {\"b\": {\"token\": \"t\"}}, \"1\": \"one\", \"z\": 2}\n"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "10",
+          "credential": {
+            "token": "vlt_cli_fakeBBBB"
+          }
+        },
+        {
+          "op": "save",
+          "server": "2",
+          "credential": {
+            "token": "vlt_cli_fakeBBBB"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"1\": \"one\",\n  \"servers\": {\n    \"2\": {\n      \"token\": \"vlt_cli_fakeBBBB\"\n    },\n    \"10\": {\n      \"token\": \"vlt_cli_fakeBBBB\"\n    },\n    \"b\": {\n      \"token\": \"t\"\n    }\n  },\n  \"z\": 2\n}\n"
+        }
+      }
+    },
+    {
+      "name": "save-over-corrupt",
+      "files": {
+        "config/credentials.json": "{\"servers\": {"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "save-over-bom",
+      "files": {
+        "config/credentials.json": "﻿{\n  \"servers\": {\n    \"https://b.example\": {\n      \"token\": \"vlt_cli_fakeBBBB\"\n    }\n  }\n}\n"
+      },
+      "ops": [
+        {
+          "op": "list"
+        },
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": []
+        },
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "save-over-null",
+      "files": {
+        "config/credentials.json": "null"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "save-null-servers",
+      "files": {
+        "config/credentials.json": "{\"servers\": null, \"k\": 1}"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  },\n  \"k\": 1\n}\n"
+        }
+      }
+    },
+    {
+      "name": "save-array-servers",
+      "files": {
+        "config/credentials.json": "{\"servers\": [1]}"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        },
+        {
+          "op": "save",
+          "server": "1",
+          "credential": {
+            "token": "vlt_cli_fakeBBBB"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": [\n    1,\n    {\n      \"token\": \"vlt_cli_fakeBBBB\"\n    }\n  ]\n}\n"
+        }
+      }
+    },
+    {
+      "name": "save-string-servers",
+      "files": {
+        "config/credentials.json": "{\"servers\": \"abc\"}"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "results": [
+        {
+          "error": {
+            "name": "TypeError"
+          }
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0644",
+          "content": "{\"servers\": \"abc\"}"
+        }
+      }
+    },
+    {
+      "name": "save-array-file",
+      "files": {
+        "config/credentials.json": "[1, 2]"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "[\n  1,\n  2\n]\n"
+        }
+      }
+    },
+    {
+      "name": "save-string-file",
+      "files": {
+        "config/credentials.json": "\"x\""
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "results": [
+        {
+          "error": {
+            "name": "TypeError"
+          }
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0644",
+          "content": "\"x\""
+        }
+      }
+    },
+    {
+      "name": "save-number-file",
+      "files": {
+        "config/credentials.json": "5"
+      },
+      "ops": [
+        {
+          "op": "save",
+          "server": "https://a.example",
+          "credential": {
+            "token": "vlt_cli_fakeAAAA",
+            "issuedAt": "2026-11-17T10:00:00.000Z",
+            "expiresAt": "2026-11-18T10:00:00.000Z",
+            "credentialId": "cred_a",
+            "name": "laptop"
+          }
+        }
+      ],
+      "results": [
+        {
+          "error": {
+            "name": "TypeError"
+          }
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0644",
+          "content": "5"
+        }
+      }
+    },
+    {
+      "name": "list-shapes",
+      "files": {
+        "config/credentials.json": "{\"servers\": {\"https://a.example\": {\"token\": \"t\"}, \"https://b.example\": \"text\", \"https://c.example\": 3, \"https://d.example\": null}}"
+      },
+      "ops": [
+        {
+          "op": "list"
+        },
+        {
+          "op": "load",
+          "server": "https://d.example"
+        },
+        {
+          "op": "load",
+          "server": "https://b.example/"
+        }
+      ],
+      "results": [
+        {
+          "value": [
+            {
+              "server": "https://a.example",
+              "credential": {
+                "token": "t"
+              }
+            },
+            {
+              "server": "https://b.example",
+              "credential": "text"
+            },
+            {
+              "server": "https://c.example",
+              "credential": 3
+            },
+            {
+              "server": "https://d.example",
+              "credential": null
+            }
+          ]
+        },
+        {
+          "value": null
+        },
+        {
+          "value": "text"
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0644",
+          "content": "{\"servers\": {\"https://a.example\": {\"token\": \"t\"}, \"https://b.example\": \"text\", \"https://c.example\": 3, \"https://d.example\": null}}"
+        }
+      }
+    },
+    {
+      "name": "list-string-servers",
+      "files": {
+        "config/credentials.json": "{\"servers\": \"ab\"}"
+      },
+      "ops": [
+        {
+          "op": "list"
+        },
+        {
+          "op": "load",
+          "server": "1"
+        },
+        {
+          "op": "load",
+          "server": "length"
+        }
+      ],
+      "results": [
+        {
+          "value": [
+            {
+              "server": "0",
+              "credential": "a"
+            },
+            {
+              "server": "1",
+              "credential": "b"
+            }
+          ]
+        },
+        {
+          "value": "b"
+        },
+        {
+          "value": 2
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0644",
+          "content": "{\"servers\": \"ab\"}"
+        }
+      }
+    },
+    {
+      "name": "list-duplicate-keys",
+      "files": {
+        "config/credentials.json": "{\"servers\": {\"https://a.example\": {\"token\": \"first\"}, \"https://b.example\": {\"token\": \"b\"}, \"https://a.example\": {\"token\": \"second\"}}}"
+      },
+      "ops": [
+        {
+          "op": "list"
+        },
+        {
+          "op": "save",
+          "server": "https://c.example",
+          "credential": {
+            "token": "vlt_cli_fakeBBBB"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": [
+            {
+              "server": "https://a.example",
+              "credential": {
+                "token": "second"
+              }
+            },
+            {
+              "server": "https://b.example",
+              "credential": {
+                "token": "b"
+              }
+            }
+          ]
+        },
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"second\"\n    },\n    \"https://b.example\": {\n      \"token\": \"b\"\n    },\n    \"https://c.example\": {\n      \"token\": \"vlt_cli_fakeBBBB\"\n    }\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "name": "delete",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    },\n    \"https://b.example\": {\n      \"token\": \"vlt_cli_fakeBBBB\"\n    }\n  }\n}\n",
+        "config/settings.json": "{\"defaultServer\": \"https://b.example\", \"theme\": \"dark\"}\n"
+      },
+      "ops": [
+        {
+          "op": "delete",
+          "server": "https://a.example/"
+        },
+        {
+          "op": "defaultServer"
+        },
+        {
+          "op": "delete",
+          "server": "https://b.example"
+        },
+        {
+          "op": "defaultServer"
+        },
+        {
+          "op": "delete",
+          "server": "https://b.example"
+        }
+      ],
+      "results": [
+        {
+          "value": true
+        },
+        {
+          "value": "https://b.example"
+        },
+        {
+          "value": true
+        },
+        {
+          "value": null
+        },
+        {
+          "value": false
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {}\n}\n"
+        },
+        "config/settings.json": {
+          "mode": "0600",
+          "content": "{\n  \"theme\": \"dark\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "delete-missing-file",
+      "ops": [
+        {
+          "op": "delete",
+          "server": "https://a.example"
+        }
+      ],
+      "results": [
+        {
+          "value": false
+        }
+      ],
+      "after": {}
+    },
+    {
+      "name": "delete-falsy-entry",
+      "files": {
+        "config/credentials.json": "{\"servers\": {\"https://a.example\": 0}}"
+      },
+      "ops": [
+        {
+          "op": "delete",
+          "server": "https://a.example"
+        }
+      ],
+      "results": [
+        {
+          "value": false
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0644",
+          "content": "{\"servers\": {\"https://a.example\": 0}}"
+        }
+      }
+    },
+    {
+      "name": "delete-array-entry",
+      "files": {
+        "config/credentials.json": "{\"servers\": [{\"token\": \"t\"}, {\"token\": \"u\"}]}"
+      },
+      "ops": [
+        {
+          "op": "delete",
+          "server": "0"
+        }
+      ],
+      "results": [
+        {
+          "value": true
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": [\n    null,\n    {\n      \"token\": \"u\"\n    }\n  ]\n}\n"
+        }
+      }
+    },
+    {
+      "name": "default-unset",
+      "ops": [
+        {
+          "op": "defaultServer"
+        },
+        {
+          "op": "rememberIfUnset",
+          "server": "https://a.example/"
+        },
+        {
+          "op": "rememberIfUnset",
+          "server": "https://b.example"
+        },
+        {
+          "op": "defaultServer"
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": true
+        },
+        {
+          "value": false
+        },
+        {
+          "value": "https://a.example"
+        }
+      ],
+      "after": {
+        "config/settings.json": {
+          "mode": "0600",
+          "content": "{\n  \"defaultServer\": \"https://a.example\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "default-replace-keeps",
+      "files": {
+        "config/settings.json": "{\"z\": 1, \"defaultServer\": \"https://a.example\", \"2\": [true]}\n"
+      },
+      "ops": [
+        {
+          "op": "setDefault",
+          "server": "https://b.example///"
+        },
+        {
+          "op": "setDefault",
+          "server": null
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/settings.json": {
+          "mode": "0600",
+          "content": "{\n  \"2\": [\n    true\n  ],\n  \"z\": 1\n}\n"
+        }
+      }
+    },
+    {
+      "name": "default-odd",
+      "files": {
+        "config/settings.json": "{\"defaultServer\": 5}"
+      },
+      "ops": [
+        {
+          "op": "defaultServer"
+        },
+        {
+          "op": "rememberIfUnset",
+          "server": "https://a.example"
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": true
+        }
+      ],
+      "after": {
+        "config/settings.json": {
+          "mode": "0600",
+          "content": "{\n  \"defaultServer\": \"https://a.example\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "default-empty",
+      "files": {
+        "config/settings.json": "{\"defaultServer\": \"\"}"
+      },
+      "ops": [
+        {
+          "op": "defaultServer"
+        },
+        {
+          "op": "rememberIfUnset",
+          "server": "https://a.example"
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": true
+        }
+      ],
+      "after": {
+        "config/settings.json": {
+          "mode": "0600",
+          "content": "{\n  \"defaultServer\": \"https://a.example\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "default-corrupt",
+      "files": {
+        "config/settings.json": "["
+      },
+      "ops": [
+        {
+          "op": "defaultServer"
+        },
+        {
+          "op": "setDefault",
+          "server": "https://a.example"
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/settings.json": {
+          "mode": "0600",
+          "content": "{\n  \"defaultServer\": \"https://a.example\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "default-array",
+      "files": {
+        "config/settings.json": "[\"https://a.example\"]"
+      },
+      "ops": [
+        {
+          "op": "defaultServer"
+        },
+        {
+          "op": "setDefault",
+          "server": "https://a.example"
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        },
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/settings.json": {
+          "mode": "0600",
+          "content": "{\n  \"defaultServer\": \"https://a.example\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "default-forget-absent",
+      "ops": [
+        {
+          "op": "setDefault",
+          "server": null
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "config/settings.json": {
+          "mode": "0600",
+          "content": "{}\n"
+        }
+      }
+    },
+    {
+      "name": "agent-run-default-store",
+      "agentRun": "default",
+      "files": {
+        "xdg/varlatch/credentials.json": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n",
+        "xdg/varlatch/settings.json": "{\"defaultServer\": \"https://a.example\"}"
+      },
+      "ops": [
+        {
+          "op": "list"
+        },
+        {
+          "op": "load",
+          "server": "https://a.example"
+        },
+        {
+          "op": "defaultServer"
+        },
+        {
+          "op": "rememberIfUnset",
+          "server": "https://b.example"
+        },
+        {
+          "op": "delete",
+          "server": "https://a.example"
+        },
+        {
+          "op": "save",
+          "server": "https://b.example",
+          "credential": {
+            "token": "vlt_cli_fakeBBBB"
+          }
+        },
+        {
+          "op": "setDefault",
+          "server": "https://a.example"
+        }
+      ],
+      "results": [
+        {
+          "value": []
+        },
+        {
+          "value": null
+        },
+        {
+          "value": null
+        },
+        {
+          "value": false
+        },
+        {
+          "value": false
+        },
+        {
+          "error": {
+            "name": "ContextError",
+            "message": "This command runs inside agent-safe run run_1, which never writes the operator's credential store."
+          }
+        },
+        {
+          "error": {
+            "name": "ContextError",
+            "message": "This command runs inside agent-safe run run_1, which never writes the operator's settings."
+          }
+        }
+      ],
+      "after": {
+        "xdg/varlatch/credentials.json": {
+          "mode": "0644",
+          "content": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+        },
+        "xdg/varlatch/settings.json": {
+          "mode": "0644",
+          "content": "{\"defaultServer\": \"https://a.example\"}"
+        }
+      }
+    },
+    {
+      "name": "agent-run-own-store",
+      "agentRun": "own",
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"2026-11-17T10:00:00.000Z\",\n      \"expiresAt\": \"2026-11-18T10:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+      },
+      "ops": [
+        {
+          "op": "list"
+        },
+        {
+          "op": "save",
+          "server": "https://b.example",
+          "credential": {
+            "token": "vlt_cli_fakeBBBB"
+          }
+        },
+        {
+          "op": "rememberIfUnset",
+          "server": "https://b.example"
+        },
+        {
+          "op": "delete",
+          "server": "https://a.example"
+        }
+      ],
+      "results": [
+        {
+          "value": [
+            {
+              "server": "https://a.example",
+              "credential": {
+                "token": "vlt_cli_fakeAAAA",
+                "issuedAt": "2026-11-17T10:00:00.000Z",
+                "expiresAt": "2026-11-18T10:00:00.000Z",
+                "credentialId": "cred_a",
+                "name": "laptop"
+              }
+            }
+          ]
+        },
+        {
+          "value": null
+        },
+        {
+          "value": true
+        },
+        {
+          "value": true
+        }
+      ],
+      "after": {
+        "config/credentials.json": {
+          "mode": "0600",
+          "content": "{\n  \"servers\": {\n    \"https://b.example\": {\n      \"token\": \"vlt_cli_fakeBBBB\"\n    }\n  }\n}\n"
+        },
+        "config/settings.json": {
+          "mode": "0600",
+          "content": "{\n  \"defaultServer\": \"https://b.example\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "local-missing",
+      "ops": [
+        {
+          "op": "loadLocal"
+        },
+        {
+          "op": "saveLocal",
+          "state": {
+            "selectedEnvironment": "dev",
+            "selectedTier": "production",
+            "tierCachedAt": "2026-11-17T10:00:00.000Z"
+          }
+        },
+        {
+          "op": "loadLocal"
+        }
+      ],
+      "results": [
+        {
+          "value": {}
+        },
+        {
+          "value": null
+        },
+        {
+          "value": {
+            "selectedEnvironment": "dev",
+            "selectedTier": "production",
+            "tierCachedAt": "2026-11-17T10:00:00.000Z"
+          }
+        }
+      ],
+      "after": {
+        "repo/.varlatch/.gitignore": {
+          "mode": "0644",
+          "content": "*\n"
+        },
+        "repo/.varlatch/local.json": {
+          "mode": "0644",
+          "content": "{\n  \"selectedEnvironment\": \"dev\",\n  \"selectedTier\": \"production\",\n  \"tierCachedAt\": \"2026-11-17T10:00:00.000Z\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "local-keeps-gitignore",
+      "files": {
+        "repo/.varlatch/.gitignore": "custom\n",
+        "repo/.varlatch/local.json": "{\"serverOverride\": \"https://x.example\", \"other\": [1]}"
+      },
+      "ops": [
+        {
+          "op": "loadLocal"
+        },
+        {
+          "op": "saveLocal",
+          "state": {
+            "selectedEnvironment": "qa"
+          }
+        }
+      ],
+      "results": [
+        {
+          "value": {
+            "serverOverride": "https://x.example",
+            "other": [
+              1
+            ]
+          }
+        },
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "repo/.varlatch/.gitignore": {
+          "mode": "0644",
+          "content": "custom\n"
+        },
+        "repo/.varlatch/local.json": {
+          "mode": "0644",
+          "content": "{\n  \"selectedEnvironment\": \"qa\"\n}\n"
+        }
+      }
+    },
+    {
+      "name": "local-shapes",
+      "files": {
+        "repo/.varlatch/local.json": "null"
+      },
+      "ops": [
+        {
+          "op": "loadLocal"
+        }
+      ],
+      "results": [
+        {
+          "value": null
+        }
+      ],
+      "after": {
+        "repo/.varlatch/local.json": {
+          "mode": "0644",
+          "content": "null"
+        }
+      }
+    },
+    {
+      "name": "local-corrupt",
+      "files": {
+        "repo/.varlatch/local.json": "{"
+      },
+      "ops": [
+        {
+          "op": "loadLocal"
+        }
+      ],
+      "results": [
+        {
+          "value": {}
+        }
+      ],
+      "after": {
+        "repo/.varlatch/local.json": {
+          "mode": "0644",
+          "content": "{"
+        }
+      }
+    },
+    {
+      "name": "local-bom",
+      "files": {
+        "repo/.varlatch/local.json": "﻿{\"selectedEnvironment\": \"dev\"}"
+      },
+      "ops": [
+        {
+          "op": "loadLocal"
+        }
+      ],
+      "results": [
+        {
+          "value": {}
+        }
+      ],
+      "after": {
+        "repo/.varlatch/local.json": {
+          "mode": "0644",
+          "content": "﻿{\"selectedEnvironment\": \"dev\"}"
+        }
+      }
+    }
+  ]
+}
