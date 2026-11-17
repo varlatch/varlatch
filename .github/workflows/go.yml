@@ -49,6 +49,9 @@ on:
       - "scripts/conformance/targets/go-binary.mjs"
       - "scripts/conformance/expect/go-binary.json"
       - "scripts/conformance/targets/capabilities.json"
+      # Which suites each go-binary shard runs.
+      - "scripts/conformance/shard.mjs"
+      - "scripts/conformance/shard-weights.json"
       - "services/varlatchd/test/go-values-fixture.test.ts"
       - "services/varlatchd/test/go-webhooks-fixture.test.ts"
       - "services/varlatchd/test/go-fixture-kit.ts"
@@ -107,6 +110,8 @@ jobs:
             scripts/conformance/targets/go-binary.mjs
             scripts/conformance/expect/go-binary.json
             scripts/conformance/targets/capabilities.json
+            scripts/conformance/shard.mjs
+            scripts/conformance/shard-weights.json
             services/varlatchd/test/go-values-fixture.test.ts
             services/varlatchd/test/go-webhooks-fixture.test.ts
             services/varlatchd/test/go-fixture-kit.ts
