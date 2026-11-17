@@ -418,6 +418,42 @@ comes. `verify-release`, which the installers run, is Go's own.
   case or a vector: a built command, each of its options, each variable,
   chain and exit status. Missing coverage fails. `TestClientLacksNotStale`
   checks `scripts/conformance/client-go.json` against `built`.
+- `internal/agents/`: `varlatch agents guide` and `agents install`
+  (slice 5.1d), a port of `apps/cli/src/agents` (`install.ts`, `files.ts`,
+  `toml.ts`, `mcpConfig.ts`, `skill.ts` and the files `guardrails.ts`
+  writes): the skill in `.agents/skills/varlatch` and
+  `.claude/skills/varlatch`, the marked block in `AGENTS.md`, the
+  adapters (`CLAUDE.md`'s import, the Gemini CLI's `context.fileName`,
+  `.aider.conf.yml`'s `read:`), `--guardrails` (Claude Code's
+  `.claude/settings.json`, Codex's `.codex/hooks.json` and the marked
+  region of `.codex/config.toml`) and `--mcp` (each coding agent's MCP
+  file), with `--check` and `--remove`. Files are written as the TypeScript
+  CLI writes them (`writeFileSync`: the default mode less the umask, not
+  replaced atomically), never through a symbolic link, and a settings file
+  only when the edit keeps its formatting. JSON is read and written as
+  JavaScript does (`lib/jsjson`), and `config.toml` is judged by
+  `internal/toml`, which keeps every value as smol-toml gives it, so a
+  change is made only when the parser shows the file then says exactly
+  what it said plus the change. The skill is embedded from
+  `apps/cli/skill/varlatch` into `skillfiles.gen.go` by `gen_skill.go`
+  (`go generate ./...`); `TestSkillFilesCurrent` fails when it is stale,
+  and checks it against the TypeScript CLI's own embedded copy. `agents
+  hook` (the guardrail hook itself) is slice 5.6a. `internal/cli`'s
+  `agentscmd.go` is the commands and `init` with its flags (`--org`,
+  `--project`, `--server`, `--default-environment`, `--no-agent-files`);
+  `init` on a terminal without them (guided) is slice 5.8a.
+- `testdata/vectors/agents.json` (`apps/cli/test/go-vectors-agents.test.ts`):
+  the pure edits (the block, the imports, the Gemini CLI's context, 46
+  `.aider.conf.yml` layouts, 35 `config.toml` texts through each of the
+  four TOML edits, `agents guide`), and 263 projects (files, symbolic and
+  hard links, files that are not UTF-8, directories in the way) taken
+  through runs of install, check and remove for every coding agent, with
+  and without `--guardrails` and `--mcp`, in both scopes: each run's
+  result or error, its lines, and the whole tree afterwards
+  (`internal/agents`' `TestInstallVectors`).
+- The process tests of `apps/cli/test` run against a Go binary with
+  `VARLATCH_TEST_CLI=<path>` (`cliUnderTest.ts`); `go-cli-files.json` lists
+  the files that must pass.
 - Conformance: `node scripts/conformance/run.mjs --target <target> --cli
   go:<path to varlatch>` runs the suites with this CLI; the features it
   does not have yet report client-lacks (`scripts/conformance/README.md`).
@@ -446,6 +482,8 @@ it to the recording.
 | Proxies | fetch reads no proxy from the environment, unless Node.js is started with `NODE_USE_ENV_PROXY=1` | never (`Proxy: nil`) | Decision 4; the Go CLI has no Node.js option to honour |
 | Runtime error wording: the code in `Cannot reach the Varlatch server (<code>)` | the first code in the `fetch failed` error's causes that `exitCodes.ts` names, else "network error" | the same codes from Go's errors: refused, reset, timed out, unreachable host or network by their errno; NXDOMAIN `ENOTFOUND`; a temporary DNS failure `EAI_AGAIN`; a connect or TLS handshake timeout `UND_ERR_CONNECT_TIMEOUT`; a connection closed before the answer `UND_ERR_SOCKET`; anything else "network error" | Decision 2: the exit status (69) is the same; the code is Node.js's own wording, mapped where Go can tell |
 | Request headers decision 2 does not compare | `accept-language: *`, `sec-fetch-mode: cors`, `accept-encoding: gzip, deflate` | none of the first two; `accept-encoding: gzip` (Go decompresses it) | Neither the server nor any consumer reads them |
+| `skill-version` (how transcripts compare, not a behaviour) | the skill files `agents install` writes name `varlatch 0.22.0` (`SKILL.md`'s `metadata.generator`, each reference's first line) | this build's version | Each CLI names itself, so `--check` after an upgrade reports the skill as changed; the replay puts this build's version in a case's inputs and expected files alike |
+| A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
 | A redirect's relative `Location` | resolved by the WHATWG URL parser | resolved by `apiclient`'s own resolver (absolute, `//host`, `/path`, `?query` and path-relative references), then parsed by `lib/whatwg` | varlatchd sends no redirect; a proxy's is absolute or root-relative |
 
 ## varlatchd
@@ -2341,6 +2379,7 @@ Not reproduced:
 | `domain/securityreport.ts` `countWouldBlock`, a count whose hour and the current hour are both already summarized (possible only after the clock moved back across a summarized hour) | the count is dropped (an error is logged): the stored total is one short | the count goes to the hour after the last summarized one for its key, which no summary covers yet, so every committed count reaches exactly one summary; with a clock that does not move back nothing differs | `server/security` `TestCountsSurviveAClockMovedBack` | none |
 | `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | `server/values` `TestConcurrentExportsUnderReportCountExactly`: 24 concurrent named and all-authorized exports in one bucket all succeed and the counter is exact | none |
 | `apps/cli/src/options.ts` `parseOptions`, a positional argument named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, `hasOwnProperty`) for a command whose options have aliases (step 5 defect 11, not a security defect) | `spec.aliases[arg]` reads the prototype, so `arg` becomes a function and `arg.startsWith` throws a `TypeError`: Node.js prints the stack and exits 1 | an ordinary argument | `internal/cli` `TestPrototypeNamesAreOrdinaryArguments` | none |
+| `apps/cli/src/agents/install.ts` `AGENTS`, `skill.ts` `GUIDE_TOPICS` and `mcpConfig.ts` `MCP_FILES_BY_AGENT`, a coding agent or guide topic named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, ...) (step 5, not a security defect) | the lookups read the prototype, so the name passes as known: `agents install --agent constructor` installs and prints `constructor reads undefined` (in `--json`, an agent without `reads`), with `--mcp` it throws a `TypeError` before writing; `agents guide constructor` throws a `TypeError`: Node.js prints the stack and exits 1 | an unknown coding agent or topic: the usage error every other unknown name gets (64), nothing written | `internal/agents` `TestPrototypeNamesAreUnknown` | none |
 | `packages/sync` `coolifyCompose.ts` `classifyComposeUsage`, a Compose file with an alias inside its own anchor (step 4 defect 6, not a security defect) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack, so the Coolify adapter's `inspectUsage` throws a `RangeError` though it never should: varlatchd's engine catches it (its `usage-unchecked` note says "the destination could not be read"), the CLI's `sync check` fails | `lib/sync` reads the file as unreadable: usage unchecked, every verdict unknown, the note's reason "the service's compose file is too large or could not be read" | `lib/sync` `TestTypeScriptExchanges`, the case "divergence: an alias inside its own anchor" | none |
 
 The TypeScript admin CLI refuses an ordinary command during maintenance

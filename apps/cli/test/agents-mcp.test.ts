@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EXIT } from "../src/exitCodes.js";
 import { runInstall, type InstallOptions } from "../src/agents/install.js";
 import { REGION_BEGIN, REGION_END, withoutTomlPart, withTomlPart } from "../src/agents/toml.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch agents install --mcp` (ADR-0043 Decisions 7 and 9): a
@@ -259,7 +260,7 @@ interface Result {
 
 function cli(args: string[], cwd: string): Promise<Result> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd,
       env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg") },
       stdio: ["ignore", "pipe", "pipe"],

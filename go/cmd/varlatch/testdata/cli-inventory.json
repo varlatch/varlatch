@@ -4,7 +4,8 @@
   "built": [
     "5.1a",
     "5.1b",
-    "5.1c"
+    "5.1c",
+    "5.1d"
   ],
   "commands": {
     "login": {
@@ -1024,7 +1025,9 @@
       "of": "varlatch",
       "commands": [
         "agents"
-      ]
+      ],
+      "slice": "5.6a",
+      "note": "agents hook --format: the guardrail hook is slice 5.6a; agents itself is 5.1d"
     },
     "--from": {
       "sources": [

@@ -1,0 +1,7 @@
+{
+  "comment": "The process tests that must pass against the Go CLI (VARLATCH_TEST_CLI, cliUnderTest.ts); each slice of internal docs/design/go-cli.md adds its files.",
+  "files": [
+    "test/agents-install.test.ts",
+    "test/agents-mcp.test.ts"
+  ]
+}

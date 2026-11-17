@@ -20,6 +20,7 @@ import {
   type InstallOptions,
 } from "../src/agents/install.js";
 import { SKILL_FILES } from "../src/agents/skillFiles.generated.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch agents install` and `init`'s default (ADR-0043 Decision 7): the
@@ -85,7 +86,7 @@ interface Result {
 
 function cli(args: string[], cwd: string, env: Record<string, string> = {}): Promise<Result> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd,
       env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg"), ...env },
       stdio: ["ignore", "pipe", "pipe"],

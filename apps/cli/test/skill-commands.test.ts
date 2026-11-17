@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EXIT } from "../src/exitCodes.js";
 import { agentsBlock } from "../src/agents/install.js";
 import { SKILL_FILES } from "../src/agents/skillFiles.generated.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * The commands the skill tells a coding agent to run, run exactly as
@@ -119,7 +120,7 @@ function project(): string {
 
 function cli(args: string[], cwd: string, extraEnv: Record<string, string> = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd,
       env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg"), VARLATCH_TOKEN: "vlt_test", ...extraEnv },
       stdio: ["ignore", "pipe", "pipe"],
