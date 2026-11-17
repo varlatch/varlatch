@@ -148,10 +148,53 @@ func TestNothingThroughALinkBelowTheRoot(t *testing.T) {
 			if !errors.As(err, &e) || e.Usage || !strings.HasPrefix(e.Message, c.refused+" is a symbolic link, so the CLI does not read, write or remove anything through it") {
 				t.Fatalf("%v, want the refusal naming %s", err, c.refused)
 			}
+			if !strings.Contains(e.Message, "; nothing was changed. Replace it with a directory, then run this again") {
+				t.Errorf("the refusal does not say nothing changed: %q", e.Message)
+			}
 			sameSnapshot(t, "outside", beforeOutside, snapshot(t, outside))
 			sameSnapshot(t, "the root", beforeRoot, snapshot(t, root))
 		})
 	}
+}
+
+// TestRemoveRefusalListsTheFiles: a --remove refused for a linked
+// directory it would prune (a dotfiles ~/.codex) names the link, says
+// nothing changed, and lists the skill files it would have removed, none
+// of them behind a link.
+func TestRemoveRefusalListsTheFiles(t *testing.T) {
+	dir := t.TempDir()
+	home, outside := filepath.Join(dir, "home"), filepath.Join(dir, "outside")
+	if _, err := RunInstall(Options{Scope: "user", Root: home, Version: "1", Mode: "install"}); err != nil {
+		t.Fatal(err)
+	}
+	writeAt(t, filepath.Join(outside, "config.toml"), "x = 1\n")
+	symlink(t, outside, filepath.Join(home, ".codex"))
+	before := snapshot(t, dir)
+	_, err := RunInstall(Options{Scope: "user", Root: home, Version: "1", Mode: "remove"})
+	var e *Error
+	if !errors.As(err, &e) {
+		t.Fatalf("%v, want a refusal", err)
+	}
+	want := ".codex is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. " +
+		"Replace it with a directory, then run this again, or remove these files by hand:\n"
+	if !strings.HasPrefix(e.Message, want) {
+		t.Fatalf("%q, want it to begin %q", e.Message, want)
+	}
+	var listed []string
+	for _, f := range SkillFiles("1") {
+		for _, base := range skillBases {
+			listed = append(listed, filepath.Join(home, base, filepath.FromSlash(f.path)))
+		}
+	}
+	for _, path := range listed {
+		if !strings.Contains(e.Message, "\n  "+path) {
+			t.Errorf("the refusal does not list %s", path)
+		}
+	}
+	if got := strings.Count(e.Message, "\n  "); got != len(listed) {
+		t.Errorf("%d files listed, want %d", got, len(listed))
+	}
+	sameSnapshot(t, "everything", before, snapshot(t, dir))
 }
 
 // TestUserScopeIgnoresLinksItDoesNotUse: a linked ~/.codex is no concern

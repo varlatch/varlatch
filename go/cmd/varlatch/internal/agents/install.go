@@ -790,8 +790,8 @@ func RunInstall(opts Options) (*Result, error) {
 	// root: refused before the plan reads anything, and again for every file
 	// it would change, before anything is changed.
 	for _, dir := range scopeDirs(opts) {
-		if err := checkBelow(opts.Root, dir); err != nil {
-			return nil, err
+		if link := linkBelow(opts.Root, dir); link != "" {
+			return nil, refuseBefore(opts, link)
 		}
 	}
 	var p plan
@@ -799,8 +799,8 @@ func RunInstall(opts Options) (*Result, error) {
 		return nil, err
 	}
 	for _, file := range p.files {
-		if err := checkBelow(opts.Root, filepath.Dir(relative(opts.Root, file.path))); err != nil {
-			return nil, err
+		if link := linkBelow(opts.Root, filepath.Dir(relative(opts.Root, file.path))); link != "" {
+			return nil, refuseBefore(opts, link)
 		}
 	}
 	w := &writer{path: opts.Root}

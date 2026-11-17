@@ -55,6 +55,32 @@ func checkBelow(root, rel string) error {
 	return nil
 }
 
+// refuseBefore is the refusal of a run found before it touched anything:
+// it names the link and says nothing changed. For --remove it also lists
+// the skill files the run would have removed that are not behind a link,
+// so the person can remove them by hand.
+func refuseBefore(opts Options, link string) error {
+	message := filepath.ToSlash(link) + " is a symbolic link, so the CLI does not read, write or remove anything through it; " +
+		"nothing was changed. Replace it with a directory, then run this again"
+	var files []string
+	if opts.Mode == "remove" {
+		for _, base := range skillBases {
+			if linkBelow(opts.Root, base) != "" {
+				continue
+			}
+			found, err := filesUnder(filepath.Join(opts.Root, base))
+			if err != nil {
+				continue
+			}
+			files = append(files, found...)
+		}
+	}
+	if len(files) == 0 {
+		return &Error{message, false}
+	}
+	return &Error{message + ", or remove these files by hand:\n  " + strings.Join(files, "\n  "), false}
+}
+
 // scopeDirs are the directories a run reads, writes, removes or prunes
 // below its root.
 func scopeDirs(opts Options) []string {
