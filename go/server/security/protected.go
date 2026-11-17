@@ -163,6 +163,80 @@ func (p *Prepared) Count(ctx context.Context, tx query.DBTX) error {
 // Prepare is prepareProtectedOperation, in the operation's write job (see
 // the top of this file).
 func Prepare(ctx context.Context, tx query.DBTX, r Request, op Protected, now func() time.Time) (*Prepared, error) {
+	st, err := start(ctx, tx, r, op, now)
+	if err != nil {
+		return nil, err
+	}
+	return st.Finish(ctx, tx)
+}
+
+// Started is a protected operation decided but not yet finished
+// (StartedOperation): its approval, if it needs one, not consumed yet.
+type Started struct {
+	p  *Prepared
+	r  Request
+	op Protected
+}
+
+// Binding is what the operation's approval is bound to; nil when it needs
+// none.
+func (st *Started) Binding() *auth.Binding { return st.p.Binding }
+
+// Access is the passkey-verification counts the checkpoint found.
+func (st *Started) Access() []auth.PendingReport { return st.p.Access }
+
+// Start is startProtectedOperation with its precheck, for an external
+// effect (amendment D): the checks up to the binding, in the effect's
+// snapshot, and, under enforce, an approved intent for exactly this
+// binding, so an unapproved request never calls out. Finish consumes it in
+// the final job.
+func Start(ctx context.Context, tx query.DBTX, r Request, op Protected, now func() time.Time) (*Started, error) {
+	st, err := start(ctx, tx, r, op, now)
+	if err != nil {
+		return nil, err
+	}
+	if b := st.p.Binding; b != nil {
+		if r.ApprovalMalformed {
+			return nil, auth.ApprovalInvalid("not-found", nil)
+		}
+		if err := r.Approvals.PrecheckApproval(ctx, tx, r.requester(), r.ApprovalID, *b); err != nil {
+			return nil, err
+		}
+	}
+	return st, nil
+}
+
+// Finish is StartedOperation.finish: the approval consumed (steps 4, 6 and
+// 7) and the operation's authorization rechecked, then the scope's Project
+// and environments.
+func (st *Started) Finish(ctx context.Context, tx query.DBTX) (*Prepared, error) {
+	p, r, op := st.p, st.r, st.op
+	if p.Binding != nil {
+		if r.ApprovalMalformed {
+			return nil, auth.ApprovalInvalid("not-found", nil)
+		}
+		used, err := r.Approvals.ConsumeApproval(ctx, tx, r.requester(), r.ApprovalID, *p.Binding)
+		if err != nil {
+			return nil, err
+		}
+		p.Approval = &used
+		if op.AuthorizeIn != nil {
+			if err := op.AuthorizeIn(ctx, tx); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if op.Scope.ProjectID != "" {
+		if err := write.CheckLive(ctx, tx, op.Scope); err != nil {
+			return nil, err
+		}
+	}
+	return p, nil
+}
+
+// start is decide: the checks up to the binding, and ApprovalNeeded for a
+// request that needs an approval and carries none.
+func start(ctx context.Context, tx query.DBTX, r Request, op Protected, now func() time.Time) (*Started, error) {
 	p := &Prepared{organizationID: op.Scope.OrganizationID, at: now().UnixMicro(), now: now}
 	org := write.Scope{OrganizationID: op.Scope.OrganizationID, AllowDeleting: op.Scope.AllowDeleting, DuringFreeze: op.Scope.DuringFreeze}
 	if err := write.CheckLive(ctx, tx, org); err != nil {
@@ -250,30 +324,10 @@ func Prepare(ctx context.Context, tx query.DBTX, r Request, op Protected, now fu
 			return nil, MachineCannotApprove(p.Binding.Operation)
 		}
 	}
-	if p.Binding != nil {
-		if !r.carries() {
-			return nil, &auth.ApprovalNeeded{Binding: *p.Binding}
-		}
-		if r.ApprovalMalformed {
-			return nil, auth.ApprovalInvalid("not-found", nil)
-		}
-		used, err := r.Approvals.ConsumeApproval(ctx, tx, r.requester(), r.ApprovalID, *p.Binding)
-		if err != nil {
-			return nil, err
-		}
-		p.Approval = &used
-		if op.AuthorizeIn != nil {
-			if err := op.AuthorizeIn(ctx, tx); err != nil {
-				return nil, err
-			}
-		}
+	if p.Binding != nil && !r.carries() {
+		return nil, &auth.ApprovalNeeded{Binding: *p.Binding}
 	}
-	if op.Scope.ProjectID != "" {
-		if err := write.CheckLive(ctx, tx, op.Scope); err != nil {
-			return nil, err
-		}
-	}
-	return p, nil
+	return &Started{p: p, r: r, op: op}, nil
 }
 
 // RefuseMachineUnderEnforce is refuseMachineUnderEnforce: an early

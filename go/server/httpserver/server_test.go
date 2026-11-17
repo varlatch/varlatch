@@ -161,12 +161,12 @@ func TestEveryOperationRoutedToStubOrBuilt(t *testing.T) {
 func TestStubAnswersBeforeEverything(t *testing.T) {
 	s, b, _, _ := newTestServer(t, nil)
 	cases := []struct{ method, path, body string }{
-		{"POST", "/v1/organizations/acme/github-app/import", "{not json"},
-		{"POST", "/v1/organizations/acme/github-app/registrations", strings.Repeat("x", 4096)},
-		{"GET", "/v1/organizations/acme/github-app", ""},
+		{"POST", "/v1/organizations/acme/github-app/key", "{not json"},
+		{"POST", "/v1/organizations/acme/github-app/key", strings.Repeat("x", 4096)},
+		{"GET", "/v1/organizations/acme/github-app/installations", ""},
 		{"GET", "/v1/organizations/acme/github-app/installations?limit=not-a-number", ""},
-		{"DELETE", "/v1/organizations/acme/github-app/registrations/core", ""},
-		{"POST", "/v1/organizations/acme/github-app/registrations/core/attach", "{}"},
+		{"POST", "/v1/organizations/acme/github-app/key", ""},
+		{"POST", "/v1/organizations/acme/github-app/key?wait=not-a-boolean", "{}"},
 	}
 	for _, c := range cases {
 		w := do(s, c.method, c.path, c.body, map[string]string{"Content-Type": "application/json", "Authorization": "Bearer nonsense"})
@@ -186,8 +186,8 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 		t.Errorf("the stub reached the backend: %+v", b)
 	}
 	// The stub names the operation's route.
-	w := do(s, "POST", "/v1/organizations/acme/github-app/registrations", "{}", nil)
-	if e := decode(t, w); !strings.HasPrefix(e.Error.Message, "POST /v1/organizations/{org}/github-app/registrations is not built yet") {
+	w := do(s, "POST", "/v1/organizations/acme/github-app/key", "{}", nil)
+	if e := decode(t, w); !strings.HasPrefix(e.Error.Message, "POST /v1/organizations/{org}/github-app/key is not built yet") {
 		t.Errorf("message %q", e.Error.Message)
 	}
 }
@@ -196,8 +196,8 @@ func TestStubAnswersBeforeEverything(t *testing.T) {
 // its generated handler, not the stub (here one this package does not
 // implement, so the handler is reached and fails as an internal error).
 func TestBuiltOperationLeavesTheStub(t *testing.T) {
-	s, _, _, _ := newTestServer(t, func(o *Options) { o.Built = []string{"GET /v1/organizations/{org}/github-app"} })
-	w := do(s, "GET", "/v1/organizations/acme/github-app", "", map[string]string{"Authorization": "Bearer x"})
+	s, _, _, _ := newTestServer(t, func(o *Options) { o.Built = []string{"GET /v1/organizations/{org}/github-app/installations"} })
+	w := do(s, "GET", "/v1/organizations/acme/github-app/installations", "", map[string]string{"Authorization": "Bearer x"})
 	if w.Code == http.StatusNotImplemented {
 		t.Fatalf("still the stub: %s", w.Body.String())
 	}

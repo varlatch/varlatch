@@ -584,8 +584,8 @@ export async function resealWith(
   plaintextOf: (version: Row) => string,
   /** A webhook's signing secret, when the rows hold webhooks to seal again. */
   secretOf?: (webhook: Row) => string,
-  /** Platform Connection credentials and GitHub App keys, when the rows hold them to seal again. */
-  more: { credentialOf?: (connection: Row) => string; appKeyOf?: (app: Row) => string } = {},
+  /** Platform Connection credentials, GitHub App keys and pending registrations' keys, when the rows hold them to seal again. */
+  more: { credentialOf?: (connection: Row) => string; appKeyOf?: (app: Row) => string; pendingKeyOf?: (registration: Row) => string } = {},
 ): Promise<void> {
   const crypto = await loadHierarchy(ref);
   for (const inst of rows.installation!) inst.kek_canary = crypto.createCanary(rootKek, inst.id as string) as Envelope;
@@ -617,6 +617,15 @@ export async function resealWith(
       const orgKek = kekOf.get(a.organization_id as string);
       if (!orgKek) throw new Error(`GitHub App ${String(a.id)}: its Organization has no KEK to seal it under`);
       a.key_envelope = crypto.encryptGitHubAppKey(orgKek, a.organization_id as string, a.id as string, more.appKeyOf(a)) as Envelope;
+    }
+  }
+  if (more.pendingKeyOf) {
+    for (const r of rows.github_app_registrations ?? []) {
+      if (r.pending_key_envelope === null) continue;
+      const orgKek = kekOf.get(r.organization_id as string);
+      if (!orgKek) throw new Error(`GitHub App registration ${String(r.id)}: its Organization has no KEK to seal it under`);
+      // A pending key is bound to the registration's id.
+      r.pending_key_envelope = crypto.encryptGitHubAppKey(orgKek, r.organization_id as string, r.id as string, more.pendingKeyOf(r)) as Envelope;
     }
   }
   const envOf = new Map((rows.environments ?? []).map((e) => [e.id, e]));

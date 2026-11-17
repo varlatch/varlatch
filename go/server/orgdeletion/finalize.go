@@ -15,6 +15,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/db/query"
+	"github.com/varlatch/varlatch/go/server/githubapps"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/people"
 	"github.com/varlatch/varlatch/go/server/write"
@@ -269,7 +270,7 @@ func (s *Service) finalizeIn(ctx context.Context, tx *storage.Tx, deletionID, or
 	if o.ConnectionsRevoked, err = q.RevokeOrganizationConnections(ctx, query.RevokeOrganizationConnectionsParams{Now: now, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
-	if o.GitHubAppRemoved, err = GitHubAppTeardown.Finalize(ctx, tx, organizationID, at); err != nil {
+	if o.GitHubAppRemoved, err = githubapps.RemoveForDeletion(ctx, tx, organizationID, at); err != nil {
 		return nil, err
 	}
 	if o.WebhooksRemoved, err = q.RevokeOrganizationWebhooks(ctx, query.RevokeOrganizationWebhooksParams{Now: now, OrganizationID: organizationID}); err != nil {
@@ -394,29 +395,4 @@ func (s *Service) pass(ctx context.Context, admit func() (func(), bool)) {
 			s.log().Error("audit export drain cleanup error", "error", err)
 		}
 	}
-}
-
-// GitHubAppTeardown is what a deletion does to the Organization's GitHub
-// App (ADR-0047).
-//
-// STEP 4.10: the GitHub App is not built in this varlatchd yet. Until it
-// is, this is the TypeScript server's row changes only (a restored
-// TypeScript database can hold an App): scheduling deletes the unfinished
-// registrations, finalizing removes the App's local registration and its
-// key. When 4.10 lands, its package owns these rows: replace this with
-// its own teardown (and whatever it caches), and remove
-// TestGitHubAppTeardownWaitsForStep410, which fails once any of 4.10's
-// operations is built.
-var GitHubAppTeardown = struct {
-	Schedule func(ctx context.Context, db query.DBTX, organizationID string) error
-	Finalize func(ctx context.Context, db query.DBTX, organizationID string, at int64) (bool, error)
-}{
-	Schedule: func(ctx context.Context, db query.DBTX, organizationID string) error {
-		return query.New(db).DeleteGitHubAppRegistrations(ctx, organizationID)
-	},
-	Finalize: func(ctx context.Context, db query.DBTX, organizationID string, at int64) (bool, error) {
-		n, err := query.New(db).RemoveOrganizationGitHubApps(ctx, query.RemoveOrganizationGitHubAppsParams{
-			Now: sql.NullInt64{Int64: at, Valid: true}, OrganizationID: organizationID})
-		return n > 0, err
-	},
 }

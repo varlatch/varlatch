@@ -4,7 +4,6 @@ package values_test
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,11 +22,10 @@ import (
 // lib/envelope's sealed fixtures) and naming the tests that prove it.
 // TestG3Matrix fails when an entry names a test that does not exist or that
 // CI does not run, and when a purpose or envelope version has no entry.
-// TestG3Gate is the check the 0.50.0 gate runs (go test ./server/values
-// -run TestG3Gate -args -g3-gate): it fails while any class but the JWT
-// signing keys is proven at the envelope level only.
-
-var g3Gate = flag.Bool("g3-gate", false, "fail while any G3 entry but the JWT signing keys is envelope-only (the 0.50.0 gate)")
+// TestG3Gate is the 0.50.0 gate's check, run unconditionally since every
+// class it covers reached the database level (step 4.10, decision 9): it
+// fails if any class but the JWT signing keys is proven at the envelope
+// level only, so a later change cannot reopen an entry.
 
 type g3Proof struct {
 	Go     string `json:"go"`     // a Go test file, relative to go/
@@ -242,9 +240,6 @@ func TestG3Matrix(t *testing.T) {
 // signing keys (only Convex uses them) must be proven at the database level
 // in both directions by then.
 func TestG3Gate(t *testing.T) {
-	if !*g3Gate {
-		t.Skip("the 0.50.0 gate's check: go test ./server/values -run TestG3Gate -args -g3-gate")
-	}
 	for _, e := range readG3(t).Entries {
 		if e.Level == "envelope" && e.Purpose != envelope.PurposeJWTSigningKey {
 			t.Errorf("%s (%s, %s, %s): proven at the envelope level only; database level due with %s", e.Class, e.Purpose, e.Release, e.Direction, e.DatabaseLevelWith)

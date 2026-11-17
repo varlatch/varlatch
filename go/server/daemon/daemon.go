@@ -35,6 +35,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/db/query"
+	"github.com/varlatch/varlatch/go/server/githubapps"
 	"github.com/varlatch/varlatch/go/server/httpserver"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
@@ -448,6 +449,16 @@ func serve(opts Options, h *hooks) int {
 		deletions.RunLoop(ctx, orgdeletion.Interval, admission.Enter)
 	}()
 	defer func() { cancel(); <-deletionDone }()
+	// The GitHub App registration sweep (ADR-0054 amendment D): a pass at
+	// once, then every minute, inside the maintenance admission; pending
+	// conversions past their hour lose their key.
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		apps := &githubapps.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Now: time.Now, Log: log}
+		apps.RunSweepLoop(ctx, githubapps.SweepInterval, admission.Enter)
+	}()
+	defer func() { cancel(); <-sweepDone }()
 	hopts := httpserver.Options{
 		Outbound:       policy,
 		Version:        buildinfo.Version,

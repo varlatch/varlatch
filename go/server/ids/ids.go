@@ -17,10 +17,14 @@ const (
 	OrganizationFreeze = "ofz"
 	// OrganizationDeletion is a deletion request (ADR-0051, step 4.12b).
 	OrganizationDeletion = "odl"
-	Identity             = "idn"
-	Credential           = "crd"
-	SetupGrant           = "sgr"
-	DeviceSignIn         = "dsi"
+	// GitHubApp and GitHubAppRegistration are an Organization's GitHub App
+	// and its registration (ADR-0047, step 4.10).
+	GitHubApp             = "gha"
+	GitHubAppRegistration = "ghr"
+	Identity              = "idn"
+	Credential            = "crd"
+	SetupGrant            = "sgr"
+	DeviceSignIn          = "dsi"
 	// DeviceSignInChallenge and PasskeyConfirmationChallenge are the
 	// challenges of a device sign-in approval and a passkey confirmation.
 	DeviceSignInChallenge        = "dsc"
