@@ -15,6 +15,31 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 )
 
+// goTestAll matches go.yml running every package's tests, unfiltered: go
+// test ./..., optionally with -count=1 (no cached results) and nothing else.
+// A -run, -list or -tags flag, before or after ./..., would select fewer or other tests, so it does
+// not match (TestGoTestAllPattern).
+var goTestAll = regexp.MustCompile(`go test (-count=1 )?\./\.\.\.[ \t]*(\n|$)`)
+
+func TestGoTestAllPattern(t *testing.T) {
+	for line, want := range map[string]bool{
+		"go test ./...":                   true,
+		"go test -count=1 ./...":          true,
+		"run: go test -count=1 ./...\n":   true,
+		"go test -run=^$ ./...":           false,
+		"go test -run=TestG3Matrix ./...": false,
+		"go test -list=. ./...":           false,
+		"go test -tags=conformance ./...": false,
+		"go test -count=1 -run=X ./...":   false,
+		"go test ./.../values":            false,
+		"go test ./... -run=X":            false,
+	} {
+		if got := goTestAll.MatchString(line); got != want {
+			t.Errorf("goTestAll.MatchString(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
 // G3's matrix (testdata/g3-matrix.json): one entry per encryption class
 // (each envelope purpose go/lib/envelope defines) × fixture release ×
 // envelope version × direction, saying at which level it is proven
@@ -115,7 +140,7 @@ func checkProof(t *testing.T, p g3Proof, workflow string) error {
 		if sub != "" && !strings.Contains(src, sub) {
 			return fmt.Errorf("%s: test %s has no subtest %q", p.Go, name, sub)
 		}
-		if !strings.Contains(workflow, "go test ./...") {
+		if !goTestAll.MatchString(workflow) {
 			return fmt.Errorf("go.yml no longer runs go test ./...")
 		}
 	case p.Vitest != "":
