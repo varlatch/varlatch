@@ -115,8 +115,29 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "varlatch.toml"), []byte(toml), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Sol, #265 round 1: varlatch.toml lines whose escapes, quotes and forms hid a password from the scanner.
+	tomls := map[string]string{
+		"escaped-quote": `server = "https://alice:fake\"pass@example.com" x`,
+		"escaped-at":    `server = "https://alice:fake\u0040pass@example.com" x`,
+		"newline":       `server = "https://alice:fa\nke@example.com" x`,
+		"ftp-password":  `server = "https://alice:ftp:@example.com" x`,
+		"bad-host":      `server = "https://[bad\\alice:fake-pass@h" x`,
+		"slash":         `server = "https://alice:fake/pass@h" x`,
+		"tab-scheme":    "server = \"ht\\ttps:/alice:fake-pass@h\" x",
+	}
+	var tomlDirs []string
+	for name, line := range tomls {
+		d := filepath.Join(dir, name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "varlatch.toml"), []byte("organization = \"acme\"\nproject = \"web\"\n"+line+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		tomlDirs = append(tomlDirs, d)
+	}
 	env := MapEnv{"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config"), "HOME": filepath.Join(dir, "home")}
-	for _, c := range []struct {
+	cases := []struct {
 		cwd  string
 		args []string
 	}{
@@ -130,7 +151,16 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 		{dir, []string{"--approval", "https://alice:fake-pass@example.com", "status"}},
 		{repo, []string{"context", "--json"}},
 		{repo, []string{"server"}},
-	} {
+		{dir, []string{"server", "https://alice:ftp:@example.com"}},
+		{dir, []string{"server", "use", "https://alice:fake/pass@h"}},
+	}
+	for _, d := range tomlDirs {
+		cases = append(cases, struct {
+			cwd  string
+			args []string
+		}{d, []string{"context", "--json"}})
+	}
+	for _, c := range cases {
 		t.Chdir(c.cwd)
 		var stdout, stderr bytes.Buffer
 		Main(c.args, env, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
@@ -141,5 +171,22 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 		if !strings.Contains(out, "[redacted]@") {
 			t.Errorf("%q shows no redacted URL:\n%s", c.args, out)
 		}
+	}
+}
+
+// TestFailuresKeepTextWithoutCredentials: a varlatch.toml line quoting a
+// URL with no user name and password next to a quoted email keeps its
+// bytes (the next string's "@" is never taken).
+func TestFailuresKeepTextWithoutCredentials(t *testing.T) {
+	dir := t.TempDir()
+	line := `server = "https://example.com" "ops@example.net"`
+	if err := os.WriteFile(filepath.Join(dir, "varlatch.toml"), []byte("organization = \"acme\"\nproject = \"web\"\n"+line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	var stdout, stderr bytes.Buffer
+	Main([]string{"context"}, MapEnv{"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config")}, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+	if !strings.Contains(stderr.String(), line) || strings.Contains(stderr.String(), "[redacted]") {
+		t.Errorf("the line was changed:\n%s", stderr.String())
 	}
 }

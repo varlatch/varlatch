@@ -90,7 +90,8 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 	for _, f := range files {
 		path, name, ok := strings.Cut(f, "=")
 		if !ok || path == "" || name == "" {
-			return fail("--file needs <path>=<name>, got %q", f)
+			// Masked before it is quoted: %q's escapes would otherwise hide a password from the masker.
+			return fail("--file needs <path>=<name>, got %q", clientctx.MaskUserinfoInArgument(f))
 		}
 		r, err := os.Open(path)
 		if err != nil {
@@ -99,7 +100,7 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 		err = checked.Check(name, r)
 		_ = r.Close()
 		if err != nil {
-			return fail("%s: %v", path, err)
+			return fail("%s: %v", clientctx.MaskUserinfoInArgument(path), err)
 		}
 		fmt.Fprintf(stdout, "%s matches SHA256SUMS (%s)\n", path, name)
 	}

@@ -55,3 +55,22 @@ func TestVerifyReleaseRefuses(t *testing.T) {
 		t.Fatalf("usage: exit %d %s", code, errOut.String())
 	}
 }
+
+// verify-release's failures never show a URL's user name and password,
+// even one %q would escape (Sol, #265 round 1).
+func TestVerifyReleaseNeverEchoesUserinfo(t *testing.T) {
+	for _, args := range [][]string{
+		verifyArgs("--file", `https://alice:fa"ke-pw@h`),
+		verifyArgs("--file", `https://alice:se\cret-pw@h`),
+		verifyArgs("--file", "https://alice:fake-pw@h=Caddyfile"),
+		{"verify-release", "--version", "1.2.3", "--sums", "https://alice:fake-pw@h/SHA256SUMS", "--bundle", "x"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := run(args, strings.NewReader(""), &stdout, &stderr); code == 0 {
+			t.Fatalf("%q succeeded", args)
+		}
+		if out := stdout.String() + stderr.String(); strings.Contains(out, "-pw") || strings.Contains(out, "alice") || !strings.Contains(out, "[redacted]@") {
+			t.Errorf("%q:\n%s", args, out)
+		}
+	}
+}
