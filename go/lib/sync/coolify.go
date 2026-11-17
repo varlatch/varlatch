@@ -100,20 +100,20 @@ func updateFlags(row Object, buildTime *bool, expands bool) Object {
 	literal := !expands
 	switch flagStyle(row) {
 	case "current":
-		build := truthy(row.get("is_buildtime"))
+		build := truthy(row.Value("is_buildtime"))
 		if buildTime != nil {
 			build = *buildTime
 		}
 		var runtime any = true
 		if buildTime == nil || *buildTime {
-			if v := row.get("is_runtime"); v != nil {
+			if v := row.Value("is_runtime"); v != nil {
 				runtime = v // row.is_runtime ?? true
 			}
 		}
 		return Object{{"is_literal", literal}, {"is_multiline", literal},
-			{"is_shown_once", truthy(row.get("is_shown_once"))}, {"is_buildtime", build}, {"is_runtime", runtime}}
+			{"is_shown_once", truthy(row.Value("is_shown_once"))}, {"is_buildtime", build}, {"is_runtime", runtime}}
 	case "legacy":
-		build := truthy(row.get("is_build_time"))
+		build := truthy(row.Value("is_build_time"))
 		if buildTime != nil {
 			build = *buildTime
 		}
@@ -159,7 +159,7 @@ func coolifyForbidden(res *response, where Where) AccessCheck {
 	message := ""
 	if body, ok := res.jsonBody(); ok {
 		if o, isObject := body.(Object); isObject {
-			message, _ = o.get("message").(string)
+			message, _ = o.Value("message").(string)
 		}
 	}
 	m := asciiLower(message)
@@ -216,7 +216,7 @@ func listEnvs(ctx context.Context, req *Request) ([]Object, error) {
 	for _, e := range list {
 		switch row := e.(type) {
 		case Object:
-			if !truthy(row.get("is_preview")) {
+			if !truthy(row.Value("is_preview")) {
 				rows = append(rows, row)
 			}
 		case []any:
@@ -229,7 +229,7 @@ func listEnvs(ctx context.Context, req *Request) ([]Object, error) {
 // rowKey is a row's key when it is a string; only a string key can match
 // a name.
 func rowKey(row Object) (string, bool) {
-	k, ok := row.get("key").(string)
+	k, ok := row.Value("key").(string)
 	return k, ok
 }
 
@@ -389,15 +389,15 @@ func unresolvableValue(value string) string {
 func storedOtherwise(row Object, service, expands bool) bool {
 	multiline := service || flagStyle(row) == "current"
 	if expands {
-		if row.get("is_literal") == true {
+		if row.Value("is_literal") == true {
 			return true
 		}
-		return multiline && row.get("is_multiline") == true
+		return multiline && row.Value("is_multiline") == true
 	}
-	if row.get("is_literal") == false {
+	if row.Value("is_literal") == false {
 		return true
 	}
-	return multiline && row.get("is_multiline") == false
+	return multiline && row.Value("is_multiline") == false
 }
 
 // compareUnits is JavaScript's default sort order: UTF-16 code units.
@@ -455,7 +455,7 @@ func containerNames(service Object) []string {
 	seen := map[string]bool{}
 	names := []string{}
 	for _, key := range []string{"applications", "databases"} {
-		list, ok := service.get(key).([]any)
+		list, ok := service.Value(key).([]any)
 		if !ok {
 			continue
 		}
@@ -464,7 +464,7 @@ func containerNames(service Object) []string {
 			if !isObject {
 				continue
 			}
-			if name := shortText(o.get("name"), 64); name != "" && !seen[name] {
+			if name := shortText(o.Value("name"), 64); name != "" && !seen[name] {
 				seen[name] = true
 				names = append(names, name)
 			}
@@ -488,7 +488,7 @@ func (coolify) CanonicalizeDestination(raw Object) (Destination, error) {
 	}
 	fail := func(message string) (Destination, error) { return Destination{}, &AdapterError{Message: message} }
 	if given("serviceUuid") {
-		service, _ := raw.get("serviceUuid").(string)
+		service, _ := raw.Value("serviceUuid").(string)
 		service = whatwg.Trim(service)
 		if given("applicationUuid") {
 			return fail("A Coolify destination is an application or a service, not both")
@@ -502,18 +502,18 @@ func (coolify) CanonicalizeDestination(raw Object) (Destination, error) {
 		if given("deployAction") {
 			return fail("A Coolify service takes no deployAction option: it always restarts")
 		}
-		if list, isArray := raw.get("platformExpands").([]any); given("platformExpands") && !(isArray && len(list) == 0) {
+		if list, isArray := raw.Value("platformExpands").([]any); given("platformExpands") && !(isArray && len(list) == 0) {
 			return fail("A Coolify service takes no platformExpands option: only an application's values can be left for Coolify to resolve")
 		}
 		return Destination{Fields: Fields{{"serviceUuid", service}}, Key: "service:" + service}, nil
 	}
-	uuid, _ := raw.get("applicationUuid").(string)
+	uuid, _ := raw.Value("applicationUuid").(string)
 	uuid = whatwg.Trim(uuid)
 	if !coolifyUUIDPattern.MatchString(uuid) {
 		return fail("Invalid Coolify application UUID")
 	}
 	fields := Fields{{"applicationUuid", uuid}}
-	switch bt := raw.get("buildTime"); {
+	switch bt := raw.Value("buildTime"); {
 	case bt == true || bt == "true":
 		fields = append(fields, Field{"buildTime", "true"})
 	case bt == false || bt == "false":
@@ -521,7 +521,7 @@ func (coolify) CanonicalizeDestination(raw Object) (Destination, error) {
 	case given("buildTime"):
 		return fail(`Coolify buildTime must be "true" or "false"`)
 	}
-	switch da := raw.get("deployAction"); {
+	switch da := raw.Value("deployAction"); {
 	case da == "restart":
 		fields = append(fields, Field{"deployAction", "restart"})
 	case da == "deploy":
@@ -646,7 +646,7 @@ func (coolify) DeleteNames(ctx context.Context, req *Request, names []string) ([
 	byKey := map[string]any{}
 	for _, row := range rows {
 		if k, ok := rowKey(row); ok {
-			byKey[k] = row.get("uuid")
+			byKey[k] = row.Value("uuid")
 		}
 	}
 	outcomes := []NameOutcome{}
@@ -798,7 +798,7 @@ func coolifyCheck(ctx context.Context, req *Request, host string, where *Where) 
 	if res.ok() {
 		found, _ := res.jsonBody()
 		o, isObject := found.(Object)
-		if !isObject || o.get("uuid") != r.uuid {
+		if !isObject || o.Value("uuid") != r.uuid {
 			return AccessCheck{Status: StatusFailed, Where: *where, HTTPStatus: res.status,
 				Message: host + " did not answer with " + r.kind + " " + r.uuid + ". Check the instance URL and the UUID."}, nil
 		}
@@ -850,7 +850,7 @@ func checkServiceVariables(ctx context.Context, req *Request, r resource, servic
 		return AccessCheck{Status: StatusFailed, Where: where, HTTPStatus: res.status,
 			Message: host + " did not answer with the variables of service " + r.uuid + "."}, nil
 	}
-	name := shortText(service.get("name"), 200)
+	name := shortText(service.Value("name"), 200)
 	if name == "" {
 		name = r.uuid
 	}
@@ -921,16 +921,16 @@ func coolifyList(ctx context.Context, req *Request, host string) (DestinationLis
 		if !ok {
 			continue
 		}
-		uuid, ok := o.get("uuid").(string)
+		uuid, ok := o.Value("uuid").(string)
 		if !ok || !coolifyUUIDPattern.MatchString(uuid) {
 			continue
 		}
 		address := ""
-		if fqdn, ok := o.get("fqdn").(string); ok {
+		if fqdn, ok := o.Value("fqdn").(string); ok {
 			first, _, _ := strings.Cut(fqdn, ",")
 			address = shortText(coolifyAddressPrefix.ReplaceAllString(first, ""), 200)
 		}
-		label := shortText(o.get("name"), 200)
+		label := shortText(o.Value("name"), 200)
 		if label == "" {
 			label = uuid
 		}
@@ -955,11 +955,11 @@ func coolifyList(ctx context.Context, req *Request, host string) (DestinationLis
 			if !ok {
 				continue
 			}
-			uuid, ok := o.get("uuid").(string)
+			uuid, ok := o.Value("uuid").(string)
 			if !ok || !coolifyUUIDPattern.MatchString(uuid) {
 				continue
 			}
-			label := shortText(o.get("name"), 200)
+			label := shortText(o.Value("name"), 200)
 			if label == "" {
 				label = uuid
 			}
@@ -1009,18 +1009,18 @@ func (coolify) InspectUsage(ctx context.Context, req *Request, names []string) *
 	}
 	parsed, _ := res.jsonBody()
 	body, isObject := parsed.(Object)
-	if !isObject || body.get("uuid") != r.uuid {
+	if !isObject || body.Value("uuid") != r.uuid {
 		return uncheckedUsage("Coolify did not answer with the service", names)
 	}
 	if _, has := body.Get("docker_compose_raw"); !has {
 		return uncheckedUsage("Coolify did not return the service's compose file to this token (reading it takes its read:sensitive permission)", names)
 	}
 	var version *float64
-	if v := jsToNumber(body.get("compose_parsing_version"), body.has("compose_parsing_version")); !isNaNOrInf(v) {
+	if v := jsToNumber(body.Value("compose_parsing_version"), hasKey(body, "compose_parsing_version")); !isNaNOrInf(v) {
 		version = &v
 	}
-	raw, rawOK := body.get("docker_compose_raw").(string)
-	generated, generatedOK := body.get("docker_compose").(string)
+	raw, rawOK := body.Value("docker_compose_raw").(string)
+	generated, generatedOK := body.Value("docker_compose").(string)
 	return ClassifyComposeUsage(optionalString(raw, rawOK), optionalString(generated, generatedOK), version, names)
 }
 

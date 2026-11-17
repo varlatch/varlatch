@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
-import { cliPath as cliUnderTest, reporter, targetOp } from "../../../scripts/conformance/suite-kit.mjs";
+import { cliCommand, reporter, targetOp } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Degraded realtime E2E (ADR-0035 D10). With convex-backend stopped, the
  * dashboard says live updates are reconnecting, keeps showing changes made
@@ -30,7 +30,6 @@ if (!enrollUrl?.includes("#") || !apiToken) {
 }
 const base = new URL(enrollUrl).origin;
 // The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
-const cliPath = cliUnderTest();
 const suffix = randomBytes(3).toString("hex");
 
 const { check, error, finish } = reporter();
@@ -98,7 +97,7 @@ try {
 
   const cfg = mkdtempSync(join(tmpdir(), "realtime-e2e-cfg-"));
   const repo = mkdtempSync(join(tmpdir(), "realtime-e2e-repo-"));
-  const cli = (...args) => spawnSync("node", [cliPath, ...args], { cwd: repo, env: { ...process.env, VARLATCH_CONFIG_DIR: cfg }, encoding: "utf8", timeout: 60000 });
+  const cli = (...args) => spawnSync(...cliCommand(args), { cwd: repo, env: { ...process.env, VARLATCH_CONFIG_DIR: cfg }, encoding: "utf8", timeout: 60000 });
   cli("init", "--org", "acme", "--project", "api", "--server", base);
   cli("login", "--server", base, "--token", apiToken);
   const list = cli("env", "list");

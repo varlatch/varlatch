@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cliPath, reporter } from "../suite-kit.mjs";
+import { cliCommand, reporter } from "../suite-kit.mjs";
 
 const [origin, token, seeded] = process.argv.slice(2);
 if (!origin || !token || !seeded) {
@@ -30,7 +30,7 @@ const config = mkdtempSync(join(tmpdir(), "cli-core-cfg-"));
 /** The CLI under test, in a checkout of acme/api, with no Varlatch setting from the host. */
 function cli(args) {
   const env = { PATH: process.env.PATH ?? "", HOME: config, VARLATCH_CONFIG_DIR: config, VARLATCH_ASSISTED: "0" };
-  const r = spawnSync(process.execPath, [cliPath(), ...args], { cwd: repo, env, encoding: "utf8", timeout: 90_000 });
+  const r = spawnSync(...cliCommand(args), { cwd: repo, env, encoding: "utf8", timeout: 90_000 });
   return { code: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 const holdsNoSecret = (text) => !text.includes(token) && !text.includes(seeded);

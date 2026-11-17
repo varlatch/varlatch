@@ -147,9 +147,10 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
 }
 
 /**
- * The CLI under test: a script run with Node, named by VARLATCH_CLI. The
- * runner sets it for every suite (`--cli source` is apps/cli/dist/varlatch.cjs);
- * a suite never picks a CLI of its own.
+ * The CLI under test, named by VARLATCH_CLI: a script run with Node, or,
+ * with VARLATCH_CLI_NATIVE=1, a native binary run directly (the Go CLI,
+ * `--cli go:<path>`). The runner sets both for every suite (`--cli source`
+ * is apps/cli/dist/varlatch.cjs); a suite never picks a CLI of its own.
  */
 export function cliPath() {
   const path = process.env.VARLATCH_CLI;
@@ -157,6 +158,18 @@ export function cliPath() {
     throw new Error("VARLATCH_CLI is not set: run the suite through scripts/conformance/run.mjs, or set it to the CLI under test");
   }
   return path;
+}
+
+/**
+ * The program and arguments that run the CLI under test with `args`:
+ * `[node, cli, ...args]` for a TypeScript CLI, `[cli, args]` for a native
+ * one, so a suite spawns either the same way with `spawn(...cliCommand(args))`.
+ * No wrapper script: it would hide a native binary's signals, terminal
+ * checks and exit statuses.
+ */
+export function cliCommand(args) {
+  const path = cliPath();
+  return process.env.VARLATCH_CLI_NATIVE === "1" ? [path, [...args]] : [process.execPath, [path, ...args]];
 }
 
 /**

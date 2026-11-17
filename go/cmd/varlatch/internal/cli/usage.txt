@@ -1,0 +1,235 @@
+varlatch — self-host-first secrets and configuration
+
+Usage:
+  varlatch <command> --help                            # one command's usage (also: varlatch help <command>)
+  varlatch --assisted <command>...                      # a coding agent drives the CLI (or VARLATCH_ASSISTED=1):
+               run masks Secrets in the command's output by default and refuses one too short to mask
+               (exit 78; --omit <NAME> leaves it out when the command does not need it), and refuses
+               --allow-unmasked and --no-redact; values set/rotate never take a
+               Secret's value from the command line, and replace an existing value only with --replace <ITEM>;
+               values delete deletes only with --confirm <ITEM>; member remove and member leave always need --confirm;
+               login with no method starts a device sign-in
+  varlatch run --allow-unmasked <NAME>... -- <command>  # the human's override, outside assisted mode: shows only
+               the named short Secrets; every other known Secret stays masked
+  varlatch login --server <url> [--ttl <s>]              # browser passkey sign-in, in a browser on this machine
+               (without --server: the server a command here uses, to sign in again. The first server you sign in
+                to becomes the default for commands outside a repository; see varlatch server)
+  varlatch login --server <url> --start [--ttl <s>] [--json]
+               (device sign-in: prints an address and a code; approve it with your passkey in a browser on any
+                device, then run --wait. The code lasts 10 minutes)
+  varlatch login --server <url> --wait [--timeout <s>] [--json]
+               (collects the approved sign-in and stores the credential; waits up to 60 seconds, at most 600;
+                exit 75 when it is still pending: run --wait again)
+  varlatch login --server <url> --token-stdin            # a credential from a pipe or file, e.g. from a password manager
+  varlatch login --server <url> --token <credential>
+  varlatch login --server <url> --oidc --org <organization> [--audience <aud>] [--oidc-token <jwt>] [--ttl <s>]
+  varlatch logout [--server <url>|--all]                 # revokes server-side, removes locally
+  varlatch server [--json]                               # the server commands here use, and the remembered default
+  varlatch server use <url> [--json]                     # make a server you are signed in to the default
+               (the default applies outside a repository only: a repository's varlatch.toml names its server)
+  varlatch status [--json] [--probe]                     # stored credentials + repo context; offline unless --probe
+  varlatch whoami [--server <url>] [--json]              # who this credential belongs to: identity, organization, credential
+               (a person's or a machine's; uses VARLATCH_TOKEN, else the stored credential, as every command does)
+  varlatch init [--org <slug>] [--project <slug>] [--server <url>] [--no-agent-files]
+               (on a terminal, without --org or --project: asks for what is missing, signs in, creates the
+                organization, project and environments you confirm, and offers to import .env files;
+                off a terminal or in assisted mode both flags are needed, as before)
+               (writes varlatch.toml with the server: --server, VARLATCH_SERVER, or the default server;
+                also writes the files coding agents read, as agents install does; --no-agent-files skips them)
+  varlatch agents guide [setup|run|agent-run|self-hosting|contract]
+               (print the skill for coding agents, or one of its references: for any coding agent with a shell)
+  varlatch agents install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]
+               (write the skill to .agents/skills/varlatch and .claude/skills/varlatch, a marked block in AGENTS.md,
+                and the adapters some coding agents need; --check exits 1 when the files differ, for CI;
+                --remove takes back what install wrote; --guardrails also writes opt-in hooks and settings
+                for Claude Code and Codex: accident prevention, not a boundary; --mcp adds a "varlatch mcp"
+                server to the project's MCP files, for coding agents that should use MCP)
+  varlatch agents hook --format <claude|codex>
+               (the handler guardrail hooks call: reads a pre-tool-use event on stdin and denies reading .env files
+                or the credential store, and printing the environment of a varlatch run)
+  varlatch context [--json]
+  varlatch env <use <name>|list [--json]>
+  varlatch run [-e <env>] [--export-context] [--redact] [--no-redact] [--allow-unmasked <NAME>]... [--omit <NAME>]...
+               -- <command> [args...]
+               (--export-context: also give the command VARLATCH_RUN_CONTEXT, names only, for the Typed Accessor;
+                --redact: mask the Secrets delivered to the command in its piped stdout and stderr,
+                refused when either is a terminal, and with --agent-safe;
+                --omit: leave an item stored here or in the Contract out of the command's environment, a copy
+                inherited from this shell included; a Secret left out is not fetched, so it is not masked
+                either, and a short one no longer stops an assisted run; another name exits 64)
+  varlatch run --strict [--allow-inherited <NAME>]... [--omit <NAME>]... [--redact] -- <command> [args...]
+               (validate exactly what the command receives; exit 78 and start nothing on any violation;
+                --omit of an item required here is one; combine with --agent-safe for the agent-safe
+                preflight: Secrets stay placeholders)
+  varlatch run --agent-safe --agent <identity> --allow-host <host[:port]>...
+               --target <NAME=header:<name>|query:<name>|json:<pointer>|form:<name>>... --omit <NAME>...
+               [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>]
+               [--agent-metadata] -- <command>...
+               (every stored Secret needs a --target or an --omit; it is substituted only there; the Agent gets its own
+                empty configuration directory, so a varlatch command it starts never uses the operator's credential)
+  varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]
+                   [-o <file>] [-i] <https-url>
+               (inside an agent-safe run: send the request through the Broker, which substitutes Secrets at their
+                targets and scrubs the response; exit 0 on any whole response, 1 when the Broker refuses or the response
+                is cut off, 77 when the Broker rejects the proxy credential, 69 unreachable)
+  varlatch mcp [--server <url>] [--org <slug>] [--project <slug>] [-e <env>] [--allow-writes]
+               (a Model Context Protocol server over stdio, for MCP hosts without a shell: read tools; --allow-writes
+                adds non-secret writes; no tool returns or writes a Secret's value)
+  varlatch validate [-e <env>] [--json]  (exit 1 invalid; 2 incomplete: items this identity may not read)
+  varlatch values <set <ITEM> [<value> | -- <value>] [--replace <ITEM>]|list [--json]|delete <ITEM> [--confirm <ITEM>]|rotate <ITEM> [<new-value>] [--grace <s>] [--replace <ITEM>]|rotate-complete <ITEM>> [-e <env>]
+                  set/rotate: --stdin | --from-file <path> | --generate <hex|base64|base64url:<bytes>|alnum:<chars>>,
+                  or no value in a terminal for a hidden prompt
+  varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--replace <NAME>]... [--delete-source] [--json] [-e <env>]
+               (store a dotenv file's values without printing them; --contract adds new items to a Contract
+                revision, Secrets unless --plain; --delete-source removes the file once every value is stored)
+  varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show> [--server <url>]
+                   push [--semantics <version|latest>]   (pin Contract Semantics; default keeps the active version)
+                   push [--json]                         (the new revision as JSON; show always prints JSON)
+  varlatch types --out <file.ts|file.py> [--revision <id>] [--check]
+                 (one TypeScript or Python module, by extension, with typed config and the Typed Accessor,
+                  from the active Contract; --check exits 1 when the file is stale)
+  varlatch sync push --platform <github-actions|coolify|convex> --base <owner|https://origin>
+                     (--repo <name> [--gh-environment <name>] | --app <uuid> [--build-time true|false]
+                      [--platform-expands NAME[,NAME…]] | --service <uuid> | nothing for convex: --base is the
+                      deployment URL)
+                     [--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [-e <env>]
+                     # client-side push for installations without server egress (ADR-0031)
+  varlatch sync check --platform <github-actions|coolify|convex> --base <owner|https://origin>
+                      (--repo <name> [--gh-environment <name>] | --app <uuid> | --service <uuid>
+                       | nothing for convex)
+                      [--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [-e <env>] [--json]
+               (does the platform hold the Environment's values? compared in memory, one status per key of
+                the Contract: match, differs, missing-on-platform, extra-on-platform, unreadable, absent;
+                never a value or a hash, so assisted mode allows it; exit 0 in sync, 1 drift, 2 not
+                everything checked. Use it instead of printing the environment through varlatch run)
+  varlatch admin backup create|verify|restore|status [--dir <compose-directory>]
+  varlatch setup [--dir <compose-directory>] [--ingress public|tailnet|external] [--public-url <url>]
+                 [--tailnet-machine <name>] [--tailscale-auth-key-file <f>] [--port <web-port>] [--no-wait]
+                 [--tailnet-endpoint | --no-tailnet-endpoint] [--serve-cli | --no-serve-cli]
+                 [--escrow passphrase|shamir|copy] [--escrow-passphrase-file <f>] [--attest]
+                                                       # install: one command, resumable; --tailnet-endpoint
+                                                       # lets approved devices read tailnet-protected values
+                                                       # in the dashboard (HTTPS on port 8688 of the node);
+                                                       # --serve-cli serves this installation's CLI and
+                                                       # install scripts at /install.sh (off unless chosen)
+  varlatch adopt [--dir <compose-directory>] [--apply] [--only <step>] [--revert <step>] [--secrets-dir <dir>]
+                                                       # existing installation → managed, step by step
+  varlatch move --public-url <url> [--ingress public|external] [--dir <compose-directory>]
+                [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--reenroll-hours <1-168>]
+                [--yes] [--no-wait]                    # another public URL: archive, move, re-enrollment links
+  varlatch move --abandon [--dir <compose-directory>]  # give up an open move: back to the old address
+  varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]
+                                                       # one-time links: a new passkey on an existing identity
+  varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] [--dir <compose-directory>]
+               (the host operator's way back: sets the named security controls to off and closes their open
+                approvals; never touches deletion, passkeys or grants)
+  varlatch admin unfreeze --org <slug> --confirm <slug> [--json] [--dir <compose-directory>]
+               (the host operator's lift of an incident freeze, when nobody can approve it)
+  varlatch admin outbound check [--allow <value>] [--org <organization>] [--json] [--dir <compose-directory>]
+               (every configured webhook, Coolify and Convex Connection and OIDC issuer against the outbound policy,
+                with the VARLATCH_OUTBOUND_ALLOW value that would allow the refused ones; DNS lookups only;
+                exit 0 all allowed, 1 something refused, 2 something not resolved)
+  varlatch doctor [--dir <compose-directory>] [--json] [--wait <s>] [--gate]
+                                                       # read-only installation health on this host
+  varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]
+                [--max-file-size <size>] [--max-total-size <size>]
+               (look for this identity's Secrets in staged files or build output; one audited disclosure;
+                exit 1 findings, 2 some files not scanned; never prints values or line contents)
+  varlatch scan --install-hook [-e <env>]              # pre-commit hook running varlatch scan --staged
+  varlatch scan --find-files [<dir>] [--json]
+               (list files that look like copies of secrets by name: .env, .env.* except .env.example and
+                .env.schema, *.pem, *.key; says whether Git ignores each; finds them by name and metadata,
+                without reading their contents; needs no project or server; exit 1 files found, 2 search
+                incomplete)
+  varlatch invite <name> [--role member|admin]
+  varlatch member <list [--json]|remove <member> --confirm <member>|leave --confirm <organization>|role <member> admin|member>
+                                                       # people in the organization; former members are listed too
+  varlatch member exposure <member> [--json]           # what a current or former member received, and what is still
+                                                       # served; read-only, never a value (--json: NDJSON)
+  varlatch tailnet <require --tailnet <tn> --tags tag:prod|requirements [--json]|remove <id>>
+  varlatch audit <list [--json]|export>
+  varlatch audit export --deleted-org <organization-id> [--server <url>]
+                                                       # a deleted organization's audit log, for its readers
+  varlatch org <list [--json]|create <slug> [name]> [--server <url>]
+  varlatch org delete <slug> --confirm <slug> [--after <days>] [--server <url>]
+                                                       # schedules the deletion (1-30 days, default 7) and
+                                                       # freezes the organization until then
+  varlatch org delete <slug> --approve <request-id> | --cancel <request-id> [--server <url>]
+  varlatch org deletion <slug> [--json] [--server <url>]
+                                                       # the open deletion request, if any
+  varlatch org freeze <slug> --reason <text> --confirm <slug> [--server <url>]
+                                                       # incident freeze: stops all access at once, reads
+                                                       # included; no approval needed
+  varlatch org unfreeze <slug> [--json] [--server <url>]
+                                                       # lifts it: prints the approval URL and waits
+  varlatch project <create <slug> --org <org> --server <url> [--managed]|list [--json]|rename <slug> <new-name>>
+  varlatch project delete <slug> --confirm <slug> [--org <org>] [--server <url>]
+                                                       # at once: erases every value of the project
+  varlatch env-create <name> --tier <tier> | --parent <env> [--kind personal|preview]
+  varlatch env-delete <name> [--confirm <name>]        # --confirm required for production-tier roots
+  varlatch identity <list [--json]|rename <id> <new-name>|retire <id> [--confirm <name>]|reactivate <id>>
+                                                       # --confirm required: retire revokes all credentials
+  varlatch identity reach <id|name> [--json]           # what a machine's grants allow, per project and
+                                                       # environment, with tailnet conditions; read-only
+  varlatch credential <list <identity-id> [--json]|revoke <identity-id> <credential-id>>
+  varlatch credential issue <identity-id> --name <name> [--ttl <s>] [--max-uses <n>] --out <file> [--json]
+               (another credential for a service, workload, or broker identity, such as one per program;
+                the token goes only to --out, a new file readable by you only, never to the output)
+  varlatch audit-export show [--json] [--org <organization>] [--server <url>]
+               (the organization's audit export to object storage: destination, retention and Object Lock, how far it
+                delivered, what is pending, the last error; needs organization.manage; never the key)
+  varlatch audit-export create --endpoint <url> --region <region> --bucket <bucket> [--prefix <prefix>] [--path-style]
+                               --access-key-id <id> [--secret-stdin | --secret-file <path>]
+                               [--retention <compliance|governance>:<days>] [--from <beginning|now>] [--json]
+               (copies every audit event of the organization to an S3-compatible bucket you control, with optional
+                Object Lock retention; the destination is checked first, including that it refuses to overwrite;
+                the secret access key comes from standard input, a file or a hidden prompt, never the command line;
+                needs organization.manage and a person's credential)
+  varlatch audit-export change [--endpoint <url>] [--region <region>] [--bucket <bucket>] [--prefix <prefix>]
+                               [--path-style | --no-path-style] [--retention <mode>:<days> | --no-retention] [--json]
+  varlatch audit-export change --access-key-id <id> [--secret-stdin | --secret-file <path>] [--json]
+               (a new destination, a new key, or a shorter or removed retention always needs your approval with a
+                trusted passkey; a longer or stronger retention does not; a new destination starts a new stream)
+  varlatch audit-export remove --confirm <organization> [--json]
+               (stops the copy and clears its key; what was delivered stays in the bucket; always needs your
+                approval; in assisted mode only with --confirm, the human's decision)
+  varlatch audit-export check [destination options] [--access-key-id <id> ...] [--retention <mode>:<days>] [--json]
+               (checks a destination without saving anything: conditional writes, Object Lock, what the key may read;
+                without a key, the export's own key against its own destination; exit 1 when the check fails)
+  varlatch security status [--json] [--org <organization>] [--server <url>]
+               (the organization's security at a glance, as on the dashboard's Security page: each control's mode,
+                what it counts and what enforce would change, its counts of the last 30 days, the admins' trusted and
+                unconfirmed passkeys, credentials to review or expiring, tailnet requirements, and a checklist with
+                links to the docs; parts you cannot read are named, not shown; read-only)
+  varlatch security report [--json] [--org <organization>] [--server <url>]
+               (machine credentials never used, unused for 30 days, or without expiry, with their identity and
+                last use, and service credentials expiring within 7 days or expired; reporting only: nothing is
+                revoked or retired; needs identity.manage. With organization.manage, also the webhooks, connections
+                and OIDC issuers this installation's outbound policy refuses, with why and since when)
+  varlatch security controls [--json] [--org <organization>] [--server <url>]
+               (the organization's security controls: requirement-protection, admin-step-up, passkey-verification,
+                credential-lifetime, each off, report or enforce; enforce only where the server offers it for that
+                control)
+  varlatch security set <control> <off|report|enforce> [--default-ttl <seconds>] [--max-ttl <seconds>] [--clear-config]
+                        [--approval <id>] [--json] [--org <organization>] [--server <url>]
+               (needs organization.manage and a person's credential; tightening applies at once; loosening, such as
+                report to off or a longer lifetime, needs your approval with a trusted passkey: the CLI prints an
+                address, waits until you approved it in the dashboard, then sends the change again)
+  varlatch --approval <id> <command>...                 # resume a command that needed your approval (step-up),
+               after you approved it: waits for the approval (until it expires), then sends the command with it.
+               In assisted mode the CLI never waits on its own: it prints the address, exits 75, and the command
+               runs again with --approval <id> once the person approved
+  varlatch --version                                   # CLI release; refresh it after every upgrade
+  varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]
+                                                       # replace this CLI with a release build (checksum, signature)
+  varlatch upgrade [<version>] [--dir <compose-dir>] [--check] [--repo <owner/repo>]
+                   [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--yes]
+                   # backup-gated compose upgrade on this host (run where docker-compose.yml lives)
+
+Exit status: 0 success; 1 failure; 64 the command line is wrong; 69 the server cannot be reached or is in
+maintenance; 75 login --wait reached its deadline with the sign-in still pending, or an approval is still pending
+(assisted mode) or expired; 77 not authenticated or denied, or an approval was cancelled, used or does not fit;
+78 strict startup violation, or assisted mode cannot mask a Secret; 130 Ctrl-C stopped the wait for an approval.
+Kept as before: validate 1 invalid, 2 incomplete; scan 1 findings, 2 not everything scanned; types --check 1 stale;
+sync check 1 drift, 2 not everything checked;
+run returns the command's own status once the command has started. agents install --check exits 1 when the files differ.

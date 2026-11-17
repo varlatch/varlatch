@@ -202,8 +202,8 @@ func (convex) ReadValues(ctx context.Context, req *Request) (map[string]*string,
 		return nil, &ScriptError{Name: "TypeError", Message: "the query answer is null"}
 	}
 	o, _ := parsed.(Object)
-	list, isArray := o.get("value").([]any)
-	if o.get("status") != "success" || !isArray {
+	list, isArray := o.Value("value").([]any)
+	if o.Value("status") != "success" || !isArray {
 		// A UDF-level error body never enters the message.
 		return nil, &AdapterError{Message: "Convex env query failed (udf error)", Retryable: true}
 	}
@@ -213,12 +213,12 @@ func (convex) ReadValues(ctx context.Context, req *Request) (map[string]*string,
 			continue
 		}
 		entry, _ := e.(Object)
-		name, ok := entry.get("name").(string)
+		name, ok := entry.Value("name").(string)
 		if !ok {
 			continue
 		}
 		// A value Convex does not return as a string is unknown, not empty.
-		if v, isString := entry.get("value").(string); isString {
+		if v, isString := entry.Value("value").(string); isString {
 			values[name] = &v
 		} else {
 			values[name] = nil
@@ -247,17 +247,17 @@ func (convex) CheckAccess(ctx context.Context, req *Request) AccessCheck {
 	}
 	body, _ := res.jsonBody()
 	key, isObject := body.(Object)
-	if !isObject || key.get("success") != true {
+	if !isObject || key.Value("success") != true {
 		return foreign("Convex", "deployment", host, res.status)
 	}
-	ops, _ := key.get("allowedOps").([]any)
+	ops, _ := key.Value("allowedOps").([]any)
 	allowed := false
 	for _, op := range ops {
 		if op == "WriteEnvironmentVariables" {
 			allowed = true
 		}
 	}
-	if key.get("isReadOnly") == true || (len(ops) > 0 && !allowed) {
+	if key.Value("isReadOnly") == true || (len(ops) > 0 && !allowed) {
 		return AccessCheck{Status: StatusPermissionMissing, Where: where, HTTPStatus: res.status,
 			Message: "Convex accepted the key, but it may not change environment variables. Use a deploy key with full access, or the admin key."}
 	}

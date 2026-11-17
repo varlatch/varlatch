@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
-import { cliPath as cliUnderTest, reporter, targetOp } from "../../../scripts/conformance/suite-kit.mjs";
+import { cliCommand, reporter, targetOp } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Isolating maintenance E2E (ADR-0036 D6). The installation is put into the
  * same `503 MAINTENANCE` admission a restore uses, for a short lease:
@@ -29,7 +29,6 @@ if (!enrollUrl?.includes("#") || !apiToken) {
 }
 const base = new URL(enrollUrl).origin;
 // The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
-const cliPath = cliUnderTest();
 const LEASE_MS = 20_000;
 
 const { check, error, finish, supports } = reporter();
@@ -63,8 +62,8 @@ try {
   const cfg = mkdtempSync(join(tmpdir(), "maint-e2e-cfg-"));
   const repo = mkdtempSync(join(tmpdir(), "maint-e2e-repo-"));
   const cliEnv = { ...process.env, VARLATCH_CONFIG_DIR: cfg };
-  spawnSync("node", [cliPath, "init", "--org", "acme", "--project", "api", "--server", base], { cwd: repo, env: cliEnv });
-  spawnSync("node", [cliPath, "login", "--server", base, "--token", apiToken], { cwd: repo, env: cliEnv });
+  spawnSync(...cliCommand(["init", "--org", "acme", "--project", "api", "--server", base]), { cwd: repo, env: cliEnv });
+  spawnSync(...cliCommand(["login", "--server", base, "--token", apiToken]), { cwd: repo, env: cliEnv });
 
   // ---- The window opens.
   const opened = Date.now();
@@ -88,7 +87,7 @@ try {
   // Its own feature group: a CLI that predates waiting skips only this.
   if (supports("maintenance-wait")) {
     const run = await new Promise((resolve) => {
-      const child = spawn("node", [cliPath, "env", "list"], { cwd: repo, env: cliEnv });
+      const child = spawn(...cliCommand(["env", "list"]), { cwd: repo, env: cliEnv });
       let stdout = "", stderr = "";
       child.stdout.on("data", (d) => { stdout += d; });
       child.stderr.on("data", (d) => { stderr += d; });

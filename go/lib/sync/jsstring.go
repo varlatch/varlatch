@@ -134,9 +134,3 @@ func stringToNumber(s string) float64 {
 }
 
 func isNaNOrInf(f float64) bool { return math.IsNaN(f) || math.IsInf(f, 0) }
-
-// has is "key in o" for an own property.
-func (o Object) has(key string) bool {
-	_, ok := o.Get(key)
-	return ok
-}

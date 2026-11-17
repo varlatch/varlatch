@@ -403,7 +403,7 @@ func (c *converter) object(n *yaml.Node) (Object, error) {
 			for _, e := range entries {
 				key := propertyKey(e.key)
 				if _, has := o.Get(key); !has {
-					o = o.set(key, e.value)
+					o = o.Set(key, e.value)
 				}
 			}
 			continue
@@ -423,7 +423,7 @@ func (c *converter) object(n *yaml.Node) (Object, error) {
 		if err != nil {
 			return nil, err
 		}
-		o = o.set(key, value)
+		o = o.Set(key, value)
 	}
 	return o, nil
 }
@@ -995,14 +995,14 @@ func environmentOf(service any) (env *envMap, opaque bool) {
 		return env, false
 	}
 	var build any
-	if b, ok := o.get("build").(Object); ok {
-		build = b.get("args")
+	if b, ok := o.Value("build").(Object); ok {
+		build = b.Value("args")
 	}
 	numericKey := func(source any) bool {
 		s, ok := source.(Object)
 		return ok && slices.ContainsFunc(s, func(m Member) bool { return phpNumeric.MatchString(m.Key) })
 	}
-	environment := o.get("environment")
+	environment := o.Value("environment")
 	if numericKey(environment) || numericKey(build) {
 		return env, true
 	}
@@ -1100,14 +1100,14 @@ func loadsDotEnv(service any) bool {
 	if !ok {
 		return false
 	}
-	files, isArray := o.get("env_file").([]any)
+	files, isArray := o.Value("env_file").([]any)
 	if !isArray {
-		files = []any{o.get("env_file")}
+		files = []any{o.Value("env_file")}
 	}
 	for _, f := range files {
 		path, ok := f.(string)
 		if fo, isObject := f.(Object); isObject {
-			path, ok = fo.get("path").(string)
+			path, ok = fo.Value("path").(string)
 		}
 		if ok && (path == ".env" || path == "./.env") {
 			return true
@@ -1280,8 +1280,8 @@ func ClassifyComposeUsage(raw, generated *string, parsingVersion *float64, names
 	if !rawOK || !genOK {
 		return unknownUsage("the service's compose file is too large or could not be read", names)
 	}
-	rawServices, _ := rawDoc.get("services").(Object)
-	genServices, _ := genDoc.get("services").(Object)
+	rawServices, _ := rawDoc.Value("services").(Object)
+	genServices, _ := genDoc.Value("services").(Object)
 	containers := make([]string, len(rawServices))
 	for i, m := range rawServices {
 		containers[i] = m.Key
@@ -1294,7 +1294,7 @@ func ClassifyComposeUsage(raw, generated *string, parsingVersion *float64, names
 	decoded := scalarsOf(rawDoc, nil)
 	copied := map[string]bool{}
 	for _, container := range containers {
-		env, _ := environmentOf(rawServices.get(container))
+		env, _ := environmentOf(rawServices.Value(container))
 		for _, k := range env.keys {
 			for _, n := range copiedNames(k, env.values[k]) {
 				copied[n] = true
@@ -1308,7 +1308,7 @@ func ClassifyComposeUsage(raw, generated *string, parsingVersion *float64, names
 		var shadowed, unknownIn []string
 		reaches := false
 		for _, container := range containers {
-			service := rawServices.get(container)
+			service := rawServices.Value(container)
 			env, opaque := environmentOf(service)
 			if opaque {
 				unknownIn = append(unknownIn, container)
@@ -1326,7 +1326,7 @@ func ClassifyComposeUsage(raw, generated *string, parsingVersion *float64, names
 				default:
 					reaches = true
 				}
-			case loadsDotEnv(genServices.get(container)):
+			case loadsDotEnv(genServices.Value(container)):
 				reaches = true
 			case referencesAny(jsonScalars(service, nil), name):
 				// The container uses the stored value inside another setting.

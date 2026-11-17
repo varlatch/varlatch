@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
-import { cliPath as cliUnderTest, reporter } from "../../../scripts/conformance/suite-kit.mjs";
+import { cliCommand, reporter } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live E2E for the credential broker (ADR-0022): agent-safe run against the
  * clean-room stack with a real TLS upstream. Asserts the design-doc list:
@@ -27,7 +27,6 @@ if (!server || !adminToken) {
   process.exit(1);
 }
 // The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
-const cliPath = cliUnderTest();
 
 const kit = reporter({ detailOnFailure: true });
 const { check, error } = kit;
@@ -118,7 +117,7 @@ if (agentSafe) {
   };
   const run = (args, opts = {}) =>
     new Promise((resolve) => {
-      const child = spawn("node", [cliPath, ...args], { cwd: repoDir, env: cliEnv, ...opts });
+      const child = spawn(...cliCommand(args), { cwd: repoDir, env: cliEnv, ...opts });
       let out = "";
       child.stdout.on("data", (d) => (out += d));
       child.stderr.on("data", (d) => (out += d));

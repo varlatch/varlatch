@@ -10,7 +10,7 @@
  *   doctor.mjs      (run by scripts/conformance/run.mjs)
  */
 import { spawnSync } from "node:child_process";
-import { cliPath, reporter, targetOp } from "../suite-kit.mjs";
+import { cliCommand, reporter, targetOp } from "../suite-kit.mjs";
 
 const { check, error, finish, supports } = reporter();
 try {
@@ -21,7 +21,7 @@ try {
   // environment variables.
   const { dir, env } = JSON.parse(targetOp("ts-stack", ["compose-env"]));
   const before = JSON.parse(targetOp("probe", ["audit-event-count"]));
-  const doctor = spawnSync(process.execPath, [cliPath(), "doctor", "--dir", dir, "--json", "--wait", "30"], {
+  const doctor = spawnSync(...cliCommand(["doctor", "--dir", dir, "--json", "--wait", "30"]), {
     env: { ...process.env, ...env },
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
-import { cliPath as cliUnderTest, reporter } from "../../../scripts/conformance/suite-kit.mjs";
+import { cliCommand, reporter } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live E2E for the CLI browser-handoff login (ADR-0017): enrolls a passkey
  * via a recovery grant, then drives `varlatch login` end to end — CLI opens
@@ -21,7 +21,6 @@ if (!enrollUrl?.includes("#")) {
 }
 const base = new URL(enrollUrl).origin;
 // The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
-const cliPath = cliUnderTest();
 const { check, finish } = reporter();
 
 const browser = await chromium.launch();
@@ -58,7 +57,7 @@ const home = mkdtempSync(join(tmpdir(), "varlatch-login-e2e-"));
 // The human's browser handoff: VARLATCH_ASSISTED=0, as in the strict-run
 // E2E, so a coding agent's marker in the host shell does not switch on
 // assisted mode, where login starts a device sign-in instead (ADR-0043).
-const cli = spawn("node", [cliPath, "login", "--server", base], {
+const cli = spawn(...cliCommand(["login", "--server", base]), {
   env: { ...process.env, VARLATCH_ASSISTED: "0", VARLATCH_CONFIG_DIR: home, DISPLAY: "" },
 });
 let out = "";
