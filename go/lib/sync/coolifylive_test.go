@@ -10,10 +10,12 @@ package sync
 // never in CI (the coolifylive build tag), run by hand:
 //
 //	cd robotsson-monorepo/scripts && varlatch run -- sh -c '
-//	  COOLIFY_LIVE_TOKEN=$COOLIFY_LAB_ROOT_TOKEN \
 //	  COOLIFY_LIVE_URL=https://coolify-lab.private.robotsson.be \
 //	  COOLIFY_LIVE_SERVER=<the lab server uuid> COOLIFY_LIVE_RUN=<a new dir> \
 //	  go test -tags coolifylive -count=1 -v -run <test> ./lib/sync'
+//
+// The token is COOLIFY_LAB_ROOT_TOKEN, as varlatch run gives it (the lab's
+// root-team token), and no other variable.
 //
 // TestCoolifyLivePreflight only reads (the instance's version and its
 // servers' names and uuids). TestCoolifyLiveServices and
@@ -24,12 +26,15 @@ package sync
 // The guard: every request refuses unless COOLIFY_LIVE_URL's origin is
 // exactly the lab's (labOrigin, normalised), and before any change the
 // instance must list the server COOLIFY_LIVE_SERVER exactly once. Every
-// name carries the run's prefix (VARLATCH_CANARY_<RUN>_, projects
-// varlatch-coolify-…-<run>); every created resource is recorded in
-// COOLIFY_LIVE_RUN/ids.env before anything else, and cleanup deletes the
-// shared variables first, then the resources, then checks that nothing
-// with the prefix is left. Answers are never printed (the token reads
-// sensitive values): only statuses and named fields.
+// name carries the run's id (variables VARLATCH_CANARY_<RUN>_…, projects,
+// services and applications …-<run>); every creation is recorded in
+// COOLIFY_LIVE_RUN/ids.env before it is sent (and its uuid once known).
+// Cleanup does not rely on that record: it lists every scope (projects,
+// services, applications, the team's, the server's and each run project's
+// and environment's shared variables) for the run's id, deletes what it
+// finds (shared variables first), and records CLEANED only once every
+// listing was read and none holds the run's id. Answers are never printed
+// (the token reads sensitive values): only statuses and named fields.
 
 import (
 	"bytes"
@@ -43,6 +48,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -99,9 +106,9 @@ type liveResource struct {
 func newLive(t *testing.T) *live {
 	t.Helper()
 	base := strings.TrimRight(os.Getenv("COOLIFY_LIVE_URL"), "/")
-	token := os.Getenv("COOLIFY_LIVE_TOKEN")
+	token := os.Getenv("COOLIFY_LAB_ROOT_TOKEN")
 	if base == "" || token == "" {
-		t.Skip("COOLIFY_LIVE_URL and COOLIFY_LIVE_TOKEN are not set: the live checks run by hand against the lab Coolify")
+		t.Skip("COOLIFY_LIVE_URL and COOLIFY_LAB_ROOT_TOKEN (from varlatch run) are not set: the live checks run by hand against the lab Coolify")
 	}
 	if got := normalOrigin(base); got != labOrigin {
 		t.Fatalf("refused: COOLIFY_LIVE_URL is %q, not the lab Coolify (%s); nothing was sent", got, labOrigin)
@@ -155,15 +162,21 @@ func (l *live) instance() {
 // name is a variable name with the run's prefix.
 func (l *live) name(n string) string { return "VARLATCH_CANARY_" + strings.ToUpper(l.run) + "_" + n }
 
-// record appends a created resource to the run's ids.env (before anything
-// else uses it) and keeps it for cleanup.
-func (l *live) record(kind, uuid, del, gone string) {
+// intend appends what is about to be created to the run's ids.env, before
+// the request that creates it: its kind, its name (with the run's id) and
+// where it is created.
+func (l *live) intend(kind, name, where string) {
+	l.t.Helper()
+	l.appendRecord(map[string]string{"intent": kind, "name": name, "where": where})
+}
+
+func (l *live) appendRecord(v any) {
 	l.t.Helper()
 	f, err := os.OpenFile(filepath.Join(l.dir, "ids.env"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	line, _ := json.Marshal(liveResource{Kind: kind, UUID: uuid, Delete: del, Gone: gone})
+	line, _ := json.Marshal(v)
 	_, err = f.Write(append(line, '\n'))
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -171,7 +184,14 @@ func (l *live) record(kind, uuid, del, gone string) {
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	if kind != "RUN" {
+}
+
+// record appends a created resource to the run's ids.env (before anything
+// else uses it) and keeps it for cleanup's first round.
+func (l *live) record(kind, uuid, del, gone string) {
+	l.t.Helper()
+	l.appendRecord(liveResource{Kind: kind, UUID: uuid, Delete: del, Gone: gone})
+	if kind != "RUN" && kind != "CLEANED" {
 		l.mu.Lock()
 		l.created = append(l.created, liveResource{Kind: kind, UUID: uuid, Delete: del, Gone: gone})
 		l.mu.Unlock()
@@ -266,11 +286,11 @@ func (l *live) req(dest Fields, usage *UsageReport) *Request {
 	return &Request{BaseIdentity: base, Destination: dest, Credential: l.token, Client: l.client, Usage: usage}
 }
 
-// finish cleans up (shared variables first), checks that nothing with
-// the run's prefix is left, and fails the test on any failed check.
+// finish cleans up and fails the test on any failed check (after the
+// cleanup, which runs first whatever happened).
 func (l *live) finish() {
 	l.t.Helper()
-	l.cleanup(l.created)
+	l.cleanup()
 	if l.failed > 0 {
 		l.t.Errorf("%d of %d checks failed", l.failed, len(l.checks))
 	} else {
@@ -278,96 +298,157 @@ func (l *live) finish() {
 	}
 }
 
-// cleanup deletes rs, shared variables first, each until a GET says it is
-// gone (or, for a shared variable, until its scope's listing no longer has
-// the run's names), then lists every scope for the prefix.
-func (l *live) cleanup(rs []liveResource) {
-	l.t.Helper()
-	order := map[string]int{"shared-team": 0, "shared-server": 1, "shared-environment": 2, "shared-project": 3, "application": 4, "service": 5, "project": 6}
-	sorted := append([]liveResource(nil), rs...)
-	for i := range sorted {
-		for j := i + 1; j < len(sorted); j++ {
-			if order[sorted[j].Kind] < order[sorted[i].Kind] {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
-	for _, r := range sorted {
-		ok := false
-		for i := 0; i < 24 && !ok; i++ {
-			code := l.try("DELETE", r.Delete)
-			if code == 200 || code == 204 || code == 404 {
-				ok = r.Gone == "" || l.gone(r.Gone)
-			}
-			if !ok {
-				time.Sleep(5 * time.Second)
-			}
-		}
-		l.t.Logf("cleanup %s %s: %v", r.Kind, r.UUID, ok)
-		if !ok {
-			l.t.Errorf("cleanup: %s %s is not gone; its record is in %s", r.Kind, r.UUID, filepath.Join(l.dir, "ids.env"))
-		}
-	}
-	if left := l.leftovers(); len(left) > 0 {
-		l.t.Errorf("cleanup: left with the run's prefix: %s", strings.Join(left, ", "))
-		return
-	}
-	if l.run != "" {
-		l.record("CLEANED", l.run, "", "")
-	}
-}
+// found is something the run left: its kind, a label (a name with the
+// run's id, or a uuid; never a value) and the path that deletes it.
+type found struct{ kind, label, del string }
 
-func (l *live) gone(path string) bool { return l.try("GET", path) == 404 }
-
-// leftovers lists what still carries the run's prefix: projects by name,
-// shared variables of the team, the server and every project by key.
-func (l *live) leftovers() []string {
-	if l.run == "" {
-		return nil
-	}
-	var left []string
-	read := func(path string, out any) int {
+// survey lists every scope for what carries the run's id: projects,
+// services and applications by name; the team's, the server's and each
+// run project's and its environment's shared variables by key. complete
+// is false when a listing could not be read or decoded, or an item has no
+// id to delete it by: then nothing is confirmed.
+func (l *live) survey() (left []found, complete bool) {
+	complete = true
+	list := func(path string) ([]map[string]any, bool) {
 		code, b, err := l.send("GET", path, nil)
-		if err != nil {
-			return 0
+		if err != nil || code != 200 {
+			return nil, false
 		}
-		if code == 200 {
-			_ = json.Unmarshal(b, out)
+		var rows []map[string]any
+		if json.Unmarshal(b, &rows) != nil {
+			return nil, false
 		}
-		return code
+		return rows, true
 	}
-	var projects []struct{ UUID, Name string }
-	if code := read("/projects", &projects); code != 200 {
-		return []string{fmt.Sprintf("(projects unreadable: HTTP %d)", code)}
-	}
-	for _, p := range projects {
-		if strings.Contains(p.Name, l.run) {
-			left = append(left, "project "+p.Name)
+	str := func(m map[string]any, k string) string { s, _ := m[k].(string); return s }
+	idOf := func(m map[string]any) string {
+		switch v := m["id"].(type) {
+		case float64:
+			return strconv.FormatInt(int64(v), 10)
+		case string:
+			if v != "" {
+				return v
+			}
 		}
+		return str(m, "uuid")
 	}
 	prefix := l.name("")
-	for _, path := range []string{"/team/envs", "/servers/" + l.server + "/envs"} {
-		var envs []struct{ Key string }
-		if code := read(path, &envs); code != 200 {
-			left = append(left, fmt.Sprintf("(%s unreadable: HTTP %d)", path, code))
-			continue
+	shared := func(scope, path string) {
+		rows, ok := list(path)
+		if !ok {
+			complete = false
+			return
 		}
-		for _, e := range envs {
-			if strings.HasPrefix(e.Key, prefix) {
-				left = append(left, path+" "+e.Key)
+		for _, r := range rows {
+			if key := str(r, "key"); strings.HasPrefix(key, prefix) {
+				if id := idOf(r); id != "" {
+					left = append(left, found{"shared-" + scope, key, path + "/" + id})
+				} else {
+					complete = false
+				}
 			}
 		}
 	}
-	return left
+	shared("team", "/team/envs")
+	shared("server", "/servers/"+l.server+"/envs")
+	projects, ok := list("/projects")
+	if !ok {
+		complete = false
+	}
+	var runProjects []string
+	for _, p := range projects {
+		if strings.Contains(str(p, "name"), l.run) {
+			if uuid := str(p, "uuid"); uuid != "" {
+				runProjects = append(runProjects, uuid)
+			} else {
+				complete = false
+			}
+		}
+	}
+	for _, uuid := range runProjects {
+		shared("project", "/projects/"+uuid+"/envs")
+		shared("environment", "/projects/"+uuid+"/environments/production/envs")
+	}
+	for _, kind := range []string{"application", "service"} {
+		rows, ok := list("/" + kind + "s")
+		if !ok {
+			complete = false
+			continue
+		}
+		for _, r := range rows {
+			if name := str(r, "name"); strings.Contains(name, l.run) {
+				if uuid := str(r, "uuid"); uuid != "" {
+					left = append(left, found{kind, name, "/" + kind + "s/" + uuid + "?delete_configurations=true&delete_volumes=true&docker_cleanup=true&delete_connected_networks=true"})
+				} else {
+					complete = false
+				}
+			}
+		}
+	}
+	for _, uuid := range runProjects {
+		left = append(left, found{"project", uuid, "/projects/" + uuid})
+	}
+	return left, complete
 }
+
+// cleanup deletes what the run left, recorded or not: first the shared
+// variables it recorded, then whatever the survey finds, shared variables
+// first, round after round (two minutes at most), until every listing is
+// read and none holds the run's id; only then is CLEANED recorded.
+// Otherwise the test fails naming what is left, and TestCoolifyLiveCleanup
+// can finish it.
+func (l *live) cleanup() {
+	l.t.Helper()
+	if l.run == "" {
+		return
+	}
+	for _, r := range l.created {
+		if strings.HasPrefix(r.Kind, "shared-") {
+			l.t.Logf("cleanup %s %s: HTTP %d", r.Kind, r.UUID, l.try("DELETE", r.Delete))
+		}
+	}
+	var left []found
+	complete := false
+	for round := 0; round < 24; round++ {
+		if left, complete = l.survey(); complete && len(left) == 0 {
+			l.record("CLEANED", l.run, "", "")
+			l.t.Logf("cleanup: every scope listed, nothing with run %s left", l.run)
+			return
+		}
+		for _, f := range left {
+			l.t.Logf("cleanup %s %s: HTTP %d", f.kind, f.label, l.try("DELETE", f.del))
+		}
+		time.Sleep(5 * time.Second)
+	}
+	var labels []string
+	for _, f := range left {
+		labels = append(labels, f.kind+" "+f.label)
+	}
+	if !complete {
+		labels = append(labels, "(a listing could not be read: nothing is confirmed)")
+	}
+	l.t.Errorf("cleanup not confirmed for run %s (record %s): %s", l.run, filepath.Join(l.dir, "ids.env"), strings.Join(labels, ", "))
+}
+
+// version is the instance's version, if its answer is one (a version
+// string, quoted or not); nothing else of the answer is shown.
+func (l *live) version() string {
+	code, b := l.do("GET", "/version", nil)
+	v := strings.Trim(strings.TrimSpace(string(b)), `"`)
+	if code != 200 || !versionText.MatchString(v) {
+		return fmt.Sprintf("(HTTP %d, not a version)", code)
+	}
+	return v
+}
+
+var versionText = regexp.MustCompile(`^v?[0-9]+([.][0-9]+){1,3}([-.][A-Za-z0-9.]+)?$`)
 
 // TestCoolifyLivePreflight only reads: the instance's version and its
 // servers' names and uuids (for COOLIFY_LIVE_SERVER). The guard on the
 // origin applies; nothing is changed.
 func TestCoolifyLivePreflight(t *testing.T) {
 	l := newLive(t)
-	code, b := l.do("GET", "/version", nil)
-	t.Logf("version: HTTP %d %s", code, strings.TrimSpace(string(b)))
+	t.Logf("version: %s", l.version())
 	var servers []struct {
 		UUID, Name string
 		Settings   struct {
@@ -382,8 +463,9 @@ func TestCoolifyLivePreflight(t *testing.T) {
 	}
 }
 
-// TestCoolifyLiveCleanup deletes what the run in COOLIFY_LIVE_CLEANUP
-// recorded and did not clean up (an interrupted run).
+// TestCoolifyLiveCleanup finishes the cleanup of the run in
+// COOLIFY_LIVE_CLEANUP (a run's directory: its ids.env names the run's id),
+// by the same survey: everything with the run's id, recorded or not.
 func TestCoolifyLiveCleanup(t *testing.T) {
 	dir := os.Getenv("COOLIFY_LIVE_CLEANUP")
 	if dir == "" {
@@ -391,27 +473,24 @@ func TestCoolifyLiveCleanup(t *testing.T) {
 	}
 	l := newLive(t)
 	l.dir = dir
+	if l.server == "" {
+		t.Fatal("COOLIFY_LIVE_SERVER is required")
+	}
 	l.instance()
 	b, err := os.ReadFile(filepath.Join(dir, "ids.env"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rs []liveResource
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		var r liveResource
-		if json.Unmarshal([]byte(line), &r) != nil {
-			continue
-		}
-		switch r.Kind {
-		case "RUN":
+		if json.Unmarshal([]byte(line), &r) == nil && r.Kind == "RUN" {
 			l.run = r.UUID
-		case "CLEANED":
-			t.Logf("run %s was cleaned up already", r.UUID)
-		default:
-			rs = append(rs, r)
 		}
 	}
-	l.cleanup(rs)
+	if l.run == "" {
+		t.Fatal("ids.env names no run")
+	}
+	l.cleanup()
 }
 
 // liveCtx is the checks' context: each call is bounded by the client's

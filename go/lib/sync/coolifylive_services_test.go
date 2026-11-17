@@ -32,26 +32,7 @@ func TestCoolifyLiveServices(t *testing.T) {
 	n := l.name
 	P := n("")
 
-	compose := `services:
-  probe:
-    image: busybox:1.37
-    command: ["sh", "-c", "env | od -An -tx1 | tr -d ' \\n'; echo; sleep 2147483647"]
-    environment:
-      ` + P + `SHADOWED: fixed-in-compose
-      ` + P + `REFERENCED: ${` + P + `REFERENCED}
-      ` + P + `DEFAULTED: ${` + P + `DEFAULTED:-from-compose}
-      ` + P + `DEFAULTED_RAW: ${` + P + `DEFAULTED_RAW:-from-compose}
-      ` + P + `ESCAPED_REF: "$` + P + `ESCAPED_REF"
-  lister:
-    image: busybox:1.37
-    command: ["sh", "-c", "env | od -An -tx1 | tr -d ' \\n'; echo; sleep 2147483647"]
-    environment:
-      - ` + P + `BARE_LIST
-      - ` + P + `LIST_SET=from-list
-  other:
-    image: busybox:1.37
-    command: ["sh", "-c", "env | od -An -tx1 | tr -d ' \\n'; echo; sleep 2147483647"]
-`
+	compose := servicesCompose(P)
 	type kv struct{ short, value string }
 	values := []kv{
 		{"PLAIN", "plain-canary-1"}, {"DOLLARS", "pa$$word$HOME${X}"}, {"HASH", "abc #x"}, {"MULTI", "line1\nline2"},
@@ -61,17 +42,16 @@ func TestCoolifyLiveServices(t *testing.T) {
 	}
 	refused := []kv{{"QUOTE", "it's"}, {"TRAIL", "x "}, {"SHARED", "{{environment.X}}"}}
 
-	var version string
-	_, vb := l.do("GET", "/version", nil)
-	version = strings.TrimSpace(string(vb))
-	t.Logf("instance version: %s", version)
+	t.Logf("instance version: %s", l.version())
 
 	var project struct{ UUID string }
+	l.intend("project", "varlatch-coolify-services-"+l.run, "/projects")
 	if code := l.json("POST", "/projects", map[string]any{"name": "varlatch-coolify-services-" + l.run, "description": "Temporary Varlatch adapter live test " + l.run + ", deleted afterwards"}, &project); project.UUID == "" {
 		t.Fatalf("project not created (HTTP %d)", code)
 	}
 	l.record("project", project.UUID, "/projects/"+project.UUID, "/projects/"+project.UUID)
 	var created struct{ UUID string }
+	l.intend("service", "varlatch-probe-"+l.run, "/services in project "+project.UUID)
 	code := l.json("POST", "/services", map[string]any{
 		"project_uuid": project.UUID, "environment_name": "production", "server_uuid": l.server,
 		"name": "varlatch-probe-" + l.run, "docker_compose_raw": base64.StdEncoding.EncodeToString([]byte(compose)), "instant_deploy": false,
@@ -319,3 +299,30 @@ func outcomeText(o []NameOutcome, err error) string {
 func httpStatus(code int) string { return "HTTP " + itoaLive(code) }
 
 func itoaLive(n int) string { b, _ := json.Marshal(n); return string(b) }
+
+// servicesCompose is the service's compose file, its names with the run's
+// prefix P. ESCAPED_REF's value is a YAML escape of "$" (as in the
+// TypeScript fixture), so the reference appears only once the YAML is
+// decoded.
+func servicesCompose(P string) string {
+	return `services:
+  probe:
+    image: busybox:1.37
+    command: ["sh", "-c", "env | od -An -tx1 | tr -d ' \\n'; echo; sleep 2147483647"]
+    environment:
+      ` + P + `SHADOWED: fixed-in-compose
+      ` + P + `REFERENCED: ${` + P + `REFERENCED}
+      ` + P + `DEFAULTED: ${` + P + `DEFAULTED:-from-compose}
+      ` + P + `DEFAULTED_RAW: ${` + P + `DEFAULTED_RAW:-from-compose}
+      ` + P + `ESCAPED_REF: "\u0024` + P + `ESCAPED_REF"
+  lister:
+    image: busybox:1.37
+    command: ["sh", "-c", "env | od -An -tx1 | tr -d ' \\n'; echo; sleep 2147483647"]
+    environment:
+      - ` + P + `BARE_LIST
+      - ` + P + `LIST_SET=from-list
+  other:
+    image: busybox:1.37
+    command: ["sh", "-c", "env | od -An -tx1 | tr -d ' \\n'; echo; sleep 2147483647"]
+`
+}

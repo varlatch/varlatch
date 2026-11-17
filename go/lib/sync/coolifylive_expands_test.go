@@ -50,10 +50,10 @@ func TestCoolifyLiveExpands(t *testing.T) {
 		expected[k] = strings.ToLower(k) + "-sentinel-" + l.run
 	}
 
-	_, vb := l.do("GET", "/version", nil)
-	t.Logf("instance version: %s", strings.TrimSpace(string(vb)))
+	t.Logf("instance version: %s", l.version())
 
 	var project struct{ UUID string }
+	l.intend("project", "varlatch-coolify-expands-"+l.run, "/projects")
 	if code := l.json("POST", "/projects", map[string]any{"name": "varlatch-coolify-expands-" + l.run, "description": "Temporary Varlatch adapter live test " + l.run + ", deleted afterwards"}, &project); project.UUID == "" {
 		t.Fatalf("project not created (HTTP %d)", code)
 	}
@@ -62,6 +62,7 @@ func TestCoolifyLiveExpands(t *testing.T) {
 	// The application first; the shared variables right before the writes
 	// that use them, so that they live as short a time as they can.
 	var app struct{ UUID string }
+	l.intend("application", "varlatch-expands-probe-"+l.run, "/applications/public in project "+project.UUID)
 	code := l.json("POST", "/applications/public", map[string]any{
 		"project_uuid": project.UUID, "environment_name": "production", "server_uuid": l.server,
 		"name": "varlatch-expands-probe-" + l.run, "git_repository": "https://github.com/varlatch/varlatch",
@@ -88,6 +89,7 @@ func TestCoolifyLiveExpands(t *testing.T) {
 			ID   any
 			UUID string
 		}
+		l.intend("shared-"+scope, key, path)
 		code := l.json("POST", path, map[string]any{"key": key, "value": value}, &r)
 		id := r.UUID
 		if f, ok := r.ID.(float64); ok && id == "" {
