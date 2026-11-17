@@ -274,10 +274,15 @@ func (db *DB) runBatch(batch []*job) {
 
 	if err := db.ensureWriter(); err != nil {
 		fail("writer", err)
-	} else if _, err := db.wconn.ExecContext(bg, "BEGIN IMMEDIATE"); err != nil {
-		fail("begin", err)
 	} else {
-		ws.batchActive.Store(true)
+		// The g9a build's WAL count starts at the batch (timing_on.go);
+		// elsewhere this reads nothing.
+		db.walWritten()
+		if _, err := db.wconn.ExecContext(bg, "BEGIN IMMEDIATE"); err != nil {
+			fail("begin", err)
+		} else {
+			ws.batchActive.Store(true)
+		}
 	}
 	for i, j := range batch {
 		if fatal != nil {
@@ -356,16 +361,20 @@ func (db *DB) runBatch(batch []*job) {
 	if db.opts.OnCommit != nil {
 		db.opts.OnCommit()
 	}
-	ownErrors := 0
+	ownErrors, jobs := 0, 0
 	for i := range batch {
-		if ran[i] && results[i] != nil {
-			ownErrors++
+		if ran[i] {
+			jobs++
+			if results[i] != nil {
+				ownErrors++
+			}
 		}
 	}
 	db.m.batch(len(batch), ownErrors, false, time.Since(t0), commit)
+	wal := db.walWritten()
 	for i, j := range batch {
 		if ran[i] {
-			j.timing.committed(commit)
+			j.timing.committed(commit, wal, jobs)
 			j.done <- results[i]
 		}
 	}

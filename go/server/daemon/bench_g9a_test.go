@@ -55,7 +55,12 @@ func (l *settingsLog) last(t *testing.T) storage.Settings {
 func benchRun(t *testing.T, p g9a.Plan, fn func(base string, manifest []g9a.ManifestEntry)) string {
 	t.Helper()
 	data, out := t.TempDir(), t.TempDir()
-	conf, err := benchInstallation(data, out, "127.0.0.1:0")
+	coolify, err := startBenchCoolify(benchProjects * benchEnvsPer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(coolify.close)
+	conf, err := benchInstallation(data, out, "127.0.0.1:0", coolify.Port())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +68,7 @@ func benchRun(t *testing.T, p g9a.Plan, fn func(base string, manifest []g9a.Mani
 	done := make(chan int, 1)
 	var stderr syncBuffer
 	go func() {
-		done <- benchServe(Options{ConfigPath: conf, Stderr: &stderr, Signals: make(chan os.Signal), Ready: func(a net.Addr) { ready <- a.String() }}, p, data, out, 30*time.Second)
+		done <- benchServe(Options{ConfigPath: conf, Stderr: &stderr, Signals: make(chan os.Signal), Ready: func(a net.Addr) { ready <- a.String() }}, p, data, out, 30*time.Second, coolify)
 	}()
 	var base string
 	select {
@@ -166,17 +171,19 @@ func TestBenchSettingsAreProduction(t *testing.T) {
 }
 
 // A short run: W1 seeded in the production tables, a disclosure with the
-// manifest's credential, and converge runs whose writes are reconcileTarget's
-// successful path (2k + 7 commits per Target: k written ledger entries, the
-// three sync.* events, the lease released and the run's row deleted).
+// manifest's credential, and converge runs on the real engine against the
+// run's Coolify: before each, k values changed in every Target's
+// environment; each Target's run writes them and reports its commits and
+// the WAL bytes they wrote.
 func TestBenchRun(t *testing.T) {
 	p := quickPlan()
-	// One converge run, at 3 s (the next would be after the load): over 20
-	// Targets one takes a few seconds, each Target's provider call 200 ms.
+	// One converge run, at 3 s (the next would be after the load), with a
+	// provider call of 5 ms so that it ends in time.
 	p.Phases = []g9a.Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 1, Seconds: 4}}
 	p.Backups = []g9a.Backup{{Phase: "p", AtSeconds: 1}}
 	p.ConvergeEverySeconds = 3
 	p.ChangesPerRun = 3
+	p.ProviderDelayMs = 5
 	out := benchRun(t, p, func(base string, manifest []g9a.ManifestEntry) {
 		if len(manifest) != 20 {
 			t.Fatalf("%d manifest entries", len(manifest))
@@ -249,7 +256,10 @@ func TestBenchRun(t *testing.T) {
 	for _, e := range events {
 		switch e.Ev {
 		case g9a.EvConvergeEnd:
-			if e.Err != "" || e.Targets != 20 || e.Values != 20*p.ChangesPerRun {
+			// Each Target's k values written, a call each after reading
+			// its variables; the engine's commits and their WAL bytes.
+			if e.Err != "" || e.Targets != 20 || e.Values != 20*p.ChangesPerRun || e.Calls < int64(20*(p.ChangesPerRun+1)) ||
+				e.Commits < 20*p.ChangesPerRun || e.WALBytes <= 0 || e.EngineUs <= 0 {
 				t.Fatalf("converge: %+v", e)
 			}
 			runs++
@@ -268,6 +278,54 @@ func TestBenchRun(t *testing.T) {
 	}
 	if runs == 0 {
 		t.Fatal("no converge run")
+	}
+	// converge.jsonl: each run's Targets, every commit with its time and
+	// its batch's WAL bytes.
+	lines, err := g9a.ReadConverge(filepath.Join(out, g9a.FileConverge))
+	if err != nil || len(lines) != runs {
+		t.Fatalf("%s: %d lines, %d runs: %v", g9a.FileConverge, len(lines), runs, err)
+	}
+	// The successful path's commits, 2k + 7, in order (CONVERGE.md).
+	want := []string{"lease", "values-decrypted", "push-attempted"}
+	for range p.ChangesPerRun {
+		want = append(want, "intent-write")
+	}
+	for range p.ChangesPerRun {
+		want = append(want, "write-outcome")
+	}
+	want = append(want, "push-result", "result", "lease-release", "run-row")
+	for _, l := range lines {
+		if len(l.Runs) != 20 {
+			t.Fatalf("a run of %d Targets", len(l.Runs))
+		}
+		for _, r := range l.Runs {
+			if r.Commits != len(r.Jobs) || r.Commits != 2*p.ChangesPerRun+7 || r.WALBytes <= 0 || r.DurationUs <= 0 {
+				t.Fatalf("Target run %+v", r)
+			}
+			var points []string
+			var inJobs, completion int64
+			for _, j := range r.Jobs {
+				points = append(points, j.Point)
+				inJobs += j.InJobUs
+				completion += j.CompletionUs
+				// A job's body and its wait for its batch, apart.
+				if j.InJobUs < 0 || j.CompletionUs < 0 || j.QueuedUs < 0 {
+					t.Fatalf("commit times %+v of %s", j, r.Target)
+				}
+			}
+			// Each job's time is rounded to the microsecond, the run's total once.
+			near := func(a, b int64) bool { return max(a-b, b-a) <= int64(len(r.Jobs)) }
+			if !reflect.DeepEqual(points, want) || !near(inJobs, r.InJobsUs) || !near(completion, r.CompletionUs) {
+				t.Fatalf("Target run %s: commits %v (want %v), in jobs %d of %d, completion %d of %d", r.Target, points, want, inJobs, r.InJobsUs, completion, r.CompletionUs)
+			}
+			for _, j := range r.Jobs {
+				// A commit may write no page (an update that changed no
+				// row): its WAL bytes may be 0, never less.
+				if j.Point == "" || j.BatchJobs < 1 || j.WALBytes < 0 {
+					t.Fatalf("commit %+v of %s", j, r.Target)
+				}
+			}
+		}
 	}
 
 	// The database the run left: what the converge runs wrote.
@@ -291,21 +349,21 @@ func TestBenchRun(t *testing.T) {
 		q    string
 		want int
 	}{
-		{`SELECT count(*) FROM value_versions`, 5000},
+		// The seed's versions and each run's changes.
+		{`SELECT count(*) FROM value_versions`, 5000 + 20*p.ChangesPerRun*runs},
+		{`SELECT count(*) FROM audit_events WHERE event_type = 'value.written'`, 20 * p.ChangesPerRun * runs},
 		{`SELECT count(*) FROM identities`, 50},
-		{`SELECT count(*) FROM sync_targets WHERE last_result = 'ok' AND lease_expires_at IS NULL AND generation = ?`, 20},
+		// Every Target converged and released: the first pass (every
+		// value) and each run.
+		{`SELECT count(*) FROM sync_targets WHERE failure_count = 0 AND last_result IS NOT NULL AND lease_expires_at IS NULL`, 20},
 		{`SELECT count(*) FROM sync_runs`, 0},
-		{`SELECT count(*) FROM audit_events WHERE event_type = 'sync.values_decrypted'`, 20 * runs},
-		{`SELECT count(*) FROM audit_events WHERE event_type = 'sync.push_attempted'`, 20 * runs},
-		{`SELECT count(*) FROM audit_events WHERE event_type = 'sync.push_result'`, 20 * runs},
-		{`SELECT count(*) FROM sync_ledger WHERE state = 'written'`, 20 * min(runs*p.ChangesPerRun, benchSecretsPer)},
+		{`SELECT count(*) FROM audit_events WHERE event_type = 'sync.values_decrypted'`, 20 * (runs + 1)},
+		{`SELECT count(*) FROM audit_events WHERE event_type = 'sync.push_attempted'`, 20 * (runs + 1)},
+		{`SELECT count(*) FROM audit_events WHERE event_type = 'sync.push_result'`, 20 * (runs + 1)},
+		{`SELECT count(*) FROM sync_ledger WHERE state = 'written'`, 20 * benchSecretsPer},
 		{`SELECT count(*) FROM audit_events WHERE event_type = 'secret.disclosed'`, 20},
 	} {
-		args := []any{}
-		if strings.Contains(c.q, "?") {
-			args = append(args, runs)
-		}
-		if got := count(c.q, args...); got != c.want {
+		if got := count(c.q); got != c.want {
 			t.Errorf("%s: %d, want %d", c.q, got, c.want)
 		}
 	}

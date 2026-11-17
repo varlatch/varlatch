@@ -196,6 +196,11 @@ type Report struct {
 	// Profile is when the server's CPU profile ran (cpu-window.json),
 	// against the load's requests, for diagnosis only.
 	Profile *ProfileWindow `json:"profile,omitempty"`
+	// Converge is the real engine's converge runs' cost (converge.jsonl;
+	// feature-parity decision 7), reported only.
+	Converge *ConvergeCost `json:"converge,omitempty"`
+
+	convergeLines []ConvergeLine
 }
 
 // ProfileWindow is when the CPU profile ran and when the load's requests
@@ -538,6 +543,9 @@ func Analyze(dir string) (*Report, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	if r.convergeLines, err = ReadConverge(filepath.Join(dir, FileConverge)); err != nil {
+		return nil, err
+	}
 	r.analyze(events, reqs, sum)
 	if access == nil {
 		r.missing("no access log: the requests per client address and request window are not shown")
@@ -669,6 +677,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	var backupSpans [][2]int64 // each backup from backup_start to backup_end, unpadded
 	var convergeDur []Request
 	var convergeStart []int64
+	var convergeEnds []Event
 	fullConverges := 0
 	for _, e := range events {
 		// Seeding writes before the run are not part of it; a checkpoint
@@ -728,6 +737,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 		case EvConvergeStart:
 			convergeStart = append(convergeStart, e.T)
 		case EvConvergeEnd:
+			convergeEnds = append(convergeEnds, e)
 			if e.Err != "" {
 				r.fail("converge run ending at %+.1fs: %s", off(e.T, start), e.Err)
 			}
@@ -740,6 +750,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 		}
 	}
 	r.Converges, r.ConvergeMs, r.ConvergesWant = len(convergeDur), stats(convergeDur), p.Converges()
+	r.Converge = convergeCost(convergeEnds, convergeStart, start, r.convergeLines)
 	if fullConverges < r.ConvergesWant {
 		r.missing("%d of the plan's %d converge runs ran over all %d targets during the load", fullConverges, r.ConvergesWant, p.Targets)
 	}
@@ -1190,6 +1201,9 @@ func (r *Report) Markdown() string {
 	fmt.Fprintf(&b, "## Storage settings\n\nThe production build's: %v%s. WAL bound %d bytes, journal_size_limit %d bytes, batches of up to %d jobs (queue %d), %d read connections, PASSIVE every %d ms, snapshots %d pages every %d ms. Pragmas: %v.\n\n",
 		r.System.Production, map[bool]string{true: "", false: " (" + r.System.SettingsNote + ")"}[r.System.SettingsNote == ""], st.WALBound, st.JournalSizeLimit, st.MaxBatch, st.QueueSize, st.ReadConns, st.PassiveEveryMs, st.SnapshotStepPages, st.SnapshotPauseMs, st.Pragmas)
 	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d of %d planned (duration p50 %.0f ms, max %.0f ms). Backups: %d (%d timed, inside their phase); missed: %d.\n\n", r.Converges, r.ConvergesWant, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups, r.TimedBackups, r.MissedBackups)
+	if r.Converge != nil {
+		r.Converge.markdown(&b)
+	}
 	me := r.MemoryEvents
 	fmt.Fprintf(&b, "## Memory\n\nCgroup anon after %gs: max %.1f MiB (limit %.0f MiB). Reported only: RSS max %.1f MiB, memory.current max %.1f MiB. memory.events: high %d, max %d, oom %d, oom_kill %d. memory.max %q, memory.swap.max %q.\n\n",
 		r.Plan.Thresholds.MemoryAfterSeconds, r.MemoryMaxMiB, r.Plan.Thresholds.MemoryMiB, r.RSSMaxMiB, r.CurrentMaxMiB, me.High, me.Max, me.OOM, me.OOMKill, r.System.Cgroup.MemoryMax, r.System.Cgroup.SwapMax)
