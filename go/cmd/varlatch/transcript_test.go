@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/transcript"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 )
@@ -40,6 +41,29 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = "varlatch " + buildinfo.Version + "\n"
 		}
 	},
+	// The User-Agent names the CLI's own version and the platform it runs
+	// on: the recording's, made by TypeScript 0.22.0 on the recorder's
+	// machine, becomes this build's, on this machine, with the same
+	// assisted token (decision 2: the format is kept, the values are the
+	// running CLI's).
+	"user-agent": func(o *transcript.Outcome, _ transcript.Outcome) {
+		for i := range o.Requests {
+			ua, ok := o.Requests[i].Headers["user-agent"]
+			if !ok {
+				continue
+			}
+			m := recordedUserAgent.FindStringSubmatch(ua)
+			if m == nil {
+				continue
+			}
+			headers := map[string]string{}
+			for k, v := range o.Requests[i].Headers {
+				headers[k] = v
+			}
+			headers["user-agent"] = cli.FormatUserAgent(buildinfo.Version, m[1] != "", cli.NodePlatform(), cli.NodeArch())
+			o.Requests[i].Headers = headers
+		}
+	},
 	// An error the TypeScript CLI lets escape (recorded as {{uncaught ...}}):
 	// Node.js prints a stack and exits 1; the Go CLI exits 1 too, with one
 	// line saying what went wrong. Only that stderr is accepted; the status
@@ -50,6 +74,9 @@ var differences = map[string]transcript.Difference{
 		}
 	},
 }
+
+// recordedUserAgent is the TypeScript CLI's User-Agent in a recording.
+var recordedUserAgent = regexp.MustCompile(`^varlatch-cli/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)
 
 // goFailure is one line of the Go CLI's own failure.
 var goFailure = regexp.MustCompile(`^varlatch: [^\n]+\n$`)

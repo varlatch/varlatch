@@ -322,9 +322,48 @@ comes. `verify-release`, which the installers run, is Go's own.
   hand-edited file holding JSON of another shape gives what the TypeScript
   code gives (`lib/jsjson` values, `internal/jsval`'s property reads), and
   where that code throws a `TypeError`, a `*TypeError` (the `uncaught`
-  difference below). The commands `status` (without `--probe`, which is
-  5.1c), `server`, `server use` and `context` are `internal/cli`'s
-  `contextcmds.go`.
+  difference below). The commands `status`, `server`, `server use` and
+  `context` are `internal/cli`'s `contextcmds.go`.
+- `internal/apiclient/`: the client half of `packages/sdk` (slice 5.1c):
+  the transport behaves as Node.js's fetch does for the TypeScript CLI
+  (undici's timing: 10 s to connect, 300 s for the headers and between body
+  chunks, no overall deadline; HTTP/1.1; at most 20 redirects, with 303,
+  and 301 or 302 after a POST, becoming a GET without the body,
+  Authorization dropped when the origin changes, and a redirect to a URL
+  with credentials refused; the Fetch standard's bad ports refused;
+  `Accept: */*`); the requests carry the same
+  Authorization, User-Agent, Content-Type, Approval and Idempotency-Key
+  headers as the SDK's (the TypeScript CLI passes no idempotency key, so
+  neither does the Go CLI); answers come back as `lib/jsjson` values
+  (`Undefined` for none), and error answers as `*APIError` with the
+  server's fields as JavaScript holds them. A 503 `MAINTENANCE` is ridden
+  out within the client's budget (180 s, from the first such answer until
+  the server answers otherwise; `Retry-After` read with `Number()`, so a
+  missing one is 0 and one that is not a number is 5 s, with ±20% jitter).
+  A failure to connect is a `*FetchError` ("fetch failed") with the code
+  `exitCodes.ts`'s `networkFailure` gives (`ECONNREFUSED`, `ENOTFOUND`,
+  ..., else "network error"). `apiclient/v1` holds the request and
+  response types generated from `packages/protocol/openapi.yaml`
+  (oapi-codegen, models only; `go generate ./...`), never imported from
+  `server/api`. `internal/cli`'s `client.go` is how commands use it:
+  `connectClient` (no credential, or one only an agent-safe run's operator
+  holds: 77), the stored credential's expiry warning and the server's
+  `Varlatch-Credential-Expires` warning for `VARLATCH_TOKEN` (once per
+  process, on stderr), the maintenance notice (once per process), and
+  main.ts's mapping of what the client throws to a message and an exit
+  status (a pending step-up approval and a passkey verification 77,
+  maintenance that outlasted the wait 69, any other API error by
+  `apiErrorExit`, a server that cannot be reached 69). `probe.go` is
+  `status --probe`, reading each answer as JavaScript would, so an answer
+  of another shape gives the TypeScript CLI's `TypeError` text as the
+  probe's detail.
+- `testdata/vectors/apiclient.json` (`apps/cli/test/go-vectors-apiclient.test.ts`):
+  what the SDK makes of 45 answers (the value, or the error's fields) and
+  what main.ts's catch prints and exits with for each error, 26 maintenance
+  sequences with the clock and `Math.random` fixed (every wait, the
+  notice, the requests, the results), the expiry warnings, and
+  `encodeURIComponent`. `internal/apiclient` and `internal/cli` replay
+  them through the real transport.
 - `internal/toml/`: `varlatch.toml` as smol-toml 1.9.0 (which the
   TypeScript CLI bundles) reads it: a port of its parser, under its
   BSD-3-Clause license as well (`LICENSE-smol-toml-BSD-3-Clause`, listed in
@@ -400,8 +439,14 @@ it to the recording.
 | --- | --- | --- | --- |
 | `version` | `varlatch --version` prints `varlatch <version> (migration <n>)` | `varlatch <version>` | Decision 6: the migration number is the TypeScript release manifest's; every consumer (installers, menu bar app, tray, omarchy plugin, tap) reads the first two words |
 | `uncaught`: an error no command handles (for example a `credentials.json` entry or a `.varlatch/local.json` holding `null`, or a `varlatch.toml` that is a directory) | escapes `main()`; Node.js prints the source line, its stack trace and its version, and exits 1 (the recorder keeps `{{uncaught <name>: <message>}}`) | `varlatch: <error>`, one line on stderr, exit 1 | A stack trace is not output anyone parses; the status and stdout are compared as recorded |
-| Diagnostics never print credential values | a server URL with a user name and password, configured (`--server`, `VARLATCH_SERVER`, `.varlatch/local.json`, `varlatch.toml`) or stored (`credentials.json`, `settings.json`), is printed as it is by `status`, `server`, `server use` and `context`, in `--json` documents and messages too | the same, with `[redacted]` in place of the user name and password (`clientctx.MaskUserinfo`); a `varlatch.toml` line quoted in an error is masked the same way | Output is printed, logged and pasted into issues; every URL without them is byte for byte the same, and so are the exit status and stdout's shape. Pinned by `internal/cli`'s `TestServerURLsNeverShowUserinfo` and `internal/clientctx`'s `TestMaskUserinfo` |
+| Diagnostics never print credential values | a server URL with a user name and password, configured (`--server`, `VARLATCH_SERVER`, `.varlatch/local.json`, `varlatch.toml`) or stored (`credentials.json`, `settings.json`), is printed as it is by `status` (`--probe` included), `server`, `server use` and `context`, in `--json` documents and messages too, and by the client's messages (not signed in, the expiry warnings); a header value fetch cannot send, or a server URL fetch refuses, is refused with fetch's own message | the same, with `[redacted]` in place of the user name and password (`clientctx.MaskUserinfo`); a `varlatch.toml` line quoted in an error is masked the same way; a refused header value is refused the same way, before anything is sent, with a message that names the header (`the credential contains a character that is not allowed in an HTTP header`) | Output is printed, logged and pasted into issues; every URL without them is byte for byte the same, and so are the exit status and stdout's shape. Pinned by `internal/cli`'s `TestServerURLsNeverShowUserinfo` and `TestClientMessagesNeverShowUserinfo`, `internal/clientctx`'s `TestMaskUserinfo`, `internal/apiclient`'s `TestRefusalsNeverShowCredentials`, and the process test `TestDiagnosticsNeverPrintCredentials` |
 | The Node.js version warning | one line on stderr below a Node.js release's security floor (`VARLATCH_NODE_CHECK=off` hides it) | none | No Node.js; the recorder sets `VARLATCH_NODE_CHECK=off` |
+| `user-agent` (how transcripts compare, not a behaviour) | `varlatch-cli/0.22.0 (<platform>; <arch>[; assisted])` as recorded | the same format with this build's version, platform and processor | Each CLI names itself; the recording's values belong to the recorder's machine |
+| Trust roots | Node.js's bundled Mozilla roots, plus the PEM file `NODE_EXTRA_CA_CERTS` names (Node.js warns once on stderr when it cannot read it) | the system's roots, plus the same file; one it cannot read adds nothing, silently | Decision 4: a self-hosted installation behind a private CA keeps working; the system's roots are where Go and operators keep them |
+| Proxies | fetch reads no proxy from the environment, unless Node.js is started with `NODE_USE_ENV_PROXY=1` | never (`Proxy: nil`) | Decision 4; the Go CLI has no Node.js option to honour |
+| Runtime error wording: the code in `Cannot reach the Varlatch server (<code>)` | the first code in the `fetch failed` error's causes that `exitCodes.ts` names, else "network error" | the same codes from Go's errors: refused, reset, timed out, unreachable host or network by their errno; NXDOMAIN `ENOTFOUND`; a temporary DNS failure `EAI_AGAIN`; a connect or TLS handshake timeout `UND_ERR_CONNECT_TIMEOUT`; a connection closed before the answer `UND_ERR_SOCKET`; anything else "network error" | Decision 2: the exit status (69) is the same; the code is Node.js's own wording, mapped where Go can tell |
+| Request headers decision 2 does not compare | `accept-language: *`, `sec-fetch-mode: cors`, `accept-encoding: gzip, deflate` | none of the first two; `accept-encoding: gzip` (Go decompresses it) | Neither the server nor any consumer reads them |
+| A redirect's relative `Location` | resolved by the WHATWG URL parser | resolved by `apiclient`'s own resolver (absolute, `//host`, `/path`, `?query` and path-relative references), then parsed by `lib/whatwg` | varlatchd sends no redirect; a proxy's is absolute or root-relative |
 
 ## varlatchd
 
@@ -2286,6 +2331,7 @@ Kept, because they are on the wire:
 | `http/app.ts` `listAuditEvents`, the `credentials` sidecar | the page's credentials from a query without `ORDER BY` (`id = ANY($1)`), so the object's member order is PostgreSQL's row order | the table's order (`rowid`), which is PostgreSQL's for a table nothing was deleted from, as the security fixture records | the security fixture's audit listings |
 | PostgreSQL's text and jsonb, under every route | U+0000 in a string written to a text or jsonb column fails the statement: the transaction rolls back and the route answers 500 `INTERNAL`; a lone surrogate reaches a text column as U+FFFD (Node's UTF-8) and fails in jsonb | the same: `write.Text` for text columns (U+0000 refused, lone surrogates as U+FFFD), `jsvalue.JsonbRefuses` for jsonb (`audit.Record`, `write.Idempotent`). **Every later slice applies them to each text or jsonb value it writes**, at the point the TypeScript statement would fail, and records the case in its parity fixture | `server/write` `TestText`; the core fixture's U+0000 and lone-surrogate requests |
 | `domain/oidc.ts` `exchangeOidcToken`, a token whose payload is JSON `null` | `peek.iss` is read outside the try: a `TypeError`, so `POST /v1/oidc/token` answers 500 `INTERNAL` instead of 401 `INVALID_CREDENTIAL`, with no `authentication.failed` event (step 4 defect 5, not a security defect) | the same for now, as the other 500s on bad input; once the TypeScript server is retired (step 7/8), 401 audited as "malformed" | the OIDC fixture's "exchange, a null payload" |
+| `apps/cli/src/main.ts` `probeServer`, an answer of another shape (step 5 defect 14, not a security defect) | the `TypeError`'s message becomes the probe's detail on stdout, and V8 names the expression as the release bundle spells it: esbuild renamed `meta` and `credentials` there, so the detail reads `meta3.capabilities.includes is not a function` or `credentials2.items.find is not a function` | the same text, the bundle's names included (`status --probe --json` is parsed by the menu bar app and the tray) | `testdata/transcripts/5.1c-api-client.json`, the `probe.shape.*` cases |
 
 Not reproduced:
 

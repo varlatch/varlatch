@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 )
@@ -60,6 +61,8 @@ type Run struct {
 	// Command is the command's name, Args what follows it.
 	Command string
 	Args    []string
+	// clients is what main.ts keeps per process for its API clients.
+	clients clientState
 	// everyFailureIsOne: `varlatch scan` documents 1 for every failure, finding
 	// or not (usage, authentication, permission, server), and that meaning is
 	// frozen (ADR-0043 Decision 10); every other command distinguishes them.
@@ -102,7 +105,7 @@ func UsageError(message string) error { return Fail(message, ExitUsage) }
 func Main(args []string, env Env, streams IO) int {
 	taken, given := TakeAssistedOption(args)
 	run := &Run{IO: streams, Env: env, Assisted: ResolveAssisted(given, env)}
-	run.Secrets = &Secrets{Token: run.Getenv("VARLATCH_TOKEN")}
+	run.Secrets = &Secrets{Token: run.Getenv("VARLATCH_TOKEN"), Stored: func() []string { return storedTokens(env) }}
 	resumed, approval, problem := TakeApprovalOption(taken)
 	if problem != "" {
 		return run.finish(UsageError("varlatch: " + problem))
@@ -169,6 +172,7 @@ func (r *Run) finish(err error) int {
 	if err == nil {
 		return ExitOK
 	}
+	err = r.mapClientError(err)
 	var e *exitError
 	if !errors.As(err, &e) {
 		// An error no command turned into a message: TypeScript lets it
@@ -181,6 +185,27 @@ func (r *Run) finish(err error) int {
 		return ExitFailure
 	}
 	return e.code
+}
+
+// storedTokens is safeText.ts's heldCredentials' stored half: every stored
+// credential's token that is a string; an unreadable store adds nothing.
+func storedTokens(env Env) []string {
+	list, err := clientctx.ListCredentials(env)
+	if err != nil {
+		return nil
+	}
+	var tokens []string
+	for _, e := range list {
+		if e.Credential == nil {
+			continue
+		}
+		if token, ok := jsval.Get(e.Credential, "token"); ok {
+			if s, isString := token.(string); isString {
+				tokens = append(tokens, s)
+			}
+		}
+	}
+	return tokens
 }
 
 // println writes one line on stdout, as console.log does (a lone
