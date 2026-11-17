@@ -18,7 +18,6 @@
 package agents
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -717,11 +716,13 @@ func shownPath(root, path string) string {
 }
 
 // pruneEmpty removes, after --remove, the emptied skill directories, and
-// their parents if nothing else is in them.
-func pruneEmpty(root, base string) error {
-	var prune func(dir string) error
-	prune = func(dir string) error {
-		info, err := os.Stat(dir)
+// their parents if nothing else is in them. root is the scope's root;
+// nothing below it that is a link is followed or removed.
+func pruneEmpty(w *writer, root, base string) error {
+	var prune func(rel string) error
+	prune = func(rel string) error {
+		dir := filepath.Join(root, rel)
+		info, err := os.Lstat(dir)
 		if err != nil || !info.IsDir() {
 			return nil
 		}
@@ -731,7 +732,7 @@ func pruneEmpty(root, base string) error {
 		}
 		for _, e := range entries {
 			if e.IsDir() {
-				if err := prune(filepath.Join(dir, e.Name())); err != nil {
+				if err := prune(filepath.Join(rel, e.Name())); err != nil {
 					return err
 				}
 			}
@@ -740,11 +741,11 @@ func pruneEmpty(root, base string) error {
 			return err
 		}
 		if len(entries) == 0 {
-			return rmdir(dir)
+			return w.rmdir(rel)
 		}
 		return nil
 	}
-	if err := prune(filepath.Join(root, base)); err != nil {
+	if err := prune(base); err != nil {
 		return err
 	}
 	for dir := filepath.Dir(filepath.Join(root, base)); dir != root && strings.HasPrefix(dir, root); dir = filepath.Dir(dir) {
@@ -758,7 +759,7 @@ func pruneEmpty(root, base string) error {
 		if len(entries) > 0 {
 			break
 		}
-		if err := rmdir(dir); err != nil {
+		if err := w.rmdir(relative(root, dir)); err != nil {
 			return err
 		}
 	}
@@ -785,10 +786,25 @@ func RunInstall(opts Options) (*Result, error) {
 	if opts.Scope == "user" && opts.MCP {
 		return nil, &Error{"--mcp applies to a project: it edits the project's MCP files", true}
 	}
+	// Nothing is read, written, removed or pruned through a link below the
+	// root: refused before the plan reads anything, and again for every file
+	// it would change, before anything is changed.
+	for _, dir := range scopeDirs(opts) {
+		if err := checkBelow(opts.Root, dir); err != nil {
+			return nil, err
+		}
+	}
 	var p plan
 	if err := p.build(opts); err != nil {
 		return nil, err
 	}
+	for _, file := range p.files {
+		if err := checkBelow(opts.Root, filepath.Dir(relative(opts.Root, file.path))); err != nil {
+			return nil, err
+		}
+	}
+	w := &writer{path: opts.Root}
+	defer w.close()
 	result := &Result{Scope: opts.Scope, Root: opts.Root, Changes: []Change{}, Manual: p.manual, LeftInPlace: p.leftInPlace, Notices: p.notices}
 	for _, file := range p.files {
 		rel := filepath.ToSlash(relative(opts.Root, file.path))
@@ -822,21 +838,18 @@ func RunInstall(opts Options) (*Result, error) {
 			continue
 		}
 		if file.desired == nil {
-			if err := os.Remove(file.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := w.remove(relative(opts.Root, file.path)); err != nil {
 				return nil, err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(file.path), 0o777); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(file.path, []byte(*file.desired), 0o666); err != nil {
+		if err := w.write(relative(opts.Root, file.path), []byte(*file.desired)); err != nil {
 			return nil, err
 		}
 	}
 	if opts.Mode == "remove" {
 		for _, base := range append(slices.Clone(skillBases), ".codex", ".cursor", ".vscode", ".gemini") {
-			if err := pruneEmpty(opts.Root, base); err != nil {
+			if err := pruneEmpty(w, opts.Root, base); err != nil {
 				return nil, err
 			}
 		}

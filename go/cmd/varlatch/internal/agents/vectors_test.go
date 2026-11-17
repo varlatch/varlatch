@@ -163,6 +163,8 @@ func TestInstallVectors(t *testing.T) {
 	v := loadAgentVectors(t)
 	version := v.Value("version").(string)
 	scenarios := cases(t, v, "install", 250)
+	syncWrites = false
+	defer func() { syncWrites = true }()
 	scratch, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
