@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -110,17 +111,32 @@ func TestCheckCost(t *testing.T) {
 	}
 }
 
-// spread's median is the nearest-rank 50th percentile (rank takes a
-// percentage): with the minimum repeated it must not report the minimum.
+// spread's median is the upper middle, as CheckCost reads it: never the
+// minimum (rank given 0.5 for 50 made it so), and of an even count the
+// upper of the two middle values, not their mean or the lower one.
 func TestSpread(t *testing.T) {
 	got := spread([]float64{131840, 131840, 152440, 160680, 160680, 168920, 201880})
 	if want := (Spread{Min: 131840, Median: 160680, Max: 201880}); got != want {
 		t.Fatalf("spread = %+v, want %+v", got, want)
 	}
-	if got := spread([]float64{4, 1, 3, 2}); got.Median != 2 {
-		t.Fatalf("spread of 1..4: median %v, want 2 (nearest rank)", got.Median)
+	if got := spread([]float64{4, 1, 3, 2}); got.Median != 3 {
+		t.Fatalf("spread of 1..4: median %v, want 3 (the upper middle)", got.Median)
+	}
+	// The first CI run of the converge review (44083176486): 20 Targets,
+	// the two middle values 156560 and 160680. The review and CheckCost
+	// quote 160680.
+	run1 := []float64{131840, 131840, 144200, 148320, 148320, 148320, 148320, 152440, 152440, 156560,
+		160680, 168920, 168920, 168920, 168920, 173040, 177160, 185400, 189520, 201880}
+	if got := spread(run1); got.Median != 160680 || got.Median != upperMedian(sortedCopy(run1)) {
+		t.Fatalf("spread of the review's first run: median %v, want 160680", got.Median)
 	}
 	if got := spread(nil); got != (Spread{}) {
 		t.Fatalf("spread(nil) = %+v", got)
 	}
+}
+
+func sortedCopy(v []float64) []float64 {
+	s := slices.Clone(v)
+	slices.Sort(s)
+	return s
 }
