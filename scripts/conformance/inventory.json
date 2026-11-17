@@ -3858,7 +3858,7 @@
       "script": "scripts/test-backup-e2e.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 4: backups, with their recovery suite against the Go server"
+        "none": "Its Go counterparts are Go tests and steps of the Go workflow (.github/workflows/go.yml), not runner checks: go/server/daemon.TestBackupRestoreEndToEnd (a backup while varlatchd stays ready and every disclosure is answered, a restore onto a fresh host from the archive and the two keys, the secret disclosed there, installation.restored naming the archive, a failed restore isolated across restarts and completed by a rerun), go/server/daemon.TestBackupAndMaintenanceCommands (a lease isolates the running server, ends by itself, and its id is refused afterwards), go/server/maintenance.TestLease, go/server/backups.TestFailedRestoreStaysIsolatedAndResumes and go/server/backups.TestRun, all in the step 'Test'; and the steps 'Restore a Go archive in a fresh container' and 'Run the conformance suites against the restored varlatchd'."
       }
     },
     "backup-s3": {
@@ -3866,7 +3866,7 @@
       "script": "scripts/test-backup-s3.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 4: backups, with their S3 transfer suite against the Go server"
+        "none": "Its Go counterpart is a step of the Go workflow (.github/workflows/go.yml), not a runner check: 'G13, the S3 client and the bucket test against a local S3 with Object Lock' runs go/lib/backup.TestS3UploadDownload (one request and multipart at 17 MiB, byte for byte, with and without Object Lock, a missing object), go/lib/backup.TestS3MultipartAbortAndRetry and go/lib/backup.TestBucketTest against the pinned MinIO image, with VARLATCH_REQUIRE_S3=1 so that none of them can skip."
       }
     },
     "backup-upgrade": {
