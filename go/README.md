@@ -43,6 +43,129 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   control characters), `json:` (an RFC 6901 pointer); a Capability's
   targets canonical (at most 4 per item, none repeated, every item covered,
   items and targets in JavaScript's UTF-16 order) and their audit form.
+- `lib/sync/` (step 4.9a): the Platform Adapters of Sync Targets
+  (ADR-0031 §8), a port of `packages/sync` that varlatchd and (in step 5)
+  the CLI's `sync push` and `sync check` share: GitHub Actions secrets
+  (the sealed box, GitHub App listings, token expiry), Coolify
+  applications and services (flags, value fidelity, `platformExpands`,
+  redeploys, the Compose file's usage), and Convex. The adapters take the
+  caller's `*http.Client` and never build one (decision 6;
+  `structure_test.go` checks it): varlatchd passes the outbound policy's,
+  the CLI a plain one. Platform answers are read as `JSON.parse` reads
+  them (JavaScript's property order, repeated keys, lone surrogates kept)
+  by a reader of the package's own (`json.go`), which duplicates
+  `server/jsvalue`'s: that one is AGPL-3.0-or-later, and moving it to
+  `lib` is a licensing decision left to the owner,
+  and a Compose file as the `yaml` package reads it, on
+  `go.yaml.in/yaml/v3`'s nodes. The vectors
+  (`testdata/ts-exchanges.json`, 707 cases) are recorded from the
+  TypeScript adapters while their own tests and extra cases run
+  (`packages/sync/test/go-vectors.test.ts`, regenerated with
+  `VARLATCH_WRITE_GO_VECTORS=1`): each call's arguments, every request
+  (method, URL, headers, body; a sealed value by its length, and by what
+  it opens to when sealed to one of the file's known recipients) and the fake
+  service's answer or transport failure, the send checks, the expiry
+  reports, and the result. Both languages replay the file and must send
+  the same requests and give the same results; the sealed box and Node's
+  base64 decoding have byte vectors of their own, and
+  `TestGitHubSealsEachRequestedValue` opens every value a write sends.
+  The YAML reader follows the `yaml` package where yaml.v3 reads
+  otherwise: the non-specific tag `!` (a string, which yaml.v3 does not
+  report: found from the text at the node's position, after the one
+  leading byte order mark both drop), `%YAML 1.2` (which yaml.v3 refuses:
+  read strictly, then given to it as 1.1, a repeat as a comment),
+  and `!!merge` (a merge key whatever its quoting; a value so tagged is
+  read by no rule, so unknown). Where Go answers otherwise:
+  - A Compose file the Go reader does not read is unreadable, so every
+    verdict is unknown (the conservative reading). The Go reader reads a
+    subset of YAML, an allowlist, and calls everything else unreadable
+    (#218, Sol's fourth round; `inSubset` and `subsetCharacters` in
+    `compose.go`):
+    - characters: printable ones, tab, line feed, and carriage return
+      only before a line feed. No other control character (C0, DEL, C1,
+      NEL), no U+2028 or U+2029, no byte order mark past the first, no
+      U+FFFE or U+FFFF, nothing that is not UTF-8 (a lone surrogate);
+    - quoted and plain scalars, keys included, start and end on one line,
+      only a blank, `:`, `,`, `]` or `}` follows a closing quote, and a
+      double-quoted one holds only YAML 1.2's escapes (not `\'`).
+      Block scalars (`|`, `>`) are read, with a strict header (no `#` run
+      into it, as in `>#-`);
+    - in a block mapping, a scalar value on a later line than its key is
+      indented more than the key (a block sequence there is read);
+    - flow collections (`{…}`, `[…]`) close on the line they open on, with
+      nothing run into the closing bracket,
+      hold no `?` outside quotes (an explicit key: `{?:}` is read two
+      ways), and no plain scalar in them is empty or holds a `:` (where
+      one ends a key, as in `{7:, A: x}`, the parsers disagree);
+    - anchors and aliases named with letters, digits, `_`, `-` and `.`;
+      tags `!`, `!name` or `!!name`, with a name of letters, digits and
+      `-`, and none of the YAML 1.1 types, on a key either (`!!binary <<`);
+    - directives: only `%YAML 1.2`, with a `---` after it; no document
+      end marker (`...`).
+
+    **What this costs.** Some valid Compose files fall outside the subset,
+    and for them every name's verdict is unknown, names the file never
+    mentions included, where TypeScript checks them. Among them:
+    - a flow list spread over lines (`command: [` then one argument per
+      line);
+    - a quoted or plain value continued on the next line (a long
+      `command:` string);
+    - an unquoted `host:container` port in a flow list (`ports:
+      [8080:80]`);
+    - a key and value without a blank in a flow mapping (`{A:x}`).
+
+    For a Coolify service whose file falls outside, a run then does what
+    it does with any compose file it cannot read: it notes that usage
+    could not be checked, holds values containing `$` (the file might
+    copy them where Docker Compose expands `$`), and stops deleting again
+    names it deleted (the file might re-create them). Block style and
+    quoted ports keep a file readable.
+
+    TypeScript reads some of what falls outside: a lone surrogate, quoted
+    or plain values over indented lines, an escaped line break, a flow
+    collection over indented lines, a property alone on its line, the
+    flow forms above. It also
+    reads the YAML 1.1 types (`!!binary`, `!!timestamp`, `!!set`,
+    `!!omap`, `!!pairs`), a mapping or sequence as a key, and an alias
+    inside its own anchor (on which TypeScript overflows its stack and
+    `inspectUsage` throws: defect 6, below). The vectors record each of
+    those (`divergence:`), and each class outside the subset that
+    TypeScript cannot read either (`subset:`).
+  - The differential fuzz: `packages/sync/test/go-compose-fuzz.test.ts`
+    writes mutants of every Compose input the vectors hold, with awkward
+    characters and forms inserted or swapped in, each with TypeScript's
+    verdict. `TestComposeFuzzDifferential` fails on each mutant where Go's
+    verdict is more confident than TypeScript's. It is opt-in, not part of
+    CI (the commands are in the test file). Its mutations include `:` and
+    `?` at flow collections' delimiters, keys and values. At #218's fifth
+    round, wide runs (61 seeds, 1 to 60 and 137, 366,000 mutants each)
+    found nine more classes, each now outside the subset with a vector: a
+    flow key ending in `:`, `{?:}` (and empty flow scalars), text run into
+    a closing quote, or into a closing bracket, a value at its key's
+    column, `...` markers, a block scalar header with a comment run into
+    it, YAML 1.1 tags on keys, and escapes YAML 1.2 does not have. They
+    also found one rule bug, fixed: the key of a merge-tagged value, which
+    `JSON.stringify` drops.
+    The final run had none more confident in Go: 331,287 gave the same
+    verdict, 34,713 were unreadable only in Go.
+  - An error that is not the adapter's own (an answer that is not JSON,
+    or of the wrong shape) keeps JavaScript's name (`SyntaxError`,
+    `TypeError`, `URIError`) with Go's wording, not V8's.
+  - A transport failure is named as Node's fetch names it (`TypeError`,
+    `TimeoutError`, `AbortError`, and `OutboundRefusedError` for the
+    outbound policy's refusal anywhere in the error).
+  - An answer is read up to 32 MiB (`MaxResponseBytes`); TypeScript reads
+    any size.
+  - A Coolify variable whose key is not a string never matches a name
+    and is left out; one whose value is neither a string nor null reads
+    as unreadable (`nil`), which, like TypeScript's non-string, never
+    equals a value.
+  - A Coolify listing's labels sort in `golang.org/x/text`'s root
+    collation, where `localeCompare` uses ICU's; the vectors hold them to
+    the same order on mixed case, accents, digits, punctuation and
+    scripts.
+  - GitHub names uppercase as `toUpperCase` does wherever the result is
+    ASCII (the only names any pattern accepts).
 - `lib/whatwg/`: what the TypeScript code gets from Node.js's URL
   parser, `url.domainToASCII`, `net.isIP` and string functions, as far as
   audit redaction, Destination Selectors and url Config Items use them. Domain to ASCII is
@@ -1554,6 +1677,7 @@ Not reproduced:
 | `mirror/publisher.ts:209` orders Convex mirror events by the text form of `event_order` | events after position 9 can be published out of order | nothing to port: there is no Convex in Go | | none |
 | `domain/securityreport.ts` `countWouldBlock`, a count whose hour and the current hour are both already summarized (possible only after the clock moved back across a summarized hour) | the count is dropped (an error is logged): the stored total is one short | the count goes to the hour after the last summarized one for its key, which no summary covers yet, so every committed count reaches exactly one summary; with a clock that does not move back nothing differs | `server/security` `TestCountsSurviveAClockMovedBack` | none |
 | `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | `server/values` `TestConcurrentExportsUnderReportCountExactly`: 24 concurrent named and all-authorized exports in one bucket all succeed and the counter is exact | none |
+| `packages/sync` `coolifyCompose.ts` `classifyComposeUsage`, a Compose file with an alias inside its own anchor (step 4 defect 6, not a security defect) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack, so the Coolify adapter's `inspectUsage` throws a `RangeError` though it never should: varlatchd's engine catches it (its `usage-unchecked` note says "the destination could not be read"), the CLI's `sync check` fails | `lib/sync` reads the file as unreadable: usage unchecked, every verdict unknown, the note's reason "the service's compose file is too large or could not be read" | `lib/sync` `TestTypeScriptExchanges`, the case "divergence: an alias inside its own anchor" | none |
 
 The TypeScript admin CLI refuses an ordinary command during maintenance
 with `Installation is in maintenance; ordinary admin operations are
