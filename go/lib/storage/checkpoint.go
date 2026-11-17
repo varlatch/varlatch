@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -38,6 +39,14 @@ type CheckpointResult struct {
 // WAL is over WALBound (ADR-0059 Decision 2). Automatic checkpoints are off
 // on every connection. A snapshot holds TRUNCATE off while it runs; the WAL
 // may then pass the bound, and the snapshot truncates it when done.
+//
+// The loop only decides. PASSIVE runs on the checkpointer's connection: it
+// never takes SQLite's write lock, so it blocks nobody. TRUNCATE takes the
+// write lock, and holds it while it copies frames, syncs the database file
+// and waits for readers on older snapshots (up to the busy timeout), so the
+// writer runs it between batches (checkpointLocked): jobs queue behind it
+// as behind a batch, and no BEGIN IMMEDIATE can find the lock taken by a
+// checkpoint and fail with SQLITE_BUSY.
 func (db *DB) checkpointLoop() {
 	defer db.loops.Done()
 	t := time.NewTicker(db.opts.PassiveEvery)
@@ -62,14 +71,49 @@ func (db *DB) checkpointLoop() {
 	}
 }
 
-// checkpointLocked runs one checkpoint on the checkpointer's connection.
-// Any mode but PASSIVE needs ckptMu held.
+// checkpointLocked runs one checkpoint. Any mode but PASSIVE needs ckptMu
+// held. PASSIVE runs on the checkpointer's connection, and is skipped (a
+// zero result) if a TRUNCATE is running: the next tick runs it. Any other
+// mode runs on the writer's connection, on the writer goroutine between
+// batches, or on the checkpointer's once the writer has stopped (Close).
+// It must not be called from the writer goroutine.
 func (db *DB) checkpointLocked(ctx context.Context, mode, trigger string) (CheckpointResult, error) {
+	if mode == "PASSIVE" {
+		if !db.ckptRun.TryLock() {
+			return CheckpointResult{}, nil
+		}
+		defer db.ckptRun.Unlock()
+		return db.checkpointOn(ctx, db.cconn, mode, trigger)
+	}
+	var r CheckpointResult
+	var err error
+	ran, werr := db.onWriterConn(func(c *sql.Conn) error {
+		db.ckptRun.Lock()
+		defer db.ckptRun.Unlock()
+		r, err = db.checkpointOn(bg, c, mode, trigger)
+		return nil
+	})
+	if werr != nil {
+		// The writer had no connection and could not open one.
+		db.m.checkpoint(CheckpointResult{}, werr)
+		db.notify(CheckpointResult{Mode: mode, Trigger: trigger, Start: time.Now()}, werr)
+		return CheckpointResult{}, werr
+	}
+	if !ran {
+		db.ckptRun.Lock()
+		defer db.ckptRun.Unlock()
+		return db.checkpointOn(ctx, db.cconn, mode, trigger)
+	}
+	return r, err
+}
+
+// checkpointOn runs PRAGMA wal_checkpoint(mode) on c and reports it.
+func (db *DB) checkpointOn(ctx context.Context, c *sql.Conn, mode, trigger string) (CheckpointResult, error) {
 	r := CheckpointResult{Mode: mode, Trigger: trigger, WALBefore: db.walSize()}
 	crashPoint(db, "checkpoint")
 	r.Start = time.Now()
 	var busy int
-	err := db.cconn.QueryRowContext(ctx, "PRAGMA wal_checkpoint("+mode+")").Scan(&busy, &r.LogFrames, &r.Checkpointed)
+	err := c.QueryRowContext(ctx, "PRAGMA wal_checkpoint("+mode+")").Scan(&busy, &r.LogFrames, &r.Checkpointed)
 	r.Duration = time.Since(r.Start)
 	r.Busy = busy != 0
 	r.WALAfter = db.walSize()

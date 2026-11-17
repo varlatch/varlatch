@@ -43,7 +43,9 @@ func (j *job) start() bool { return j.state.CompareAndSwap(queued, started) }
 
 // An op runs on the writer's connection between batches (snapshot steps).
 type op struct {
-	fn   func(driverConn any) error
+	fn func(driverConn any) error
+	// conn, if set instead of fn, runs with the writer's *sql.Conn.
+	conn func(*sql.Conn) error
 	done chan error
 }
 
@@ -128,7 +130,29 @@ func (db *DB) Write(ctx context.Context, fn func(tx *Tx) error) error {
 	j.timing.queue(ctx)
 	err := db.submit(ctx, j)
 	j.timing.report()
+	if IsBusy(err) {
+		if note, ok := ctx.Value(busyNoteKey{}).(*atomic.Bool); ok {
+			note.Store(true)
+		}
+	}
 	return err
+}
+
+type busyNoteKey struct{}
+
+// WithBusyNote returns a context whose Write calls note a job that failed
+// because SQLite answered SQLITE_BUSY, and the function that says whether
+// one did. The G9a harness counts busy answers with it: ADR-0059 Decision 2
+// promises clients never see one.
+func WithBusyNote(ctx context.Context) (context.Context, func() bool) {
+	note := new(atomic.Bool)
+	return context.WithValue(ctx, busyNoteKey{}, note), note.Load
+}
+
+// IsBusy reports whether err comes from SQLite answering SQLITE_BUSY.
+func IsBusy(err error) bool {
+	code, ok := sqliteCode(err)
+	return ok && code&0xff == sqlite3.SQLITE_BUSY
 }
 
 // submit queues j and waits for its outcome (Write).
@@ -169,8 +193,34 @@ func (db *DB) onWriter(ctx context.Context, fn func(driverConn any) error) error
 	return <-o.done
 }
 
+// onWriterConn runs fn with the writer's connection on the writer
+// goroutine, between batches. ran is false if the writer had already
+// stopped (Close), and fn did not run; err is the writer's failure to
+// open a connection, if any.
+func (db *DB) onWriterConn(fn func(*sql.Conn) error) (ran bool, err error) {
+	o := &op{conn: fn, done: make(chan error, 1)}
+	select {
+	case db.ops <- o:
+	case <-db.exited:
+		return false, nil
+	}
+	select {
+	case err := <-o.done:
+		return true, err
+	case <-db.exited:
+		// Queued after the writer's last look at the queue: not run.
+		select {
+		case err := <-o.done:
+			return true, err
+		default:
+			return false, nil
+		}
+	}
+}
+
 func (db *DB) writerLoop() {
 	defer db.loops.Done()
+	defer close(db.exited)
 	for {
 		select {
 		case j := <-db.jobs:
@@ -250,6 +300,9 @@ func (db *DB) ensureWriter() error {
 func (db *DB) runOp(o *op) error {
 	if err := db.ensureWriter(); err != nil {
 		return &BatchError{Op: "writer", Err: err}
+	}
+	if o.conn != nil {
+		return o.conn(db.wconn)
 	}
 	return db.wconn.Raw(o.fn)
 }
@@ -350,6 +403,7 @@ func (db *DB) runBatch(batch []*job) {
 		// The metrics are recorded before any caller is released, so that a
 		// caller reading Metrics after its Write returns sees this batch.
 		db.m.batch(len(batch), 0, true, time.Since(t0), 0)
+		db.m.failed(fatal)
 		for i, j := range batch {
 			if ran[i] || j.start() {
 				j.done <- fatal

@@ -11,7 +11,9 @@
 //   - Snapshot: a consistent copy of the database, taken in paced steps on
 //     the writer's connection.
 //
-// A checkpointer bounds the WAL. The settings ADR-0059 fixes (WAL mode,
+// A checkpointer bounds the WAL: PASSIVE checkpoints on its own connection,
+// which block nobody, and TRUNCATE checkpoints run by the writer between
+// batches, so the single writer never waits on SQLite's write lock. The settings ADR-0059 fixes (WAL mode,
 // synchronous=FULL, a busy timeout, foreign keys) are not options.
 //
 // The package knows nothing about Varlatch's schema; it is Apache-2.0 so
@@ -68,9 +70,9 @@ type Options struct {
 	JournalSizeLimit int64
 	// OnCheckpoint, if set, is called after every checkpoint, and each time
 	// a snapshot defers the size trigger (Deferred), on the goroutine that
-	// ran it (the checkpointer, a snapshot or Close), possibly with the
-	// checkpoint lock held: it must return quickly and must not call into
-	// the DB. The G9a harness logs every checkpoint through it.
+	// ran it (the checkpointer for PASSIVE, the writer for TRUNCATE, or
+	// Close), possibly with the checkpoint lock held: it must return
+	// quickly and must not call into the DB. The G9a harness logs every checkpoint through it.
 	OnCheckpoint func(CheckpointResult, error)
 	// OnCommit, if set, is called after every COMMIT that succeeded, on the
 	// writer goroutine, before the batch's jobs are answered: what the
@@ -112,6 +114,8 @@ type DB struct {
 	backup *activeBackup // the snapshot reading from wconn; writer goroutine only
 	jobs   chan *job
 	ops    chan *op
+	// exited is closed when the writer goroutine has returned (Close).
+	exited chan struct{}
 
 	// pageSize is the database's page size, read once by the g9a build's
 	// WAL accounting (timing_on.go); writer goroutine only.
@@ -119,12 +123,17 @@ type DB struct {
 
 	rdb *sql.DB // read-only pool
 
-	// The checkpointer's own connection.
+	// The checkpointer's own connection, for PASSIVE checkpoints (and the
+	// last TRUNCATE, at Close, once the writer has stopped).
 	cdb   *sql.DB
 	cconn *sql.Conn
 	// ckptMu is held by non-passive checkpoints and for a whole snapshot, so
 	// that a snapshot holds TRUNCATE off while it runs.
 	ckptMu sync.Mutex
+	// ckptRun is held while a checkpoint runs, so that a PASSIVE one on the
+	// checkpointer's connection and a TRUNCATE on the writer's never run
+	// at once (SQLite would answer the second busy at once).
+	ckptRun sync.Mutex
 
 	// mu guards closed against concurrent submissions: Close takes it for
 	// writing, so every submission that saw closed == false has been
@@ -193,11 +202,12 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 	}
 
 	db := &DB{
-		opts: opts,
-		ws:   &writerState{},
-		jobs: make(chan *job, opts.QueueSize),
-		ops:  make(chan *op, 16),
-		stop: make(chan struct{}),
+		opts:   opts,
+		ws:     &writerState{},
+		jobs:   make(chan *job, opts.QueueSize),
+		ops:    make(chan *op, 16),
+		exited: make(chan struct{}),
+		stop:   make(chan struct{}),
 	}
 	db.ws.db = db
 	ok := false
