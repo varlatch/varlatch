@@ -550,6 +550,8 @@ func TestTheWrittenReportFollowsAccess(t *testing.T) {
 	}
 	if f := file(); !strings.Contains(f, `"node":{"status":"pass"}`) {
 		t.Fatalf("after the re-pin: %s", f)
+	}
+}
 
 // With the browser endpoint configured, the report names its URL (once
 // the tailnet is known), checks its certificate (browserTls) and both

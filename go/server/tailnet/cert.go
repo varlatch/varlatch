@@ -52,9 +52,10 @@ type loadedCert struct {
 	notBefore, notAfter time.Time
 }
 
-// DecodePair checks a pair for host at now: one key, a chain whose leaf
-// names host exactly (no wildcard, never the subject), valid now, and the
-// key matching it. A non-empty reason says why it cannot be used.
+// DecodePair checks a pair for host at now: one key, a chain whose every
+// certificate parses, whose leaf names host exactly (no wildcard, never
+// the subject) and is valid now, and the key matching it. A non-empty
+// reason says why it cannot be used.
 func DecodePair(certPEM, keyPEM []byte, host string, now time.Time) (*tls.Certificate, time.Time, time.Time, string) {
 	var zero time.Time
 	keys, chain := 0, 0
@@ -74,23 +75,30 @@ func DecodePair(certPEM, keyPEM []byte, host string, now time.Time) (*tls.Certif
 	if keys != 1 || chain == 0 {
 		return nil, zero, zero, "the answer is not one key with a certificate"
 	}
-	var leafDER []byte
-	for rest := certPEM; leafDER == nil; {
+	// Every certificate of the chain: tls.X509KeyPair parses the leaf only,
+	// and a chain a client cannot read must never replace a working pair.
+	var chainCerts []*x509.Certificate
+	for rest := certPEM; ; {
 		var b *pem.Block
 		if b, rest = pem.Decode(rest); b == nil {
 			break
 		}
-		if b.Type == "CERTIFICATE" {
-			leafDER = b.Bytes
+		if b.Type != "CERTIFICATE" {
+			continue
 		}
+		cert, err := x509.ParseCertificate(b.Bytes)
+		if err != nil {
+			if len(chainCerts) == 0 {
+				return nil, zero, zero, "the certificate does not parse"
+			}
+			return nil, zero, zero, "a certificate of its chain does not parse"
+		}
+		chainCerts = append(chainCerts, cert)
 	}
-	if leafDER == nil {
+	if len(chainCerts) == 0 {
 		return nil, zero, zero, "the answer is not one key with a certificate"
 	}
-	leaf, err := x509.ParseCertificate(leafDER)
-	if err != nil {
-		return nil, zero, zero, "the certificate does not parse"
-	}
+	leaf := chainCerts[0]
 	if !namesExactly(leaf, host) {
 		return nil, zero, zero, "the certificate does not name " + host
 	}
@@ -127,6 +135,9 @@ type Certificate struct {
 	log      *slog.Logger
 	onChange func()
 
+	// wake asks Run to fetch now: the host changed (Wake).
+	wake chan struct{}
+
 	mu         sync.Mutex
 	loaded     *loadedCert
 	lastError  string
@@ -147,7 +158,17 @@ func NewCertificate(src CertSource, host func() string, log *slog.Logger, now fu
 	if onChange == nil {
 		onChange = func() {}
 	}
-	return &Certificate{src: src, host: host, now: now, log: log, onChange: onChange}
+	return &Certificate{src: src, host: host, now: now, log: log, onChange: onChange, wake: make(chan struct{}, 1)}
+}
+
+// Wake makes Run fetch at once instead of at its next round: the host
+// changed (enrolment, a re-pin, an adoption), so the loaded pair no longer
+// serves and the new host's is needed now.
+func (c *Certificate) Wake() {
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
 }
 
 // Current is what to serve now: nil while no valid certificate for the
@@ -186,7 +207,7 @@ func (c *Certificate) LastError() string {
 
 // Run fetches now, then keeps refreshing until ctx ends: daily, hourly in
 // a certificate's last two days, and after a failure from 30 seconds,
-// doubling, to an hour.
+// doubling, to an hour; at once when woken (Wake).
 func (c *Certificate) Run(ctx context.Context) {
 	for {
 		ok := c.Refresh(ctx)
@@ -196,6 +217,8 @@ func (c *Certificate) Run(ctx context.Context) {
 			t.Stop()
 			return
 		case <-t.C:
+		case <-c.wake:
+			t.Stop()
 		}
 	}
 }
@@ -318,20 +341,26 @@ func (c *Certificate) TLSConfig() *tls.Config {
 		MinVersion:             tls.VersionTLS12,
 		SessionTicketsDisabled: true,
 		NextProtos:             []string{"http/1.1"},
+		// The name is checked against one reading of the host, and the
+		// certificate taken for that same host.
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			host := c.host()
 			if host == "" || !strings.EqualFold(hello.ServerName, host) {
 				return nil, errors.New("unknown server name")
 			}
-			cert := c.Current()
+			cert := c.CurrentFor(host)
 			if cert == nil {
 				return nil, errors.New("no valid certificate")
 			}
 			return cert, nil
 		},
+		// Again once the handshake is done: the host may have changed (a
+		// re-pin) since the certificate was chosen, and a handshake for the
+		// old name never serves a request.
 		VerifyConnection: func(cs tls.ConnectionState) error {
-			if cs.DidResume || c.Current() == nil {
-				return errors.New("refused: a resumed session, or no valid certificate")
+			host := c.host()
+			if cs.DidResume || host == "" || !strings.EqualFold(cs.ServerName, host) || c.CurrentFor(host) == nil {
+				return errors.New("refused: a resumed session, a name that is not the endpoint's now, or no valid certificate")
 			}
 			return nil
 		},

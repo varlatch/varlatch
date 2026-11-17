@@ -141,6 +141,7 @@ func (m *Manager) openLocked() bool {
 // old period's admitted requests are cancelled before it returns, its
 // resolutions void.
 func (m *Manager) settleLocked() {
+	m.wakeCertificateLocked()
 	if open := m.openLocked(); open != m.open {
 		m.open = open
 		m.gen++
@@ -259,6 +260,8 @@ type browserEndpoint struct {
 	port      int
 	cert      *Certificate
 	listening *bool
+	// woken is the host the certificate was last told of (Wake).
+	woken string
 }
 
 // SetBrowser configures the browser endpoint: the node's host name (its
@@ -271,13 +274,31 @@ func (m *Manager) SetBrowser(hostname string, port int) {
 	m.mu.Unlock()
 }
 
-// SetCertificate gives the browser endpoint's certificate, for the report.
+// SetCertificate gives the browser endpoint's certificate, for the report,
+// and to wake when the host changes.
 func (m *Manager) SetCertificate(c *Certificate) {
 	m.mu.Lock()
 	if m.browser != nil {
 		m.browser.cert = c
+		m.browser.woken = m.browserHostLocked()
 	}
 	m.mu.Unlock()
+}
+
+// wakeCertificateLocked wakes the certificate's refresh when the browser
+// endpoint's host changed (enrolment, a re-pin, an adoption): the loaded
+// pair stops serving at once, and the new host's is fetched now, not at
+// the next daily round.
+func (m *Manager) wakeCertificateLocked() {
+	if m.browser == nil || m.browser.cert == nil {
+		return
+	}
+	if host := m.browserHostLocked(); host != m.browser.woken {
+		m.browser.woken = host
+		if host != "" {
+			m.browser.cert.Wake()
+		}
+	}
 }
 
 // BrowserHost is the browser endpoint's host: the configured name in the

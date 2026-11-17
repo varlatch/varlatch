@@ -119,7 +119,8 @@ func TestCertificateKeepsTheLastValidPair(t *testing.T) {
 	// 90 days: renewal asks for a third of it, at most a week.
 	ca.Fail = nil
 	c.Refresh(ctx)
-	if got := ca.Requests[len(ca.Requests)-1]; got.Domain != certHost || got.MinValidity != 7*day {
+	reqs := ca.Requested()
+	if got := reqs[len(reqs)-1]; got.Domain != certHost || got.MinValidity != 7*day {
 		t.Errorf("the renewal's request: %+v", got)
 	}
 	clk.add(88 * day)
@@ -251,4 +252,114 @@ func TestBrowserTLS(t *testing.T) {
 			}
 		}
 	}
+}
+
+// #224 review P2 (cert.go:100): a pair whose chain holds a certificate that
+// does not parse is refused, and the working pair stays in service.
+func TestAMalformedChainNeverReplacesAWorkingPair(t *testing.T) {
+	ca := newCA(t)
+	now := time.Now()
+	certPEM, keyPEM, err := ca.Issue([]string{certHost}, now.Add(-time.Hour), now.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := append(append([]byte{}, certPEM...), []byte("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")...)
+	if _, _, _, reason := DecodePair(bad, keyPEM, certHost, now); reason != "a certificate of its chain does not parse" {
+		t.Fatalf("a bad intermediate: %q", reason)
+	}
+	src := &badChain{ca: ca}
+	c := NewCertificate(src, func() string { return certHost }, nil, nil, nil)
+	if !c.Refresh(context.Background()) {
+		t.Fatal(c.LastError())
+	}
+	good := c.Current()
+	src.bad = true
+	if c.Refresh(context.Background()) || c.Current() != good || c.LastError() != "a certificate of its chain does not parse" {
+		t.Fatalf("a bad chain replaced the working pair: %q", c.LastError())
+	}
+}
+
+// badChain is the CA, its chain spoiled on demand.
+type badChain struct {
+	ca  *tailnettest.CA
+	bad bool
+}
+
+func (b *badChain) CertPair(ctx context.Context, domain string, minValidity time.Duration) ([]byte, []byte, error) {
+	certPEM, keyPEM, err := b.ca.CertPair(ctx, domain, minValidity)
+	if b.bad {
+		certPEM = append(certPEM, []byte("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")...)
+	}
+	return certPEM, keyPEM, err
+}
+
+// #224 review P2 (cert.go:332): a handshake made for the old name is
+// refused once the host changed (a re-pin), even when a certificate for
+// the new name is loaded meanwhile; the name is checked and the
+// certificate chosen from one reading of the host.
+func TestAHandshakeForTheOldNameAfterARepin(t *testing.T) {
+	ca := newCA(t)
+	var mu sync.Mutex
+	host := "varlatch.corp.ts.net"
+	c := NewCertificate(ca, func() string { mu.Lock(); defer mu.Unlock(); return host }, nil, nil, nil)
+	if !c.Refresh(context.Background()) {
+		t.Fatal(c.LastError())
+	}
+	cfg := c.TLSConfig()
+	chosen, err := cfg.GetCertificate(&tls.ClientHelloInfo{ServerName: "varlatch.corp.ts.net"})
+	if err != nil || chosen.Leaf.DNSNames[0] != "varlatch.corp.ts.net" {
+		t.Fatalf("the old name's certificate: %v", err)
+	}
+	// The host changes and the new name's pair loads after the choice.
+	mu.Lock()
+	host = "varlatch.renamed.ts.net"
+	mu.Unlock()
+	if !c.Refresh(context.Background()) {
+		t.Fatal(c.LastError())
+	}
+	if err := cfg.VerifyConnection(tls.ConnectionState{ServerName: "varlatch.corp.ts.net"}); err == nil {
+		t.Fatal("a handshake for the old name was accepted after the host changed")
+	}
+	if err := cfg.VerifyConnection(tls.ConnectionState{ServerName: "varlatch.renamed.ts.net"}); err != nil {
+		t.Fatalf("a handshake for the new name: %v", err)
+	}
+	if _, err := cfg.GetCertificate(&tls.ClientHelloInfo{ServerName: "varlatch.corp.ts.net"}); err == nil {
+		t.Fatal("the old name is still served")
+	}
+}
+
+// #224 review P2 (cert.go:193): when the host changes (enrolment, a
+// re-pin), the new host's certificate is fetched at once, not at the next
+// daily round.
+func TestARepinFetchesTheNewHostsCertificate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ca := newCA(t)
+	status := &statusNode{st: Status{BackendState: "NeedsLogin"}}
+	m := enrolling(t, status, "", t.TempDir(), nil)
+	m.SetBrowser("varlatch", 8443)
+	c := NewCertificate(ca, m.BrowserHost, nil, nil, nil)
+	m.SetCertificate(c)
+	go c.Run(ctx)
+	waitFor := func(host string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if cur := c.Current(); cur != nil && cur.Leaf.DNSNames[0] == host {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("no certificate for %s within 5 s: %q", host, c.LastError())
+	}
+	// Enrolment: the host becomes known after Run's first, failed fetch.
+	status.set(running("Tabc123", "corp.ts.net"), nil)
+	m.Check(ctx)
+	waitFor("varlatch.corp.ts.net")
+	status.set(running("Tabc123", "corp-new.ts.net"), nil)
+	m.Check(ctx)
+	if _, _, err := m.Repin(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("varlatch.corp-new.ts.net")
 }

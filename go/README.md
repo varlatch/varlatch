@@ -929,14 +929,19 @@ certificate (`server/tailnet/cert.go`, `cert.ts`; `listener.ts`'s
   obtains through Tailscale's control plane (MagicDNS and HTTPS
   certificates on in the tailnet): fetched at start and daily (hourly in
   its last two days, from 30 seconds doubling to an hour after a
-  failure), asking for a third of its lifetime left (at most a week). A
-  pair that does not name the host exactly (never a wildcard or the
-  subject), is not valid now, or whose key does not match is never used;
-  the last valid one serves until it expires. The certificate's name is
+  failure), asking for a third of its lifetime left (at most a week), and
+  at once when the host changes (enrolment, a re-pin, an adoption: the
+  manager wakes it). A pair whose chain holds a certificate that does not
+  parse, whose leaf does not name the host exactly (never a wildcard or
+  the subject) or is not valid now, or whose key does not match is never
+  used; the last valid one serves until it expires. The certificate's name is
   published in Certificate Transparency logs.
 - **TLS.** TLS 1.2 at least; only the host's name (a handshake for another
-  name, without SNI, or without a valid certificate is refused); no
-  session ever resumed (tickets off, and a resumed or certificate-less
+  name, without SNI, or without a valid certificate is refused), checked
+  and its certificate chosen from one reading of the host, and checked
+  again once the handshake is done, so a handshake for a name the host no
+  longer has (a re-pin meanwhile) never serves a request; no session ever
+  resumed (tickets off, and a resumed or certificate-less
   connection fails before a request is read); HTTP/1.1, as Node's server.
 - **The same rules as the plain tailnet listener:** the admission (closed
   pin, every request refused), the device check, and the browser gate of

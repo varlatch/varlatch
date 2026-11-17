@@ -36,7 +36,8 @@ type CA struct {
 	Fail error
 	// Names, when set, replaces the names a certificate is issued for.
 	Names []string
-	// Requests records each request's domain and minimum validity.
+	// Requests records each request's domain and minimum validity; read it
+	// with Requested while a refresh may run.
 	Requests []Request
 }
 
@@ -44,6 +45,14 @@ type CA struct {
 type Request struct {
 	Domain      string
 	MinValidity time.Duration
+}
+
+// Requested is a copy of Requests, read under the CA's lock: a refresh
+// may append to it meanwhile.
+func (c *CA) Requested() []Request {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]Request(nil), c.Requests...)
 }
 
 // NewCA makes a CA.

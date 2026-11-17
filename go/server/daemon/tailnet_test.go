@@ -307,8 +307,8 @@ func TestBrowserEndpoint(t *testing.T) {
 	const endpoint = "https://varlatch.corp.ts.net:8443"
 	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":"`+endpoint+`"}`)
 	waitReport(t, r, bearer, `"checks":{"listener":{"status":"pass"},"browserTls":{"status":"pass","certificateNotAfter":"`)
-	if len(ca.Requests) == 0 || ca.Requests[0].Domain != "varlatch.corp.ts.net" {
-		t.Fatalf("the certificate requests: %+v", ca.Requests)
+	if len(ca.Requested()) == 0 || ca.Requested()[0].Domain != "varlatch.corp.ts.net" {
+		t.Fatalf("the certificate requests: %+v", ca.Requested())
 	}
 	var ep map[string]any
 	if code := do(t, http.DefaultClient, "GET", "http://"+r.addr+"/v1/tailnet/endpoint", bearer, "", &ep); code != 200 || ep["browserEndpoint"] != endpoint {
