@@ -151,6 +151,9 @@ func TestInventoryCoverage(t *testing.T) {
 		}
 	}
 	for option, o := range inv.Options {
+		if o.Of == "varlatch" && o.Slice != "" && !built(o.Slice) {
+			continue // an option a later slice builds, of a command built already (status --probe)
+		}
 		if o.Of != "varlatch" {
 			if o.Slice != "" && built(o.Slice) {
 				t.Errorf("option %s (%s) of built slice %s: needs a vector; none is defined yet", option, o.Of, o.Slice)

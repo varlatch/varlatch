@@ -35,12 +35,24 @@ var versionLine = regexp.MustCompile(`^varlatch \S+ \(migration \d+\)\n$`)
 // name a recorded case gives.
 var differences = map[string]transcript.Difference{
 	// Decision 6: `varlatch <version>`, without the migration number.
-	"version": func(o *transcript.Outcome) {
+	"version": func(o *transcript.Outcome, _ transcript.Outcome) {
 		if versionLine.MatchString(o.Stdout) {
 			o.Stdout = "varlatch " + buildinfo.Version + "\n"
 		}
 	},
+	// An error the TypeScript CLI lets escape (recorded as {{uncaught ...}}):
+	// Node.js prints a stack and exits 1; the Go CLI exits 1 too, with one
+	// line saying what went wrong. Only that stderr is accepted; the status
+	// and everything else are compared as recorded.
+	"uncaught": func(o *transcript.Outcome, got transcript.Outcome) {
+		if strings.HasPrefix(o.Stderr, "{{uncaught") && o.Status == 1 && goFailure.MatchString(got.Stderr) {
+			o.Stderr = got.Stderr
+		}
+	},
 }
+
+// goFailure is one line of the Go CLI's own failure.
+var goFailure = regexp.MustCompile(`^varlatch: [^\n]+\n$`)
 
 // TestTranscripts replays every recorded case (testdata/transcripts).
 func TestTranscripts(t *testing.T) {

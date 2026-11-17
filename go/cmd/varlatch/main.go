@@ -9,6 +9,7 @@ package main
 import (
 	"io"
 	"os"
+	"strings"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 )
@@ -21,6 +22,19 @@ func main() {
 type osEnv struct{}
 
 func (osEnv) LookupEnv(key string) (string, bool) { return os.LookupEnv(key) }
+
+// Environ lists the process environment, as process.env's keys.
+func (osEnv) Environ() map[string]string {
+	env := map[string]string{}
+	for _, kv := range os.Environ() {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			if _, seen := env[k]; !seen {
+				env[k] = v
+			}
+		}
+	}
+	return env
+}
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "verify-release" {

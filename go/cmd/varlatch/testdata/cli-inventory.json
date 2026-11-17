@@ -2,7 +2,8 @@
   "schema": 1,
   "comment": "The Go CLI's inventory (internal docs/design/go-cli.md, decision 16): every command, option and environment variable of the TypeScript CLI, kept equal to its source both ways by apps/cli/test/cli-inventory.test.ts, and what must be covered once its slice is built, checked by go/cmd/varlatch's TestInventoryCoverage. Edited by hand; the test says what is missing.",
   "built": [
-    "5.1a"
+    "5.1a",
+    "5.1b"
   ],
   "commands": {
     "login": {
@@ -848,7 +849,9 @@
       ],
       "of": "varlatch",
       "commands": [
-        "mcp"
+        "context",
+        "mcp",
+        "status"
       ]
     },
     "--error-unmatch": {
@@ -1849,7 +1852,9 @@
       "of": "varlatch",
       "commands": [
         "status"
-      ]
+      ],
+      "slice": "5.1c",
+      "note": "status --probe goes online: slice 5.1c (the API client); status itself is 5.1b"
     },
     "--profile": {
       "sources": [
@@ -2188,6 +2193,7 @@
       "commands": [
         "audit",
         "audit-export",
+        "context",
         "contract",
         "init",
         "login",
@@ -2196,6 +2202,7 @@
         "org",
         "project",
         "security",
+        "status",
         "whoami"
       ]
     },
@@ -2831,10 +2838,12 @@
       ],
       "of": "varlatch",
       "commands": [
+        "context",
         "import",
         "mcp",
         "run",
         "scan",
+        "status",
         "sync",
         "validate",
         "values"
@@ -3442,7 +3451,24 @@
         "the only stored credential"
       ],
       "source": "packages/context/src/index.ts resolveServer, resolveContext",
-      "cases": []
+      "cases": [
+        "transcripts/5.1b-context.json#context.server-flag",
+        "transcripts/5.1b-context.json#status.repo.environment-server",
+        "transcripts/5.1b-context.json#context.server-env-var",
+        "transcripts/5.1b-context.json#server.env-var",
+        "transcripts/5.1b-context.json#status.repo.env-var",
+        "transcripts/5.1b-context.json#server.repo.bad-toml-env-var",
+        "transcripts/5.1b-context.json#context.server-local-override",
+        "transcripts/5.1b-context.json#server.repo.local-override",
+        "transcripts/5.1b-context.json#context.server-repository",
+        "transcripts/5.1b-context.json#server.repo",
+        "transcripts/5.1b-context.json#server.repo.no-server",
+        "transcripts/5.1b-context.json#context.no-server",
+        "transcripts/5.1b-context.json#context.no-server-default",
+        "transcripts/5.1b-context.json#server.default",
+        "transcripts/5.1b-context.json#server.only-credential",
+        "transcripts/5.1b-context.json#server.several-no-default"
+      ]
     },
     {
       "name": "environment",
@@ -3454,7 +3480,20 @@
         "the committed default (varlatch.toml default_environment)"
       ],
       "source": "packages/context/src/index.ts resolveContext",
-      "cases": []
+      "cases": [
+        "transcripts/5.1b-context.json#context.flag",
+        "transcripts/5.1b-context.json#context.short-flag",
+        "transcripts/5.1b-context.json#context.both-flags",
+        "transcripts/5.1b-context.json#context.empty-flag",
+        "transcripts/5.1b-context.json#context.flag-last",
+        "transcripts/5.1b-context.json#status.repo.flag-env",
+        "transcripts/5.1b-context.json#context.env-var",
+        "transcripts/5.1b-context.json#status.repo.env-var",
+        "transcripts/5.1b-context.json#context.local-selection",
+        "transcripts/5.1b-context.json#status.repo.tier",
+        "transcripts/5.1b-context.json#context.committed-default",
+        "transcripts/5.1b-context.json#context.no-environment"
+      ]
     },
     {
       "name": "credential",

@@ -303,6 +303,52 @@ comes. `verify-release`, which the installers run, is Go's own.
   and the User-Agent (`varlatch-cli/<version> (<platform>; <arch>[;
   assisted])` with Node.js's platform and processor names, which varlatchd
   summarizes into the audit's client).
+- `internal/clientctx/`: `packages/context` (slice 5.1b): where the CLI
+  finds `varlatch.toml` and `.varlatch/local.json`, how it resolves the
+  server and Environment (ADR-0017 §7; ADR-0058 Decision 1: `--server` >
+  `VARLATCH_SERVER` > the local override > `varlatch.toml`, and outside a
+  repository the default server > the only stored credential;
+  `--environment`/`-e` > `VARLATCH_ENV` > the local selection > the
+  committed default), and the user-level `credentials.json` and
+  `settings.json`: the same directory (`VARLATCH_CONFIG_DIR`, else
+  `$XDG_CONFIG_HOME/varlatch`, else `<home>/.config/varlatch` on every
+  platform, home as Node.js's `os.homedir()` finds it), schema, bytes
+  (`JSON.stringify(value, null, 2)` and a newline) and modes (0600,
+  replaced atomically) as the TypeScript CLI, keeping keys and entries it
+  does not know, so a sign-in made by either CLI works with the other
+  (internal `docs/design/go-cli.md`, decision 11). Inside an agent-safe run
+  (`VARLATCH_AGENT_RUN`) the operator's default store is never read or
+  written. Files are read with no schema, as JavaScript reads them: a
+  hand-edited file holding JSON of another shape gives what the TypeScript
+  code gives (`lib/jsjson` values, `internal/jsval`'s property reads), and
+  where that code throws a `TypeError`, a `*TypeError` (the `uncaught`
+  difference below). The commands `status` (without `--probe`, which is
+  5.1c), `server`, `server use` and `context` are `internal/cli`'s
+  `contextcmds.go`.
+- `internal/toml/`: `varlatch.toml` as smol-toml 1.9.0 (which the
+  TypeScript CLI bundles) reads it: a port of its parser, under its
+  BSD-3-Clause license as well (`LICENSE-smol-toml-BSD-3-Clause`, listed in
+  `scripts/third-party-code.json`), with its error messages, and positions
+  and columns in UTF-16 code units, so a refused file gets the same message
+  and caret.
+- `internal/jsval/`: JavaScript's own semantics where an answer depends on
+  them: a property read of any JSON value, strict equality, `Number(text)`,
+  the default sort order, how `readFileSync(path, "utf8")` decodes bytes
+  (the WHATWG decoder: one U+FFFD per ill-formed sequence), how Node.js
+  writes a lone surrogate (U+FFFD), and `Date.parse`: V8's date parser
+  ported (`date.go`, from V8 14.6.202 under its BSD-3-Clause license as
+  well, `LICENSE-v8-BSD-3-Clause`): the ISO form with V8's extensions, then
+  its older parser ("Nov 17 2026", "2026-11-17 10:00:00", "5"), local time
+  through the time zone database, taking the offset before a change of
+  offset as V8 does.
+- `testdata/vectors/context.json` (`apps/cli/test/go-vectors-context.test.ts`):
+  213 `varlatch.toml` documents and what `loadRepoConfig` makes of each
+  (every one of smol-toml's messages), `Date.parse` of 127 texts in
+  America/New_York, UTF-8 decoding, `Number(text)`, and 34 sequences of
+  credential store, settings and local state operations from the files a
+  CLI or a person may leave, each with its results and every file
+  afterwards, byte for byte and mode for mode (`internal/clientctx`'s
+  `TestStoreVectors`).
 - `internal/transcript/`: the transcript replayer (test infrastructure).
   `apps/cli/test/go-transcripts.test.ts` records cases from the TypeScript
   CLI as users get it (its arguments, a clean environment, files, standard
@@ -314,7 +360,9 @@ comes. `verify-release`, which the installers run, is Go's own.
   deleted, changed or given another mode, inputs included, fails a case.
   Request bodies are compared as JSON values through `lib/jsjson`, so lone
   surrogates stay distinct. Both sides run under umask 022; on Windows only
-  a mode's read-only bit is compared. Regenerate after changing the cases with
+  a mode's read-only bit is compared. A case may unset variables of the
+  clean environment (`unset`, to reach the default configuration
+  directory). Regenerate after changing the cases with
   `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/cli exec vitest run
   test/go-transcripts.test.ts`.
 - `testdata/vectors/framework.json`: what the TypeScript code answers for
@@ -351,7 +399,7 @@ it to the recording.
 | Difference | TypeScript | Go | Why |
 | --- | --- | --- | --- |
 | `version` | `varlatch --version` prints `varlatch <version> (migration <n>)` | `varlatch <version>` | Decision 6: the migration number is the TypeScript release manifest's; every consumer (installers, menu bar app, tray, omarchy plugin, tap) reads the first two words |
-| An error no command handles | escapes `main()`; Node.js prints its stack trace and exits 1 | `varlatch: <error>` on stderr, exit 1 | A stack trace is not output anyone parses; the status is the same |
+| `uncaught`: an error no command handles (for example a `credentials.json` entry or a `.varlatch/local.json` holding `null`, or a `varlatch.toml` that is a directory) | escapes `main()`; Node.js prints the source line, its stack trace and its version, and exits 1 (the recorder keeps `{{uncaught <name>: <message>}}`) | `varlatch: <error>`, one line on stderr, exit 1 | A stack trace is not output anyone parses; the status and stdout are compared as recorded |
 | The Node.js version warning | one line on stderr below a Node.js release's security floor (`VARLATCH_NODE_CHECK=off` hides it) | none | No Node.js; the recorder sets `VARLATCH_NODE_CHECK=off` |
 
 ## varlatchd

@@ -273,6 +273,8 @@ both licenses.
 | --- | --- | --- | --- | --- |
 | [ada](https://github.com/ada-url/ada/blob/b12a893a45809da8103bb4f1e2f6f5ee13f9100b/src/ada_idna.cpp) | 4.0.0 (`b12a893a4580`) | MIT | Domain to ASCII and label validity (ada::idna::to_ascii and is_label_valid), ported to Go. ada is dual-licensed Apache-2.0 OR MIT; Varlatch takes it under MIT. | `go/lib/whatwg/idna.go` |
 | [PostgreSQL](https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2) | 17.6 (`REL_17_6`) | PostgreSQL | timestamptz input (ParseDateTime, DecodeDateTime and their helpers in src/backend/utils/adt/datetime.c, tm2timestamp in timestamp.c), zone lookup (pg_tzset and pg_open_tzfile in src/timezone/pgtz.c) and the Default timezone abbreviations (src/timezone/tznames/Default), ported to Go; tzload, tzparse, pg_next_dst_boundary and pg_interpret_timezone_abbrev come from PostgreSQL's src/timezone/localtime.c, the IANA tz code, which is in the public domain. | `go/server/pgtime/abbrevs.go`, `go/server/pgtime/pgtime.go`, `go/server/pgtime/zone.go` |
+| [smol-toml](https://github.com/squirrelchat/smol-toml/tree/v1.9.0/src) | 1.9.0 (`6f9739a5ab48`) | BSD-3-Clause | The TOML parser (parse, and the key, value, string, number and date readers with their error messages), ported to Go so the Go CLI reads varlatch.toml exactly as the TypeScript CLI, which bundles smol-toml, reads it. | `go/cmd/varlatch/internal/toml/toml.go` |
+| [V8](https://github.com/v8/v8/tree/14.6.202/src/date) | 14.6.202 (`e04c3a1a2543`) | BSD-3-Clause | The date parser behind Date.parse (src/date/dateparser.h, dateparser-inl.h and dateparser.cc, with ParseDateTimeString and MakeDay from date.cc), ported to Go so the Go CLI reads timestamps as the Node.js that runs the TypeScript CLI does. | `go/cmd/varlatch/internal/jsval/date.go` |
 
 ## License texts
 
@@ -5150,6 +5152,66 @@ INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
 AND FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
 ON AN "AS IS" BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATIONS TO
 PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+````
+
+### smol-toml 1.9.0 (ported code)
+
+````text
+Copyright (c) Squirrel Chat et al., All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+````
+
+### V8 14.6.202 (ported code)
+
+````text
+Copyright 2014, the V8 project authors. All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+    * Neither the name of Google Inc. nor the names of its
+      contributors may be used to endorse or promote products derived
+      from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ````
 
 ### Packages that ship no license file

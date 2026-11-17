@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 )
 
@@ -29,6 +30,14 @@ type MapEnv map[string]string
 func (m MapEnv) LookupEnv(key string) (string, bool) {
 	v, ok := m[key]
 	return v, ok
+}
+
+// Environ implements Lister.
+func (m MapEnv) Environ() map[string]string { return m }
+
+// Lister is an Env that can list its variables (process.env's keys).
+type Lister interface {
+	Environ() map[string]string
 }
 
 // IO is where a run reads and writes.
@@ -55,6 +64,15 @@ type Run struct {
 	// or not (usage, authentication, permission, server), and that meaning is
 	// frozen (ADR-0043 Decision 10); every other command distinguishes them.
 	everyFailureIsOne bool
+}
+
+// Environ is every variable of the run's environment, when its Env can
+// list them (Lister); none otherwise.
+func (r *Run) Environ() map[string]string {
+	if l, ok := r.Env.(Lister); ok {
+		return l.Environ()
+	}
+	return map[string]string{}
 }
 
 // Getenv is the variable's value, "" when unset.
@@ -158,16 +176,17 @@ func (r *Run) finish(err error) int {
 		// was instead (go/README.md, the Go CLI's accepted differences).
 		e = &exitError{message: "varlatch: " + err.Error(), code: ExitFailure}
 	}
-	fmt.Fprintln(r.Stderr, e.message)
+	fmt.Fprintln(r.Stderr, jsval.NodeText(e.message))
 	if r.everyFailureIsOne {
 		return ExitFailure
 	}
 	return e.code
 }
 
-// println writes one line on stdout, as console.log does.
+// println writes one line on stdout, as console.log does (a lone
+// surrogate as U+FFFD, as Node.js writes it).
 func (r *Run) println(text string) error {
-	_, err := io.WriteString(r.Stdout, text+"\n")
+	_, err := io.WriteString(r.Stdout, jsval.NodeText(text)+"\n")
 	return err
 }
 
