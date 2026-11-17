@@ -24,6 +24,11 @@ type Metrics struct {
 	MaxBatchTime  time.Duration
 	LastCommit    time.Duration // the COMMIT alone, which holds the fsync
 	MaxCommit     time.Duration
+	// FailedBegins are failed batches whose BEGIN IMMEDIATE failed, and
+	// BusyBatches failed batches whose error was SQLITE_BUSY (ADR-0059
+	// Decision 2: both stay 0 while varlatchd runs).
+	FailedBegins uint64
+	BusyBatches  uint64
 
 	PassiveCheckpoints uint64
 	MaxPassive         time.Duration
@@ -69,6 +74,17 @@ func (x *metrics) batch(jobs, ownErrors int, failed bool, total, commit time.Dur
 	m.LastBatch, m.MaxBatchTime = total, max(m.MaxBatchTime, total)
 	if !failed {
 		m.LastCommit, m.MaxCommit = commit, max(m.MaxCommit, commit)
+	}
+}
+
+func (x *metrics) failed(e *BatchError) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if e.Op == "begin" {
+		x.m.FailedBegins++
+	}
+	if IsBusy(e.Err) {
+		x.m.BusyBatches++
 	}
 }
 

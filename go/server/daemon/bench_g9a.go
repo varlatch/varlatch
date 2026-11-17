@@ -252,11 +252,14 @@ func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duratio
 					return
 				}
 				rec := &statusRecorder{ResponseWriter: w}
-				// The disclosure's stages (step 4 decision 7).
+				// The disclosure's stages (step 4 decision 7), and whether
+				// one of its writes was answered SQLITE_BUSY (Decision 2:
+				// never).
 				ctx := stages.With(r.Context(), hist, arrived)
+				ctx, busy := storage.WithBusyNote(ctx)
 				next.ServeHTTP(rec, r.WithContext(ctx))
 				stages.Flush(ctx)
-				runner.Count(rec.status != http.StatusOK, false)
+				runner.Count(rec.status != http.StatusOK, busy())
 			})
 		},
 		stop: runner.Done(),
