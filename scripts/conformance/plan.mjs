@@ -18,6 +18,19 @@
  * reconcile suite deploys the Convex functions the seed step's mirror sync
  * calls, and the passkey suite enrolls the identity everything after it uses.
  */
+
+/**
+ * The suites that write audit events in bulk: realtime-events floods
+ * Organization changes (tens of thousands of audit events) until its slow
+ * client is cut off. The converge engine's trigger scan reads 500 audit
+ * events a pass on the TypeScript targets (TypeScript defect 10;
+ * feature-parity.md, go/server/syncs/CONVERGE.md), so after them a value
+ * change would reach the engine only after one 30-second pass per 500
+ * events. The sync suite runs before every one of them (test/plan.test.mjs
+ * fails otherwise); the Go server drains the scan each pass.
+ */
+export const BULK_AUDIT_SUITES = ["realtime-events"];
+
 export const PLAN = [
   { suite: "reconcile", args: () => [], always: true },
   { setup: "bootstrap" },
@@ -43,7 +56,11 @@ export const PLAN = [
     suite: "realtime-degraded",
     args: async (ctx) => [await ctx.grant(), await ctx.cliCredential(), await ctx.cliCredential(), await ctx.cliCredential()],
   },
-  // G11 on the Go server's server-sent events (go-server checks).
+  // Sync Targets against fake platforms, before the suites that write audit
+  // events in bulk (BULK_AUDIT_SUITES: TypeScript defect 10).
+  { suite: "sync", args: (ctx) => [ctx.origin, ctx.token] },
+  // G11 on the Go server's server-sent events (go-server checks). It writes
+  // audit events in bulk (BULK_AUDIT_SUITES).
   { suite: "realtime-events", args: (ctx) => [ctx.origin] },
   // The credential broker (ADR-0022). It ran inside the realtime suite, with
   // Convex down; on the TypeScript stack the runner still stops Convex
@@ -66,7 +83,6 @@ export const PLAN = [
   { suite: "deletion", args: (ctx) => [ctx.origin, ctx.token] },
   // Audit webhook delivery against the target's local receiver.
   { suite: "webhooks", args: (ctx) => [ctx.origin, ctx.token] },
-  { suite: "sync", args: (ctx) => [ctx.origin, ctx.token] },
   // The audit export to object storage, against the target's local S3 server.
   { suite: "audit-export", args: (ctx) => [ctx.origin, ctx.token] },
   // OIDC workload identity, against the target's local issuer.

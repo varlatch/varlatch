@@ -417,7 +417,7 @@ export async function maintenance(state, ttlMs) {
 
 /** A fixed, named probe of server state (the target contract): `varlatchd admin conformance-probe`. */
 export async function probe(state, probeName, ...args) {
-  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses", "deletion-due", "sync-repair-due"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
+  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses", "deletion-due", "sync-repair-due", "sync-trigger-position"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
   return JSON.parse(admin(state, ["conformance-probe", probeName, ...args]));
 }
 

@@ -71,6 +71,28 @@ async function waitFor(done, ms = PASS_MS) {
 
 // A converge's whole time: a pass every 30 seconds, and the next.
 const PASS_MS = 75_000;
+// The engine's trigger scan reads this many audit events a pass, as the
+// TypeScript engine's (SCAN_BATCH), a pass every 30 seconds.
+const SCAN_BATCH = 500;
+const PASS_INTERVAL_MS = 30_000;
+
+/**
+ * Waits until the engine's trigger scan has read every audit event written
+ * so far, so that a value changed before it has reached the engine. The
+ * scan reads SCAN_BATCH events a pass: after the suites that ran before
+ * this one in the same server, a change waits behind their events for as
+ * many passes as they fill. The deadline is those passes and two more.
+ * Answers the position, or null if the deadline passed.
+ */
+async function scanned() {
+  const position = () => JSON.parse(targetOp("probe", ["sync-trigger-position"]));
+  const { cursor, latest } = position();
+  const passes = Math.ceil(Math.max(0, latest - cursor) / SCAN_BATCH) + 2;
+  return waitFor(() => {
+    const p = position();
+    return p.cursor >= latest && p;
+  }, passes * PASS_INTERVAL_MS);
+}
 const APP = "/applications/app-conformance";
 const SERVICE = "/services/svc-conformance";
 
@@ -144,6 +166,7 @@ try {
   // A partial failure: GitHub refuses one name; the others stay, the
   // Target is degraded and backs off; the other Targets do not mind.
   await put("BROKEN_TOKEN", "zzz");
+  const seenBroken = await scanned();
   const degraded = await waitFor(async () => {
     const t = await targetOf(tGh);
     return /BROKEN_TOKEN \(HTTP 500\)/.test(t.lastResult ?? "") && t.failureCount >= 1 && t;
@@ -152,8 +175,8 @@ try {
   check(
     "sync.partial-failure",
     "a name the platform refuses degrades its Target and counts a failure; its other names stay, and other Targets are unaffected",
-    Boolean(degraded) && ["API_KEY", "DEBUG", "PORT"].every((n) => fakes().github[repo]?.includes(n)) && others.every((t) => t.failureCount === 0),
-    JSON.stringify({ degraded: degraded && [degraded.lastResult, degraded.failureCount], others: others.map((t) => [t.lastResult, t.failureCount]) }),
+    Boolean(seenBroken) && Boolean(degraded) && ["API_KEY", "DEBUG", "PORT"].every((n) => fakes().github[repo]?.includes(n)) && others.every((t) => t.failureCount === 0),
+    JSON.stringify({ scanned: seenBroken, degraded: degraded && [degraded.lastResult, degraded.failureCount], others: others.map((t) => [t.lastResult, t.failureCount]) }),
   );
 
   // pushSyncTarget: the backoff cleared, the Target due at once.
@@ -169,17 +192,20 @@ try {
   // A deletion: a removed value leaves the destinations of Targets that
   // remove orphans.
   ok(await api("DELETE", `${env}/values/DEBUG`), "removing DEBUG");
+  const seenDeletion = await scanned();
   const deleted = await waitFor(() => {
     const s = fakes();
     return !(s.github[repo] ?? []).includes("DEBUG") && !("DEBUG" in s.convex) && s;
   });
   check("sync.deletion", "a value removed from the environment is deleted from the destinations of Targets that remove orphans",
-    Boolean(deleted), JSON.stringify(deleted ? {} : { github: fakes().github[repo], convex: Object.keys(fakes().convex) }));
+    Boolean(seenDeletion) && Boolean(deleted),
+    JSON.stringify(deleted && seenDeletion ? {} : { scanned: seenDeletion, github: fakes().github[repo], convex: Object.keys(fakes().convex) }));
 
   // The pause fence: a paused Target sends nothing, then resumes.
   const paused = await api("POST", `${env}/sync-targets/${tConvex}/pause?wait=true`, { body: {} });
   const before = fakes().requests.length;
   await put("PORT", "9090");
+  const seenPort = await scanned();
   await waitFor(() => fakes().coolify[APP]?.PORT === "9090");
   await sleep(35_000); // one more pass, in which the paused Target would have run
   const sentWhilePaused = fakes().requests.slice(before).filter((r) => r.host === "convex.conformance.test");
@@ -188,9 +214,9 @@ try {
   check(
     "sync.pause-fence",
     "a paused Target answers paused once no run of it can send, sends nothing while paused, and converges once resumed",
-    paused.status === 200 && paused.json?.state === "paused" && paused.json?.drained === true && sentWhilePaused.length === 0 &&
+    Boolean(seenPort) && paused.status === 200 && paused.json?.state === "paused" && paused.json?.drained === true && sentWhilePaused.length === 0 &&
       resumed.state === "active" && Boolean(caughtUp),
-    JSON.stringify({ paused: paused.json?.state, drained: paused.json?.drained, sentWhilePaused, resumed: resumed.state, convexPort: fakes().convex.PORT }),
+    JSON.stringify({ scanned: seenPort, paused: paused.json?.state, drained: paused.json?.drained, sentWhilePaused, resumed: resumed.state, convexPort: fakes().convex.PORT }),
   );
 
   // Drift: a value changed and redeployed behind Varlatch's back (the

@@ -862,7 +862,8 @@
       "script": "scripts/conformance/suites/sync.mjs",
       "needs": [
         "platform-fakes",
-        "probe:sync-repair-due"
+        "probe:sync-repair-due",
+        "probe:sync-trigger-position"
       ],
       "operations": [
         "admin-recover",

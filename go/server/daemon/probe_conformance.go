@@ -31,6 +31,8 @@ import (
 //	                                 40 days ago, due a second ago)
 //	sync-repair-due <target id>      the Sync Target's last repair pass hours ago; answers
 //	                                 {"needsSync", "nextAttemptAt"}, which it leaves as they are
+//	sync-trigger-position            {"cursor", "latest"}: the converge engine's trigger scan's
+//	                                 position, and the last audit event it reads (not sync.*)
 
 var (
 	probeName    = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
@@ -56,6 +58,17 @@ func init() {
 		var err error
 		var out any
 		switch rest[0] {
+		case "sync-trigger-position":
+			// Where the trigger scan stands: a change reaches the engine once
+			// the scan's cursor passes its audit event.
+			var pos struct {
+				Cursor int64 `json:"cursor"`
+				Latest int64 `json:"latest"`
+			}
+			err = store.Reader().QueryRowContext(ctx, `SELECT
+				COALESCE((SELECT cursor_order FROM sync_cursor), 0),
+				COALESCE((SELECT max(event_order) FROM audit_events WHERE substr(event_type, 1, 5) <> 'sync.'), 0)`).Scan(&pos.Cursor, &pos.Latest)
+			out = pos
 		case "sync-repair-due":
 			// The sync suite's repair pass: the Target's last repair hours
 			// ago, as six hours later, and nothing else changed, so that

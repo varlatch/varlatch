@@ -268,6 +268,11 @@ const PROBES = {
       WHERE id = '${deletionId}' AND cancelled_at IS NULL AND completed_at IS NULL`);
     return true;
   },
+  // Where the converge engine's trigger scan stands: a change reaches the
+  // engine once the scan's cursor passes its audit event.
+  "sync-trigger-position": (state) => JSON.parse(psql(state, `SELECT json_build_object(
+      'cursor', COALESCE((SELECT cursor_order FROM sync_cursor), 0),
+      'latest', COALESCE((SELECT max(event_order) FROM audit_events WHERE substr(event_type, 1, 5) <> 'sync.'), 0))`)),
   // The sync suite's repair pass: the Target's last repair hours ago, as
   // six hours later, and nothing else changed, so that only the periodic
   // schedule can make it due. Answers what would also have made it due,
