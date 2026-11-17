@@ -30,6 +30,7 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 | `source-images.mjs` | Builds the `ts-source` images once, for several runs to share (the weekly matrix). |
 | `clients.json` | The released CLIs a run can select, pinned by version, release commit and hash, and the pinned cosign that verifies them. |
 | `clients.mjs` | Downloads and verifies a pinned CLI; bundles `packages/sdk` for the sdk suite. |
+| `client-go.json` | The CLI features the Go CLI (`--cli go:<path>`) does not have yet, each with the slice that builds it: their checks report client-lacks (`lib/client-lacks.mjs`). |
 | `plan.mjs` | The order of the suites and how each gets its arguments. |
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
@@ -169,7 +170,9 @@ A probe is a fixed, named read; a suite never sends SQL. A conformance check
 that needs a capability the target lacks fails.
 
 Suites get the CLI under test in `VARLATCH_CLI` (a script run with Node;
-`--cli source` is `apps/cli/dist/varlatch.cjs`), its verified version in
+`--cli source` is `apps/cli/dist/varlatch.cjs`; with `VARLATCH_CLI_NATIVE=1`
+a native binary, the Go CLI), and run it with suite-kit's `cliCommand(args)`,
+which gives `[node, cli, ...args]` or `[cli, args]`; its verified version in
 `VARLATCH_CLI_VERSION` (empty for `source`), the sdk bundle in
 `VARLATCH_SDK`, their own name in `CONFORMANCE_SUITE`, and the target's state
 in `CONFORMANCE_TARGET_STATE`, which `target-op.mjs` reads.
@@ -503,7 +506,9 @@ request that changes `go/` or the harness's `go-binary` pieces.
 
 ## Clients
 
-`--cli` chooses the CLI under test: `source` (built from this checkout) or a
+`--cli` chooses the CLI under test: `source` (built from this checkout),
+`go:<path>` (the Go CLI, ADR-0059 step 5, a native binary built from this
+checkout: `cd go && go build -o <path> ./cmd/varlatch`), or a
 released TypeScript CLI pinned in `clients.json` by version, release commit
 and the hash of `varlatch-cli-<version>.cjs`, never "latest". The pins now
 are 0.21.0 and 0.22.0; a later release is added by hand (its commit from
@@ -532,6 +537,34 @@ from the same source as the CLI under test: bundled from the pinned
 release's commit (fetched by hash when a shallow checkout lacks it, as
 `apps/cli/test/controlCli.ts` builds the 0.13.0 CLI), or from this checkout
 for `--cli source`. The report records the bundle's hash.
+
+### The Go CLI's gaps: client-lacks
+
+The Go CLI is ported in slices (internal `docs/design/go-cli.md`), so for a
+while it lacks CLI features the suites exercise. `client-go.json` lists
+them, each with the slice that builds it, the client's counterpart of a
+target's `lacks` (one file, since the gaps are the client's, the same on
+every target). A check lacks when its feature, a feature its suite's setup
+uses (`suites.<name>.cliNeeds`), or, for a check without a feature of its
+own, one its `cliNeeds` lists, is in the file:
+
+- the runner reports it `client-lacks` itself; a suite cannot;
+- a suite all of whose checks lack something is not started; otherwise it
+  runs, and what it prints for a lacking check is replaced, except a PASS,
+  which fails the run as a stale entry (remove it in the pull request that
+  builds the feature);
+- a check that lacks nothing is judged as always: client-lacks never hides
+  it;
+- only the `go` client has gaps; a TypeScript CLI ignores the file;
+- gate mode refuses any client-lacks: G1 at 0.50.0 runs the Go CLI with
+  nothing left out.
+
+`go/cmd/varlatch`'s `TestClientLacksNotStale` also fails while an entry
+names a slice the Go CLI's inventory says is built. `cliNeeds` is recorded
+conservatively for the checks without a feature (every feature of their
+suite); a slice that finds a check needing less narrows it. The setup's
+`init --org --project --server` (slice 5.1d) comes before `login-token`
+(slice 5.1e), so `login-token`'s entry covers it.
 
 ### Features, groups and the compatibility core
 

@@ -53,10 +53,10 @@ func TestGitHubSealsEachRequestedValue(t *testing.T) {
 			t.Fatalf("%s: %v", r.URL, err)
 		}
 		o := v.(Object)
-		if o.get("key_id") != "kid-1" {
-			t.Errorf("%s: key_id %v", r.URL, o.get("key_id"))
+		if o.Value("key_id") != "kid-1" {
+			t.Errorf("%s: key_id %v", r.URL, o.Value("key_id"))
 		}
-		sealed, err := base64.StdEncoding.DecodeString(o.get("encrypted_value").(string))
+		sealed, err := base64.StdEncoding.DecodeString(o.Value("encrypted_value").(string))
 		if err != nil {
 			t.Fatal(err)
 		}

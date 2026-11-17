@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "description": "The CLI features the Go CLI does not have yet (internal docs/design/go-cli.md, decision 3), for --cli go:<path>: a check that needs one reports client-lacks, from the runner (lib/client-lacks.mjs). The pull request that builds a feature removes its entry; a lacking check that passes fails the run as stale. Setup's `init --org --project --server` is slice 5.1d, before login-token's 5.1e, so login-token's entry covers it.",
+  "lacksFeatures": {
+    "agent-safe-run": {
+      "reason": "varlatch run --agent-safe with --target and --omit, and --agent-metadata: not ported to the Go CLI yet",
+      "slice": "5.5b"
+    },
+    "doctor": {
+      "reason": "varlatch doctor: not ported to the Go CLI yet",
+      "slice": "step 6"
+    },
+    "env-list": {
+      "reason": "varlatch env list: not ported to the Go CLI yet",
+      "slice": "5.1e"
+    },
+    "login-browser": {
+      "reason": "varlatch login: sign-in through the browser: not ported to the Go CLI yet",
+      "slice": "5.2"
+    },
+    "login-device": {
+      "reason": "varlatch login --start and --wait: device sign-in: not ported to the Go CLI yet",
+      "slice": "5.2"
+    },
+    "login-token": {
+      "reason": "varlatch login --token: sign in with an existing credential: not ported to the Go CLI yet",
+      "slice": "5.1e"
+    },
+    "maintenance-wait": {
+      "reason": "the CLI waits out a maintenance window: not ported to the Go CLI yet",
+      "slice": "5.1e"
+    },
+    "mcp": {
+      "reason": "varlatch mcp: not ported to the Go CLI yet",
+      "slice": "5.6b"
+    },
+    "run": {
+      "reason": "varlatch run: a default run: not ported to the Go CLI yet",
+      "slice": "5.4b"
+    },
+    "run-export-context": {
+      "reason": "varlatch run --export-context: not ported to the Go CLI yet",
+      "slice": "5.4b"
+    },
+    "run-redact": {
+      "reason": "varlatch run --redact: not ported to the Go CLI yet",
+      "slice": "5.4c"
+    },
+    "run-strict": {
+      "reason": "varlatch run --strict: not ported to the Go CLI yet",
+      "slice": "5.4f"
+    },
+    "run-strict-agent-safe": {
+      "reason": "varlatch run --strict --agent-safe: not ported to the Go CLI yet",
+      "slice": "5.5b"
+    },
+    "scan": {
+      "reason": "varlatch scan: not ported to the Go CLI yet",
+      "slice": "5.4d"
+    },
+    "types-python": {
+      "reason": "varlatch types: the Python module and its Typed Accessor: not ported to the Go CLI yet",
+      "slice": "5.3c"
+    },
+    "types-typescript": {
+      "reason": "varlatch types: the TypeScript module and its Typed Accessor: not ported to the Go CLI yet",
+      "slice": "5.3c"
+    },
+    "whoami": {
+      "reason": "varlatch whoami: not ported to the Go CLI yet",
+      "slice": "5.1e"
+    }
+  }
+}

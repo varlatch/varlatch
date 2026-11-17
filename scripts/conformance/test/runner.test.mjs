@@ -10,10 +10,13 @@
  * names the CLI version a case asks for (a released CLI is otherwise
  * downloaded and verified). Every other file is this checkout's.
  *
- * The stub suite's checks: stub.base (no group), and in group "audit"
- * (exportAuditEvents, which the target lacks, so the group is skipped)
- * stub.featured (feature scan, introduced in 0.11.0) and stub.plain (no
- * feature).
+ * The stub suite's checks: stub.base (no group), stub.scanned (feature
+ * scan, no group), and in group "audit" (exportAuditEvents, which the target
+ * lacks, so the group is skipped) stub.featured (feature scan, introduced in
+ * 0.11.0) and stub.plain (no feature).
+ *
+ * The Go CLI (`--cli go:<path>`, lib/client-lacks.mjs): the copy's
+ * client-go.json says it lacks scan, so stub.scanned reports client-lacks.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -50,6 +53,7 @@ before(() => {
     },
     checks: {
       "stub.base": { suite: "stub", kind: "conformance", title: "the base check" },
+      "stub.scanned": { suite: "stub", kind: "conformance", feature: "scan", title: "a scan check outside the group" },
       "stub.featured": { suite: "stub", kind: "conformance", group: "audit", feature: "scan", title: "a scan check in the group" },
       "stub.plain": { suite: "stub", kind: "conformance", group: "audit", title: "a plain check in the group" },
       ...Object.fromEntries(Object.keys(features).filter((f) => f !== "scan").map((f) => [`stub.core-${f}`, { suite: "stub", kind: "conformance", feature: f, title: f }])),
@@ -66,7 +70,8 @@ const line = (status, id) => console.log(\`\${status}  [\${id}] \${id}\`);
 if (mode === "crash") throw new Error("the stub suite crashed");
 if (mode === "exit-early") process.exit(3);
 for (const id of ${JSON.stringify(coreChecks)}) line("PASS", id);
-line("PASS", "stub.base");
+line(mode === "base-fails" ? "FAIL" : "PASS", "stub.base");
+line(mode === "scan-fails" ? "FAIL" : "PASS", "stub.scanned");
 if (mode === "predates") { line("PREDATES-CLI", "stub.featured"); }
 if (mode === "predates-plain") { line("PREDATES-CLI", "stub.plain"); }
 if (mode === "pass-skipped") { line("PASS", "stub.plain"); }
@@ -113,18 +118,22 @@ export async function requestLog() { return []; }
     `export async function resolveCli(spec, { workDir }) {
   const path = (await import("node:path")).join(workDir, "stub-cli.cjs");
   (await import("node:fs")).writeFileSync(path, "");
-  return { spec, path, version: process.env.STUB_CLI_VERSION || null, commit: null, sha256: "0".repeat(64), verified: null };
+  const go = spec.startsWith("go:");
+  return { spec: go ? "go" : spec, path, version: process.env.STUB_CLI_VERSION || null, commit: null, sha256: "0".repeat(64), verified: null, native: go };
 }
 export async function resolveCliReal(spec, {`,
   ));
+
+  // The Go CLI lacks scan.
+  writeFileSync(join(dst, "client-go.json"), JSON.stringify({ schema: 1, lacksFeatures: { scan: { reason: "not ported yet", slice: "5.4d" } } }));
 });
 
 after(() => rmSync(root, { recursive: true, force: true }));
 
 /** Runs the copied runner on the stub suite: its exit status, output and report. */
-function run(mode, cliVersion = "") {
-  const report = join(root, `report-${mode}-${cliVersion || "source"}.json`);
-  const r = spawnSync(process.execPath, [join(root, "scripts/conformance/run.mjs"), "--target", "stub", "--cli", "source", "--suite", "stub", "--report", report], {
+function run(mode, cliVersion = "", cli = "source") {
+  const report = join(root, `report-${mode}-${cliVersion || "source"}-${cli === "source" ? "ts" : "go"}.json`);
+  const r = spawnSync(process.execPath, [join(root, "scripts/conformance/run.mjs"), "--target", "stub", "--cli", cli, "--suite", "stub", "--report", report], {
     encoding: "utf8",
     timeout: 120_000,
     env: { ...process.env, STUB_MODE: mode, STUB_CLI_VERSION: cliVersion },
@@ -170,4 +179,33 @@ test("the runner: a suite that exits early, or crashes, fails the run", () => {
     assert.match(r.out, why, mode);
     assert.match(r.out, /stub\.base/, `${mode}: the missing check is named`);
   }
+});
+
+// The Go CLI's gaps (lib/client-lacks.mjs): client-go.json says it lacks scan.
+
+test("the runner: a check of a feature the Go CLI lacks reports client-lacks, whatever the suite printed", () => {
+  const r = run("scan-fails", "", "go:/stub/varlatch");
+  assert.equal(r.status, 0, r.out);
+  assert.equal(outcomeOf(r.report, "stub.scanned"), "client-lacks");
+  assert.equal(outcomeOf(r.report, "stub.base"), "pass");
+  assert.deepEqual(r.report.clientLacks.stale, []);
+});
+
+test("the runner: a lacking check that passes is a stale entry, and fails the run", () => {
+  const r = run("plain", "", "go:/stub/varlatch");
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /stub\.scanned passed, but client-go\.json says the CLI lacks scan: remove the entry/);
+  assert.deepEqual(r.report.clientLacks.stale, [{ id: "stub.scanned", features: ["scan"] }]);
+});
+
+test("the runner: client-lacks never hides a check of a feature the Go CLI has", () => {
+  const r = run("base-fails", "", "go:/stub/varlatch");
+  assert.equal(r.status, 1, r.out);
+  assert.equal(outcomeOf(r.report, "stub.base"), "fail");
+});
+
+test("the runner: a TypeScript CLI lacks nothing, whatever client-go.json says", () => {
+  const r = run("scan-fails");
+  assert.equal(r.status, 1, r.out);
+  assert.equal(outcomeOf(r.report, "stub.scanned"), "fail");
 });

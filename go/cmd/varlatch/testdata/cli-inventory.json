@@ -1,0 +1,3628 @@
+{
+  "schema": 1,
+  "comment": "The Go CLI's inventory (internal docs/design/go-cli.md, decision 16): every command, option and environment variable of the TypeScript CLI, kept equal to its source both ways by apps/cli/test/cli-inventory.test.ts, and what must be covered once its slice is built, checked by go/cmd/varlatch's TestInventoryCoverage. Edited by hand; the test says what is missing.",
+  "built": [
+    "5.1a"
+  ],
+  "commands": {
+    "login": {
+      "slice": "5.1e"
+    },
+    "init": {
+      "slice": "5.1d"
+    },
+    "agents": {
+      "slice": "5.1d"
+    },
+    "logout": {
+      "slice": "5.1e"
+    },
+    "status": {
+      "slice": "5.1b"
+    },
+    "whoami": {
+      "slice": "5.1e"
+    },
+    "server": {
+      "slice": "5.1b"
+    },
+    "context": {
+      "slice": "5.1b"
+    },
+    "env": {
+      "slice": "5.1e"
+    },
+    "run": {
+      "slice": "5.4b"
+    },
+    "validate": {
+      "slice": "5.3a"
+    },
+    "scan": {
+      "slice": "5.4d"
+    },
+    "values": {
+      "slice": "5.3a"
+    },
+    "mcp": {
+      "slice": "5.6b"
+    },
+    "request": {
+      "slice": "5.5b"
+    },
+    "import": {
+      "slice": "5.3a"
+    },
+    "sync": {
+      "slice": "5.8b"
+    },
+    "contract": {
+      "slice": "5.3b"
+    },
+    "types": {
+      "slice": "5.3c"
+    },
+    "invite": {
+      "slice": "5.7a"
+    },
+    "tailnet": {
+      "slice": "5.7a"
+    },
+    "audit": {
+      "slice": "5.7a"
+    },
+    "org": {
+      "slice": "5.7a"
+    },
+    "project": {
+      "slice": "5.7a"
+    },
+    "env-create": {
+      "slice": "5.7a"
+    },
+    "env-delete": {
+      "slice": "5.7a"
+    },
+    "identity": {
+      "slice": "5.7a"
+    },
+    "member": {
+      "slice": "5.7a"
+    },
+    "credential": {
+      "slice": "5.7a"
+    },
+    "audit-export": {
+      "slice": "5.7c"
+    },
+    "security": {
+      "slice": "5.7b"
+    },
+    "admin": {
+      "slice": "step 6"
+    },
+    "setup": {
+      "slice": "step 6"
+    },
+    "move": {
+      "slice": "step 6"
+    },
+    "adopt": {
+      "slice": "never"
+    },
+    "doctor": {
+      "slice": "step 6"
+    },
+    "version": {
+      "slice": "5.1a"
+    },
+    "--version": {
+      "slice": "5.1a"
+    },
+    "self-update": {
+      "slice": "step 6"
+    },
+    "upgrade": {
+      "slice": "step 6"
+    }
+  },
+  "options": {
+    "--abandon": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "move"
+      ]
+    },
+    "--access-key-id": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--adapter": {
+      "sources": [
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--after": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/deletion.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "org"
+      ]
+    },
+    "--after-context": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--agent": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "agents",
+        "run"
+      ]
+    },
+    "--agent-metadata": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--agent-network": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--agent-safe": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--all": {
+      "sources": [
+        "apps/cli/src/doctor.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "admin",
+        "logout"
+      ]
+    },
+    "--allow": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "admin"
+      ]
+    },
+    "--allow-disclose": {
+      "sources": [
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "mcp"
+      ]
+    },
+    "--allow-host": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--allow-inherited": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/strictRun.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--allow-unmasked": {
+      "sources": [
+        "apps/cli/src/agents/install.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--allow-unverified": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "self-update"
+      ]
+    },
+    "--allow-writes": {
+      "sources": [
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "mcp"
+      ]
+    },
+    "--app": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--apply": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "adopt"
+      ]
+    },
+    "--approval": {
+      "sources": [
+        "apps/cli/src/approvals.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "*"
+      ]
+    },
+    "--approve": {
+      "sources": [
+        "apps/cli/src/deletion.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "org"
+      ]
+    },
+    "--archive": {
+      "sources": [
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--arg": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--argjson": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--assisted": {
+      "sources": [
+        "apps/cli/src/agents/install.ts",
+        "apps/cli/src/approvals.ts",
+        "apps/cli/src/assisted.ts",
+        "apps/cli/src/assistedRun.ts",
+        "apps/cli/src/userAgent.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "*"
+      ]
+    },
+    "--attest": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--audience": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "login"
+      ]
+    },
+    "--backup-dir": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option (setup, upgrade)",
+      "slice": "step 6"
+    },
+    "--base": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--baseline": {
+      "sources": [
+        "apps/cli/src/scanCommand.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "scan"
+      ]
+    },
+    "--batch": {
+      "sources": [
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--batch-check": {
+      "sources": [
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--before": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--before-context": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--bek-file": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "move",
+        "upgrade"
+      ]
+    },
+    "--bek-passphrase-file": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "move",
+        "upgrade"
+      ]
+    },
+    "--broker-credential-file": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--bucket": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--build-time": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--bundle": {
+      "sources": [
+        "apps/cli/src/selfUpdate.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--cached": {
+      "sources": [
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--cancel": {
+      "sources": [
+        "apps/cli/src/deletion.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "org"
+      ]
+    },
+    "--certificate-identity": {
+      "sources": [
+        "apps/cli/src/selfUpdate.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--certificate-oidc-issuer": {
+      "sources": [
+        "apps/cli/src/selfUpdate.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--chdir": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--check": {
+      "sources": [
+        "apps/cli/src/agents/install.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/typesCommand.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "agents",
+        "self-update",
+        "types",
+        "upgrade"
+      ]
+    },
+    "--chek": {
+      "sources": [
+        "apps/cli/src/options.ts"
+      ],
+      "of": "none",
+      "note": "an example in options.ts's comment (--chek), not an option"
+    },
+    "--clear-config": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/securityControls.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "security"
+      ]
+    },
+    "--color": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--colors": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--config": {
+      "sources": [
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--confirm": {
+      "sources": [
+        "apps/cli/src/deletion.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "admin",
+        "audit-export",
+        "env-delete",
+        "identity",
+        "member",
+        "org",
+        "project",
+        "values"
+      ]
+    },
+    "--context": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--context-separator": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--contract": {
+      "sources": [
+        "apps/cli/src/importCommand.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "import"
+      ]
+    },
+    "--control": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "admin"
+      ]
+    },
+    "--count": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--count-matches": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--data": {
+      "sources": [
+        "apps/cli/src/request.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ]
+    },
+    "--default-environment": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "init"
+      ]
+    },
+    "--default-ttl": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/securityControls.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "security"
+      ]
+    },
+    "--delete-source": {
+      "sources": [
+        "apps/cli/src/importCommand.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "import"
+      ]
+    },
+    "--deleted-org": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit"
+      ]
+    },
+    "--depth": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--dereference-recursive": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--destination": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--destinations-file": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--devices": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--dir": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "admin",
+        "adopt",
+        "doctor",
+        "move",
+        "setup",
+        "upgrade"
+      ]
+    },
+    "--directories": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--dry-run": {
+      "sources": [
+        "apps/cli/src/importCommand.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "import"
+      ]
+    },
+    "--encoding": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--endpoint": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--engine": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--enroll-timeout": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option (setup, upgrade)",
+      "slice": "step 6"
+    },
+    "--entrypoint": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--env": {
+      "sources": [
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "mcp"
+      ]
+    },
+    "--environment": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/options.ts",
+        "apps/cli/src/scanCommand.ts",
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "mcp"
+      ]
+    },
+    "--error-unmatch": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--escrow": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--escrow-passphrase-file": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--eval": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--exclude": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--exclude-dir": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--exclude-from": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--exclude-standard": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--exit-on-error": {
+      "sources": [
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--export-context": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/strictRun.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--file": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/contractPush.ts",
+        "apps/cli/src/findFiles.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "contract"
+      ]
+    },
+    "--file-search-regex": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--files": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--files-with-matches": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--files-without-match": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--files-without-matches": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--find-files": {
+      "sources": [
+        "apps/cli/src/scanCommand.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "scan"
+      ]
+    },
+    "--force-recreate": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--format": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/doctor.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/setup.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "agents"
+      ]
+    },
+    "--from": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--from-file": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "values"
+      ]
+    },
+    "--gate": {
+      "sources": [
+        "apps/cli/src/doctor.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "doctor"
+      ]
+    },
+    "--generate": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "values"
+      ]
+    },
+    "--gh-environment": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--git-path": {
+      "sources": [
+        "apps/cli/src/scanCommand.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--glob": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--grace": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "values"
+      ]
+    },
+    "--group-separator": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--guardrails": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "agents"
+      ]
+    },
+    "--header": {
+      "sources": [
+        "apps/cli/src/request.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ]
+    },
+    "--help": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "*"
+      ]
+    },
+    "--hidden": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--hours": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "admin"
+      ]
+    },
+    "--identity": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "admin"
+      ]
+    },
+    "--iglob": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--ignore": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--ignore-dir": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--ignore-file": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--in": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/move.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--include": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/request.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ],
+      "note": "also an option of other programs the guardrail hook reads"
+    },
+    "--indent": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--ingress": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "move",
+        "setup"
+      ]
+    },
+    "--install-hook": {
+      "sources": [
+        "apps/cli/src/scanCommand.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "scan"
+      ]
+    },
+    "--json": {
+      "sources": [
+        "apps/cli/src/doctor.ts",
+        "apps/cli/src/importCommand.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/request.ts",
+        "apps/cli/src/scanCommand.ts",
+        "apps/cli/src/setup.ts",
+        "apps/cli/src/syncCheck.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "admin",
+        "agents",
+        "audit",
+        "audit-export",
+        "context",
+        "contract",
+        "credential",
+        "doctor",
+        "env",
+        "identity",
+        "import",
+        "login",
+        "member",
+        "org",
+        "project",
+        "request",
+        "scan",
+        "security",
+        "self-update",
+        "server",
+        "status",
+        "sync",
+        "tailnet",
+        "validate",
+        "values",
+        "whoami"
+      ]
+    },
+    "--kek-backup-verified": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option (setup, upgrade)",
+      "slice": "step 6"
+    },
+    "--kek-file": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "move",
+        "upgrade"
+      ]
+    },
+    "--key": {
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--kind": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "env-create"
+      ]
+    },
+    "--label": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--legacy-release": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--list": {
+      "sources": [
+        "apps/cli/src/findFiles.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--managed": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "project"
+      ]
+    },
+    "--map": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--max-columns": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--max-count": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--max-depth": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--max-file-size": {
+      "sources": [
+        "apps/cli/src/scanCommand.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "scan"
+      ]
+    },
+    "--max-filesize": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--max-total-size": {
+      "sources": [
+        "apps/cli/src/scanCommand.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "scan"
+      ]
+    },
+    "--max-ttl": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/securityControls.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "security"
+      ]
+    },
+    "--max-uses": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "credential"
+      ]
+    },
+    "--mcp": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "agents"
+      ]
+    },
+    "--method": {
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--name": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "credential"
+      ]
+    },
+    "--name-only": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--new-admin": {
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--no-abbrev": {
+      "sources": [
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--no-agent-files": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "init"
+      ]
+    },
+    "--no-color": {
+      "sources": [
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--no-deps": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/outbound.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--no-ext-diff": {
+      "sources": [
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--no-ignore": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--no-ignore-vcs": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--no-includes": {
+      "sources": [
+        "apps/cli/src/findFiles.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--no-index": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/findFiles.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--no-owner": {
+      "sources": [
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--no-path-style": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--no-recreate": {
+      "sources": [
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--no-redact": {
+      "sources": [
+        "apps/cli/src/agents/install.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--no-renames": {
+      "sources": [
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--no-retention": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--no-serve-cli": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--no-tailnet-endpoint": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--no-wait": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "move",
+        "setup"
+      ]
+    },
+    "--nodes": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "tailnet"
+      ]
+    },
+    "--oidc": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "login"
+      ]
+    },
+    "--oidc-token": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "login"
+      ]
+    },
+    "--omit": {
+      "sources": [
+        "apps/cli/src/assistedRun.ts",
+        "apps/cli/src/exportContext.ts",
+        "apps/cli/src/inject.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/strictRun.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--only": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "adopt"
+      ]
+    },
+    "--org": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "admin",
+        "audit-export",
+        "init",
+        "login",
+        "mcp",
+        "project",
+        "security"
+      ]
+    },
+    "--organization": {
+      "sources": [
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "mcp"
+      ]
+    },
+    "--out": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "credential",
+        "types"
+      ]
+    },
+    "--output": {
+      "sources": [
+        "apps/cli/src/request.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ]
+    },
+    "--pager": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--parent": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "env-create"
+      ]
+    },
+    "--path-separator": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--path-style": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--path-to-ignore": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--plain": {
+      "sources": [
+        "apps/cli/src/agents/install.ts",
+        "apps/cli/src/importCommand.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "import"
+      ]
+    },
+    "--platform": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--platform-expands": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--port": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--pre": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--pre-glob": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--prefix": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--print": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--probe": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "status"
+      ]
+    },
+    "--profile": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/doctor.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--project": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "init",
+        "mcp"
+      ]
+    },
+    "--public-url": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "move",
+        "setup"
+      ]
+    },
+    "--quiet": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--raw": {
+      "sources": [
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--rawfile": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--read-credentials-file": {
+      "sources": [
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--reason": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "org"
+      ]
+    },
+    "--record": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/move.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--recursive": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--redact": {
+      "sources": [
+        "apps/cli/src/inject.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/redact.ts",
+        "apps/cli/src/strictRun.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--reenroll-hours": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "move"
+      ]
+    },
+    "--regexp": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--region": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--release-dir": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option (setup, upgrade)",
+      "slice": "step 6"
+    },
+    "--remove": {
+      "sources": [
+        "apps/cli/src/agents/guardrails.ts",
+        "apps/cli/src/agents/install.ts",
+        "apps/cli/src/agents/mcpConfig.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "agents"
+      ]
+    },
+    "--remove-orphans": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/setup.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--replace": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "import",
+        "values"
+      ]
+    },
+    "--repo": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "self-update",
+        "sync",
+        "upgrade"
+      ]
+    },
+    "--request": {
+      "sources": [
+        "apps/cli/src/request.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ]
+    },
+    "--restore-gate": {
+      "sources": [
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--retention": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--revert": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "adopt"
+      ]
+    },
+    "--revision": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "types"
+      ]
+    },
+    "--rm": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/outbound.ts",
+        "apps/cli/src/setup.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--role": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "invite"
+      ]
+    },
+    "--schema": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "contract"
+      ]
+    },
+    "--scope": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "agents"
+      ]
+    },
+    "--scratch-dir": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--secret-file": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--secret-stdin": {
+      "sources": [
+        "apps/cli/src/auditExport.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit-export"
+      ]
+    },
+    "--secrets-dir": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "adopt"
+      ]
+    },
+    "--semantics": {
+      "sources": [
+        "apps/cli/src/contractPush.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "contract"
+      ]
+    },
+    "--serve-cli": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--server": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/scanCommand.ts",
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "audit",
+        "audit-export",
+        "contract",
+        "init",
+        "login",
+        "logout",
+        "mcp",
+        "org",
+        "project",
+        "security",
+        "whoami"
+      ]
+    },
+    "--service": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--services": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--shares": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--short": {
+      "sources": [
+        "apps/cli/src/doctor.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--show-toplevel": {
+      "sources": [
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    },
+    "--silent": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--skip-db-backup": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option (setup, upgrade)",
+      "slice": "step 6"
+    },
+    "--skip-vcs-ignores": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--slurpfile": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--snapshot": {
+      "sources": [
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--sort": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--sortr": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--staged": {
+      "sources": [
+        "apps/cli/src/scanCommand.ts",
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "scan"
+      ]
+    },
+    "--start": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "login"
+      ]
+    },
+    "--status": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--stdin": {
+      "sources": [
+        "apps/cli/src/findFiles.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "values"
+      ]
+    },
+    "--strict": {
+      "sources": [
+        "apps/cli/src/assistedRun.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--tags": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "tailnet"
+      ]
+    },
+    "--tail": {
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--tailnet": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "tailnet"
+      ]
+    },
+    "--tailnet-endpoint": {
+      "sources": [
+        "apps/cli/src/doctor.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--tailnet-machine": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--tailscale-auth-key-file": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "setup"
+      ]
+    },
+    "--target": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "run"
+      ]
+    },
+    "--target-release": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/move.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--threads": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--threshold": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--tier": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "env-create"
+      ]
+    },
+    "--timeout": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "login"
+      ]
+    },
+    "--timeout-seconds": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/main.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "--token": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "login"
+      ]
+    },
+    "--token-env": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "sync"
+      ]
+    },
+    "--token-stdin": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "login"
+      ]
+    },
+    "--ttl": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "credential",
+        "login",
+        "run"
+      ]
+    },
+    "--type": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--type-add": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--type-clear": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--type-list": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--type-not": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--unrestricted": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--unset": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--untracked": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--users": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "tailnet"
+      ]
+    },
+    "--version": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "apps/cli/src/selfUpdate.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "*"
+      ],
+      "note": "the command itself (varlatch --version), and install's and self-update's own --version"
+    },
+    "--wait": {
+      "sources": [
+        "apps/cli/src/deviceLogin.ts",
+        "apps/cli/src/doctor.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/upgrade.ts",
+        "packages/context/src/index.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "doctor",
+        "login"
+      ]
+    },
+    "--width": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "--write-baseline": {
+      "sources": [
+        "apps/cli/src/scanCommand.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "scan"
+      ]
+    },
+    "--yes": {
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "move",
+        "self-update",
+        "upgrade"
+      ]
+    },
+    "-A": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-At": {
+      "sources": [
+        "apps/cli/src/legacyBackup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-Atc": {
+      "sources": [
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-B": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-C": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-D": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-E": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-Fc": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-G": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-H": {
+      "sources": [
+        "apps/cli/src/request.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ]
+    },
+    "-L": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-M": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-R": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-T": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/doctor.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/outbound.ts",
+        "apps/cli/src/setup.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-U": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-W": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-X": {
+      "sources": [
+        "apps/cli/src/request.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ]
+    },
+    "-a": {
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-c": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/findFiles.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/setup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-cf": {
+      "sources": [
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-d": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/request.ts",
+        "apps/cli/src/setup.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ]
+    },
+    "-e": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/options.ts",
+        "apps/cli/src/scanCommand.ts",
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "import",
+        "mcp",
+        "run",
+        "scan",
+        "sync",
+        "validate",
+        "values"
+      ]
+    },
+    "-exec": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-execdir": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-f": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-fprint": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-fprintf": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-fsS": {
+      "sources": [
+        "apps/cli/src/adopt.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-g": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-h": {
+      "sources": [
+        "apps/cli/src/main.ts",
+        "packages/mcp-server/src/run.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "*"
+      ]
+    },
+    "-i": {
+      "sources": [
+        "apps/cli/src/request.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ]
+    },
+    "-j": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-l": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-m": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-m5": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-n": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/backup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-o": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/request.ts"
+      ],
+      "of": "varlatch",
+      "commands": [
+        "request"
+      ]
+    },
+    "-ok": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-okdir": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-p": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/legacyBackup.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-pre": {
+      "sources": [
+        "apps/cli/src/nodeRuntime.ts"
+      ],
+      "of": "none",
+      "note": "part of a Node.js version pattern, not an option; the warning is dropped in Go"
+    },
+    "-q": {
+      "sources": [
+        "apps/cli/src/adopt.ts",
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-r": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-rn": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-t": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-u": {
+      "sources": [
+        "apps/cli/src/agents/hook.ts"
+      ],
+      "of": "another program",
+      "note": "an option of a program whose command line the guardrail hook reads (ripgrep, grep, git, find, jq, ...)",
+      "slice": "5.6a"
+    },
+    "-v": {
+      "sources": [
+        "apps/cli/src/backup.ts",
+        "apps/cli/src/legacyBackup.ts",
+        "apps/cli/src/upgrade.ts"
+      ],
+      "of": "host",
+      "note": "a step 6 host command's option, or an argument it passes to docker compose, psql, tar, cosign or git",
+      "slice": "step 6"
+    },
+    "-z": {
+      "sources": [
+        "apps/cli/src/findFiles.ts",
+        "apps/cli/src/scanSources.ts"
+      ],
+      "of": "another program",
+      "note": "an argument scan passes to git (or the guardrail hook reads)",
+      "slice": "5.4d"
+    }
+  },
+  "environment": {
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN": {
+      "slice": "5.2",
+      "sources": [
+        "apps/cli/src/oidcLogin.ts"
+      ],
+      "note": "see ACTIONS_ID_TOKEN_REQUEST_URL"
+    },
+    "ACTIONS_ID_TOKEN_REQUEST_URL": {
+      "slice": "5.2",
+      "sources": [
+        "apps/cli/src/oidcLogin.ts"
+      ],
+      "note": "OIDC sign-in from GitHub Actions, with ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+    },
+    "AGENT": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "a coding agent's marker: assisted mode, unless VARLATCH_ASSISTED turns detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "AI_AGENT": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "a coding agent's marker: assisted mode, unless VARLATCH_ASSISTED turns detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "CLAUDECODE": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "a coding agent's marker: assisted mode, unless VARLATCH_ASSISTED turns detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "CODEX_THREAD_ID": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "a coding agent's marker: assisted mode, unless VARLATCH_ASSISTED turns detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "COMPOSE_ENV_FILES": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "COMPOSE_FILE": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "COMPOSE_PATH_SEPARATOR": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "COPILOT_AGENT": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "a coding agent's marker: assisted mode, unless VARLATCH_ASSISTED turns detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "COPILOT_CLI": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "a coding agent's marker: assisted mode, unless VARLATCH_ASSISTED turns detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "CURSOR_AGENT": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "a coding agent's marker: assisted mode, unless VARLATCH_ASSISTED turns detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "DATA_DIR": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/legacyBackup.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "GEMINI_CLI": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "a coding agent's marker: assisted mode, unless VARLATCH_ASSISTED turns detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "GH_TOKEN": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/upgrade.ts"
+      ],
+      "note": "upgrade's release lookup only (not sync)"
+    },
+    "GITHUB_TOKEN": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/upgrade.ts"
+      ],
+      "note": "upgrade's release lookup only (not sync)"
+    },
+    "GIT_CONFIG_GLOBAL": {
+      "slice": "5.4e",
+      "sources": [
+        "apps/cli/src/findFiles.ts"
+      ],
+      "note": "scan --find-files: Git's global configuration, for core.excludesFile"
+    },
+    "HOME": {
+      "slice": "5.1b",
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/findFiles.ts"
+      ],
+      "note": "the home directory as Node's os.homedir() finds it; the guardrail hook reads it too"
+    },
+    "HTTPS_PROXY": {
+      "slice": "5.5b",
+      "sources": [
+        "apps/cli/src/agentRun.ts",
+        "apps/cli/src/request.ts"
+      ],
+      "note": "see HTTP_PROXY"
+    },
+    "HTTP_PROXY": {
+      "slice": "5.5b",
+      "sources": [
+        "apps/cli/src/agentRun.ts",
+        "apps/cli/src/request.ts"
+      ],
+      "note": "set for the Agent by an agent-safe run, read by varlatch request"
+    },
+    "NODE_USE_ENV_PROXY": {
+      "slice": "5.5b",
+      "sources": [
+        "apps/cli/src/agentRun.ts"
+      ],
+      "note": "set for the Agent by an agent-safe run, so a Node.js Agent uses the proxy"
+    },
+    "OPENCODE": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "a coding agent's marker: assisted mode, unless VARLATCH_ASSISTED turns detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "STORAGE_DIR": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/legacyBackup.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "VARLATCH_AGENT_RUN": {
+      "slice": "5.1b",
+      "sources": [
+        "packages/context/src/index.ts"
+      ],
+      "note": "set inside an agent-safe run: the operator's store is never read or written"
+    },
+    "VARLATCH_ASSISTED": {
+      "slice": "5.1a",
+      "sources": [
+        "apps/cli/src/agents/guardrails.ts",
+        "apps/cli/src/assisted.ts"
+      ],
+      "note": "assisted mode: 1 or true on, 0 or false off and marker detection off",
+      "coveredBy": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    "VARLATCH_BROKER_CREDENTIAL": {
+      "slice": "5.5b",
+      "sources": [
+        "apps/cli/src/agentRun.ts"
+      ],
+      "note": "the agent-safe run's proxy credential, read by varlatch request"
+    },
+    "VARLATCH_CONFIG_DIR": {
+      "slice": "5.1b",
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "packages/context/src/index.ts"
+      ],
+      "note": "the configuration directory, else $XDG_CONFIG_HOME/varlatch, else <home>/.config/varlatch"
+    },
+    "VARLATCH_ENV": {
+      "slice": "5.1b",
+      "sources": [
+        "packages/context/src/index.ts"
+      ],
+      "note": "the Environment: --environment/-e > VARLATCH_ENV > the local selection > the committed default"
+    },
+    "VARLATCH_KEK_HOST_PATH": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "VARLATCH_MCP_ALLOW_DISCLOSE": {
+      "slice": "5.6b",
+      "sources": [
+        "packages/mcp-server/src/run.ts"
+      ],
+      "note": "varlatch mcp: refused when set to anything but empty or 0"
+    },
+    "VARLATCH_MCP_ALLOW_WRITES": {
+      "slice": "5.6b",
+      "sources": [
+        "packages/mcp-server/src/run.ts"
+      ],
+      "note": "varlatch mcp: =1 as --allow-writes"
+    },
+    "VARLATCH_MIGRATE_PASSWORD": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/adopt.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "VARLATCH_MIGRATE_PASSWORD_HOST_PATH": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "VARLATCH_NODE_CHECK": {
+      "slice": "dropped",
+      "sources": [
+        "apps/cli/src/nodeRuntime.ts"
+      ],
+      "note": "the Node.js version warning; no Node.js in Go. The recorder sets it to off"
+    },
+    "VARLATCH_NO_BROWSER": {
+      "slice": "5.2",
+      "sources": [
+        "apps/cli/src/browser.ts"
+      ],
+      "note": "browser sign-in prints the address instead of opening a browser"
+    },
+    "VARLATCH_OIDC_TOKEN": {
+      "slice": "5.2",
+      "sources": [
+        "apps/cli/src/oidcLogin.ts"
+      ],
+      "note": "OIDC sign-in: --oidc-token > VARLATCH_OIDC_TOKEN > the GitHub Actions endpoint"
+    },
+    "VARLATCH_PUBLIC_URL": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/upgrade.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "VARLATCH_RELEASE_REPO": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "note": "self-update and upgrade"
+    },
+    "VARLATCH_RUNTIME_PASSWORD": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/adopt.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "VARLATCH_RUNTIME_PASSWORD_HOST_PATH": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/setup.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "VARLATCH_RUN_CONTEXT": {
+      "slice": "5.4b",
+      "sources": [
+        "apps/cli/src/inject.ts"
+      ],
+      "note": "given to the command by run --export-context"
+    },
+    "VARLATCH_SERVER": {
+      "slice": "5.1b",
+      "sources": [
+        "apps/cli/src/agentRun.ts",
+        "apps/cli/src/main.ts",
+        "packages/context/src/index.ts",
+        "packages/mcp-server/src/run.ts"
+      ],
+      "note": "the server: --server > VARLATCH_SERVER > the local override > varlatch.toml > the default server > the only stored credential"
+    },
+    "VARLATCH_SYNC_TOKEN": {
+      "slice": "5.8b",
+      "sources": [
+        "apps/cli/src/main.ts"
+      ],
+      "note": "sync push and sync check: the platform credential when --token-env is not given; no other fallback"
+    },
+    "VARLATCH_TAILNET_ENDPOINT": {
+      "slice": "step 6",
+      "sources": [
+        "apps/cli/src/doctor.ts"
+      ],
+      "note": "a host command's (Compose installations)"
+    },
+    "VARLATCH_TOKEN": {
+      "slice": "5.1e",
+      "sources": [
+        "apps/cli/src/agentRun.ts",
+        "apps/cli/src/main.ts",
+        "apps/cli/src/safeText.ts",
+        "packages/context/src/index.ts"
+      ],
+      "note": "the credential: VARLATCH_TOKEN > the stored credential; also masked in a server's text"
+    },
+    "XDG_CONFIG_HOME": {
+      "slice": "5.1b",
+      "sources": [
+        "apps/cli/src/agents/hook.ts",
+        "apps/cli/src/findFiles.ts",
+        "packages/context/src/index.ts"
+      ],
+      "note": "see VARLATCH_CONFIG_DIR; scan --find-files also reads Git's ignore file under it"
+    }
+  },
+  "precedence": [
+    {
+      "name": "server",
+      "slice": "5.1b",
+      "steps": [
+        "--server",
+        "VARLATCH_SERVER",
+        "the local override (.varlatch/local.json)",
+        "varlatch.toml",
+        "the default server (settings.json)",
+        "the only stored credential"
+      ],
+      "source": "packages/context/src/index.ts resolveServer, resolveContext",
+      "cases": []
+    },
+    {
+      "name": "environment",
+      "slice": "5.1b",
+      "steps": [
+        "--environment or -e",
+        "VARLATCH_ENV",
+        "the local selection (.varlatch/local.json)",
+        "the committed default (varlatch.toml default_environment)"
+      ],
+      "source": "packages/context/src/index.ts resolveContext",
+      "cases": []
+    },
+    {
+      "name": "credential",
+      "slice": "5.1e",
+      "steps": [
+        "VARLATCH_TOKEN",
+        "the stored credential for the server"
+      ],
+      "source": "packages/context/src/index.ts loadToken",
+      "cases": []
+    },
+    {
+      "name": "oidc-token",
+      "slice": "5.2",
+      "steps": [
+        "--oidc-token",
+        "VARLATCH_OIDC_TOKEN",
+        "the GitHub Actions endpoint (ACTIONS_ID_TOKEN_REQUEST_URL with ACTIONS_ID_TOKEN_REQUEST_TOKEN)",
+        "none: the error"
+      ],
+      "source": "apps/cli/src/oidcLogin.ts",
+      "cases": []
+    },
+    {
+      "name": "assisted",
+      "slice": "5.1a",
+      "steps": [
+        "--assisted",
+        "VARLATCH_ASSISTED=1 or true",
+        "VARLATCH_ASSISTED=0 or false (off, markers ignored)",
+        "an agent marker, in AgentMarkers order"
+      ],
+      "source": "apps/cli/src/assisted.ts resolveAssisted",
+      "cases": [
+        "vectors/framework.json#assisted"
+      ]
+    },
+    {
+      "name": "sync-token",
+      "slice": "5.8b",
+      "steps": [
+        "the variable --token-env names",
+        "VARLATCH_SYNC_TOKEN",
+        "none: the error (no GITHUB_TOKEN or GH_TOKEN fallback)"
+      ],
+      "source": "apps/cli/src/main.ts sync, syncPush.ts, syncCheck.ts",
+      "cases": []
+    },
+    {
+      "name": "mcp-writes",
+      "slice": "5.6b",
+      "steps": [
+        "--allow-writes",
+        "VARLATCH_MCP_ALLOW_WRITES=1",
+        "refused inside an agent-safe run"
+      ],
+      "source": "packages/mcp-server/src/run.ts",
+      "cases": []
+    }
+  ],
+  "exits": [
+    {
+      "command": "*",
+      "status": 0,
+      "meaning": "success, help",
+      "slice": "5.1a"
+    },
+    {
+      "command": "*",
+      "status": 64,
+      "meaning": "the command line is wrong",
+      "slice": "5.1a"
+    },
+    {
+      "command": "*",
+      "status": 69,
+      "meaning": "the server cannot be reached or is in maintenance",
+      "slice": "5.1e"
+    },
+    {
+      "command": "*",
+      "status": 77,
+      "meaning": "not authenticated or denied",
+      "slice": "5.1e"
+    },
+    {
+      "command": "login",
+      "status": 75,
+      "meaning": "login --wait: still pending at its deadline",
+      "slice": "5.2"
+    },
+    {
+      "command": "*",
+      "status": 75,
+      "meaning": "an approval still pending (assisted) or expired",
+      "slice": "5.2"
+    },
+    {
+      "command": "*",
+      "status": 130,
+      "meaning": "Ctrl-C stopped the wait for an approval",
+      "slice": "5.2"
+    },
+    {
+      "command": "validate",
+      "status": 1,
+      "meaning": "invalid",
+      "slice": "5.3a"
+    },
+    {
+      "command": "validate",
+      "status": 2,
+      "meaning": "incomplete: items this identity may not read",
+      "slice": "5.3a"
+    },
+    {
+      "command": "types",
+      "status": 1,
+      "meaning": "types --check: stale",
+      "slice": "5.3c"
+    },
+    {
+      "command": "run",
+      "status": 78,
+      "meaning": "strict violation, or assisted mode cannot mask a Secret",
+      "slice": "5.4b"
+    },
+    {
+      "command": "run",
+      "status": "the command's own",
+      "meaning": "run passes the started command's status through (128 plus a signal's number)",
+      "slice": "5.4b"
+    },
+    {
+      "command": "scan",
+      "status": 1,
+      "meaning": "findings, and every failure (usage, authentication, network)",
+      "slice": "5.4d"
+    },
+    {
+      "command": "scan",
+      "status": 2,
+      "meaning": "not everything scanned (and --find-files: search incomplete)",
+      "slice": "5.4d"
+    },
+    {
+      "command": "request",
+      "status": 1,
+      "meaning": "the Broker refuses or the response is cut off",
+      "slice": "5.5b"
+    },
+    {
+      "command": "agents",
+      "status": 1,
+      "meaning": "agents install --check: the files differ",
+      "slice": "5.1d"
+    },
+    {
+      "command": "sync",
+      "status": 1,
+      "meaning": "sync check: drift",
+      "slice": "5.8b"
+    },
+    {
+      "command": "sync",
+      "status": 2,
+      "meaning": "sync check: not everything checked",
+      "slice": "5.8b"
+    }
+  ]
+}

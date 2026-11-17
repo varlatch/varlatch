@@ -9,6 +9,9 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
 
 - `cmd/varlatchd/`, `server/`: the server, AGPL-3.0-or-later. See
   "varlatchd" below.
+- `cmd/varlatch/`: the CLI, Apache-2.0 (ADR-0059 step 5), ported from
+  `apps/cli` slice by slice (internal `docs/design/go-cli.md`). See "The
+  varlatch CLI" below.
 - `server/api/`: the `/v1` contract in Go (Decision 3, spec-first
   OpenAPI), generated from `packages/protocol/openapi.yaml`: the request
   and response types, `StrictServerInterface` (one method per operation)
@@ -53,9 +56,8 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   `structure_test.go` checks it): varlatchd passes the outbound policy's,
   the CLI a plain one. Platform answers are read as `JSON.parse` reads
   them (JavaScript's property order, repeated keys, lone surrogates kept)
-  by a reader of the package's own (`json.go`), which duplicates
-  `server/jsvalue`'s: that one is AGPL-3.0-or-later, and moving it to
-  `lib` is a licensing decision left to the owner,
+  by `lib/jsjson` (which `server/jsvalue`, AGPL-3.0-or-later, duplicates;
+  the server may switch to the Apache package),
   and a Compose file as the `yaml` package reads it, on
   `go.yaml.in/yaml/v3`'s nodes. The vectors
   (`testdata/ts-exchanges.json`, 707 cases) are recorded from the
@@ -168,6 +170,17 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
     scripts.
   - GitHub names uppercase as `toUpperCase` does wherever the result is
     ASCII (the only names any pattern accepts).
+- `lib/jsjson/` (step 5.1a): JSON as JavaScript's `JSON.parse` and
+  `JSON.stringify` read and write it: objects in JavaScript's property
+  order (array indexes first, then insertion; a repeated key keeps its first
+  place and its last value), lone UTF-16 surrogates kept in their WTF-8
+  bytes, numbers as `Number::toString` prints them, `JSON.stringify`'s
+  escaping (`<`, `>`, `&`, U+2028 and U+2029 not escaped), and
+  `StringifyIndent` for `JSON.stringify(v, null, n)`, which is how the CLI
+  prints every document. It was `lib/sync`'s reader; the adapters keep
+  their names for it (`lib/sync/json.go`). `testdata/ts-vectors.json` holds
+  what Node.js makes of a set of JSON texts (written by
+  `apps/cli/test/go-vectors-framework.test.ts`).
 - `lib/whatwg/`: what the TypeScript code gets from Node.js's URL
   parser, `url.domainToASCII`, `net.isIP` and string functions, as far as
   audit redaction, Destination Selectors and url Config Items use them. Domain to ASCII is
@@ -272,6 +285,64 @@ dashboard and needs the pinned Node (26) and pnpm (the root
 `VARLATCH_REQUIRE_DASHBOARD=1` for the tests, so a build without the
 dashboard fails there instead of skipping the check that the embedded
 dashboard comes from the checkout.
+
+## The varlatch CLI
+
+`cmd/varlatch` is the CLI (ADR-0059 Decision 1), a port of the TypeScript
+CLI (`apps/cli`) that behaves as v0.22.0 does, observed from outside: the
+same bytes on stdout and stderr and the same exit status (internal
+`docs/design/go-cli.md`, decision 2). It is built in slices; a command not
+ported yet says so and exits 64, and `adopt` (a Compose installation) never
+comes. `verify-release`, which the installers run, is Go's own.
+
+- `internal/cli/`: the framework (slice 5.1a): the command table
+  (`commands.go`, each command with the slice that builds it), the global
+  `--assisted` and `--approval` options, help (`usage.txt`, the TypeScript
+  CLI's `USAGE` byte for byte, and `CommandHelp`), exit statuses, the
+  terminal-safe text and secret masking of `safeText.ts`, assisted mode
+  and the User-Agent (`varlatch-cli/<version> (<platform>; <arch>[;
+  assisted])` with Node.js's platform and processor names, which varlatchd
+  summarizes into the audit's client).
+- `internal/transcript/`: the transcript replayer (test infrastructure).
+  `apps/cli/test/go-transcripts.test.ts` records cases from the TypeScript
+  CLI as users get it (its arguments, a clean environment, files, standard
+  input and a scripted fake server; what it printed, its status, the
+  requests it sent and the files it wrote) into `testdata/transcripts/`,
+  and `TestTranscripts` replays every case against this CLI and compares
+  byte for byte, strictly both ways: an unexpected or missing request or
+  file fails a case. Regenerate after changing the cases with
+  `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/cli exec vitest run
+  test/go-transcripts.test.ts`.
+- `testdata/vectors/framework.json`: what the TypeScript code answers for
+  the option parser, help, safe text, assisted mode, the global options,
+  the User-Agents and the exit status of an API error
+  (`apps/cli/test/go-vectors-framework.test.ts`); `internal/cli`'s tests
+  replay them.
+- `testdata/cli-inventory.json`: every command, option literal and
+  environment variable of the TypeScript CLI, with the files it appears in
+  (held equal to the source both ways by `apps/cli/test/cli-inventory.test.ts`),
+  each command's slice, the precedence chains and the command-specific exit
+  statuses. `TestInventoryCoverage` checks that the command table agrees
+  with it and that everything of a built slice (`built`) has a recorded
+  case or a vector: a built command, each of its options, each variable,
+  chain and exit status. Missing coverage fails. `TestClientLacksNotStale`
+  checks `scripts/conformance/client-go.json` against `built`.
+- Conformance: `node scripts/conformance/run.mjs --target <target> --cli
+  go:<path to varlatch>` runs the suites with this CLI; the features it
+  does not have yet report client-lacks (`scripts/conformance/README.md`).
+
+### The Go CLI's accepted differences
+
+Where the Go CLI differs from the TypeScript CLI on purpose (internal
+`docs/design/go-cli.md`, decision 12). A transcript case names the
+difference it relies on (`differences`), and `transcript_test.go` applies
+it to the recording.
+
+| Difference | TypeScript | Go | Why |
+| --- | --- | --- | --- |
+| `version` | `varlatch --version` prints `varlatch <version> (migration <n>)` | `varlatch <version>` | Decision 6: the migration number is the TypeScript release manifest's; every consumer (installers, menu bar app, tray, omarchy plugin, tap) reads the first two words |
+| An error no command handles | escapes `main()`; Node.js prints its stack trace and exits 1 | `varlatch: <error>` on stderr, exit 1 | A stack trace is not output anyone parses; the status is the same |
+| The Node.js version warning | one line on stderr below a Node.js release's security floor (`VARLATCH_NODE_CHECK=off` hides it) | none | No Node.js; the recorder sets `VARLATCH_NODE_CHECK=off` |
 
 ## varlatchd
 
@@ -2161,6 +2232,7 @@ Not reproduced:
 | `mirror/publisher.ts:209` orders Convex mirror events by the text form of `event_order` | events after position 9 can be published out of order | nothing to port: there is no Convex in Go | | none |
 | `domain/securityreport.ts` `countWouldBlock`, a count whose hour and the current hour are both already summarized (possible only after the clock moved back across a summarized hour) | the count is dropped (an error is logged): the stored total is one short | the count goes to the hour after the last summarized one for its key, which no summary covers yet, so every committed count reaches exactly one summary; with a clock that does not move back nothing differs | `server/security` `TestCountsSurviveAClockMovedBack` | none |
 | `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | `server/values` `TestConcurrentExportsUnderReportCountExactly`: 24 concurrent named and all-authorized exports in one bucket all succeed and the counter is exact | none |
+| `apps/cli/src/options.ts` `parseOptions`, a positional argument named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, `hasOwnProperty`) for a command whose options have aliases (step 5 defect 11, not a security defect) | `spec.aliases[arg]` reads the prototype, so `arg` becomes a function and `arg.startsWith` throws a `TypeError`: Node.js prints the stack and exits 1 | an ordinary argument | `internal/cli` `TestPrototypeNamesAreOrdinaryArguments` | none |
 | `packages/sync` `coolifyCompose.ts` `classifyComposeUsage`, a Compose file with an alias inside its own anchor (step 4 defect 6, not a security defect) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack, so the Coolify adapter's `inspectUsage` throws a `RangeError` though it never should: varlatchd's engine catches it (its `usage-unchecked` note says "the destination could not be read"), the CLI's `sync check` fails | `lib/sync` reads the file as unreadable: usage unchecked, every verdict unknown, the note's reason "the service's compose file is too large or could not be read" | `lib/sync` `TestTypeScriptExchanges`, the case "divergence: an alias inside its own anchor" | none |
 
 The TypeScript admin CLI refuses an ordinary command during maintenance

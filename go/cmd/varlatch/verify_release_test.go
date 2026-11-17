@@ -21,7 +21,7 @@ func verifyArgs(extra ...string) []string {
 
 func TestVerifyRelease(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := run(verifyArgs("--file", td+"v0.21.0/Caddyfile=Caddyfile"), &out, &errOut); code != 0 {
+	if code := run(verifyArgs("--file", td+"v0.21.0/Caddyfile=Caddyfile"), strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "release.yml@refs/tags/v0.21.0") || !strings.Contains(out.String(), "matches SHA256SUMS (Caddyfile)") {
@@ -43,7 +43,7 @@ func TestVerifyReleaseRefuses(t *testing.T) {
 		"bad --file":        verifyArgs("--file", "no-equals-sign"),
 	} {
 		var out, errOut bytes.Buffer
-		if code := run(args, &out, &errOut); code != 1 {
+		if code := run(args, strings.NewReader(""), &out, &errOut); code != 1 {
 			t.Errorf("%s: exit %d, %s", name, code, errOut.String())
 		}
 		if strings.Contains(out.String(), "matches SHA256SUMS ("+filepath.Base(changed)) && name == "changed file" {
@@ -51,7 +51,7 @@ func TestVerifyReleaseRefuses(t *testing.T) {
 		}
 	}
 	var out, errOut bytes.Buffer
-	if code := run([]string{"verify-release", "--version", "0.21.0"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "usage") {
+	if code := run([]string{"verify-release", "--version", "0.21.0"}, strings.NewReader(""), &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "usage") {
 		t.Fatalf("usage: exit %d %s", code, errOut.String())
 	}
 }

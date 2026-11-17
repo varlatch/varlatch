@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
-import { cliPath as cliUnderTest, reporter, tryTargetOp } from "../../../scripts/conformance/suite-kit.mjs";
+import { cliCommand, reporter, tryTargetOp } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live E2E for the client runtime against the clean-room stack, with the
  * CLI under test: `varlatch run --redact`, `varlatch run --export-context`,
@@ -31,7 +31,6 @@ if (!server || !adminToken) {
   process.exit(1);
 }
 // The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
-const cliPath = cliUnderTest();
 const TSC = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 const ORG = "acme";
 const PROJECT = "clientrt";
@@ -131,7 +130,7 @@ async function workspace(token, { gitRepo = false } = {}) {
   const configDir = tempDir("cfg");
   if (gitRepo) git(dir, ["-c", "init.defaultBranch=main", "init", "-q"]);
   const cli = (args, extraEnv = {}, timeoutMs) =>
-    capture(process.execPath, [cliPath, ...args], {
+    capture(...cliCommand(args), {
       cwd: dir,
       env: baseEnv({ VARLATCH_CONFIG_DIR: configDir, ...extraEnv }),
       timeoutMs,

@@ -65,8 +65,8 @@ export function validateExpectations(file, { targetName, inventory, cliVersions,
     const anyClient = new Set(Object.keys(clients[ANY_CLIENT] ?? {}));
     for (const [client, checks] of Object.entries(clients)) {
       const at = `${where}: ${key} / ${client}`;
-      if (client !== ANY_CLIENT && client !== "source" && !(VERSION.test(client) && cliVersions.includes(client))) {
-        problems.push(`${at}: the client must be source, ${ANY_CLIENT}, or a CLI clients.json pins (${cliVersions.join(", ")})`);
+      if (client !== ANY_CLIENT && client !== "source" && client !== "go" && !(VERSION.test(client) && cliVersions.includes(client))) {
+        problems.push(`${at}: the client must be source, go, ${ANY_CLIENT}, or a CLI clients.json pins (${cliVersions.join(", ")})`);
       }
       for (const [id, entry] of Object.entries(checks ?? {})) {
         if (!(id in inventory.checks)) problems.push(`${at}: ${id} is not in the inventory`);

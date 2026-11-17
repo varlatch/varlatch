@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
-import { cliPath as cliUnderTest, reporter } from "../../../scripts/conformance/suite-kit.mjs";
+import { cliCommand, reporter } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live E2E for device sign-in (design notes "Device-authorization
  * sign-in"): the built CLI starts a sign-in, a person approves it on the
@@ -24,7 +24,6 @@ if (!enrollUrl?.includes("#")) {
 }
 const base = new URL(enrollUrl).origin;
 // The CLI under test (VARLATCH_CLI), set by scripts/conformance/run.mjs.
-const cliPath = cliUnderTest();
 const config = mkdtempSync(join(tmpdir(), "varlatch-device-e2e-"));
 
 const { check, finish } = reporter();
@@ -32,7 +31,7 @@ const { check, finish } = reporter();
 function cli(args, env = {}) {
   return new Promise((resolve, reject) => {
     // A clean environment: no coding-agent markers, so only --assisted turns assisted mode on.
-    const child = spawn(process.execPath, [cliPath, ...args], {
+    const child = spawn(...cliCommand(args), {
       env: { PATH: process.env.PATH ?? "", HOME: config, VARLATCH_CONFIG_DIR: config, ...env },
     });
     let stdout = "";
