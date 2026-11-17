@@ -190,4 +190,5 @@ export const {
   objectStore,
   hostAdmin,
   oidcIssuer,
+  platformFakes,
 } = stack;

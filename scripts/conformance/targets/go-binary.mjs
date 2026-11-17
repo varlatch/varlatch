@@ -75,7 +75,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
-import { issuerCertificate, ISSUER_SOURCE, OBJECT_STORE_IMAGE, objectStoreKeys, objectStoreReady } from "./compose-stack.mjs";
+import { issuerCertificate, ISSUER_SOURCE, OBJECT_STORE_IMAGE, objectStoreKeys, objectStoreReady, PLATFORM_FAKE_HOSTS, platformFakesCertificate } from "./compose-stack.mjs";
 
 export const name = "go-binary";
 
@@ -121,7 +121,8 @@ function config(state, extra = "") {
     `access_log = ${state.accessLog}`,
     // The webhooks suite's receiver: the one private destination allowed.
     // and the audit-export suite's object store.
-    ...(state.receiverPort ? [`outbound_allow = ${[state.receiverPort, state.objectStorePort, state.oidcPort].filter(Boolean).map((p) => `127.0.0.1/32:${p}`).join(",")}`] : []),
+    // And the sync suite's fake platforms.
+    ...(state.receiverPort ? [`outbound_allow = ${[state.receiverPort, state.objectStorePort, state.oidcPort, state.fakesPort].filter(Boolean).map((p) => `127.0.0.1/32:${p}`).join(",")}`] : []),
     extra,
   ].join("\n") + "\n";
 }
@@ -145,6 +146,8 @@ export async function up({ argument, onState = () => {} }) {
   const receiverPort = await freePort();
   const objectStorePort = await freePort();
   const oidcPort = await freePort();
+  const fakesPort = await freePort();
+  const fakesControlPort = await freePort();
   const state = {
     target: `go-binary:${argument}`,
     binary,
@@ -163,6 +166,9 @@ export async function up({ argument, onState = () => {} }) {
     oidcPort,
     oidcDir: join(dir, "oidc"),
     oidcPidFile: join(dir, "oidc-issuer.pid"),
+    fakesPort,
+    fakesControlPort,
+    fakesPidFile: join(dir, "platform-fakes.pid"),
   };
   onState(state);
   try {
@@ -177,9 +183,11 @@ export async function up({ argument, onState = () => {} }) {
     }
     chmodSync(state.kekFile, 0o600);
     issuerCertificate(state.oidcDir);
-    // varlatchd's roots: the system's and the issuer's certificate.
+    platformFakesCertificate(state.oidcDir);
+    // varlatchd's roots: the system's, the issuer's certificate and the
+    // fake platforms'.
     const system = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"].find((f) => existsSync(f));
-    writeFileSync(join(state.oidcDir, "roots.pem"), `${system ? readFileSync(system, "utf8") : ""}\n${readFileSync(join(state.oidcDir, "cert.pem"), "utf8")}`);
+    writeFileSync(join(state.oidcDir, "roots.pem"), `${system ? readFileSync(system, "utf8") : ""}\n${readFileSync(join(state.oidcDir, "cert.pem"), "utf8")}${readFileSync(join(state.oidcDir, "fakes-cert.pem"), "utf8")}`);
     writeFileSync(state.conf, config(state));
     await start(state);
   } catch (err) {
@@ -194,6 +202,7 @@ export async function down(state) {
   await stop(state).catch(() => {});
   stopReceiver(state);
   stopIssuer(state);
+  stopPlatformFakes(state);
   // The object store, by the name only this installation's has.
   if (state?.dir) spawnSync("docker", ["rm", "-fv", objectStoreName(state)], { stdio: "ignore" });
   if (state?.dir && state.dir.startsWith(join(tmpdir(), "conformance-go-"))) rmSync(state.dir, { recursive: true, force: true });
@@ -235,8 +244,15 @@ async function start(state) {
   try {
     child = spawn(process.execPath, [SUPERVISOR, state.dir, state.pidFile, state.serverLog, state.binary, "serve", "--config", state.conf], {
       stdio: ["pipe", log, log],
-      // The system's roots and the oidc suite's issuer certificate.
-      env: { ...process.env, ...(state.oidcDir ? { SSL_CERT_FILE: join(state.oidcDir, "roots.pem") } : {}) },
+      // The system's roots, the oidc suite's issuer certificate and the
+      // fake platforms'; and the conformance build's host override, which
+      // leads the platforms' host names to the fakes (the allow list still
+      // decides: their port is the one entry for them).
+      env: {
+        ...process.env,
+        ...(state.oidcDir ? { SSL_CERT_FILE: join(state.oidcDir, "roots.pem") } : {}),
+        ...(state.fakesPort ? { VARLATCH_CONFORMANCE_OUTBOUND_HOSTS: PLATFORM_FAKE_HOSTS.map((h) => `${h}=127.0.0.1:${state.fakesPort}`).join(",") } : {}),
+      },
     });
   } finally {
     closeSync(log);
@@ -401,7 +417,7 @@ export async function maintenance(state, ttlMs) {
 
 /** A fixed, named probe of server state (the target contract): `varlatchd admin conformance-probe`. */
 export async function probe(state, probeName, ...args) {
-  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses", "deletion-due"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
+  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses", "deletion-due", "sync-repair-due", "sync-trigger-position"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
   return JSON.parse(admin(state, ["conformance-probe", probeName, ...args]));
 }
 
@@ -425,6 +441,66 @@ export async function serveCli(state, on) {
   appendFileSync(state.serverLog, "--- conformance: serve_cli is not a varlatchd setting yet; started again without it\n");
   await start(state);
   throw new NotImplementedYet("varlatchd has no serve_cli setting yet");
+}
+
+const PLATFORM_FAKES = join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "platform-fakes.cjs");
+
+/** The fake platforms' recorded PID, when it still runs this installation's fakes. */
+function platformFakesPid(state) {
+  if (!state?.fakesPidFile || !existsSync(state.fakesPidFile)) return null;
+  const pid = Number(readFileSync(state.fakesPidFile, "utf8").trim());
+  if (!Number.isInteger(pid) || pid <= 1) return null;
+  try {
+    const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    return cmdline.includes(PLATFORM_FAKES) && cmdline.includes(state.dir) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function stopPlatformFakes(state) {
+  const pid = platformFakesPid(state);
+  if (pid) process.kill(pid, "SIGTERM");
+}
+
+async function platformFakesControl(state, method, path, body) {
+  return fetch(`http://127.0.0.1:${state.fakesControlPort}${path}`, { method, ...(body ? { body } : {}), signal: AbortSignal.timeout(5000) }).then(
+    (r) => (r.ok ? r.json() : null),
+    () => null,
+  );
+}
+
+/**
+ * The platform-fakes capability: `start` runs the fake platforms
+ * (lib/platform-fakes.cjs) on the loopback port varlatchd.conf allows and
+ * the host override leads to, when they are not running; `state` what they
+ * hold and every request they saw; `drift <resource> <key> <value>` changes
+ * a Coolify value behind Varlatch's back. A process of its own, stopped by
+ * `down` by its recorded PID, and gone by itself once the installation
+ * directory is.
+ */
+export async function platformFakes(state, action, ...args) {
+  if (action === "state") {
+    const got = await platformFakesControl(state, "GET", "/_state");
+    if (!got) throw new Error("the fake platforms are not running: start them first");
+    return got;
+  }
+  if (action === "drift") {
+    const [resource, key, value] = args;
+    const got = await platformFakesControl(state, "POST", "/_drift", JSON.stringify({ resource, key, value }));
+    if (!got) throw new Error(`the fake platforms could not drift ${resource} ${key}`);
+    return got;
+  }
+  if (action !== "start") throw new Error(`unknown platform-fakes action ${action}`);
+  if (!(await platformFakesControl(state, "GET", "/_state"))) {
+    const child = spawn(process.execPath, [PLATFORM_FAKES, String(state.fakesPort), String(state.fakesControlPort),
+      join(state.oidcDir, "fakes-cert.pem"), join(state.oidcDir, "fakes-key.pem"), state.dir], { stdio: "ignore", detached: true });
+    writeFileSync(state.fakesPidFile, `${child.pid}\n`);
+    child.unref();
+    for (let i = 0; i < 50 && !(await platformFakesControl(state, "GET", "/_state")); i++) await sleep(100);
+    if (!(await platformFakesControl(state, "GET", "/_state"))) throw new Error("the fake platforms did not start");
+  }
+  return { coolify: "https://coolify.conformance.test", convex: "https://convex.conformance.test", github: "acme" };
 }
 
 const RECEIVER = join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "webhook-receiver.cjs");

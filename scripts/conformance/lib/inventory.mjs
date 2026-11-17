@@ -68,6 +68,8 @@ export const CAPABILITIES = [
   "probe:expire-pending-device-sign-ins",
   "probe:proxy-addresses",
   "probe:deletion-due",
+  "probe:sync-repair-due",
+  "probe:sync-trigger-position",
   "maintenance",
   "serve-cli",
   "ts-stack",
@@ -76,6 +78,7 @@ export const CAPABILITIES = [
   "object-store",
   "host-admin",
   "oidc-issuer",
+  "platform-fakes",
 ];
 
 /**

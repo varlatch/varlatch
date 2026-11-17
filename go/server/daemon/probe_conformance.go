@@ -29,10 +29,16 @@ import (
 //	proxy-addresses                  [] (nothing stands in front of varlatchd)
 //	deletion-due <odl_...>           the open deletion request made due now (as if scheduled
 //	                                 40 days ago, due a second ago)
+//	sync-repair-due <target id>      the Sync Target's last repair pass hours ago; answers
+//	                                 {"needsSync", "nextAttemptAt"}, which it leaves as they are
+//	sync-trigger-position            {"cursor", "latest"}: the converge engine's trigger scan's
+//	                                 position, and the last audit event it reads (not sync.*)
 
-var probeName = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
-
-var deletionID = regexp.MustCompile(`^odl_[a-z2-7]{26}$`)
+var (
+	probeName    = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+	deletionID   = regexp.MustCompile(`^odl_[a-z2-7]{26}$`)
+	syncTargetID = regexp.MustCompile(`^snt_[a-z0-9]{26}$`)
+)
 
 func init() {
 	conformanceProbe = func(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io.Writer) int {
@@ -52,6 +58,42 @@ func init() {
 		var err error
 		var out any
 		switch rest[0] {
+		case "sync-trigger-position":
+			// Where the trigger scan stands: a change reaches the engine once
+			// the scan's cursor passes its audit event.
+			var pos struct {
+				Cursor int64 `json:"cursor"`
+				Latest int64 `json:"latest"`
+			}
+			err = store.Reader().QueryRowContext(ctx, `SELECT
+				COALESCE((SELECT cursor_order FROM sync_cursor), 0),
+				COALESCE((SELECT max(event_order) FROM audit_events WHERE substr(event_type, 1, 5) <> 'sync.'), 0)`).Scan(&pos.Cursor, &pos.Latest)
+			out = pos
+		case "sync-repair-due":
+			// The sync suite's repair pass: the Target's last repair hours
+			// ago, as six hours later, and nothing else changed, so that
+			// only the periodic schedule can make it due. Answers what would
+			// also have made it due, for the suite to see the Target was
+			// settled.
+			if len(rest) != 2 || !syncTargetID.MatchString(rest[1]) {
+				return fail(fmt.Errorf("sync-repair-due: a Sync Target id"))
+			}
+			var settled struct {
+				NeedsSync     bool   `json:"needsSync"`
+				NextAttemptAt *int64 `json:"nextAttemptAt"`
+			}
+			err = store.Write(ctx, func(tx *storage.Tx) error {
+				var next sql.NullInt64
+				if err := tx.QueryRowContext(ctx, `UPDATE sync_targets SET last_repair_at = ? WHERE id = ? RETURNING needs_sync, next_attempt_at`,
+					time.Now().Add(-7*time.Hour).UnixMicro(), rest[1]).Scan(&settled.NeedsSync, &next); err != nil {
+					return err
+				}
+				if next.Valid {
+					settled.NextAttemptAt = &next.Int64
+				}
+				return nil
+			})
+			out = settled
 		case "expire-pending-device-sign-ins":
 			err = store.Write(ctx, func(tx *storage.Tx) error {
 				return query.New(tx).ExpirePendingDeviceSignIns(ctx, time.Now().Add(-time.Second).UnixMicro())
