@@ -13,7 +13,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { dirname, join, parse as parsePath, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
@@ -246,12 +246,42 @@ export function resolveServer(options: {
 
 // ---- User-level credential store (never in the repo) ----------------------
 
+/**
+ * The user's home directory: HOME (USERPROFILE on Windows) when it is set
+ * and not empty, else the one the operating system records for the user.
+ * An empty variable counts as unset, as everywhere else in the CLI.
+ */
+export function homeDirectory(): string {
+  let home = "";
+  try {
+    home = homedir();
+    if (home === "") home = userInfo().homedir;
+  } catch {
+    home = "";
+  }
+  if (home === "") throw new HomeDirectoryError();
+  return home;
+}
+
+/** Neither HOME (USERPROFILE on Windows) nor the operating system names a home directory: the command line must give one (64). */
+export class HomeDirectoryError extends Error {
+  override name = "HomeDirectoryError";
+  constructor() {
+    super("varlatch: the home directory is unknown: HOME is empty or unset, and the system records none for this user. Set HOME, or VARLATCH_CONFIG_DIR");
+  }
+}
+
 function defaultConfigDir(env: NodeJS.ProcessEnv): string {
-  return env.XDG_CONFIG_HOME ? join(env.XDG_CONFIG_HOME, "varlatch") : join(homedir(), ".config", "varlatch");
+  return env.XDG_CONFIG_HOME ? join(env.XDG_CONFIG_HOME, "varlatch") : join(homeDirectory(), ".config", "varlatch");
+}
+
+/** The configuration directory: VARLATCH_CONFIG_DIR when it is set and not empty, else the default one. */
+function configDir(env: NodeJS.ProcessEnv): string {
+  return env.VARLATCH_CONFIG_DIR || defaultConfigDir(env);
 }
 
 export function credentialsPath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.VARLATCH_CONFIG_DIR ?? defaultConfigDir(env), "credentials.json");
+  return join(configDir(env), "credentials.json");
 }
 
 /** Set by `varlatch run --agent-safe` in the Agent's environment (ADR-0043 Decision 5). */
@@ -410,7 +440,7 @@ export function deleteCredential(server: string, env: NodeJS.ProcessEnv = proces
 // never read or written, like the credential store.
 
 export function settingsPath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.VARLATCH_CONFIG_DIR ?? defaultConfigDir(env), "settings.json");
+  return join(configDir(env), "settings.json");
 }
 
 /** The form servers are stored under, in credentials.json and here: the URL without trailing slashes. */
@@ -474,7 +504,7 @@ export function rememberServerIfUnset(server: string, env: NodeJS.ProcessEnv = p
 // atomically, one entry per server.
 
 export function pendingSignInsPath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.VARLATCH_CONFIG_DIR ?? defaultConfigDir(env), "pending-sign-ins.json");
+  return join(configDir(env), "pending-sign-ins.json");
 }
 
 /** The key a server's entries are stored under: scheme, host, port (default ports dropped), path without trailing slashes. */

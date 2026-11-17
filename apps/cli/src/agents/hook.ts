@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawnSync } from "node:child_process";
 import { type Dirent, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, normalize, resolve, sep } from "node:path";
-import { credentialsPath } from "@varlatch/context";
+import { credentialsPath, homeDirectory } from "@varlatch/context";
 
 /**
  * `varlatch agents hook --format <agent>` (ADR-0043 Decision 8): the one
@@ -861,7 +860,7 @@ export function runHook(format: HookFormat, stdin: string, env: NodeJS.ProcessEn
   }
   if (typeof event !== "object" || event === null || typeof event.tool_name !== "string") return "";
   if (event.hook_event_name !== undefined && event.hook_event_name !== "PreToolUse") return "";
-  const ctx: HookContext = { cwd: typeof event.cwd === "string" ? event.cwd : processCwd, env, home: env.HOME || homedir() };
+  const ctx: HookContext = { cwd: typeof event.cwd === "string" ? event.cwd : processCwd, env, home: env.HOME || homeDirectory() };
   const denial = checkToolCall(event.tool_name, event.tool_input, ctx);
   if (denial === null) return "";
   switch (format) {

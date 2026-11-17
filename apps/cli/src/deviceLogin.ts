@@ -7,7 +7,7 @@ import {
   saveCredential,
   savePendingSignIn,
 } from "@varlatch/context";
-import { DeviceSignInRedirectError, VarlatchApiError, VarlatchClient, type DeviceSignInPoll } from "@varlatch/sdk";
+import { DeviceSignInRedirectError, VarlatchApiError, VarlatchClient, maskUserinfo, maskUserinfoInText, type DeviceSignInPoll } from "@varlatch/sdk";
 import { EXIT, networkFailure } from "./exitCodes.js";
 import { noteDefaultServer } from "./serverCommand.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
@@ -64,20 +64,20 @@ export async function transportRefusal(server: string, resolve = defaultResolve)
   try {
     url = new URL(server);
   } catch {
-    return `${server} is not a URL; give the server's address, such as https://varlatch.example.com`;
+    return `${maskUserinfo(server)} is not a URL; give the server's address, such as https://varlatch.example.com`;
   }
   if (url.protocol === "https:") return null;
   const rule =
     "device sign-in sends a code that collects a credential, and receives that credential, so it runs only over " +
     "https:// (or http:// to 127.0.0.1, ::1, or localhost in local development)";
-  if (url.protocol !== "http:") return `${server}: ${rule}`;
+  if (url.protocol !== "http:") return `${maskUserinfo(server)}: ${rule}`;
   if (url.hostname === "127.0.0.1" || url.hostname === "[::1]") return null;
   if (url.hostname === "localhost") {
     const addresses = await resolve("localhost").catch(() => []);
     if (addresses.length > 0 && addresses.every((a) => isLoopbackAddress(a.address))) return null;
-    return `${server}: localhost does not resolve only to loopback addresses here; ${rule}`;
+    return `${maskUserinfo(server)}: localhost does not resolve only to loopback addresses here; ${rule}`;
   }
-  return `${server}: ${rule}. Use https://${url.host}${url.pathname.replace(/\/+$/, "")}`;
+  return `${maskUserinfo(server)}: ${rule}. Use https://${url.host}${url.pathname.replace(/\/+$/, "")}`;
 }
 
 function defaultResolve(host: string): Promise<{ address: string }[]> {
@@ -149,11 +149,11 @@ export async function startDeviceLogin(server: string, ttlSeconds: number | unde
   });
   if (replaced && Date.parse(replaced.expiresAt) > now()) {
     io.err(
-      `varlatch login: the sign-in started earlier from this CLI for ${server} (code ${replaced.userCode}) no longer completes here; ` +
+      `varlatch login: the sign-in started earlier from this CLI for ${maskUserinfo(server)} (code ${replaced.userCode}) no longer completes here; ` +
         "it expires unused on the server.",
     );
   }
-  const wait = `${io.cli} login --server ${server} --wait`;
+  const wait = `${io.cli} login --server ${maskUserinfo(server)} --wait`;
   if (io.json) {
     io.json({ verificationUri: started.verificationUri, userCode: started.userCode, expiresAt });
     return EXIT.ok;
@@ -181,19 +181,19 @@ async function startFailure(err: unknown, server: string, io: DeviceLoginIO): Pr
   if (err instanceof VarlatchApiError) {
     if (err.status === 404) return unsupported(server, io);
     if (err.code === "MAINTENANCE") {
-      io.err(`varlatch login: ${server} is in maintenance; try again in a moment.`);
+      io.err(`varlatch login: ${maskUserinfo(server)} is in maintenance; try again in a moment.`);
       return EXIT.unavailable;
     }
     io.err(`varlatch login: the server refused to start a sign-in (${safeApiCode(err)}): ${serverMessage(err.message)}`);
     return err.status >= 500 ? EXIT.unavailable : EXIT.failure;
   }
   if (isAbort(err)) {
-    io.err(`varlatch login: ${server} did not answer within ${START_TIMEOUT_MS / 1000} seconds. Nothing was stored.`);
+    io.err(`varlatch login: ${maskUserinfo(server)} did not answer within ${START_TIMEOUT_MS / 1000} seconds. Nothing was stored.`);
     return EXIT.unavailable;
   }
   const network = networkFailure(err);
   if (network) {
-    io.err(`varlatch login: cannot reach ${server} (${network}). Nothing was stored.`);
+    io.err(`varlatch login: cannot reach ${maskUserinfo(server)} (${network}). Nothing was stored.`);
     return EXIT.unavailable;
   }
   throw err;
@@ -201,15 +201,15 @@ async function startFailure(err: unknown, server: string, io: DeviceLoginIO): Pr
 
 async function unsupported(server: string, io: DeviceLoginIO): Promise<number> {
   io.err(
-    `varlatch login: ${server} does not offer device sign-in (capability auth.device: Varlatch 0.14.0 or later, ` +
-      `with an HTTPS public address). Sign in in a browser on this machine instead: varlatch login --server ${server}`,
+    `varlatch login: ${maskUserinfo(server)} does not offer device sign-in (capability auth.device: Varlatch 0.14.0 or later, ` +
+      `with an HTTPS public address). Sign in in a browser on this machine instead: varlatch login --server ${maskUserinfo(server)}`,
   );
   return EXIT.unavailable;
 }
 
 function redirectMessage(err: DeviceSignInRedirectError, server: string, kept: string): string {
   return (
-    `varlatch login: ${server} answered ${err.status} with a redirect${err.location ? ` to ${serverMessage(err.location)}` : ""}. ` +
+    `varlatch login: ${maskUserinfo(server)} answered ${err.status} with a redirect${err.location ? ` to ${serverMessage(maskUserinfo(err.location))}` : ""}. ` +
     `Device sign-in follows no redirect, so its code was not sent there. ${kept} ` +
     "Check --server: give the address the server answers at."
   );
@@ -228,7 +228,7 @@ export async function waitDeviceLogin(server: string, options: WaitOptions, io: 
   }
   const entry = loadPendingSignIn(server);
   if (!entry) {
-    io.err(`varlatch login: no sign-in was started from this CLI for ${server}. Start one: ${io.cli} login --server ${server} --start`);
+    io.err(`varlatch login: no sign-in was started from this CLI for ${maskUserinfo(server)}. Start one: ${io.cli} login --server ${maskUserinfo(server)} --start`);
     return EXIT.usage;
   }
   rememberSecret(entry.deviceCode);
@@ -239,7 +239,7 @@ export async function waitDeviceLogin(server: string, options: WaitOptions, io: 
   // credential: the credential is collected once, so it must not be lost to
   // the deadline after collection. Everything still ends by the deadline.
   const pollDeadline = deadline - Math.min(5_000, timeoutMs / 4);
-  const startNext = `${io.cli} login --server ${server} --start`;
+  const startNext = `${io.cli} login --server ${maskUserinfo(server)} --start`;
   let interval = entry.interval;
   let seenPending = false;
   let lastPolledAt: number | null = null;
@@ -254,7 +254,7 @@ export async function waitDeviceLogin(server: string, options: WaitOptions, io: 
     if (io.json) io.json({ state: "pending" });
     io.err(
       `varlatch login: not approved yet. Code ${entry.userCode} is still waiting at ${printable(entry.verificationUri)} ` +
-        `(it expires at ${entry.expiresAt}). Run again: ${io.cli} login --server ${server} --wait`,
+        `(it expires at ${entry.expiresAt}). Run again: ${io.cli} login --server ${maskUserinfo(server)} --wait`,
     );
     return PENDING_EXIT;
   };
@@ -307,7 +307,7 @@ export async function waitDeviceLogin(server: string, options: WaitOptions, io: 
         if (credentialId && loadCredential(server)?.credentialId === credentialId) {
           deletePendingSignIn(server);
           if (io.json) io.json({ state: "signed-in", credentialId, expiresAt: loadCredential(server)?.expiresAt ?? null });
-          else io.out(`Already logged in to ${server} with this sign-in's credential.`);
+          else io.out(`Already logged in to ${maskUserinfo(server)} with this sign-in's credential.`);
           return EXIT.ok;
         }
         deletePendingSignIn(server);
@@ -346,30 +346,30 @@ function waitFailure(
   // At the deadline with the sign-in last seen pending: 75, as a plain pending deadline.
   if ((isAbort(err) || networkFailure(err)) && state.deadlinePassed && state.seenPending) return state.stillPending();
   state.keep();
-  const kept = `The pending sign-in is kept; run again: ${io.cli} login --server ${server} --wait`;
+  const kept = `The pending sign-in is kept; run again: ${io.cli} login --server ${maskUserinfo(server)} --wait`;
   if (err instanceof DeviceSignInRedirectError) {
     io.err(redirectMessage(err, server, "The pending sign-in is kept."));
     return EXIT.failure;
   }
   if (err instanceof VarlatchApiError) {
     if (err.status === 404) {
-      io.err(`varlatch login: ${server} does not offer device sign-in (capability auth.device). ${kept}`);
+      io.err(`varlatch login: ${maskUserinfo(server)} does not offer device sign-in (capability auth.device). ${kept}`);
       return EXIT.unavailable;
     }
     if (err.code === "MAINTENANCE" || err.status === 502 || err.status === 503 || err.status === 504) {
-      io.err(`varlatch login: ${server} is unavailable or in maintenance (${err.status}). ${kept}`);
+      io.err(`varlatch login: ${maskUserinfo(server)} is unavailable or in maintenance (${err.status}). ${kept}`);
       return EXIT.unavailable;
     }
     io.err(`varlatch login: the server refused the poll (${safeApiCode(err)}): ${serverMessage(err.message)}. ${kept}`);
     return err.status >= 500 ? EXIT.unavailable : EXIT.failure;
   }
   if (isAbort(err)) {
-    io.err(`varlatch login: ${server} did not answer before the deadline. ${kept}`);
+    io.err(`varlatch login: ${maskUserinfo(server)} did not answer before the deadline. ${kept}`);
     return EXIT.unavailable;
   }
   const network = networkFailure(err);
   if (network) {
-    io.err(`varlatch login: cannot reach ${server} (${network}). ${kept}`);
+    io.err(`varlatch login: cannot reach ${maskUserinfo(server)} (${network}). ${kept}`);
     return EXIT.unavailable;
   }
   throw err;
@@ -431,7 +431,7 @@ async function storeCollected(
     // Only fields of the expected shape (issue #119): a server could put anything in them.
     const apiMajor = safeApiMajor(meta.apiMajor);
     io.out(
-      `Logged in to ${server} (server ${safeVersion(meta.serverVersion) ?? UNRECOGNIZED_VERSION}, ` +
+      `Logged in to ${maskUserinfo(server)} (server ${safeVersion(meta.serverVersion) ?? UNRECOGNIZED_VERSION}, ` +
         `${apiMajor === undefined ? "an unrecognized API version" : `API v${apiMajor}`}). The credential expires at ${safeTime(credential.expiresAt)}.`,
     );
   }
@@ -441,7 +441,7 @@ async function storeCollected(
     );
     const say = io.json ? io.err : io.out;
     if (failure === null) say("Previous credential revoked.");
-    else io.err(`varlatch: previous credential not revoked (${failure}); it may remain live${replaced.expiresAt ? ` until ${safeTime(replaced.expiresAt)}` : ""}.`);
+    else io.err(`varlatch: previous credential not revoked (${maskUserinfoInText(failure)}); it may remain live${replaced.expiresAt ? ` until ${safeTime(replaced.expiresAt)}` : ""}.`);
   }
   return EXIT.ok;
 }

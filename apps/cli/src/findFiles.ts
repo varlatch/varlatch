@@ -2,7 +2,8 @@
 import { spawn } from "node:child_process";
 import type { Dir, Dirent } from "node:fs";
 import { lstat, open, opendir, readlink, realpath } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
+import { homeDirectory } from "@varlatch/context";
 import { join, resolve, sep } from "node:path";
 import { ENV_TEMPLATES } from "./agents/hook.js";
 import { displayPath } from "./scan.js";
@@ -458,7 +459,7 @@ interface GlobalConfig {
  * makes every state unknown.
  */
 async function readGlobalConfig(): Promise<GlobalConfig> {
-  const home = process.env.HOME || homedir();
+  const home = homeDirectory();
   const xdg = process.env.XDG_CONFIG_HOME || join(home, ".config");
   const files =
     process.env.GIT_CONFIG_GLOBAL !== undefined ? [process.env.GIT_CONFIG_GLOBAL] : [join(xdg, "git", "config"), join(home, ".gitconfig")];
@@ -479,7 +480,7 @@ async function readGlobalConfig(): Promise<GlobalConfig> {
 
 /** The excludes file Git would read, checked; or why it is unusual. */
 async function excludesFileOf(value: string | null): Promise<{ path: string } | string> {
-  const home = process.env.HOME || homedir();
+  const home = homeDirectory();
   let path: string;
   if (value === null) path = join(process.env.XDG_CONFIG_HOME || join(home, ".config"), "git", "ignore");
   else if (value.startsWith("~/")) path = join(home, value.slice(2));

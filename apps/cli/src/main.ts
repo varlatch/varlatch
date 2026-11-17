@@ -9,7 +9,9 @@ import {
   REPO_CONFIG_FILE,
   agentRunOf,
   deleteCredential,
+  HomeDirectoryError,
   findRepoRoot,
+  homeDirectory,
   listCredentials,
   loadCredential,
   loadLocalState,
@@ -22,7 +24,7 @@ import {
   type LocalState,
   type ResolvedContext,
 } from "@varlatch/context";
-import { VarlatchApiError, VarlatchClient, stepUpApproval } from "@varlatch/sdk";
+import { VarlatchApiError, VarlatchClient, maskServer, maskUserinfo, maskUserinfoInText, stepUpApproval } from "@varlatch/sdk";
 import { TargetError, formatTarget, parseTarget, type EffectiveConfiguration } from "@varlatch/protocol";
 import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNameError } from "@varlatch/env-schema";
 import { RUN_CONTEXT, buildEnv, omitProblem, runChild, withheldItems } from "./inject.js";
@@ -190,7 +192,7 @@ async function namesForOmit(api: VarlatchClient, ctx: ResolvedContext, effective
  */
 function contextOptions(args: string[], ctx: ResolvedContext): string {
   const overridden = flag(args, "--server") !== undefined || Boolean(process.env.VARLATCH_SERVER);
-  return `-e ${ctx.environment}${overridden ? ` --server ${ctx.server}` : ""}`;
+  return `-e ${ctx.environment}${overridden ? ` --server ${maskServer(ctx.server)}` : ""}`;
 }
 
 /** contextOptions, or a placeholder when the context cannot be resolved (the refusal must still be said). */
@@ -418,7 +420,7 @@ function connectClient(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
   if (!token && agentRun) {
     // ADR-0043 Decision 5: never the operator's stored credential.
     fail(
-      `Not authenticated to ${ctx.server}: this command runs inside agent-safe run ${agentRun}, which gives the ` +
+      `Not authenticated to ${maskServer(ctx.server)}: this command runs inside agent-safe run ${agentRun}, which gives the ` +
         "Agent no Varlatch credential and never uses the operator's.\nFor read access to configuration metadata, " +
         "the operator relaunches the run with --agent-metadata.",
       EXIT.denied,
@@ -426,9 +428,9 @@ function connectClient(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
   }
   if (!token) {
     fail(
-      `Not authenticated to ${ctx.server}.\nSign in: varlatch login --server ${ctx.server} (in a browser on this machine), ` +
-        `varlatch login --server ${ctx.server} --start (approve in a browser on any device), ` +
-        `or pipe a credential to varlatch login --server ${ctx.server} --token-stdin`,
+      `Not authenticated to ${maskServer(ctx.server)}.\nSign in: varlatch login --server ${maskServer(ctx.server)} (in a browser on this machine), ` +
+        `varlatch login --server ${maskServer(ctx.server)} --start (approve in a browser on any device), ` +
+        `or pipe a credential to varlatch login --server ${maskServer(ctx.server)} --token-stdin`,
       EXIT.denied,
     );
   }
@@ -554,7 +556,7 @@ async function browserLogin(server: string): Promise<string> {
       const port = typeof address === "object" && address ? address.port : 0;
       const url = `${server.replace(/\/+$/, "")}/enroll?callback=${encodeURIComponent(`http://127.0.0.1:${port}/`)}`;
       console.log("Complete passkey sign-in in your browser:");
-      console.log(`  ${url}`);
+      console.log(`  ${maskUserinfo(url)}`);
       const opener = browserCommand(process.platform, url, process.env);
       if (opener) {
         spawn(opener.command, opener.args, {
@@ -764,7 +766,7 @@ function organizationTarget(
   // Outside a repository: the remembered default, then the only stored
   // credential (ADR-0058 Decision 1). Inside one, only the repository.
   const server = given ?? repo?.server ?? (inRepository ? undefined : resolveServer({ cwd: process.cwd() })?.server);
-  return { server, organization: organization ?? repo?.organization, serverOption: given ? ` --server ${shellWord(given)}` : "" };
+  return { server, organization: organization ?? repo?.organization, serverOption: given ? ` --server ${shellWord(maskUserinfo(given))}` : "" };
 }
 
 /** organizationTarget, both parts required: a missing one is a wrong command line. */
@@ -1201,7 +1203,7 @@ async function whoamiCommand(args: string[]): Promise<void> {
   if (!server) {
     usageError(
       stored.length > 1
-        ? `varlatch whoami: credentials are stored for ${stored.join(", ")}; pass --server <url>\n${WHOAMI_USAGE}`
+        ? `varlatch whoami: credentials are stored for ${stored.map(maskUserinfo).join(", ")}; pass --server <url>\n${WHOAMI_USAGE}`
         : `varlatch whoami: no server; pass --server <url>, set VARLATCH_SERVER, or run inside a varlatch repository\n${WHOAMI_USAGE}`,
     );
   }
@@ -1214,7 +1216,7 @@ async function whoamiCommand(args: string[]): Promise<void> {
   }
   const base = server.replace(/\/+$/, "");
   if (parsed.booleans.has("--json")) {
-    printJson({ server: base, ...caller });
+    printJson({ server: maskUserinfo(base), ...caller });
     return;
   }
   console.log(formatWhoamiHuman(base, caller));
@@ -1385,7 +1387,7 @@ async function main(): Promise<void> {
         // Only fields of the expected shape (issue #119): a server could put anything in them.
         const apiMajor = safeApiMajor(meta.apiMajor);
         console.log(
-          `Logged in to ${server} (server ${safeVersion(meta.serverVersion) ?? UNRECOGNIZED_VERSION}, ` +
+          `Logged in to ${maskUserinfo(server)} (server ${safeVersion(meta.serverVersion) ?? UNRECOGNIZED_VERSION}, ` +
             `${apiMajor === undefined ? "an unrecognized API version" : `API v${apiMajor}`}).`,
         );
         noteDefaultServer(server, (line) => console.error(line));
@@ -1399,7 +1401,7 @@ async function main(): Promise<void> {
             console.log("Previous credential revoked.");
           } else {
             console.error(
-              `varlatch: previous credential not revoked (${failure}) — it may remain live` +
+              `varlatch: previous credential not revoked (${maskUserinfoInText(failure)}) — it may remain live` +
                 `${replaced.expiresAt ? ` until ${safeTime(replaced.expiresAt)}` : ""}.`,
             );
           }
@@ -1427,6 +1429,10 @@ async function main(): Promise<void> {
         }
         // Writes varlatch.toml and, unless --no-agent-files, the files coding agents read.
         const writeRepository = async (config: { server: string; organization: string; project: string; defaultEnvironment: string }, said: string) => {
+          // varlatch.toml is committed: a user name or password in the URL never goes there.
+          if (maskUserinfo(config.server) !== config.server) {
+            usageError(`varlatch init: a server URL with a user name or password can't be written to ${REPO_CONFIG_FILE}; give the server's address without them. Nothing was written.`);
+          }
           const lines = [
             `server = "${config.server}"`,
             `organization = "${config.organization}"`,
@@ -1435,7 +1441,7 @@ async function main(): Promise<void> {
             "",
           ];
           writeFileSync(join(process.cwd(), REPO_CONFIG_FILE), lines.join("\n"));
-          console.log(`Wrote ${REPO_CONFIG_FILE} for ${config.server}${said}. Commit it; it contains no credentials.`);
+          console.log(`Wrote ${REPO_CONFIG_FILE} for ${maskUserinfo(config.server)}${said}. Commit it; it contains no credentials.`);
           // ADR-0043 Decision 7: the files coding agents read, unless
           // --no-agent-files. A failure here leaves the project initialized.
           if (!opts.booleans.has("--no-agent-files")) {
@@ -1504,7 +1510,7 @@ async function main(): Promise<void> {
                   },
                   out: (line) => console.log(line),
                 });
-                return client(loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied));
+                return client(loadToken(server) ?? fail(`Not authenticated to ${maskUserinfo(server)}`, EXIT.denied));
               },
               writeRepository: (config) => writeRepository(config, ""),
               ...(opts.values.has("--org") ? { organization: opts.values.get("--org") as string } : {}),
@@ -1579,12 +1585,11 @@ async function main(): Promise<void> {
         const mode = opts.booleans.has("--check") ? "check" : opts.booleans.has("--remove") ? "remove" : "install";
         const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
         const { AgentsInstallError, describeInstall, runInstall } = await import("./agents/install.js");
-        const { homedir } = await import("node:os");
         let result: ReturnType<typeof runInstall>;
         try {
           result = runInstall({
             scope,
-            root: scope === "user" ? homedir() : (findRepoRoot(process.cwd()) ?? process.cwd()),
+            root: scope === "user" ? homeDirectory() : (findRepoRoot(process.cwd()) ?? process.cwd()),
             version: EMBEDDED_RELEASE.version,
             agents: opts.lists.get("--agent") ?? [],
             mode,
@@ -1624,11 +1629,11 @@ async function main(): Promise<void> {
             here ??
             usageError(
               stored.length > 1
-                ? `Multiple servers stored (${stored.map((s) => s.server).join(", ")}). Pass --server <url> or --all.`
-                : `No server here: pass --server <url> or --all (stored: ${stored.map((s) => s.server).join(", ")}).`,
+                ? `Multiple servers stored (${stored.map((s) => maskUserinfo(s.server)).join(", ")}). Pass --server <url> or --all.`
+                : `No server here: pass --server <url> or --all (stored: ${stored.map((s) => maskUserinfo(s.server)).join(", ")}).`,
             );
           const key = server.replace(/\/+$/, "");
-          const match = stored.find((s) => s.server === key) ?? fail(`No stored credential for ${server}`);
+          const match = stored.find((s) => s.server === key) ?? fail(`No stored credential for ${maskUserinfo(server)}`);
           targets = [match];
         }
         for (const { server, credential } of targets) {
@@ -1637,10 +1642,10 @@ async function main(): Promise<void> {
           );
           deleteCredential(server);
           if (revokeFailure === null) {
-            console.log(`${server}: credential revoked and removed.`);
+            console.log(`${maskUserinfo(server)}: credential revoked and removed.`);
           } else {
             console.log(
-              `${server}: removed locally; server revocation failed (${revokeFailure}) — the credential may remain live` +
+              `${maskUserinfo(server)}: removed locally; server revocation failed (${maskUserinfoInText(revokeFailure)}) — the credential may remain live` +
                 `${credential.expiresAt ? ` until ${safeTime(credential.expiresAt)}` : ""}.`,
             );
           }
@@ -1710,7 +1715,7 @@ async function main(): Promise<void> {
           console.log(JSON.stringify({ version: STATUS_SCHEMA_VERSION, ...repo, ...(agentRun ? { agentRun } : {}) }, null, 2));
           return;
         }
-        console.log(`Server        ${ctx.server}`);
+        console.log(`Server        ${maskServer(ctx.server)}`);
         console.log(`Organization  ${ctx.organization}`);
         console.log(`Project       ${ctx.project}`);
         console.log(`Environment   ${ctx.environment}`);
@@ -2340,10 +2345,10 @@ async function main(): Promise<void> {
         let target: Parameters<typeof runImport>[1];
         try {
           const ctx = context(args);
-          target = loadToken(ctx.server) || !dryRun ? { ctx, api: client(ctx) } : { offline: `not signed in to ${ctx.server}` };
+          target = loadToken(ctx.server) || !dryRun ? { ctx, api: client(ctx) } : { offline: `not signed in to ${maskServer(ctx.server)}` };
         } catch (err) {
           if (!(err instanceof ContextError) || !dryRun) throw err;
-          target = { offline: err.message.split(". ")[0] ?? err.message };
+          target = { offline: maskUserinfoInText(err.message.split(". ")[0] ?? err.message) };
         }
         try {
           process.exitCode = await runImport(
@@ -2564,7 +2569,7 @@ async function main(): Promise<void> {
         const ctx = context(args);
         const invite = await client(ctx).createInvitation(ctx.organization, { name, role });
         console.log(`Hand this one-time enrollment link to ${name} (${role}):`);
-        console.log(`  ${ctx.server}/enroll#${printable(invite.token)}`);
+        console.log(`  ${maskServer(ctx.server)}/enroll#${printable(invite.token)}`);
         console.log(`Expires: ${safeTime(invite.expiresAt)}. They will create a passkey — no email involved.`);
         return;
       }
@@ -2671,7 +2676,7 @@ async function main(): Promise<void> {
         if (sub !== "list" && sub !== "create") usageError("Usage: varlatch org <list|create|delete|deletion|freeze|unfreeze>");
         if (sub === "create" && !args[1]) usageError("Usage: varlatch org create <slug> [name]");
         const server = commandServer(args);
-        const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
+        const token = loadToken(server) ?? fail(`Not authenticated to ${maskUserinfo(server)}`, EXIT.denied);
         warnIfExpiring(server);
         const api = new VarlatchClient({ onMaintenance: maintenanceNotice, onCredentialExpires: credentialExpiryNotice(server, token), server, token, userAgent: cliUserAgent() });
         if (sub === "list") {
@@ -2705,7 +2710,7 @@ async function main(): Promise<void> {
           const slug = args[1] ?? usageError("Usage: varlatch project create <slug> [name] [--managed]");
           const server = commandServer(args);
           const org = flag(args, "--org") ?? usageError("Provide --org <slug>");
-          const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
+          const token = loadToken(server) ?? fail(`Not authenticated to ${maskUserinfo(server)}`, EXIT.denied);
           warnIfExpiring(server);
           const api = new VarlatchClient({ onMaintenance: maintenanceNotice, onCredentialExpires: credentialExpiryNotice(server, token), server, token, userAgent: cliUserAgent() });
           const project = await api.createProject(org, {
@@ -2714,7 +2719,7 @@ async function main(): Promise<void> {
             contractAuthority: has(args, "--managed") ? "managed" : "git",
           });
           console.log(safe`Project ${project.slug} created in ${org} (${project.contractAuthority} contract authority).`);
-          console.log(safe`Set up a repo with: varlatch init --org ${org} --project ${project.slug} --server ${server}`);
+          console.log(safe`Set up a repo with: varlatch init --org ${org} --project ${project.slug} --server ${maskUserinfo(server)}`);
           return;
         }
         const ctx = context(args);
@@ -2895,7 +2900,7 @@ async function main(): Promise<void> {
         const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
         if (parsed.values.has("--server")) opts.server = parsed.values.get("--server") as string;
         const ctx = resolveContext(opts);
-        const serverOption = parsed.values.has("--server") || process.env.VARLATCH_SERVER ? ` --server ${shellWord(ctx.server)}` : "";
+        const serverOption = parsed.values.has("--server") || process.env.VARLATCH_SERVER ? ` --server ${shellWord(maskServer(ctx.server))}` : "";
         const api = client(ctx);
         if (sub === "list") {
           const people = (await api.listIdentities(ctx.organization)).items.filter((i) => i.kind === "human");
@@ -3452,7 +3457,8 @@ async function main(): Promise<void> {
   } catch (err) {
     if (err instanceof Error && err.name === "BackupError") fail(err.message);
     if (err instanceof Error && err.name === "ExportContextError") fail(`varlatch: ${err.message}. Nothing was started.`);
-    if (err instanceof ContextError) fail(err.message);
+    if (err instanceof HomeDirectoryError) fail(err.message, EXIT.usage);
+    if (err instanceof ContextError) fail(maskUserinfoInText(err.message));
     if (err instanceof EnvSchemaParseError || err instanceof UnknownEnvironmentNameError) fail(err.message);
     // Its message names the approval by the id the server gave: escaped (issue #119).
     if (err instanceof ApprovalError) fail(printable(err.message), err.exit);
