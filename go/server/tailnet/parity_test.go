@@ -33,7 +33,7 @@ var tailnetTables = []string{"installation", "identities", "credentials", "organ
 
 // The fixture's listeners (PUBLIC_URL, BROWSER and LISTENERS there).
 var (
-	browser         = &httpserver.BrowserEndpoint{Host: "varlatch.corp.ts.net", Port: 8443, Origins: []string{"https://dash.example.com"}}
+	browser         = &httpserver.BrowserEndpoint{Host: func() string { return "varlatch.corp.ts.net" }, Port: 8443, Origins: []string{"https://dash.example.com"}}
 	browserEndpoint = "https://varlatch.corp.ts.net:8443"
 )
 
@@ -93,7 +93,7 @@ func TestTypeScriptFixture(t *testing.T) {
 		h, err := httpserver.New(httpserver.Options{
 			Version: f.Version(), Backend: daemon.NewBackend(store, rootKEK), Log: log, PublicURL: publicURL,
 			Auth: approvals, Values: vs, Writer: w, RootKEK: rootKEK, Now: now,
-			Tailnet: tl, BrowserEndpoint: browserEndpoint,
+			Tailnet: tl, BrowserEndpoint: func() string { return browserEndpoint },
 		})
 		if err != nil {
 			t.Fatal(err)

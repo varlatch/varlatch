@@ -127,10 +127,11 @@ type Options struct {
 	// request resolved to its peer's Tailnet Context first.
 	Tailnet *TailnetListener
 	// BrowserEndpoint is the tailnet browser endpoint's URL when this
-	// installation serves one, "" for none, on every listener: GET
+	// installation serves one, "" (or nil) for none, on every listener: GET
 	// /v1/tailnet/endpoint answers it and /v1/meta lists
-	// tailnet.browser-reads.
-	BrowserEndpoint string
+	// tailnet.browser-reads. A function: the URL names the pinned tailnet,
+	// known once the node is enrolled.
+	BrowserEndpoint func() string
 	// TailnetListeners is what varlatchd last observed of its tailnet
 	// listeners (GET /v1/installation/listeners); nil without one.
 	TailnetListeners func() any

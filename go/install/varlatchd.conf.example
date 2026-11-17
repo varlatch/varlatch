@@ -108,3 +108,13 @@ tailnet = off
 # The auth key's file, read only to enrol the node the first time.
 # Default: the tailnet-auth-key credential in $CREDENTIALS_DIRECTORY.
 #tailnet_auth_key_file =
+
+# The browser endpoint (ADR-0046), off unless its port is set: the API
+# over HTTPS on the node's tailnet name, with the node's own certificate
+# (MagicDNS and HTTPS certificates on in the tailnet), for the dashboard to
+# read tailnet-protected values from a browser on a tailnet device. The
+# certificate's name, <tailnet_hostname>.<tailnet>.ts.net, is published in
+# Certificate Transparency logs. Allowed dashboard origins: an https (or
+# loopback http) public_url's, and these exact origins, comma-separated.
+#tailnet_https_port = 8443
+#tailnet_browser_origins =

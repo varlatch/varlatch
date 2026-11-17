@@ -497,6 +497,10 @@ func writeConfiguration(path string, cfg *config.Config) error {
 		settings["tailnet_hostname"] = t.Hostname
 		settings["tailnet_tags"] = strings.Join(t.Tags, ",")
 		settings["tailnet_port"] = fmt.Sprint(t.Port)
+		if t.HTTPSPort != 0 {
+			settings["tailnet_https_port"] = fmt.Sprint(t.HTTPSPort)
+			settings["tailnet_browser_origins"] = strings.Join(t.BrowserOrigins, ",")
+		}
 	}
 	b, err := json.Marshal(Configuration{FormatVersion: 1, Settings: settings})
 	if err != nil {

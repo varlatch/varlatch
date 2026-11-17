@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -78,6 +80,10 @@ type Manager struct {
 	statusErr bool
 	listening *bool
 	checkedAt *time.Time
+	// The browser endpoint (step 4.13c), when configured: the node's
+	// configured host name, the port, its certificate, and whether it
+	// bound its port.
+	browser   *browserEndpoint
 	persisted struct {
 		json string
 		at   time.Time
@@ -246,6 +252,69 @@ func (m *Manager) Closed() string {
 		return PinUnknown
 	}
 	return m.verdict
+}
+
+type browserEndpoint struct {
+	hostname  string
+	port      int
+	cert      *Certificate
+	listening *bool
+}
+
+// SetBrowser configures the browser endpoint: the node's host name (its
+// first DNS label, fixed at enrolment) and the HTTPS port. Its host is
+// that name in the pinned tailnet (BrowserHost); cert is set once it
+// exists (SetCertificate).
+func (m *Manager) SetBrowser(hostname string, port int) {
+	m.mu.Lock()
+	m.browser = &browserEndpoint{hostname: strings.ToLower(hostname), port: port}
+	m.mu.Unlock()
+}
+
+// SetCertificate gives the browser endpoint's certificate, for the report.
+func (m *Manager) SetCertificate(c *Certificate) {
+	m.mu.Lock()
+	if m.browser != nil {
+		m.browser.cert = c
+	}
+	m.mu.Unlock()
+}
+
+// BrowserHost is the browser endpoint's host: the configured name in the
+// pinned tailnet; "" without a browser endpoint or a pin.
+func (m *Manager) BrowserHost() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.browserHostLocked()
+}
+
+func (m *Manager) browserHostLocked() string {
+	if m.browser == nil || m.pin == nil || m.pin.Enrolling {
+		return ""
+	}
+	return m.browser.hostname + "." + m.pin.Suffix
+}
+
+// BrowserEndpoint is the browser endpoint's URL, as getTailnetEndpoint
+// answers it; "" without a browser endpoint, or before the node is
+// enrolled and its tailnet known.
+func (m *Manager) BrowserEndpoint() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	host := m.browserHostLocked()
+	if host == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://%s:%d", host, m.browser.port)
+}
+
+// ListeningBrowser records whether the browser endpoint bound its port.
+func (m *Manager) ListeningBrowser(ok bool) {
+	m.mu.Lock()
+	if m.browser != nil {
+		m.browser.listening = &ok
+	}
+	m.mu.Unlock()
 }
 
 // Listening records whether the tailnet listener bound its port.
@@ -446,13 +515,20 @@ func (m *Manager) reportLocked() jsvalue.Object {
 	if m.pin != nil {
 		tailnetName = m.pin.Suffix
 	}
-	configured := jsvalue.Object{{Key: "tailnet", Value: tailnetName}, {Key: "listenerPort", Value: m.port}, {Key: "browserEndpoint", Value: nil}}
+	var endpoint any
+	if host := m.browserHostLocked(); host != "" {
+		endpoint = fmt.Sprintf("https://%s:%d", host, m.browser.port)
+	}
+	configured := jsvalue.Object{{Key: "tailnet", Value: tailnetName}, {Key: "listenerPort", Value: m.port}, {Key: "browserEndpoint", Value: endpoint}}
 	listener, localAPI, node := unchecked, unchecked, unchecked
+	wanted := []*bool{m.listening}
+	if m.browser != nil {
+		wanted = append(wanted, m.browser.listening)
+	}
 	switch {
-	case m.listening == nil:
-	case *m.listening:
+	case !slices.ContainsFunc(wanted, func(l *bool) bool { return l == nil || !*l }):
 		listener = check("pass", "")
-	default:
+	case slices.ContainsFunc(wanted, func(l *bool) bool { return l != nil && !*l }):
 		listener = check("fail", "NOT_LISTENING")
 	}
 	var details jsvalue.Object
@@ -467,6 +543,8 @@ func (m *Manager) reportLocked() jsvalue.Object {
 			node = check("fail", "NOT_RUNNING")
 		case !m.open:
 			node = check("fail", "OTHER_TAILNET")
+		case m.browser != nil && st.DNSName != m.browserHostLocked():
+			node = check("fail", "NAME_CHANGED")
 		default:
 			node = check("pass", "")
 		}
@@ -476,13 +554,38 @@ func (m *Manager) reportLocked() jsvalue.Object {
 	if m.checkedAt != nil {
 		checkedAt = audit.ISOTime(m.checkedAt.UnixMicro())
 	}
-	observed := jsvalue.Object{{Key: "checkedAt", Value: checkedAt}, {Key: "checks", Value: jsvalue.Object{
-		{Key: "listener", Value: listener}, {Key: "localApi", Value: localAPI}, {Key: "node", Value: node},
-	}}}
+	checks := jsvalue.Object{{Key: "listener", Value: listener}}
+	if m.browser != nil {
+		checks = append(checks, jsvalue.Member{Key: "browserTls", Value: m.browserTLSLocked()})
+	}
+	checks = append(checks, jsvalue.Member{Key: "localApi", Value: localAPI}, jsvalue.Member{Key: "node", Value: node})
+	observed := jsvalue.Object{{Key: "checkedAt", Value: checkedAt}, {Key: "checks", Value: checks}}
 	if len(details) > 0 {
 		observed = append(observed, jsvalue.Member{Key: "node", Value: details})
 	}
 	return jsvalue.Object{{Key: "configured", Value: configured}, {Key: "observed", Value: observed}}
+}
+
+// browserTLSLocked is the browserTls check: pass while a valid
+// certificate serves, with when it expires; else NO_CERTIFICATE, with the
+// expiry of the one last loaded.
+func (m *Manager) browserTLSLocked() jsvalue.Object {
+	c := m.browser.cert
+	if c == nil {
+		return check("fail", "NO_CERTIFICATE")
+	}
+	var notAfter any
+	if t := c.NotAfter(); !t.IsZero() {
+		notAfter = audit.ISOTime(t.UnixMicro())
+	}
+	if c.CurrentFor(m.browserHostLocked()) != nil {
+		return jsvalue.Object{{Key: "status", Value: "pass"}, {Key: "certificateNotAfter", Value: notAfter}}
+	}
+	o := check("fail", "NO_CERTIFICATE")
+	if notAfter != nil {
+		o = append(o, jsvalue.Member{Key: "certificateNotAfter", Value: notAfter})
+	}
+	return o
 }
 
 // observedNode is observe.ts's observedNode: each field checked, one that

@@ -46,8 +46,9 @@ const TailnetClosedMessage = tailnet.ClosedMessage
 // BrowserEndpoint is the browser endpoint's gate (ADR-0046 Decisions 3
 // and 4).
 type BrowserEndpoint struct {
-	// Host is the node's MagicDNS name, lower case; Port its HTTPS port.
-	Host string
+	// Host is the node's MagicDNS name, lower case ("" while it is not
+	// known, and every request is refused); Port its HTTPS port.
+	Host func() string
 	Port int
 	// Origins are the exact origins allowed to read cross-origin.
 	Origins []string
@@ -117,9 +118,9 @@ func isBrowserRoute(method, p string) bool {
 // never Access-Control-Allow-Credentials. It returns false when it
 // answered.
 func (b *BrowserEndpoint) gate(w http.ResponseWriter, r *http.Request, p string) bool {
-	host := strings.ToLower(r.Host)
-	if host != b.Host && host != b.Host+":"+strconv.Itoa(b.Port) {
-		writeError(w, r, http.StatusForbidden, "PERMISSION_DENIED", "This endpoint answers only as "+b.Host)
+	host, name := strings.ToLower(r.Host), b.Host()
+	if name == "" || host != name && host != name+":"+strconv.Itoa(b.Port) {
+		writeError(w, r, http.StatusForbidden, "PERMISSION_DENIED", "This endpoint answers only as "+name)
 		return false
 	}
 	origins, present := r.Header["Origin"]
@@ -184,8 +185,8 @@ func (notRouted) VisitGetTailnetContextResponse(w http.ResponseWriter) error {
 // nothing about whether this caller can reach it (ADR-0046 Decision 6).
 func (o *operations) GetTailnetEndpoint(ctx context.Context, _ api.GetTailnetEndpointRequestObject) (api.GetTailnetEndpointResponseObject, error) {
 	var endpoint any
-	if o.s.opts.BrowserEndpoint != "" {
-		endpoint = o.s.opts.BrowserEndpoint
+	if u := o.s.opts.browserEndpoint(); u != "" {
+		endpoint = u
 	}
 	return ok(jsvalue.Object{{Key: "browserEndpoint", Value: endpoint}}), nil
 }
@@ -215,4 +216,12 @@ func (o *operations) GetInstallationListeners(ctx context.Context, _ api.GetInst
 		report = o.s.opts.TailnetListeners()
 	}
 	return ok(jsvalue.Object{{Key: "tailnet", Value: report}}), nil
+}
+
+// browserEndpoint is the browser endpoint's URL now, "" for none.
+func (o *Options) browserEndpoint() string {
+	if o.BrowserEndpoint == nil {
+		return ""
+	}
+	return o.BrowserEndpoint()
 }

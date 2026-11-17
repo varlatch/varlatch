@@ -752,9 +752,9 @@ the drains and `admin audit-export discard-plan`.
 listeners' HTTP side (ADR-0014 §7, ADR-0046; `tailnet/whois.ts`,
 `tailnet/listener.ts`, `http/tailnet-browser.ts`), on a `tailnet.Node`:
 what varlatchd's own node answers about a peer (WhoIs) and about itself.
-The node, its pin and the listeners report are step 4.13b (next
-section); the browser endpoint's HTTPS with Tailscale certificates is
-4.13c.
+The node, its pin and the listeners report are step 4.13b, the browser
+endpoint's HTTPS with the node's certificate 4.13c (the next two
+sections).
 
 - **Listeners.** A tailnet listener is a server of its own
   (`Options.Tailnet`): the API alone, with no nginx in front, no dashboard,
@@ -905,6 +905,55 @@ serves the tailnet listener on the node's own addresses
   a missing pin, lookups and contexts across a closure, the admission) are
   unit tests in `pin_test.go`. The live checks on a real tailnet are run
   by hand (the PR lists them).
+
+### The browser endpoint over HTTPS (step 4.13c)
+
+With `tailnet_https_port` set, varlatchd serves the browser endpoint
+(ADR-0046) on the node's addresses, over HTTPS with the node's own
+certificate (`server/tailnet/cert.go`, `cert.ts`; `listener.ts`'s
+`serveTailnetHttps`), beside the plain tailnet listener.
+
+- **Settings.** `tailnet_https_port` (not `tailnet_port`) and
+  `tailnet_browser_origins`, exact origins as a browser sends them (https,
+  or plain http on loopback; never `*`, `null`, a path or a wildcard
+  host), checked as `config.ts`'s `tailnetBrowser` checks them (through
+  `lib/whatwg`'s URL parser); an https (or loopback http) `public_url`'s
+  origin is allowed by default, and at least one origin is required.
+- **Its host** is `tailnet_hostname` in the pinned tailnet (the
+  TypeScript server's `VARLATCH_TAILNET_MACHINE` and tailnet settings): known
+  once the node is enrolled, and following a re-pin.
+  `getTailnetEndpoint` answers its URL and `/v1/meta` lists
+  `tailnet.browser-reads` from then on (`Options.BrowserEndpoint` and
+  `BrowserEndpoint.Host` are functions).
+- **The certificate** is the node's Let's Encrypt pair, which tsnet
+  obtains through Tailscale's control plane (MagicDNS and HTTPS
+  certificates on in the tailnet): fetched at start and daily (hourly in
+  its last two days, from 30 seconds doubling to an hour after a
+  failure), asking for a third of its lifetime left (at most a week). A
+  pair that does not name the host exactly (never a wildcard or the
+  subject), is not valid now, or whose key does not match is never used;
+  the last valid one serves until it expires. The certificate's name is
+  published in Certificate Transparency logs.
+- **TLS.** TLS 1.2 at least; only the host's name (a handshake for another
+  name, without SNI, or without a valid certificate is refused); no
+  session ever resumed (tickets off, and a resumed or certificate-less
+  connection fails before a request is read); HTTP/1.1, as Node's server.
+- **The same rules as the plain tailnet listener:** the admission (closed
+  pin, every request refused), the device check, and the browser gate of
+  4.13a (the host, the allowlisted origins, CORS).
+- **The report** adds `browserTls` (pass with `certificateNotAfter`, or
+  `NO_CERTIFICATE`), both listeners in `listener`, and `NAME_CHANGED` when
+  the node's name is no longer the endpoint's host.
+- **Tests, with no real tailnet or ACME:** a test CA
+  (`server/tailnet/tailnettest`) stands in for Let's Encrypt.
+  `TestDecodePair`, `TestCertificateKeepsTheLastValidPair`,
+  `TestRefreshesShareAFetch` and `TestBrowserTLS` (SNI, versions, no
+  resumption in TLS 1.2 and 1.3) cover `cert.go`;
+  `TestReportWithTheBrowserEndpoint` the report; `TestBrowserEndpoint`
+  runs varlatchd with the endpoint on testcontrol (the `tailnetCerts`
+  hook): a tagged peer reads its own device over HTTPS from an
+  allowlisted origin; another origin, name or Host is refused; and with
+  tailnet access closed the endpoint refuses too.
 
 The server's packages:
 
@@ -1380,9 +1429,10 @@ The server's packages:
   kind of confirmation; `TestCoverageWhileTheBackfillRuns` the coverage
   of an unfinished backfill.
 
-- `server/tailnet` (steps 4.13a and 4.13b): the tailnet listeners'
-  device check, varlatchd's tsnet node, its pin and the listeners report
-  (see "The tailnet listeners" and "The tailnet node and its pin").
+- `server/tailnet` (steps 4.13a to 4.13c): the tailnet listeners'
+  device check, varlatchd's tsnet node, its pin, the listeners report and
+  the browser endpoint's certificate (see "The tailnet listeners", "The
+  tailnet node and its pin" and "The browser endpoint over HTTPS").
 - `server/capabilities` (step 4.6): broker Capabilities' issuance, list
   and revocation; their exercise is `server/values`' (see "Broker
   Capabilities").

@@ -113,7 +113,7 @@ var loopbackHosts = map[string]bool{"127.0.0.1": true, "[::1]": true, "localhost
 // it exists.
 func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (api.GetMetaResponseObject, error) {
 	s := o.s
-	hidden := map[string]bool{"tailnet.browser-reads": s.opts.BrowserEndpoint == "", "cli.download": true}
+	hidden := map[string]bool{"tailnet.browser-reads": s.opts.browserEndpoint() == "", "cli.download": true}
 	if !s.opts.Sync {
 		hidden["sync.targets"] = true
 	}
