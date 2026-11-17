@@ -210,7 +210,7 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     // Step 4.9b: Platform Connections.
     "listPlatformConnections", "createPlatformConnection", "checkPlatformAccess", "listPlatformDestinations",
     "getPlatformConnection", "replacePlatformCredential", "revokePlatformConnection",
-    // Step 4.9c: Sync Targets (pushing is 4.9d's).
+    // Step 4.9c: Sync Targets.
     "listOrgSyncTargets", "listSyncTargets", "createSyncTarget", "getSyncTarget", "updateSyncTarget",
     "pauseSyncTarget", "resumeSyncTarget", "revokeSyncTarget",
     // Step 4.12a: Project deletion.
@@ -218,6 +218,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     // Step 4.12b: Organization deletion and the audit-access tombstone.
     "getOrganizationDeletion", "scheduleOrganizationDeletion", "approveOrganizationDeletion", "cancelOrganizationDeletion",
     "listDeletedOrganizationAuditEvents", "exportDeletedOrganizationAuditEvents", "listDeletedOrganizations", "removeDeletedOrganizationReader",
+    // Step 4.9d: pushing, the converge engine's trigger.
+    "pushSyncTarget",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // Of the named operations only serving the CLI is lacking (the seed is

@@ -37,6 +37,7 @@ const (
 	revokeSyncTargetPattern   = "DELETE /v1/organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}"
 	pauseSyncTargetPattern    = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/pause"
 	resumeSyncTargetPattern   = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/resume"
+	pushSyncTargetPattern     = "POST /v1/organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/push"
 	orgSyncTargetsRoute       = "/v1/organizations/:org/sync-targets"
 	syncTargetsRoute          = "/v1/organizations/:org/projects/:project/environments/:environment/sync-targets"
 	syncTargetRoute           = syncTargetsRoute + "/:target"
@@ -52,12 +53,13 @@ var (
 
 func init() {
 	for _, p := range []string{listOrgSyncTargetsPattern, listSyncTargetsPattern, createSyncTargetPattern, getSyncTargetPattern,
-		updateSyncTargetPattern, revokeSyncTargetPattern, pauseSyncTargetPattern, resumeSyncTargetPattern} {
+		updateSyncTargetPattern, revokeSyncTargetPattern, pauseSyncTargetPattern, resumeSyncTargetPattern, pushSyncTargetPattern} {
 		readsItself[p] = true
 	}
 }
 
 func (r reply) VisitListOrgSyncTargetsResponse(w http.ResponseWriter) error { return r.visit(w) }
+func (r reply) VisitPushSyncTargetResponse(w http.ResponseWriter) error     { return r.visit(w) }
 func (r reply) VisitListSyncTargetsResponse(w http.ResponseWriter) error    { return r.visit(w) }
 func (r reply) VisitCreateSyncTargetResponse(w http.ResponseWriter) error   { return r.visit(w) }
 func (r reply) VisitGetSyncTargetResponse(w http.ResponseWriter) error      { return r.visit(w) }
@@ -480,6 +482,26 @@ func (o *operations) PauseSyncTarget(ctx context.Context, _ api.PauseSyncTargetR
 		return nil, err
 	}
 	return ok(out), nil
+}
+
+// PushSyncTarget is POST …/{target}/push: the Target due at the engine's
+// next pass, its backoff cleared. 202.
+func (o *operations) PushSyncTarget(ctx context.Context, _ api.PushSyncTargetRequestObject) (api.PushSyncTargetResponseObject, error) {
+	t, target, err := o.target(ctx, syncTargetRoute+"/push", "")
+	if err != nil {
+		return nil, err
+	}
+	if err := o.assertSyncEnabled(); err != nil {
+		return nil, err
+	}
+	reports, err := o.syncService().RequestPush(ctx, orgOf(t).syncRequest(ctx), t.org, target.ID)
+	if err != nil {
+		return nil, t.refused(ctx, err)
+	}
+	if err := orgOf(t).written(ctx, reports); err != nil {
+		return nil, err
+	}
+	return reply{status: http.StatusAccepted, body: jsvalue.Object{{Key: "scheduled", Value: true}}}, nil
 }
 
 // ResumeSyncTarget is POST …/{target}/resume: an immediate converge.

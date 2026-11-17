@@ -43,6 +43,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/syncs"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/web"
@@ -399,6 +400,22 @@ func serve(opts Options, h *hooks) int {
 		hooks.RunLoop(ctx, webhooks.Interval, admission.Enter)
 	}()
 	defer func() { cancel(); <-webhookDone }()
+	// The converge engine (ADR-0031, ADR-0050; feature-parity decision 7),
+	// when the host left sync on: a pass at once, then every 30 seconds,
+	// each Target under its lease, through the outbound policy. A stop ends
+	// it before the policy and the database close; a run cut short keeps
+	// its lease until it expires, as a crash would.
+	if cfg.Sync {
+		syncDone := make(chan struct{})
+		go func() {
+			defer close(syncDone)
+			engine := &syncs.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Adapters: cfg.SyncAdapters, Log: log}
+			engine.RunLoop(ctx, syncs.SyncInterval, admission.Enter)
+		}()
+		defer func() { cancel(); <-syncDone }()
+	} else {
+		log.Info("sync targets disabled by sync = off (CLI mode remains available)")
+	}
 	// The audit export worker (ADR-0056 Decisions 2 and 3), when the host
 	// left the export on: a pass at once, then every minute, each export
 	// under its lease and its gate, through the outbound policy. A stop

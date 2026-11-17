@@ -32,10 +32,6 @@
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"
       },
-      "pushSyncTarget": {
-        "reason": "not ported to the Go server yet",
-        "step": "ADR-0059 step 4"
-      },
       "removeGitHubApp": {
         "reason": "not ported to the Go server yet",
         "step": "ADR-0059 step 4"

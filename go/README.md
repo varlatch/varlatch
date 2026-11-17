@@ -802,6 +802,67 @@ Pushing (`pushSyncTarget`) and the converge engine are 4.9d's and answer
     the two behaviors the fixture cannot (a run that ends while the pause
     waits; `sync = off`).
 
+### The converge engine (step 4.9d)
+
+`server/syncs/converge.go` is `domain/syncdelivery.ts`: the loop that
+converges each Sync Target's destination to its environment's effective
+output, and `pushSyncTarget`, which makes a Target due at once.
+varlatchd runs it every 30 seconds when `sync = on`.
+
+- **The transaction map first** (feature-parity decision 7):
+  `server/syncs/CONVERGE.md` lists every commit the TypeScript engine
+  makes, in order, on every path, with the guard it takes and what lies
+  between commits (provider calls, the decryption). Go makes each as one
+  write job, in that order, and merges none. A merge would need decision
+  7's proof.
+- **Unchanged:**
+  - one `writeValues` and one `deleteNames` per run;
+  - the generation guard on every guarded commit;
+  - the send check (generation, deadline, freeze) before every write,
+    delete and redeploy request inside a batch;
+  - the order of audit events.
+- **The report:** each run reports its commits, its time queued for the
+  writer and in jobs, and its duration (`Service.OnRun`, a debug log
+  line).
+- **Where Go differs** (CONVERGE.md):
+  - a Target on a GitHub App Connection waits for 4.10's minting
+    (`needs_sync` kept, nothing recorded);
+  - the ledger is read in last-write order, which TypeScript leaves
+    unspecified.
+- **A TypeScript defect kept for parity:** the trigger scan's batch is
+  ordered by `event_order` as text. It is reported for the defect list.
+- **Parity:**
+  - `converge-v0.22.0.json` (`go-converge-fixture.test.ts`): 28 requests,
+    ticks of the engine between ordinary requests, against stateful fake
+    GitHub, Coolify and Convex services written alike in both languages.
+    Every request the engine sends is compared, a GitHub secret by the
+    plaintext the fake opens, with every ledger row (fingerprints
+    included), every Target column and every audit event.
+  - The ticks cover:
+    - the first forced pass (read-back, adoption, rewrites, a redeploy, a
+      credential's expiry);
+    - triggers, and an orphan's deletion;
+    - a failed write, its backoff, and `pushSyncTarget`;
+    - drift put back;
+    - a paused and resumed Target;
+    - a new destination;
+    - a revoked Connection.
+- **G7** (`converge_g7_test.go`):
+  - a crash right after each commit of the first pass, at every commit,
+    recovered both by the repair pass and by an ordinary triggered run,
+    converges to what the pass converges to without a crash;
+  - a fence (the generation moved) at every request to a platform, in the
+    middle of a batch included, stops the run's writes and records
+    nothing more under its generation.
+
+  Under the race detector both take one point in seven.
+- **Also tested** (`converge_test.go`):
+  - a converged run's commits;
+  - a refusal by the outbound policy is not a failure;
+  - a run out of budget yields;
+  - a freeze mid-run yields, and nothing is leased while frozen;
+  - App Connection Targets wait.
+
 ### The audit export's configuration (step 4.11a)
 
 `server/auditexport` is the configuration side of `domain/auditexport.ts`

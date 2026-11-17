@@ -140,13 +140,15 @@ func benchInstallation(data, out, listen string) (string, error) {
 		return "", err
 	}
 	// The plan's backups are real ones, sealed with a key of their own;
-	// the run drives them, so the schedule is off.
+	// the run drives them, so the schedule is off. The run drives the
+	// converge too (the simulation below, until 4.9's G9a smoke moves it
+	// to the engine), so the engine's own loop is off: sync = off.
 	bekFile := filepath.Join(data, "backup-key")
 	if err := os.WriteFile(bekFile, []byte(hex.EncodeToString(envelope.GenerateKey())+"\n"), 0o600); err != nil {
 		return "", err
 	}
 	conf := filepath.Join(out, g9a.FileConfig)
-	text := fmt.Sprintf("# Written by varlatchd g9a for one run.\nlisten = %s\ndata_dir = %s\nroot_kek_file = %s\naccess_log = %s\nbackup_key_file = %s\nbackup_interval = off\nbackup_keep = 2\n",
+	text := fmt.Sprintf("# Written by varlatchd g9a for one run.\nlisten = %s\ndata_dir = %s\nroot_kek_file = %s\naccess_log = %s\nbackup_key_file = %s\nbackup_interval = off\nbackup_keep = 2\nsync = off\n",
 		listen, data, kekFile, filepath.Join(out, g9a.FileAccessLog), bekFile)
 	return conf, os.WriteFile(conf, []byte(text), 0o644)
 }
