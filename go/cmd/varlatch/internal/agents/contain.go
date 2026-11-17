@@ -294,18 +294,33 @@ func (w *writer) write(rel string, data []byte) error {
 	return nil
 }
 
-// remove removes the file rel, if it is there.
-func (w *writer) remove(rel string) error {
+// remove removes the file rel, if it is there. A file whose every name is
+// one install gives it (an AGENTS.md and the CLAUDE.md that is it) goes
+// under each of them, so no name keeps what was removed; it returns the
+// other names removed. A file with a name the CLI cannot see loses only
+// rel: removing a name never changes another name's file.
+func (w *writer) remove(rel string) ([]string, error) {
 	if err := checkBelow(w.path, filepath.Dir(rel)); err != nil {
-		return err
+		return nil, err
 	}
 	if err := w.open(); err != nil {
-		return err
+		return nil, err
 	}
-	if err := w.root.Remove(rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+	names := []string{rel}
+	if info, err := w.root.Lstat(rel); err == nil && info.Mode().IsRegular() {
+		if found, ok, err := aliases(w.path, rel); err == nil && ok {
+			names = found
+		}
 	}
-	return nil
+	for _, name := range names {
+		if err := checkBelow(w.path, filepath.Dir(name)); err != nil {
+			return nil, err
+		}
+		if err := w.root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+	}
+	return names[1:], nil
 }
 
 // rmdir removes the empty directory rel, never a link.

@@ -400,3 +400,44 @@ func TestLateNamesKeepTheOldContent(t *testing.T) {
 		t.Errorf("AGENTS.md was not replaced: %q", data)
 	}
 }
+
+// TestRemoveTakesBothNamesOfAPair: --remove takes away an AGENTS.md that
+// holds only the block under every name install gives it (a CLAUDE.md or
+// .claude/CLAUDE.md that is the same file), reports each name once, and
+// writes neither again.
+func TestRemoveTakesBothNamesOfAPair(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hard links in the test's own setup")
+	}
+	for _, alias := range []string{"CLAUDE.md", filepath.Join(".claude", "CLAUDE.md")} {
+		root := t.TempDir()
+		if _, err := RunInstall(Options{Scope: "project", Root: root, Version: "1", Mode: "install"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, alias)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Link(filepath.Join(root, "AGENTS.md"), filepath.Join(root, alias)); err != nil {
+			t.Skip(err)
+		}
+		result, err := RunInstall(Options{Scope: "project", Root: root, Version: "1", Mode: "remove"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]int{}
+		for _, c := range result.Changes {
+			seen[c.Path]++
+			if (c.Path == "AGENTS.md" || c.Path == filepath.ToSlash(alias)) && c.Action != "remove" {
+				t.Errorf("%s: %s, want remove", alias, c.Path)
+			}
+		}
+		if seen["AGENTS.md"] != 1 || seen[filepath.ToSlash(alias)] != 1 {
+			t.Errorf("%s: reported %v", alias, seen)
+		}
+		entries := snapshot(t, root)
+		delete(entries, "./")
+		if len(entries) != 0 {
+			t.Errorf("%s: left %v", alias, entries)
+		}
+	}
+}

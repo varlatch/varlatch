@@ -815,9 +815,15 @@ func RunInstall(opts Options) (*Result, error) {
 	}
 	w := &writer{path: opts.Root}
 	defer w.close()
+	// Names a removal took away with their file (a hard-linked pair): never
+	// reported twice, nor written again by a later row for the same file.
+	gone := map[string]bool{}
 	result := &Result{Scope: opts.Scope, Root: opts.Root, Changes: []Change{}, Manual: p.manual, LeftInPlace: p.leftInPlace, Notices: p.notices}
 	for _, file := range p.files {
 		rel := filepath.ToSlash(relative(opts.Root, file.path))
+		if gone[rel] {
+			continue
+		}
 		current, st, err := readBytes(file.path)
 		if err != nil {
 			return nil, err
@@ -848,8 +854,14 @@ func RunInstall(opts Options) (*Result, error) {
 			continue
 		}
 		if file.desired == nil {
-			if err := w.remove(relative(opts.Root, file.path)); err != nil {
+			others, err := w.remove(relative(opts.Root, file.path))
+			if err != nil {
 				return nil, err
+			}
+			for _, other := range others {
+				name := filepath.ToSlash(other)
+				gone[name] = true
+				result.Changes = append(result.Changes, Change{Path: name, Action: "remove"})
 			}
 			continue
 		}
