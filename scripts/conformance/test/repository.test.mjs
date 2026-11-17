@@ -273,37 +273,57 @@ test("every lifecycle and installer suite (scripts/test-*.mjs) is an external su
 });
 
 // An external suite whose replacement is `none` because its Go
-// counterparts run in the Go workflow names them: every Go test it names
-// exists, and every step it quotes is one of go.yml's. The S3 step runs
-// the tests it names and cannot skip them.
+// counterparts run in the Go workflow names them, each Go test by its
+// package (go/<package dir>.TestName): it is defined in that package
+// directory, in a file every workflow step that runs `go test ./...` on
+// Linux builds (no build tag other than linux), and every step quoted is
+// one of go.yml's. The S3 step runs the S3 tests named, in their package,
+// and cannot skip them.
 test("an external suite's Go counterparts it names exist", () => {
-  const goTests = new Set();
-  const walk = (dir) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith("_test.go")) for (const m of readFileSync(p, "utf8").matchAll(/^func (Test\w+)\(t \*testing\.T\)/gm)) goTests.add(m[1]);
+  const testsIn = (dir) => {
+    const found = new Map();
+    for (const e of readdirSync(join(repoRoot, dir), { withFileTypes: true })) {
+      if (!e.isFile() || !e.name.endsWith("_test.go")) continue;
+      const src = readFileSync(join(repoRoot, dir, e.name), "utf8");
+      const tag = src.match(/^\/\/go:build (.+)$/m)?.[1]?.trim() ?? null;
+      for (const m of src.matchAll(/^func (Test\w+)\(t \*testing\.T\)/gm)) found.set(m[1], tag);
     }
+    return found;
   };
-  walk(join(repoRoot, "go"));
   const workflow = readFileSync(join(repoRoot, ".github/workflows/go.yml"), "utf8");
   const steps = new Set([...workflow.matchAll(/^\s+- name: (.+)$/gm)].map((m) => m[1].trim()));
+  const qualified = /\b(go(?:\/[a-z0-9_]+)+)\.(Test[A-Z]\w*)/g;
   let named = 0;
   for (const [name, suite] of Object.entries(inventory.externalSuites)) {
     const why = suite.replacement?.none;
     if (typeof why !== "string" || !why.includes("go.yml")) continue;
-    for (const [, t] of why.matchAll(/\b(Test[A-Z]\w*)/g)) {
-      assert.ok(goTests.has(t), `${name}: ${t} is not a Go test`);
+    const bare = why.replace(qualified, "").match(/\bTest[A-Z]\w*/g);
+    assert.equal(bare, null, `${name}: a Go test named without its package (go/<dir>.TestName): ${bare}`);
+    for (const [, dir, t] of why.matchAll(qualified)) {
+      assert.ok(existsSync(join(repoRoot, dir)), `${name}: ${dir} is not a directory`);
+      const tests = testsIn(dir);
+      assert.ok(tests.has(t), `${name}: ${t} is not a test of ${dir}`);
+      const tag = tests.get(t);
+      assert.ok(tag === null || tag === "linux", `${name}: ${dir}.${t} needs the build tag "${tag}", which the workflow's go test ./... does not set`);
       named++;
     }
     for (const [, step] of why.matchAll(/'([^']+)'/g)) assert.ok(steps.has(step), `${name}: '${step}' is not a step of go.yml`);
   }
   assert.ok(named >= 8, `only ${named} Go tests named`);
+  // The step 'Test' runs every package under go/.
+  const testStep = workflow.slice(workflow.indexOf("      - name: Test\n"));
+  const testRun = testStep.slice(0, testStep.indexOf("\n      - ", 1));
+  assert.match(testRun, /working-directory: go\n/);
+  assert.match(testRun, /go test \.\/\.\.\.\s*$/m);
+  // The S3 step runs the S3 tests named, in their package, without skipping.
   const s3 = workflow.slice(workflow.indexOf("- name: G13, the S3 client"));
   const run = s3.slice(0, s3.indexOf("\n      - ", 1));
   assert.match(run, /VARLATCH_REQUIRE_S3=1/);
-  for (const t of ["TestS3UploadDownload", "TestS3MultipartAbortAndRetry", "TestBucketTest"]) {
-    assert.ok(inventory.externalSuites["backup-s3"].replacement.none.includes(t), t);
+  assert.match(run, /working-directory: go\n/);
+  const s3Named = [...inventory.externalSuites["backup-s3"].replacement.none.matchAll(qualified)];
+  assert.ok(s3Named.length >= 3, "the S3 tests named");
+  for (const [, dir, t] of s3Named) {
+    assert.ok(run.includes(` ./${dir.replace(/^go\//, "")}`), `the S3 step does not run ${dir}`);
     assert.ok(run.includes(t), `the S3 step does not run ${t}`);
   }
 });
