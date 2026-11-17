@@ -21,6 +21,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
 type fakeBackend struct {
@@ -483,6 +485,84 @@ func TestDashboardCSPNamesTheBrowserEndpoint(t *testing.T) {
 	if got := csp(); got != ContentSecurityPolicy {
 		t.Errorf("once the pin is closed: %q", got)
 	}
+}
+
+// pinNode is a tailnet node whose status the test sets.
+type pinNode struct {
+	mu sync.Mutex
+	st tailnet.Status
+}
+
+func (n *pinNode) Status(context.Context) (tailnet.Status, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.st, nil
+}
+
+func (n *pinNode) on(id, suffix string) {
+	n.mu.Lock()
+	n.st = tailnet.Status{BackendState: "Running", SelfID: "nSelf", DNSName: "varlatch." + suffix, Suffix: suffix, TailnetID: id, Tags: []string{"tag:varlatch"}}
+	n.mu.Unlock()
+}
+
+// Through the tailnet manager varlatchd wires in (its BrowserEndpoint):
+// the dashboard's policy, getTailnetEndpoint and /v1/meta's
+// tailnet.browser-reads agree as the pin is taken, closes (the tailnet
+// changed), stays closed across a restart and is re-pinned.
+func TestTheBrowserEndpointFollowsThePinEverywhere(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	node := &pinNode{st: tailnet.Status{BackendState: "NeedsLogin"}}
+	if err := tailnet.BeginEnrolment(dir); err != nil {
+		t.Fatal(err)
+	}
+	manager := func() *tailnet.Manager {
+		m, err := tailnet.NewManager(node, "", dir, 8687, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.SetBrowser("varlatch", 8443)
+		return m
+	}
+	m := manager()
+	s, _, _, _, ta := newTestServerAuth(t, func(o *Options) { o.BrowserEndpoint = func() string { return m.BrowserEndpoint() } })
+	seen := func(want string) {
+		t.Helper()
+		csp := do(s, "GET", "/orgs/acme", "", nil).Header().Get("Content-Security-Policy")
+		wantCSP := contentSecurityPolicy(want)
+		if want == "" {
+			wantCSP = ContentSecurityPolicy
+		}
+		if csp != wantCSP {
+			t.Errorf("the dashboard's policy %q, want the endpoint %q", csp, want)
+		}
+		var ep struct{ BrowserEndpoint *string }
+		w := do(s, "GET", "/v1/tailnet/endpoint", "", map[string]string{"Authorization": "Bearer " + ta.tokens["valid"]})
+		if json.Unmarshal(w.Body.Bytes(), &ep) != nil || w.Code != 200 || (ep.BrowserEndpoint == nil) != (want == "") || (ep.BrowserEndpoint != nil && *ep.BrowserEndpoint != want) {
+			t.Errorf("getTailnetEndpoint: %d %s, want %q", w.Code, w.Body.String(), want)
+		}
+		if meta := do(s, "GET", "/v1/meta", "", nil).Body.String(); strings.Contains(meta, `"tailnet.browser-reads"`) != (want != "") {
+			t.Errorf("/v1/meta's tailnet.browser-reads with the endpoint %q: %s", want, meta)
+		}
+	}
+	m.Check(ctx)
+	seen("")
+	node.on("Tabc123", "corp.ts.net")
+	m.Check(ctx)
+	seen("https://varlatch.corp.ts.net:8443")
+	node.on("Tabc123", "corp-new.ts.net")
+	m.Check(ctx)
+	if m.Closed() != tailnet.PinSuffix {
+		t.Fatalf("the pin did not close: %q", m.Closed())
+	}
+	seen("")
+	m = manager() // a restart: the closure is latched
+	m.Check(ctx)
+	seen("")
+	if _, _, err := m.Repin(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	seen("https://varlatch.corp-new.ts.net:8443")
 }
 
 // The dashboard: files of the build where the path names one, index.html
