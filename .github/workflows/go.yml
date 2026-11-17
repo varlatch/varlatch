@@ -10,58 +10,25 @@ name: Go
 # go/server/api is generated from (the openapi job checks a pull request's
 # change to it for breaking ones). ci.yml classifies Go-only
 # changes too (scripts/ci-changes.sh): they run its repository-wide checks
-# and no TypeScript tests. No ruleset requires these jobs, so a pull request
-# the path filter skips is never left waiting for them. They run on
+# and no TypeScript tests. The main ruleset requires go-ok, which every
+# pull request and merge group reports: when the changes job finds no Go
+# path, the Go jobs are skipped and go-ok passes. They run on
 # GitHub-hosted runners only, never on the self-hosted varlatch-ci runner the
 # TypeScript release uses, and with no fallback to it. When hosted minutes
 # are out these jobs wait or fail; the checks then run locally, outside the
 # release's test runs.
 on:
+  # Every pull request into main and every merge group runs this workflow,
+  # so that go-ok (the required check) always reports; the changes job
+  # decides from the paths below whether the Go jobs run or are skipped.
   pull_request:
     branches: [main, rewrite/go]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "go/**"
-      - ".github/workflows/go.yml"
-      # Loaded by go/lib/envelope/testdata/tsfixtures.mjs.
-      - "services/varlatchd/src/crypto/**"
-      - "services/varlatchd/src/auth/jwt.ts"
-      - "services/varlatchd/src/config.ts"
-      - "packages/contract/src/canonical.ts"
-      # go/lib/contract runs the package's shared vectors (step 4.1b).
-      - "packages/contract/src/**"
-      - "packages/contract/test/vectors/**"
-      # The license map, which checks go/ too.
-      - "scripts/check-licenses.mjs"
-      # The /v1 contract: go/server/api is generated from it, and the
-      # openapi job checks a change for breaking ones.
-      - "packages/protocol/openapi.yaml"
-      # The conformance harness's go-binary target and declared gaps, which
-      # the go-binary job runs against varlatchd.
-      - "scripts/conformance/run.mjs"
-      - "scripts/conformance/inventory.json"
-      - "scripts/conformance/lacks-probe.mjs"
-      - "scripts/conformance/lib/operations.mjs"
-      - "scripts/conformance/targets/go-binary.mjs"
-      - "scripts/conformance/expect/go-binary.json"
-      - "scripts/conformance/targets/capabilities.json"
-      # The read path's parity vectors and G3's reverse direction: the
-      # TypeScript server's answers, and its read path on values Go sealed.
-      - "services/varlatchd/test/go-values-fixture.test.ts"
-      # Webhook secrets' G3 reverse direction (step 4.7b).
-      - "services/varlatchd/test/go-webhooks-fixture.test.ts"
-      - "services/varlatchd/test/go-fixture-kit.ts"
-      # Audit export credentials' and drain copies' G3 reverse direction
-      # (steps 4.11a and 4.11b), and their shared fake destination.
-      - "services/varlatchd/test/go-audit-export-fixture.test.ts"
-      - "services/varlatchd/test/go-audit-export-worker-fixture.test.ts"
-      - "services/varlatchd/test/helpers/audit-export-fake.ts"
-      # The BEK seal, escrow and Shamir in both directions (step 4.14).
-      - "services/varlatchd/test/go-backup-vectors.test.ts"
-      - "packages/backup/src/**"
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main, rewrite/go]
-    # The same paths as pull_request's.
+    # The same paths as the changes job's patterns.
     paths:
       - "go/**"
       - ".github/workflows/go.yml"
@@ -99,9 +66,76 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Whether this run's change touches anything the Go jobs check. A push
+  # is filtered by the trigger's paths instead, and runs every job.
+  changes:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select the Go jobs
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          # The push trigger's paths, as shell patterns (* crosses /).
+          PATTERNS: |
+            go/*
+            .github/workflows/go.yml
+            services/varlatchd/src/crypto/*
+            services/varlatchd/src/auth/jwt.ts
+            services/varlatchd/src/config.ts
+            packages/contract/src/canonical.ts
+            packages/contract/src/*
+            packages/contract/test/vectors/*
+            scripts/check-licenses.mjs
+            packages/protocol/openapi.yaml
+            scripts/conformance/run.mjs
+            scripts/conformance/inventory.json
+            scripts/conformance/lacks-probe.mjs
+            scripts/conformance/lib/operations.mjs
+            scripts/conformance/targets/go-binary.mjs
+            scripts/conformance/expect/go-binary.json
+            scripts/conformance/targets/capabilities.json
+            services/varlatchd/test/go-values-fixture.test.ts
+            services/varlatchd/test/go-webhooks-fixture.test.ts
+            services/varlatchd/test/go-fixture-kit.ts
+            services/varlatchd/test/go-audit-export-fixture.test.ts
+            services/varlatchd/test/go-audit-export-worker-fixture.test.ts
+            services/varlatchd/test/helpers/audit-export-fake.ts
+            services/varlatchd/test/go-backup-vectors.test.ts
+            packages/backup/src/*
+        run: |
+          if [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          hits=""
+          while read -r f; do
+            while read -r pattern; do
+              [ -n "$pattern" ] || continue
+              # shellcheck disable=SC2053 # the pattern is a glob on purpose
+              if [[ $f == $pattern ]]; then hits+="$f"$'\n'; break; fi
+            done <<< "$PATTERNS"
+          done < <(git diff --no-renames --name-only "$BASE" HEAD)
+          if [ -n "$hits" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            printf 'Go jobs run for:\n%s' "$hits"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "No Go path changed: the Go jobs are skipped."
+          fi
+
   go:
     # Drafts run nothing, as in ci.yml.
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     # The race detector's run (go-race) and the cross-platform builds
     # (go-platforms) run beside this job.
@@ -433,7 +467,8 @@ jobs:
   # needs cgo, which only this job uses. It embeds the dashboard, as go's
   # tests do (go generate ./server/web builds it).
   go-race:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -498,7 +533,8 @@ jobs:
   # them. They need no dashboard: go:embed takes the committed
   # dist/.gitkeep and the placeholder.
   go-platforms:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -569,7 +605,8 @@ jobs:
   # (scripts/conformance/expect/go-binary.json). The weekly matrix
   # (conformance.yml) has the same row.
   go-binary:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
@@ -726,7 +763,8 @@ jobs:
   # added after the push), and with the label the breaking changes are
   # reported as warnings, provided the pull request changes CHANGELOG.md.
   openapi:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -772,7 +810,8 @@ jobs:
   # (G8) and the end-to-end install, which changes the runner user's PATH
   # (restored afterwards; the runner is disposable).
   windows:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -789,3 +828,22 @@ jobs:
           CGO_ENABLED: "0"
           VARLATCH_TEST_DISPOSABLE: "1"
         run: go test -count=1 -v -timeout 20m -run 'PS1' ./install/
+
+  # The required check (the main ruleset's merge queue): every Go job
+  # succeeded or was skipped because no Go path changed.
+  go-ok:
+    name: go-ok
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    needs: [changes, go, go-race, go-platforms, go-binary, openapi, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every Go job passed or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
+            echo "::error::A Go job failed or was cancelled."
+            exit 1
+          fi
