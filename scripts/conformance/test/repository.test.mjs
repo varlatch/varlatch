@@ -423,6 +423,22 @@ test("the Go test guard follows Go: the header's boundary, Unicode names and raw
   assert.equal(fileConstraint("a_test.go", "// +build windows\n/* x */\n\npackage p\n"), null);
   assert.equal(fileConstraint("a_test.go", "// SPDX\n\n// +build windows\n\npackage p\n"), "((windows))");
   assert.equal(fileConstraint("a_test.go", "// +buildwindows\n\npackage p\n"), null);
+  // Go's whitespace (unicode.IsSpace) after //go:build and // +build, and
+  // between terms: not only space and tab.
+  for (const ws of [" ", "\t", "\v", "\f", "\u0085", "\u00a0", "\u2003", "\u3000"]) {
+    const name = JSON.stringify(ws);
+    assert.equal(fileConstraint("a_test.go", `//go:build${ws}windows\n\npackage p\n`), "windows", `//go:build${name}`);
+    assert.equal(fileConstraint("a_test.go", `// +build${ws}windows\n\npackage p\n`), "((windows))", `// +build${name}`);
+    assert.equal(fileConstraint("a_test.go", `//go:build${ws}linux${ws}&&${ws}!race${ws}\n\npackage p\n`), "linux && !race", `terms split by ${name}`);
+    assert.equal(fileConstraint("a_test.go", `// +build${ws}linux,amd64${ws}darwin\n\npackage p\n`), "((linux && amd64) || (darwin))", `options split by ${name}`);
+  }
+  assert.equal(fileConstraint("a_test.go", "//go:buildwindows\n\npackage p\n"), null);
+  assert.equal(fileConstraint("a_test.go", "\uFEFF//go:build windows\n\npackage p\n"), "windows");
+  // The review's case: a windows-only test is not the workflow's.
+  {
+    const pkg = new Map([["TestWindows", fileConstraint("w_test.go", "//go:build\vwindows\n\npackage p\n")]]);
+    assert.match(goReferenceProblems("go.yml: go/lib/p.TestWindows", () => pkg).problems.join(), /built only under windows/);
+  }
   // //go:build counts anywhere among the leading comments, never inside a
   // block comment, and only before the package clause.
   assert.equal(fileConstraint("a_test.go", "/* header */\n//go:build windows\n\npackage p\n"), "windows");

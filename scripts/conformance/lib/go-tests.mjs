@@ -128,8 +128,25 @@ export function goTestDecls(src) {
  */
 function plusBuildExpr(lines) {
   return lines
-    .map((l) => `(${l.split(/\s+/).filter(Boolean).map((opt) => `(${opt.split(",").join(" && ")})`).join(" || ")})`)
+    .map((l) => `(${goFields(l).map((opt) => `(${opt.split(",").join(" && ")})`).join(" || ")})`)
     .join(" && ");
+}
+
+// Go's whitespace (unicode.IsSpace), which bytes.TrimSpace, strings.Fields
+// and the constraint package use: not JavaScript's \s or trim() (which
+// differ on U+0085 and U+FEFF).
+const GO_SPACE = "\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const GO_TRIM = new RegExp(`^[${GO_SPACE}]+|[${GO_SPACE}]+$`, "gu");
+const GO_FIELDS = new RegExp(`[${GO_SPACE}]+`, "u");
+
+/** s with Go's whitespace trimmed from both ends (strings.TrimSpace). */
+function goTrim(s) {
+  return s.replace(GO_TRIM, "");
+}
+
+/** s split on Go's whitespace into non-empty fields (strings.Fields). */
+function goFields(s) {
+  return s.split(GO_FIELDS).filter(Boolean);
 }
 
 /**
@@ -141,6 +158,7 @@ function plusBuildExpr(lines) {
  * group with no blank line after it, ends it first).
  */
 function parseFileHeader(src) {
+  src = src.replace(/^\uFEFF/, ""); // a leading byte order mark, as go/build skips it
   let end = 0;
   let ended = false; // a line that is not a // comment was seen
   let inSlashStar = false;
@@ -149,26 +167,26 @@ function parseFileHeader(src) {
   lines: while (pos < src.length) {
     const nl = src.indexOf("\n", pos);
     const next = nl < 0 ? src.length : nl + 1;
-    let line = src.slice(pos, nl < 0 ? src.length : nl).trim();
+    let line = goTrim(src.slice(pos, nl < 0 ? src.length : nl));
     pos = next;
     if (line === "" && !ended) {
       end = pos;
       continue;
     }
     if (!line.startsWith("//")) ended = true;
-    if (!inSlashStar && /^\/\/go:build(?:[ \t]|$)/.test(line) && goBuild === null) goBuild = line.slice("//go:build".length).trim();
+    if (!inSlashStar && goBuild === null) goBuild = goBuildLine(line);
     while (line.length > 0) {
       if (inSlashStar) {
         const i = line.indexOf("*/");
         if (i < 0) continue lines;
         inSlashStar = false;
-        line = line.slice(i + 2).trim();
+        line = goTrim(line.slice(i + 2));
         continue;
       }
       if (line.startsWith("//")) continue lines;
       if (line.startsWith("/*")) {
         inSlashStar = true;
-        line = line.slice(2).trim();
+        line = goTrim(line.slice(2));
         continue;
       }
       break lines; // the package clause, or other code
@@ -177,13 +195,26 @@ function parseFileHeader(src) {
   return { header: src.slice(0, end), goBuild };
 }
 
+/**
+ * The expression of a //go:build line, or null if it is not one
+ * (isGoBuildComment, constraint.splitGoBuild): //go:build, then nothing
+ * or Go whitespace.
+ */
+function goBuildLine(line) {
+  if (!line.startsWith("//go:build")) return null;
+  const after = goTrim(line).slice("//go:build".length);
+  const trimmed = goTrim(after);
+  if (after !== "" && after.length === trimmed.length) return null; // //go:buildx
+  return trimmed;
+}
+
 /** The expression of a // +build line, or null if it is not one (constraint.IsPlusBuild). */
 function plusBuildLine(line) {
   if (!line.startsWith("//")) return null;
-  const rest = line.slice(2).trim();
+  const rest = goTrim(line.slice(2));
   if (!rest.startsWith("+build")) return null;
   const after = rest.slice("+build".length);
-  const trimmed = after.trim();
+  const trimmed = goTrim(after);
   if (after !== "" && after.length === trimmed.length) return null; // +buildx
   return trimmed;
 }
@@ -197,11 +228,11 @@ export function fileConstraint(fileName, src) {
   const parts = [];
   const { header, goBuild } = parseFileHeader(src);
   if (goBuild) {
-    parts.push(goBuild);
+    parts.push(goFields(goBuild).join(" "));
   } else {
     const plus = header
       .split("\n")
-      .map((l) => plusBuildLine(l.trim()))
+      .map((l) => plusBuildLine(goTrim(l)))
       .filter((e) => e);
     if (plus.length) parts.push(plusBuildExpr(plus));
   }
