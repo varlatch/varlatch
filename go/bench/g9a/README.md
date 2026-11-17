@@ -154,8 +154,10 @@ and `G9A_BACKUP_DESTINATION` (one of its names) make run.sh pass
 writes them into the run's `varlatchd.conf`. Each backup then uploads its
 archive, its window (`backup_start` to `backup_end`) includes the upload,
 `backup_end` names the destination (`uploadedTo`), and a failed upload is
-a failed backup, which fails the run. Without them the archives stay in
-the data directory, as in CI's smoke.
+a failed backup, which fails the run. One variable without the other is
+refused before anything starts, and so is a destination the file does not
+name. Without them the archives stay in the data directory, as in CI's
+smoke.
 
 ## What it records
 

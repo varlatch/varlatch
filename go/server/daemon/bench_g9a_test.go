@@ -442,15 +442,34 @@ func TestBenchBackupUploads(t *testing.T) {
 	}
 }
 
-// The two destination flags go together.
+// The two destination flags go together, the file is an absolute path,
+// and it must name the destination: a run that names one never falls back
+// to local archives. Each is refused before anything is seeded.
 func TestBenchDestinationFlags(t *testing.T) {
-	for _, args := range [][]string{
-		{"-plan", "p", "-data", "d", "-out", "o", "-backup-destinations", "/x.json"},
-		{"-plan", "p", "-data", "d", "-out", "o", "-backup-destination", "local"},
+	dir := t.TempDir()
+	dests := filepath.Join(dir, "destinations.json")
+	if err := os.WriteFile(dests, []byte(`{"other":{"endpoint":"http://127.0.0.1:9","region":"us-east-1","bucket":"b-1","writeCredentialsFile":"c.json"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data := filepath.Join(dir, "data")
+	for _, c := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"-backup-destinations", "/x.json"}, 64, "go together"},
+		{[]string{"-backup-destination", "local"}, 64, "go together"},
+		{[]string{"-backup-destinations", "destinations.json", "-backup-destination", "other"}, 64, "not an absolute path"},
+		{[]string{"-backup-destinations", dests, "-backup-destination", "local"}, ExitConfig, "No destination named local"},
+		{[]string{"-backup-destinations", filepath.Join(dir, "missing.json"), "-backup-destination", "local"}, ExitConfig, "missing.json"},
 	} {
 		var stderr strings.Builder
-		if code := runBench(args, &stderr); code != 64 || !strings.Contains(stderr.String(), "go together") {
-			t.Errorf("%v: exit %d: %s", args, code, stderr.String())
+		args := append([]string{"-plan", filepath.Join(dir, "plan.json"), "-data", data, "-out", filepath.Join(dir, "out")}, c.args...)
+		if code := runBench(args, &stderr); code != c.code || !strings.Contains(stderr.String(), c.want) {
+			t.Errorf("%v: exit %d: %s", c.args, code, stderr.String())
 		}
+	}
+	if _, err := os.Stat(data); !os.IsNotExist(err) {
+		t.Errorf("the data directory was made: %v", err)
 	}
 }

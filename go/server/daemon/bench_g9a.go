@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/bench/g9a"
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -113,6 +114,18 @@ func runBench(args []string, stderr io.Writer) int {
 	if (dest.File == "") != (dest.Name == "") {
 		fmt.Fprintln(stderr, "varlatchd g9a: -backup-destinations and -backup-destination go together")
 		return 64
+	}
+	if dest.File != "" {
+		// The destination must be in the file, before anything is seeded:
+		// a run that names one never falls back to local archives.
+		if !filepath.IsAbs(dest.File) {
+			fmt.Fprintf(stderr, "varlatchd g9a: -backup-destinations: %s is not an absolute path\n", dest.File)
+			return 64
+		}
+		if _, err := backup.ReadDestination(dest.File, dest.Name); err != nil {
+			fmt.Fprintf(stderr, "varlatchd g9a: -backup-destination %s: %v\n", dest.Name, err)
+			return ExitConfig
+		}
 	}
 	p, err := g9a.ReadPlan(*planPath)
 	if err != nil {

@@ -47,6 +47,14 @@ die() { echo "run.sh: $*" >&2; exit 3; }
 [ $# -ge 1 ] && [ $# -le 2 ] || die "usage: run.sh OUT [plan.json]"
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$1
+# A run that names a destination must upload there: one variable without
+# the other is refused, before anything is built or started (varlatchd g9a
+# then refuses a destination its file does not name).
+if [ -n "${G9A_BACKUP_DESTINATIONS:-}" ] || [ -n "${G9A_BACKUP_DESTINATION:-}" ]; then
+  [ -n "${G9A_BACKUP_DESTINATIONS:-}" ] && [ -n "${G9A_BACKUP_DESTINATION:-}" ] ||
+    die "G9A_BACKUP_DESTINATIONS and G9A_BACKUP_DESTINATION go together: set both or neither"
+  [ -f "$G9A_BACKUP_DESTINATIONS" ] || die "G9A_BACKUP_DESTINATIONS: $G9A_BACKUP_DESTINATIONS is not a file"
+fi
 [ -e "$OUT" ] && die "$OUT exists: every run gets a new directory"
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
@@ -73,7 +81,7 @@ fi
 # The server: seeds, probes the idle disk, then waits for the load.
 set -- -plan "$OUT/plan.in.json" -data "$DATA" -out "$OUT" -listen "$LISTEN" -profile "${G9A_PROFILE:-0}"
 if [ -n "${G9A_BACKUP_DESTINATIONS:-}" ]; then
-  set -- "$@" -backup-destinations "$G9A_BACKUP_DESTINATIONS" -backup-destination "${G9A_BACKUP_DESTINATION:-}"
+  set -- "$@" -backup-destinations "$G9A_BACKUP_DESTINATIONS" -backup-destination "$G9A_BACKUP_DESTINATION"
 fi
 # shellcheck disable=SC2086 # G9A_SCOPE is a command line
 ${G9A_SCOPE:-} "$VARLATCHD" g9a "$@" 2> "$OUT/server.log" &
