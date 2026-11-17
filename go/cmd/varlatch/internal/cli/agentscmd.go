@@ -184,6 +184,13 @@ func initCommand(r *Run) error {
 	if resolved == nil {
 		return UsageError("varlatch init: no server to write in " + clientctx.RepoConfigFile + "; pass --server <url>, or sign in first with varlatch login --server <url>\n" + initUsage)
 	}
+	// varlatch.toml is committed: a user name or password in the server URL,
+	// wherever it came from, would be committed with it. Nothing is written,
+	// and the URL is not repeated.
+	if server, ok := resolved.Server.(string); ok && hasUserinfo(server) {
+		return UsageError("varlatch init: a server URL with a user name or password can't be written to " + clientctx.RepoConfigFile +
+			", so nothing was written; give the server without them (--server <url>)")
+	}
 	said := ""
 	if resolved.Source != clientctx.ServerFlag {
 		said = " (" + serverSourceWords[resolved.Source] + ")"
@@ -233,6 +240,11 @@ func initCommand(r *Run) error {
 	}
 	return nil
 }
+
+// hasUserinfo is whether a server URL may hold a user name or password:
+// clientctx.MaskUserinfo would mask something in it (it errs towards
+// finding them).
+func hasUserinfo(server string) bool { return clientctx.MaskUserinfo(server) != server }
 
 // isTerminal is a stream's isTTY.
 func isTerminal(stream any) bool {
