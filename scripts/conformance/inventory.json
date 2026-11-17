@@ -3946,7 +3946,7 @@
       "script": "scripts/test-coolify-live.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "none": "replaced by the manual Go live check go/lib/sync TestCoolifyLiveServices (build tag coolifylive, varlatch#239), run on the lab Coolify 4.7.5 on 2026-11-17: 84 of 85, the one failure a recorded 4.7.5 difference (internal docs/evidence/adr-0059-step4-coolify-live)"
+        "none": "replaced by the manual Go live check go/lib/sync.TestCoolifyLiveServices (build tag coolifylive, varlatch#239), run on the lab Coolify 4.7.5 on 2026-11-17: 84 of 85, the one failure a recorded 4.7.5 difference (internal docs/evidence/adr-0059-step4-coolify-live)"
       }
     },
     "coolify-live-expands": {
@@ -3954,7 +3954,7 @@
       "script": "scripts/test-coolify-live-expands.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "none": "replaced by the manual Go live check go/lib/sync TestCoolifyLiveExpands (build tag coolifylive, varlatch#239), run on the lab Coolify 4.7.5 on 2026-11-17: 56 of 56 (internal docs/evidence/adr-0059-step4-coolify-live)"
+        "none": "replaced by the manual Go live check go/lib/sync.TestCoolifyLiveExpands (build tag coolifylive, varlatch#239), run on the lab Coolify 4.7.5 on 2026-11-17: 56 of 56 (internal docs/evidence/adr-0059-step4-coolify-live)"
       }
     }
   }

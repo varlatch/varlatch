@@ -11,6 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { buildConstraintHolds, goReferenceProblems, goTestsIn, noneReasons, QUALIFIED } from "../lib/go-tests.mjs";
 import { validateInventory } from "../lib/inventory.mjs";
 import { PLAN } from "../plan.mjs";
 
@@ -272,44 +273,25 @@ test("every lifecycle and installer suite (scripts/test-*.mjs) is an external su
   }
 });
 
-// An external suite whose replacement is `none` because its Go
-// counterparts run in the Go workflow names them, each Go test by its
-// package (go/<package dir>.TestName): it is defined in that package
-// directory, in a file every workflow step that runs `go test ./...` on
-// Linux builds (no build tag other than linux), and every step quoted is
-// one of go.yml's. The S3 step runs the S3 tests named, in their package,
-// and cannot skip them.
-test("an external suite's Go counterparts it names exist", () => {
-  const testsIn = (dir) => {
-    const found = new Map();
-    for (const e of readdirSync(join(repoRoot, dir), { withFileTypes: true })) {
-      if (!e.isFile() || !e.name.endsWith("_test.go")) continue;
-      const src = readFileSync(join(repoRoot, dir, e.name), "utf8");
-      const tag = src.match(/^\/\/go:build (.+)$/m)?.[1]?.trim() ?? null;
-      for (const m of src.matchAll(/^func (Test\w+)\(t \*testing\.T\)/gm)) found.set(m[1], tag);
-    }
-    return found;
-  };
+// A `none` replacement that names Go tests names each by its package
+// (go/<dir>.TestName, lib/go-tests.mjs): it is defined in that package
+// directory, a test behind a build tag says so ("build tag <tag>"), and a
+// reason that claims the Go workflow (go.yml) names only tests its
+// go test ./... on Linux builds, and only steps of go.yml. The S3 step
+// runs the S3 tests named, in their package, and cannot skip them.
+test("the Go tests a none replacement names exist, by their package", () => {
+  const testsIn = (dir) => goTestsIn(repoRoot, dir);
   const workflow = readFileSync(join(repoRoot, ".github/workflows/go.yml"), "utf8");
   const steps = new Set([...workflow.matchAll(/^\s+- name: (.+)$/gm)].map((m) => m[1].trim()));
-  const qualified = /\b(go(?:\/[a-z0-9_]+)+)\.(Test[A-Z]\w*)/g;
   let named = 0;
-  for (const [name, suite] of Object.entries(inventory.externalSuites)) {
-    const why = suite.replacement?.none;
-    if (typeof why !== "string" || !why.includes("go.yml")) continue;
-    const bare = why.replace(qualified, "").match(/\bTest[A-Z]\w*/g);
-    assert.equal(bare, null, `${name}: a Go test named without its package (go/<dir>.TestName): ${bare}`);
-    for (const [, dir, t] of why.matchAll(qualified)) {
-      assert.ok(existsSync(join(repoRoot, dir)), `${name}: ${dir} is not a directory`);
-      const tests = testsIn(dir);
-      assert.ok(tests.has(t), `${name}: ${t} is not a test of ${dir}`);
-      const tag = tests.get(t);
-      assert.ok(tag === null || tag === "linux", `${name}: ${dir}.${t} needs the build tag "${tag}", which the workflow's go test ./... does not set`);
-      named++;
-    }
-    for (const [, step] of why.matchAll(/'([^']+)'/g)) assert.ok(steps.has(step), `${name}: '${step}' is not a step of go.yml`);
+  for (const { where, why } of noneReasons(inventory)) {
+    const found = goReferenceProblems(why, testsIn);
+    assert.deepEqual(found.problems, [], where);
+    named += found.named.length;
+    if (!why.includes("go.yml")) continue;
+    for (const [, step] of why.matchAll(/'([^']+)'/g)) assert.ok(steps.has(step), `${where}: '${step}' is not a step of go.yml`);
   }
-  assert.ok(named >= 8, `only ${named} Go tests named`);
+  assert.ok(named >= 10, `only ${named} Go tests named`);
   // The step 'Test' runs every package under go/.
   const testStep = workflow.slice(workflow.indexOf("      - name: Test\n"));
   const testRun = testStep.slice(0, testStep.indexOf("\n      - ", 1));
@@ -320,12 +302,64 @@ test("an external suite's Go counterparts it names exist", () => {
   const run = s3.slice(0, s3.indexOf("\n      - ", 1));
   assert.match(run, /VARLATCH_REQUIRE_S3=1/);
   assert.match(run, /working-directory: go\n/);
-  const s3Named = [...inventory.externalSuites["backup-s3"].replacement.none.matchAll(qualified)];
+  const s3Named = [...inventory.externalSuites["backup-s3"].replacement.none.matchAll(QUALIFIED)];
   assert.ok(s3Named.length >= 3, "the S3 tests named");
   for (const [, dir, t] of s3Named) {
     assert.ok(run.includes(` ./${dir.replace(/^go\//, "")}`), `the S3 step does not run ${dir}`);
     assert.ok(run.includes(t), `the S3 step does not run ${t}`);
   }
+});
+
+test("the Go test reference guard: renames, removals, the old form and build tags", () => {
+  // A package as the repository has it: one plain test, one Linux-only,
+  // one behind a manual tag.
+  const pkg = new Map([
+    ["TestPlain", null],
+    ["TestLinux", "linux"],
+    ["TestLive", "coolifylive"],
+    ["TestNotRace", "!race && linux"],
+  ]);
+  const testsIn = (dir) => (dir === "go/lib/sync" ? pkg : null);
+  const problems = (why) => goReferenceProblems(why, testsIn).problems;
+  const ok = (why) => assert.deepEqual(problems(why), [], why);
+  const bad = (why, re) => {
+    const p = problems(why);
+    assert.ok(p.length === 1 && re.test(p[0]), `${why}: ${JSON.stringify(p)}`);
+  };
+  ok("run by go.yml: go/lib/sync.TestPlain, go/lib/sync.TestLinux and go/lib/sync.TestNotRace");
+  ok("the manual check go/lib/sync.TestLive (build tag coolifylive)");
+  ok("no Go test at all");
+  // A rename or a removal of the test, or of its package.
+  bad("run by go.yml: go/lib/sync.TestPlainRenamed", /TestPlainRenamed is not a test of go\/lib\/sync/);
+  bad("the manual check go/lib/sync.TestGone (build tag coolifylive)", /TestGone is not a test of go\/lib\/sync/);
+  bad("run by go.yml: go/lib/moved.TestPlain", /go\/lib\/moved is not a directory/);
+  // A test named any other way is not checked, so it fails.
+  bad("the manual check go/lib/sync TestLive (build tag coolifylive)", /without its package.*TestLive/);
+  bad("run by go.yml: TestPlain", /without its package.*TestPlain/);
+  // A tagged test: the reason names its tag, and never claims the workflow.
+  bad("the manual check go/lib/sync.TestLive", /needs \/\/go:build coolifylive: say so/);
+  bad("the manual check go/lib/sync.TestLive (build tag g9a)", /needs \/\/go:build coolifylive: say so/);
+  bad("run by go.yml: go/lib/sync.TestLive (build tag coolifylive)", /go test \.\/\.\.\. does not set/);
+  // The real tagged tests resolve the same way.
+  const real = (why) => goReferenceProblems(why, (dir) => goTestsIn(repoRoot, dir));
+  assert.deepEqual(real("go/lib/sync.TestCoolifyLiveServices (build tag coolifylive)"), { problems: [], named: ["go/lib/sync.TestCoolifyLiveServices"] });
+  assert.match(real("go/lib/sync.TestCoolifyLiveServices").problems.join(), /coolifylive: say so/);
+  assert.match(real("go/lib/sync.TestCoolifyLiveService (build tag coolifylive)").problems.join(), /not a test of go\/lib\/sync/);
+});
+
+test("build constraints read as Go reads them", () => {
+  const holds = (expr, tags) => buildConstraintHolds(expr, tags);
+  assert.equal(holds("linux", ["linux"]), true);
+  assert.equal(holds("coolifylive", ["linux"]), false);
+  assert.equal(holds("!race && linux", ["linux"]), true);
+  assert.equal(holds("crashpoint && !windows", ["linux"]), false);
+  assert.equal(holds("crashpoint && !windows", ["linux", "crashpoint"]), true);
+  assert.equal(holds("linux || darwin", ["darwin"]), true);
+  assert.equal(holds("!(a || b) && c", ["c"]), true);
+  assert.equal(holds("!(a || b) && c", ["a", "c"]), false);
+  assert.throws(() => holds("a &&", []));
+  assert.throws(() => holds("a b", []));
+  assert.throws(() => holds("(a", []));
 });
 
 test("each expectations file is valid and named after a target", async () => {
