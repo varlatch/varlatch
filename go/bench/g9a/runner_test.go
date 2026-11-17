@@ -28,12 +28,95 @@ type fakeTarget struct {
 	dir     string
 	targets int
 	running atomic.Bool
+	// stall, if set, plays out a stalled disk.
+	stall     *diskStall
+	converges atomic.Int32
+	// walBackup is closed when a WAL-triggered backup (number 2 or later)
+	// has returned.
+	walBackup     chan struct{}
+	walBackupOnce sync.Once
+}
+
+// diskStall is a stalled disk, as when the host deletes a large tree, in
+// the order the flaky runs showed, each step held by a signal rather than
+// by a sleep: the first converge run writes only once the timed backup
+// (backup 1) holds the slot; the timed backup holds it until the runner
+// has logged the crossing those writes made as skipped; the first
+// converge run then stays stuck until the runner has skipped two converge
+// ticks. Each wait gives up at a deadline, reported as an error.
+type diskStall struct {
+	t *testing.T
+	// timedHolds is closed when backup 1 has taken the slot; crossingSkipped
+	// when the runner has logged a skipped crossing (the test watches the
+	// event log); twoSkipped when two converge ticks found a run in progress.
+	timedHolds, crossingSkipped, twoSkipped chan struct{}
+	skipped                                 atomic.Int32
+}
+
+func newDiskStall(t *testing.T) *diskStall {
+	return &diskStall{t: t, timedHolds: make(chan struct{}), crossingSkipped: make(chan struct{}), twoSkipped: make(chan struct{})}
+}
+
+// stallLimit bounds each wait of a stall: far beyond any scheduling delay,
+// well inside the test's own limits.
+const stallLimit = 20 * time.Second
+
+func (d *diskStall) wait(ch <-chan struct{}, what string) {
+	select {
+	case <-ch:
+	case <-time.After(stallLimit):
+		d.t.Errorf("the stall: no %s within %s", what, stallLimit)
+	}
+}
+
+// tickSkipped counts a converge tick that found the first run in progress.
+func (d *diskStall) tickSkipped() {
+	if d.skipped.Add(1) == 2 {
+		close(d.twoSkipped)
+	}
+}
+
+// watchCrossing closes crossingSkipped once the runner's event log holds a
+// skipped crossing. The log is buffered, so it flushes it first (the test
+// is in the package): flushing early changes nothing the run records. The
+// function it returns stops the watch and waits for it.
+func (d *diskStall) watchCrossing(r *Runner, path string) (stop func()) {
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(10 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-quit:
+				return
+			case <-t.C:
+			}
+			if err := r.ev.flush(); err != nil {
+				d.t.Errorf("event log: %v", err)
+				return
+			}
+			if b, _ := os.ReadFile(path); strings.Contains(string(b), `"ev":"`+EvWALCrossing+`"`) {
+				close(d.crossingSkipped)
+				return
+			}
+		}
+	}()
+	return func() { close(quit); <-done }
 }
 
 func (f *fakeTarget) WALSize() int64 { return f.db.Metrics().WALBytes }
 
 // Backup takes a bare snapshot (no sealing) and removes it.
 func (f *fakeTarget) Backup(ctx context.Context, n int, o storage.SnapshotOptions) (BackupStats, error) {
+	if n == 1 {
+		if f.stall != nil {
+			close(f.stall.timedHolds)
+			f.stall.wait(f.stall.crossingSkipped, "skipped crossing while the timed backup held the slot")
+		}
+	} else {
+		defer f.walBackupOnce.Do(func() { close(f.walBackup) })
+	}
 	if err := os.MkdirAll(f.dir, 0o700); err != nil {
 		return BackupStats{}, err
 	}
@@ -45,9 +128,16 @@ func (f *fakeTarget) Backup(ctx context.Context, n int, o storage.SnapshotOption
 
 func (f *fakeTarget) Converge(ctx context.Context) ConvergeResult {
 	if !f.running.CompareAndSwap(false, true) {
+		if f.stall != nil {
+			f.stall.tickSkipped()
+		}
 		return ConvergeResult{Err: ErrConvergeRunning}
 	}
 	defer f.running.Store(false)
+	first := f.converges.Add(1) == 1
+	if first && f.stall != nil {
+		f.stall.wait(f.stall.timedHolds, "timed backup in the slot before the first converge run's writes")
+	}
 	for i := range f.targets {
 		err := f.db.Write(ctx, func(tx *storage.Tx) error {
 			_, err := tx.ExecContext(ctx, `INSERT INTO blob (target, body) VALUES (?, randomblob(16384))`, i)
@@ -56,6 +146,9 @@ func (f *fakeTarget) Converge(ctx context.Context) ConvergeResult {
 		if err != nil {
 			return ConvergeResult{Targets: i, Err: err}
 		}
+	}
+	if first && f.stall != nil {
+		f.stall.wait(f.stall.twoSkipped, "two skipped converge ticks")
 	}
 	return ConvergeResult{Targets: f.targets, Values: f.targets}
 }
@@ -67,11 +160,25 @@ func TestRunner(t *testing.T) {
 	if testing.Short() {
 		t.Skip("probes the disk for a few seconds")
 	}
+	t.Run("free", func(t *testing.T) { t.Parallel(); testRunner(t, false) })
+	// A disk stall like the one that made this test flaky (diskStall): the
+	// WAL crosses the threshold while the timed backup holds the slot (that
+	// crossing is skipped), the backup's TRUNCATE empties the WAL, and the
+	// first converge run stays stuck through the next two converge ticks,
+	// which are skipped. The attempt can only come from a later converge
+	// run. Signals, not sleeps, hold each step, so it plays out the same
+	// way however the host schedules the run.
+	t.Run("stalled disk", func(t *testing.T) { t.Parallel(); testRunner(t, true) })
+}
+
+func testRunner(t *testing.T, stalled bool) {
 	p := DefaultPlan()
-	// Nine seconds of load: room for converge runs after the timed backup's
-	// TRUNCATE (they grow the WAL to the WAL-triggered backup's fraction)
-	// even when, on a busy host, every other tick is skipped.
-	p.Phases = []Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 1, Seconds: 9}}
+	// At least nine seconds of load, and then until a WAL-triggered backup
+	// has run: converge runs after the timed backup's TRUNCATE grow the WAL
+	// to that backup's fraction, but on a stalled disk a stuck converge run
+	// skips the ticks after it, so no fixed window is enough. The phase's
+	// 60 s is a ceiling; the test stops the run (minLoad, walWait).
+	p.Phases = []Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 1, Seconds: 60}}
 	// The converge runs write past the small bound, so the WAL crosses
 	// half of it from below after the timed backup's TRUNCATE.
 	p.Backups = []Backup{{Phase: "p", AtSeconds: 1}, {Phase: "p", WALTriggered: WALTrigger{Fraction: 0.5, MaxAttempts: 2}}}
@@ -81,10 +188,15 @@ func TestRunner(t *testing.T) {
 	p.WALBound = 64 << 10
 	out, data := t.TempDir(), t.TempDir()
 
-	target := &fakeTarget{targets: p.Targets, dir: filepath.Join(data, "backups")}
+	target := &fakeTarget{targets: p.Targets, dir: filepath.Join(data, "backups"), walBackup: make(chan struct{})}
 	r, err := NewRunner(RunnerOptions{DataDir: data, OutDir: out, Plan: p, Target: target, Tail: time.Minute})
 	if err != nil {
 		t.Fatal(err)
+	}
+	stopWatch := func() {}
+	if stalled {
+		target.stall = newDiskStall(t)
+		stopWatch = target.stall.watchCrossing(r, filepath.Join(out, FileEvents))
 	}
 	target.db, err = storage.Open(context.Background(), storage.Options{Path: filepath.Join(data, "g9a.db"), WALBound: p.WALBound, OnCheckpoint: r.OnCheckpoint})
 	if err != nil {
@@ -134,13 +246,20 @@ func TestRunner(t *testing.T) {
 	for i := range 21 {
 		r.Count(i == 20, false)
 	}
-	time.Sleep(time.Duration(p.PhaseSeconds("p")) * time.Second) // converge runs and the backups
+	const minLoad, walWait = 9 * time.Second, 50 * time.Second
+	time.Sleep(minLoad) // converge runs, the backups, the samplers
+	select {
+	case <-target.walBackup:
+	case <-time.After(walWait):
+		// The checks below say what happened.
+	}
 	post("/run/stop", 200)
 	select {
 	case <-r.Done():
 	case <-time.After(10 * time.Second):
 		t.Fatal("the run did not end on /run/stop")
 	}
+	stopWatch()
 	r.Finish()
 	if err := target.db.Close(); err != nil {
 		t.Fatal(err)
@@ -206,6 +325,9 @@ func TestRunner(t *testing.T) {
 		if seen[want] == 0 {
 			t.Errorf("no %s event (saw %v)", want, seen)
 		}
+	}
+	if stalled && (seen[EvWALCrossing] == 0 || seen["converge skipped"] < 2) {
+		t.Errorf("the stall did not play out: want a skipped crossing and two skipped converge ticks (events %v)", seen)
 	}
 	if end.Requests != 21 || end.Errors != 1 || end.BusyErrs != 0 {
 		t.Errorf("run_end: %+v", end)
