@@ -18,9 +18,10 @@ function encode(s, keepSlash = false) {
 
 /**
  * One signed request. `path` is "/bucket" or "/bucket/key"; `query` an
- * object of parameters; `headers` extra headers (signed too).
+ * object of parameters; `headers` extra headers (signed too); `timeoutMs`
+ * bounds the whole request (30 seconds by default).
  */
-export async function s3Request({ endpoint, region, accessKeyId, secretAccessKey }, method, path, { query = {}, headers = {}, body = "" } = {}) {
+export async function s3Request({ endpoint, region, accessKeyId, secretAccessKey }, method, path, { query = {}, headers = {}, body = "", timeoutMs = 30_000 } = {}) {
   const url = new URL(endpoint);
   const now = new Date();
   const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
@@ -42,7 +43,7 @@ export async function s3Request({ endpoint, region, accessKeyId, secretAccessKey
     method,
     headers: { ...all, authorization },
     ...(body ? { body } : {}),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const bytes = Buffer.from(await res.arrayBuffer());
   return { status: res.status, text: bytes.toString("utf8"), body: bytes, headers: res.headers };
