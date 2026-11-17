@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { buildConstraintHolds, fileConstraint, goReferenceProblems, goTestDecls, goTestsIn, noneReasons, QUALIFIED, WORKFLOW_TAGS } from "../lib/go-tests.mjs";
+import { buildConstraintHolds, fileConstraint, goReferenceProblems, goTestDecls, goTestsIn, isTestName, noneReasons, QUALIFIED, WORKFLOW_TAGS } from "../lib/go-tests.mjs";
 import { validateInventory } from "../lib/inventory.mjs";
 import { PLAN } from "../plan.mjs";
 
@@ -414,6 +414,36 @@ test("Go file constraints: //go:build, // +build and the file's name", () => {
     ["x_linux_test.go", "package p\n", true],
     ["x_test.go", head("//go:build go1.21 && !race"), true],
   ]) assert.equal(buildConstraintHolds(fileConstraint(name, src) ?? "linux", WORKFLOW_TAGS), built, name);
+});
+
+test("the Go test guard follows Go: the header's boundary, Unicode names and raw-string imports", () => {
+  // go/build's header: // +build lines count only in the leading run of //
+  // comments that a blank line ends; a block comment ends it first.
+  assert.equal(fileConstraint("a_test.go", "/* header */\n// +build windows\n\npackage p\n"), null);
+  assert.equal(fileConstraint("a_test.go", "// +build windows\n/* x */\n\npackage p\n"), null);
+  assert.equal(fileConstraint("a_test.go", "// SPDX\n\n// +build windows\n\npackage p\n"), "((windows))");
+  assert.equal(fileConstraint("a_test.go", "// +buildwindows\n\npackage p\n"), null);
+  // //go:build counts anywhere among the leading comments, never inside a
+  // block comment, and only before the package clause.
+  assert.equal(fileConstraint("a_test.go", "/* header */\n//go:build windows\n\npackage p\n"), "windows");
+  assert.equal(fileConstraint("a_test.go", "/* header\n//go:build windows\n*/\npackage p\n"), null);
+  // Unicode: a name continues through any letter; after Test, a lowercase
+  // letter in Unicode's sense means not a test.
+  assert.ok(isTestName("TestÉ") && isTestName("Test_é") && isTestName("Test١"));
+  assert.ok(!isTestName("Testé") && !isTestName("Testx"));
+  const file = (body, imports = `import "testing"`) => `package p\n\n${imports}\n\n${body}\n`;
+  assert.deepEqual(goTestDecls(file("func TestÉ(t *testing.T) {}\nfunc Testé(t *testing.T) {}\nfunc Test(t *testing.T) {}")).sort(), ["Test", "TestÉ"]);
+  assert.deepEqual(goTestDecls(file("func TestAlias(t *тест.T) {}", `import тест "testing"`)), ["TestAlias"]);
+  const pkg = new Map([["Test", null]]);
+  const problems = (why) => goReferenceProblems(why, (d) => (d === "go/lib/p" ? pkg : null)).problems;
+  assert.match(problems("go.yml: go/lib/p.TestÉ").join(), /TestÉ is not a test of go\/lib\/p/);
+  assert.match(problems("go.yml: go/lib/p.Testé").join(), /go\/lib\/p\.Testé is not a Go test name/);
+  assert.match(problems("go.yml: TestÉ").join(), /without its package.*TestÉ/);
+  pkg.set("TestÉ", null);
+  assert.deepEqual(goReferenceProblems("go.yml: go/lib/p.TestÉ", () => pkg), { problems: [], named: ["go/lib/p.TestÉ"] });
+  // testing imported as a raw string.
+  assert.deepEqual(goTestDecls(file("func TestRaw(t *testing.T) {}", "import `testing`")), ["TestRaw"]);
+  assert.deepEqual(goTestDecls(file("func TestRawAlias(t *tt.T) {}", "import (\n\ttt `testing`\n)")), ["TestRawAlias"]);
 });
 
 test("the Go test guard on files: commented-out tests, legacy tags and file names", () => {
