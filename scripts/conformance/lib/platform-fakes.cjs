@@ -18,7 +18,12 @@
  * GitHub: a public key of 32 fixed bytes (sealed values are stored as
  * sent, never opened); a secret whose name starts with BROKEN fails with
  * 500; a credential containing "expiring" is answered with an expiry
- * header. Coolify: an application app-conformance (redeploys record what
+ * header. The repository endpoints take two kinds of credential, as
+ * GitHub's do: the suites' fine-grained tokens (a Bearer or token
+ * credential starting with "conformance-", the fake's configured tokens)
+ * and installation tokens minted here, within their narrowing. Anything
+ * else (no Authorization header, an App's JWT, a token the fake did not
+ * mint) is refused with 401. Coolify: an application app-conformance (redeploys record what
  * it runs: its values at that time) and a service svc-conformance with
  * compose files. Convex: the variable list and the batch update.
  *
@@ -179,7 +184,7 @@ const GITHUB_ROUTES = [
     method: "GET",
     path: /^\/installation\/repositories$/,
     handle: (req, res, m, body, credential) => {
-      if (!credential.token) return answer(res, 401, { message: "Bad credentials" }, DATE());
+      if (credential.kind !== "installation") return refused(res);
       const i = state.installations[credential.token.installationId];
       const all = i.repos.filter((r) => !credential.token.repos || credential.token.repos.includes(r.toLowerCase()));
       return answer(res, 200, {
@@ -193,7 +198,7 @@ const GITHUB_ROUTES = [
     method: "GET",
     path: /^\/repos\/([^/]+)\/([^/]+)$/,
     handle: (req, res, m, body, credential) => {
-      if (!credential.token) return answer(res, credential.token === null ? 401 : 404, { message: credential.token === null ? "Bad credentials" : "Not Found" }, DATE());
+      if (credential.kind !== "installation") return credential.kind === "none" ? refused(res) : answer(res, 404, { message: "Not Found" }, DATE());
       if (!tokenReaches(credential, m[1], m[2], "metadata", "read") && !tokenReaches(credential, m[1], m[2], "secrets", "read")) {
         return answer(res, 404, { message: "Not Found" }, DATE());
       }
@@ -204,7 +209,7 @@ const GITHUB_ROUTES = [
     method: "GET",
     path: /^\/repos\/([^/]+)\/([^/]+)\/actions\/secrets\/public-key$/,
     handle: (req, res, m, body, credential) => {
-      if (credential.token === null) return answer(res, 401, { message: "Bad credentials" });
+      if (credential.kind === "none") return refused(res);
       if (!tokenReaches(credential, m[1], m[2], "secrets", "read")) return answer(res, 403, { message: "Resource not accessible by integration" });
       return answer(res, 200, { key_id: "conformance-key", key: PUBLIC_KEY }, credential.expiry);
     },
@@ -213,7 +218,7 @@ const GITHUB_ROUTES = [
     method: "PUT",
     path: /^\/repos\/([^/]+)\/([^/]+)\/actions\/secrets\/([^/]+)$/,
     handle: (req, res, m, body, credential) => {
-      if (credential.token === null) return answer(res, 401, { message: "Bad credentials" });
+      if (credential.kind === "none") return refused(res);
       if (!tokenReaches(credential, m[1], m[2], "secrets", "write")) return answer(res, 403, { message: "Resource not accessible by integration" });
       const secrets = (state.github[`${m[1]}/${m[2]}`] ??= {});
       const name = decodeURIComponent(m[3]);
@@ -231,7 +236,7 @@ const GITHUB_ROUTES = [
     method: "DELETE",
     path: /^\/repos\/([^/]+)\/([^/]+)\/actions\/secrets\/([^/]+)$/,
     handle: (req, res, m, body, credential) => {
-      if (credential.token === null) return answer(res, 401, { message: "Bad credentials" });
+      if (credential.kind === "none") return refused(res);
       if (!tokenReaches(credential, m[1], m[2], "secrets", "write")) return answer(res, 403, { message: "Resource not accessible by integration" });
       const secrets = (state.github[`${m[1]}/${m[2]}`] ??= {});
       const name = decodeURIComponent(m[3]);
@@ -246,21 +251,32 @@ const GITHUB_ROUTES = [
 // the expiry header GitHub answers it with. A fine-grained token
 // containing "expiring" is answered with an expiry header.
 function githubCredential(req) {
-  const [scheme = "", value = ""] = (req.headers.authorization || "").split(" ");
-  // An installation token minted here: its installation, repositories and
-  // permissions; one this fake did not mint is refused.
-  const token = value.startsWith("ghs_") ? state.tokens[value] ?? null : undefined;
-  return { scheme, token, expiry: value.includes("expiring") ? { "github-authentication-token-expiration": EXPIRES } : {} };
+  const [scheme = "", value = "", ...extra] = (req.headers.authorization || "").split(" ");
+  const bearer = extra.length === 0 && (scheme === "Bearer" || scheme === "token");
+  // kind: "fine-grained" (a suite's configured token), "installation" (a
+  // token minted here: its installation, repositories and permissions), or
+  // "none" (no header, a JWT, a token the fake did not mint), refused.
+  let kind = "none";
+  let token;
+  if (bearer && value.startsWith("conformance-")) kind = "fine-grained";
+  else if (bearer && value.startsWith("ghs_") && state.tokens[value]) {
+    kind = "installation";
+    token = state.tokens[value];
+  }
+  return { scheme, kind, token, expiry: kind === "fine-grained" && value.includes("expiring") ? { "github-authentication-token-expiration": EXPIRES } : {} };
 }
+
+// The repository endpoints' refusal for a credential they do not take.
+const refused = (res) => answer(res, 401, { message: "Bad credentials" }, DATE());
 
 // An installation token reaches only its installation's account's
 // repositories it was narrowed to, with the permission asked.
 const LEVELS = ["read", "write", "admin"];
 const allows = (granted, needed) => granted !== undefined && LEVELS.indexOf(granted) >= LEVELS.indexOf(needed);
 function tokenReaches(credential, owner, repo, permission, level) {
-  if (credential.token === undefined) return true; // a fine-grained token: the existing routes' own rules
+  if (credential.kind === "fine-grained") return true; // a suite's token: the repository's own rules
+  if (credential.kind !== "installation") return false;
   const t = credential.token;
-  if (!t) return false;
   const inst = state.installations[t.installationId];
   if (!inst || inst.account.login.toLowerCase() !== owner.toLowerCase()) return false;
   if (!inst.repos.some((r) => r.toLowerCase() === repo.toLowerCase())) return false;
