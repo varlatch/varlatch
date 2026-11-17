@@ -13,15 +13,16 @@ the CLI its image carries (for the backup job and `/cli/varlatch.cjs`).
 
 ### CLI
 
-- **Agent file installation.** `varlatch agents install`, and the agent
-  files `varlatch init` writes, stop with status 78 before reading or
-  changing anything when a directory below the project (with `--scope
-  user`, below the home directory) on the way to a file they manage is a
-  symbolic link. This includes `--check` and `--remove`. Replace the link
-  with a directory and run the command again. A changed file is replaced
-  as a whole and keeps its permission bits; `AGENTS.md` and a `CLAUDE.md`
-  that is the same file stay one file, and a file with any other second
-  name (a hard link) stops the command with status 78.
+- **Agent file installation.** `varlatch agents install`, `--check` and
+  `--remove` stop with status 78 before reading or changing anything when
+  a directory below the project (with `--scope user`, below the home
+  directory) on the way to a file they manage is a symbolic link. Replace
+  the link with a directory and run the command again. `varlatch init`
+  still writes `varlatch.toml` in that case, prints a warning, and skips
+  the agent files. A changed file is replaced as a whole and keeps its
+  permission bits; `AGENTS.md` and a `CLAUDE.md` that is the same file
+  stay one file, and a file with any other second name (a hard link) stops
+  the command with status 78.
 - **Credential display.** The CLI never prints a credential or a server
   URL's user name and password. A stored credential that cannot be sent is
   named, not quoted; such a URL is shown with `[redacted]` in their place
