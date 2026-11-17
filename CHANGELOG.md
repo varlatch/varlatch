@@ -5,6 +5,53 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## 0.22.2 (2026-11-17)
+
+A CLI release: security hardening of agent file installation and of
+credential display. The server is unchanged apart from its version and
+the CLI its image carries (for the backup job and `/cli/varlatch.cjs`).
+
+### CLI
+
+- **Agent file installation.** `varlatch agents install`, and the agent
+  files `varlatch init` writes, stop with status 78 before reading or
+  changing anything when a directory below the project (with `--scope
+  user`, below the home directory) on the way to a file they manage is a
+  symbolic link. This includes `--check` and `--remove`. Replace the link
+  with a directory and run the command again. A changed file is replaced
+  as a whole and keeps its permission bits; `AGENTS.md` and a `CLAUDE.md`
+  that is the same file stay one file, and a file with any other second
+  name (a hard link) stops the command with status 78.
+- **Credential display.** The CLI never prints a credential or a server
+  URL's user name and password. A stored credential that cannot be sent is
+  named, not quoted; such a URL is shown with `[redacted]` in their place
+  in `status`, `server`, `context`, `login`, `logout`, `whoami`,
+  `varlatch mcp` and every message that names a server. A URL without them
+  is printed as before.
+- **`varlatch init`** refuses a server URL with a user name or password
+  (status 64) and writes nothing, since `varlatch.toml` is committed.
+- **An empty `VARLATCH_CONFIG_DIR` or `HOME`** counts as unset: the CLI
+  uses the default configuration directory and the home directory the
+  operating system records. With no home directory at all, commands exit
+  64 and say to set `HOME` or `VARLATCH_CONFIG_DIR`.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.22.2.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`.
+- The server: nothing changes but its version and the CLI in its image.
+  To move an installation to 0.22.2, follow the 0.22.1 notes below with
+  the 0.22.2 CLI and version.
+- Scripts that run `varlatch agents install` in a checkout whose `.claude`,
+  `.agents`, `.codex`, `.cursor`, `.vscode` or `.gemini` directory is a
+  symbolic link now get status 78: replace the link with a directory.
+
+Backups: archives of 0.22.1 and earlier still restore into this release.
+
 ## 0.22.1 (2026-11-16)
 
 ### Access control
