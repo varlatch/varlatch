@@ -75,8 +75,7 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   leading byte order mark both drop), `%YAML 1.2` (which yaml.v3 refuses:
   read strictly, then given to it as 1.1, a repeat as a comment),
   and `!!merge` (a merge key whatever its quoting; a value so tagged is
-  read by no rule, so unknown). Where Go answers
-  otherwise, only on input no platform sends:
+  read by no rule, so unknown). Where Go answers otherwise:
   - A Compose file the Go reader does not read is unreadable, so every
     verdict is unknown (the conservative reading). The Go reader reads a
     subset of YAML, an allowlist, and calls everything else unreadable
@@ -86,17 +85,46 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
       only before a line feed. No other control character (C0, DEL, C1,
       NEL), no U+2028 or U+2029, no byte order mark past the first, no
       U+FFFE or U+FFFF, nothing that is not UTF-8 (a lone surrogate);
-    - quoted and plain scalars, keys included, start and end on one line.
-      Block scalars (`|`, `>`) are read;
-    - flow collections (`{…}`, `[…]`) close on the line they open on;
+    - quoted and plain scalars, keys included, start and end on one line,
+      only a blank, `:`, `,`, `]` or `}` follows a closing quote, and a
+      double-quoted one holds only YAML 1.2's escapes (not `\'`).
+      Block scalars (`|`, `>`) are read, with a strict header (no `#` run
+      into it, as in `>#-`);
+    - in a block mapping, a scalar value on a later line than its key is
+      indented more than the key (a block sequence there is read);
+    - flow collections (`{…}`, `[…]`) close on the line they open on, with
+      nothing run into the closing bracket,
+      hold no `?` outside quotes (an explicit key: `{?:}` is read two
+      ways), and no plain scalar in them is empty or holds a `:` (where
+      one ends a key, as in `{7:, A: x}`, the parsers disagree);
     - anchors and aliases named with letters, digits, `_`, `-` and `.`;
       tags `!`, `!name` or `!!name`, with a name of letters, digits and
-      `-`;
-    - directives: only `%YAML 1.2`, with a `---` after it.
+      `-`, and none of the YAML 1.1 types, on a key either (`!!binary <<`);
+    - directives: only `%YAML 1.2`, with a `---` after it; no document
+      end marker (`...`).
+
+    **What this costs.** Some valid Compose files fall outside the subset,
+    and for them every name's verdict is unknown, names the file never
+    mentions included, where TypeScript checks them. Among them:
+    - a flow list spread over lines (`command: [` then one argument per
+      line);
+    - a quoted or plain value continued on the next line (a long
+      `command:` string);
+    - an unquoted `host:container` port in a flow list (`ports:
+      [8080:80]`);
+    - a key and value without a blank in a flow mapping (`{A:x}`).
+
+    For a Coolify service whose file falls outside, a run then does what
+    it does with any compose file it cannot read: it notes that usage
+    could not be checked, holds values containing `$` (the file might
+    copy them where Docker Compose expands `$`), and stops deleting again
+    names it deleted (the file might re-create them). Block style and
+    quoted ports keep a file readable.
 
     TypeScript reads some of what falls outside: a lone surrogate, quoted
     or plain values over indented lines, an escaped line break, a flow
-    collection over indented lines, a property alone on its line. It also
+    collection over indented lines, a property alone on its line, the
+    flow forms above. It also
     reads the YAML 1.1 types (`!!binary`, `!!timestamp`, `!!set`,
     `!!omap`, `!!pairs`), a mapping or sequence as a key, and an alias
     inside its own anchor (on which TypeScript overflows its stack and
@@ -108,9 +136,18 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
     characters and forms inserted or swapped in, each with TypeScript's
     verdict. `TestComposeFuzzDifferential` fails on each mutant where Go's
     verdict is more confident than TypeScript's. It is opt-in, not part of
-    CI (the commands are in the test file). At #218's fourth round, 36,000
-    mutants (seeds 1 to 6) had none: 32,691 gave the same verdict, 3,309
-    were unreadable only in Go.
+    CI (the commands are in the test file). Its mutations include `:` and
+    `?` at flow collections' delimiters, keys and values. At #218's fifth
+    round, wide runs (61 seeds, 1 to 60 and 137, 366,000 mutants each)
+    found nine more classes, each now outside the subset with a vector: a
+    flow key ending in `:`, `{?:}` (and empty flow scalars), text run into
+    a closing quote, or into a closing bracket, a value at its key's
+    column, `...` markers, a block scalar header with a comment run into
+    it, YAML 1.1 tags on keys, and escapes YAML 1.2 does not have. They
+    also found one rule bug, fixed: the key of a merge-tagged value, which
+    `JSON.stringify` drops.
+    The final run had none more confident in Go: 331,287 gave the same
+    verdict, 34,713 were unreadable only in Go.
   - An error that is not the adapter's own (an answer that is not JSON,
     or of the wrong shape) keeps JavaScript's name (`SyntaxError`,
     `TypeError`, `URIError`) with Go's wording, not V8's.

@@ -78,6 +78,11 @@ export const AWKWARD = [
   "${FOO}", "$FOO", "$$FOO", "${FOO:-x}", "FOO", "FOO=x", "- FOO=x\n", "env_file: .env\n", "environment:\n  FOO: x\n", "services:\n  app:\n    image: x\n",
 ];
 
+/** Inserted at a flow collection's delimiters: implicit and explicit keys, adjacent colons. */
+const FLOW_PUNCTUATION = [
+  ":", "?", ": ", " :", "?:", "::", ":,", "? ", "?,", "7:", ":x", "x:", "a:b", "? a", "? a: b", ": :", "{a:b}", "[a:b]", "{? a}", "{a: b:}", "{7:, x: y}",
+];
+
 function mutate(text: string, rand: () => number): string {
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
   const at = () => Math.floor(rand() * (text.length + 1));
@@ -87,7 +92,7 @@ function mutate(text: string, rand: () => number): string {
     const i = Math.min(at(), out.length);
     const lines = out.split("\n");
     const li = Math.floor(rand() * lines.length);
-    switch (Math.floor(rand() * 8)) {
+    switch (Math.floor(rand() * 10)) {
       case 0:
       case 1:
         out = out.slice(0, i) + pick(AWKWARD) + out.slice(i);
@@ -109,6 +114,13 @@ function mutate(text: string, rand: () => number): string {
       case 6: // split a line, the rest at another indentation
         out = out.slice(0, i) + pick(["\n", "\r\n", "\n ", "\n  ", "\n    ", "\n        "]) + out.slice(i);
         break;
+      case 8:
+      case 9: { // ':' and '?' at a flow collection's delimiters, keys and values
+        const at = out.split("").flatMap((c, j) => ("{}[],".includes(c) ? [j] : [])); // UTF-16 units, as slice counts
+        const j = at.length > 0 ? at[Math.floor(rand() * at.length)]! + (rand() < 0.5 ? 0 : 1) : i;
+        out = out.slice(0, j) + pick(FLOW_PUNCTUATION) + out.slice(j);
+        break;
+      }
       default: // duplicate a line
         lines.splice(li, 0, lines[li]!);
         out = lines.join("\n");
