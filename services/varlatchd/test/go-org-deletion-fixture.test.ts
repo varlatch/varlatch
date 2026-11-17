@@ -58,7 +58,7 @@ import { accessCountsSettled } from "../src/domain/securityreport.js";
 import { BUCKET, ENDPOINT, FakeS3, FixturePolicy, KEY_GOOD } from "./helpers/audit-export-fake.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 import {
-  expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, record, withIds,
+  expectCurrentTable, expectSameAnswers, expectSameRows, exportRows, loadRows, onClock, onRecordedClock, record, withIds,
   type Fixture, type RequestCase, type SideTable, type Table,
 } from "./go-fixture-kit.js";
 
@@ -498,8 +498,16 @@ function withRun(ctx: AppCtx, app: { request: (path: string, init: RequestInit) 
   };
 }
 
-/** The file's answers, recorded on its own rows. */
-async function replay(f: Fixture): Promise<Awaited<ReturnType<typeof record>>> {
+/**
+ * The file's answers, recorded on its own rows, on the recording's clock
+ * (onRecordedClock: its invitations are valid a week from the recording,
+ * its scheduled deletions run days after it).
+ */
+function replay(f: Fixture): Promise<Awaited<ReturnType<typeof record>>> {
+  return onRecordedClock(f.rows, () => replayOnce(f));
+}
+
+async function replayOnce(f: Fixture): Promise<Awaited<ReturnType<typeof record>>> {
   const db = await loadRows(f.rows, TABLES);
   await db.query("UPDATE audit_position SET value = (SELECT coalesce(max(event_order), 0) FROM audit_events) WHERE singleton");
   try {
@@ -536,6 +544,12 @@ describe.skipIf(process.env.VARLATCH_WRITE_GO_VECTORS !== "1")("writing the fixt
 });
 
 describe("the organization deletion fixture is this server's answers", () => {
+  it("gives the same answers with the date 30 days on (no lifetime in the fixture runs on today's date)", async () => {
+    const f = JSON.parse(readFileSync(FILE, "utf8")) as Fixture;
+    const wall = Date;
+    await onClock(() => wall.now() + 30 * 24 * 3_600_000, async () => expectSameAnswers(f, await replay(f)));
+    expect(Date).toBe(wall);
+  }, 300_000);
   it("org-deletion-v0.22.0.json", async () => {
     const f = JSON.parse(readFileSync(FILE, "utf8")) as Fixture;
     expect(f.serverVersion).toBe(SERVER_VERSION);

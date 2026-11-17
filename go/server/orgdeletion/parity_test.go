@@ -172,7 +172,19 @@ func outcomeJS(o orgdeletion.Outcome) jsvalue.Object {
 // TestTypeScriptFixture replays the table against varlatchd on the file's
 // rows, the due run through the deletion loop's own pass: every answer,
 // audit event and changed row the same.
-func TestTypeScriptFixture(t *testing.T) {
+func TestTypeScriptFixture(t *testing.T) { replayFixture(t, time.Now) }
+
+// TestFixtureLaterDate: the replay does not depend on the date it runs on.
+// With the date outside 30 days after today (past the rows' invitations,
+// valid a week, and the scheduled deletions' run_after), it gives the same
+// answers.
+func TestFixtureLaterDate(t *testing.T) {
+	replayFixture(t, func() time.Time { return time.Now().Add(30 * 24 * time.Hour) })
+}
+
+// replayFixture replays the fixture on the recording's clock
+// (paritytest.RecordedClock), wall being the date outside.
+func replayFixture(t *testing.T, wall func() time.Time) {
 	path := paritytest.Path("org-deletion-v0.22.0.json")
 	f, err := paritytest.Read(path)
 	if err != nil {
@@ -197,7 +209,10 @@ func TestTypeScriptFixture(t *testing.T) {
 	public, _ := url.Parse("http://127.0.0.1:8686")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	w := &write.Writer{Store: store, Gates: write.NewGates()}
-	now := paritytest.HourClock()
+	now, err := paritytest.RecordedClock(f.Rows, wall)
+	if err != nil {
+		t.Fatal(err)
+	}
 	approvals := auth.New(store, auth.Options{Log: log, RootKEK: rootKEK, PublicURL: public, PersonGate: w.Gates.PersonGate, Now: now})
 	vs := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: w.Gates, Now: now})
 	h, err := httpserver.New(httpserver.Options{

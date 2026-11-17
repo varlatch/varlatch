@@ -138,8 +138,15 @@ func strOf(v sql.NullString) any {
 }
 
 // replayWorker runs the fixture's steps against the Go worker on the
-// file's rows and compares each step's result with the file's.
-func replayWorker(t *testing.T, f workerFixture) {
+// file's rows and compares each step's result with the file's, on the
+// recording's clock (paritytest.RecordedClock: a plan's retain_until and a
+// drain's deadline mean what they meant when recorded): wall is the date
+// outside (time.Now).
+func replayWorker(t *testing.T, f workerFixture, wall func() time.Time) {
+	clock, err := paritytest.RecordedClock(f.Rows, wall)
+	if err != nil {
+		t.Fatal(err)
+	}
 	fake := s3fake.New()
 	t.Cleanup(fake.Close)
 	path := filepath.Join(t.TempDir(), "varlatch.db")
@@ -158,7 +165,7 @@ func replayWorker(t *testing.T, f workerFixture) {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := &auditexport.Service{Writer: &write.Writer{Store: store, Gates: write.NewGates()}, RootKEK: rootKEK,
-		Policy: fixturePolicy(t, fake, log), Now: time.Now, Enabled: true, Log: log}
+		Policy: fixturePolicy(t, fake, log), Now: clock, Enabled: true, Log: log}
 	n := paritytest.NewNormalizer(f.Rows)
 	orgOf := map[string]string{}
 	for _, o := range f.Rows["organizations"] {
@@ -183,7 +190,7 @@ func replayWorker(t *testing.T, f workerFixture) {
 		var events int64
 		_ = store.Reader().QueryRow(`SELECT coalesce(max(event_order), 0) FROM audit_events`).Scan(&events)
 		var result any
-		now := time.Now()
+		now := clock()
 		switch {
 		case s.Run != "":
 			out, err := svc.ExportOnce(ctx, exportOf(s.Run))
@@ -400,7 +407,15 @@ func workerEvents(t *testing.T, store *storage.DB, after int64) []any {
 // TypeScript code sealed under the Root KEK: G3 at the database level for
 // drain copies, ts-to-go.
 func TestTypeScriptWorkerFixture(t *testing.T) {
-	replayWorker(t, readWorker(t))
+	replayWorker(t, readWorker(t), time.Now)
+}
+
+// TestWorkerFixtureLaterDate: the replay does not depend on the date it
+// runs on. With the date outside 30 days after today (beyond the
+// fixture's longest lifetime, a drain's 30 days), it gives the same
+// results.
+func TestWorkerFixtureLaterDate(t *testing.T) {
+	replayWorker(t, readWorker(t), func() time.Time { return time.Now().Add(30 * 24 * time.Hour) })
 }
 
 // TestGoSealedWorkerFixture: the same steps with the canary, every
@@ -459,7 +474,7 @@ func TestGoSealedWorkerFixture(t *testing.T) {
 	if drains != 1 {
 		t.Fatalf("%d drain copies in the fixture, want gamma's", drains)
 	}
-	replayWorker(t, f)
+	replayWorker(t, f, time.Now)
 	if *writeGoSealedWorker == "" {
 		return
 	}

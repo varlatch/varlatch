@@ -48,7 +48,7 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { DomainError } from "../src/domain/errors.js";
 import { BUCKET, ENDPOINT, FakeS3, FixturePolicy, KEY_GOOD } from "./helpers/audit-export-fake.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { exportRows, loadRows, Normalizer, type Row, type Table } from "./go-fixture-kit.js";
+import { exportRows, loadRows, Normalizer, onClock, onRecordedClock, type Row, type Table } from "./go-fixture-kit.js";
 
 const { buildApp, SERVER_VERSION } = await vi.importActual<typeof import("../src/http/app.js")>("../src/http/app.js");
 
@@ -158,8 +158,19 @@ const hours = (v: unknown): unknown =>
 
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
-/** The steps run on the file's rows: each step's result, normalized. */
-async function replay(f: Pick<WorkerFixture, "rows" | "rootKek" | "steps">): Promise<unknown[]> {
+/**
+ * The steps run on the file's rows: each step's result, normalized. The
+ * replay runs on the recording's time moved on by the time it has taken,
+ * so that the rows' lifetimes mean what they meant when the fixture was
+ * recorded, whatever the date (a plan recorded with a day to run expired
+ * in real time the day after: varlatch run 44049762382). See
+ * onRecordedClock.
+ */
+function replay(f: Pick<WorkerFixture, "rows" | "rootKek" | "steps">): Promise<unknown[]> {
+  return onRecordedClock(f.rows, () => replayOnce(f));
+}
+
+async function replayOnce(f: Pick<WorkerFixture, "rows" | "rootKek" | "steps">): Promise<unknown[]> {
   const fake = new FakeS3();
   await fake.start();
   const db = await loadRows(f.rows, TABLES);
@@ -324,6 +335,12 @@ describe("the audit export worker fixture is this server's worker", () => {
     const f = JSON.parse(readFileSync(FILE, "utf8")) as WorkerFixture;
     expect(f.ref).toBe("v0.22.0");
     await expectFixture(f);
+  }, 300_000);
+  it("gives the same results with the date 30 days on (no lifetime in the fixture runs on today's date)", async () => {
+    const f = JSON.parse(readFileSync(FILE, "utf8")) as WorkerFixture;
+    const wall = Date;
+    await onClock(() => wall.now() + 30 * 24 * 3_600_000, () => expectFixture(f));
+    expect(Date).toBe(wall);
   }, 300_000);
   const goSealed = process.env.VARLATCH_GO_SEALED_AUDIT_EXPORT_WORKER;
   it.skipIf(!goSealed)("export credentials and drain copies the Go server sealed open here with the same steps", async () => {
