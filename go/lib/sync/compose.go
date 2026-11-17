@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -539,11 +540,209 @@ func propertyKey(v any) string {
 // spaces or tabs, and an optional comment after a separating blank.
 var yamlDirective = regexp.MustCompile(`^%YAML[ \t]+1\.2(?:[ \t]+(?:#.*)?)?$`)
 
+// The subset. yaml.v3 and the `yaml` package read some texts differently,
+// and where they do, Go must never give a more confident verdict than
+// TypeScript. Rather than follow each difference, this reader reads a
+// conservative subset of YAML and calls everything else unreadable (every
+// verdict unknown, which is always safe): the characters subsetCharacters
+// allows, the directives normalize allows, and scalars that start and end
+// on one line or are block scalars, flow collections on one line, and
+// well-formed properties (inSubset). Compose files as people and Coolify
+// usually write them stay inside it (a flow list spread over lines does
+// not: its verdicts are unknown).
+
+// subsetCharacters reports that the text holds only printable characters,
+// tab, line feed, and carriage return before a line feed: no other
+// control character (C0, DEL, C1, NEL), no line or paragraph separator
+// (U+2028, U+2029), no byte order mark (one leading one is dropped
+// before), no U+FFFE or U+FFFF, and nothing that is not UTF-8 (a lone
+// surrogate the JavaScript string held).
+func subsetCharacters(text string) bool {
+	if !utf8.ValidString(text) {
+		return false
+	}
+	for i, r := range text {
+		switch {
+		case r == '\t' || r == '\n':
+		case r == '\r':
+			if i+1 >= len(text) || text[i+1] != '\n' {
+				return false
+			}
+		case r < 0x20 || (r >= 0x7f && r <= 0x9f):
+			return false
+		case r == 0x2028 || r == 0x2029 || r == 0xfeff || r == 0xfffe || r == 0xffff:
+			return false
+		}
+	}
+	return true
+}
+
+// inSubset reports that the tree's structure is in the subset:
+//   - every quoted or plain scalar, keys included, starts and ends on its
+//     line (yaml.v3 and the `yaml` package fold and indent continuation
+//     lines by different rules); block scalars (| and >) span lines by
+//     design and are read;
+//   - every flow collection ({…} or […]) closes on the line it opens on;
+//   - every property and alias is well formed: an anchor or alias name of
+//     letters, digits, '_', '-' and '.', a tag "!", "!name" or "!!name"
+//     with a name of letters, digits and '-'.
+//
+// Aliases are read where their anchor is.
+func (c *converter) inSubset(n *yaml.Node) bool {
+	if n.Kind == yaml.DocumentNode {
+		for _, child := range n.Content {
+			if !c.inSubset(child) {
+				return false
+			}
+		}
+		return true
+	}
+	line, ok := c.lineAt(n)
+	if !ok {
+		return false
+	}
+	if n.Kind == yaml.AliasNode {
+		name, _ := nextToken(line)
+		return len(name) > 1 && name[0] == '*' && anchorName.MatchString(string(name[1:]))
+	}
+	rest, ok := afterProperties(line)
+	if !ok {
+		return false
+	}
+	switch n.Kind {
+	case yaml.MappingNode, yaml.SequenceNode:
+		if n.Style&yaml.FlowStyle != 0 {
+			if flowEnd(rest) < 0 {
+				return false
+			}
+		}
+		for _, child := range n.Content {
+			if !c.inSubset(child) {
+				return false
+			}
+		}
+		return true
+	case yaml.ScalarNode:
+		switch {
+		case n.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0:
+			return true
+		case n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0:
+			return quotedEnd(rest) >= 0
+		case n.Value == "":
+			return true // an empty plain scalar has no text
+		default:
+			return strings.HasPrefix(string(rest), n.Value)
+		}
+	}
+	return false
+}
+
+var (
+	anchorName = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	tagToken   = regexp.MustCompile(`^!(?:!?[A-Za-z0-9-]+)?$`)
+)
+
+// lineAt is the node's line from the node's position on: yaml.v3 places a
+// node at its first property, counting characters.
+func (c *converter) lineAt(n *yaml.Node) ([]rune, bool) {
+	if n.Line < 1 || n.Line > len(c.lines) || n.Column < 1 {
+		return nil, false
+	}
+	line := []rune(strings.TrimSuffix(c.lines[n.Line-1], "\r"))
+	if n.Column-1 > len(line) {
+		return nil, false
+	}
+	return line[n.Column-1:], true
+}
+
+func isBlank(r rune) bool { return r == ' ' || r == '\t' }
+
+// nextToken is the text up to the next blank or flow indicator, and what
+// follows it.
+func nextToken(rest []rune) ([]rune, []rune) {
+	i := 0
+	for i < len(rest) && !isBlank(rest[i]) && !strings.ContainsRune(",[]{}", rest[i]) {
+		i++
+	}
+	return rest[:i], rest[i:]
+}
+
+// afterProperties is the text after the node's properties (anchors, tags)
+// and the blanks after each; not ok when one is not well formed. It may be
+// empty: a block collection's content starts on the next line.
+func afterProperties(rest []rune) ([]rune, bool) {
+	for len(rest) > 0 && (rest[0] == '&' || rest[0] == '!') {
+		t, after := nextToken(rest)
+		if t[0] == '&' && !anchorName.MatchString(string(t[1:])) || t[0] == '!' && !tagToken.MatchString(string(t)) {
+			return nil, false
+		}
+		if len(after) > 0 && !isBlank(after[0]) {
+			return nil, false // a property runs into a flow indicator
+		}
+		for len(after) > 0 && isBlank(after[0]) {
+			after = after[1:]
+		}
+		rest = after
+	}
+	return rest, true
+}
+
+// quotedEnd is the index just past the quoted scalar the text starts with,
+// or -1 when it does not end on this line: ” is a quote in single
+// quotes, a backslash escapes the next character in double quotes (at the
+// line's end, a line break).
+func quotedEnd(rest []rune) int {
+	if len(rest) == 0 || (rest[0] != '"' && rest[0] != '\'') {
+		return -1
+	}
+	q := rest[0]
+	for i := 1; i < len(rest); i++ {
+		switch {
+		case q == '"' && rest[i] == '\\':
+			i++
+		case rest[i] == q && q == '\'' && i+1 < len(rest) && rest[i+1] == '\'':
+			i++
+		case rest[i] == q:
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// flowEnd is the index just past the flow collection the text starts
+// with, or -1 when it does not close on this line (or a quote in it is
+// not read as one here).
+func flowEnd(rest []rune) int {
+	if len(rest) == 0 || (rest[0] != '{' && rest[0] != '[') {
+		return -1
+	}
+	depth := 0
+	for i := 0; i < len(rest); i++ {
+		switch r := rest[i]; {
+		case r == '{' || r == '[':
+			depth++
+		case r == '}' || r == ']':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		case r == '"' || r == '\'':
+			end := quotedEnd(rest[i:])
+			if end < 0 {
+				return -1
+			}
+			i += end - 1
+		case r == '#' && i > 0 && isBlank(rest[i-1]):
+			return -1 // a comment before the collection closes
+		}
+	}
+	return -1
+}
+
 // normalize is the compose text as yaml.v3 is given it, so that it and
 // every lookup into the text (nonSpecific) see the same text:
 //   - one leading byte order mark dropped, as the `yaml` package drops it
-//     (yaml.v3 counts columns without it too); any other one makes the
-//     file unreadable;
+//     (yaml.v3 counts columns without it too);
 //   - the directives before the document, read strictly: only "%YAML 1.2"
 //     (repeated or not), which is the `yaml` package's own version, read
 //     here with its 1.2 rules. yaml.v3 accepts only "%YAML 1.1", which
@@ -552,20 +751,10 @@ var yamlDirective = regexp.MustCompile(`^%YAML[ \t]+1\.2(?:[ \t]+(?:#.*)?)?$`)
 //     directive (another version, %TAG, a reserved one, trailing text),
 //     and directives with no "---" after them, make the file unreadable:
 //     the conservative reading;
-//   - a carriage return anywhere but before a line feed makes the file
-//     unreadable.
+//   - only the characters of the subset (subsetCharacters).
 func normalize(text string) (string, bool) {
 	text = strings.TrimPrefix(text, "\ufeff")
-	if strings.Contains(text, "\ufeff") {
-		// The `yaml` package keeps any other one as text (a second at the
-		// start becomes part of the first key); yaml.v3 drops some.
-		return "", false
-	}
-	if strings.Contains(strings.ReplaceAll(text, "\r\n", ""), "\r") {
-		// A carriage return outside a CRLF pair: the `yaml` package cannot
-		// read the file (it keeps one inside a quoted value as text),
-		// while yaml.v3 reads it and can find Services the `yaml` package
-		// never sees. Unreadable here: the conservative reading.
+	if !subsetCharacters(text) {
 		return "", false
 	}
 	lines := strings.Split(text, "\n")
@@ -623,6 +812,9 @@ func parseBounded(text string) (Object, bool) {
 		return nil, false
 	}
 	c := &converter{anchors: map[*yaml.Node]*anchorData{}, active: map[*yaml.Node]bool{}, lines: strings.Split(parsed, "\n")}
+	if !c.inSubset(doc.Content[0]) {
+		return nil, false
+	}
 	v, err := c.toJS(doc.Content[0])
 	if err != nil {
 		return nil, false

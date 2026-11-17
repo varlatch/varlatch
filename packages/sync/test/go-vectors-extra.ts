@@ -188,6 +188,87 @@ describe("extra: compose YAML as the yaml package reads it", () => {
       classifyComposeUsage(raw, "services: {app: {}}", 3, ["FOO"]);
     });
   }
+  // The subset (#218 review, fourth round): what Go reads is a conservative
+  // subset of YAML, everything else unreadable. Each class below, where
+  // TypeScript cannot read the file either.
+  for (const [name, [raw, generated]] of Object.entries({
+    "a line separator": ["services: {app: {}} ", "services: {app: {}}"],
+    "a paragraph separator": ["services: {app: {}} ", "services: {app: {}}"],
+    "a next line (NEL)": ["services: {app: {}}\u0085", "services: {app: {}}"],
+    "a line separator in the generated file": ["services: {app: {environment: {FOO: x}}}", "services: {app: {}} "],
+    "a NEL in the generated file": ["services: {app: {environment: {FOO: x}}}", "services: {app: {}}\u0085"],
+    "a C0 control": ["services: {app: {}}\u0001", "services: {app: {}}"],
+    "a vertical tab": ["services: {app: {}}\u000b", "services: {app: {}}"],
+    "a form feed": ["services:\f\n  app: {}\n", "services: {app: {}}"],
+    "DEL": ["services: {app: {}}\u007f", "services: {app: {}}"],
+    "a C1 control": ["services: {app: {}}\u0090", "services: {app: {}}"],
+    "U+FFFE": ["services: {app: {}}￾", "services: {app: {}}"],
+    "a double-quoted value over two lines": ["services: {app: {environment: {FOO: \"a\nb\"}}}", "services: {app: {}}"],
+    "a double-quoted value over two CRLF lines": ["services: {app: {environment: {FOO: \"a\r\nb\"}}}", "services: {app: {}}"],
+    "a single-quoted value over two lines": ["services: {app: {environment: {FOO: 'a\nb'}}}", "services: {app: {}}"],
+    "a single-quoted value over two CRLF lines": ["services: {app: {environment: {FOO: 'a\r\nb'}}}", "services: {app: {}}"],
+    "a flow mapping continued unindented": ["services: {app: \n{image: x}}\n", "services: {app: {}}"],
+    "a flow mapping opened on its own line": ["services: {\napp: {environment: {FOO: x}}}\n", "services: {app: {}}"],
+    "a flow mapping closed on the next line": ["services: {app: {environment: {FOO: x\n}}}\n", "services: {app: {}}"],
+    "a tag with brackets": ["services:\n  app:\n    environment:\n      FOO: !!b[[x]]inary aGVsbG8=\n", "services: {app: {}}"],
+    "a tag run into a comma": ["services:\n  app:\n    environment:\n      FOO: !!merge, x\n", "services: {app: {}}"],
+    "an anchor with a comma": ["services:\n  app:\n    environment:\n      FOO: &a,b x\n", "services: {app: {}}"],
+    "a tag with another !": ["services:\n  app:\n    environment:\n      !!me!ge 'anything': {FOO: \"\"}\n", "services: {app: {}}"],
+    "a named tag handle with no %TAG": ["services:\n  app:\n    environment:\n      FOO: !e!x '7'\n", "services: {app: {}}"],
+  })) {
+    it(`subset: ${name}`, () => {
+      classifyComposeUsage(raw, generated, 3, ["FOO"]);
+    });
+  }
+  // Read by TypeScript, unreadable in Go: outside the subset.
+  for (const [name, raw] of Object.entries({
+    "a lone surrogate": "services: {app: {environment: {FOO: \"\ud800\"}}}\n",
+    "a double-quoted value over two indented lines": "services:\n  app:\n    environment:\n      FOO: \"a\n        b\"\n",
+    "a single-quoted value over two indented lines": "services:\n  app:\n    environment:\n      FOO: 'a\n        b'\n",
+    "an escaped line break": "services:\n  app:\n    environment:\n      FOO: \"a\\\n        b\"\n",
+    "a plain value over two lines": "services:\n  app:\n    environment:\n      FOO: a\n        b\n",
+    "a flow sequence over indented lines": "services:\n  app:\n    command: [\n      \"a\",\n      \"b\"\n    ]\n    environment:\n      FOO: x\n",
+    "a flow mapping over indented lines": "services:\n  app: {\n    environment: {FOO: x}\n  }\n",
+    "a property alone on its line": "services:\n  app:\n    environment:\n      FOO: !!str\n        x\n",
+    "a tag with a star": "services:\n  app:\n    environment:\n      !!me*age 'anything': {FOO: \"\"}\n",
+  })) {
+    it(`divergence: ${name}`, () => {
+      classifyComposeUsage(raw, "services: {app: {}}", 3, ["FOO"]);
+    });
+  }
+  it("a Compose file as people and Coolify write it stays readable", () => {
+    const raw = [
+      "# a comment",
+      "x-common: &common",
+      "  restart: unless-stopped",
+      "  labels:",
+      "    - \"traefik.http.routers.app.rule=Host(`app.example.com`)\"",
+      "services:",
+      "  app:",
+      "    <<: *common",
+      "    image: 'ghcr.io/acme/app:1.2.3' # pinned",
+      "    command: [\"node\", \"server.js\", \"--port\", \"3000\"]",
+      "    entrypoint: |",
+      "      sh -c 'echo \"it''s up\"'",
+      "    healthcheck:",
+      "      test: [\"CMD-SHELL\", \"curl -f http://localhost:3000 || exit 1\"]",
+      "      interval: 30s",
+      "    environment:",
+      "      - FOO=${FOO}",
+      "      - BAR=${BAR:-default}",
+      "      - 'QUOTED=a # not a comment'",
+      "    env_file: [.env]",
+      "  db:",
+      "    image: postgres:16",
+      "    environment:",
+      "      POSTGRES_PASSWORD: $SERVICE_PASSWORD_POSTGRES",
+      "      NOTE: >",
+      "        folded",
+      "        text",
+      "",
+    ].join("\r\n");
+    expect(classifyComposeUsage(raw, "services:\n  app:\n    env_file: [.env]\n  db:\n    env_file: [.env]\n", 3, ["FOO", "BAR", "QUOTED", "OTHER"]).checked).toBe(true);
+  });
   it("divergence: a bare carriage return in a quoted value", () => {
     // The `yaml` package folds it into the value; here it is unreadable too.
     classifyComposeUsage("services: {app: {environment: {FOO: \"a\rb\"}}}\n", "services: {app: {}}", 3, ["FOO"]);
