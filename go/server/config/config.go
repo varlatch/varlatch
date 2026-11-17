@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/outbound"
 )
@@ -110,6 +111,13 @@ type Tailnet struct {
 	// (tailnet_auth_key_file, or the unit's tailnet-auth-key credential);
 	// "" when there is none.
 	AuthKeyFile string
+	// HTTPSPort is the browser endpoint's (ADR-0046), on the node's
+	// addresses with its Tailscale certificate; 0 when it is off.
+	HTTPSPort int
+	// BrowserOrigins are the exact dashboard origins the browser endpoint
+	// lets read cross-origin: an https (or loopback http) public_url's,
+	// and tailnet_browser_origins.
+	BrowserOrigins []string
 }
 
 // TailscaleControlURL is Tailscale's coordination server, the default.
@@ -153,7 +161,8 @@ type Env func(string) string
 
 var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "outbound_allow", "access_log", "sync", "sync_adapters", "audit_export",
 	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination",
-	"tailnet", "tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file"}
+	"tailnet", "tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file",
+	"tailnet_https_port", "tailnet_browser_origins"}
 
 // Backup defaults: a day between backups, seven archives kept (the
 // TypeScript host backup's LOCAL_KEEP), the destination named offsite
@@ -359,7 +368,7 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 func parseTailnet(values map[string]string, at func(string, string, ...any) error, c *Config, env Env) (*Tailnet, error) {
 	switch v := values["tailnet"]; v {
 	case "", "off":
-		for _, name := range []string{"tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file"} {
+		for _, name := range []string{"tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file", "tailnet_https_port", "tailnet_browser_origins"} {
 			if values[name] != "" {
 				return nil, at(name, "is set, but tailnet is off; set tailnet = on to start the tailnet listener")
 			}
@@ -415,7 +424,97 @@ func parseTailnet(values map[string]string, at func(string, string, ...any) erro
 	case env("CREDENTIALS_DIRECTORY") != "":
 		t.AuthKeyFile = filepath.Join(env("CREDENTIALS_DIRECTORY"), "tailnet-auth-key")
 	}
-	return t, nil
+	return t, parseBrowserEndpoint(values, at, c, t)
+}
+
+// parseBrowserEndpoint reads tailnet_https_port and tailnet_browser_origins
+// (config.ts's tailnetBrowser): the browser endpoint is off unless the
+// port is set, and then needs a port of its own and at least one origin.
+// Its host is tailnet_hostname in the pinned tailnet, known at enrolment.
+func parseBrowserEndpoint(values map[string]string, at func(string, string, ...any) error, c *Config, t *Tailnet) error {
+	raw := values["tailnet_https_port"]
+	if raw == "" {
+		if values["tailnet_browser_origins"] != "" {
+			return at("tailnet_browser_origins", "is set, but the browser endpoint is off; set tailnet_https_port to serve it")
+		}
+		return nil
+	}
+	p, err := strconv.Atoi(raw)
+	if err != nil || p < 1 || p > 65535 {
+		return at("tailnet_https_port", "%q is not a port (1 to 65535)", raw)
+	}
+	if p == t.Port {
+		return at("tailnet_https_port", "must differ from tailnet_port")
+	}
+	t.HTTPSPort = p
+	// The dashboard's own origin by default, but only over HTTPS: a page
+	// served in plain text could be altered on the way to an approved
+	// device.
+	seen := map[string]bool{}
+	add := func(o string) {
+		if !seen[o] {
+			seen[o] = true
+			t.BrowserOrigins = append(t.BrowserOrigins, o)
+		}
+	}
+	if u := c.PublicURL; u != nil && (u.Scheme == "https" || loopbackOrigin[u.Hostname()] || loopbackOrigin["["+u.Hostname()+"]"]) {
+		host := strings.ToLower(u.Host)
+		if p := u.Port(); u.Scheme == "https" && p == "443" || u.Scheme == "http" && p == "80" {
+			host = strings.TrimSuffix(host, ":"+p)
+		}
+		add(u.Scheme + "://" + host)
+	}
+	for _, entry := range strings.Split(values["tailnet_browser_origins"], ",") {
+		if entry = strings.TrimSpace(entry); entry == "" {
+			continue
+		}
+		o, msg := browserOrigin(entry)
+		if msg != "" {
+			return at("tailnet_browser_origins", "%s", msg)
+		}
+		add(o)
+	}
+	if len(t.BrowserOrigins) == 0 {
+		return at("tailnet_https_port", "needs a dashboard origin it may serve: an https public_url, or exact origins in tailnet_browser_origins")
+	}
+	return nil
+}
+
+// loopbackOrigin are the hosts plain http is allowed on.
+var loopbackOrigin = map[string]bool{"localhost": true, "127.0.0.1": true, "[::1]": true}
+
+// originHost is a DNS name or IPv4 address (lower case, as the URL parser
+// leaves it), or a bracketed IPv6 address.
+var originHost = regexp.MustCompile(`^(\[[0-9a-f:.]+\]|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)$`)
+
+// browserOrigin is config.ts's browserOrigin: an origin exactly as a
+// browser sends it (scheme, host and port, nothing else), https or plain
+// http on loopback, never null or a wildcard. A non-empty message says
+// why not.
+func browserOrigin(raw string) (string, string) {
+	if raw == "*" || raw == "null" {
+		return "", fmt.Sprintf("%q is never allowed; list exact origins", raw)
+	}
+	u, ok := whatwg.ParseURL(raw)
+	if !ok {
+		return "", fmt.Sprintf("%q is not an origin such as https://varlatch.example.com", raw)
+	}
+	hostname := u.Host
+	if strings.HasPrefix(hostname, "[") {
+		hostname = hostname[:strings.IndexByte(hostname, ']')+1]
+	} else if i := strings.LastIndexByte(hostname, ':'); i >= 0 {
+		hostname = hostname[:i]
+	}
+	if !(u.Protocol == "https:" || u.Protocol == "http:" && loopbackOrigin[hostname]) {
+		return "", fmt.Sprintf("%q must use https (plain http only on localhost)", raw)
+	}
+	if origin := u.Protocol + "//" + u.Host; origin != raw {
+		return "", fmt.Sprintf("%q must be exactly an origin, written %s", raw, origin)
+	}
+	if !originHost.MatchString(hostname) {
+		return "", fmt.Sprintf("%q must name one host; wildcards are never allowed", raw)
+	}
+	return raw, ""
 }
 
 // backupDestinationName is a destinations file's key (destinationsSchema).

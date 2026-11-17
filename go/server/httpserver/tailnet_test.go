@@ -39,7 +39,7 @@ func TestMetaOnTheListeners(t *testing.T) {
 	if slices.Contains(metaCapabilities(t, plain), "tailnet.browser-reads") {
 		t.Error("tailnet.browser-reads without a browser endpoint")
 	}
-	withEndpoint, _, _, _ := newTestServer(t, func(o *Options) { o.BrowserEndpoint = "https://varlatch.corp.ts.net:8443" })
+	withEndpoint, _, _, _ := newTestServer(t, func(o *Options) { o.BrowserEndpoint = func() string { return "https://varlatch.corp.ts.net:8443" } })
 	if caps := metaCapabilities(t, withEndpoint); !slices.Contains(caps, "tailnet.browser-reads") || !slices.Contains(caps, "auth.session") {
 		t.Errorf("the ordinary listener with a browser endpoint: %v", caps)
 	}

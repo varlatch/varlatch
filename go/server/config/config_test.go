@@ -153,6 +153,57 @@ func TestParseTailnet(t *testing.T) {
 	}
 }
 
+// tailnet_https_port turns the browser endpoint on (config.ts's
+// tailnetBrowser): a port of its own, and the origins it may serve, an
+// https (or loopback http) public_url's by default and exact ones listed.
+func TestParseBrowserEndpoint(t *testing.T) {
+	on := "root_kek_file = /k\ntailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n"
+	parse := func(extra string) (*Tailnet, error) {
+		c, err := Parse(strings.NewReader(on+extra), env(nil))
+		if err != nil {
+			return nil, err
+		}
+		return c.Tailnet, nil
+	}
+	if tn, err := parse(""); err != nil || tn.HTTPSPort != 0 || tn.BrowserOrigins != nil {
+		t.Fatalf("off by default: %+v %v", tn, err)
+	}
+	tn, err := parse("public_url = https://varlatch.example.com:443\ntailnet_https_port = 8443\ntailnet_browser_origins = https://dash.example.com, http://localhost:5173 , https://varlatch.example.com\n")
+	if err != nil || tn.HTTPSPort != 8443 || !slices.Equal(tn.BrowserOrigins, []string{"https://varlatch.example.com", "https://dash.example.com", "http://localhost:5173"}) {
+		t.Fatalf("on: %+v %v", tn, err)
+	}
+	if tn, err := parse("public_url = http://127.0.0.1:8686\ntailnet_https_port = 8443\n"); err != nil || !slices.Equal(tn.BrowserOrigins, []string{"http://127.0.0.1:8686"}) {
+		t.Errorf("a loopback public_url: %+v %v", tn, err)
+	}
+	if tn, err := parse("tailnet_https_port = 8443\ntailnet_browser_origins = http://[::1]:3000\n"); err != nil || !slices.Equal(tn.BrowserOrigins, []string{"http://[::1]:3000"}) {
+		t.Errorf("IPv6 loopback: %+v %v", tn, err)
+	}
+	for name, c := range map[string]struct{ extra, want string }{
+		"origins without the port": {"tailnet_browser_origins = https://dash.example.com\n", "is set, but the browser endpoint is off"},
+		"no origin":                {"tailnet_https_port = 8443\n", "needs a dashboard origin it may serve"},
+		"not a port":               {"tailnet_https_port = 70000\n", "is not a port"},
+		"the listener's port":      {"tailnet_https_port = 8687\n", "must differ from tailnet_port"},
+		"a wildcard":               {"tailnet_https_port = 8443\ntailnet_browser_origins = *\n", "is never allowed; list exact origins"},
+		"null":                     {"tailnet_https_port = 8443\ntailnet_browser_origins = null\n", "is never allowed; list exact origins"},
+		"not a URL":                {"tailnet_https_port = 8443\ntailnet_browser_origins = dash.example.com\n", "is not an origin such as"},
+		"plain http":               {"tailnet_https_port = 8443\ntailnet_browser_origins = http://dash.example.com\n", "must use https"},
+		"a path":                   {"tailnet_https_port = 8443\ntailnet_browser_origins = https://dash.example.com/\n", "must be exactly an origin, written https://dash.example.com"},
+		"the default port":         {"tailnet_https_port = 8443\ntailnet_browser_origins = https://dash.example.com:443\n", "must be exactly an origin, written https://dash.example.com"},
+		"upper case":               {"tailnet_https_port = 8443\ntailnet_browser_origins = https://Dash.example.com\n", "must be exactly an origin, written https://dash.example.com"},
+		"a wildcard host":          {"tailnet_https_port = 8443\ntailnet_browser_origins = https://*.example.com\n", "must name one host; wildcards are never allowed"},
+		"http public_url only":     {"public_url = http://localhost:8686\ntailnet_https_port = 8443\ntailnet_browser_origins = https://a.example.com,ftp://x\n", "must use https"},
+	} {
+		_, err := parse(c.extra)
+		var cerr *Error
+		if !errors.As(err, &cerr) || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", name, err, c.want)
+		}
+	}
+	if _, err := Parse(strings.NewReader("root_kek_file = /k\ntailnet_https_port = 8443\n"), env(nil)); err == nil || !strings.Contains(err.Error(), "tailnet is off") {
+		t.Errorf("with tailnet off: %v", err)
+	}
+}
+
 func TestLoadReadError(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "missing.conf"))
 	var cerr *Error

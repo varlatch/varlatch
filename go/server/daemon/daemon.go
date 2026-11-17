@@ -42,6 +42,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/tailnet"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/web"
 	"github.com/varlatch/varlatch/go/server/webhooks"
@@ -120,8 +121,11 @@ type hooks struct {
 	// backups tunes the backup service (tests: a slower sealing pace).
 	backups func(*backups.Options)
 	// tailnetControl replaces the tailnet node's control server (tests: an
-	// in-process one).
+	// in-process one), and tailnetCerts where the browser endpoint's
+	// certificate comes from (tests: a test CA, since a real one needs
+	// Let's Encrypt).
 	tailnetControl string
+	tailnetCerts   tailnet.CertSource
 }
 
 // productionStorage is the storage engine's options for serving: the
@@ -297,7 +301,7 @@ func serve(opts Options, h *hooks) int {
 		if h.tailnetControl != "" {
 			controlURL = h.tailnetControl
 		}
-		if tn, err = startTailnet(cfg, controlURL, log); err != nil {
+		if tn, err = startTailnet(cfg, controlURL, h.tailnetCerts, log); err != nil {
 			return fail(ExitFailure, "cannot start the tailnet node", "error", err)
 		}
 		env.tailnet = tn.manager
@@ -430,12 +434,15 @@ func serve(opts Options, h *hooks) int {
 	}
 	if tn != nil {
 		hopts.TailnetListeners = tn.manager.Report
+		if tn.cert != nil {
+			hopts.BrowserEndpoint = tn.manager.BrowserEndpoint
+		}
 	}
 	handler, err := httpserver.New(hopts)
 	if err != nil {
 		return fail(ExitFailure, "building the HTTP handler", "error", err)
 	}
-	var tailnetHandler http.Handler
+	var tailnetHandler, browserHandler http.Handler
 	if tn != nil {
 		// The same API, without the dashboard, the browser session, the
 		// live updates, the public URL or proxies: every request is a
@@ -448,6 +455,16 @@ func serve(opts Options, h *hooks) int {
 			return fail(ExitFailure, "building the tailnet listener's HTTP handler", "error", err)
 		}
 		tailnetHandler = th
+		if b := tn.browserEndpoint(); b != nil {
+			// The browser endpoint (ADR-0046): the same device check, over
+			// HTTPS, for the allowlisted dashboard origins.
+			topts.Tailnet = &httpserver.TailnetListener{Resolve: tn.resolver.Resolve, Admit: tn.manager.Admit, Browser: b}
+			bh, err := httpserver.New(topts)
+			if err != nil {
+				return fail(ExitFailure, "building the browser endpoint's HTTP handler", "error", err)
+			}
+			browserHandler = bh
+		}
 	}
 	if _, ok := web.Embedded(); !ok {
 		log.Warn("this varlatchd was built without the dashboard; it serves a placeholder page (go generate ./server/web)")
@@ -475,7 +492,7 @@ func serve(opts Options, h *hooks) int {
 	go func() { served <- srv.Serve(ln) }()
 	log.Info("varlatchd is serving", "version", buildinfo.Version, "address", ln.Addr().String(), "installationId", inst.ID)
 	if tn != nil {
-		go tn.serve(ctx, tailnetHandler)
+		go tn.serve(ctx, tailnetHandler, browserHandler)
 	}
 	if opts.Ready != nil {
 		opts.Ready(ln.Addr())

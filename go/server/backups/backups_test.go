@@ -638,14 +638,16 @@ func TestBucketTestBesideARun(t *testing.T) {
 func TestConfigurationKeepsTheTailnetSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "configuration.json")
 	cfg := &config.Config{Listen: "127.0.0.1:8686", AccessLog: "stdout", BackupKeep: 7, BackupDestination: "offsite",
-		Tailnet: &config.Tailnet{Hostname: "varlatch", Tags: []string{"tag:varlatch", "tag:prod"}, Port: 8687, AuthKeyFile: "/etc/varlatch/tailnet-auth-key"}}
+		Tailnet: &config.Tailnet{Hostname: "varlatch", Tags: []string{"tag:varlatch", "tag:prod"}, Port: 8687, AuthKeyFile: "/etc/varlatch/tailnet-auth-key",
+			HTTPSPort: 8443, BrowserOrigins: []string{"https://dash.example.com", "http://localhost:5173"}}}
 	if err := writeConfiguration(path, cfg); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(path)
 	var conf Configuration
 	if err := json.Unmarshal(raw, &conf); err != nil || conf.Settings["tailnet"] != "on" || conf.Settings["tailnet_hostname"] != "varlatch" ||
-		conf.Settings["tailnet_tags"] != "tag:varlatch,tag:prod" || conf.Settings["tailnet_port"] != "8687" || bytes.Contains(raw, []byte("tailnet-auth-key")) {
+		conf.Settings["tailnet_tags"] != "tag:varlatch,tag:prod" || conf.Settings["tailnet_port"] != "8687" || bytes.Contains(raw, []byte("tailnet-auth-key")) ||
+		conf.Settings["tailnet_https_port"] != "8443" || conf.Settings["tailnet_browser_origins"] != "https://dash.example.com,http://localhost:5173" {
 		t.Errorf("configuration %s", raw)
 	}
 }

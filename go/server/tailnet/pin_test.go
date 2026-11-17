@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/domainerr"
+	"github.com/varlatch/varlatch/go/server/tailnet/tailnettest"
 )
 
 // statusNode is a node that says what the test sets. block, when set,
@@ -548,5 +550,64 @@ func TestTheWrittenReportFollowsAccess(t *testing.T) {
 	}
 	if f := file(); !strings.Contains(f, `"node":{"status":"pass"}`) {
 		t.Fatalf("after the re-pin: %s", f)
+	}
+}
+
+// With the browser endpoint configured, the report names its URL (once
+// the tailnet is known), checks its certificate (browserTls) and both
+// listeners, and fails the node when its name is no longer the endpoint's
+// host (observe.ts).
+func TestReportWithTheBrowserEndpoint(t *testing.T) {
+	ctx := context.Background()
+	node := &statusNode{st: Status{BackendState: "NeedsLogin"}}
+	m := enrolling(t, node, "", t.TempDir(), nil)
+	m.SetBrowser("Varlatch", 8443)
+	ca, err := tailnettest.NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := NewCertificate(ca, m.BrowserHost, nil, nil, nil)
+	m.SetCertificate(cert)
+	m.Check(ctx)
+	report := string(jsvalueStringify(m.Report()))
+	if m.BrowserEndpoint() != "" || !strings.Contains(report, `"browserEndpoint":null`) ||
+		!strings.Contains(report, `"browserTls":{"status":"fail","reason":"NO_CERTIFICATE"}`) {
+		t.Fatalf("before enrolment: %q %s", m.BrowserEndpoint(), report)
+	}
+	node.set(running("Tabc123", "corp.ts.net"), nil)
+	m.Check(ctx)
+	m.Listening(true)
+	if !cert.Refresh(ctx) {
+		t.Fatal(cert.LastError())
+	}
+	m.Check(ctx)
+	report = string(jsvalueStringify(m.Report()))
+	notAfter := audit.ISOTime(cert.NotAfter().UnixMicro())
+	for _, want := range []string{`"browserEndpoint":"https://varlatch.corp.ts.net:8443"`,
+		`"checks":{"listener":{"status":"unknown","reason":"NOT_CHECKED"},"browserTls":{"status":"pass","certificateNotAfter":"` + notAfter + `"},"localApi":{"status":"pass"},"node":{"status":"pass"}}`} {
+		if !strings.Contains(report, want) {
+			t.Errorf("%s lacks %s", report, want)
+		}
+	}
+	if m.BrowserEndpoint() != "https://varlatch.corp.ts.net:8443" || m.BrowserHost() != "varlatch.corp.ts.net" {
+		t.Errorf("the endpoint: %q %q", m.BrowserEndpoint(), m.BrowserHost())
+	}
+	m.ListeningBrowser(false)
+	m.Check(ctx)
+	if report = string(jsvalueStringify(m.Report())); !strings.Contains(report, `"listener":{"status":"fail","reason":"NOT_LISTENING"}`) {
+		t.Errorf("the browser endpoint not listening: %s", report)
+	}
+	m.ListeningBrowser(true)
+	m.Check(ctx)
+	if report = string(jsvalueStringify(m.Report())); !strings.Contains(report, `"listener":{"status":"pass"}`) {
+		t.Errorf("both listening: %s", report)
+	}
+	// An admin renamed the node: its certificate no longer fits.
+	renamed := running("Tabc123", "corp.ts.net")
+	renamed.DNSName = "varlatch-2.corp.ts.net"
+	node.set(renamed, nil)
+	m.Check(ctx)
+	if report = string(jsvalueStringify(m.Report())); !strings.Contains(report, `"node":{"status":"fail","reason":"NAME_CHANGED"}`) {
+		t.Errorf("a renamed node: %s", report)
 	}
 }

@@ -4,11 +4,13 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/httpserver"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
@@ -26,25 +29,29 @@ import (
 // (httpserver's Options.Tailnet). The public listener never sees a tailnet
 // peer's identity, and the tailnet one never answers without it.
 
-// tailnetRunner is the running tailnet listener.
+// tailnetRunner is the running tailnet listener, and the browser endpoint
+// when it is configured (step 4.13c).
 type tailnetRunner struct {
 	cfg      *config.Tailnet
 	node     *tailnet.TSNode
 	manager  *tailnet.Manager
 	resolver *tailnet.Resolver
-	log      *slog.Logger
-	done     chan struct{}
+	// cert is the browser endpoint's certificate; nil when it is off.
+	cert *tailnet.Certificate
+	log  *slog.Logger
+	done chan struct{}
 
 	mu      sync.Mutex
-	srv     *http.Server
+	srvs    []*http.Server
 	stopped bool
 }
 
 // startTailnet starts the node (it returns at once; the node joins its
 // tailnet in the background) and loads its pin. The auth key is read only
 // while the node has no state of its own: once enrolled it is never
-// needed again. controlURL is the configured one (tests replace it).
-func startTailnet(cfg *config.Config, controlURL string, log *slog.Logger) (*tailnetRunner, error) {
+// needed again. controlURL is the configured one, certs where the browser
+// endpoint's certificate comes from (nil: the node; tests replace both).
+func startTailnet(cfg *config.Config, controlURL string, certs tailnet.CertSource, log *slog.Logger) (*tailnetRunner, error) {
 	t := cfg.Tailnet
 	dir := filepath.Join(cfg.DataDir, tailnet.StateDir)
 	authKey := ""
@@ -81,13 +88,35 @@ func startTailnet(cfg *config.Config, controlURL string, log *slog.Logger) (*tai
 		_ = node.Close()
 		return nil, err
 	}
-	return &tailnetRunner{cfg: t, node: node, manager: m, resolver: tailnet.NewPinnedResolver(node, m, log), log: log, done: make(chan struct{})}, nil
+	r := &tailnetRunner{cfg: t, node: node, manager: m, resolver: tailnet.NewPinnedResolver(node, m, log), log: log, done: make(chan struct{})}
+	if t.HTTPSPort != 0 {
+		if certs == nil {
+			certs = node
+		}
+		m.SetBrowser(t.Hostname, t.HTTPSPort)
+		// A certificate swapped in is checked at once, not at the next
+		// minute.
+		r.cert = tailnet.NewCertificate(certs, m.BrowserHost, log, nil, func() { m.Check(context.Background()) })
+		m.SetCertificate(r.cert)
+	}
+	return r, nil
+}
+
+// browserEndpoint is the browser endpoint's gate: the node's name in the
+// pinned tailnet, its port, the allowlisted origins; nil when it is off.
+func (r *tailnetRunner) browserEndpoint() *httpserver.BrowserEndpoint {
+	if r.cert == nil {
+		return nil
+	}
+	return &httpserver.BrowserEndpoint{Host: r.manager.BrowserHost, Port: r.cfg.HTTPSPort, Origins: r.cfg.BrowserOrigins}
 }
 
 // serve waits for the node to join its tailnet, checks (or records) the
-// pin, then serves handler on the node's addresses, and checks the node
-// every minute until ctx ends.
-func (r *tailnetRunner) serve(ctx context.Context, handler http.Handler) {
+// pin, then serves handler on the node's addresses and, when configured,
+// browser over HTTPS with the node's certificate, and checks the node
+// every minute until ctx ends. A browser endpoint that cannot listen never
+// takes the tailnet listener down with it.
+func (r *tailnetRunner) serve(ctx context.Context, handler, browser http.Handler) {
 	defer close(r.done)
 	if err := r.node.Up(ctx); err != nil {
 		if ctx.Err() == nil {
@@ -100,23 +129,23 @@ func (r *tailnetRunner) serve(ctx context.Context, handler http.Handler) {
 	r.manager.Listening(err == nil)
 	if err != nil {
 		r.log.Error("the tailnet listener cannot listen", "port", r.cfg.Port, "error", err)
-		return
+	} else if r.start(handler, ln, slog.LevelWarn) {
+		suffix, open := r.manager.Pinned()
+		r.log.Info("varlatchd tailnet listener is serving", "port", r.cfg.Port, "tailnet", suffix, "open", open)
 	}
-	srv := &http.Server{
-		Handler: handler, ReadHeaderTimeout: readHeaderTimeout, ReadTimeout: readTimeout, IdleTimeout: idleTimeout,
-		ErrorLog: slog.NewLogLogger(r.log.Handler(), slog.LevelWarn),
+	if r.cert != nil {
+		go r.cert.Run(ctx)
+		bln, err := r.node.Listen(r.cfg.HTTPSPort)
+		r.manager.ListeningBrowser(err == nil)
+		if err != nil {
+			r.log.Error("the tailnet browser endpoint cannot listen", "port", r.cfg.HTTPSPort, "error", err)
+		} else if r.start(browser, tls.NewListener(bln, r.cert.TLSConfig()), slog.LevelDebug) {
+			// Refused handshakes (another name, no certificate) are logged
+			// at debug only: anyone on the tailnet can make them.
+			r.log.Info("varlatchd tailnet browser endpoint is serving", "endpoint", r.manager.BrowserEndpoint(), "origins", strings.Join(r.cfg.BrowserOrigins, ", "))
+		}
+		r.manager.Check(ctx)
 	}
-	r.mu.Lock()
-	if r.stopped {
-		r.mu.Unlock()
-		_ = ln.Close()
-		return
-	}
-	r.srv = srv
-	r.mu.Unlock()
-	go func() { _ = srv.Serve(ln) }()
-	suffix, open := r.manager.Pinned()
-	r.log.Info("varlatchd tailnet listener is serving", "port", r.cfg.Port, "tailnet", suffix, "open", open)
 	tick := time.NewTicker(tailnet.CheckEvery)
 	defer tick.Stop()
 	for {
@@ -129,17 +158,34 @@ func (r *tailnetRunner) serve(ctx context.Context, handler http.Handler) {
 	}
 }
 
-// stop ends the listener and leaves the tailnet (never logging out: the
+// start serves handler on ln, unless the runner stopped first.
+func (r *tailnetRunner) start(handler http.Handler, ln net.Listener, level slog.Level) bool {
+	srv := &http.Server{
+		Handler: handler, ReadHeaderTimeout: readHeaderTimeout, ReadTimeout: readTimeout, IdleTimeout: idleTimeout,
+		ErrorLog: slog.NewLogLogger(r.log.Handler(), level),
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped {
+		_ = ln.Close()
+		return false
+	}
+	r.srvs = append(r.srvs, srv)
+	go func() { _ = srv.Serve(ln) }()
+	return true
+}
+
+// stop ends the listeners and leaves the tailnet (never logging out: the
 // node keeps its identity). Only the first call does anything.
 func (r *tailnetRunner) stop(ctx context.Context) {
 	r.mu.Lock()
-	srv, already := r.srv, r.stopped
+	srvs, already := r.srvs, r.stopped
 	r.stopped = true
 	r.mu.Unlock()
 	if already {
 		return
 	}
-	if srv != nil {
+	for _, srv := range srvs {
 		if err := srv.Shutdown(ctx); err != nil {
 			_ = srv.Close()
 		}

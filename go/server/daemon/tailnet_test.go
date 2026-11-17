@@ -6,14 +6,17 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +28,7 @@ import (
 	"tailscale.com/types/logger"
 
 	"github.com/varlatch/varlatch/go/server/tailnet"
+	"github.com/varlatch/varlatch/go/server/tailnet/tailnettest"
 )
 
 // The tailnet listener end to end, with no real tailnet: Tailscale's own
@@ -275,4 +279,117 @@ func varlatchdAddr(t *testing.T, ctx context.Context, peer *tsnet.Server) string
 	}
 	t.Fatal("the peer never saw varlatchd")
 	return ""
+}
+
+// The browser endpoint end to end: varlatchd's node serves HTTPS on the
+// tailnet with its certificate (a test CA stands in for Let's Encrypt).
+// A tagged peer's browser-style request, from an allowlisted origin,
+// reads its own device; another origin, another name in the handshake or
+// another Host are refused; the ordinary listener names the endpoint.
+func TestBrowserEndpoint(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	control := startTestControl(t)
+	ca, err := tailnettest.NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := newInstall(t, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n"+
+		"tailnet_https_port = 8443\ntailnet_browser_origins = https://dash.example.com\n")
+	r := startWith(t, in, &hooks{tailnetControl: control.BaseURL(), tailnetCerts: ca})
+	defer func() { r.stop(t) }()
+	code, out, errOut := runAdmin(t, "bootstrap", "--cli-credential", "--config", in.conf)
+	m := bootstrapCLI.FindStringSubmatch(out)
+	if code != ExitOK || m == nil {
+		t.Fatalf("bootstrap: %d %q %q", code, out, errOut)
+	}
+	bearer := m[2]
+	const endpoint = "https://varlatch.corp.ts.net:8443"
+	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":"`+endpoint+`"}`)
+	waitReport(t, r, bearer, `"checks":{"listener":{"status":"pass"},"browserTls":{"status":"pass","certificateNotAfter":"`)
+	if len(ca.Requested()) == 0 || ca.Requested()[0].Domain != "varlatch.corp.ts.net" {
+		t.Fatalf("the certificate requests: %+v", ca.Requested())
+	}
+	var ep map[string]any
+	if code := do(t, http.DefaultClient, "GET", "http://"+r.addr+"/v1/tailnet/endpoint", bearer, "", &ep); code != 200 || ep["browserEndpoint"] != endpoint {
+		t.Fatalf("the endpoint on the ordinary listener: %d %v", code, ep)
+	}
+	var meta struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if code := do(t, http.DefaultClient, "GET", "http://"+r.addr+"/v1/meta", bearer, "", &meta); code != 200 || !slices.Contains(meta.Capabilities, "tailnet.browser-reads") {
+		t.Fatalf("/v1/meta: %d %v", code, meta.Capabilities)
+	}
+
+	peer := &tsnet.Server{Dir: t.TempDir(), Hostname: "ci-1", ControlURL: control.BaseURL(), Ephemeral: true, AdvertiseTags: []string{"tag:ci"}, Logf: logger.Discard}
+	t.Cleanup(func() { _ = peer.Close() })
+	if _, err := peer.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	addr := varlatchdAddr(t, ctx, peer) + ":8443"
+	client := func(serverName string) *http.Client {
+		return &http.Client{Transport: &http.Transport{
+			DialContext:     func(ctx context.Context, _, _ string) (net.Conn, error) { return peer.Dial(ctx, "tcp", addr) },
+			TLSClientConfig: &tls.Config{RootCAs: ca.Pool, ServerName: serverName},
+		}}
+	}
+	browserGet := func(c *http.Client, url, origin string) (*http.Response, string) {
+		t.Helper()
+		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		res, err := c.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", url, err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res, string(b)
+	}
+	res, body := browserGet(client("varlatch.corp.ts.net"), endpoint+"/v1/tailnet/context", "https://dash.example.com")
+	if res.StatusCode != 200 || res.Header.Get("Access-Control-Allow-Origin") != "https://dash.example.com" ||
+		!strings.Contains(body, `"recognized":true`) || !strings.Contains(body, `"nodeName":"ci-1"`) || !strings.Contains(body, `"tags":["tag:ci"]`) {
+		t.Fatalf("the peer's device through the browser endpoint: %d %v %s", res.StatusCode, res.Header, body)
+	}
+	if res, _ := browserGet(client("varlatch.corp.ts.net"), endpoint+"/v1/tailnet/context", "https://elsewhere.example.com"); res.StatusCode != 403 || res.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Errorf("another origin: %d %v", res.StatusCode, res.Header)
+	}
+	if res, _ := browserGet(client("varlatch.corp.ts.net"), "https://"+addr+"/v1/tailnet/context", ""); res.StatusCode != 403 {
+		t.Errorf("another Host: %d", res.StatusCode)
+	}
+	other := client("other.corp.ts.net")
+	other.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://other.corp.ts.net:8443/v1/tailnet/context", nil)
+	if res, err := other.Do(req); err == nil {
+		res.Body.Close()
+		t.Error("a handshake for another name was served")
+	}
+	// The plain tailnet listener has no browser route.
+	plain := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return peer.Dial(ctx, "tcp", strings.TrimSuffix(addr, ":8443")+":8687")
+	}}}
+	if res, _ := browserGet(plain, "http://varlatch.corp.ts.net:8687/v1/tailnet/context", ""); res.StatusCode != 404 {
+		t.Errorf("the device route on the plain tailnet listener: %d", res.StatusCode)
+	}
+
+	// Tailnet access closed (a latched closure): the browser endpoint
+	// refuses as the plain listener does.
+	r.stop(t)
+	pinPath := filepath.Join(in.data, tailnet.PinFile)
+	pin, err := tailnet.LoadPin(pinPath)
+	if err != nil || pin == nil {
+		t.Fatalf("the pin: %+v %v", pin, err)
+	}
+	pin.Closed = &tailnet.Closure{Reason: tailnet.PinSuffix, Since: "2026-11-17T00:00:00Z", Observed: tailnet.Observed{Suffix: "other.ts.net"}}
+	if err := tailnet.SavePin(pinPath, pin); err != nil {
+		t.Fatal(err)
+	}
+	r = startWith(t, in, &hooks{tailnetControl: control.BaseURL(), tailnetCerts: ca})
+	waitReport(t, r, bearer, `"browserTls":{"status":"pass"`)
+	res, body = browserGet(client("varlatch.corp.ts.net"), endpoint+"/v1/tailnet/context", "https://dash.example.com")
+	if res.StatusCode != 403 || !strings.Contains(body, `"code":"TAILNET_CONTEXT_UNAVAILABLE"`) {
+		t.Fatalf("the browser endpoint with tailnet access closed: %d %s", res.StatusCode, body)
+	}
 }
