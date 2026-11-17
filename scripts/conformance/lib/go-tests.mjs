@@ -23,14 +23,18 @@ import { join } from "node:path";
  * the name (a subtest path is refused, see goReferenceProblems). The name
  * itself is checked against Go's rule for test names (isTestName).
  */
-export const QUALIFIED = /\b(go(?:\/[a-z0-9_]+)+)\.(Test\w*)(\/\S*)?/g;
+export const QUALIFIED = /\b(go(?:\/[a-z0-9_]+)+)\.(Test[\p{L}\p{Nd}_]*)(\/\S*)?/gu;
+
+// A Go identifier: a Unicode letter or _, then letters, decimal digits or _.
+const IDENT = String.raw`[\p{L}_][\p{L}\p{Nd}_]*`;
 
 /**
- * Go's rule for a test function's name: Test, then nothing or a character
- * that is not a lowercase letter (TestX, Test_x, Test1, Test).
+ * Go's rule for a test function's name (cmd/go/internal/load isTest):
+ * Test, then nothing or a character that is not a lowercase letter in
+ * Unicode's sense (TestX, TestÉ, Test_x, Test1, Test; not Testx, Testé).
  */
 export function isTestName(name) {
-  return /^Test(?![a-z])\w*$/.test(name);
+  return /^Test(?!\p{Ll})[\p{L}\p{Nd}_]*$/u.test(name);
 }
 
 // The release tags of the Go the workflow uses (go1.1 to go1.27 hold).
@@ -92,7 +96,8 @@ export function stripGo(src, { keepStrings = false, keepLineComments = false } =
 function testingNames(src) {
   const code = stripGo(src, { keepStrings: true });
   const names = new Set();
-  const spec = /(?:^|[\s(;])(?:([A-Za-z_]\w*|\.)\s+)?"testing"/g;
+  // The path as an interpreted or a raw string.
+  const spec = /(?:^|[\s(;])(?:([\p{L}_][\p{L}\p{Nd}_]*|\.)\s+)?(["`])testing\2/gu;
   for (const block of code.matchAll(/\bimport\s*(\([^)]*\)|[^\n;]+)/g)) {
     for (const m of block[1].matchAll(spec)) names.add(m[1] ?? "testing");
   }
@@ -110,7 +115,7 @@ export function goTestDecls(src) {
   const found = [];
   for (const pkg of testingNames(src)) {
     const type = pkg === "." ? String.raw`\*\s*T` : String.raw`\*\s*${pkg}\s*\.\s*T`;
-    const decl = new RegExp(String.raw`\bfunc\s+(Test\w*)\s*\(\s*(?:[A-Za-z_]\w*\s+)?${type}\s*,?\s*\)`, "g");
+    const decl = new RegExp(String.raw`\bfunc\s+(Test[\p{L}\p{Nd}_]*)\s*\(\s*(?:${IDENT}\s+)?${type}\s*,?\s*\)`, "gu");
     for (const m of code.matchAll(decl)) if (isTestName(m[1])) found.push(m[1]);
   }
   return found;
@@ -123,43 +128,114 @@ export function goTestDecls(src) {
  */
 function plusBuildExpr(lines) {
   return lines
-    .map((l) => `(${l.split(/\s+/).filter(Boolean).map((opt) => `(${opt.split(",").join(" && ")})`).join(" || ")})`)
+    .map((l) => `(${goFields(l).map((opt) => `(${opt.split(",").join(" && ")})`).join(" || ")})`)
     .join(" && ");
+}
+
+// Go's whitespace (unicode.IsSpace), which bytes.TrimSpace, strings.Fields
+// and the constraint package use: not JavaScript's \s or trim() (which
+// differ on U+0085 and U+FEFF).
+const GO_SPACE = "\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const GO_TRIM = new RegExp(`^[${GO_SPACE}]+|[${GO_SPACE}]+$`, "gu");
+const GO_FIELDS = new RegExp(`[${GO_SPACE}]+`, "u");
+
+/** s with Go's whitespace trimmed from both ends (strings.TrimSpace). */
+function goTrim(s) {
+  return s.replace(GO_TRIM, "");
+}
+
+/** s split on Go's whitespace into non-empty fields (strings.Fields). */
+function goFields(s) {
+  return s.split(GO_FIELDS).filter(Boolean);
+}
+
+/**
+ * A file's header as go/build reads it (parseFileHeader in
+ * go/build/build.go): the //go:build line, wherever it is among the
+ * leading comments (not inside a block comment), and the text in which
+ * // +build lines count, which ends at the last blank line before the
+ * first line that is not a // comment (so a block comment, or a +build
+ * group with no blank line after it, ends it first).
+ */
+function parseFileHeader(src) {
+  src = src.replace(/^\uFEFF/, ""); // a leading byte order mark, as go/build skips it
+  let end = 0;
+  let ended = false; // a line that is not a // comment was seen
+  let inSlashStar = false;
+  let goBuild = null;
+  let pos = 0;
+  lines: while (pos < src.length) {
+    const nl = src.indexOf("\n", pos);
+    const next = nl < 0 ? src.length : nl + 1;
+    let line = goTrim(src.slice(pos, nl < 0 ? src.length : nl));
+    pos = next;
+    if (line === "" && !ended) {
+      end = pos;
+      continue;
+    }
+    if (!line.startsWith("//")) ended = true;
+    if (!inSlashStar && goBuild === null) goBuild = goBuildLine(line);
+    while (line.length > 0) {
+      if (inSlashStar) {
+        const i = line.indexOf("*/");
+        if (i < 0) continue lines;
+        inSlashStar = false;
+        line = goTrim(line.slice(i + 2));
+        continue;
+      }
+      if (line.startsWith("//")) continue lines;
+      if (line.startsWith("/*")) {
+        inSlashStar = true;
+        line = goTrim(line.slice(2));
+        continue;
+      }
+      break lines; // the package clause, or other code
+    }
+  }
+  return { header: src.slice(0, end), goBuild };
+}
+
+/**
+ * The expression of a //go:build line, or null if it is not one
+ * (isGoBuildComment, constraint.splitGoBuild): //go:build, then nothing
+ * or Go whitespace.
+ */
+function goBuildLine(line) {
+  if (!line.startsWith("//go:build")) return null;
+  const after = goTrim(line).slice("//go:build".length);
+  const trimmed = goTrim(after);
+  if (after !== "" && after.length === trimmed.length) return null; // //go:buildx
+  return trimmed;
+}
+
+/** The expression of a // +build line, or null if it is not one (constraint.IsPlusBuild). */
+function plusBuildLine(line) {
+  if (!line.startsWith("//")) return null;
+  const rest = goTrim(line.slice(2));
+  if (!rest.startsWith("+build")) return null;
+  const after = rest.slice("+build".length);
+  const trimmed = goTrim(after);
+  if (after !== "" && after.length === trimmed.length) return null; // +buildx
+  return trimmed;
 }
 
 /**
  * The build constraint a Go file is under, as one //go:build expression,
- * or null for none: its header's //go:build line (or else its // +build
- * lines, which the go command honours only when a blank line follows them
- * before the package clause), and its name's GOOS and GOARCH.
+ * or null for none: its header's //go:build line, or else its // +build
+ * lines (parseFileHeader), and its name's GOOS and GOARCH.
  */
 export function fileConstraint(fileName, src) {
   const parts = [];
-  // The header: everything before the package clause.
-  // Line comments as written, block comments blanked: a constraint is a
-  // line comment, never a line inside a block comment.
-  const lines = stripGo(src, { keepStrings: true, keepLineComments: true }).split("\n");
-  const code = stripGo(src).split("\n");
-  let goBuild = null;
-  const plus = [];
-  let blankAfterPlus = false;
-  for (let n = 0; n < lines.length; n++) {
-    if (code[n].trim() !== "") break; // the package clause (or other code)
-    const line = lines[n].trim();
-    if (line === "") {
-      if (plus.length) blankAfterPlus = true;
-      continue;
-    }
-    const gb = line.match(/^\/\/go:build\s+(.+)$/);
-    if (gb && goBuild === null) goBuild = gb[1].trim();
-    const pb = line.match(/^\/\/\s*\+build\s+(.+)$/);
-    if (pb) {
-      plus.push(pb[1].trim());
-      blankAfterPlus = false;
-    }
+  const { header, goBuild } = parseFileHeader(src);
+  if (goBuild) {
+    parts.push(goFields(goBuild).join(" "));
+  } else {
+    const plus = header
+      .split("\n")
+      .map((l) => plusBuildLine(goTrim(l)))
+      .filter((e) => e);
+    if (plus.length) parts.push(plusBuildExpr(plus));
   }
-  if (goBuild !== null) parts.push(goBuild);
-  else if (plus.length && blankAfterPlus) parts.push(plusBuildExpr(plus));
   // The name: *_GOOS, *_GOARCH or *_GOOS_GOARCH, after _test.go.
   const segs = fileName.replace(/\.go$/, "").replace(/_test$/, "").split("_");
   const last = segs.length > 1 ? segs.at(-1) : null;
@@ -251,7 +327,7 @@ export function goReferenceProblems(why, testsIn) {
   const named = [];
   // In prose, a bare test name is Test and at least one more character
   // (the word Test alone is a workflow step's name).
-  const bare = why.replace(QUALIFIED, "").match(/\bTest(?![a-z])\w+/g);
+  const bare = why.replace(QUALIFIED, "").match(/(?<![\p{L}\p{Nd}_])Test(?!\p{Ll})[\p{L}\p{Nd}_]+/gu);
   if (bare) problems.push(`a Go test named without its package as go/<dir>.TestName: ${bare.join(", ")}`);
   const workflow = why.includes("go.yml");
   const tagsNamed = [...why.matchAll(/\bbuild tags? ([a-z0-9_]+(?:(?:, | and )[a-z0-9_]+)*)/g)].flatMap((m) => m[1].split(/, | and /));
