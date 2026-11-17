@@ -136,19 +136,23 @@ type TargetRun struct {
 	WALBytes      int64    `json:"walBytes"`
 	QueuedUs      int64    `json:"queuedUs"`
 	InJobsUs      int64    `json:"inJobsUs"`
+	CompletionUs  int64    `json:"completionUs"`
 	DurationUs    int64    `json:"durationUs"`
 	Jobs          []JobRun `json:"jobs"`
 }
 
 // JobRun is one commit of a Target's run: its name (CONVERGE.md), its
-// time queued and in its job, its batch's WAL bytes and jobs.
+// time queued, in its own body, and from the body's end to its job's
+// return (its batch's later jobs, COMMIT and fsync), its batch's WAL bytes
+// and jobs.
 type JobRun struct {
-	Point     string `json:"point"`
-	QueuedUs  int64  `json:"queuedUs"`
-	InJobUs   int64  `json:"inJobUs"`
-	WALBytes  int64  `json:"walBytes"`
-	BatchJobs int    `json:"batchJobs"`
-	Committed bool   `json:"committed"`
+	Point        string `json:"point"`
+	QueuedUs     int64  `json:"queuedUs"`
+	InJobUs      int64  `json:"inJobUs"`
+	CompletionUs int64  `json:"completionUs"`
+	WALBytes     int64  `json:"walBytes"`
+	BatchJobs    int    `json:"batchJobs"`
+	Committed    bool   `json:"committed"`
 }
 
 // ConvergeLine is a line of FileConverge: a converge run's start and its
@@ -496,6 +500,7 @@ func (r *Runner) runBackground(t0 time.Time) {
 				e.EngineUs += run.DurationUs
 				e.QueuedUs += run.QueuedUs
 				e.InJobsUs += run.InJobsUs
+				e.CompletionUs += run.CompletionUs
 			}
 			if res.Err != nil {
 				e.Err = res.Err.Error()

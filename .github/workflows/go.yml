@@ -359,10 +359,24 @@ jobs:
             and .converge != null and (.converge.runs | length) == .converges
             and ([.converge.runs[] | .targets == 20 and .values == 20 * 5 and .commits > 0 and .walBytes > 0 and .engineMs > 0] | all)
           ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
-          # The real engine's cost, for the review of feature-parity decision
-          # 7 (commits and WAL bytes per run): converge.jsonl holds every
-          # Target run's commits.
-          jq -se 'length > 0 and all(.runs | length == 20 and all(.commits > 0 and .walBytes > 0 and (.jobs | length) >= .commits))' "$out/converge.jsonl" || { echo "converge.jsonl does not hold the runs"; exit 1; }
+          # The real engine's cost against its baseline (feature-parity
+          # decision 7; go/bench/g9a/converge-baseline.json): in every run
+          # each of the 20 Targets ran once, with exactly the successful
+          # path's commits (2k + 7, by name and in order), and its WAL bytes
+          # within the baseline's range (the run's median Target, and each,
+          # allowing for commits that share a batch with disclosures). A
+          # change to the engine's cost on purpose updates the baseline file
+          # and says why in its pull request.
+          jq -se --slurpfile base go/bench/g9a/converge-baseline.json '
+            $base[0] as $b
+            | ([.[].runs[].walBytes] | sort | .[length / 2 | floor]) as $m
+            | ($b.points | length) == $b.commitsPerTarget and $b.changesPerRun == 5
+            and length > 0
+            and all(.[]; (.runs | length) == 20 and ([.runs[].target] | unique | length) == 20
+                    and all(.runs[]; .commits == $b.commitsPerTarget and ([.jobs[].point]) == $b.points and all(.jobs[]; .committed)
+                            and .walBytes >= $b.walBytesPerTarget * $b.walEach[0] and .walBytes <= $b.walBytesPerTarget * $b.walEach[1]))
+            and $m >= $b.walBytesPerTarget * $b.walMedian[0] and $m <= $b.walBytesPerTarget * $b.walMedian[1]
+          ' "$out/converge.jsonl" || { echo "the converge runs' cost is not the baseline's (go/bench/g9a/converge-baseline.json)"; jq -sc '[.[].runs[] | {commits, walBytes}]' "$out/converge.jsonl" | head -c 2000; exit 1; }
           # The plan's backups are real ones (step 4.14): each sealed an archive.
           jq -se '[.[] | select(.ev == "backup_end")] | length > 0 and all(.err == null and .archiveBytes > 0)' "$out/events.jsonl" || { echo "a backup sealed no archive"; exit 1; }
           [ -s "$out/cpu.pprof" ] || { echo "no CPU profile"; exit 1; }

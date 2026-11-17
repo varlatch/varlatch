@@ -76,13 +76,15 @@ type Event struct {
 	// converge_end: the real engine's cost (feature-parity decision 7),
 	// over the run's Targets: commits, those that shared their batch with
 	// other jobs, WAL bytes written, the Targets' run time, their time
-	// queued for the writer and in their jobs, and the provider calls.
+	// queued for the writer, in their jobs' bodies and waiting for their
+	// batches to complete, and the provider calls.
 	Commits       int   `json:"commits,omitempty"`
 	SharedCommits int   `json:"sharedCommits,omitempty"`
 	WALBytes      int64 `json:"walBytes,omitempty"`
 	EngineUs      int64 `json:"engineUs,omitempty"`
 	QueuedUs      int64 `json:"queuedUs,omitempty"`
 	InJobsUs      int64 `json:"inJobsUs,omitempty"`
+	CompletionUs  int64 `json:"completionUs,omitempty"`
 	Calls         int64 `json:"calls,omitempty"`
 
 	// run_end: what the server counted

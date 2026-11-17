@@ -66,7 +66,13 @@ harness failed.
   otherwise). The run keeps them in `converge.jsonl`, and the report
   shows them per run and per commit point (feature-parity decision 7: a
   pull request that raises commits or WAL bytes per run by more than
-  20 % says why). The period of a scaled plan is at least 45 s
+  20 % says why). CI's smoke holds each run to `converge-baseline.json`:
+  the successful path's commits by name and in order, and the WAL bytes
+  per Target within its range; a change to the engine's cost on purpose
+  updates that file and says why. A commit's time is its body's
+  (`inJobUs`), apart from its wait for its batch to complete
+  (`completionUs`: the batch's later jobs, COMMIT and fsync). The period
+  of a scaled plan is at least 45 s
   (`MinConvergeSeconds`): a run over 20 Targets with k = 5 takes about
   24 s of provider calls.
 - **Its effective storage settings**, read back from its connections at

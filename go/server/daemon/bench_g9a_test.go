@@ -285,13 +285,38 @@ func TestBenchRun(t *testing.T) {
 	if err != nil || len(lines) != runs {
 		t.Fatalf("%s: %d lines, %d runs: %v", g9a.FileConverge, len(lines), runs, err)
 	}
+	// The successful path's commits, 2k + 7, in order (CONVERGE.md).
+	want := []string{"lease", "values-decrypted", "push-attempted"}
+	for range p.ChangesPerRun {
+		want = append(want, "intent-write")
+	}
+	for range p.ChangesPerRun {
+		want = append(want, "write-outcome")
+	}
+	want = append(want, "push-result", "result", "lease-release", "run-row")
 	for _, l := range lines {
 		if len(l.Runs) != 20 {
 			t.Fatalf("a run of %d Targets", len(l.Runs))
 		}
 		for _, r := range l.Runs {
-			if r.Commits != len(r.Jobs) || r.WALBytes <= 0 || r.DurationUs <= 0 {
+			if r.Commits != len(r.Jobs) || r.Commits != 2*p.ChangesPerRun+7 || r.WALBytes <= 0 || r.DurationUs <= 0 {
 				t.Fatalf("Target run %+v", r)
+			}
+			var points []string
+			var inJobs, completion int64
+			for _, j := range r.Jobs {
+				points = append(points, j.Point)
+				inJobs += j.InJobUs
+				completion += j.CompletionUs
+				// A job's body and its wait for its batch, apart.
+				if j.InJobUs < 0 || j.CompletionUs < 0 || j.QueuedUs < 0 {
+					t.Fatalf("commit times %+v of %s", j, r.Target)
+				}
+			}
+			// Each job's time is rounded to the microsecond, the run's total once.
+			near := func(a, b int64) bool { return max(a-b, b-a) <= int64(len(r.Jobs)) }
+			if !reflect.DeepEqual(points, want) || !near(inJobs, r.InJobsUs) || !near(completion, r.CompletionUs) {
+				t.Fatalf("Target run %s: commits %v (want %v), in jobs %d of %d, completion %d of %d", r.Target, points, want, inJobs, r.InJobsUs, completion, r.CompletionUs)
 			}
 			for _, j := range r.Jobs {
 				// A commit may write no page (an update that changed no

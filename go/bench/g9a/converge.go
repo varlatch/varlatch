@@ -40,6 +40,7 @@ type ConvergeRunCost struct {
 	EngineMs      float64 `json:"engineMs"`
 	QueuedMs      float64 `json:"queuedMs"`
 	InJobsMs      float64 `json:"inJobsMs"`
+	CompletionMs  float64 `json:"completionMs"`
 }
 
 // PointCost is one commit point over every run.
@@ -49,6 +50,7 @@ type PointCost struct {
 	Count, Committed int
 	InJobMs          Spread `json:"inJobMs"`
 	QueuedMs         Spread `json:"queuedMs"`
+	CompletionMs     Spread `json:"completionMs"`
 	// BatchWALBytes is the WAL bytes of the batches that held them.
 	BatchWALBytes Spread `json:"batchWALBytes"`
 	// Shared counts those whose batch held other jobs too.
@@ -104,7 +106,8 @@ func convergeCost(ends []Event, starts []int64, start int64, lines []ConvergeLin
 	c := &ConvergeCost{}
 	for i, e := range ends {
 		run := ConvergeRunCost{Targets: e.Targets, Values: e.Values, Calls: e.Calls, Commits: e.Commits, SharedCommits: e.SharedCommits,
-			WALBytes: e.WALBytes, EngineMs: float64(e.EngineUs) / 1e3, QueuedMs: float64(e.QueuedUs) / 1e3, InJobsMs: float64(e.InJobsUs) / 1e3}
+			WALBytes: e.WALBytes, EngineMs: float64(e.EngineUs) / 1e3, QueuedMs: float64(e.QueuedUs) / 1e3, InJobsMs: float64(e.InJobsUs) / 1e3,
+			CompletionMs: float64(e.CompletionUs) / 1e3}
 		if i < len(starts) {
 			run.Offset = off(starts[i], start)
 		}
@@ -112,8 +115,8 @@ func convergeCost(ends []Event, starts []int64, start int64, lines []ConvergeLin
 	}
 	var commits, wal []float64
 	type acc struct {
-		count, committed, shared int
-		inJob, queued, batch     []float64
+		count, committed, shared         int
+		inJob, queued, completion, batch []float64
 	}
 	points := map[string]*acc{}
 	var order []string
@@ -137,6 +140,7 @@ func convergeCost(ends []Event, starts []int64, start int64, lines []ConvergeLin
 				}
 				a.inJob = append(a.inJob, float64(j.InJobUs)/1e3)
 				a.queued = append(a.queued, float64(j.QueuedUs)/1e3)
+				a.completion = append(a.completion, float64(j.CompletionUs)/1e3)
 				a.batch = append(a.batch, float64(j.WALBytes))
 			}
 		}
@@ -145,7 +149,7 @@ func convergeCost(ends []Event, starts []int64, start int64, lines []ConvergeLin
 	for _, p := range order {
 		a := points[p]
 		c.Points = append(c.Points, PointCost{Point: p, Count: a.count, Committed: a.committed, Shared: a.shared,
-			InJobMs: spread(a.inJob), QueuedMs: spread(a.queued), BatchWALBytes: spread(a.batch)})
+			InJobMs: spread(a.inJob), QueuedMs: spread(a.queued), CompletionMs: spread(a.completion), BatchWALBytes: spread(a.batch)})
 	}
 	return c
 }
@@ -154,15 +158,16 @@ func convergeCost(ends []Event, starts []int64, start int64, lines []ConvergeLin
 func (c *ConvergeCost) markdown(b *strings.Builder) {
 	b.WriteString("### Converge runs (the real engine)\n\n")
 	b.WriteString("Commits, WAL bytes and times are the engine's own (feature-parity decision 7). A commit's WAL bytes are its share of its batch's when the batch held other jobs (`shared`), exact otherwise. A pull request that raises commits or WAL bytes per run by more than 20 % says why.\n\n")
-	b.WriteString("| Run at | Targets | Values | Provider calls | Commits | Shared | WAL bytes | Engine time | Queued | In jobs |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	b.WriteString("In jobs is the jobs' own bodies; completion, from each body's end to its job's return (its batch's later jobs, COMMIT and fsync).\n\n")
+	b.WriteString("| Run at | Targets | Values | Provider calls | Commits | Shared | WAL bytes | Engine time | Queued | In jobs | Completion |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, r := range c.Runs {
-		fmt.Fprintf(b, "| %+.1f s | %d | %d | %d | %d | %d | %d | %.0f ms | %.0f ms | %.0f ms |\n",
-			r.Offset, r.Targets, r.Values, r.Calls, r.Commits, r.SharedCommits, r.WALBytes, r.EngineMs, r.QueuedMs, r.InJobsMs)
+		fmt.Fprintf(b, "| %+.1f s | %d | %d | %d | %d | %d | %d | %.0f ms | %.0f ms | %.0f ms | %.0f ms |\n",
+			r.Offset, r.Targets, r.Values, r.Calls, r.Commits, r.SharedCommits, r.WALBytes, r.EngineMs, r.QueuedMs, r.InJobsMs, r.CompletionMs)
 	}
 	fmt.Fprintf(b, "\nPer Target run: commits %s, WAL bytes %s (min / median / max).\n\n", c.CommitsPerTarget.text(0), c.WALBytesPerTarget.text(0))
-	b.WriteString("| Commit point | Jobs | Committed | Shared | In job (ms) | Queued (ms) | Batch WAL bytes |\n| --- | --- | --- | --- | --- | --- | --- |\n")
+	b.WriteString("| Commit point | Jobs | Committed | Shared | In job (ms) | Completion (ms) | Queued (ms) | Batch WAL bytes |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, p := range c.Points {
-		fmt.Fprintf(b, "| %s | %d | %d | %d | %s | %s | %s |\n", p.Point, p.Count, p.Committed, p.Shared, p.InJobMs.text(1), p.QueuedMs.text(1), p.BatchWALBytes.text(0))
+		fmt.Fprintf(b, "| %s | %d | %d | %d | %s | %s | %s | %s |\n", p.Point, p.Count, p.Committed, p.Shared, p.InJobMs.text(1), p.CompletionMs.text(1), p.QueuedMs.text(1), p.BatchWALBytes.text(0))
 	}
 	b.WriteString("\n")
 }

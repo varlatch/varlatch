@@ -646,9 +646,9 @@ func (t *benchTarget) startEngine(w *write.Writer, approvals *auth.Service, poli
 // onRun keeps a Target run's report (syncs.Service.OnRun).
 func (t *benchTarget) onRun(st syncs.RunStats) {
 	run := g9a.TargetRun{Target: st.TargetID, Commits: st.Commits, SharedCommits: st.SharedCommits, WALBytes: st.WALBytes,
-		QueuedUs: st.Queued.Microseconds(), InJobsUs: st.InJobs.Microseconds(), DurationUs: st.Duration.Microseconds()}
+		QueuedUs: st.Queued.Microseconds(), InJobsUs: st.InJobs.Microseconds(), CompletionUs: st.Completion.Microseconds(), DurationUs: st.Duration.Microseconds()}
 	for _, j := range st.Jobs {
-		run.Jobs = append(run.Jobs, g9a.JobRun{Point: j.Point, QueuedUs: j.Queued.Microseconds(), InJobUs: j.InJob.Microseconds(),
+		run.Jobs = append(run.Jobs, g9a.JobRun{Point: j.Point, QueuedUs: j.Queued.Microseconds(), InJobUs: j.InJob.Microseconds(), CompletionUs: j.Completion.Microseconds(),
 			WALBytes: j.WALBytes, BatchJobs: j.BatchJobs, Committed: j.Committed})
 	}
 	t.mu.Lock()
