@@ -72,7 +72,7 @@ func spread(v []float64) Spread {
 	}
 	s := slices.Clone(v)
 	sort.Float64s(s)
-	return Spread{Min: s[0], Median: rank(s, 0.5), Max: s[len(s)-1]}
+	return Spread{Min: s[0], Median: rank(s, 50), Max: s[len(s)-1]}
 }
 
 // ReadConverge reads FileConverge: nil if the run wrote none (a run of a

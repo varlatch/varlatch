@@ -109,3 +109,18 @@ func TestCheckCost(t *testing.T) {
 		})
 	}
 }
+
+// spread's median is the nearest-rank 50th percentile (rank takes a
+// percentage): with the minimum repeated it must not report the minimum.
+func TestSpread(t *testing.T) {
+	got := spread([]float64{131840, 131840, 152440, 160680, 160680, 168920, 201880})
+	if want := (Spread{Min: 131840, Median: 160680, Max: 201880}); got != want {
+		t.Fatalf("spread = %+v, want %+v", got, want)
+	}
+	if got := spread([]float64{4, 1, 3, 2}); got.Median != 2 {
+		t.Fatalf("spread of 1..4: median %v, want 2 (nearest rank)", got.Median)
+	}
+	if got := spread(nil); got != (Spread{}) {
+		t.Fatalf("spread(nil) = %+v", got)
+	}
+}
