@@ -28,12 +28,26 @@ type fakeTarget struct {
 	dir     string
 	targets int
 	running atomic.Bool
+	// A stalled disk, as when the host deletes a large tree: the first
+	// backup holds the backup slot for backupStall before its snapshot,
+	// and the first converge run blocks for convergeStall after its writes.
+	backupStall, convergeStall time.Duration
+	converges                  atomic.Int32
+	// walBackup is closed when a WAL-triggered backup (number 2 or later)
+	// has returned.
+	walBackup     chan struct{}
+	walBackupOnce sync.Once
 }
 
 func (f *fakeTarget) WALSize() int64 { return f.db.Metrics().WALBytes }
 
 // Backup takes a bare snapshot (no sealing) and removes it.
 func (f *fakeTarget) Backup(ctx context.Context, n int, o storage.SnapshotOptions) (BackupStats, error) {
+	if n == 1 {
+		time.Sleep(f.backupStall)
+	} else {
+		defer f.walBackupOnce.Do(func() { close(f.walBackup) })
+	}
 	if err := os.MkdirAll(f.dir, 0o700); err != nil {
 		return BackupStats{}, err
 	}
@@ -57,6 +71,9 @@ func (f *fakeTarget) Converge(ctx context.Context) ConvergeResult {
 			return ConvergeResult{Targets: i, Err: err}
 		}
 	}
+	if f.converges.Add(1) == 1 {
+		time.Sleep(f.convergeStall)
+	}
 	return ConvergeResult{Targets: f.targets, Values: f.targets}
 }
 
@@ -67,11 +84,23 @@ func TestRunner(t *testing.T) {
 	if testing.Short() {
 		t.Skip("probes the disk for a few seconds")
 	}
+	t.Run("free", func(t *testing.T) { t.Parallel(); testRunner(t, false) })
+	// A disk stall like the one that made this test flaky: the WAL crosses
+	// the threshold while the timed backup holds the slot (that crossing is
+	// skipped), the backup's TRUNCATE empties the WAL, and the first
+	// converge run stays stuck through the next two converge ticks, which
+	// are skipped. The attempt can only come from a later converge run.
+	t.Run("stalled disk", func(t *testing.T) { t.Parallel(); testRunner(t, true) })
+}
+
+func testRunner(t *testing.T, stalled bool) {
 	p := DefaultPlan()
-	// Nine seconds of load: room for converge runs after the timed backup's
-	// TRUNCATE (they grow the WAL to the WAL-triggered backup's fraction)
-	// even when, on a busy host, every other tick is skipped.
-	p.Phases = []Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 1, Seconds: 9}}
+	// At least nine seconds of load, and then until a WAL-triggered backup
+	// has run: converge runs after the timed backup's TRUNCATE grow the WAL
+	// to that backup's fraction, but on a stalled disk a stuck converge run
+	// skips the ticks after it, so no fixed window is enough. The phase's
+	// 60 s is a ceiling; the test stops the run (minLoad, walWait).
+	p.Phases = []Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 1, Seconds: 60}}
 	// The converge runs write past the small bound, so the WAL crosses
 	// half of it from below after the timed backup's TRUNCATE.
 	p.Backups = []Backup{{Phase: "p", AtSeconds: 1}, {Phase: "p", WALTriggered: WALTrigger{Fraction: 0.5, MaxAttempts: 2}}}
@@ -81,7 +110,10 @@ func TestRunner(t *testing.T) {
 	p.WALBound = 64 << 10
 	out, data := t.TempDir(), t.TempDir()
 
-	target := &fakeTarget{targets: p.Targets, dir: filepath.Join(data, "backups")}
+	target := &fakeTarget{targets: p.Targets, dir: filepath.Join(data, "backups"), walBackup: make(chan struct{})}
+	if stalled {
+		target.backupStall, target.convergeStall = time.Second, 6*time.Second
+	}
 	r, err := NewRunner(RunnerOptions{DataDir: data, OutDir: out, Plan: p, Target: target, Tail: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +166,13 @@ func TestRunner(t *testing.T) {
 	for i := range 21 {
 		r.Count(i == 20, false)
 	}
-	time.Sleep(time.Duration(p.PhaseSeconds("p")) * time.Second) // converge runs and the backups
+	const minLoad, walWait = 9 * time.Second, 50 * time.Second
+	time.Sleep(minLoad) // converge runs, the backups, the samplers
+	select {
+	case <-target.walBackup:
+	case <-time.After(walWait):
+		// The checks below say what happened.
+	}
 	post("/run/stop", 200)
 	select {
 	case <-r.Done():
@@ -206,6 +244,9 @@ func TestRunner(t *testing.T) {
 		if seen[want] == 0 {
 			t.Errorf("no %s event (saw %v)", want, seen)
 		}
+	}
+	if stalled && (seen[EvWALCrossing] == 0 || seen["converge skipped"] < 2) {
+		t.Errorf("the stall did not play out: want a skipped crossing and two skipped converge ticks (events %v)", seen)
 	}
 	if end.Requests != 21 || end.Errors != 1 || end.BusyErrs != 0 {
 		t.Errorf("run_end: %+v", end)
