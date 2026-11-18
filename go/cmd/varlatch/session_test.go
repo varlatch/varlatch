@@ -263,11 +263,14 @@ func TestUsageErrorsNeverEchoACredential(t *testing.T) {
 		{[]string{"login", "--server", "https://a.example", "--token-stdin", "vlt_cli_secretCANARY"}, "varlatch login: unexpected argument [redacted]"},
 		{[]string{"whoami", "vlt_cli_secretCANARY"}, "varlatch whoami: unexpected argument [redacted]"},
 		{[]string{"vlt_cli_secretCANARY"}, "varlatch: unknown command [redacted]"},
+		{[]string{"run-vlt_cli_secretCANARY"}, "varlatch: unknown command run-[redacted]"},
+		{[]string{"agents", "install", "--agent", "vlt_cli_secretCANARY"}, ""},
+		{[]string{"agents", "install", "--agent=vlt_cli_secretCANARY"}, "varlatch agents install: unknown option --agent=[redacted]"},
 	} {
 		s := newSessionRun(t)
 		status, stdout, stderr := s.run("", c.args...)
 		first, _, _ := strings.Cut(stderr, "\n")
-		if status != 64 || stdout != "" || first != c.want {
+		if status != 64 || stdout != "" || c.want != "" && first != c.want || stderr == "" {
 			t.Errorf("%q: status %d, stdout %q, stderr %q; want 64 and %q", c.args, status, stdout, stderr, c.want)
 		}
 		if strings.Contains(stdout+stderr, "CANARY") {
@@ -276,6 +279,17 @@ func TestUsageErrorsNeverEchoACredential(t *testing.T) {
 		if c.args[0] == "login" && !strings.HasSuffix(stderr, loginUsage(s)) {
 			t.Errorf("%q: the usage does not follow:\n%s", c.args, stderr)
 		}
+	}
+}
+
+// TestLoginServerTokenIsNeverEchoed: a token given as the server is
+// refused by the API client as a URL that does not parse; the refusal
+// reaches stderr through the fail-safe, which redacts it.
+func TestLoginServerTokenIsNeverEchoed(t *testing.T) {
+	s := newSessionRun(t)
+	status, stdout, stderr := s.run("", "login", "--server", "vlt_cli_secretCANARY", "--token", "vlt_cli_x")
+	if status != 1 || stdout != "" || stderr != "varlatch: Failed to parse URL from [redacted]/v1/meta\n" {
+		t.Errorf("status %d, stdout %q, stderr %q", status, stdout, stderr)
 	}
 }
 

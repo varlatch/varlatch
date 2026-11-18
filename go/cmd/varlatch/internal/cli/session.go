@@ -236,7 +236,7 @@ func (r *Run) loginWithToken(serverValue any, token string) error {
 	if failure == "" {
 		return r.println("Previous credential revoked.")
 	}
-	fmt.Fprintln(r.Stderr, jsval.NodeText("varlatch: previous credential not revoked ("+failure+") — it may remain live"+liveUntil(replaced)+"."))
+	r.warn("varlatch: previous credential not revoked (" + failure + ") — it may remain live" + liveUntil(replaced) + ".")
 	return nil
 }
 
@@ -255,11 +255,11 @@ func liveUntil(credential any) string {
 func (r *Run) noteDefaultServer(server string) {
 	set, err := clientctx.RememberServerIfUnset(server, r.Env)
 	if err != nil {
-		fmt.Fprintln(r.Stderr, jsval.NodeText("varlatch: the default server was not saved ("+err.Error()+"); the sign-in is stored."))
+		r.warn("varlatch: the default server was not saved (" + err.Error() + "); the sign-in is stored.")
 		return
 	}
 	if set {
-		fmt.Fprintln(r.Stderr, jsval.NodeText("Default server: "+shownServer(clientctx.StoredServerKey(server))+", for commands outside a repository. Change it with: varlatch server use <url>"))
+		r.warn("Default server: " + shownServer(clientctx.StoredServerKey(server)) + ", for commands outside a repository. Change it with: varlatch server use <url>")
 	}
 }
 
@@ -304,7 +304,9 @@ func (r *Run) revokeStored(server string, credential any) (string, error) {
 		if api, ok := err.(*apiclient.APIError); ok {
 			return safeCode(api.Code), nil
 		}
-		return err.Error(), nil
+		// The reason is printed (logout on stdout, login on stderr): no
+		// Varlatch token in it, whatever made it.
+		return varlatchToken.ReplaceAllLiteralString(err.Error(), Redacted), nil
 	}
 	return "", nil
 }

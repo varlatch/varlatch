@@ -434,7 +434,13 @@ const agentFiles51d: TranscriptCase[] = [
     ["extra", "install takes no argument", ["extra"]],
     ["separator", "-- is not an end of options here", ["--", "--check"]],
     ["short", "no short options", ["-c"]],
-  ].map(([id, title, rest]): TranscriptCase => ({ id: `install.usage.${id}`, title: title as string, args: install(...(rest as string[])) })),
+  ].map(([id, title, rest]): TranscriptCase => ({
+    id: `install.usage.${id}`,
+    title: title as string,
+    args: install(...(rest as string[])),
+    // The Go CLI never echoes an attached option value (go/README.md).
+    ...(id === "equals" ? { differences: ["option-value"] } : {}),
+  })),
   // install, check, remove: the project scope
   { id: "install.empty", title: "a project with nothing: the skill twice and AGENTS.md", args: install(), differences: SKILL },
   { id: "install.empty.json", title: "--json: the result after the schema version", args: install("--json"), differences: SKILL },

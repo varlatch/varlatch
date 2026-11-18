@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 
@@ -39,22 +40,42 @@ type OptionSpec struct {
 	EndOfOptions bool `json:"endOfOptions,omitempty"`
 }
 
-// SecretOptions are the options whose value is a credential or part of
-// one. A usage error never echoes such a value, wherever it appears: a
-// `--token=<value>` the parser does not know is shown as
-// `--token=[redacted]` (go/README.md, "Usage errors never echo a
-// credential").
-var SecretOptions = []string{"--token", "--oidc-token", "--access-key-id"}
-
-// shownArgument is an argument as a usage error echoes it: the value of a
-// secret option given as `--name=value` as [redacted], a URL's user name
-// and password masked (MaskURLInValue), and any text in Varlatch's token
-// format as [redacted].
+// shownArgument is an argument as a usage error echoes it. An option
+// written with its value attached, `--name=value` or a short option such
+// as `-Hvalue`, is shown without the value (`--name=[redacted]`,
+// `-H[redacted]`), whatever the option: the value may be a credential
+// (go/README.md, "Diagnostics never print credential values"). Otherwise a
+// URL's user name and password are masked (MaskURLInValue), and any text in
+// Varlatch's token format is shown as [redacted]. Run.finish's fail-safe
+// redacts tokens again, so correctness never depends on this; it keeps the
+// wording precise.
 func shownArgument(arg string) string {
-	if name, _, ok := strings.Cut(arg, "="); ok && slices.Contains(SecretOptions, name) {
-		return name + "=" + Redacted
+	if strings.HasPrefix(arg, "--") {
+		if name, _, ok := strings.Cut(arg, "="); ok {
+			return name + "=" + Redacted
+		}
+	} else if strings.HasPrefix(arg, "-") && len(arg) > 2 {
+		return arg[:2] + Redacted
 	}
 	return varlatchToken.ReplaceAllLiteralString(clientctx.MaskURLInValue(arg), Redacted)
+}
+
+// unknownWithValue is an unknown-option message whose option carries an
+// attached value, as the TypeScript CLI words it.
+var unknownWithValue = regexp.MustCompile(`unknown option (--[^=\s]+=|-[^-\s])[^\s]*`)
+
+// OptionValueDifference is a TypeScript usage message as the Go CLI words
+// it: an unknown option's attached value as [redacted] (shownArgument).
+// The transcripts and vectors apply it where they record the TypeScript
+// CLI echoing one.
+func OptionValueDifference(message string) string {
+	return unknownWithValue.ReplaceAllStringFunc(message, func(m string) string {
+		arg := strings.TrimPrefix(m, "unknown option ")
+		if !strings.HasPrefix(arg, "--") && len(arg) <= 2 {
+			return m
+		}
+		return "unknown option " + shownArgument(arg)
+	})
 }
 
 // Alias is one other name for an option.

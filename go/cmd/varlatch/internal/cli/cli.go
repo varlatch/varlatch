@@ -208,17 +208,33 @@ func (r *Run) finish(err error) int {
 		// was instead (go/README.md, the Go CLI's accepted differences).
 		e = &exitError{message: "varlatch: " + err.Error(), code: ExitFailure}
 	}
-	// The fail-safe on every failure, whatever it echoes: no URL's user name
-	// and password reaches stderr even where an echo site did not mask its
-	// value (go/README.md, "Diagnostics never print credential values"). A
-	// line with no ":"...at-sign pair keeps its bytes.
+	// The fail-safe on every failure, whatever it echoes and whichever path
+	// made it (RedactDiagnostic): no URL's user name and password and no
+	// Varlatch token reaches stderr (go/README.md, "Diagnostics never print
+	// credential values").
 	if !e.silent {
-		fmt.Fprintln(r.Stderr, jsval.NodeText(clientctx.MaskUserinfoInText(e.message)+e.usage))
+		fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(e.message)+e.usage))
 	}
 	if r.everyFailureIsOne {
 		return ExitFailure
 	}
 	return e.code
+}
+
+// RedactDiagnostic is the fail-safe every diagnostic goes through before it
+// is written, failures (Run.finish) and warnings (Run.warn) alike: a URL's
+// user name and password (clientctx.MaskUserinfoInText, from the first
+// scheme colon to the last at-sign), then every text in Varlatch's token
+// format, as [redacted]. Text with neither keeps its bytes.
+func RedactDiagnostic(text string) string {
+	return varlatchToken.ReplaceAllLiteralString(clientctx.MaskUserinfoInText(text), Redacted)
+}
+
+// warn writes one diagnostic line on stderr through the fail-safe
+// (RedactDiagnostic). Every line the CLI writes on stderr outside
+// Run.finish goes through it.
+func (r *Run) warn(text string) {
+	fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(text)))
 }
 
 // storedTokens is safeText.ts's heldCredentials' stored half: every stored

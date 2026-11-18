@@ -36,7 +36,7 @@ func (r *Run) maintenanceNotice(wait apiclient.MaintenanceWait) {
 	}
 	r.clients.maintenanceAnnounced = true
 	budget := math.Ceil(float64((wait.RetryIn + wait.Remaining).Milliseconds()) / 1000)
-	fmt.Fprintf(r.Stderr, "varlatch: the installation is in maintenance (restore or upgrade); waiting up to %s s…\n", jsjson.Number(budget))
+	r.warn("varlatch: the installation is in maintenance (restore or upgrade); waiting up to " + jsjson.Number(budget) + " s…")
 }
 
 // warnExpiryOnce is main.ts's warnExpiryOnce: at most one expiry warning
@@ -46,7 +46,7 @@ func (r *Run) warnExpiryOnce(warning string) {
 		return
 	}
 	r.clients.expiryWarned = true
-	fmt.Fprintln(r.Stderr, jsval.NodeText(warning))
+	r.warn(warning)
 }
 
 // templateTime is `${safeTime(value)}`: "undefined" for a missing time.
@@ -65,6 +65,18 @@ func ExpiryWarning(server string, credential any, now float64) string {
 	var expiresAt any
 	if credential != nil {
 		expiresAt, _ = jsval.Get(credential, "expiresAt")
+	}
+	// A server holding an at-sign is named once, before the explanation:
+	// the fail-safe every warning goes through (Run.warn) keeps what
+	// follows the last at-sign.
+	if clientctx.HasAtSign(server) {
+		switch state {
+		case "expired":
+			return "varlatch: " + server + ": the credential expired " + templateTime(expiresAt) + "; run varlatch login --server and this server's URL"
+		case "expiring":
+			return "varlatch: " + server + ": the credential expires " + templateTime(expiresAt) + "; run varlatch login --server and this server's URL to renew"
+		}
+		return ""
 	}
 	switch state {
 	case "expired":
@@ -87,6 +99,13 @@ func EnvTokenExpiryWarning(server, expiresAt string, now float64) string {
 	const remedy = "issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN"
 	// The header's text is the server's: only a timestamp is shown (issue #119).
 	shown := templateTime(expiresAt)
+	if clientctx.HasAtSign(server) {
+		// Named once, before the explanation (see ExpiryWarning).
+		if at <= now {
+			return "varlatch: " + server + " (VARLATCH_TOKEN): the credential expired " + shown + "; " + remedy
+		}
+		return "varlatch: " + server + " (VARLATCH_TOKEN): the credential expires " + shown + "; " + remedy + " before then"
+	}
 	if at <= now {
 		return "varlatch: credential for " + server + " (VARLATCH_TOKEN) expired " + shown + "; " + remedy
 	}

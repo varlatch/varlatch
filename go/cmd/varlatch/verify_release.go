@@ -14,6 +14,7 @@ import (
 
 	"github.com/sigstore/sigstore-go/pkg/root"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/lib/release"
 )
@@ -50,7 +51,7 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 	}
 	fail := func(format string, a ...any) int {
 		// The fail-safe, as on every CLI failure.
-		fmt.Fprintln(stderr, clientctx.MaskUserinfoInText("varlatch verify-release: "+fmt.Sprintf(format, a...)))
+		fmt.Fprintln(stderr, cli.RedactDiagnostic("varlatch verify-release: "+fmt.Sprintf(format, a...)))
 		return 1
 	}
 

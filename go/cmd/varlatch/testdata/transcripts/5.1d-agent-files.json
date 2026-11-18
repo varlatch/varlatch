@@ -613,6 +613,9 @@
         "install",
         "--check=true"
       ],
+      "differences": [
+        "option-value"
+      ],
       "expect": {
         "status": 64,
         "stdout": "",
