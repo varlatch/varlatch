@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,7 +208,7 @@ func TestFailuresKeepTextWithoutCredentials(t *testing.T) {
 // user name and password puts its explanation after the value (an accepted
 // wording difference from TypeScript), so what the fail-safe keeps, after
 // the last at-sign, still says what went wrong. Pinned through Main, the
-// fail-safe included.
+// fail-safe included, and for 5.1c's client messages through Run.finish.
 func TestFailureExplanationsSurvive(t *testing.T) {
 	dir := t.TempDir()
 	write := func(rel, text string) {
@@ -245,6 +246,34 @@ func TestFailureExplanationsSurvive(t *testing.T) {
 		Main(c.args, env, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
 		if !strings.Contains(stderr.String(), c.want) || strings.Contains(stderr.String(), "fake") {
 			t.Errorf("%q: stderr\n%s\nwant it to hold\n%s", c.args, stderr.String(), c.want)
+		}
+	}
+	// 5.1c's client messages, which no command reaches before 5.1e: each
+	// error as a command would return it, through Run.finish and so the
+	// fail-safe. Nothing here connects: fetch refuses before it does.
+	for _, c := range []struct {
+		name string
+		err  func(r *Run) error
+		want string
+	}{
+		{"not authenticated", func(r *Run) error {
+			_, err := r.connectClient("https://alice:fake@n.example")
+			return err
+		}, "Not authenticated to https:[redacted]@n.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
+			"adding --start to approve in a browser on any device, or --token-stdin to pipe a credential\n"},
+		{"credentials refused", func(r *Run) error {
+			_, err := r.plainClient("https://alice:fake@n.example", "vlt_cli_fake").Meta(context.Background())
+			return err
+		}, "varlatch:[redacted]@n.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again\n"},
+		{"does not parse", func(r *Run) error {
+			_, err := r.plainClient("https://alice:fake@[bad", "vlt_cli_fake").Meta(context.Background())
+			return err
+		}, "varlatch:[redacted]@[bad/v1/meta: can't be parsed as a URL\n"},
+	} {
+		r, stderr := testRun(MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()})
+		r.finish(c.err(r))
+		if stderr.String() != c.want {
+			t.Errorf("%s: stderr\n%q\nwant\n%q", c.name, stderr.String(), c.want)
 		}
 	}
 }

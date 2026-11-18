@@ -261,24 +261,9 @@ func checkURL(raw string) (whatwg.URL, error) {
 		return u, &FetchError{Message: "Failed to parse URL from " + shown}
 	}
 	if u.Username != "" || u.Password != "" {
-		return u, &FetchError{Message: href(u) + ": a server URL with a user name or password can't be used; remove them and try again"}
+		return u, &FetchError{Message: clientctx.MaskUserinfo(raw) + ": a server URL with a user name or password can't be used; remove them and try again"}
 	}
 	return u, nil
-}
-
-// href is the URL serialized, its user name and password, if any, shown
-// as [redacted].
-func href(u whatwg.URL) string {
-	path, query := u.RequestTarget()
-	auth := ""
-	if u.Username != "" || u.Password != "" {
-		auth = "[redacted]@"
-	}
-	s := u.Protocol + "//" + auth + u.Host + path
-	if query != "" || u.Search == "?" {
-		s += "?" + query
-	}
-	return s + u.Hash
 }
 
 // resolve is a Location header against the URL it answered.
