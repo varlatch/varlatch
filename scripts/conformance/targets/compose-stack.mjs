@@ -20,6 +20,7 @@
  * back for the suites.
  */
 import { spawnSync } from "node:child_process";
+import { deadlineSpawnSync } from "../lib/deadline.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -34,7 +35,7 @@ export const projectName = (dir) => `varlatch-e2e-${dir.split("-").pop().toLower
 
 /** `docker compose` against the project; output captured unless `inherit`. */
 export function compose(state, args, { input = "", inherit = false, env = {} } = {}) {
-  const r = spawnSync(
+  const r = deadlineSpawnSync(
     "docker",
     [
       "compose",
@@ -52,6 +53,7 @@ export function compose(state, args, { input = "", inherit = false, env = {} } =
       maxBuffer: 256 * 1024 * 1024,
     },
   );
+  if (r.timedOut) return { status: 124, stdout: r.stdout ?? "", stderr: "docker compose timed out at the operation's deadline" };
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? (r.error ? String(r.error) : "") };
 }
 
@@ -286,7 +288,8 @@ const PROBES = {
   },
   "sync-runs": (state, targetId) => {
     if (!/^snt_[a-z0-9]{26}$/.test(targetId ?? "")) throw new Error("sync-runs: a Sync Target id");
-    return { runs: Number(psql(state, `SELECT count(*) FROM sync_runs WHERE target_id = '${targetId}'`)) };
+    return JSON.parse(psql(state, `SELECT json_build_object('runs', count(*), 'generations', COALESCE(json_agg(generation ORDER BY generation), '[]'::json))
+      FROM sync_runs WHERE target_id = '${targetId}'`));
   },
   "deletion-teardown": (state, organizationId) => {
     if (!/^org_[a-z0-9]{26}$/.test(organizationId ?? "")) throw new Error("deletion-teardown: an Organization id (org_...)");

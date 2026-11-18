@@ -317,51 +317,70 @@ try {
   for (const until = Date.now() + 90_000; Date.now() < until && !inFlight; await sleep(250)) {
     inFlight = fakeState().held.find((h) => h.repo === keptRepo) ?? null;
   }
-  const writesBeforeRelease = writes();
-  // The stale run's lease: its sync_runs row, which it deletes when it ends.
-  // Each probe is bounded by the time left, so a stuck call cannot overrun.
+  // The stale run's lease: its sync_runs row, by generation, which it
+  // deletes when it ends. Each probe is bounded by the time left, so a
+  // stuck call cannot overrun.
   const runsOf = (timeoutMs) => {
     try {
-      return JSON.parse(targetOp("probe", ["sync-runs", ctarget.id], { timeoutMs: Math.max(1000, timeoutMs) })).runs;
+      return JSON.parse(targetOp("probe", ["sync-runs", ctarget.id], { timeoutMs: Math.max(1, Math.floor(timeoutMs)) }));
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
   };
   const heldNow = () => fakeState().held.find((h) => h.repo === keptRepo) ?? null;
-  const atHold = { held: heldNow(), runs: runsOf(30_000) };
+  // What the stale run would change were it to commit anything (its
+  // success, or a failure): read while it is held, before it can.
+  const targetBefore = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
+  const atHold = { held: heldNow(), rows: runsOf(30_000) };
+  // The stale run: the one run in flight while its write is held.
+  const staleGen = atHold.rows?.generations?.length === 1 ? atHold.rows.generations[0] : null;
   const toCancel = ok(await api("POST", `${C}/deletion`, { body: {} }), "scheduling its deletion");
   // The ordering: the deletion was scheduled while the stale run was still
   // in flight, its write still held with its client connected and its row
-  // still there. Seen after the scheduling, so it held throughout it.
-  const atSchedule = { held: heldNow(), runs: runsOf(30_000) };
+  // (its generation) still there. Seen after the scheduling, so it held
+  // throughout it.
+  const atSchedule = { held: heldNow(), rows: runsOf(30_000) };
   const { released, abandoned: abandonedWrites } = fakeGitHub({ op: "release", repo: keptRepo });
-  const orderedProof = inFlight?.name === "SECRET" && atHold.held?.connected === true && atHold.runs >= 1 &&
-    atSchedule.held?.connected === true && atSchedule.runs >= 1 &&
-    Array.isArray(released) && released.includes("SECRET") && Array.isArray(abandonedWrites) && abandonedWrites.length === 0;
-  const reached = orderedProof ? await waitFor(() => writes() > writesBeforeRelease, 30_000) : false;
+  const orderedProof = inFlight?.name === "SECRET" && staleGen !== null && atHold.held?.connected === true &&
+    atSchedule.held?.connected === true && (atSchedule.rows?.generations ?? []).includes(staleGen) &&
+    JSON.stringify(released) === JSON.stringify(["SECRET"]) && Array.isArray(abandonedWrites) && abandonedWrites.length === 0;
+  // The released write's answer reached the stale run (flushed to its
+  // still-open connection), so it went on to try its commit.
+  const delivery = orderedProof
+    ? await waitFor(() => fakeState().deliveries.find((d) => d.repo === keptRepo && d.name === "SECRET" && d.delivered !== null) ?? null, 10_000)
+    : null;
   const reachedAt = writes();
-  // The stale run has ended (its commit refused) once its row is gone; only
-  // then is the deletion cancelled, so no later run can be what fences it.
+  // The stale run has ended once its generation's row is gone; only then is
+  // the deletion cancelled, so no later run can be what fences it.
   let staleEnded = false;
-  let lastRuns = null;
-  if (orderedProof) {
-    for (const deadline = Date.now() + 60_000; Date.now() < deadline && !staleEnded;) {
-      lastRuns = runsOf(deadline - Date.now());
-      staleEnded = lastRuns === 0;
+  let lastRows = null;
+  if (orderedProof && delivery?.delivered === true) {
+    for (const deadline = Date.now() + 60_000; !staleEnded;) {
+      const left = deadline - Date.now();
+      if (left <= 0) break;
+      lastRows = runsOf(left);
+      staleEnded = Array.isArray(lastRows?.generations) && !lastRows.generations.includes(staleGen);
       if (!staleEnded) await sleep(Math.min(1000, Math.max(0, deadline - Date.now())));
     }
   }
+  // A fenced run commits nothing, its failure included: the Target's
+  // failure count and last result are those from before it.
+  const targetAfter = staleEnded ? (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json : null;
+  const committedNothing = staleEnded && targetAfter?.failureCount === targetBefore?.failureCount && targetAfter?.lastResult === targetBefore?.lastResult;
   const fenceTitle = "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once that run has ended and the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing";
-  const fenceSoFar = { firstPush: Boolean(firstPush), inFlight, atHold, atSchedule, released, abandonedWrites, reached: Boolean(reached), staleEnded, lastRuns };
-  // Without the ordering, or with the stale run still running after a
-  // minute, nothing below could prove the fence: the check fails now, before
-  // the cancellation, saying why.
-  const fenceShown = orderedProof && Boolean(reached) && staleEnded;
+  const fenceSoFar = { firstPush: Boolean(firstPush), inFlight, staleGen, atHold, atSchedule, released, abandonedWrites, delivery, staleEnded, lastRows,
+    before: targetBefore && [targetBefore.failureCount, targetBefore.lastResult], after: targetAfter && [targetAfter.failureCount, targetAfter.lastResult] };
+  // Without the ordering, the delivery, the stale run's end within a
+  // minute, or with anything it committed, nothing below could prove the
+  // fence: the check fails now, before the cancellation, saying why.
+  const fenceShown = orderedProof && delivery?.delivered === true && staleEnded && committedNothing;
   if (!fenceShown) {
     check("deletion.scheduling-fences-runs", fenceTitle, false, JSON.stringify({
       why: !orderedProof
-        ? "inconclusive: the deletion was not shown scheduled while the stale run's write was held and connected and its row present"
-        : !reached ? "the released write did not reach the fake GitHub within 30 s" : "the stale run had not ended (its sync_runs row still there) after 60 s",
+        ? "inconclusive: the deletion was not shown scheduled while the stale run (one generation) was in flight with its write held and connected, or the release was not exactly that write"
+        : delivery?.delivered !== true ? "inconclusive: the released write's answer did not reach the stale run"
+          : !staleEnded ? "the stale run had not ended (its generation's sync_runs row still there) after 60 s"
+            : "the stale run committed something (the Target's failure count or last result changed)",
       ...fenceSoFar,
     }));
   }

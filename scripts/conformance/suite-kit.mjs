@@ -29,6 +29,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { DEADLINE_ENV } from "./lib/deadline.mjs";
 import { predates } from "./lib/inventory.mjs";
 
 const TARGET_OP = fileURLToPath(new URL("./target-op.mjs", import.meta.url));
@@ -176,18 +177,20 @@ export function cliCommand(args) {
  * Runs one operation of the target under test (scripts/conformance/target-op.mjs)
  * and returns its standard output; throws when the operation fails.
  * `input` is passed on standard input, `env` is added to the environment.
- * `timeoutMs` bounds the call: past it the operation is killed and the
- * call throws, saying it timed out.
+ * `timeoutMs` bounds the call: the operation gets that deadline
+ * (lib/deadline.mjs), so its own child processes stop at it, with theirs;
+ * the wrapper itself is killed two seconds later as a backstop. Past the
+ * deadline the call throws, saying it timed out.
  */
 export function targetOp(operation, args = [], { input, env, timeoutMs } = {}) {
   const r = spawnSync(process.execPath, [TARGET_OP, operation, ...args], {
     encoding: "utf8",
     input: input ?? "",
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...env, ...(timeoutMs ? { [DEADLINE_ENV]: String(Date.now() + timeoutMs) } : {}) },
     maxBuffer: 256 * 1024 * 1024,
-    ...(timeoutMs ? { timeout: timeoutMs, killSignal: "SIGKILL" } : {}),
+    ...(timeoutMs ? { timeout: timeoutMs + 2000, killSignal: "SIGKILL" } : {}),
   });
-  if (r.error?.code === "ETIMEDOUT") {
+  if (timeoutMs && (r.error?.code === "ETIMEDOUT" || /timed out at the operation's deadline/.test(r.stderr ?? ""))) {
     throw new Error(`target operation ${[operation, ...args].join(" ")} timed out after ${timeoutMs} ms`);
   }
   if (r.status !== 0) {

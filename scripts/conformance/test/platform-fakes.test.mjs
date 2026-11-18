@@ -12,6 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { request } from "node:https";
+import { connect as tlsConnect } from "node:tls";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,8 +131,12 @@ test("the fake GitHub's repository writes take a suite's fine-grained token or a
   const writesHeld = state.writes["acme-apps/api"];
   assert.deepEqual(await control({ op: "release", repo: "acme-apps/api" }), { released: ["X"], abandoned: [] });
   assert.equal((await pending).status, 204, "the held write is answered once released");
-  state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+  for (let i = 0; i < 50 && !(state.deliveries ?? []).some((d) => d.delivered !== null); i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+  }
   assert.equal(state.writes["acme-apps/api"], writesHeld + 1);
+  assert.deepEqual(state.deliveries, [{ repo: "acme-apps/api", name: "X", delivered: true }], "the released write was delivered");
   assert.deepEqual(state.held, []);
   // A held write whose client disconnects (its request timed out) is
   // abandoned: shown as no longer connected, never answered, stored or
@@ -161,6 +166,54 @@ test("the fake GitHub's repository writes take a suite's fine-grained token or a
   assert.equal(state.writes["acme-apps/api"], before.writes["acme-apps/api"], "an abandoned write is not counted");
   assert.ok(!(state.github["acme-apps/api"] ?? []).includes("LATE"), "an abandoned write is not stored");
   assert.deepEqual(state.abandoned, [{ repo: "acme-apps/api", name: "LATE" }]);
+  // The race: the client goes away and the release comes at once, in
+  // either order. The write never counts: abandoned at the release, or
+  // released and then undelivered (its answer never reached an open
+  // socket).
+  for (let round = 0; round < 10; round++) {
+    await control({ op: "hold", repo: "acme-apps/api" });
+    const writesRace = (await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json())).writes["acme-apps/api"];
+    const racing = request({
+      host: "127.0.0.1", port: ports.https, method: "PUT", path: `/repos/acme-apps/api/actions/secrets/RACE${round}`, servername: "api.github.com", rejectUnauthorized: false,
+      headers: { host: "api.github.com", authorization: token },
+    });
+    racing.on("error", () => {});
+    racing.end(JSON.stringify({ encrypted_value: "abc", key_id: "conformance-key" }));
+    for (let i = 0; i < 50; i++) {
+      const st = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+      if (st.held.length) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    racing.destroy();
+    const out = await control({ op: "release", repo: "acme-apps/api" });
+    await new Promise((r) => setTimeout(r, 100));
+    const st = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+    const delivery = st.deliveries?.find((d) => d.name === `RACE${round}`);
+    assert.equal(st.writes["acme-apps/api"], writesRace, `round ${round}: a write whose client went away was counted`);
+    assert.ok(out.abandoned.includes(`RACE${round}`) || (out.released.includes(`RACE${round}`) && delivery?.delivered === false),
+      `round ${round}: neither abandoned nor undelivered: ${JSON.stringify({ out, delivery })}`);
+  }
+  // Released first, then the client is found gone: a client that already
+  // gave up drops its connection when the answer arrives. The write was
+  // released (its client still connected at the release), but never
+  // delivered, so it is not counted.
+  await control({ op: "hold", repo: "acme-apps/api" });
+  const writesLate = (await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json())).writes["acme-apps/api"];
+  const raw = tlsConnect({ host: "127.0.0.1", port: ports.https, servername: "api.github.com", rejectUnauthorized: false });
+  raw.on("error", () => {});
+  await new Promise((r) => raw.once("secureConnect", r));
+  const lateBody = JSON.stringify({ encrypted_value: "abc", key_id: "conformance-key" });
+  raw.write(`PUT /repos/acme-apps/api/actions/secrets/GAVEUP HTTP/1.1\r\nHost: api.github.com\r\nAuthorization: ${token}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(lateBody)}\r\nConnection: keep-alive\r\n\r\n${lateBody}`);
+  raw.once("data", () => raw.destroy());
+  for (let i = 0; i < 50 && !(state.held ?? []).some((h) => h.name === "GAVEUP"); i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+  }
+  assert.deepEqual(await control({ op: "release", repo: "acme-apps/api" }), { released: ["GAVEUP"], abandoned: [] }, "released while its client was connected");
+  await new Promise((r) => setTimeout(r, 800));
+  state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+  assert.equal(state.deliveries.find((d) => d.name === "GAVEUP")?.delivered, false, "a reset after the answer leaves the write undelivered");
+  assert.equal(state.writes["acme-apps/api"], writesLate, "an undelivered write is not counted");
   // The App's own endpoints take its JWT, and never an installation token.
   assert.equal((await github("GET", "/app", app)).status, 200);
   assert.equal((await github("GET", "/app", token)).status, 401);

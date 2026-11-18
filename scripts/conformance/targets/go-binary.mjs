@@ -68,6 +68,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { deadlineSpawnSync } from "../lib/deadline.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { accessSync, appendFileSync, chmodSync, closeSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -366,7 +367,8 @@ export async function requestLog(state) {
 
 /** Runs `varlatchd admin ...`: its output, or NotImplementedYet while the command is not built. */
 function admin(state, args) {
-  const r = spawnSync(state.binary, ["admin", ...args, "--config", state.conf], { encoding: "utf8", timeout: 60_000 });
+  const r = deadlineSpawnSync(state.binary, ["admin", ...args, "--config", state.conf], { encoding: "utf8", timeout: 60_000 });
+  if (r.timedOut) throw new Error(`varlatchd admin ${args[0]} timed out at the operation's deadline`);
   if (r.status === EXIT_NOT_BUILT && r.stderr.startsWith(`${NOT_IMPLEMENTED_YET}:`)) {
     throw new NotImplementedYet(r.stderr.trim().slice(NOT_IMPLEMENTED_YET.length + 2));
   }
@@ -381,7 +383,7 @@ function admin(state, args) {
  */
 export async function hostAdmin(state, ...args) {
   if (args[0] !== "audit-export") throw new Error(`host-admin: unknown command ${args[0]}`);
-  const r = spawnSync(state.binary, ["admin", ...args, "--config", state.conf], { encoding: "utf8", timeout: 60_000 });
+  const r = deadlineSpawnSync(state.binary, ["admin", ...args, "--config", state.conf], { encoding: "utf8", timeout: 60_000 });
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
