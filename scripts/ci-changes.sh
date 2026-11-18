@@ -34,10 +34,11 @@
 #       *_SHARED file. Documentation inside a package selects nothing.
 #
 #   scripts/ci-changes.sh check-shared
-#       Fails when a package's tests name a Go data file (one under a
-#       testdata/ directory, or a .json, .html or .mjs file) that the
-#       *_SHARED patterns do not give to that package, so the patterns
-#       cannot fall behind the tests.
+#       Fails when a file of a package (its tests and the helpers they
+#       import) names a Go data file (one under a testdata/ directory, or a
+#       .json, .html or .mjs file) that the *_SHARED patterns do not give to
+#       that package, or builds a Go path from pieces, which it could not
+#       check; so the patterns cannot fall behind the tests.
 #
 # pnpm's own selector (`--filter "...[<base>]"`) maps a changed file outside
 # every package to the workspace root project, which no package depends on
@@ -161,12 +162,35 @@ affected() {
   printf '%s\n' "${names[@]}"
 }
 
+# git grep in one package's files (committed, or new and not ignored),
+# documentation aside; exit 1 (no match) is not an error.
+grep_package() {
+  local status=0
+  (cd "$REPO_ROOT" && git grep --untracked "$@" -- "$rel" ":!$rel/**/*.md" ":!$rel/*.md") || status=$?
+  if [ "$status" -gt 1 ]; then
+    echo "check-shared: could not search ${rel} (git grep exit ${status})." >&2
+    return 2
+  fi
+}
+
 check_shared() {
-  local dir name ref probe missing=0
+  local dir rel name ref probe refs missing=0
   for dir in "$REPO_ROOT"/apps/*/ "$REPO_ROOT"/packages/*/ "$REPO_ROOT"/services/*/ "$REPO_ROOT"/convex/; do
-    [ -f "$dir/package.json" ] && [ -d "$dir/test" ] || continue
+    [ -f "$dir/package.json" ] || continue
+    rel=${dir#"$REPO_ROOT"/}
+    rel=${rel%/}
     name=$(node -p "require(process.argv[1]).name" "$dir/package.json")
-    # shellcheck disable=SC2016 # the pattern matches a literal ${ in tests
+    # A Go path built from pieces (join("go", "server", ...)) cannot be
+    # checked; name it as one string.
+    refs=$(grep_package -nE "['\"\`]go['\"\`][[:space:]]*,[[:space:]]*['\"\`](cmd|lib|server|internal)['\"\`]")
+    if [ -n "$refs" ]; then
+      printf '%s\n' "$refs" >&2
+      echo "These build a Go path from pieces; write it as one string (\"go/...\") so check-shared can check it." >&2
+      missing=1
+    fi
+    # shellcheck disable=SC2016 # the pattern matches a literal ${ in sources
+    refs=$(grep_package -ohE 'go/(cmd|lib|server|internal)/[A-Za-z0-9_./<>${}-]*')
+    refs=$(sort -u <<< "$refs")
     while IFS= read -r ref; do
       [ -n "$ref" ] || continue
       # A path built from a template (<area>, ${name}) stops before it, and
@@ -177,16 +201,16 @@ check_shared() {
       probe=$ref
       if [[ $ref == */ ]]; then probe="${ref}x.json"; fi
       if ! shared_owners "$probe" | grep -qx "$name"; then
-        echo "${dir#"$REPO_ROOT"/}test names ${ref}, which no *_SHARED pattern in scripts/ci-changes.sh gives to ${name}." >&2
+        echo "${rel} names ${ref}, which no *_SHARED pattern in scripts/ci-changes.sh gives to ${name}." >&2
         missing=1
       fi
-    done < <(cd "$dir" && grep -rohE 'go/(cmd|lib|server|internal)/[A-Za-z0-9_./<>${}-]*' test | sort -u)
+    done <<< "$refs"
   done
   if [ "$missing" -ne 0 ]; then
     echo "A change to such a file would skip the tests that read it; add it to the package's pattern." >&2
     return 1
   fi
-  echo "Every Go data file that a package's tests name selects that package." >&2
+  echo "Every Go data file that a package's files name selects that package." >&2
 }
 
 case ${1:-} in

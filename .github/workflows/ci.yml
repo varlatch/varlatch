@@ -496,8 +496,9 @@ jobs:
   # CLI 0.22.0 (scripts/conformance/clients.json), downloaded and verified
   # with cosign before anything starts, and the sdk built from its release
   # commit. A pull request or a merge group runs it when it touches the
-  # harness, a suite, or ci-e2e.sh; every other event runs it too. Hosted
-  # runners only.
+  # harness, a suite, or ci-e2e.sh; every other event runs it too, except a
+  # nightly run on a commit the last successful one tested, which runs
+  # nothing. Hosted runners only.
   e2e-cli:
     needs: changes
     if: needs.changes.outputs.conformance == 'true' && needs.changes.outputs.hosted == 'true' && !vars.CI_RUNNER
