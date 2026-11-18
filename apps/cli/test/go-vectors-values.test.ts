@@ -290,29 +290,30 @@ function graphemeTable(): Array<[number, number, string]> {
 
 const BASE: ValidationReport = { valid: false, missing: [], invalid: [], unresolved: [] } as unknown as ValidationReport;
 
+/**
+ * Reports of the protocol's shape (ValidationReport): the Go CLI projects any
+ * other field or enumeration value away (its own tests), so only these are
+ * compared with the TypeScript answers.
+ */
 const REPORTS: Array<[string, unknown]> = [
   ["production", { ...BASE, valid: true, complete: true }],
   ["production", { ...BASE, valid: true }],
   ["dev", { valid: true, missing: [], invalid: [], unresolved: [] }],
   ["dev", { valid: false }],
-  ["dev", { valid: true, complete: false, notEvaluated: [{ name: "API_KEY", requires: "secret.reveal", reason: "access" }] }],
+  ["dev", { valid: true, complete: false, notEvaluated: [{ name: "API_KEY", requires: "secret.reveal", reason: "permission" }] }],
   ["dev", { valid: true, notEvaluated: [{ name: "A", requires: "secret.reveal" }] }],
   ["dev", { valid: true, complete: null, notEvaluated: [] }],
   ["production", { ...BASE, missing: ["DATABASE_URL", "API_KEY"], invalid: [{ name: "PORT", reason: "expected a number" }] }],
-  ["production", { ...BASE, complete: false, missing: ["X"], notEvaluated: [{ name: "S", requires: "secret.reveal", reason: "access" }] }],
+  ["production", { ...BASE, complete: false, missing: ["X"], notEvaluated: [{ name: "S", requires: "secret.reveal", reason: "permission" }] }],
   ["production", { ...BASE, complete: false, notEvaluated: [
-    { name: "A", requires: "config.metadata.read", reason: "access" },
-    { name: "B", requires: "config.value.read", reason: "access" },
+    { name: "A", requires: "config.metadata.read", reason: "permission" },
+    { name: "B", requires: "config.value.read", reason: "permission" },
     { name: "C", requires: "secret.reveal", reason: "requirement" },
-    { name: "D", requires: "made.up", reason: "access" },
-    { name: "E", requires: "made.up", reason: "requirement" },
   ] }],
   ["production", { ...BASE, unresolved: [{ name: "URL", reason: "reference" }] }],
   ["production", { ...BASE, unresolved: [{ name: "URL", reason: "authority" }] }],
   ["production", { ...BASE, complete: false, unresolved: [{ name: "URL", reason: "authority" }], notEvaluated: [{ name: "K", requires: "secret.reveal" }] }],
   ["production", { ...BASE, invalid: [{ name: "N\u001b[31m", reason: "bad\u202e" }], missing: ["M\u0007"] }],
-  ["production", { ...BASE, missing: ["A"], complete: 0 }],
-  ["production", { valid: 1, complete: "yes" }],
   ["dev", { ...BASE, invalid: [{ name: "X" }], extra: { kept: false } }],
 ];
 
@@ -321,7 +322,7 @@ const REPORTS: Array<[string, unknown]> = [
 const INFER: string[] = [
   "", "true", "FALSE", "True", "yes", "1", "0", "-1", "007", "1.5", "-0.5", "1.", ".5", "1e5", "9007199254740993", "12345678901234567890",
   "https://example.com", "http://localhost:3000/x", "ftp://x", "postgres://u:p@h/db", "user@example.com", "a@b", "not an email@", "plain text",
-  " 1", "1 ", "+1", "0x10", "\u0661\u0662\u0663",
+  " 1", "1 ", "+1", "0x10", "fal\u017fe", "\u212arue", "TRUE", "tRuE", "\u0661\u0662\u0663",
 ];
 
 const ENTRY_SETS: Array<Array<{ name: string; value: string; line: number }>> = [

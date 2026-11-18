@@ -46,7 +46,7 @@ func newPTYRun(t *testing.T) *ptyRun {
 		p.bodies = append(p.bodies, r.Method+" "+r.URL.Path+" "+string(body))
 		p.mu.Unlock()
 		w.Header().Set("content-type", "application/json")
-		_, _ = w.Write([]byte(`{"versionId":"ver_1"}`))
+		_, _ = w.Write([]byte(`{"versionId":"ver_ptyvaluestoredaaaaaaaaaaaa"}`))
 	}))
 	t.Cleanup(p.server.Close)
 	write := func(path, content string) {
@@ -166,9 +166,9 @@ func TestHiddenPromptOnATerminal(t *testing.T) {
 		value  string // the value sent, "" for none
 		shows  string
 	}{
-		{"enter", "s3cr3t-typed-value\r", 0, "s3cr3t-typed-value", "API_KEY set (version ver_1)."},
-		{"editing keys", "abcdefgh\U0001F600\x7f\x1b[Dij\r", 0, "abcdefghij", "API_KEY set (version ver_1)."},
-		{"ctrl-d", "s3cr3t-ctrl-d\x04", 0, "s3cr3t-ctrl-d", "API_KEY set (version ver_1)."},
+		{"enter", "s3cr3t-typed-value\r", 0, "s3cr3t-typed-value", "API_KEY set (version ver_ptyvaluestoredaaaaaaaaaaaa)."},
+		{"editing keys", "abcdefgh\U0001F600\x7f\x1b[Dij\r", 0, "abcdefghij", "API_KEY set (version ver_ptyvaluestoredaaaaaaaaaaaa)."},
+		{"ctrl-d", "s3cr3t-ctrl-d\x04", 0, "s3cr3t-ctrl-d", "API_KEY set (version ver_ptyvaluestoredaaaaaaaaaaaa)."},
 		{"empty", "\r", 1, "", "varlatch: no value entered; nothing was stored"},
 		{"ctrl-c", "s3cr3t-half\x03", 130, "", "varlatch: cancelled; nothing was stored"},
 		{"ctrl-c after enter in one read", "s3cr3t-x\r\x03", 130, "", "varlatch: cancelled; nothing was stored"},
@@ -209,28 +209,57 @@ func TestHiddenPromptOnATerminal(t *testing.T) {
 	}
 }
 
-// TestHiddenPromptRestoresTheTerminalOnASignal: stopped by SIGTERM or
-// SIGINT from outside while it waits, the prompt restores the terminal
-// before the signal ends the process, and nothing is sent.
+// TestHiddenPromptRestoresTheTerminalOnASignal: stopped by a signal from
+// outside, while it waits for the value or in the window before its
+// question (the handler in place, the terminal raw or not yet), the prompt
+// restores the terminal before the signal ends the process, and nothing is
+// sent. SIGHUP is the terminal closing; SIGQUIT ends it with 131.
 func TestHiddenPromptRestoresTheTerminalOnASignal(t *testing.T) {
-	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT} {
-		t.Run(sig.String(), func(t *testing.T) {
+	cases := []struct {
+		name   string
+		pause  string // "" waits for the question
+		sig    syscall.Signal
+		status int // -1: ended by the signal
+	}{
+		{"SIGTERM while waiting", "", syscall.SIGTERM, -1},
+		{"SIGINT while waiting", "", syscall.SIGINT, -1},
+		{"SIGHUP while waiting", "", syscall.SIGHUP, -1},
+		{"SIGQUIT while waiting", "", syscall.SIGQUIT, 131},
+		{"SIGTERM in raw mode before the question", "raw", syscall.SIGTERM, -1},
+		{"SIGHUP in raw mode before the question", "raw", syscall.SIGHUP, -1},
+		{"SIGINT before raw mode", "signals", syscall.SIGINT, -1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
 			p := newPTYRun(t)
-			master, tty, before, cmd, out, mu := p.start()
-			waitFor(t, out, mu, "(input hidden): ")
-			if _, err := master.Write([]byte("s3cr3t-partial")); err != nil {
-				t.Fatal(err)
+			var extra []string
+			if c.pause != "" {
+				extra = append(extra, promptPause+"="+c.pause)
 			}
-			time.Sleep(200 * time.Millisecond)
-			if err := cmd.Process.Signal(sig); err != nil {
+			master, tty, before, cmd, out, mu := p.start(extra...)
+			if c.pause != "" {
+				waitFor(t, out, mu, "PAUSED "+c.pause)
+				if c.pause == "raw" {
+					if state, err := term.GetState(int(tty.Fd())); err == nil && reflect.DeepEqual(state, before) {
+						t.Fatal("the terminal is not in raw mode at the pause")
+					}
+				}
+			} else {
+				waitFor(t, out, mu, "(input hidden): ")
+				if _, err := master.Write([]byte("s3cr3t-partial")); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+			if err := cmd.Process.Signal(c.sig); err != nil {
 				t.Fatal(err)
 			}
 			status, got, shown := finish(t, cmd, out, mu)
-			if status != -1 || got != sig {
-				t.Errorf("ended with status %d signal %v, want the signal %v", status, got, sig)
+			if c.status == -1 && (status != -1 || got != c.sig) || c.status != -1 && status != c.status {
+				t.Errorf("ended with status %d signal %v, want %d (%v)", status, got, c.status, c.sig)
 			}
-			if strings.Contains(shown, "s3cr3t") {
-				t.Errorf("the terminal showed what was typed: %q", shown)
+			if strings.Contains(shown, "s3cr3t") || strings.Contains(shown, "goroutine") {
+				t.Errorf("the terminal showed %q", shown)
 			}
 			restored(t, tty, before)
 			p.mu.Lock()

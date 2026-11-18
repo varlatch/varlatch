@@ -181,3 +181,30 @@ func TestReplayCatchesChangedInputs(t *testing.T) {
 		}
 	}
 }
+
+// TestGeneratedPatternIsExact: the "generated" pattern records a value of
+// exactly its generator's shape by the spec, and anything else by a note
+// that never holds the value.
+func TestGeneratedPatternIsExact(t *testing.T) {
+	body := func(v string) json.RawMessage { b, _ := json.Marshal(map[string]string{"value": v}); return b }
+	for spec, cases := range map[string]map[string]bool{
+		"hex:32":       {strings.Repeat("a1", 32): true, strings.Repeat("a", 63): false, strings.Repeat("A", 64): false},
+		"base64:32":    {strings.Repeat("A+/", 14) + "a=": true, strings.Repeat("A", 44): false},
+		"base64:16":    {strings.Repeat("Ab", 11) + "==": true, strings.Repeat("A", 23) + "=": false},
+		"base64url:24": {strings.Repeat("a-_B", 8): true, strings.Repeat("a+", 16): false},
+		"alnum:30":     {strings.Repeat("aZ9", 10): true, strings.Repeat("a", 29): false, strings.Repeat("a-", 15): false},
+	} {
+		for value, accepted := range cases {
+			got := GeneratedPattern([]string{"values", "set", "K", "--generate", spec}, []Request{{Body: body(value)}}, "K set\n")
+			want := `{"value":"{{generated ` + spec + `}}"}`
+			if (string(got[0].Body) == want) != accepted || strings.Contains(string(got[0].Body), value) {
+				t.Errorf("%s %q: recorded %s", spec, value, got[0].Body)
+			}
+		}
+	}
+	value := strings.Repeat("ab", 32)
+	got := GeneratedPattern([]string{"--generate", "hex:32"}, []Request{{Body: body(value)}}, "shown: "+value+"\n")
+	if string(got[0].Body) != `{"value":"{{generated value shown in the output}}"}` {
+		t.Errorf("a value shown on stdout: recorded %s", got[0].Body)
+	}
+}

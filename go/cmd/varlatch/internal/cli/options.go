@@ -18,12 +18,13 @@ import (
 
 // OptionsError is options.ts's OptionsError: its message names the problem.
 // Rejected is "unknown" for an unknown option and "unexpected" for an
-// argument beyond the positionals, with Argument the argument as given, so
-// a command whose arguments may hold a Secret can say so without it.
+// argument beyond the positionals, with Index its place in the arguments
+// (from 0), so a command whose arguments may hold a Secret can name the
+// place without the argument.
 type OptionsError struct {
 	Message  string
 	Rejected string
-	Argument string
+	Index    int
 }
 
 func (e *OptionsError) Error() string { return e.Message }
@@ -111,13 +112,13 @@ func (p *ParsedOptions) Value(name string) (string, bool) {
 // ParseOptions is options.ts's parseOptions.
 func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 	parsed := &ParsedOptions{Values: map[string]string{}, Lists: map[string][]string{}}
-	positional := func(arg string) error {
+	positional := func(arg string, index int) error {
 		if len(parsed.Positionals) >= spec.Positionals {
 			shown := shownArgument(arg)
 			if clientctx.HasAtSign(shown) {
-				return &OptionsError{Message: shown + ": unexpected argument", Rejected: "unexpected", Argument: arg} // the explanation follows the URL
+				return &OptionsError{Message: shown + ": unexpected argument", Rejected: "unexpected", Index: index} // the explanation follows the URL
 			}
-			return &OptionsError{Message: "unexpected argument " + shown, Rejected: "unexpected", Argument: arg}
+			return &OptionsError{Message: "unexpected argument " + shown, Rejected: "unexpected", Index: index}
 		}
 		parsed.Positionals = append(parsed.Positionals, arg)
 		return nil
@@ -137,8 +138,8 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 	}
 	for i := 0; i < len(args); i++ {
 		if spec.EndOfOptions && args[i] == "--" {
-			for _, rest := range args[i+1:] {
-				if err := positional(rest); err != nil {
+			for j, rest := range args[i+1:] {
+				if err := positional(rest, i+1+j); err != nil {
 					return nil, err
 				}
 			}
@@ -188,11 +189,11 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 			}
 			shown := shownArgument(arg)
 			if clientctx.HasAtSign(shown) {
-				return nil, &OptionsError{Message: shown + ": unknown option" + hint, Rejected: "unknown", Argument: arg} // the explanation follows the URL
+				return nil, &OptionsError{Message: shown + ": unknown option" + hint, Rejected: "unknown", Index: i} // the explanation follows the URL
 			}
-			return nil, &OptionsError{Message: "unknown option " + shown + hint, Rejected: "unknown", Argument: arg}
+			return nil, &OptionsError{Message: "unknown option " + shown + hint, Rejected: "unknown", Index: i}
 		}
-		if err := positional(arg); err != nil {
+		if err := positional(arg, i); err != nil {
 			return nil, err
 		}
 	}

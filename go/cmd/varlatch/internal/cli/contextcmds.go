@@ -66,7 +66,7 @@ func (r *Run) resolveArgs(cwd string, args []string) (*clientctx.Context, error)
 // --json document goes through it; TestEveryWriteGoesThroughTheFailSafe
 // fails on a document serialised for stdout anywhere else.
 func (r *Run) printJSON(doc jsjson.Object) error {
-	return r.println(string(jsjson.StringifyIndent(RedactValue(doc), 2)))
+	return r.document(string(jsjson.StringifyIndent(RedactValue(doc, r.inFlight...), 2)))
 }
 
 // statusSchemaVersion is status.ts's STATUS_SCHEMA_VERSION, the version of

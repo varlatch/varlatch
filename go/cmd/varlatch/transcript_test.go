@@ -3,18 +3,18 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/secretinput"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/transcript"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 )
@@ -24,8 +24,22 @@ import (
 // process without a second build.
 const asCLI = "VARLATCH_TEST_AS_CLI"
 
+// promptPause names the hidden prompt's stage at which the CLI under test
+// pauses (secretinput.Hook).
+const promptPause = "VARLATCH_TEST_PROMPT_PAUSE"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(asCLI) == "1" {
+		// The pseudo-terminal tests stop the hidden prompt at a stage before
+		// its question, to send a signal in that window.
+		if stage := os.Getenv(promptPause); stage != "" {
+			secretinput.Hook = func(at string) {
+				if at == stage {
+					fmt.Fprintf(os.Stderr, "PAUSED %s\n", at)
+					time.Sleep(5 * time.Second)
+				}
+			}
+		}
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	setTranscriptUmask()
@@ -130,91 +144,68 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = got.Stdout
 		}
 	},
-	// Not a difference: a value `--generate` makes is random in both CLIs,
-	// so the recording holds its generator, `{{generated <spec>}}`
-	// (goKit.ts). Each such request takes the value Go sent, which must have
-	// exactly the alphabet and length the spec gives and must not appear on
-	// stdout or stderr; every other field is compared as recorded.
-	"generated-value": func(o *transcript.Outcome, got transcript.Outcome) {
-		for i := range o.Requests {
-			if i >= len(got.Requests) {
-				break
-			}
-			body, want, ok := generatedBody(o.Requests[i].Body)
-			_, have, haveOK := generatedBody(got.Requests[i].Body)
-			m := generatedPlaceholder.FindStringSubmatch(want)
-			if !ok || !haveOK || m == nil || !generatedBy(m[1], have) || strings.Contains(got.Stdout, have) || strings.Contains(got.Stderr, have) {
-				continue
-			}
-			body["value"] = have
-			o.Requests[i].Body, _ = json.Marshal(body)
-		}
-	},
-	// The Go CLI does not echo an argument `values set` or `values rotate`
-	// refuses, unless it looks like an option: it may be a value, or part
-	// of one (go/README.md, "No message holds a value"). Accepted only where
-	// Go's stderr is the recording with the refusal's words in place of the
-	// echo, and holds no part of the refused argument.
+	// `values set` and `values rotate` never repeat an argument they
+	// refuse, whatever its spelling: it may be the value or part of it
+	// (go/README.md, "No message holds a value"). The message names its
+	// place among the command's arguments instead. Accepted only where Go's
+	// first line of stderr is the refusal's own words for the same command
+	// and holds no part of the refused argument, and every other line,
+	// the status and stdout are as recorded.
 	"value-free-usage": func(o *transcript.Outcome, got transcript.Outcome) {
-		m := echoedRefusal.FindStringSubmatchIndex(o.Stderr)
-		if m == nil {
+		wantFirst, wantRest, _ := strings.Cut(o.Stderr, "\n")
+		gotFirst, gotRest, _ := strings.Cut(got.Stderr, "\n")
+		if wantRest != gotRest {
 			return
 		}
-		argument := o.Stderr[m[4]:m[5]]
-		var words string
-		if o.Stderr[m[2]:m[3]] == "unknown option " {
-			words = `an unknown option, not shown since it may be a value (a value that begins with "-" goes after --)`
-		} else {
-			words = "one argument too many, not shown since it may be part of a value (a value with spaces goes in quotes)"
+		for _, form := range valueFreeForms {
+			m := form.ts.FindStringSubmatch(wantFirst)
+			if m == nil {
+				continue
+			}
+			argument := ""
+			for _, part := range m[2:] {
+				if part != "" {
+					argument = part
+				}
+			}
+			g := form.goWords.FindStringSubmatch(gotFirst)
+			if g != nil && g[1] == m[1] && argument != "" && !strings.Contains(got.Stderr, argument) {
+				o.Stderr = got.Stderr
+			}
+			return
 		}
-		accepted := o.Stderr[:m[2]] + words + o.Stderr[m[1]:]
-		if got.Stderr == accepted && !strings.Contains(got.Stderr, argument) {
-			o.Stderr = accepted
+	},
+	// A server's identifier that does not have the server's shape (a
+	// prefix and 26 characters of lower-case base32) is shown as "an
+	// unrecognized id" (go/README.md, "No message holds a value").
+	"unrecognized-id": func(o *transcript.Outcome, got transcript.Outcome) {
+		if m := recordedVersion.FindStringSubmatchIndex(o.Stdout); m != nil {
+			if accepted := o.Stdout[:m[2]] + cli.UnrecognizedID + o.Stdout[m[3]:]; accepted == got.Stdout {
+				o.Stdout = accepted
+			}
 		}
 	},
 }
 
-// echoedRefusal is the TypeScript parser's refusal of an argument, as
-// `values set` and `values rotate` print it: the words, the argument, and
-// for an unknown option the hint.
-var echoedRefusal = regexp.MustCompile(`(unknown option |unexpected argument )(\S+)(?: \(a value that begins with "-" goes after --\))?`)
+// recordedVersion is the version a recorded `values set` names.
+var recordedVersion = regexp.MustCompile(` set \(version (.*)\)\.\n$`)
 
-// generatedBody is a request body holding a string "value".
-func generatedBody(raw json.RawMessage) (map[string]any, string, bool) {
-	var body map[string]any
-	if json.Unmarshal(raw, &body) != nil {
-		return nil, "", false
-	}
-	value, ok := body["value"].(string)
-	return body, value, ok
-}
-
-// generatedPlaceholder is a generated value as a recording holds it.
-var generatedPlaceholder = regexp.MustCompile(`^\{\{generated ((?:hex|base64|base64url|alnum):[0-9]+)\}\}$`)
-
-// generatedBy is whether value has the shape the generator spec gives:
-// hex of 2n digits, base64 with padding, base64url without, alnum of n
-// characters.
-func generatedBy(spec, value string) bool {
-	encoding, size, _ := strings.Cut(spec, ":")
-	n, err := strconv.Atoi(size)
-	if err != nil {
-		return false
-	}
-	var pattern string
-	switch encoding {
-	case "hex":
-		pattern = fmt.Sprintf(`^[0-9a-f]{%d}$`, 2*n)
-	case "base64":
-		pattern = fmt.Sprintf(`^[A-Za-z0-9+/]{%d}={%d}$`, (4*n+2)/3, (3-n%3)%3)
-	case "base64url":
-		pattern = fmt.Sprintf(`^[A-Za-z0-9_-]{%d}$`, (4*n+2)/3)
-	case "alnum":
-		pattern = fmt.Sprintf(`^[A-Za-z0-9]{%d}$`, n)
-	default:
-		return false
-	}
-	return regexp.MustCompile(pattern).MatchString(value)
+// valueFreeForms are the refusals `values set` and `values rotate` word
+// without the argument: the TypeScript words (the command, the argument)
+// and the Go words (the command).
+var valueFreeForms = []struct{ ts, goWords *regexp.Regexp }{
+	{
+		regexp.MustCompile(`^varlatch (values set|values rotate): (?:unknown option (\S+)(?: \(a value that begins with "-" goes after --\))?|(\S+): unknown option.*)$`),
+		regexp.MustCompile(`^varlatch (values set|values rotate): unknown option at argument [0-9]+, not shown since it may be a value \(a value that begins with "-" goes after --\)$`),
+	},
+	{
+		regexp.MustCompile(`^varlatch (values set|values rotate): (?:unexpected argument (\S+)|(\S+): unexpected argument)$`),
+		regexp.MustCompile(`^varlatch (values set|values rotate): unexpected argument [0-9]+, not shown since it may be part of a value \(a value with spaces goes in quotes\)$`),
+	},
+	{
+		regexp.MustCompile(`^varlatch (values rotate): --grace needs a whole number of seconds, not (.+)$`),
+		regexp.MustCompile(`^varlatch (values rotate): --grace needs a whole number of seconds$`),
+	},
 }
 
 // skillVersion is the version a skill file names.
@@ -308,36 +299,21 @@ func TestBackslashPathDifferenceIsExact(t *testing.T) {
 	}
 }
 
-// TestGeneratedValuePatternIsExact: generated-value accepts only a value of
-// the alphabet and length its generator gives, never shown.
-func TestGeneratedValuePatternIsExact(t *testing.T) {
-	for spec, cases := range map[string]map[string]bool{
-		"hex:32":       {strings.Repeat("a1", 32): true, strings.Repeat("a", 63): false, strings.Repeat("A", 64): false},
-		"base64:32":    {strings.Repeat("A+/", 14) + "a=": true, strings.Repeat("A", 44): false},
-		"base64:16":    {strings.Repeat("Ab", 11) + "==": true, strings.Repeat("A", 23) + "=": false},
-		"base64url:24": {strings.Repeat("a-_B", 8): true, strings.Repeat("a+", 16): false},
-		"alnum:30":     {strings.Repeat("aZ9", 10): true, strings.Repeat("a", 29): false, strings.Repeat("a-", 15): false},
+// TestValueFreeUsageIsExact: value-free-usage accepts only Go's own words
+// for the same refusal, never a message that holds the argument.
+func TestValueFreeUsageIsExact(t *testing.T) {
+	const usage = "\nUsage: varlatch values set <ITEM>\n"
+	recorded := `varlatch values set: unknown option -s3cr3t (a value that begins with "-" goes after --)` + usage
+	for got, accepted := range map[string]bool{
+		`varlatch values set: unknown option at argument 2, not shown since it may be a value (a value that begins with "-" goes after --)` + usage:    true,
+		`varlatch values rotate: unknown option at argument 2, not shown since it may be a value (a value that begins with "-" goes after --)` + usage: false,
+		`varlatch values set: unknown option at argument 2, not shown since it may be a value -s3cr3t` + usage:                                         false,
+		`varlatch values set: unknown option at argument 2, not shown since it may be a value (a value that begins with "-" goes after --)` + "\n":     false,
 	} {
-		for value, accepted := range cases {
-			if generatedBy(spec, value) != accepted {
-				t.Errorf("%s %q: accepted %v, want %v", spec, value, !accepted, accepted)
-			}
-			body, _ := json.Marshal(map[string]string{"value": "{{generated " + spec + "}}"})
-			sent, _ := json.Marshal(map[string]string{"value": value})
-			want := transcript.Outcome{Requests: []transcript.Request{{Body: body}}}
-			differences["generated-value"](&want, transcript.Outcome{Requests: []transcript.Request{{Body: sent}}, Stdout: "set (version 1)\n"})
-			if (string(want.Requests[0].Body) == string(sent)) != accepted {
-				t.Errorf("%s %q: replay accepted %v", spec, value, !accepted)
-			}
+		want := transcript.Outcome{Stderr: recorded}
+		differences["value-free-usage"](&want, transcript.Outcome{Stderr: got})
+		if (want.Stderr == got) != accepted {
+			t.Errorf("%q: accepted %v, want %v", got, want.Stderr == got, accepted)
 		}
-	}
-	// A value shown on stdout is never accepted.
-	value := strings.Repeat("ab", 32)
-	body, _ := json.Marshal(map[string]string{"value": "{{generated hex:32}}"})
-	sent, _ := json.Marshal(map[string]string{"value": value})
-	want := transcript.Outcome{Requests: []transcript.Request{{Body: body}}}
-	differences["generated-value"](&want, transcript.Outcome{Requests: []transcript.Request{{Body: sent}}, Stdout: value + "\n"})
-	if string(want.Requests[0].Body) == string(sent) {
-		t.Error("a value shown on stdout was accepted")
 	}
 }

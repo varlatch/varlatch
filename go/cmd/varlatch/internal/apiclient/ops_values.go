@@ -69,9 +69,3 @@ func (c *Client) GetActiveContract(ctx context.Context, org, project string) (an
 func (c *Client) PushContractRevision(ctx context.Context, org, project string, body jsjson.Object) (any, error) {
 	return c.Request(ctx, "POST", projectPath(org, project)+"/contract/revisions", body, nil)
 }
-
-// ListProjectEnvironments is GET .../environments (the SDK's
-// listEnvironments).
-func (c *Client) ListProjectEnvironments(ctx context.Context, org, project string) (any, error) {
-	return c.Request(ctx, "GET", projectPath(org, project)+"/environments", NoBody, nil)
-}

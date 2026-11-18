@@ -28,6 +28,8 @@ type valuesServer struct {
 	*httptest.Server
 	mu   sync.Mutex
 	sent []string // every value the CLI sent
+	// onPut runs as the server stores a value (a test changes the source file then).
+	onPut func()
 	// answers by "METHOD path" (path without the query); a missing one is 200 {"versionId": "ver_1"}.
 	answers map[string]struct {
 		status int
@@ -44,6 +46,9 @@ func newValuesServer(t *testing.T) *valuesServer {
 		raw, _ := io.ReadAll(r.Body)
 		var body struct{ Value *string }
 		received := ""
+		if r.Method == "PUT" && s.onPut != nil {
+			s.onPut()
+		}
 		if json.Unmarshal(raw, &body) == nil && body.Value != nil {
 			received = *body.Value
 			s.mu.Lock()
@@ -75,6 +80,17 @@ const envPath = "/v1/organizations/acme/projects/web/environments/dev"
 // runIn runs the CLI in a repository on the server, signed in.
 func runIn(t *testing.T, s *valuesServer, stdin string, files map[string]string, env map[string]string, args ...string) (int, string, string) {
 	t.Helper()
+	return runInRepo(t, s, stdin, files, env, nil, args...)
+}
+
+// runInWith is runIn with a step that prepares the repository directory.
+func runInWith(t *testing.T, s *valuesServer, files map[string]string, prepare func(repo string), args ...string) (int, string, string) {
+	t.Helper()
+	return runInRepo(t, s, "", files, nil, prepare, args...)
+}
+
+func runInRepo(t *testing.T, s *valuesServer, stdin string, files map[string]string, env map[string]string, prepare func(repo string), args ...string) (int, string, string) {
+	t.Helper()
 	dir := t.TempDir()
 	write := func(path, content string) {
 		full := filepath.Join(dir, path)
@@ -89,6 +105,9 @@ func runIn(t *testing.T, s *valuesServer, stdin string, files map[string]string,
 	write("config/credentials.json", `{"servers": {"`+s.URL+`": {"token": "vlt_cli_secretTestAAAA"}}}`+"\n")
 	for path, content := range files {
 		write("repo/"+path, content)
+	}
+	if prepare != nil {
+		prepare(filepath.Join(dir, "repo"))
 	}
 	t.Chdir(filepath.Join(dir, "repo"))
 	vars := MapEnv{"HOME": filepath.Join(dir, "home"), "VARLATCH_CONFIG_DIR": filepath.Join(dir, "config")}
@@ -169,12 +188,115 @@ func TestValuesNeverPrintAValue(t *testing.T) {
 			values := append([]string{canary}, s.sent...)
 			s.mu.Unlock()
 			for _, v := range values {
-				if len(v) >= MinMaskedLength && (strings.Contains(stdout, v) || strings.Contains(stderr, v)) {
+				if v != "" && (strings.Contains(stdout, v) || strings.Contains(stderr, v)) {
 					t.Errorf("a value reached the output:\nstdout %q\nstderr %q", stdout, stderr)
 				}
 			}
 			if stdout == "" && stderr == "" {
 				t.Errorf("nothing was said")
+			}
+		})
+	}
+}
+
+// noneShown fails when stdout or stderr holds any of the values.
+func noneShown(t *testing.T, stdout, stderr string, values ...string) {
+	t.Helper()
+	for _, v := range values {
+		if strings.Contains(stdout, v) || strings.Contains(stderr, v) {
+			t.Errorf("%q reached the output:\nstdout %q\nstderr %q", v, stdout, stderr)
+		}
+	}
+	if stdout == "" && stderr == "" {
+		t.Errorf("nothing was said")
+	}
+}
+
+// TestShortValuesNeverShown: a value in flight is redacted whatever its
+// length, when a server echoes it in an error or in a successful answer's
+// version id (of the server's shape or not).
+func TestShortValuesNeverShown(t *testing.T) {
+	for _, value := range []string{"x", "ab", "q7z", "s3c4", "w2x3y", "zzqqxx", "abcdefg"} {
+		for name, answer := range map[string]struct {
+			status int
+			body   string
+		}{
+			"error echo":          {400, `{"error": {"code": "VALIDATION_FAILED", "message": "bad value {{value}}!"}}`},
+			"version id":          {200, `{"versionId": "{{value}}"}`},
+			"version id of shape": {200, `{"versionId": "ver_{{value}}` + strings.Repeat("a", 26-len(value)) + `"}`},
+		} {
+			for _, form := range []struct {
+				args  []string
+				stdin string
+				path  string
+			}{
+				{[]string{"values", "set", "API_KEY", value}, "", "PUT " + envPath + "/values/API_KEY"},
+				{[]string{"values", "set", "API_KEY", "--stdin"}, value + "\n", "PUT " + envPath + "/values/API_KEY"},
+				{[]string{"values", "rotate", "API_KEY", "--stdin"}, value + "\n", "POST " + envPath + "/values/API_KEY/rotations"},
+			} {
+				t.Run(value+"/"+name+"/"+strings.Join(form.args[:2], " ")+"/"+form.args[len(form.args)-1], func(t *testing.T) {
+					s := newValuesServer(t)
+					a := answer
+					if strings.Contains(form.path, "rotations") {
+						a.body = strings.ReplaceAll(a.body, `"versionId"`, `"primaryVersionId"`)
+					}
+					s.answers[form.path] = a
+					_, stdout, stderr := runIn(t, s, form.stdin, nil, nil, form.args...)
+					noneShown(t, stdout, stderr, value)
+				})
+			}
+		}
+	}
+	// Import's Secrets, short ones included; a plain value of the Contract is not one.
+	s := newValuesServer(t)
+	s.answer("GET", "/v1/organizations/acme/projects/web/contract", 200, `{"contract": {"schemaVersion": 1, "items": [{"name": "PORT", "required": {"kind": "never"}, "sensitive": false, "type": "integer"}]}}`)
+	s.answer("PUT", envPath+"/values/B", 500, `{"error": {"code": "INTERNAL", "message": "x {{value}} y"}}`)
+	_, stdout, stderr := runIn(t, s, "", map[string]string{".env": "A=q7\nB=zk\nPORT=8080\n"}, nil, "import", ".env")
+	noneShown(t, stdout, stderr, "q7", "zk")
+}
+
+// TestServerFieldsNeverPassThrough: validate and import show only the
+// fields the protocol documents, an enumeration's value only when it is
+// one, and a server's identifiers only of their shape: an extra field
+// holding a value, or a secret where a requirement, a type, an id or a
+// hash goes, never reaches stdout or stderr, as --json, human text or a
+// dry run.
+func TestServerFieldsNeverPassThrough(t *testing.T) {
+	report := `{"environmentId": "env_1", "valid": false, "complete": false, "value": "` + canary + `",
+		"missing": ["DATABASE_URL"],
+		"invalid": [{"name": "PORT", "reason": "expected an integer", "value": "` + canary + `"}],
+		"unresolved": [{"name": "U", "reason": "` + canary + `", "value": "` + canary + `"}],
+		"notEvaluated": [{"name": "K", "requires": "` + canary + `", "reason": "` + canary + `", "value": "` + canary + `"}]}`
+	for _, args := range [][]string{{"validate"}, {"validate", "--json"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			s := newValuesServer(t)
+			s.answer("POST", envPath+"/validate", 200, report)
+			code, stdout, stderr := runIn(t, s, "", nil, nil, args...)
+			noneShown(t, stdout, stderr, canary)
+			if code != 1 {
+				t.Errorf("status %d, want 1", code)
+			}
+			if !strings.Contains(stdout+stderr, UnrecognizedRequirement) {
+				t.Errorf("the requirement was not shown as unrecognized: %q %q", stdout, stderr)
+			}
+		})
+	}
+	contract := `{"id": "` + canary + `", "contract": {"schemaVersion": 1, "value": "` + canary + `", "items": [
+		{"name": "API_KEY", "required": {"kind": "never"}, "sensitive": "` + canary + `", "type": "` + canary + `", "value": "` + canary + `"},
+		{"name": "PORT", "required": {"kind": "never"}, "sensitive": false, "type": "integer"}]}}`
+	for _, args := range [][]string{
+		{"import", ".env", "--dry-run"}, {"import", ".env", "--dry-run", "--json"},
+		{"import", ".env"}, {"import", ".env", "--json"}, {"import", ".env", "--contract", "--json"}, {"import", ".env", "--contract"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			s := newValuesServer(t)
+			s.answer("GET", "/v1/organizations/acme/projects/web/contract", 200, contract)
+			s.answer("GET", envPath+"/effective-configuration", 200, `{"items": [{"name": "PORT", "sensitive": false, "source": "self", "value": "8080", "extra": "`+canary+`"}]}`)
+			s.answer("POST", "/v1/organizations/acme/projects/web/contract/revisions", 201, `{"id": "`+canary+`", "contentHash": "`+canary+`", "active": "`+canary+`"}`)
+			_, stdout, stderr := runIn(t, s, "", map[string]string{".env": "API_KEY=s3cr3t-key\nPORT=9090\nNEW=n3w-value\n"}, nil, args...)
+			noneShown(t, stdout, stderr, canary)
+			if !strings.Contains(stdout, UnrecognizedType) {
+				t.Errorf("the type was not shown as unrecognized: %q", stdout)
 			}
 		})
 	}

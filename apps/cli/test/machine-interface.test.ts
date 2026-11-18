@@ -13,6 +13,9 @@ import { EXIT } from "../src/exitCodes.js";
 import { commandHelp } from "../src/usage.js";
 import { cliCommand, goLacksCommand } from "./cliUnderTest.js";
 
+/** A new revision's id, of the server's shape (a prefix and 26 characters of lower-case base32). */
+const NEW_REVISION = `rev_${"new".padEnd(26, "a")}`;
+
 /**
  * The CLI's machine interface (ADR-0043 Decision 10) end to end: help on
  * stdout with status 0, sysexits statuses for usage (64), an unreachable
@@ -141,7 +144,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (url === `${ENV("development")}/disclosures`) return json(200, { items: [{ name: "API_TOKEN", versionId: "v", value: "json-canary-value-81" }], withheld: [] });
     const active = revision([contractItem("API_TOKEN", { sensitive: true })], { id: "crv_active" });
     if (url === `${PROJECT}/contract` && req.method === "GET") return json(200, active);
-    if (url === `${PROJECT}/contract/revisions` && req.method === "POST") return json(201, { ...active, id: "crv_new", active: false });
+    if (url === `${PROJECT}/contract/revisions` && req.method === "POST") return json(201, { ...active, id: NEW_REVISION, active: false });
     if (/\/values\/[A-Z_]+$/.test(url) && req.method === "PUT") return json(200, { versionId: "ver_1" });
     error(404, "NOT_FOUND");
   });
@@ -422,7 +425,7 @@ describe("--json documents", () => {
   it.skipIf(goLacksCommand("contract"))("contract push: the new revision", async () => {
     expect(await doc(["contract", "push", "--file", join(repo, "contract.json")])).toMatchObject({
       version: 1,
-      revision: { id: "crv_new", active: false, semanticsVersion: 2 },
+      revision: { id: NEW_REVISION, active: false, semanticsVersion: 2 },
     });
   });
 
@@ -448,7 +451,7 @@ describe("--json documents", () => {
     expect(done.code).toBe(0);
     expect(JSON.parse(done.stdout)).toMatchObject({
       dryRun: false,
-      contract: { newItems: ["PORT"], revision: { id: "crv_new", active: false } },
+      contract: { newItems: ["PORT"], revision: { id: NEW_REVISION, active: false } },
       stored: ["API_TOKEN", "PORT"],
       deleted: false,
     });

@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"regexp"
 	"slices"
@@ -102,7 +104,7 @@ func importCommand(r *Run) error {
 		first, _, _ := strings.Cut(message, ". ")
 		target.offline = clientctx.MaskUserinfoInText(first)
 	} else {
-		server, err := contextServer(ctx.Server)
+		server, err := serverString(ctx.Server)
 		if err != nil {
 			return err
 		}
@@ -143,7 +145,18 @@ type importRow struct {
 	existing any
 }
 
-var importBoolean = regexp.MustCompile(`^(?i:true|false)$`)
+// isBooleanWord is /^(true|false)$/i as JavaScript reads it without the u
+// flag: ASCII letters fold, nothing else does ("falſe" is not "false";
+// Go's (?i) would fold the long s).
+func isBooleanWord(value string) bool {
+	lower := strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, value)
+	return lower == "true" || lower == "false"
+}
 
 var typeOrder = []string{"integer", "number", "url", "email"}
 
@@ -155,7 +168,7 @@ func InferType(value string, semanticsVersion any) (string, error) {
 		return "string", nil
 	}
 	// `true` and `false` only: a boolean item also accepts 1 and 0, but a count of 1 is far more often a number.
-	if importBoolean.MatchString(value) {
+	if isBooleanWord(value) {
 		return "boolean", nil
 	}
 	version, err := semanticsOf(semanticsVersion)
@@ -236,25 +249,75 @@ func decodeStrict(b []byte, file string) (string, error) {
 	return "", importFail(file+" line "+strconv.Itoa(line)+": not valid UTF-8 text. Nothing was imported.", ExitFailure)
 }
 
-// readSource is importCommand.ts's readSource: the file's bytes (the
-// snapshot later steps compare with) and its entries. Value-free errors.
-func readSource(file string) ([]byte, []dotenv.Entry, error) {
-	if _, err := os.Stat(file); err != nil {
-		return nil, nil, importFail("No such file: "+file, ExitFailure)
+// source is the file import reads: its bytes (the snapshot later steps
+// compare with) and, for --delete-source, the file still open and what it
+// is, so only that file is ever removed.
+type source struct {
+	bytes []byte
+	open  *os.File
+	info  os.FileInfo
+}
+
+func (s *source) close() {
+	if s != nil && s.open != nil {
+		_ = s.open.Close()
 	}
-	b, err := os.ReadFile(file)
-	if err != nil {
-		return nil, nil, err
+}
+
+// readSource is importCommand.ts's readSource: the file's bytes and its
+// entries; value-free errors. With --delete-source the source must be a
+// regular file named directly: not a symbolic link (deleting the link
+// would leave the values in the file it points to) and not a directory, a
+// device or a pipe. It is opened without following a link, read from what
+// was opened, and kept open until it is deleted.
+func readSource(file string, deleteSource bool) (*source, []dotenv.Entry, error) {
+	src := &source{}
+	if deleteSource {
+		info, err := os.Lstat(file)
+		if err != nil {
+			return nil, nil, importFail("No such file: "+file, ExitFailure)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, nil, importFail(file+" is a symbolic link, so --delete-source does not import from it: deleting the link would leave the values in the file it points to. Nothing was imported.", ExitFailure)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, nil, importFail(file+" is not a regular file, so --delete-source does not import from it. Nothing was imported.", ExitFailure)
+		}
+		f, err := openNoFollow(file)
+		if err != nil {
+			return nil, nil, importFail(file+" changed while it was opened, so --delete-source does not import from it. Nothing was imported.", ExitFailure)
+		}
+		opened, err := f.Stat()
+		if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+			_ = f.Close()
+			return nil, nil, importFail(file+" changed while it was opened, so --delete-source does not import from it. Nothing was imported.", ExitFailure)
+		}
+		if src.bytes, err = io.ReadAll(f); err != nil {
+			_ = f.Close()
+			return nil, nil, err
+		}
+		src.open, src.info = f, opened
+	} else {
+		if _, err := os.Stat(file); err != nil {
+			return nil, nil, importFail("No such file: "+file, ExitFailure)
+		}
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return nil, nil, err
+		}
+		src.bytes = b
 	}
-	text, err := decodeStrict(b, file)
+	text, err := decodeStrict(src.bytes, file)
 	if err != nil {
+		src.close()
 		return nil, nil, err
 	}
 	entries, err := dotenv.Parse(text)
 	if err != nil {
+		src.close()
 		return nil, nil, importFail(file+" "+err.Error()+". Nothing was imported.", ExitFailure)
 	}
-	return b, entries, nil
+	return src, entries, nil
 }
 
 // presentValue is what an environment already has under a name: a plain
@@ -329,6 +392,35 @@ func activeContract(api *lazyClient, ctx *clientctx.Context) (c any, forbidden b
 	return found, false, nil
 }
 
+// UnrecognizedType and UnrecognizedHash are said in place of a Contract
+// item's type, or a revision's content hash, that is not one the protocol
+// defines.
+const (
+	UnrecognizedType = "an unrecognized type"
+	UnrecognizedHash = "an unrecognized hash"
+)
+
+// contentHash is a Contract revision's content hash (lib/contract).
+var contentHash = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// itemType is a Contract item's type as import shows it: one of
+// contract.ItemTypes, else UnrecognizedType.
+func itemType(t any) any {
+	if s, ok := t.(string); ok && slices.Contains(contract.ItemTypes, s) {
+		return s
+	}
+	return UnrecognizedType
+}
+
+// idOrUnrecognized is an identifier from an answer as a template literal
+// shows it, when it has the server's shape; UnrecognizedID otherwise.
+func idOrUnrecognized(v any, present bool, prefix string) string {
+	if s, ok := v.(string); ok && present && serverID(prefix).MatchString(s) {
+		return s
+	}
+	return UnrecognizedID
+}
+
 // typeText is a row's type as a template literal shows it.
 func typeText(t any) string { return jsjson.String(t) }
 
@@ -384,10 +476,6 @@ type storeFailure struct {
 // order, stopping at the first failure.
 func (r *Run) storeValues(api *apiclient.Client, ctx *clientctx.Context, entries []dotenv.Entry) ([]string, *storeFailure) {
 	stored := []string{}
-	// A server echoing a value back in an error message gets it masked (issue #119).
-	for _, e := range entries {
-		r.Secrets.Remember(e.Value)
-	}
 	for index, e := range entries {
 		if _, err := api.SetValue(context.Background(), ctx.Organization, ctx.Project, environmentOf(ctx), e.Name, e.Value); err != nil {
 			var a *apiclient.APIError
@@ -418,16 +506,32 @@ func (r *Run) storeValues(api *apiclient.Client, ctx *clientctx.Context, entries
 	return stored, nil
 }
 
-// finishSource is importCommand.ts's finishSource: the file deleted only
-// if its bytes still match the snapshot taken when it was read; false when
-// it changed or disappeared. Never writes a value.
-func finishSource(file string, snapshot []byte) (bool, error) {
-	current, err := os.ReadFile(file)
-	if err != nil || sha256.Sum256(current) != sha256.Sum256(snapshot) {
+// finishSource is importCommand.ts's finishSource, for the file
+// readSource opened: deleted only if what was opened still holds the bytes
+// read, and the path still names that same regular file (a fresh Lstat
+// compared with the open file), so a file put in its place is never
+// removed, nor a directory. True only when the path that held the values
+// is gone afterwards. Never writes a value.
+func finishSource(file string, src *source) (bool, error) {
+	if src == nil || src.open == nil {
+		return false, nil
+	}
+	current, err := io.ReadAll(io.NewSectionReader(src.open, 0, 1<<62))
+	if err != nil || sha256.Sum256(current) != sha256.Sum256(src.bytes) {
+		return false, nil
+	}
+	now, err := os.Lstat(file)
+	if err != nil || !now.Mode().IsRegular() || !os.SameFile(src.info, now) {
 		return false, nil
 	}
 	if err := os.Remove(file); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
 		return false, err
+	}
+	if _, err := os.Lstat(file); !errors.Is(err, fs.ErrNotExist) {
+		return false, nil
 	}
 	return true, nil
 }
@@ -466,10 +570,11 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 	if len(opts.plain) > 0 && !opts.contract {
 		return 0, importFail("--plain applies only with --contract: an item's sensitivity lives in the Contract", ExitUsage)
 	}
-	snapshot, entries, err := readSource(opts.file)
+	src, entries, err := readSource(opts.file, opts.deleteSource)
 	if err != nil {
 		return 0, err
 	}
+	defer src.close()
 	problems := checkEntries(entries)
 	names := map[string]bool{}
 	for _, e := range entries {
@@ -581,7 +686,8 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 		case !online:
 			row.sensitive = nil
 		case isContracted:
-			row.sensitive, _ = jsval.Get(item, "sensitive")
+			v, _ := jsval.Get(item, "sensitive")
+			row.sensitive = jsjson.Truthy(v) // a boolean, whatever the Contract's answer holds
 		case opts.contract:
 			row.sensitive = !slices.Contains(plain, e.Name)
 		default:
@@ -592,7 +698,7 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 			row.existing = ok && (jsjson.Truthy(there.sensitive) || there.value == nil || there.value != any(e.Value))
 		}
 		if t, ok := jsval.Get(item, "type"); isContracted && ok && t != nil {
-			row.typ = t
+			row.typ = itemType(t)
 		} else {
 			inferred, err := InferType(e.Value, semanticsVersion)
 			if err != nil {
@@ -601,6 +707,13 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 			row.typ = inferred
 		}
 		rows[i] = row
+	}
+	// The Secrets, and the values of unknown sensitivity, are in flight from
+	// here on: no output or diagnostic shows one, whatever its length.
+	for _, row := range rows {
+		if row.sensitive != false {
+			r.holdValue(row.entry.Value)
+		}
 	}
 	where := ""
 	if online {
@@ -773,26 +886,26 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		hash, hashOK, _ := read(revision, true, "contentHash")
+		hash, _, _ := read(revision, true, "contentHash")
 		isActive, activeOK, _ := read(revision, true, "active")
-		p := jsjson.Object{}
-		if idOK {
-			p = append(p, jsjson.Member{Key: "id", Value: id})
+		// The server's identifiers and hash only when they have its shapes.
+		shownRev := idOrUnrecognized(id, idOK, "rev")
+		shownHash := UnrecognizedHash
+		if h, ok := hash.(string); ok && contentHash.MatchString(h) {
+			shownHash = h
 		}
-		if hashOK {
-			p = append(p, jsjson.Member{Key: "contentHash", Value: hash})
-		}
+		p := jsjson.Object{{Key: "id", Value: shownRev}, {Key: "contentHash", Value: shownHash}}
 		if activeOK {
-			p = append(p, jsjson.Member{Key: "active", Value: isActive})
+			p = append(p, jsjson.Member{Key: "active", Value: jsjson.Truthy(isActive)})
 		}
 		pushed = p
 		mark := ""
 		if jsjson.Truthy(isActive) {
 			mark = " [active]"
 		}
-		out("Contract revision " + Printable(jsTemplate(id, idOK)) + " (" + Printable(jsTemplate(hash, hashOK)) + ")" + mark)
+		out("Contract revision " + shownRev + " (" + shownHash + ")" + mark)
 		if !jsjson.Truthy(isActive) {
-			out("Activate with: varlatch contract activate " + Printable(jsTemplate(id, idOK)))
+			out("Activate with: varlatch contract activate " + shownRev)
 		}
 	}
 
@@ -852,7 +965,7 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 		storedDoc[i] = n
 	}
 	if opts.deleteSource {
-		finished, err := finishSource(opts.file, snapshot)
+		finished, err := finishSource(opts.file, src)
 		if err != nil {
 			return 0, err
 		}

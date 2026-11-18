@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -51,7 +50,7 @@ func (l *lazyClient) get() (*apiclient.Client, error) {
 	if l.api != nil {
 		return l.api, nil
 	}
-	server, err := contextServer(l.server)
+	server, err := serverString(l.server)
 	if err != nil {
 		return nil, err
 	}
@@ -61,16 +60,6 @@ func (l *lazyClient) get() (*apiclient.Client, error) {
 	}
 	l.api = api
 	return api, nil
-}
-
-// contextServer is a resolved server as connectClient reads it: a string.
-// .varlatch/local.json's serverOverride can hold any JSON, and TypeScript's
-// `server.replace(...)` throws a TypeError for anything else.
-func contextServer(server any) (string, error) {
-	if s, ok := server.(string); ok {
-		return s, nil
-	}
-	return "", &clientctx.TypeError{Message: "server.replace is not a function"}
 }
 
 // environmentOf is `${ctx.environment}`.
@@ -127,16 +116,12 @@ func valuesCommand(r *Run) error {
 	return UsageError("Usage: varlatch values <set|list|delete|rotate|rotate-complete>")
 }
 
-// optionLike is an argument a person types as an option: a long option of
-// lower-case words, or one letter after a dash. Anything else that begins
-// with "-" may be a value given where an option goes.
-var optionLike = regexp.MustCompile(`^(--[a-z]+(-[a-z]+)*|-[A-Za-z])$`)
-
 // valueFreeOptions is strictOptions for a command whose arguments may hold
-// a Secret: an argument it refuses is named only when it looks like an
-// option. TypeScript echoes it (a value given unquoted, `values set KEY
-// two words`, or a value beginning with "-" before `--`); the Go CLI does
-// not (go/README.md, "No message holds a value").
+// a Secret (values set, values rotate): an argument the parser refuses is
+// never repeated, whatever its spelling, since it may be the value or part
+// of it; the message names its place among the command's arguments. The
+// status is 64, as for any wrong command line (go/README.md, "No message
+// holds a value").
 func valueFreeOptions(command string, args []string, spec OptionSpec, usage string) (*ParsedOptions, error) {
 	parsed, err := ParseOptions(args, spec)
 	if err == nil {
@@ -147,30 +132,13 @@ func valueFreeOptions(command string, args []string, spec OptionSpec, usage stri
 		return nil, err
 	}
 	message := o.Message
-	switch {
-	case o.Rejected == "unexpected":
-		message = "one argument too many, not shown since it may be part of a value (a value with spaces goes in quotes)"
-	case o.Rejected == "unknown" && !optionLike.MatchString(o.Argument) && !ownOptionWithValue(o.Argument, spec):
-		message = `an unknown option, not shown since it may be a value (a value that begins with "-" goes after --)`
+	switch o.Rejected {
+	case "unexpected":
+		message = "unexpected argument " + strconv.Itoa(o.Index) + ", not shown since it may be part of a value (a value with spaces goes in quotes)"
+	case "unknown":
+		message = "unknown option at argument " + strconv.Itoa(o.Index) + `, not shown since it may be a value (a value that begins with "-" goes after --)`
 	}
 	return nil, UsageErrorWithUsage("varlatch "+command+": "+message, "\n"+usage)
-}
-
-// ownOptionWithValue is `--name=value` for one of the command's own
-// options (--environment=production): an option written the way the
-// parser does not read, whose value is never a Secret (an environment, a
-// server, a path, a generator, an item's name).
-func ownOptionWithValue(arg string, spec OptionSpec) bool {
-	name, _, ok := strings.Cut(arg, "=")
-	if !ok {
-		return false
-	}
-	for _, list := range [][]string{spec.Values, spec.Lists, spec.Booleans} {
-		if slices.Contains(list, name) {
-			return true
-		}
-	}
-	return slices.ContainsFunc(spec.Aliases, func(a Alias) bool { return a.From == name })
 }
 
 var wholeSeconds = regexp.MustCompile(`^[0-9]+$`)
@@ -201,7 +169,8 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 	item := parsed.Positionals[1]
 	grace, hasGrace := parsed.Value("--grace")
 	if hasGrace && !wholeSeconds.MatchString(grace) {
-		return UsageError("varlatch values rotate: --grace needs a whole number of seconds, not " + grace + "\n" + usage)
+		// The value is not repeated: a refused argument may be a Secret.
+		return UsageError("varlatch values rotate: --grace needs a whole number of seconds\n" + usage)
 	}
 	// --replace names the one item this command replaces: approval for one item never covers another.
 	replace, hasReplace := parsed.Value("--replace")
@@ -217,8 +186,8 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 	if len(parsed.Positionals) > 2 {
 		// Node reads the command line as UTF-8, each ill-formed sequence as U+FFFD.
 		options.Value, options.HasValue = jsval.DecodeUTF8([]byte(parsed.Positionals[2])), true
-		// A server echoing the value back in an error message gets it masked (issue #119).
-		r.Secrets.Remember(options.Value)
+		// No output or diagnostic shows it from here on, whatever its length.
+		r.holdValue(options.Value)
 	}
 	options.File, options.HasFile = parsed.Value("--from-file")
 	options.Generate, options.HasGen = parsed.Value("--generate")
@@ -291,8 +260,9 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 	if !secretinput.IsWellFormed(value) {
 		return Fail("varlatch: the value is not well-formed Unicode text; nothing was stored.", ExitFailure)
 	}
-	// A server echoing the value back in an error message gets it masked (issue #119).
-	r.Secrets.Remember(value)
+	// No output or diagnostic shows the value, a server's echo of it
+	// included, whatever its length (issue #119).
+	r.holdValue(value)
 	how := ""
 	if generated != nil {
 		how = " to a generated value (" + secretinput.DescribeGenerated(*generated) + "; not shown)"
@@ -310,7 +280,7 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 		if err != nil {
 			return err
 		}
-		shown, err := printableValue(id, ok)
+		shown, err := shownID(id, ok, "ver")
 		if err != nil {
 			return err
 		}
@@ -329,7 +299,7 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 	if err != nil {
 		return err
 	}
-	shown, err := printableValue(primary, pOK)
+	shown, err := shownID(primary, pOK, "ver")
 	if err != nil {
 		return err
 	}
@@ -344,12 +314,21 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 	return nil
 }
 
-// printableValue is printable(value) for a value read from an answer:
-// printable() takes a string, and TypeScript throws a TypeError for
-// anything else.
-func printableValue(v any, present bool) (string, error) {
+// UnrecognizedID is said in place of a server's identifier that does not
+// have the server's shape.
+const UnrecognizedID = "an unrecognized id"
+
+// shownID is printable(value) for an identifier read from an answer: one of
+// the server's own (`<prefix>_` and 26 characters of lower-case base32) as
+// it is, any other text as UnrecognizedID, so a server never puts a value
+// (or anything else) where the CLI shows an id. printable() takes a
+// string, and TypeScript throws a TypeError for anything else, as here.
+func shownID(v any, present bool, prefix string) (string, error) {
 	if s, ok := v.(string); ok {
-		return Printable(s), nil
+		if serverID(prefix).MatchString(s) {
+			return s, nil
+		}
+		return UnrecognizedID, nil
 	}
 	if !present || v == nil {
 		return "", typeErrorRead(v, present, "replace")
@@ -357,10 +336,16 @@ func printableValue(v any, present bool) (string, error) {
 	return "", &clientctx.TypeError{Message: "text.replace is not a function"}
 }
 
-// eprintln writes one line on stderr, as console.error does.
-func (r *Run) eprintln(text string) {
-	_, _ = r.Stderr.Write([]byte(jsval.NodeText(text) + "\n"))
+// serverID is the shape of the server's identifiers of a kind
+// (services/varlatchd/src/db/ids.ts: a prefix and 128 random bits in
+// lower-case base32).
+func serverID(prefix string) *regexp.Regexp {
+	return regexp.MustCompile(`^` + prefix + `_[a-z2-7]{26}$`)
 }
+
+// eprintln writes one line on stderr, as console.error does, through the
+// fail-safe (Run.warn).
+func (r *Run) eprintln(text string) { _ = r.warn(text) }
 
 // secretInputFailure is a SecretInputError as main.ts fails with it: 64
 // for a wrong command line, 1 for the input it names.
@@ -470,7 +455,7 @@ func (r *Run) promptHidden(question string) (string, error) {
 	if !ok {
 		return "", &secretinput.Error{Message: "no value entered; nothing was stored"}
 	}
-	return secretinput.PromptHidden(f, r.Stderr, question)
+	return secretinput.PromptHidden(f, func(text string) { _ = r.ask(text) }, question)
 }
 
 // valuePresence is main.ts's valuePresence: whether the environment
@@ -762,7 +747,7 @@ func (r *Run) valuesList(ctx *clientctx.Context, api *lazyClient) error {
 // project's environments; nothing when it cannot be found (the note then
 // names no environment and offers no command).
 func (r *Run) parentEnvironment(c *apiclient.Client, ctx *clientctx.Context) (any, bool) {
-	answer, err := c.ListProjectEnvironments(context.Background(), ctx.Organization, ctx.Project)
+	answer, err := c.ListEnvironments(context.Background(), ctx.Organization, ctx.Project)
 	if err != nil {
 		return nil, false
 	}

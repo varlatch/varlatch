@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"slices"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -75,9 +76,121 @@ func prop(item any, key string) (string, error) {
 	return jsTemplate(v, ok), nil
 }
 
+// The words said in place of a report's field that is not one the protocol
+// defines.
+const (
+	UnrecognizedReason      = "an unrecognized reason"
+	UnrecognizedRequirement = "an unrecognized requirement"
+)
+
+var (
+	notEvaluatedReasons = []string{"permission", "requirement"}
+	unresolvedReasons   = []string{"authority", "reference"}
+	requirements        = []string{"config.metadata.read", "config.value.read", "secret.reveal"}
+)
+
+// ProjectReport is the validation report as the CLI reads and shows it:
+// the documented fields only (ValidationReport in
+// packages/protocol/openapi.yaml), a field of an enumeration in it when
+// the protocol defines it and a placeholder otherwise, so a server never
+// puts anything else (an extra field, a value) into what validate prints,
+// in --json or not. Names and an invalid item's reason (free text, which
+// the protocol says never holds the value) are kept, as text. A report
+// that is not an object, or a list that cannot be read, stays as it is,
+// for the TypeError TypeScript throws.
+func ProjectReport(report any) (any, error) {
+	if _, ok := report.(jsjson.Object); !ok {
+		return report, nil
+	}
+	out := jsjson.Object{}
+	for _, key := range []string{"valid", "complete"} {
+		if v, ok := jsval.Get(report, key); ok {
+			if v != nil {
+				v = jsjson.Truthy(v)
+			}
+			out = append(out, jsjson.Member{Key: key, Value: v})
+		}
+	}
+	text := func(v any) any {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return jsjson.String(v)
+	}
+	enum := func(v any, allowed []string, placeholder string) any {
+		if s, ok := v.(string); ok && slices.Contains(allowed, s) {
+			return s
+		}
+		return placeholder
+	}
+	project := func(key string, fields func(item any) jsjson.Object) {
+		v, ok := jsval.Get(report, key)
+		if !ok {
+			return
+		}
+		list, isList := v.([]any)
+		if !isList {
+			if s, isString := v.(string); isString {
+				chars, _ := iterate(s, key)
+				list = chars
+			} else {
+				out = append(out, jsjson.Member{Key: key, Value: v})
+				return
+			}
+		}
+		items := make([]any, len(list))
+		for i, item := range list {
+			if fields == nil || item == nil {
+				items[i] = item
+				if fields == nil && item != nil {
+					items[i] = text(item)
+				}
+				continue
+			}
+			items[i] = fields(item)
+		}
+		out = append(out, jsjson.Member{Key: key, Value: items})
+	}
+	// fields keeps an item's documented members, in the item's own order,
+	// each as shown gives it; an item that is not an object has none.
+	fields := func(shown map[string]func(any) any) func(item any) jsjson.Object {
+		return func(item any) jsjson.Object {
+			o, ok := item.(jsjson.Object)
+			if !ok {
+				return jsjson.Object{}
+			}
+			kept := jsjson.Object{}
+			for _, m := range o {
+				if f, known := shown[m.Key]; known {
+					kept = append(kept, jsjson.Member{Key: m.Key, Value: f(m.Value)})
+				}
+			}
+			return kept
+		}
+	}
+	reason := func(allowed []string) func(any) any {
+		return func(v any) any { return enum(v, allowed, UnrecognizedReason) }
+	}
+	project("missing", nil)
+	project("invalid", fields(map[string]func(any) any{"name": text, "reason": text}))
+	project("unresolved", fields(map[string]func(any) any{"name": text, "reason": reason(unresolvedReasons)}))
+	project("notEvaluated", fields(map[string]func(any) any{
+		"name": text, "reason": reason(notEvaluatedReasons),
+		"requires": func(v any) any { return enum(v, requirements, UnrecognizedRequirement) },
+	}))
+	if out == nil {
+		out = jsjson.Object{}
+	}
+	return out, nil
+}
+
 // ValidationOutcomeOf is validation.ts's validationOutcome for a report
-// the server sent.
+// the server sent, as ProjectReport shows it.
 func ValidationOutcomeOf(environment string, report any) (ValidationOutcome, error) {
+	report, err := ProjectReport(report)
+	if err != nil {
+		return ValidationOutcome{}, err
+	}
 	notEvaluated, err := listOr(report, "notEvaluated")
 	if err != nil {
 		return ValidationOutcome{}, err
@@ -179,6 +292,10 @@ func ValidationOutcomeOf(environment string, report any) (ValidationOutcome, err
 // names and reasons, never a value, with the result and the exit status
 // the human form would give.
 func ValidationDocument(environment any, report any, exitCode int) (jsjson.Object, error) {
+	report, err := ProjectReport(report)
+	if err != nil {
+		return nil, err
+	}
 	result := "incomplete"
 	switch exitCode {
 	case validateValid:

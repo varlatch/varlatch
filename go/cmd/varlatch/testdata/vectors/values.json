@@ -15527,7 +15527,7 @@
           {
             "name": "API_KEY",
             "requires": "secret.reveal",
-            "reason": "access"
+            "reason": "permission"
           }
         ]
       },
@@ -15550,7 +15550,7 @@
           {
             "name": "API_KEY",
             "requires": "secret.reveal",
-            "reason": "access"
+            "reason": "permission"
           }
         ],
         "exitCode": 2
@@ -15675,7 +15675,7 @@
           {
             "name": "S",
             "requires": "secret.reveal",
-            "reason": "access"
+            "reason": "permission"
           }
         ]
       },
@@ -15701,7 +15701,7 @@
           {
             "name": "S",
             "requires": "secret.reveal",
-            "reason": "access"
+            "reason": "permission"
           }
         ],
         "exitCode": 1
@@ -15719,26 +15719,16 @@
           {
             "name": "A",
             "requires": "config.metadata.read",
-            "reason": "access"
+            "reason": "permission"
           },
           {
             "name": "B",
             "requires": "config.value.read",
-            "reason": "access"
+            "reason": "permission"
           },
           {
             "name": "C",
             "requires": "secret.reveal",
-            "reason": "requirement"
-          },
-          {
-            "name": "D",
-            "requires": "made.up",
-            "reason": "access"
-          },
-          {
-            "name": "E",
-            "requires": "made.up",
             "reason": "requirement"
           }
         ]
@@ -15749,9 +15739,7 @@
           "production: INCOMPLETE: not every item could be evaluated with this identity's access",
           "  not evaluated: A (needs config.metadata.read)",
           "  not evaluated: B (needs config.value.read)",
-          "  not evaluated: C (needs secret.reveal; a Requirement (e.g. Tailnet Constraint) is not met)",
-          "  not evaluated: D (made.up)",
-          "  not evaluated: E (made.up; a Requirement (e.g. Tailnet Constraint) is not met)"
+          "  not evaluated: C (needs secret.reveal; a Requirement (e.g. Tailnet Constraint) is not met)"
         ],
         "exitCode": 2
       },
@@ -15766,26 +15754,16 @@
           {
             "name": "A",
             "requires": "config.metadata.read",
-            "reason": "access"
+            "reason": "permission"
           },
           {
             "name": "B",
             "requires": "config.value.read",
-            "reason": "access"
+            "reason": "permission"
           },
           {
             "name": "C",
             "requires": "secret.reveal",
-            "reason": "requirement"
-          },
-          {
-            "name": "D",
-            "requires": "made.up",
-            "reason": "access"
-          },
-          {
-            "name": "E",
-            "requires": "made.up",
             "reason": "requirement"
           }
         ],
@@ -15956,62 +15934,6 @@
         "unresolved": [],
         "notEvaluated": [],
         "exitCode": 1
-      }
-    },
-    {
-      "environment": "production",
-      "report": {
-        "valid": false,
-        "missing": [
-          "A"
-        ],
-        "invalid": [],
-        "unresolved": [],
-        "complete": 0
-      },
-      "outcome": {
-        "stdout": [],
-        "stderr": [
-          "production: INVALID (some items not evaluated)",
-          "  missing: A"
-        ],
-        "exitCode": 1
-      },
-      "document": {
-        "environment": "production",
-        "result": "invalid",
-        "complete": 0,
-        "missing": [
-          "A"
-        ],
-        "invalid": [],
-        "unresolved": [],
-        "notEvaluated": [],
-        "exitCode": 1
-      }
-    },
-    {
-      "environment": "production",
-      "report": {
-        "valid": 1,
-        "complete": "yes"
-      },
-      "outcome": {
-        "stdout": [
-          "production: valid"
-        ],
-        "stderr": [],
-        "exitCode": 0
-      },
-      "document": {
-        "environment": "production",
-        "result": "valid",
-        "complete": "yes",
-        "missing": [],
-        "invalid": [],
-        "unresolved": [],
-        "notEvaluated": [],
-        "exitCode": 0
       }
     },
     {
@@ -16195,6 +16117,26 @@
       "type": "string"
     },
     {
+      "value": "falſe",
+      "semanticsVersion": 1,
+      "type": "string"
+    },
+    {
+      "value": "Krue",
+      "semanticsVersion": 1,
+      "type": "string"
+    },
+    {
+      "value": "TRUE",
+      "semanticsVersion": 1,
+      "type": "boolean"
+    },
+    {
+      "value": "tRuE",
+      "semanticsVersion": 1,
+      "type": "boolean"
+    },
+    {
       "value": "١٢٣",
       "semanticsVersion": 1,
       "type": "string"
@@ -16340,6 +16282,26 @@
       "type": "string"
     },
     {
+      "value": "falſe",
+      "semanticsVersion": 2,
+      "type": "string"
+    },
+    {
+      "value": "Krue",
+      "semanticsVersion": 2,
+      "type": "string"
+    },
+    {
+      "value": "TRUE",
+      "semanticsVersion": 2,
+      "type": "boolean"
+    },
+    {
+      "value": "tRuE",
+      "semanticsVersion": 2,
+      "type": "boolean"
+    },
+    {
       "value": "١٢٣",
       "semanticsVersion": 2,
       "type": "string"
@@ -16483,6 +16445,26 @@
       "value": "0x10",
       "semanticsVersion": 3,
       "type": "string"
+    },
+    {
+      "value": "falſe",
+      "semanticsVersion": 3,
+      "type": "string"
+    },
+    {
+      "value": "Krue",
+      "semanticsVersion": 3,
+      "type": "string"
+    },
+    {
+      "value": "TRUE",
+      "semanticsVersion": 3,
+      "type": "boolean"
+    },
+    {
+      "value": "tRuE",
+      "semanticsVersion": 3,
+      "type": "boolean"
     },
     {
       "value": "١٢٣",

@@ -23,7 +23,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
           "status": 200,
           "answer": {
-            "versionId": "ver_PORT"
+            "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -32,7 +32,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "PORT set (version ver_PORT).\n",
+        "stdout": "PORT set (version ver_portaaaaaaaaaaaaaaaaaaaaaa).\n",
         "stderr": "",
         "requests": [
           {
@@ -94,7 +94,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
           "status": 200,
           "answer": {
-            "versionId": "ver_PORT"
+            "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -103,7 +103,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "PORT set (version ver_PORT).\n",
+        "stdout": "PORT set (version ver_portaaaaaaaaaaaaaaaaaaaaaa).\n",
         "stderr": "",
         "requests": [
           {
@@ -168,7 +168,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/prod/values/PORT",
           "status": 200,
           "answer": {
-            "versionId": "ver_p"
+            "versionId": "ver_prodaaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -177,7 +177,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "PORT set (version ver_p).\n",
+        "stdout": "PORT set (version ver_prodaaaaaaaaaaaaaaaaaaaaaa).\n",
         "stderr": "",
         "requests": [
           {
@@ -239,7 +239,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -248,7 +248,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "API_KEY set (version ver_API_KEY).\n",
+        "stdout": "API_KEY set (version ver_apiqkeyaaaaaaaaaaaaaaaaaaa).\n",
         "stderr": "",
         "requests": [
           {
@@ -310,7 +310,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -319,7 +319,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "API_KEY set (version ver_API_KEY).\n",
+        "stdout": "API_KEY set (version ver_apiqkeyaaaaaaaaaaaaaaaaaaa).\n",
         "stderr": "",
         "requests": [
           {
@@ -476,7 +476,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -485,7 +485,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "API_KEY set (version ver_API_KEY).\n",
+        "stdout": "API_KEY set (version ver_apiqkeyaaaaaaaaaaaaaaaaaaa).\n",
         "stderr": "",
         "requests": [
           {
@@ -697,17 +697,19 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
+      "patterns": [
+        "generated"
+      ],
       "differences": [
-        "user-agent",
-        "generated-value"
+        "user-agent"
       ],
       "expect": {
         "status": 0,
-        "stdout": "API_KEY set (version ver_API_KEY) to a generated value (hex, 32 random bytes; not shown).\n",
+        "stdout": "API_KEY set (version ver_apiqkeyaaaaaaaaaaaaaaaaaaa) to a generated value (hex, 32 random bytes; not shown).\n",
         "stderr": "",
         "requests": [
           {
@@ -769,17 +771,19 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
+      "patterns": [
+        "generated"
+      ],
       "differences": [
-        "user-agent",
-        "generated-value"
+        "user-agent"
       ],
       "expect": {
         "status": 0,
-        "stdout": "API_KEY set (version ver_API_KEY) to a generated value (alnum, 30 characters; not shown).\n",
+        "stdout": "API_KEY set (version ver_apiqkeyaaaaaaaaaaaaaaaaaaa) to a generated value (alnum, 30 characters; not shown).\n",
         "stderr": "",
         "requests": [
           {
@@ -841,17 +845,19 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
+      "patterns": [
+        "generated"
+      ],
       "differences": [
-        "user-agent",
-        "generated-value"
+        "user-agent"
       ],
       "expect": {
         "status": 0,
-        "stdout": "API_KEY set (version ver_API_KEY) to a generated value (base64url, 24 random bytes; not shown).\n",
+        "stdout": "API_KEY set (version ver_apiqkeyaaaaaaaaaaaaaaaaaaa) to a generated value (base64url, 24 random bytes; not shown).\n",
         "stderr": "",
         "requests": [
           {
@@ -1591,7 +1597,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
           "status": 200,
           "answer": {
-            "versionId": "ver_PORT"
+            "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -1600,7 +1606,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "PORT set (version ver_PORT).\n",
+        "stdout": "PORT set (version ver_portaaaaaaaaaaaaaaaaaaaaaa).\n",
         "stderr": "",
         "requests": [
           {
@@ -1911,7 +1917,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -1920,7 +1926,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "API_KEY set (version ver_API_KEY).\n",
+        "stdout": "API_KEY set (version ver_apiqkeyaaaaaaaaaaaaaaaaaaa).\n",
         "stderr": "",
         "requests": [
           {
@@ -2119,7 +2125,8 @@
         "prod"
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "value-free-usage"
       ],
       "expect": {
         "status": 64,
@@ -2167,7 +2174,8 @@
         "60"
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "value-free-usage"
       ],
       "expect": {
         "status": 64,
@@ -2308,7 +2316,8 @@
         "--environment=prod"
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "value-free-usage"
       ],
       "expect": {
         "status": 64,
@@ -2787,7 +2796,8 @@
         }
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "unrecognized-id"
       ],
       "expect": {
         "status": 0,
@@ -2885,7 +2895,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY/rotations",
           "status": 200,
           "answer": {
-            "primaryVersionId": "ver_2",
+            "primaryVersionId": "ver_twoaaaaaaaaaaaaaaaaaaaaaaa",
             "rotationDeadline": "2026-11-19T10:00:00Z"
           }
         }
@@ -2895,7 +2905,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "API_KEY rotating — new primary ver_2, previous value valid until 2026-11-19T10:00:00.000Z. Run \"varlatch values rotate-complete API_KEY\" once consumers have migrated.\n",
+        "stdout": "API_KEY rotating — new primary ver_twoaaaaaaaaaaaaaaaaaaaaaaa, previous value valid until 2026-11-19T10:00:00.000Z. Run \"varlatch values rotate-complete API_KEY\" once consumers have migrated.\n",
         "stderr": "How to rotate API_KEY (from the Contract): Issue a new key at the provider, then revoke the old one.\nRemaining steps for API_KEY (from the Contract): Issue a new key at the provider, then revoke the old one.\n",
         "requests": [
           {
@@ -3002,7 +3012,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT/rotations",
           "status": 200,
           "answer": {
-            "primaryVersionId": "ver_3",
+            "primaryVersionId": "ver_threeaaaaaaaaaaaaaaaaaaaaa",
             "rotationDeadline": null
           }
         }
@@ -3012,7 +3022,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "PORT rotating — new primary ver_3, previous value valid until undefined. Run \"varlatch values rotate-complete PORT\" once consumers have migrated.\n",
+        "stdout": "PORT rotating — new primary ver_threeaaaaaaaaaaaaaaaaaaaaa, previous value valid until undefined. Run \"varlatch values rotate-complete PORT\" once consumers have migrated.\n",
         "stderr": "",
         "requests": [
           {
@@ -3081,7 +3091,8 @@
         "9090"
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "value-free-usage"
       ],
       "expect": {
         "status": 64,
@@ -3145,18 +3156,20 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY/rotations",
           "status": 200,
           "answer": {
-            "primaryVersionId": "ver_4",
+            "primaryVersionId": "ver_fouraaaaaaaaaaaaaaaaaaaaaa",
             "rotationDeadline": "not a time"
           }
         }
       ],
+      "patterns": [
+        "generated"
+      ],
       "differences": [
-        "user-agent",
-        "generated-value"
+        "user-agent"
       ],
       "expect": {
         "status": 0,
-        "stdout": "API_KEY rotating to a generated value (base64, 32 random bytes; not shown) — new primary ver_4, previous value valid until an unrecognized time. Run \"varlatch values rotate-complete API_KEY\" once consumers have migrated.\n",
+        "stdout": "API_KEY rotating to a generated value (base64, 32 random bytes; not shown) — new primary ver_fouraaaaaaaaaaaaaaaaaaaaaa, previous value valid until an unrecognized time. Run \"varlatch values rotate-complete API_KEY\" once consumers have migrated.\n",
         "stderr": "",
         "requests": [
           {
@@ -5377,8 +5390,7 @@
             "invalid": [
               {
                 "name": "B",
-                "reason": "r",
-                "extra": 1
+                "reason": "r"
               }
             ],
             "unresolved": []
@@ -5390,7 +5402,7 @@
       ],
       "expect": {
         "status": 1,
-        "stdout": "{\n  \"version\": 1,\n  \"environment\": \"dev\",\n  \"result\": \"invalid\",\n  \"complete\": true,\n  \"missing\": [\n    \"A\"\n  ],\n  \"invalid\": [\n    {\n      \"name\": \"B\",\n      \"reason\": \"r\",\n      \"extra\": 1\n    }\n  ],\n  \"unresolved\": [],\n  \"notEvaluated\": [],\n  \"exitCode\": 1\n}\n",
+        "stdout": "{\n  \"version\": 1,\n  \"environment\": \"dev\",\n  \"result\": \"invalid\",\n  \"complete\": true,\n  \"missing\": [\n    \"A\"\n  ],\n  \"invalid\": [\n    {\n      \"name\": \"B\",\n      \"reason\": \"r\"\n    }\n  ],\n  \"unresolved\": [],\n  \"notEvaluated\": [],\n  \"exitCode\": 1\n}\n",
         "stderr": "",
         "requests": [
           {
@@ -5453,7 +5465,7 @@
               {
                 "name": "K",
                 "requires": "config.value.read",
-                "reason": "access"
+                "reason": "permission"
               }
             ]
           }
@@ -5464,7 +5476,7 @@
       ],
       "expect": {
         "status": 2,
-        "stdout": "{\n  \"version\": 1,\n  \"environment\": \"dev\",\n  \"result\": \"incomplete\",\n  \"complete\": false,\n  \"missing\": [],\n  \"invalid\": [],\n  \"unresolved\": [],\n  \"notEvaluated\": [\n    {\n      \"name\": \"K\",\n      \"requires\": \"config.value.read\",\n      \"reason\": \"access\"\n    }\n  ],\n  \"exitCode\": 2\n}\n",
+        "stdout": "{\n  \"version\": 1,\n  \"environment\": \"dev\",\n  \"result\": \"incomplete\",\n  \"complete\": false,\n  \"missing\": [],\n  \"invalid\": [],\n  \"unresolved\": [],\n  \"notEvaluated\": [\n    {\n      \"name\": \"K\",\n      \"requires\": \"config.value.read\",\n      \"reason\": \"permission\"\n    }\n  ],\n  \"exitCode\": 2\n}\n",
         "stderr": "",
         "requests": [
           {
@@ -6098,7 +6110,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -6106,7 +6118,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
           "status": 200,
           "answer": {
-            "versionId": "ver_PORT"
+            "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -6114,7 +6126,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/DEBUG",
           "status": 200,
           "answer": {
-            "versionId": "ver_DEBUG"
+            "versionId": "ver_debugaaaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -6122,7 +6134,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/HOME_URL",
           "status": 200,
           "answer": {
-            "versionId": "ver_HOME_URL"
+            "versionId": "ver_homequrlaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -6130,7 +6142,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/REF",
           "status": 200,
           "answer": {
-            "versionId": "ver_REF"
+            "versionId": "ver_refaaaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -6260,7 +6272,7 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
-        "repo/.env": "A=1\nB=s3cr3t-b\n"
+        "repo/.env": "A=s3cr3t-a\nB=s3cr3t-b\n"
       },
       "cwd": "repo",
       "id": "import.json",
@@ -6297,7 +6309,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/A",
           "status": 200,
           "answer": {
-            "versionId": "ver_A"
+            "versionId": "ver_aaaaaaaaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -6305,7 +6317,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/B",
           "status": 200,
           "answer": {
-            "versionId": "ver_B"
+            "versionId": "ver_baaaaaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -6314,7 +6326,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "{\n  \"version\": 1,\n  \"file\": \".env\",\n  \"dryRun\": false,\n  \"target\": {\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev\"\n  },\n  \"offline\": null,\n  \"items\": [\n    {\n      \"name\": \"A\",\n      \"type\": \"integer\",\n      \"sensitive\": true,\n      \"inContract\": false,\n      \"existing\": false,\n      \"line\": 1\n    },\n    {\n      \"name\": \"B\",\n      \"type\": \"string\",\n      \"sensitive\": true,\n      \"inContract\": false,\n      \"existing\": false,\n      \"line\": 2\n    }\n  ],\n  \"references\": [],\n  \"contract\": null,\n  \"stored\": [\n    \"A\",\n    \"B\"\n  ],\n  \"deleted\": false\n}\n",
+        "stdout": "{\n  \"version\": 1,\n  \"file\": \".env\",\n  \"dryRun\": false,\n  \"target\": {\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev\"\n  },\n  \"offline\": null,\n  \"items\": [\n    {\n      \"name\": \"A\",\n      \"type\": \"string\",\n      \"sensitive\": true,\n      \"inContract\": false,\n      \"existing\": false,\n      \"line\": 1\n    },\n    {\n      \"name\": \"B\",\n      \"type\": \"string\",\n      \"sensitive\": true,\n      \"inContract\": false,\n      \"existing\": false,\n      \"line\": 2\n    }\n  ],\n  \"references\": [],\n  \"contract\": null,\n  \"stored\": [\n    \"A\",\n    \"B\"\n  ],\n  \"deleted\": false\n}\n",
         "stderr": "varlatch import: .env still holds copies of these values. Rotating or deleting a value in Varlatch does not change the file; delete it once you no longer need it.\nvarlatch import: before relying on Varlatch for these secrets:\n  1. delete .env;\n  2. check where else it was copied (CI settings, teammates, chat);\n  3. rotate any secret whose copies you cannot account for: A, B.\n",
         "requests": [
           {
@@ -6347,7 +6359,7 @@
               "accept": "*/*"
             },
             "body": {
-              "value": "1"
+              "value": "s3cr3t-a"
             }
           },
           {
@@ -6383,7 +6395,7 @@
           },
           "repo/.env": {
             "mode": "0644",
-            "content": "A=1\nB=s3cr3t-b\n"
+            "content": "A=s3cr3t-a\nB=s3cr3t-b\n"
           },
           "repo/varlatch.toml": {
             "mode": "0644",
@@ -6454,7 +6466,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -6588,8 +6600,8 @@
           "path": "/v1/organizations/acme/projects/web/contract/revisions",
           "status": 201,
           "answer": {
-            "id": "crv_new",
-            "contentHash": "sha256:bbbb",
+            "id": "rev_newaaaaaaaaaaaaaaaaaaaaaaa",
+            "contentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "active": false
           }
         },
@@ -6598,7 +6610,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -6606,7 +6618,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
           "status": 200,
           "answer": {
-            "versionId": "ver_PORT"
+            "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -6614,7 +6626,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/DEBUG",
           "status": 200,
           "answer": {
-            "versionId": "ver_DEBUG"
+            "versionId": "ver_debugaaaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -6622,7 +6634,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/HOME_URL",
           "status": 200,
           "answer": {
-            "versionId": "ver_HOME_URL"
+            "versionId": "ver_homequrlaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -6630,7 +6642,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/REF",
           "status": 200,
           "answer": {
-            "versionId": "ver_REF"
+            "versionId": "ver_refaaaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -6639,7 +6651,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "Importing 5 value(s) (3 secret, 2 plain) from .env into acme/web (dev):\n  API_KEY   string   secret  in the Contract\n  PORT      integer  plain  in the Contract\n  DEBUG     boolean  plain (--plain)\n  HOME_URL  url      secret\n  REF       string   secret\nNote: Varlatch reads ${NAME} in a value as a reference to another item: REF\nContract: 3 new item(s); 2 already in the Contract keep their definition.\nContract revision crv_new (sha256:bbbb)\nActivate with: varlatch contract activate crv_new\nStored 5 value(s) in acme/web (dev).\n",
+        "stdout": "Importing 5 value(s) (3 secret, 2 plain) from .env into acme/web (dev):\n  API_KEY   string   secret  in the Contract\n  PORT      integer  plain  in the Contract\n  DEBUG     boolean  plain (--plain)\n  HOME_URL  url      secret\n  REF       string   secret\nNote: Varlatch reads ${NAME} in a value as a reference to another item: REF\nContract: 3 new item(s); 2 already in the Contract keep their definition.\nContract revision rev_newaaaaaaaaaaaaaaaaaaaaaaa (sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)\nActivate with: varlatch contract activate rev_newaaaaaaaaaaaaaaaaaaaaaaa\nStored 5 value(s) in acme/web (dev).\n",
         "stderr": "varlatch import: .env still holds copies of these values. Rotating or deleting a value in Varlatch does not change the file; delete it once you no longer need it.\nvarlatch import: before relying on Varlatch for these secrets:\n  1. delete .env;\n  2. check where else it was copied (CI settings, teammates, chat);\n  3. rotate any secret whose copies you cannot account for: API_KEY, HOME_URL, REF.\n",
         "requests": [
           {
@@ -6822,7 +6834,7 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
-        "repo/.env": "A=1\n"
+        "repo/.env": "A=s3cr3t-one\n"
       },
       "cwd": "repo",
       "id": "import.contract.json",
@@ -6860,8 +6872,8 @@
           "path": "/v1/organizations/acme/projects/web/contract/revisions",
           "status": 201,
           "answer": {
-            "id": "crv_1",
-            "contentHash": "sha256:cccc",
+            "id": "rev_oneaaaaaaaaaaaaaaaaaaaaaaa",
+            "contentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "active": true
           }
         },
@@ -6870,7 +6882,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/A",
           "status": 200,
           "answer": {
-            "versionId": "ver_A"
+            "versionId": "ver_aaaaaaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -6879,7 +6891,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "{\n  \"version\": 1,\n  \"file\": \".env\",\n  \"dryRun\": false,\n  \"target\": {\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev\"\n  },\n  \"offline\": null,\n  \"items\": [\n    {\n      \"name\": \"A\",\n      \"type\": \"integer\",\n      \"sensitive\": true,\n      \"inContract\": false,\n      \"existing\": false,\n      \"line\": 1\n    }\n  ],\n  \"references\": [],\n  \"contract\": {\n    \"newItems\": [\n      \"A\"\n    ],\n    \"revision\": {\n      \"id\": \"crv_1\",\n      \"contentHash\": \"sha256:cccc\",\n      \"active\": true\n    }\n  },\n  \"stored\": [\n    \"A\"\n  ],\n  \"deleted\": false\n}\n",
+        "stdout": "{\n  \"version\": 1,\n  \"file\": \".env\",\n  \"dryRun\": false,\n  \"target\": {\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev\"\n  },\n  \"offline\": null,\n  \"items\": [\n    {\n      \"name\": \"A\",\n      \"type\": \"string\",\n      \"sensitive\": true,\n      \"inContract\": false,\n      \"existing\": false,\n      \"line\": 1\n    }\n  ],\n  \"references\": [],\n  \"contract\": {\n    \"newItems\": [\n      \"A\"\n    ],\n    \"revision\": {\n      \"id\": \"rev_oneaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"contentHash\": \"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\n      \"active\": true\n    }\n  },\n  \"stored\": [\n    \"A\"\n  ],\n  \"deleted\": false\n}\n",
         "stderr": "varlatch import: .env still holds copies of these values. Rotating or deleting a value in Varlatch does not change the file; delete it once you no longer need it.\nvarlatch import: before relying on Varlatch for these secrets:\n  1. delete .env;\n  2. check where else it was copied (CI settings, teammates, chat);\n  3. rotate any secret whose copies you cannot account for: A.\n",
         "requests": [
           {
@@ -6921,7 +6933,7 @@
                       "kind": "never"
                     },
                     "sensitive": true,
-                    "type": "integer"
+                    "type": "string"
                   }
                 ]
               },
@@ -6940,7 +6952,7 @@
               "accept": "*/*"
             },
             "body": {
-              "value": "1"
+              "value": "s3cr3t-one"
             }
           }
         ],
@@ -6963,7 +6975,7 @@
           },
           "repo/.env": {
             "mode": "0644",
-            "content": "A=1\n"
+            "content": "A=s3cr3t-one\n"
           },
           "repo/varlatch.toml": {
             "mode": "0644",
@@ -7092,7 +7104,7 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
-        "repo/.env": "A=1\n"
+        "repo/.env": "A=s3cr3t-one\n"
       },
       "cwd": "repo",
       "id": "import.contract.forbidden",
@@ -7154,7 +7166,7 @@
           },
           "repo/.env": {
             "mode": "0644",
-            "content": "A=1\n"
+            "content": "A=s3cr3t-one\n"
           },
           "repo/varlatch.toml": {
             "mode": "0644",
@@ -7167,7 +7179,7 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
-        "repo/.env": "A=1\n"
+        "repo/.env": "A=s3cr3t-one\n"
       },
       "cwd": "repo",
       "id": "import.contract-unreadable",
@@ -7208,7 +7220,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "Dry run: would import 1 value(s) (1 secret, 0 plain) from .env into acme/web (dev):\n  A  integer  secret\nDry run: nothing was stored.\n",
+        "stdout": "Dry run: would import 1 value(s) (1 secret, 0 plain) from .env into acme/web (dev):\n  A  string  secret\nDry run: nothing was stored.\n",
         "stderr": "varlatch import: cannot read this project's Contract (403); sensitivity is shown as the default for items outside a Contract\nvarlatch import: cannot read what dev already has (404); existing values cannot be told apart\n",
         "requests": [
           {
@@ -7251,7 +7263,7 @@
           },
           "repo/.env": {
             "mode": "0644",
-            "content": "A=1\n"
+            "content": "A=s3cr3t-one\n"
           },
           "repo/varlatch.toml": {
             "mode": "0644",
@@ -7264,7 +7276,7 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
-        "repo/.env": "A=1\n"
+        "repo/.env": "A=s3cr3t-one\n"
       },
       "cwd": "repo",
       "id": "import.plain-without-contract",
@@ -7302,7 +7314,7 @@
           },
           "repo/.env": {
             "mode": "0644",
-            "content": "A=1\n"
+            "content": "A=s3cr3t-one\n"
           },
           "repo/varlatch.toml": {
             "mode": "0644",
@@ -7799,7 +7811,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
           "status": 200,
           "answer": {
-            "versionId": "ver_PORT"
+            "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -7807,7 +7819,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/DEBUG",
           "status": 200,
           "answer": {
-            "versionId": "ver_DEBUG"
+            "versionId": "ver_debugaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -8086,7 +8098,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/API_KEY",
           "status": 200,
           "answer": {
-            "versionId": "ver_API_KEY"
+            "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -8094,7 +8106,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
           "status": 200,
           "answer": {
-            "versionId": "ver_PORT"
+            "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
           }
         }
       ],
@@ -8185,7 +8197,7 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
-        "repo/.env": "A=1\nB=2\n"
+        "repo/.env": "A=s3cr3t-one\nB=s3cr3t-two\n"
       },
       "cwd": "repo",
       "id": "import.assisted.unreadable",
@@ -8247,7 +8259,7 @@
       ],
       "expect": {
         "status": 78,
-        "stdout": "Importing 2 value(s) (2 secret, 0 plain) from .env into acme/web (dev):\n  A  integer  secret\n  B  integer  secret\n",
+        "stdout": "Importing 2 value(s) (2 secret, 0 plain) from .env into acme/web (dev):\n  A  string  secret\n  B  string  secret\n",
         "stderr": "varlatch import: cannot read what dev already has (403); existing values cannot be told apart\nvarlatch import: what dev already has cannot be read, so any of these may replace a value: A, B\n  Replacing a value is the human's decision, for each named item. Ask them; with their approval for an item, add --replace <NAME> for it.\nvarlatch import: Nothing was imported.\n",
         "requests": [
           {
@@ -8290,7 +8302,7 @@
           },
           "repo/.env": {
             "mode": "0644",
-            "content": "A=1\nB=2\n"
+            "content": "A=s3cr3t-one\nB=s3cr3t-two\n"
           },
           "repo/varlatch.toml": {
             "mode": "0644",
@@ -8361,7 +8373,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/A",
           "status": 200,
           "answer": {
-            "versionId": "ver_A"
+            "versionId": "ver_aaaaaaaaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -8522,7 +8534,7 @@
           "path": "/v1/organizations/acme/projects/web/environments/dev/values/A",
           "status": 200,
           "answer": {
-            "versionId": "ver_A"
+            "versionId": "ver_aaaaaaaaaaaaaaaaaaaaaaaaaa"
           }
         },
         {
@@ -8624,7 +8636,7 @@
     {
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
-        "repo/.env": "A=1\n"
+        "repo/.env": "A=s3cr3t-one\n"
       },
       "cwd": "repo",
       "id": "import.not-signed-in",
@@ -8652,7 +8664,7 @@
           },
           "repo/.env": {
             "mode": "0644",
-            "content": "A=1\n"
+            "content": "A=s3cr3t-one\n"
           },
           "repo/varlatch.toml": {
             "mode": "0644",
@@ -8696,7 +8708,7 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
-        "repo/.env": "A=1\n"
+        "repo/.env": "A=s3cr3t-one\n"
       },
       "cwd": "repo",
       "id": "import.environment",
@@ -8756,7 +8768,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "Dry run: would import 1 value(s) (1 secret, 0 plain) from .env into acme/web (prod):\n  A  integer  secret\nDry run: nothing was stored.\n",
+        "stdout": "Dry run: would import 1 value(s) (1 secret, 0 plain) from .env into acme/web (prod):\n  A  string  secret\nDry run: nothing was stored.\n",
         "stderr": "",
         "requests": [
           {
@@ -8799,7 +8811,7 @@
           },
           "repo/.env": {
             "mode": "0644",
-            "content": "A=1\n"
+            "content": "A=s3cr3t-one\n"
           },
           "repo/varlatch.toml": {
             "mode": "0644",

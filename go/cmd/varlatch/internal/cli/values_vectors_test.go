@@ -154,11 +154,11 @@ func TestCheckEntriesVectors(t *testing.T) {
 }
 
 // TestValidationRequiresHintReadsOwnNames: a requirement named like a
-// property of Object.prototype is shown as the server named it (step 5
-// defect 23: TypeScript's lookup reads the prototype and prints a
-// function's source).
+// property of Object.prototype is not one the protocol defines, so it is
+// shown as an unrecognized requirement (step 5 defect 23: TypeScript's
+// lookup reads the prototype and prints a function's source).
 func TestValidationRequiresHintReadsOwnNames(t *testing.T) {
-	report, err := jsjson.Parse([]byte(`{"valid": false, "notEvaluated": [{"name": "A", "requires": "constructor", "reason": "access"}, {"name": "B", "requires": "toString", "reason": "requirement"}, {"name": "C", "requires": "secret.reveal"}]}`))
+	report, err := jsjson.Parse([]byte(`{"valid": false, "notEvaluated": [{"name": "A", "requires": "constructor", "reason": "permission"}, {"name": "B", "requires": "toString", "reason": "requirement"}, {"name": "C", "requires": "secret.reveal"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,8 +168,8 @@ func TestValidationRequiresHintReadsOwnNames(t *testing.T) {
 	}
 	want := []string{
 		"dev: INCOMPLETE: not every item could be evaluated with this identity's access",
-		"  not evaluated: A (constructor)",
-		"  not evaluated: B (toString; a Requirement (e.g. Tailnet Constraint) is not met)",
+		"  not evaluated: A (an unrecognized requirement)",
+		"  not evaluated: B (an unrecognized requirement; a Requirement (e.g. Tailnet Constraint) is not met)",
 		"  not evaluated: C (needs secret.reveal)",
 	}
 	if !slices.Equal(got.Stderr, want) || got.ExitCode != 2 {

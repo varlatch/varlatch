@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -26,27 +27,56 @@ func IsTerminal(stream io.Reader) bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
-// PromptHidden is promptHidden: one line read from the terminal without
-// echoing it (see HiddenInput). The terminal is in raw mode while the line
-// is typed and restored before anything more is written, whatever ends
-// the prompt: Enter, Ctrl-D, Ctrl-C (Cancelled, exit 130), or a signal
-// (the terminal restored, then the signal's default action, as Node.js
-// restores its standard streams on a fatal signal). Enter or Ctrl-D on an
-// empty line means no value.
-func PromptHidden(input *os.File, output io.Writer, question string) (string, error) {
-	fd := int(input.Fd())
-	state, err := term.MakeRaw(fd)
-	if err != nil {
-		return "", err
+// Hook, when set, is called at each stage of the prompt before the
+// question is shown ("signals": the signal handler is in place; "raw": the
+// terminal is in raw mode). Tests only: the pseudo-terminal tests stop
+// there to send a signal in that window.
+var Hook func(stage string)
+
+func hook(stage string) {
+	if Hook != nil {
+		Hook(stage)
 	}
-	var once sync.Once
-	restore := func() { once.Do(func() { _ = term.Restore(fd, state) }) }
-	defer restore()
+}
+
+// PromptHidden is promptHidden: one line read from the terminal without
+// echoing it (see HiddenInput), say writing on standard error. The signal
+// handler is in place before the terminal enters raw mode, and the
+// terminal is restored before anything more is written and before signal
+// delivery stops, however the prompt ends: Enter, Ctrl-D, Ctrl-C
+// (Cancelled, exit 130), a signal (SIGINT, SIGTERM, SIGHUP, SIGQUIT: the
+// terminal restored, then the signal's default action, as Node.js restores
+// its standard streams on a fatal signal), a read error, or a panic. Enter
+// or Ctrl-D on an empty line means no value.
+func PromptHidden(input *os.File, say func(text string), question string) (value string, err error) {
+	fd := int(input.Fd())
+	var (
+		mu    sync.Mutex
+		state *term.State
+		done  bool
+	)
+	restore := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if state != nil && !done {
+			done = true
+			_ = term.Restore(fd, state)
+		}
+	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, fatalSignals...)
 	defer func() {
+		// The terminal first, then signal delivery: a signal that arrives
+		// in between still finds the terminal restored.
+		restore()
 		signal.Stop(signals)
 		close(signals)
+	}()
+	defer func() {
+		if p := recover(); p != nil {
+			restore()
+			panic(p)
+		}
 	}()
 	go func() {
 		if sig, ok := <-signals; ok {
@@ -54,14 +84,21 @@ func PromptHidden(input *os.File, output io.Writer, question string) (string, er
 			reraise(sig)
 		}
 	}()
-
-	// Raw mode first, then the question: nothing typed after it is echoed.
-	if _, err := io.WriteString(output, question); err != nil {
+	hook("signals")
+	// Under the lock, so a signal handled meanwhile waits for the state it restores.
+	mu.Lock()
+	state, err = term.MakeRaw(fd)
+	mu.Unlock()
+	if err != nil {
 		return "", err
 	}
+	hook("raw")
+
+	// Raw mode first, then the question: nothing typed after it is echoed.
+	say(question)
 	finish := func() {
 		restore()
-		_, _ = io.WriteString(output, "\n")
+		say("\n")
 	}
 	var typed HiddenInput
 	var pending []byte // an incomplete UTF-8 sequence, kept for the next read (Node's StringDecoder)
@@ -70,12 +107,10 @@ func PromptHidden(input *os.File, output io.Writer, question string) (string, er
 		n, readErr := input.Read(buf)
 		if n > 0 {
 			data := decodeChunk(&pending, buf[:n])
-			for i := 0; i < len(data); i++ {
-				if data[i] == 0x03 {
-					finish()
-					_, _ = io.WriteString(output, "varlatch: cancelled; nothing was stored\n")
-					return "", Cancelled{}
-				}
+			if strings.ContainsRune(data, 0x03) {
+				finish()
+				say("varlatch: cancelled; nothing was stored\n")
+				return "", Cancelled{}
 			}
 			if value, done := typed.Feed(data); done {
 				finish()
