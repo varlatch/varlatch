@@ -44,7 +44,8 @@
  * App's side: "manifest-code" {code, app} sets up a code the conversion
  * hands over; "app" {app} registers one directly and answers its private
  * key; "add-key" {appId}, "delete-key" {appId, pem} and "keep-only-key"
- * {appId, pem} change its keys;
+ * {appId, pem} change its keys; "hold" {repo} holds the repository's
+ * secret writes unanswered until "release" {repo} answers them;
  * "install" {appId, account, repos, selection} installs it).
  */
 "use strict";
@@ -78,6 +79,12 @@ const state = {
   tokens: {},
   mints: [],
   nextInstallation: 169698431,
+  // Repositories whose secret writes are held unanswered (owner/repo ->
+  // true), and the writes held, each answered once released.
+  hold: {},
+  held: [],
+  // Secret writes answered, by repository (owner/repo -> count).
+  writes: {},
 };
 
 function answer(res, status, value, extra = {}) {
@@ -220,6 +227,11 @@ const GITHUB_ROUTES = [
     handle: (req, res, m, body, credential) => {
       if (credential.kind === "none") return refused(res);
       if (!tokenReaches(credential, m[1], m[2], "secrets", "write")) return answer(res, 403, { message: "Resource not accessible by integration" });
+      // A held repository: the write waits, unanswered, until released.
+      if (state.hold[`${m[1]}/${m[2]}`] && !req.released) {
+        state.held.push({ repo: `${m[1]}/${m[2]}`, name: decodeURIComponent(m[3]), run: () => { req.released = true; github(req, res, body); } });
+        return undefined;
+      }
       const secrets = (state.github[`${m[1]}/${m[2]}`] ??= {});
       const name = decodeURIComponent(m[3]);
       if (name.startsWith("BROKEN")) return answer(res, 500, { message: "boom" });
@@ -229,6 +241,7 @@ const GITHUB_ROUTES = [
       } catch {
         return answer(res, 422, { message: "Invalid request" });
       }
+      state.writes[`${m[1]}/${m[2]}`] = (state.writes[`${m[1]}/${m[2]}`] ?? 0) + 1;
       return answer(res, existed ? 204 : 201, {}, credential.expiry);
     },
   },
@@ -414,6 +427,8 @@ const control = http.createServer((req, res) => {
         coolify: coolifyState, running: state.running, convex: state.convex, requests: state.requests,
         githubApps: Object.fromEntries(Object.values(state.apps).map((a) => [a.id, { slug: a.slug, keys: a.keys.length }])),
         codesUsed: Object.entries(state.codes).filter(([, v]) => v.used).map(([k]) => k),
+        held: state.held.map((h) => ({ repo: h.repo, name: h.name })),
+        writes: state.writes,
         mints: state.mints,
       });
     }
@@ -428,6 +443,17 @@ const control = http.createServer((req, res) => {
       if (c.op === "manifest-code") {
         state.codes[c.code] = spec(c.app);
         return answer(res, 200, { code: c.code });
+      }
+      if (c.op === "hold") {
+        state.hold[c.repo] = true;
+        return answer(res, 200, { holding: c.repo });
+      }
+      if (c.op === "release") {
+        delete state.hold[c.repo];
+        const mine = state.held.filter((h) => h.repo === c.repo);
+        state.held = state.held.filter((h) => h.repo !== c.repo);
+        for (const h of mine) h.run();
+        return answer(res, 200, { released: mine.map((h) => h.name) });
       }
       if (c.op === "app") {
         const key = newKey();

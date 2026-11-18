@@ -108,6 +108,21 @@ test("the fake GitHub's repository writes take a suite's fine-grained token or a
   // A suite's fine-grained token, as the sync suite's Connection uses one.
   assert.equal((await write("anything", "Bearer conformance-sync-1")).status, 201);
   assert.equal((await write("anything", "token conformance-sync-1")).status, 204);
+  // A held repository: a write waits unanswered until released, then lands.
+  await control({ op: "hold", repo: "acme-apps/api" });
+  const pending = write("api", token);
+  let state = {};
+  for (let i = 0; i < 50 && !(state.held ?? []).length; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+  }
+  assert.deepEqual(state.held, [{ repo: "acme-apps/api", name: "X" }]);
+  const writesHeld = state.writes["acme-apps/api"];
+  assert.deepEqual((await control({ op: "release", repo: "acme-apps/api" })).released, ["X"]);
+  assert.equal((await pending).status, 204, "the held write is answered once released");
+  state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+  assert.equal(state.writes["acme-apps/api"], writesHeld + 1);
+  assert.deepEqual(state.held, []);
   // The App's own endpoints take its JWT, and never an installation token.
   assert.equal((await github("GET", "/app", app)).status, 200);
   assert.equal((await github("GET", "/app", token)).status, 401);
