@@ -30,6 +30,8 @@ func TestInitRefusesServerCredentials(t *testing.T) {
 	}{
 		{name: "flag", args: []string{"--server", "https://u:PW@host.example"}},
 		{name: "flag, user name only", args: []string{"--server", "https://u@host.example"}},
+		{name: "flag, a user name that looks like a mask", args: []string{"--server", "https://[redacted]@host.example"}},
+		{name: "flag, a password only", args: []string{"--server", "https://:PW@host.example"}},
 		{name: "flag, encoded", args: []string{"--server", "https://u%40x:PW%3A@host.example/base"}},
 		{name: "flag, backslashes", args: []string{"--server", `https:\\u:PW@host.example`}},
 		{name: "flag, other scheme", args: []string{"--server", "varlatch+https://u:PW@host.example"}},

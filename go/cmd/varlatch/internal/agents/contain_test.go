@@ -307,7 +307,7 @@ func TestHardLinkWithAnUnseenName(t *testing.T) {
 				continue
 			}
 			var e *Error
-			want := "AGENTS.md has another name (a hard link) the CLI cannot see, so nothing was changed; replace it with a plain copy of itself, then run this again"
+			want := "AGENTS.md has another name (a hard link) the CLI does not manage, so nothing was changed; replace it with a plain copy of itself, then run this again"
 			if !errors.As(err, &e) || e.Usage || e.Message != want {
 				t.Fatalf("CLAUDE.md alias %v: %v, want %q", alsoClaude, err, want)
 			}
@@ -439,5 +439,80 @@ func TestRemoveTakesBothNamesOfAPair(t *testing.T) {
 		if len(entries) != 0 {
 			t.Errorf("%s: left %v", alias, entries)
 		}
+	}
+}
+
+// TestRemoveRefusesAnUnseenName: --remove of a managed-only AGENTS.md that
+// is also CLAUDE.md and a third name the CLI cannot see is refused before
+// anything changes, as a write is: no name is removed.
+func TestRemoveRefusesAnUnseenName(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hard links in the test's own setup")
+	}
+	dir := t.TempDir()
+	root, outside := filepath.Join(dir, "root"), filepath.Join(dir, "outside")
+	if _, err := RunInstall(Options{Scope: "project", Root: root, Version: "1", Mode: "install"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{filepath.Join(root, "CLAUDE.md"), filepath.Join(outside, "third.md")} {
+		if err := os.Link(filepath.Join(root, "AGENTS.md"), name); err != nil {
+			t.Skip(err)
+		}
+	}
+	before := snapshot(t, dir)
+	_, err := RunInstall(Options{Scope: "project", Root: root, Version: "1", Mode: "remove"})
+	var e *Error
+	want := "AGENTS.md has another name (a hard link) the CLI does not manage, so nothing was changed; replace it with a plain copy of itself, then run this again"
+	if !errors.As(err, &e) || e.Usage || e.Message != want {
+		t.Fatalf("%v, want %q", err, want)
+	}
+	sameSnapshot(t, "everything", before, snapshot(t, dir))
+}
+
+// TestOtherFilesNeverExpandAliases: only a project's AGENTS.md/CLAUDE.md
+// pair is written or removed under several names. A skill file that shares
+// its file with an AGENTS.md (in the home directory for --scope user, or in
+// the project) is refused, removed or written, and the AGENTS.md is never
+// touched.
+func TestOtherFilesNeverExpandAliases(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hard links in the test's own setup")
+	}
+	skill := filepath.Join(".agents", "skills", "varlatch", "SKILL.md")
+	for _, c := range []struct {
+		name  string
+		scope string
+		mode  string
+	}{
+		{"user scope --remove", "user", "remove"},
+		{"project scope, an edited skill file", "project", "install"},
+		{"project scope --remove", "project", "remove"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			if _, err := RunInstall(Options{Scope: c.scope, Root: root, Version: "1", Mode: "install"}); err != nil {
+				t.Fatal(err)
+			}
+			if c.mode == "install" {
+				// Edited, so install would write it again.
+				writeAt(t, filepath.Join(root, skill), "edited\n")
+			}
+			agents := filepath.Join(root, "AGENTS.md")
+			os.Remove(agents)
+			if err := os.Link(filepath.Join(root, skill), agents); err != nil {
+				t.Skip(err)
+			}
+			before := snapshot(t, root)
+			_, err := RunInstall(Options{Scope: c.scope, Root: root, Version: "1", Mode: c.mode})
+			var e *Error
+			want := filepath.ToSlash(skill) + " has another name (a hard link) the CLI does not manage, so nothing was changed"
+			if !errors.As(err, &e) || e.Usage || !strings.HasPrefix(e.Message, want) {
+				t.Fatalf("%v, want %q", err, want)
+			}
+			sameSnapshot(t, "the root", before, snapshot(t, root))
+		})
 	}
 }

@@ -321,7 +321,9 @@ comes. `verify-release`, which the installers run, is Go's own.
   written. When neither `HOME` (`USERPROFILE` on Windows) nor the system's
   user record names a home directory, a command that needs one exits 64:
   `varlatch: the home directory is unknown: HOME is empty or unset, and the
-  system records none for this user. Set HOME, or VARLATCH_CONFIG_DIR`. Files are read with no schema, as JavaScript reads them: a
+  system records none for this user. Set HOME, or VARLATCH_CONFIG_DIR`. An
+  explicit `VARLATCH_CONFIG_DIR` works without a home directory, inside an
+  agent-safe run too. Files are read with no schema, as JavaScript reads them: a
   hand-edited file holding JSON of another shape gives what the TypeScript
   code gives (`lib/jsjson` values, `internal/jsval`'s property reads), and
   where that code throws a `TypeError`, a `*TypeError` (the `uncaught`
@@ -437,12 +439,14 @@ comes. `verify-release`, which the installers run, is Go's own.
   final mode, then renamed over it. A file with several names (hard links)
   is replaced only when every name is one install itself gives it (an
   `AGENTS.md` and the `CLAUDE.md` that is it, found in the root); each name
-  is then renamed onto the new file, so they stay one file. A file with a
-  name the CLI cannot see is refused before anything changes (78).
-  `--remove` takes such a pair away under both names, reporting each once;
-  a file with a name the CLI cannot see loses only the name install
-  manages. The
-  names are counted before the replacement, not as one snapshot with it:
+  is then renamed onto the new file, so they stay one file, and
+  `--remove` takes such a pair away under both names, reporting each once.
+  Any other second name (one the CLI cannot see, possibly outside the
+  root, or any second name of a file outside a project's pair, such as a
+  skill file) refuses the run before anything is written or removed (78):
+  `<path> has another name (a hard link) the CLI does not manage, so
+  nothing was changed; replace it with a plain copy of itself, then run
+  this again`. The names are counted before the replacement, not as one snapshot with it:
   a name created during the run may keep the old content, and nothing
   outside the root is ever changed. A pair is renamed one name at a time,
   not as a transaction: a crash between the two renames leaves one name
@@ -513,7 +517,7 @@ it to the recording.
 | `skill-version` (how transcripts compare, not a behaviour) | the skill files `agents install` writes name `varlatch 0.22.0` (`SKILL.md`'s `metadata.generator`, each reference's first line) | this build's version | Each CLI names itself, so `--check` after an upgrade reports the skill as changed; the replay puts this build's version in a case's inputs and expected files alike |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
 | `agents install` never writes or removes through a symbolic link | not compared | a directory below the project root (or the home directory, for `--scope user`) that is a symbolic link or a Windows junction, on the way to a file the run reads, writes, removes or prunes, refuses the run before anything is touched, `--check` included: `<path> is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. Replace it with a directory, then run this again`, 78; a refused `--remove` also lists the skill files it would have removed, for removing by hand | Installing agent files never changes anything outside the project or the home directory; `internal/agents` `TestNothingThroughALinkBelowTheRoot` |
-| `init` and a server URL with a user name or password | not compared | refused from any source (`--server`, `VARLATCH_SERVER`, the default server, the only stored credential): `varlatch init: a server URL with a user name or password can't be written to varlatch.toml, so nothing was written; give the server without them (--server <url>)`, 64, nothing written and the URL not repeated | `varlatch.toml` is committed; `cmd/varlatch` `TestInitRefusesServerCredentials` |
+| `init` and a server URL with a user name or password | not compared | a user name or password as `new URL` reads it (or, for a text that does not parse, any "@"), refused from any source (`--server`, `VARLATCH_SERVER`, the default server, the only stored credential): `varlatch init: a server URL with a user name or password can't be written to varlatch.toml, so nothing was written; give the server without them (--server <url>)`, 64, nothing written and the URL not repeated | `varlatch.toml` is committed; `cmd/varlatch` `TestInitRefusesServerCredentials` |
 | How `agents install` replaces a file | in place (`writeFileSync`) | a temporary file in the same directory, readable by its owner only until it is complete, synced, given the file's mode, then renamed over it; the names of a hard-linked `AGENTS.md`/`CLAUDE.md` pair are each renamed onto the new file; a file with any other name is refused (78) | A crash or a full disk never leaves a settings file empty or half written, and no other file shares the change; bytes and modes are the same |
 | A redirect's relative `Location` | resolved by the WHATWG URL parser | resolved by `apiclient`'s own resolver (absolute, `//host`, `/path`, `?query` and path-relative references), then parsed by `lib/whatwg` | varlatchd sends no redirect; a proxy's is absolute or root-relative |
 

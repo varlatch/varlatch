@@ -108,6 +108,9 @@ var syncWrites = true
 type writer struct {
 	path string
 	root *os.Root
+	// pairs: the run manages an AGENTS.md and the CLAUDE.md that is it (the
+	// project scope), so such a pair is written and removed under both names.
+	pairs bool
 }
 
 func (w *writer) open() error {
@@ -136,13 +139,14 @@ func (w *writer) close() {
 // AGENTS.md and the CLAUDE.md that is that file.
 var aliasCandidates = []string{"AGENTS.md", "CLAUDE.md", filepath.Join(".claude", "CLAUDE.md")}
 
-// hardLinkRefusal refuses a file with a name the CLI cannot see.
+// hardLinkRefusal refuses a file with a name the CLI does not manage: one
+// it cannot see, or, outside a project's AGENTS.md/CLAUDE.md pair, any.
 func hardLinkRefusal(rel string, nothingChanged bool) error {
 	what := "the CLI stopped before changing it"
 	if nothingChanged {
 		what = "nothing was changed"
 	}
-	return &Error{filepath.ToSlash(rel) + " has another name (a hard link) the CLI cannot see, so " + what +
+	return &Error{filepath.ToSlash(rel) + " has another name (a hard link) the CLI does not manage, so " + what +
 		"; replace it with a plain copy of itself, then run this again", false}
 }
 
@@ -153,7 +157,12 @@ func hardLinkRefusal(rel string, nothingChanged bool) error {
 // created after they are read is not seen. Such a name keeps the old
 // content, because the file is replaced by renaming, never written in
 // place, so nothing outside the root is ever changed.
-func aliases(root, rel string) (names []string, ok bool, err error) {
+//
+// pairs: names are looked for only when the run manages such a pair (the
+// project scope) and rel is one of aliasCandidates. Any other file with a
+// second name (a skill file sharing its file with an AGENTS.md, say) has a
+// name the CLI does not manage for it, so it is never expanded.
+func aliases(root, rel string, pairs bool) (names []string, ok bool, err error) {
 	at := func(name string) string { return filepath.Join(root, name) }
 	f, err := os.Open(at(rel))
 	if err != nil {
@@ -167,6 +176,9 @@ func aliases(root, rel string) (names []string, ok bool, err error) {
 	names = []string{rel}
 	if n <= 1 {
 		return names, true, nil
+	}
+	if !pairs || !slices.Contains(aliasCandidates, rel) {
+		return names, false, nil
 	}
 	info, err := os.Lstat(at(rel))
 	if err != nil {
@@ -185,13 +197,13 @@ func aliases(root, rel string) (names []string, ok bool, err error) {
 }
 
 // checkHardLinks refuses, before anything changes, a file the run would
-// change that has a name the CLI cannot see.
-func checkHardLinks(root, rel string) error {
+// change or remove that has a name the CLI does not manage.
+func checkHardLinks(root, rel string, pairs bool) error {
 	info, err := os.Lstat(filepath.Join(root, rel))
 	if err != nil || !info.Mode().IsRegular() {
 		return nil
 	}
-	if _, ok, err := aliases(root, rel); err != nil || !ok {
+	if _, ok, err := aliases(root, rel, pairs); err != nil || !ok {
 		return hardLinkRefusal(rel, true)
 	}
 	return nil
@@ -241,7 +253,7 @@ func (w *writer) temp(rel string, data []byte, mode os.FileMode) (string, error)
 // renamed over it. A file with several names is replaced only when every
 // name is one install gives it (an AGENTS.md and the CLAUDE.md that is
 // it): each name is renamed onto the new file, so they stay one file.
-// One with a name the CLI cannot see is refused. A name created during
+// One with a name the CLI does not manage is refused. A name created during
 // the run may keep the old content (see aliases); nothing outside the
 // root is ever changed. The names of a pair are renamed one at a time, not
 // as one transaction: a crash between the renames leaves one name with the
@@ -263,7 +275,7 @@ func (w *writer) write(rel string, data []byte) error {
 	mode, names := newFileMode(), []string{rel}
 	if info, err := w.root.Lstat(rel); err == nil && info.Mode().IsRegular() {
 		mode = info.Mode().Perm()
-		found, ok, err := aliases(w.path, rel)
+		found, ok, err := aliases(w.path, rel, w.pairs)
 		if err != nil || !ok {
 			return hardLinkRefusal(rel, false)
 		}
@@ -294,11 +306,11 @@ func (w *writer) write(rel string, data []byte) error {
 	return nil
 }
 
-// remove removes the file rel, if it is there. A file whose every name is
-// one install gives it (an AGENTS.md and the CLAUDE.md that is it) goes
-// under each of them, so no name keeps what was removed; it returns the
-// other names removed. A file with a name the CLI cannot see loses only
-// rel: removing a name never changes another name's file.
+// remove removes the file rel, if it is there. A project's AGENTS.md (or
+// CLAUDE.md) whose every name is one install gives it goes under each of
+// them, so no name keeps what was removed; it returns the other names
+// removed. Any other file with a second name is refused (the run checked
+// before changing anything; this checks again).
 func (w *writer) remove(rel string) ([]string, error) {
 	if err := checkBelow(w.path, filepath.Dir(rel)); err != nil {
 		return nil, err
@@ -308,9 +320,11 @@ func (w *writer) remove(rel string) ([]string, error) {
 	}
 	names := []string{rel}
 	if info, err := w.root.Lstat(rel); err == nil && info.Mode().IsRegular() {
-		if found, ok, err := aliases(w.path, rel); err == nil && ok {
-			names = found
+		found, ok, err := aliases(w.path, rel, w.pairs)
+		if err != nil || !ok {
+			return nil, hardLinkRefusal(rel, false)
 		}
+		names = found
 	}
 	for _, name := range names {
 		if err := checkBelow(w.path, filepath.Dir(name)); err != nil {

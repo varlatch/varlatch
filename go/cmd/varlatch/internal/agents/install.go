@@ -803,17 +803,20 @@ func RunInstall(opts Options) (*Result, error) {
 		if link := linkBelow(opts.Root, filepath.Dir(rel)); link != "" {
 			return nil, refuseBefore(opts, link)
 		}
-		// A file it would change that has a name it cannot see (a hard link,
-		// perhaps outside the root).
-		if opts.Mode != "check" && file.desired != nil && !isSymlink(file.path) {
-			if current, st, err := readBytes(file.path); err == nil && st == isText && !sameBytes(current, *file.desired) {
-				if err := checkHardLinks(opts.Root, rel); err != nil {
+		// A file it would change or remove that has a name it cannot see (a
+		// hard link, perhaps outside the root), or, outside a managed pair,
+		// any second name.
+		if opts.Mode != "check" && !isSymlink(file.path) {
+			current, st, err := readBytes(file.path)
+			changes := err == nil && st == isText && (file.desired == nil || !sameBytes(current, *file.desired))
+			if changes {
+				if err := checkHardLinks(opts.Root, rel, opts.Scope != "user"); err != nil {
 					return nil, err
 				}
 			}
 		}
 	}
-	w := &writer{path: opts.Root}
+	w := &writer{path: opts.Root, pairs: opts.Scope != "user"}
 	defer w.close()
 	// Names a removal took away with their file (a hard-linked pair): never
 	// reported twice, nor written again by a later row for the same file.

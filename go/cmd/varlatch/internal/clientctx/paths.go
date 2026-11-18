@@ -16,6 +16,7 @@
 package clientctx
 
 import (
+	"errors"
 	"path/filepath"
 )
 
@@ -101,6 +102,12 @@ func operatorStoreBlocked(env Env) (bool, error) {
 		return true, nil
 	}
 	def, err := defaultConfigDir(env)
+	var noHome *HomeDirectoryError
+	if errors.As(err, &noHome) {
+		// No default directory exists to be the operator's store, so the
+		// override cannot be it: it is used as given.
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
