@@ -84,10 +84,11 @@ export function retrieve() {
   }
   const id = (r.headers && r.headers['X-Request-Id']) || '';
   // sched counts the scenario's started iterations, which leave out the ones
-  // k6 dropped: after a drop it is too early by one interval per drop. So the
-  // raw dispatch time, the scenario's start and the iteration go on the line
-  // too, and the report places a request on its wall-clock slot when k6
-  // dropped any (report.go, dropSafe).
+  // k6 dropped: after a drop it is too early by one interval per drop, and
+  // the real slot is not known. So the raw dispatch time, the scenario's
+  // start and the iteration go on the line too: with drops the report judges
+  // no latency from the schedule and shows HTTP time from the send, reported
+  // only (latency.go).
   console.log(`R,${sc.name},${Math.round(sched * 1000)},${Math.round(latency * 1000)},${Math.round(service * 1000)},${r.status},${err},${id},${m.identity},${t0 * 1000},${Math.round(sc.startTime * 1000)},${sc.iterationInTest}`);
 }
 

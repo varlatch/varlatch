@@ -240,23 +240,29 @@ smoke.
   scenario's start and the iteration. k6's dropped iterations (requests it
   could not send on time) are in `k6-summary.json`. They still fail the
   run.
-  - **How the scheduled start is found.** The script's scheduled start
-    counts k6's started iterations (`iterationInTest`), which leave the
-    dropped ones out. So after d drops it is d intervals early: in G9's
-    bound run of 2026-11-18, 29 drops at 50/s made every later request
-    read 580 ms late.
-  - **With drops,** the report places each request on its slot instead:
-    its iteration plus the drops before it.
-    - Those drops come from the wall clock: the smallest offset
-      round((dispatch - start) × rate) - iteration over the request and
-      every later one in its phase.
-    - So a request k6 itself sent late keeps its lateness.
-    - The report notes the drops the slots imply beside k6's count.
-  - **Without drops,** nothing changes.
-  - **Older logs** without the dispatch columns are reconstructed from
-    their own (dispatch = schedule + latency − service time).
-  - **The report's split:** for each phase, each request's latency in its
-    two parts, the dispatch's lateness and the service time.
+  - **G9's measure** is latency from each request's scheduled start: its
+    scenario's start plus its iteration (`iterationInTest`) over the rate.
+  - **Without drops,** that is each request's slot, and the report judges
+    latency from it. One limit remains: k6 assigns `iterationInTest` after
+    it hands the iteration to a VU, so a stall can reorder a few requests
+    by a few slots (20 ms each at 50/s).
+  - **With drops,** `iterationInTest` leaves the dropped iterations out.
+    The script's schedule is then one interval early per earlier drop: in
+    G9's bound run of 2026-11-18, 29 drops at 50/s read 580 ms late on
+    every later request. The real slot is not known, and the report infers
+    none.
+    - The run fails on the drops.
+    - No phase or window p95 is judged.
+    - The tables show HTTP time from the send (k6's `blocked` +
+      `duration`), with the windows taken by send time, reported only, not
+      the G9 measure.
+    - The report also gives the dispatch lateness against the iteration
+      slot, as an upper bound: it includes one interval per earlier drop.
+  - **Older logs** without the dispatch columns take the send from their
+    own (schedule + latency − HTTP time).
+  - **The report's split:** for each phase, over every request
+    (transport failures included), the latency in its two parts: the
+    dispatch's lateness and the HTTP time.
 - `events.jsonl`: from the server: every checkpoint with its mode, why it
   ran (`interval`, `size`, `snapshot`, `close`), start, duration, busy
   result, frames in the log and checkpointed, and the WAL size before and

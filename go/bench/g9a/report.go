@@ -42,7 +42,7 @@ type Request struct {
 	RequestID, Identity string
 	// DispatchUs is when k6 sent it, StartUs its scenario's start, and Iter
 	// its iteration in the scenario (k6's iterationInTest, which leaves out
-	// dropped iterations); all 0 in older logs (dropSafe).
+	// dropped iterations); all 0 in older logs (latency.go).
 	DispatchUs, StartUs int64
 	Iter                int64
 }
@@ -218,7 +218,7 @@ type Report struct {
 	WriteLoad   []WriteLoadResult `json:"writeLoad,omitempty"`
 	WriteTotals []WriteLoadResult `json:"writeTotals,omitempty"`
 
-	// Schedule is how the requests' scheduled starts were found (dropSafe),
+	// Schedule is what the requests' latency is counted from (latency.go),
 	// and Latency each phase's latency in its parts.
 	Schedule *ScheduleBasis `json:"schedule,omitempty"`
 	Latency  []LatencyParts `json:"latencyParts,omitempty"`
@@ -611,21 +611,19 @@ func Analyze(dir string) (*Report, error) {
 	if r.convergeLines, err = ReadConverge(filepath.Join(dir, FileConverge)); err != nil {
 		return nil, err
 	}
-	// k6's iteration count leaves dropped iterations out: with drops, the
-	// requests go on their wall-clock slots (latency.go).
+	// What latency is counted from (latency.go): each request's scheduled
+	// start without drops, the G9 measure; with drops it cannot be measured,
+	// and HTTP time from the send is shown, reported only.
 	dropped := 0.0
 	if sum.Dropped != nil {
 		dropped = sum.Dropped.Count
 	}
-	b := dropSafe(reqs, r.Plan, dropped)
-	r.Schedule = &b
-	if b.WallClock {
-		r.note("k6 dropped %.0f iterations, so each request was placed on its wall-clock slot (k6's iteration count leaves dropped ones out): %d requests moved, by up to %.0f ms; the slots skip %d before the phases' last requests", dropped, b.Moved, b.MaxShiftMs, b.InferredDrops)
-		if float64(b.InferredDrops) != dropped {
-			r.note("the slots skip %d iterations, k6 counted %.0f dropped: the others came after a phase's last request, or a request started more than half an interval late and its lateness reads up to that much short", b.InferredDrops, dropped)
-		}
-	}
 	r.Latency = latencyParts(reqs, r.Plan)
+	b := latencyBasis(reqs, dropped)
+	r.Schedule = &b
+	if !b.Judged {
+		r.missing("k6 dropped %.0f iterations, and its iteration count leaves them out, so no request's latency from its scheduled start can be measured: no phase or window p95 is judged; the tables show HTTP time from the send, reported only, not the G9 measure (the drops fail the run)", dropped)
+	}
 	r.analyze(events, reqs, sum)
 	if access == nil {
 		r.missing("no access log: the requests per client address and request window are not shown")
@@ -656,6 +654,11 @@ func profileWindow(w ProfileSpan, reqs []Request) *ProfileWindow {
 func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	p := r.Plan
 	th := p.Thresholds
+	// The drops first, so a run that did not finish still shows them.
+	if sum.Dropped != nil {
+		r.Dropped = sum.Dropped.Count
+	}
+	judged := r.Schedule == nil || r.Schedule.Judged
 	if r.System.Target != TargetVarlatchd {
 		r.missing("the load ran against %s, not varlatchd: it does not pass G9a (ADR-0059, Order)", r.System.Target)
 	}
@@ -712,14 +715,13 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			r.fail("phase %s: %d failed requests (%d SQLITE_BUSY)", ph.Name, pr.Stats.Failed, pr.Busy)
 		}
 		if pr.Stats.P95 > th.P95Ms {
-			r.fail("phase %s: p95 %.1f ms over %.0f ms", ph.Name, pr.Stats.P95, th.P95Ms)
+			if judged {
+				r.fail("phase %s: p95 %.1f ms over %.0f ms", ph.Name, pr.Stats.P95, th.P95Ms)
+			}
 		}
 	}
 	for name, qs := range byPhase {
 		r.fail("%d requests from phase %q, which the plan does not have", len(qs), name)
-	}
-	if sum.Dropped != nil {
-		r.Dropped = sum.Dropped.Count
 	}
 	if r.Dropped > 0 {
 		r.fail("k6 dropped %.0f requests (not sent on time)", r.Dropped)
@@ -934,7 +936,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			}
 		}
 		r.Windows[i].Stats = stats(in)
-		if s := r.Windows[i].Stats; s.N > 0 && (s.P95 > th.P95Ms || s.Failed > 0) {
+		if s := r.Windows[i].Stats; s.N > 0 && ((judged && s.P95 > th.P95Ms) || s.Failed > 0) {
 			r.fail("%s window at %+.1fs: p95 %.1f ms, %d failed of %d", w.Kind, w.Offset, s.P95, s.Failed, s.N)
 		}
 	}
@@ -1411,7 +1413,11 @@ func (r *Report) Markdown() string {
 	list("Not shown (inconclusive)", r.Missing)
 	list("Notes", r.Notes)
 
-	b.WriteString("## Phases\n\n| phase | rate/s | seconds | requests | expected | failed | busy | p50 ms | p95 ms | p99 ms | max ms |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	measure := "Latency is counted from each request's scheduled start (its iteration slot), G9's measure."
+	if r.Schedule != nil && !r.Schedule.Judged {
+		measure = fmt.Sprintf("**k6 dropped %.0f iterations: latency from the scheduled start cannot be measured, and the p95 and windows below are HTTP time from the send, reported only, not the G9 measure.**", r.Schedule.K6Dropped)
+	}
+	b.WriteString("## Phases\n\n" + measure + "\n\n| phase | rate/s | seconds | requests | expected | failed | busy | p50 ms | p95 ms | p99 ms | max ms |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, p := range r.Phases {
 		name := p.Name
 		if p.Warmup {
@@ -1422,13 +1428,13 @@ func (r *Report) Markdown() string {
 	}
 	fmt.Fprintf(&b, "\nk6 dropped iterations: %.0f. SQLITE_BUSY seen by the server: %d.\n\n", r.Dropped, r.ServerBusy)
 	if len(r.Latency) > 0 {
-		basis := "each request's iteration slot (k6 dropped none)"
-		if r.Schedule != nil && r.Schedule.WallClock {
-			basis = fmt.Sprintf("each request's wall-clock slot, since k6 dropped %.0f iterations and its iteration count leaves them out", r.Schedule.K6Dropped)
+		lateness := "the dispatch's lateness from its iteration slot (its scheduled start)"
+		if r.Schedule != nil && !r.Schedule.Judged {
+			lateness = "reported only, not the G9 measure: the dispatch's lateness against its iteration slot, an upper bound (one interval too much per earlier drop)"
 		}
-		fmt.Fprintf(&b, "Latency in its parts, from %s: the dispatch's lateness from the scheduled start, and the service time.\n\n| phase | lateness p99 ms | lateness max ms | service p95 ms | service max ms |\n|---|---:|---:|---:|---:|\n", basis)
+		fmt.Fprintf(&b, "Latency in its parts, over every request of the phase (transport failures included): %s, and the HTTP time from the send (k6's blocked + duration). k6 assigns an iteration after it hands it to a VU, so a stall can reorder a few requests by a few slots (one interval each).\n\n| phase | lateness p99 ms | lateness max ms | HTTP time p95 ms | HTTP time max ms |\n|---|---:|---:|---:|---:|\n", lateness)
 		for _, l := range r.Latency {
-			fmt.Fprintf(&b, "| %s | %.1f | %.1f | %.1f | %.1f |\n", l.Phase, l.LatenessP99Ms, l.LatenessMaxMs, l.ServiceP95Ms, l.ServiceMaxMs)
+			fmt.Fprintf(&b, "| %s | %.1f | %.1f | %.1f | %.1f |\n", l.Phase, l.LatenessP99Ms, l.LatenessMaxMs, l.HTTPP95Ms, l.HTTPMaxMs)
 		}
 		b.WriteString("\n")
 	}
@@ -1461,6 +1467,9 @@ func (r *Report) Markdown() string {
 		fmt.Fprintf(&b, "| %s | %.1f | %d | %d | %.1f | %.1f | %.1f %s| %s |\n", w.Kind, w.Offset, s.N, s.Failed, s.P95, s.P99, s.Max, cpu, w.Note)
 	}
 	fmt.Fprintf(&b, "\nWindows are widened by %gs on both sides. Their CPU throttling is the change in cpu.stat between the samples that bracket them (reported only).\n\n", r.Plan.Thresholds.WindowPadSeconds)
+	if r.Schedule != nil && !r.Schedule.Judged {
+		b.WriteString("With k6's drops, the windows hold the requests sent in them and their p95 is HTTP time from the send: reported only, not the G9 measure.\n\n")
+	}
 
 	if len(r.WALBackups) > 0 {
 		b.WriteString("## WAL-triggered backups\n\n")
