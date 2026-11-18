@@ -20,18 +20,24 @@
 #       repository-wide checks (licenses, notices, the changelog section,
 #       the build) and the secret scan, and skips every TypeScript test. A
 #       mixed change answers for its other paths. The exception is the Go
-#       test data that varlatchd's own tests produce or read (SHARED: the
-#       authorization and audit vectors, the Node.js IDNA table, the HTTP
-#       known differences): it
-#       counts as code in @varlatch/varlatchd, so a change to it runs the
-#       tests that check it against the TypeScript server. The paths behind
+#       test data that a package's tests produce, read, or compare with (the
+#       *_SHARED patterns below: the parity fixtures and vectors, the CLI
+#       transcripts and inventory, the Node.js IDNA table, the enrollment
+#       page): it counts as code in that package, so a change to it runs the
+#       tests that check it against the TypeScript code. The paths behind
 #       each answer go to stderr.
 #
 #   scripts/ci-changes.sh affected <base>
 #       Prints the names of the packages to test when tests=affected: those
 #       with a changed file since <base> (committed or not), and every package
-#       that depends on them, and @varlatch/varlatchd for a SHARED file.
-#       Documentation inside a package selects nothing.
+#       that depends on them, and the package whose tests read a changed
+#       *_SHARED file. Documentation inside a package selects nothing.
+#
+#   scripts/ci-changes.sh check-shared
+#       Fails when a package's tests name a Go data file (one under a
+#       testdata/ directory, or a .json, .html or .mjs file) that the
+#       *_SHARED patterns do not give to that package, so the patterns
+#       cannot fall behind the tests.
 #
 # pnpm's own selector (`--filter "...[<base>]"`) maps a changed file outside
 # every package to the workspace root project, which no package depends on
@@ -47,14 +53,27 @@ DOCS='\.md$|^docs/'
 CHECKED_DOCS='^(CHANGELOG|THIRD-PARTY-NOTICES)\.md$'
 # The Go rewrite, which go.yml checks.
 GO='^go/|^\.github/workflows/go\.yml$'
-# Go test data that services/varlatchd's tests produce from the TypeScript
-# server or Node.js, or read (go-authz-vectors, go-audit-vectors, go-write-vectors, go-parity,
-# go-values-fixture, go-core-fixture through the parity kit, go-contract-vectors,
-# go-timestamp-vectors, go-backup-vectors).
-SHARED='^go/server/(authz|audit|write|custody)/testdata/ts-vectors\.json$|^go/lib/(contract|backup)/testdata/ts-vectors\.json$|^go/server/environments/testdata/pg-timestamps\.json$|^go/server/paritytest/testdata/[a-z0-9.-]+\.json$|^go/server/httpserver/testdata/known-differences\.json$|^go/server/values/testdata/values-v[0-9.]+\.json$|^go/lib/whatwg/(nodeidna_table\.go|testdata/node-idna\.json|testdata/nodeidna\.mjs)$'
-# Go test data that packages/sync's tests produce and replay
-# (go-vectors.test.ts).
+# Go files that a package's tests produce, read, or compare with, by package.
+# pnpm sees them as the workspace root's, so `affected` adds the package for
+# them. `check-shared` keeps these complete.
+# services/varlatchd: the parity fixtures and vectors (go-*-fixture.test.ts,
+# go-*-vectors.test.ts), the HTTP known differences, the enrollment page, the
+# column mapping, the Node.js IDNA table.
+SERVER_SHARED='^go/server/[a-z0-9]+/testdata/ts-vectors\.json$|^go/lib/(contract|backup)/testdata/ts-vectors\.json$|^go/server/(paritytest|values|pgtime)/testdata/|^go/server/environments/testdata/pg-timestamps\.json$|^go/server/security/testdata/approval-vectors\.json$|^go/server/auth/testdata/passkeys-v[0-9.]+\.json$|^go/server/httpserver/testdata/known-differences\.json$|^go/server/httpserver/enroll/enroll\.html$|^go/server/db/mapping\.json$|^go/lib/envelope/testdata/tsfixtures\.mjs$|^go/lib/whatwg/(nodeidna_table\.go|testdata/node-idna\.json|testdata/nodeidna\.mjs)$'
+# apps/cli: the Go CLI's transcripts, vectors and inventory (go-*.test.ts,
+# cli-inventory.test.ts), and the JSON writer's vectors.
+CLI_SHARED='^go/cmd/varlatch/testdata/(cli-inventory\.json$|transcripts/|vectors/)|^go/lib/jsjson/testdata/ts-vectors\.json$'
+# packages/sync: the exchanges its tests produce and replay
+# (go-vectors.test.ts, go-compose-fuzz.test.ts).
 SYNC_SHARED='^go/lib/sync/testdata/ts-exchanges\.json$'
+
+# Prints the packages whose tests read the Go file $1, if any.
+shared_owners() {
+  if [[ $1 =~ $SERVER_SHARED ]]; then echo "@varlatch/varlatchd"; fi
+  if [[ $1 =~ $CLI_SHARED ]]; then echo "@varlatch/cli"; fi
+  if [[ $1 =~ $SYNC_SHARED ]]; then echo "@varlatch/sync"; fi
+  return 0
+}
 
 # True when a path lies inside a workspace package (pnpm-workspace.yaml).
 in_package() {
@@ -72,7 +91,7 @@ classify() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     total=$((total + 1))
-    if [[ $path =~ $SHARED ]] || [[ $path =~ $SYNC_SHARED ]]; then code=$((code + 1)); continue; fi
+    if [ -n "$(shared_owners "$path")" ]; then code=$((code + 1)); continue; fi
     if [[ $path =~ $GO ]]; then go=$((go + 1)); continue; fi
     if [[ $path =~ $CHECKED_DOCS ]] || ! [[ $path =~ $DOCS ]]; then code=$((code + 1)); fi
     if ! [[ $path =~ $DOCS ]] && ! in_package "$path"; then global+=("$path"); fi
@@ -116,17 +135,17 @@ affected() {
     rest=${rest%%:*}
     names+=("${rest%@*}")
   done <<< "$listing"
-  # varlatchd's tests check the shared Go test data (SHARED) against the
-  # TypeScript server; pnpm sees those files as the workspace root's.
-  if (cd "$REPO_ROOT" && { git diff --name-only "$base"; git ls-files --others --exclude-standard; }) | grep -E "$SHARED" >/dev/null &&
-    [[ " ${names[*]} " != *" @varlatch/varlatchd "* ]]; then
-    names+=("@varlatch/varlatchd")
-  fi
-  # packages/sync's tests replay its Go test data (SYNC_SHARED).
-  if (cd "$REPO_ROOT" && { git diff --name-only "$base"; git ls-files --others --exclude-standard; }) | grep -E "$SYNC_SHARED" >/dev/null &&
-    [[ " ${names[*]} " != *" @varlatch/sync "* ]]; then
-    names+=("@varlatch/sync")
-  fi
+  # A package's tests that read changed Go test data (*_SHARED); pnpm sees
+  # those files as the workspace root's.
+  local path owner changed
+  changed=$(cd "$REPO_ROOT" && { git diff --no-renames --name-only "$base"; git ls-files --others --exclude-standard; })
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    while IFS= read -r owner; do
+      [ -n "$owner" ] || continue
+      [[ " ${names[*]} " == *" $owner "* ]] || names+=("$owner")
+    done < <(shared_owners "$path")
+  done <<< "$changed"
   # The Python accessor's tests read the contract and accessor vectors and
   # run the CLI's generator without depending on those packages; each of them
   # selects the CLI, so the CLI stands in for all three.
@@ -142,14 +161,43 @@ affected() {
   printf '%s\n' "${names[@]}"
 }
 
+check_shared() {
+  local dir name ref probe missing=0
+  for dir in "$REPO_ROOT"/apps/*/ "$REPO_ROOT"/packages/*/ "$REPO_ROOT"/services/*/ "$REPO_ROOT"/convex/; do
+    [ -f "$dir/package.json" ] && [ -d "$dir/test" ] || continue
+    name=$(node -p "require(process.argv[1]).name" "$dir/package.json")
+    # shellcheck disable=SC2016 # the pattern matches a literal ${ in tests
+    while IFS= read -r ref; do
+      [ -n "$ref" ] || continue
+      # A path built from a template (<area>, ${name}) stops before it, and
+      # a sentence's full stop is not part of the path.
+      ref=${ref%%[<\$]*}
+      ref=${ref%%.}
+      [[ $ref == */testdata/* || $ref =~ \.(json|html|mjs)$ ]] || continue
+      probe=$ref
+      if [[ $ref == */ ]]; then probe="${ref}x.json"; fi
+      if ! shared_owners "$probe" | grep -qx "$name"; then
+        echo "${dir#"$REPO_ROOT"/}test names ${ref}, which no *_SHARED pattern in scripts/ci-changes.sh gives to ${name}." >&2
+        missing=1
+      fi
+    done < <(cd "$dir" && grep -rohE 'go/(cmd|lib|server|internal)/[A-Za-z0-9_./<>${}-]*' test | sort -u)
+  done
+  if [ "$missing" -ne 0 ]; then
+    echo "A change to such a file would skip the tests that read it; add it to the package's pattern." >&2
+    return 1
+  fi
+  echo "Every Go data file that a package's tests name selects that package." >&2
+}
+
 case ${1:-} in
   classify) classify ;;
+  check-shared) check_shared ;;
   affected)
     [ -n "${2:-}" ] || { echo "usage: $0 affected <base>" >&2; exit 2; }
     affected "$2"
     ;;
   *)
-    echo "usage: $0 classify < paths | $0 affected <base>" >&2
+    echo "usage: $0 classify < paths | $0 affected <base> | $0 check-shared" >&2
     exit 2
     ;;
 esac

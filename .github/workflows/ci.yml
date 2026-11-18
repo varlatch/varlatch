@@ -22,7 +22,7 @@ name: CI
 # exact commit that then lands on main, diffed with main, so every merge
 # commit has a recorded pass; main runs no CI of its own on a merge, since
 # that would test the same commit twice. Everything, every package's tests
-# included, runs nightly on main when main has new commits, on manual
+# included, runs nightly on main when main has an untested commit, on manual
 # dispatch, and before every release (release.yml calls this workflow).
 on:
   pull_request:
@@ -117,6 +117,12 @@ jobs:
       # ADR-0021's split: SPDX headers, package.json fields, LICENSE files.
       - name: Every file and package matches the license map
         run: pnpm license:check
+
+      # Go test data that a package's tests read selects that package's
+      # tests (the *_SHARED patterns in scripts/ci-changes.sh); a test that
+      # names a file no pattern covers would be skipped when it changes.
+      - name: Go test data selects the tests that read it
+        run: scripts/ci-changes.sh check-shared
 
       # The conformance runner's own logic, and that its inventory, plan and
       # suites agree (scripts/conformance/README.md). No stack needed.
@@ -489,8 +495,9 @@ jobs:
   # suites against the stack built from this checkout, driven by the pinned
   # CLI 0.22.0 (scripts/conformance/clients.json), downloaded and verified
   # with cosign before anything starts, and the sdk built from its release
-  # commit. A pull request runs it when it touches the harness, a suite, or
-  # ci-e2e.sh; every other event runs it too. Hosted runners only.
+  # commit. A pull request or a merge group runs it when it touches the
+  # harness, a suite, or ci-e2e.sh; every other event runs it too. Hosted
+  # runners only.
   e2e-cli:
     needs: changes
     if: needs.changes.outputs.conformance == 'true' && needs.changes.outputs.hosted == 'true' && !vars.CI_RUNNER
@@ -525,14 +532,18 @@ jobs:
   # suite runs only when the pull request touches what it guards; tests
   # (*/test/) never trigger one, and a pull request that changes only
   # documentation or Go files triggers none. A merge group selects the same
-  # way, from its diff with main. A scheduled run skips
-  # everything when main has no commits since the last one; any other event
-  # runs everything, including a release (release.yml calls this workflow on
-  # a tag push).
+  # way, from its diff with main. A scheduled run skips everything when the
+  # last successful scheduled run tested the same commit of main; any other
+  # event runs everything, including a release (release.yml calls this
+  # workflow on a tag push).
   changes:
     needs: hosted-runner
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ${{ vars.CI_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
+    # actions: read finds the last successful nightly run.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       runner: ${{ steps.runner.outputs.runner }}
       hosted: ${{ steps.runner.outputs.hosted }}
@@ -572,10 +583,21 @@ jobs:
           REF: ${{ github.ref }}
           # A merge group's base is main's head when it was queued.
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           tiers="multiarch contributor recovery lifecycle installers conformance"
-          if [ "$EVENT" = schedule ] && [ -z "$(git log -1 --since='25 hours ago' --format=%H)" ]; then
-            echo "No commits on main since the last nightly run; skipping."
+          # The nightly run is main's only run of every package's tests, so it
+          # skips only a commit that a successful nightly run already tested
+          # (not "no commit in 25 hours": a dropped or failed nightly would
+          # then leave a merge untested). If the lookup fails, it runs.
+          last=""
+          if [ "$EVENT" = schedule ]; then
+            last=$(gh api "repos/${REPO}/actions/workflows/ci.yml/runs?event=schedule&branch=main&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null || true)
+          fi
+          if [ -n "$last" ] && [ "$last" = "$(git rev-parse HEAD)" ]; then
+            echo "The last successful nightly run tested ${last}, main's head; skipping."
             for t in run code $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
             echo "tests=all" >> "$GITHUB_OUTPUT"
             exit 0
