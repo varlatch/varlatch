@@ -318,34 +318,59 @@ try {
     inFlight = fakeState().held.find((h) => h.repo === keptRepo) ?? null;
   }
   const writesBeforeRelease = writes();
+  // The stale run's lease: its sync_runs row, which it deletes when it ends.
+  // Each probe is bounded by the time left, so a stuck call cannot overrun.
+  const runsOf = (timeoutMs) => {
+    try {
+      return JSON.parse(targetOp("probe", ["sync-runs", ctarget.id], { timeoutMs: Math.max(1000, timeoutMs) })).runs;
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  };
+  const heldNow = () => fakeState().held.find((h) => h.repo === keptRepo) ?? null;
+  const atHold = { held: heldNow(), runs: runsOf(30_000) };
   const toCancel = ok(await api("POST", `${C}/deletion`, { body: {} }), "scheduling its deletion");
-  const released = fakeGitHub({ op: "release", repo: keptRepo }).released;
-  const reached = await waitFor(() => writes() > writesBeforeRelease, 30_000);
+  // The ordering: the deletion was scheduled while the stale run was still
+  // in flight, its write still held with its client connected and its row
+  // still there. Seen after the scheduling, so it held throughout it.
+  const atSchedule = { held: heldNow(), runs: runsOf(30_000) };
+  const { released, abandoned: abandonedWrites } = fakeGitHub({ op: "release", repo: keptRepo });
+  const orderedProof = inFlight?.name === "SECRET" && atHold.held?.connected === true && atHold.runs >= 1 &&
+    atSchedule.held?.connected === true && atSchedule.runs >= 1 &&
+    Array.isArray(released) && released.includes("SECRET") && Array.isArray(abandonedWrites) && abandonedWrites.length === 0;
+  const reached = orderedProof ? await waitFor(() => writes() > writesBeforeRelease, 30_000) : false;
   const reachedAt = writes();
-  await sleep(10_000); // the stale run tries to commit, and is refused
+  // The stale run has ended (its commit refused) once its row is gone; only
+  // then is the deletion cancelled, so no later run can be what fences it.
+  let staleEnded = false;
+  let lastRuns = null;
+  if (orderedProof) {
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline && !staleEnded;) {
+      lastRuns = runsOf(deadline - Date.now());
+      staleEnded = lastRuns === 0;
+      if (!staleEnded) await sleep(Math.min(1000, Math.max(0, deadline - Date.now())));
+    }
+  }
+  const fenceTitle = "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once that run has ended and the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing";
+  const fenceSoFar = { firstPush: Boolean(firstPush), inFlight, atHold, atSchedule, released, abandonedWrites, reached: Boolean(reached), staleEnded, lastRuns };
+  // Without the ordering, or with the stale run still running after a
+  // minute, nothing below could prove the fence: the check fails now, before
+  // the cancellation, saying why.
+  const fenceShown = orderedProof && Boolean(reached) && staleEnded;
+  if (!fenceShown) {
+    check("deletion.scheduling-fences-runs", fenceTitle, false, JSON.stringify({
+      why: !orderedProof
+        ? "inconclusive: the deletion was not shown scheduled while the stale run's write was held and connected and its row present"
+        : !reached ? "the released write did not reach the fake GitHub within 30 s" : "the stale run had not ended (its sync_runs row still there) after 60 s",
+      ...fenceSoFar,
+    }));
+  }
   const keptBotDuring = (await api("GET", "/v1/organizations", { bearer: keptBot.credential })).status;
   const cancelled = await api("POST", `${C}/deletion/${toCancel.id}/cancel`);
   const cancelledAgain = await api("POST", `${C}/deletion/${toCancel.id}/cancel`);
   const keptBotAfter = (await api("GET", "/v1/organizations", { bearer: keptBot.credential })).status;
   const afterCancel = ok(await api("GET", `${C}/deletion`), "reading its request").deletion;
   const writable = await api("POST", `${C}/projects`, { body: { name: "Kept", slug: "kept", contractAuthority: "managed" } });
-  const pausedAfterCancel = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
-  const resumed = await api("POST", `${CE}/sync-targets/${ctarget.id}/resume`, { body: {} });
-  const repushed = await api("POST", `${CE}/sync-targets/${ctarget.id}/push`, { body: {} });
-  const writtenAgain = await waitFor(() => writes() > reachedAt, 90_000);
-  // The control: a push with nothing changed runs and writes nothing, so
-  // the write above came from the ledger lacking the change, not from the
-  // push itself.
-  const idle = await waitFor(async () => {
-    const t = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
-    return t?.runStartedAt === null && t.needsSync === false && t;
-  }, 90_000);
-  const writesSettled = writes();
-  ok(await api("POST", `${CE}/sync-targets/${ctarget.id}/push`, { body: {} }), "pushing it again");
-  const ranAgain = await waitFor(async () => {
-    const t = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
-    return idle && t?.lastAttemptAt !== idle.lastAttemptAt && t.runStartedAt === null && t;
-  }, 90_000);
   check(
     "deletion.organization-cancelled",
     "cancelling a scheduled deletion ends the request, restores the machine identities it suspended and writes again; a second cancel is refused",
@@ -354,15 +379,33 @@ try {
       writable.status === 201,
     JSON.stringify({ during: keptBotDuring, cancelled: cancelled.status, again: cancelledAgain.status, after: keptBotAfter, writable: writable.status }),
   );
-  check(
-    "deletion.scheduling-fences-runs",
-    "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing",
-    Boolean(firstPush) && inFlight?.name === "SECRET" && Array.isArray(released) && released.includes("SECRET") && Boolean(reached) &&
+  if (fenceShown) {
+    const pausedAfterCancel = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
+    const resumed = await api("POST", `${CE}/sync-targets/${ctarget.id}/resume`, { body: {} });
+    const repushed = await api("POST", `${CE}/sync-targets/${ctarget.id}/push`, { body: {} });
+    const writtenAgain = await waitFor(() => writes() > reachedAt, 90_000);
+    // The control: a push with nothing changed runs and writes nothing, so
+    // the write above came from the ledger lacking the change, not from the
+    // push itself.
+    const idle = await waitFor(async () => {
+      const t = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
+      return t?.runStartedAt === null && t.needsSync === false && t;
+    }, 90_000);
+    const writesSettled = writes();
+    ok(await api("POST", `${CE}/sync-targets/${ctarget.id}/push`, { body: {} }), "pushing it again");
+    const ranAgain = await waitFor(async () => {
+      const t = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
+      return idle && t?.lastAttemptAt !== idle.lastAttemptAt && t.runStartedAt === null && t;
+    }, 90_000);
+    check(
+      "deletion.scheduling-fences-runs",
+      fenceTitle,
       pausedAfterCancel?.state === "paused" && resumed.status === 200 && repushed.status === 202 && Boolean(writtenAgain) &&
-      Boolean(ranAgain) && writes() === writesSettled,
-    JSON.stringify({ firstPush: Boolean(firstPush), inFlight, released, reached: Boolean(reached), pausedAfterCancel: pausedAfterCancel?.state,
-      resumed: resumed.status, repushed: repushed.status, writes: writes(), reachedAt, control: { ran: Boolean(ranAgain), writesSettled } }),
-  );
+        Boolean(ranAgain) && writes() === writesSettled,
+      JSON.stringify({ ...fenceSoFar, pausedAfterCancel: pausedAfterCancel?.state, resumed: resumed.status, repushed: repushed.status,
+        writes: writes(), reachedAt, control: { ran: Boolean(ranAgain), writesSettled } }),
+    );
+  }
 
   // ---- The due run: made due, then run by the deletion loop's next pass
   // (every minute on both servers).

@@ -284,6 +284,10 @@ const PROBES = {
     if (!got) throw new Error(`sync-repair-due: no Sync Target ${targetId}`);
     return JSON.parse(got);
   },
+  "sync-runs": (state, targetId) => {
+    if (!/^snt_[a-z0-9]{26}$/.test(targetId ?? "")) throw new Error("sync-runs: a Sync Target id");
+    return { runs: Number(psql(state, `SELECT count(*) FROM sync_runs WHERE target_id = '${targetId}'`)) };
+  },
   "deletion-teardown": (state, organizationId) => {
     if (!/^org_[a-z0-9]{26}$/.test(organizationId ?? "")) throw new Error("deletion-teardown: an Organization id (org_...)");
     const list = (table) => `COALESCE((SELECT json_agg(json_build_object('id', id, 'revoked', revoked_at IS NOT NULL) ORDER BY id) FROM ${table} WHERE organization_id = '${organizationId}'), '[]'::json)`;
