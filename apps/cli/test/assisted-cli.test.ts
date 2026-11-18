@@ -10,6 +10,7 @@ import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EMBEDDED_RELEASE } from "@varlatch/backup";
 import { agentsBlock } from "../src/agents/install.js";
+import { cliCommand } from "./cliUnderTest.js";
 import { contractItem, revision } from "./fixtures.js";
 
 /**
@@ -208,7 +209,8 @@ interface Result {
 
 function cli(args: string[], opts: { env?: Record<string, string>; input?: string; cwd?: string } = {}): Promise<Result> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], { cwd: opts.cwd ?? repo, env: baseEnv(opts.env), stdio: ["pipe", "pipe", "pipe"] });
+    const [command, argv] = cliCommand(bundle, args);
+    const child = spawn(command, argv, { cwd: opts.cwd ?? repo, env: baseEnv(opts.env), stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
@@ -809,7 +811,8 @@ const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 function underTerminal(args: string[], extra: Record<string, string> = {}, input?: { after: string; text: string }): Promise<{ code: number | null; terminal: string }> {
   return new Promise((resolve) => {
-    const command = [process.execPath, bundle, ...args].map(shellQuote).join(" ");
+    const [cli, argv] = cliCommand(bundle, args);
+    const command = [cli, ...argv].map(shellQuote).join(" ");
     const child = spawn("script", ["-qec", command, "/dev/null"], { cwd: repo, env: { ...baseEnv(extra), SHELL: "/bin/sh" }, stdio: ["pipe", "pipe", "pipe"] });
     let terminal = "";
     let typed = false;
@@ -1213,8 +1216,10 @@ describe("values set and values rotate: a strict command line", () => {
     ["-e and --environment both", ["-e", "production", "--environment", "development"], /--environment \(or -e\) given twice/],
     ["-e twice", ["-e", "development", "-e", "development"], /--environment \(or -e\) given twice/],
     ["--from-file twice", ["--from-file", "a", "--from-file", "b"], /--from-file given twice/],
-    ["an extra argument", ["value", "extra"], /unexpected argument extra/],
-    ["a value that begins with a dash, before --", ["-x9-value"], /unknown option -x9-value \(a value that begins with "-" goes after --\)/],
+    // The Go CLI does not echo an argument these commands refuse when it may
+    // be a value, or part of one (go/README.md, "No message holds a value").
+    ["an extra argument", ["value", "extra"], /unexpected argument extra|one argument too many, not shown since it may be part of a value/],
+    ["a value that begins with a dash, before --", ["-x9-value"], /unknown option -x9-value \(a value that begins with "-" goes after --\)|an unknown option, not shown since it may be a value \(a value that begins with "-" goes after --\)/],
   ];
   const cases: [string, string, string[], RegExp][] = [
     ...both.flatMap(([name, extra, message]): [string, string, string[], RegExp][] => [["set", name, extra, message], ["rotate", name, extra, message]]),

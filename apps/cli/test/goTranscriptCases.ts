@@ -768,10 +768,182 @@ const session51e: TranscriptCase[] = [
   { id: "env.use.agent-run", title: "inside an agent-safe run the operator's credential is not used: no tier", args: ["env", "use", "dev"], env: { VARLATCH_AGENT_RUN: "run_0123" }, unset: ["VARLATCH_CONFIG_DIR"], files: { ...inRepo(), "home/.config/varlatch/credentials.json": credentials({ "{{server}}": STORED_LIVE }) }, ...IN_REPO },
 ];
 
+// ---- 5.3a: values and import ------------------------------------------------
+//
+// A repository at repo/ on the fake server, signed in with a fake token.
+// Values in these cases are fakes (s3cr3t-...); each case that stores one
+// also shows it never reaches stdout or stderr. A generated value is random:
+// the "generated-value" pattern compares its shape (go/cmd/varlatch).
+
+const VTOKEN = "vlt_cli_valuesAAAA";
+const SIGNED_IN = { ...repoFiles('server = "{{server}}"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n'), ...storeAt({ "{{server}}": { token: VTOKEN, ...OK } }) };
+const NOT_SIGNED_IN = repoFiles('server = "{{server}}"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n');
+const ENV = "/v1/organizations/acme/projects/web/environments/dev";
+const PROD = "/v1/organizations/acme/projects/web/environments/prod";
+const CONTRACT_PATH = "/v1/organizations/acme/projects/web/contract";
+const item = (name: string, extra: Record<string, unknown> = {}) => ({ name, required: { kind: "never" }, sensitive: true, type: "string", ...extra });
+const ACTIVE = {
+  id: "crv_active",
+  contentHash: "sha256:aaaa",
+  active: true,
+  contract: { schemaVersion: 1, semanticsVersion: 3, items: [item("API_KEY", { rotationHint: "Issue a new key at the provider, then revoke the old one." }), item("PORT", { sensitive: false, type: "integer" })] },
+};
+const contractAnswer = (answer: unknown = ACTIVE): Exchange => ok(CONTRACT_PATH, answer);
+const effective = (items: unknown[], query = ""): Exchange => ok(`${ENV}/effective-configuration${query}`, { environmentId: "env_1", items });
+const put = (name: string, status = 200, answer: unknown = { versionId: `ver_${name}` }, base = ENV): Exchange => ({ method: "PUT", path: `${base}/values/${name}`, status, answer });
+const denied = (path: string, method = "GET", status = 403, code = "PERMISSION_DENIED"): Exchange => ({ method, path, status, answer: apiError(status, code) });
+const v = (c: Omit<TranscriptCase, "differences" | "files" | "cwd"> & { files?: Record<string, string>; cwd?: string; differences?: string[] }): TranscriptCase => ({
+  files: SIGNED_IN,
+  cwd: "repo",
+  ...c,
+  differences: [...ONLINE, ...(c.differences ?? [])],
+});
+const GENERATED = ["generated"];
+const VALUE_FREE = ["value-free-usage"];
+const DOTENV_FILE = "# app\nAPI_KEY=s3cr3t-api-key-value\nPORT=8080\nDEBUG=true\nHOME_URL=https://example.com\nREF=${PORT}/x\n";
+const withFile = (content: string, base: Record<string, string> = SIGNED_IN) => ({ ...base, "repo/.env": content });
+
+const values53a: TranscriptCase[] = [
+  // values set: every input form
+  v({ id: "set.argument", title: "a plain value on the command line", args: ["values", "set", "PORT", "8080"], server: [put("PORT")] }),
+  v({ id: "set.argument.dash", title: "a value that begins with \"-\" after --", args: ["values", "set", "PORT", "--", "-8080"], server: [put("PORT")] }),
+  v({ id: "set.argument.options-around", title: "options on either side of the value; -e names the environment", args: ["values", "set", "-e", "prod", "PORT", "8080", "--server", "{{server}}"], server: [put("PORT", 200, { versionId: "ver_p" }, PROD)] }),
+  v({ id: "set.stdin", title: "--stdin: one trailing line break removed, the value never shown", args: ["values", "set", "API_KEY", "--stdin"], stdin: "s3cr3t-from-stdin\n", server: [put("API_KEY")] }),
+  v({ id: "set.stdin.crlf", title: "--stdin removes one CRLF", args: ["values", "set", "API_KEY", "--stdin"], stdin: "s3cr3t-crlf\r\n\r\n", server: [put("API_KEY")] }),
+  v({ id: "set.stdin.empty", title: "--stdin with only a line break: nothing stored", args: ["values", "set", "API_KEY", "--stdin"], stdin: "\n" }),
+  v({ id: "set.stdin.nul", title: "--stdin with a NUL byte: refused without quoting it", args: ["values", "set", "API_KEY", "--stdin"], stdin: "s3cr3t\u0000tail" }),
+  v({ id: "set.from-file", title: "--from-file: the file's text, one trailing line break removed", args: ["values", "set", "API_KEY", "--from-file", "key.pem"], files: { ...SIGNED_IN, "repo/key.pem": "-----BEGIN KEY-----\ns3cr3t\n-----END KEY-----\n" }, server: [put("API_KEY")] }),
+  v({ id: "set.from-file.missing", title: "--from-file naming no file: its name and the code, never content", args: ["values", "set", "API_KEY", "--from-file", "nosuch.pem"] }),
+  v({ id: "set.from-file.directory", title: "--from-file naming a directory", args: ["values", "set", "API_KEY", "--from-file", "."] }),
+  v({ id: "set.from-file.empty", title: "--from-file with an empty file", args: ["values", "set", "API_KEY", "--from-file", "empty"], files: { ...SIGNED_IN, "repo/empty": "" } }),
+  v({ id: "set.generate", title: "--generate hex:32: a new random value, described, not shown", args: ["values", "set", "API_KEY", "--generate", "hex:32"], server: [put("API_KEY")], patterns: GENERATED }),
+  v({ id: "set.generate.alnum", title: "--generate alnum:30", args: ["values", "set", "API_KEY", "--generate", "alnum:30"], server: [put("API_KEY")], patterns: GENERATED }),
+  v({ id: "set.generate.base64url", title: "--generate base64url:24", args: ["values", "set", "API_KEY", "--generate", "base64url:24"], server: [put("API_KEY")], patterns: GENERATED }),
+  v({ id: "set.generate.weak", title: "--generate below 128 bits is a usage error", args: ["values", "set", "API_KEY", "--generate", "hex:8"] }),
+  v({ id: "set.generate.unknown", title: "--generate with an unknown form", args: ["values", "set", "API_KEY", "--generate", "uuid"] }),
+  v({ id: "set.two-sources", title: "two value sources are a usage error, before any request", args: ["values", "set", "API_KEY", "s3cr3t-arg", "--stdin"], stdin: "x\n" }),
+  v({ id: "set.prompt.not-a-terminal", title: "no value, and standard input is not a terminal: how to give one", args: ["values", "set", "API_KEY"] }),
+  // assisted mode
+  v({ id: "set.assisted.no-value", title: "assisted mode never prompts: the safe forms instead", args: ["--assisted", "values", "set", "API_KEY"] }),
+  v({ id: "set.assisted.no-value.server", title: "the handoff names an overridden server", args: ["--assisted", "values", "set", "API_KEY", "--server", "{{server}}", "-e", "prod"] }),
+  v({ id: "set.assisted.secret-argument", title: "assisted mode refuses a Secret's value on the command line, never echoing it", args: ["--assisted", "values", "set", "API_KEY", "s3cr3t-on-the-command-line"], server: [contractAnswer()] }),
+  v({ id: "set.assisted.uncontracted-argument", title: "an item outside the Contract is a Secret", args: ["--assisted", "values", "set", "NEW_ITEM", "s3cr3t-on-the-command-line"], server: [contractAnswer()] }),
+  v({ id: "set.assisted.no-contract", title: "no active Contract (404): every item is a Secret", args: ["--assisted", "values", "set", "PORT", "8080"], server: [denied(CONTRACT_PATH, "GET", 404, "NOT_FOUND")] }),
+  v({ id: "set.assisted.marker", title: "a coding agent's marker turns on assisted mode", args: ["values", "set", "API_KEY", "s3cr3t-on-the-command-line"], env: { CLAUDECODE: "1" }, server: [contractAnswer()] }),
+  v({ id: "set.assisted.plain-argument", title: "a plain item's value on the command line in assisted mode; a new item needs no --replace", args: ["--assisted", "values", "set", "PORT", "8080"], server: [contractAnswer(), effective([]), put("PORT")] }),
+  v({ id: "set.assisted.existing", title: "replacing an existing value needs --replace (78), before the value is generated", args: ["--assisted", "values", "set", "API_KEY", "--generate", "hex:32"], server: [effective([{ name: "API_KEY", sensitive: true, source: "self" }])] }),
+  v({ id: "set.assisted.inherited", title: "a value inherited from the parent counts as existing", args: ["--assisted", "values", "set", "API_KEY", "--stdin"], stdin: "s3cr3t-x\n", server: [effective([{ name: "API_KEY", sensitive: true, source: "parent" }])] }),
+  v({ id: "set.assisted.unknown", title: "when the server cannot say, the item counts as existing", args: ["--assisted", "values", "set", "API_KEY", "--stdin"], stdin: "s3cr3t-x\n", server: [denied(`${ENV}/effective-configuration`)] }),
+  v({ id: "set.assisted.replace", title: "--replace naming the item: no existence check, the value is stored", args: ["--assisted", "values", "set", "API_KEY", "--from-file", "key", "--replace", "API_KEY"], files: { ...SIGNED_IN, "repo/key": "s3cr3t-file-value\n" }, server: [put("API_KEY")] }),
+  // the command line, strictly
+  v({ id: "set.replace-other", title: "--replace naming another item is a usage error", args: ["values", "set", "API_KEY", "--replace", "OTHER", "--stdin"] }),
+  v({ id: "set.no-item", title: "no item: the usage", args: ["values", "set"] }),
+  v({ id: "set.dash-item", title: "an item that begins with \"-\": the usage", args: ["values", "set", "--", "-X"] }),
+  v({ id: "set.unknown-option", title: "a mistyped option is refused before anything is read", args: ["values", "set", "PORT", "--env", "prod"] }),
+  v({ id: "set.grace", title: "--grace is rotate's", args: ["values", "set", "PORT", "8080", "--grace", "60"] }),
+  v({ id: "set.value-like-option", title: "a value that begins with \"-\" before --: refused, and the Go CLI does not echo it", args: ["values", "set", "API_KEY", "-s3cr3tValue"], differences: VALUE_FREE }),
+  v({ id: "set.extra-argument", title: "a value in two words: refused, and the Go CLI does not echo either", args: ["values", "set", "API_KEY", "s3cr3t", "words"], differences: VALUE_FREE }),
+  v({ id: "set.own-option-equals", title: "--environment=prod: one of the command's options, not parsed that way, is named", args: ["values", "set", "API_KEY", "--environment=prod"] }),
+  v({ id: "set.unknown-option-equals", title: "--value=...: an unknown option holding what may be a value is not echoed (Go)", args: ["values", "set", "API_KEY", "--value=s3cr3t-x"], differences: VALUE_FREE }),
+  v({ id: "set.missing-value-option", title: "--from-file needs a value", args: ["values", "set", "API_KEY", "--from-file"] }),
+  v({ id: "set.environment-twice", title: "-e and --environment both given", args: ["values", "set", "API_KEY", "-e", "a", "--environment", "b", "--stdin"] }),
+  // the server
+  v({ id: "set.not-signed-in", title: "no credential: 77 once the value is read", args: ["values", "set", "PORT", "8080"], files: NOT_SIGNED_IN }),
+  v({ id: "set.outside-repository", title: "outside a repository: the context error", args: ["values", "set", "PORT", "8080"], cwd: "." }),
+  v({ id: "set.echoed-value", title: "a server that echoes the value back has it masked", args: ["values", "set", "API_KEY", "--stdin"], stdin: "s3cr3t-echoed-value\n", server: [put("API_KEY", 400, apiError(400, "VALIDATION_FAILED", "value s3cr3t-echoed-value is not accepted"))] }),
+  v({ id: "set.denied", title: "a refused write: the error's code and 77", args: ["values", "set", "PORT", "8080"], server: [put("PORT", 403, apiError(403, "PERMISSION_DENIED"))] }),
+  v({ id: "set.unreachable", title: "an unreachable server: 69", args: ["values", "set", "PORT", "8080", "--server", "http://127.0.0.1:2"], files: { ...SIGNED_IN, ...storeAt({ "http://127.0.0.1:2": { token: VTOKEN, ...OK } }) } }),
+  v({ id: "set.odd-version", title: "a version id with control characters is escaped", args: ["values", "set", "PORT", "8080"], server: [put("PORT", 200, { versionId: "ver\u001b[31m" })] }),
+  // values rotate
+  v({ id: "rotate.argument", title: "rotate: the Contract's hint before and after, on stderr", args: ["values", "rotate", "API_KEY", "s3cr3t-new"], server: [contractAnswer(), { method: "POST", path: `${ENV}/values/API_KEY/rotations`, status: 200, answer: { primaryVersionId: "ver_2", rotationDeadline: "2026-11-19T10:00:00Z" } }] }),
+  v({ id: "rotate.grace", title: "--grace is sent as a number of seconds", args: ["values", "rotate", "PORT", "--grace", "007", "--stdin"], stdin: "9090\n", server: [contractAnswer(), { method: "POST", path: `${ENV}/values/PORT/rotations`, status: 200, answer: { primaryVersionId: "ver_3", rotationDeadline: null } }] }),
+  v({ id: "rotate.grace-bad", title: "--grace must be a whole number of seconds", args: ["values", "rotate", "PORT", "--grace", "1h", "9090"] }),
+  v({ id: "rotate.generate", title: "rotate to a generated value", args: ["values", "rotate", "API_KEY", "--generate", "base64:32"], server: [denied(CONTRACT_PATH), { method: "POST", path: `${ENV}/values/API_KEY/rotations`, status: 200, answer: { primaryVersionId: "ver_4", rotationDeadline: "not a time" } }], patterns: GENERATED }),
+  v({ id: "rotate.unsafe-hint", title: "a hint with control characters is not shown (an answer without a version id stops TypeScript)", args: ["values", "rotate", "API_KEY", "s3cr3t-new"], server: [contractAnswer({ ...ACTIVE, contract: { ...ACTIVE.contract, items: [item("API_KEY", { rotationHint: "line\none" })] } }), { method: "POST", path: `${ENV}/values/API_KEY/rotations`, status: 200, answer: {} }], differences: ["uncaught"] }),
+  v({ id: "rotate.assisted.existing", title: "assisted rotate of an existing value needs --replace", args: ["--assisted", "values", "rotate", "API_KEY", "--generate", "hex:32"], server: [effective([{ name: "API_KEY", sensitive: true, source: "self" }])] }),
+  v({ id: "rotate.value-like-option", title: "rotate refuses a value before -- without echoing it (Go)", args: ["values", "rotate", "API_KEY", "-s3cr3t"], differences: VALUE_FREE }),
+  // values delete
+  v({ id: "delete", title: "delete", args: ["values", "delete", "PORT"], server: [{ method: "DELETE", path: `${ENV}/values/PORT`, status: 204 }] }),
+  v({ id: "delete.environment", title: "delete in another environment", args: ["values", "delete", "PORT", "-e", "prod"], server: [{ method: "DELETE", path: `${PROD}/values/PORT`, status: 204 }] }),
+  v({ id: "delete.assisted", title: "assisted mode: every deletion needs --confirm (78), with the human's command", args: ["--assisted", "values", "delete", "PORT"] }),
+  v({ id: "delete.assisted.server", title: "the handoff keeps an overridden server", args: ["--assisted", "values", "delete", "PORT", "--server", "{{server}}"] }),
+  v({ id: "delete.assisted.server-variable", title: "VARLATCH_SERVER counts as an overridden server", args: ["--assisted", "values", "delete", "PORT"], env: { VARLATCH_SERVER: "{{server}}" } }),
+  v({ id: "delete.assisted.confirmed", title: "--confirm naming the item deletes it", args: ["--assisted", "values", "delete", "PORT", "--confirm", "PORT"], server: [{ method: "DELETE", path: `${ENV}/values/PORT`, status: 204 }] }),
+  v({ id: "delete.confirm-other", title: "--confirm naming another item is a usage error", args: ["values", "delete", "PORT", "--confirm", "API_KEY"] }),
+  v({ id: "delete.no-item", title: "no item", args: ["values", "delete"] }),
+  v({ id: "delete.extra", title: "one item only", args: ["values", "delete", "PORT", "API_KEY"] }),
+  v({ id: "delete.unknown-option", title: "a mistyped option", args: ["values", "delete", "PORT", "--env", "prod"] }),
+  v({ id: "delete.missing", title: "an item with no value: the server's 404", args: ["values", "delete", "PORT"], server: [denied(`${ENV}/values/PORT`, "DELETE", 404, "NOT_FOUND")] }),
+  // values list
+  v({ id: "list", title: "names and classification", args: ["values", "list"], server: [effective([{ name: "API_KEY", sensitive: true, source: "self" }, { name: "PORT", sensitive: false, source: "parent", value: "8080" }])] }),
+  v({ id: "list.json", title: "--json: names only, rotating as a boolean", args: ["values", "list", "--json"], server: [effective([{ name: "API_KEY", sensitive: true, source: "self", rotating: true, value: "never" }, { name: "PORT", sensitive: false, source: "parent", rotating: "yes" }, { name: "X" }])] }),
+  v({ id: "list.empty", title: "no items", args: ["values", "list", "-e", "prod"], server: [ok(`${PROD}/effective-configuration`, {})] }),
+  v({ id: "list.rotating", title: "a rotation in progress: a note on stderr with the command that completes it", args: ["values", "list"], server: [effective([{ name: "API_KEY", sensitive: true, source: "self", rotating: true }])] }),
+  v({ id: "list.rotating-inherited", title: "an inherited rotation: the note names the parent", args: ["values", "list", "--server", "{{server}}"], server: [effective([{ name: "API_KEY", sensitive: true, source: "parent", rotating: true }]), ok("/v1/organizations/acme/projects/web/environments", { items: [{ id: "env_p", name: "base" }, { id: "env_1", name: "dev", parentEnvironmentId: "env_p" }] })] }),
+  v({ id: "list.rotating-no-parent", title: "the parent cannot be found: no command", args: ["values", "list"], server: [effective([{ name: "API_KEY", sensitive: true, source: "parent", rotating: true }]), denied("/v1/organizations/acme/projects/web/environments")] }),
+  v({ id: "list.escaped", title: "names with control characters are escaped", args: ["values", "list"], server: [effective([{ name: "A\u001b[31mB", sensitive: 1, source: "self\u202e" }])] }),
+  v({ id: "list.lenient", title: "list reads its options leniently", args: ["values", "list", "--nosuch"], server: [effective([])] }),
+  v({ id: "list.not-signed-in", title: "no credential", args: ["values", "list"], files: NOT_SIGNED_IN }),
+  v({ id: "list.token-variable", title: "VARLATCH_TOKEN is the credential", args: ["values", "list"], env: { VARLATCH_TOKEN: "vlt_svc_envValuesAAAA" }, files: NOT_SIGNED_IN, server: [effective([])] }),
+  v({ id: "list.agent-run", title: "inside an agent-safe run the operator's credential is never used", args: ["values", "list"], env: { VARLATCH_AGENT_RUN: "run_1" }, unset: ["VARLATCH_CONFIG_DIR"], files: { ...NOT_SIGNED_IN, "home/.config/varlatch/credentials.json": credentials({ "{{server}}": { token: VTOKEN, ...OK } }) } }),
+  // values rotate-complete, and the subcommand
+  v({ id: "rotate-complete", title: "rotate-complete", args: ["values", "rotate-complete", "API_KEY"], server: [{ method: "POST", path: `${ENV}/values/API_KEY/rotations/complete`, status: 200, answer: {} }] }),
+  v({ id: "rotate-complete.missing", title: "rotate-complete without an item", args: ["values", "rotate-complete"] }),
+  v({ id: "rotate-complete.outside", title: "outside a repository the context comes first", args: ["values", "rotate-complete"], cwd: "." }),
+  v({ id: "values.none", title: "values without a subcommand", args: ["values"] }),
+  v({ id: "values.unknown", title: "an unknown subcommand", args: ["values", "show"] }),
+  // validate
+  v({ id: "validate.valid", title: "valid: 0", args: ["validate"], server: [{ method: "POST", path: `${ENV}/validate`, status: 200, answer: { valid: true, complete: true, missing: [], invalid: [], unresolved: [], notEvaluated: [] } }] }),
+  v({ id: "validate.invalid", title: "invalid: 1, the reasons on stderr", args: ["validate"], server: [{ method: "POST", path: `${ENV}/validate`, status: 200, answer: { valid: false, complete: true, missing: ["DATABASE_URL"], invalid: [{ name: "PORT", reason: "expected an integer" }], unresolved: [{ name: "URL", reason: "reference" }], notEvaluated: [] } }] }),
+  v({ id: "validate.incomplete", title: "incomplete: 2", args: ["validate", "-e", "prod"], server: [{ method: "POST", path: `${PROD}/validate`, status: 200, answer: { valid: true, complete: false, missing: [], invalid: [], unresolved: [{ name: "U", reason: "authority" }], notEvaluated: [{ name: "API_KEY", requires: "secret.reveal", reason: "requirement" }] } }] }),
+  v({ id: "validate.json.valid", title: "--json, valid", args: ["validate", "--json"], server: [{ method: "POST", path: `${ENV}/validate`, status: 200, answer: { valid: true } }] }),
+  v({ id: "validate.json.invalid", title: "--json, invalid: the same status", args: ["validate", "--json"], server: [{ method: "POST", path: `${ENV}/validate`, status: 200, answer: { valid: false, missing: ["A"], invalid: [{ name: "B", reason: "r", extra: 1 }], unresolved: [] } }] }),
+  v({ id: "validate.json.incomplete", title: "--json, incomplete", args: ["validate", "--json"], server: [{ method: "POST", path: `${ENV}/validate`, status: 200, answer: { valid: false, complete: false, notEvaluated: [{ name: "K", requires: "config.value.read", reason: "access" }] } }] }),
+  v({ id: "validate.escaped", title: "names and reasons are escaped", args: ["validate"], server: [{ method: "POST", path: `${ENV}/validate`, status: 200, answer: { valid: false, missing: ["A\u0007"], invalid: [{ name: "B", reason: "bad\u001b[2J" }] } }] }),
+  v({ id: "validate.not-signed-in", title: "no credential", args: ["validate"], files: NOT_SIGNED_IN }),
+  v({ id: "validate.denied", title: "refused", args: ["validate"], server: [denied(`${ENV}/validate`, "POST")] }),
+  // import
+  v({ id: "import.dry-run.offline", title: "--dry-run outside a repository lists names and inferred types", args: ["import", ".env", "--dry-run"], cwd: ".", files: { ".env": DOTENV_FILE } }),
+  v({ id: "import.dry-run.not-signed-in", title: "--dry-run without a credential", args: ["import", "--dry-run", ".env"], files: withFile(DOTENV_FILE, NOT_SIGNED_IN) }),
+  v({ id: "import.dry-run", title: "--dry-run against the server: sensitivity and existing values, nothing stored", args: ["import", ".env", "--dry-run"], files: withFile(DOTENV_FILE), server: [contractAnswer(), effective([{ name: "PORT", sensitive: false, source: "self", value: "8080" }, { name: "DEBUG", sensitive: false, source: "self", value: "false" }, { name: "API_KEY", sensitive: true, source: "self", value: null }], "?include=values")] }),
+  v({ id: "import.dry-run.json", title: "--dry-run --json: names, types and sensitivity, no value", args: ["import", ".env", "--dry-run", "--json", "--delete-source"], files: withFile(DOTENV_FILE), server: [contractAnswer(), effective([], "?include=values")] }),
+  v({ id: "import.dry-run.offline.json", title: "--dry-run --json offline", args: ["import", ".env", "--dry-run", "--json"], cwd: ".", files: { ".env": DOTENV_FILE } }),
+  v({ id: "import", title: "stores every value, printing names only", args: ["import", ".env"], files: withFile(DOTENV_FILE), server: [contractAnswer(), effective([], "?include=values"), put("API_KEY"), put("PORT"), put("DEBUG"), put("HOME_URL"), put("REF")] }),
+  v({ id: "import.json", title: "--json", args: ["import", ".env", "--json"], files: withFile("A=1\nB=s3cr3t-b\n"), server: [denied(CONTRACT_PATH, "GET", 404, "NOT_FOUND"), effective([], "?include=values"), put("A"), put("B")] }),
+  v({ id: "import.delete-source", title: "--delete-source removes the file once every value is stored", args: ["import", ".env", "--delete-source"], files: withFile("API_KEY=s3cr3t-a\n"), server: [contractAnswer(), effective([], "?include=values"), put("API_KEY")] }),
+  v({ id: "import.contract", title: "--contract adds new items, --plain marks one plain", args: ["import", ".env", "--contract", "--plain", "DEBUG"], files: withFile(DOTENV_FILE), server: [contractAnswer(), effective([], "?include=values"), { method: "POST", path: `${CONTRACT_PATH}/revisions`, status: 201, answer: { id: "crv_new", contentHash: "sha256:bbbb", active: false } }, put("API_KEY"), put("PORT"), put("DEBUG"), put("HOME_URL"), put("REF")] }),
+  v({ id: "import.contract.json", title: "--contract --json with no active Contract", args: ["import", ".env", "--contract", "--json"], files: withFile("A=1\n"), server: [denied(CONTRACT_PATH, "GET", 404, "NOT_FOUND"), effective([], "?include=values"), { method: "POST", path: `${CONTRACT_PATH}/revisions`, status: 201, answer: { id: "crv_1", contentHash: "sha256:cccc", active: true } }, put("A")] }),
+  v({ id: "import.contract.all-known", title: "--contract when every item is in the Contract", args: ["import", ".env", "--contract", "--dry-run"], files: withFile("PORT=1\n"), server: [contractAnswer(), effective([], "?include=values")] }),
+  v({ id: "import.contract.forbidden", title: "--contract without contract.read: 77", args: ["import", ".env", "--contract"], files: withFile("A=1\n"), server: [denied(CONTRACT_PATH)] }),
+  v({ id: "import.contract-unreadable", title: "without --contract, an unreadable Contract is a warning", args: ["import", ".env", "--dry-run"], files: withFile("A=1\n"), server: [denied(CONTRACT_PATH), denied(`${ENV}/effective-configuration?include=values`, "GET", 404, "NOT_FOUND")] }),
+  v({ id: "import.plain-without-contract", title: "--plain needs --contract", args: ["import", ".env", "--plain", "A"], files: withFile("A=1\n") }),
+  v({ id: "import.plain-sensitive", title: "--plain naming an item the Contract marks sensitive", args: ["import", ".env", "--contract", "--plain", "API_KEY"], files: withFile("API_KEY=s3cr3t\n"), server: [contractAnswer(), effective([], "?include=values")] }),
+  v({ id: "import.problems", title: "every problem with the names at once, by line, never a value", args: ["import", ".env", "--replace", "NOPE", "--contract", "--plain", "ALSO_NOPE"], files: withFile("VARLATCH_TOKEN=s3cr3t-t\nlower=s3cr3t-l\nA=1\nA=s3cr3t-2\n") }),
+  v({ id: "import.parse-error", title: "a line that is not NAME=value: the line number only", args: ["import", ".env"], files: withFile("A=1\nSECRET_VALUE_WITHOUT_NAME\n") }),
+  v({ id: "import.unclosed-quote", title: "an unclosed quote", args: ["import", ".env"], files: withFile("A=\"s3cr3t\nmore\n") }),
+  v({ id: "import.missing-file", title: "no such file", args: ["import", "nosuch.env"] }),
+  v({ id: "import.empty", title: "a file that sets nothing", args: ["import", ".env", "--delete-source"], files: withFile("# nothing\n") }),
+  v({ id: "import.empty.json", title: "a file that sets nothing, --json", args: ["import", ".env", "--json"], files: withFile("") }),
+  v({ id: "import.existing", title: "outside assisted mode an existing value is replaced, and said so", args: ["import", ".env"], files: withFile("PORT=9090\nDEBUG=true\n"), server: [contractAnswer(), effective([{ name: "PORT", sensitive: false, source: "self", value: "8080" }, { name: "DEBUG", sensitive: false, source: "self", rawValue: "true", value: "x" }], "?include=values"), put("PORT"), put("DEBUG")] }),
+  v({ id: "import.assisted.existing", title: "assisted: an existing value needs --replace for it (78), nothing stored", args: ["--assisted", "import", ".env", "--delete-source"], files: withFile("API_KEY=s3cr3t-a\nPORT=1\n"), server: [contractAnswer(), effective([{ name: "API_KEY", sensitive: true, source: "self" }], "?include=values")] }),
+  v({ id: "import.assisted.replace", title: "assisted with --replace for each existing item", args: ["--assisted", "import", ".env", "--replace", "API_KEY"], files: withFile("API_KEY=s3cr3t-a\nPORT=1\n"), server: [contractAnswer(), effective([{ name: "API_KEY", sensitive: true, source: "self" }], "?include=values"), put("API_KEY"), put("PORT")] }),
+  v({ id: "import.assisted.unreadable", title: "assisted, when what the environment has cannot be read: every item needs --replace", args: ["--assisted", "import", ".env"], files: withFile("A=1\nB=2\n"), server: [contractAnswer(), denied(`${ENV}/effective-configuration?include=values`)] }),
+  v({ id: "import.store-failure", title: "a failure part way: what was stored, what was not, and why (a code, never a value)", args: ["import", ".env", "--delete-source"], files: withFile("A=s3cr3t-a\nB=s3cr3t-b\nC=s3cr3t-c\n"), server: [contractAnswer(), effective([], "?include=values"), put("A"), put("B", 500, apiError(500, "INTERNAL", "could not store s3cr3t-b"))] }),
+  v({ id: "import.store-failure.assisted", title: "the same in assisted mode: the retry needs approval again", args: ["--assisted", "import", ".env"], files: withFile("A=s3cr3t-a\nB=s3cr3t-b\n"), server: [contractAnswer(), effective([], "?include=values"), put("A"), put("B", 403, apiError(403, "PERMISSION_DENIED"))] }),
+  v({ id: "import.not-signed-in", title: "no credential: 77", args: ["import", ".env"], files: withFile("A=1\n", NOT_SIGNED_IN) }),
+  v({ id: "import.outside", title: "outside a repository without --dry-run: the context error", args: ["import", ".env"], cwd: ".", files: { ".env": "A=1\n" } }),
+  v({ id: "import.environment", title: "-e names the environment", args: ["import", "-e", "prod", ".env", "--dry-run"], files: withFile("A=1\n"), server: [contractAnswer(), ok(`${PROD}/effective-configuration?include=values`, { items: [] })] }),
+  v({ id: "import.usage.none", title: "no file", args: ["import"] }),
+  v({ id: "import.usage.two-files", title: "two files", args: ["import", "a.env", "b.env"] }),
+  v({ id: "import.usage.unknown", title: "an unknown option", args: ["import", ".env", "--force"] }),
+  v({ id: "import.usage.replace-missing-value", title: "--replace needs a value", args: ["import", ".env", "--replace"] }),
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
   "5.1c-api-client": apiClient51c,
   "5.1d-agent-files": agentFiles51d,
   "5.1e-session": session51e,
+  "5.3a-values": values53a,
 };

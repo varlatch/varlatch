@@ -483,6 +483,33 @@ comes. `verify-release`, which the installers run, is Go's own.
   and without `--guardrails` and `--mcp`, in both scopes: each run's
   result or error, its lines, and the whole tree afterwards
   (`internal/agents`' `TestInstallVectors`).
+- Values and import (slice 5.3a): `internal/cli`'s `values.go` (`values
+  set`, `list`, `delete`, `rotate`, `rotate-complete`, with assisted mode's
+  `--replace` and `--confirm`), `validate.go` (`validate [--json]`, 0
+  valid, 1 invalid, 2 incomplete) and `importcmd.go` (`import <file>` with
+  `--dry-run`, `--contract`, `--plain`, `--replace`, `--delete-source` and
+  `--json`); `internal/secretinput/` is `secretInput.ts` (the value from
+  an argument, `--stdin`, `--from-file`, `--generate` or the hidden
+  prompt) and `internal/dotenv/` is `dotenv.ts`. Values are secrets: no
+  message, document or error holds one, a value a server echoes back is
+  masked, and `TestValuesNeverPrintAValue` takes a canary value through
+  every path, server echoes and parse errors included. The hidden prompt
+  puts the terminal in raw mode (`golang.org/x/term`), reads keys as
+  `HiddenInput` does, and restores the terminal however it ends: Enter,
+  Ctrl-D, Ctrl-C (130, nothing stored) or a signal, after which the
+  signal ends the process as it ends Node.js. Backspace removes one
+  extended grapheme cluster, as `Intl.Segmenter` finds it:
+  `secretinput/graphemes.json` holds each code point's segmentation
+  properties as the ICU inside Node.js shows them, written by probing the
+  segmenter (`apps/cli/test/go-vectors-values.test.ts`). The pseudo-terminal
+  test `TestHiddenPromptOnATerminal` (Linux and macOS) checks that nothing
+  typed is echoed, the value sent, and the terminal's state afterwards.
+- `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
+  what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
+  generators, the value sources, input bytes, well-formed text, the hidden
+  prompt's keys) and 2,022 texts split into grapheme clusters, `validate`'s
+  outcome and `--json` document for 17 reports, and import's type
+  inference (every semantics version), name checks and strict decoding.
 - The process tests of `apps/cli/test` run against a Go binary with
   `VARLATCH_TEST_CLI=<path>` (`cliUnderTest.ts`); `go-cli-files.json` lists
   the files that must pass.
@@ -527,6 +554,10 @@ it to the recording.
 | `init` and a server URL with a user name or password | not compared | refused from any source (`--server`, `VARLATCH_SERVER`, the default server, the only stored credential), judged on the server as `varlatch.toml` will give it back: a user name or password as `new URL` reads it, an at-sign in any form in a text that does not parse, or a backslash with an at-sign in any form (`\u0040`, `%40`, ...) after it: `varlatch init: a server URL with a user name or password can't be written to varlatch.toml; give the server's address without them. Nothing was written.`, 64, nothing written and the URL not repeated | `varlatch.toml` is committed; `cmd/varlatch` `TestInitRefusesServerCredentials`, `clientctx` `TestHasUserinfo` |
 | `toml-escaped`: how `init` writes `varlatch.toml`'s values | not compared | each value as an escaped TOML basic string (`\"`, `\\`, control characters), so the file reads back as exactly what was given | A value with a quote, a backslash or a control character means what it says; transcripts compare the escaped form (`init.raw-values`); `TestInitValuesReadBackAsGiven` |
 | How `agents install` replaces a file | in place (`writeFileSync`) | a temporary file in the same directory, readable by its owner only until it is complete, synced, given the file's mode, then renamed over it; the names of a hard-linked `AGENTS.md`/`CLAUDE.md` pair are each renamed onto the new file; a file with any other name is refused (78) | A crash or a full disk never leaves a settings file empty or half written, and no other file shares the change; bytes and modes are the same |
+| No message holds a value: an argument `values set` or `values rotate` refuses (`value-free-usage`) | the option parser's message | an argument that may be a value or part of one is not repeated: `one argument too many, not shown since it may be part of a value (a value with spaces goes in quotes)` and `an unknown option, not shown since it may be a value (a value that begins with "-" goes after --)`; an argument that looks like an option (`--env`, `-x`) or is one of the command's own options written with `=` is named as before | A value typed unquoted, or one beginning with "-" before `--`, would otherwise reach stderr, a terminal's scrollback or a CI log; the status (64) is the same. Accepted only where Go's stderr is the recording with these words in place of the argument and holds no part of it; `TestValuesNeverPrintAValue` |
+| `generated-value` (how transcripts compare, not a behaviour) | the value `--generate` made, recorded by its generator as `{{generated <spec>}}` | another random value, with exactly the alphabet and length the spec gives | Random in both CLIs; the pattern also requires that the value Go sent never appears on stdout or stderr (`TestGeneratedValuePatternIsExact`) |
+| The hidden prompt's Backspace | removes one grapheme cluster as the ICU of the Node.js running the CLI finds it | removes one cluster by the table written from Node.js 26's ICU (Unicode 17), the rules of Unicode Standard Annex #29 | The same answers on 2,022 recorded texts; a TypeScript CLI under another Node.js may segment new characters differently |
+| The hidden prompt when the terminal goes away before Enter | not compared | the terminal restored, `varlatch: no value entered; nothing was stored`, exit 1 | Nothing is stored either way; the Go CLI says so |
 | A redirect's relative `Location` | resolved by the WHATWG URL parser | resolved by `apiclient`'s own resolver (absolute, `//host`, `/path`, `?query` and path-relative references), then parsed by `lib/whatwg` | varlatchd sends no redirect; a proxy's is absolute or root-relative |
 | `login` without `--token` or `--token-stdin` | browser sign-in, `--oidc`, and device sign-in (`--start`, `--wait`, and assisted mode's default) | a usage error (64) saying the method is not in this build of the Go CLI yet (slice 5.2), before anything is read, sent or written | Slice 5.2 ports them; `TestLoginLaterMethodsSayNotYet` |
 | `now` (how transcripts compare, not a behaviour) | `login` and `env use` write the time of the run (`issuedAt`, `tierCachedAt`) | the same, at another time | A case that lists the `now` pattern has each ISO 8601 timestamp between its run's start and end written `{{now}}`, in the recording and the replay alike (`goKit.ts` `nowPattern`, `transcript.NowPattern`); a timestamp outside the run is compared as it is |
@@ -2425,6 +2456,7 @@ Not reproduced:
 | `domain/retrieval.ts:201` updates `security_control_counters` before `audit/events.ts:221-222` locks the Organization and the exposure identities | under admin-step-up's report mode, repeated exports in one counter bucket can deadlock in PostgreSQL, which aborts one export | the report counter and the export's audit events are one write job on the single writer, and no gate is taken inside a job, so the inversion cannot form | `server/values` `TestConcurrentExportsUnderReportCountExactly`: 24 concurrent named and all-authorized exports in one bucket all succeed and the counter is exact | none |
 | `apps/cli/src/options.ts` `parseOptions`, a positional argument named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, `hasOwnProperty`) for a command whose options have aliases (step 5 defect 11, not a security defect) | `spec.aliases[arg]` reads the prototype, so `arg` becomes a function and `arg.startsWith` throws a `TypeError`: Node.js prints the stack and exits 1 | an ordinary argument | `internal/cli` `TestPrototypeNamesAreOrdinaryArguments` | none |
 | `apps/cli/src/agents/install.ts` `AGENTS`, `skill.ts` `GUIDE_TOPICS` and `mcpConfig.ts` `MCP_FILES_BY_AGENT`, a coding agent or guide topic named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, ...) (step 5 defect 15, not a security defect) | the lookups read the prototype, so the name passes as known: `agents install --agent constructor` installs and prints `constructor reads undefined` (in `--json`, an agent without `reads`), with `--mcp` it throws a `TypeError` before writing; `agents guide constructor` throws a `TypeError`: Node.js prints the stack and exits 1 | an unknown coding agent or topic: the usage error every other unknown name gets (64), nothing written | `internal/agents` `TestPrototypeNamesAreUnknown` | none |
+| `apps/cli/src/validation.ts` `REQUIRES_HINT`, a requirement named like a property of `Object.prototype` (`constructor`, `toString`, ...) in `validate`'s report (step 5 defect 23, not a security defect) | the lookup reads the prototype, so `validate` prints a function's source as the requirement: `not evaluated: A (function Object() { [native code] })` | the requirement as the server named it: `not evaluated: A (constructor)` | `internal/cli` `TestValidationRequiresHintReadsOwnNames` | none |
 | `packages/sync` `coolifyCompose.ts` `classifyComposeUsage`, a Compose file with an alias inside its own anchor (step 4 defect 6, not a security defect) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack, so the Coolify adapter's `inspectUsage` throws a `RangeError` though it never should: varlatchd's engine catches it (its `usage-unchecked` note says "the destination could not be read"), the CLI's `sync check` fails | `lib/sync` reads the file as unreadable: usage unchecked, every verdict unknown, the note's reason "the service's compose file is too large or could not be read" | `lib/sync` `TestTypeScriptExchanges`, the case "divergence: an alias inside its own anchor" | none |
 
 The TypeScript admin CLI refuses an ordinary command during maintenance

@@ -46,13 +46,18 @@ func contextError(err error) error {
 // resolveFromArgs is main.ts's context(args): --environment (else -e) and
 // --server read leniently from the command's arguments.
 func (r *Run) resolveFromArgs(cwd string) (*clientctx.Context, error) {
+	return r.resolveArgs(cwd, r.Args)
+}
+
+// resolveArgs is main.ts's context(args) for the arguments given.
+func (r *Run) resolveArgs(cwd string, args []string) (*clientctx.Context, error) {
 	options := clientctx.ResolveOptions{Cwd: cwd}
-	environment, ok := flagArg(r.Args, "--environment")
+	environment, ok := flagArg(args, "--environment")
 	if !ok {
-		environment, _ = flagArg(r.Args, "-e")
+		environment, _ = flagArg(args, "-e")
 	}
 	options.Environment = environment
-	options.Server, _ = flagArg(r.Args, "--server")
+	options.Server, _ = flagArg(args, "--server")
 	return clientctx.ResolveContext(options, r.Env)
 }
 

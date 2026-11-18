@@ -17,7 +17,14 @@ import (
 // `--chek` must not run the command as if the option were absent.
 
 // OptionsError is options.ts's OptionsError: its message names the problem.
-type OptionsError struct{ Message string }
+// Rejected is "unknown" for an unknown option and "unexpected" for an
+// argument beyond the positionals, with Argument the argument as given, so
+// a command whose arguments may hold a Secret can say so without it.
+type OptionsError struct {
+	Message  string
+	Rejected string
+	Argument string
+}
 
 func (e *OptionsError) Error() string { return e.Message }
 
@@ -108,9 +115,9 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 		if len(parsed.Positionals) >= spec.Positionals {
 			shown := shownArgument(arg)
 			if clientctx.HasAtSign(shown) {
-				return &OptionsError{shown + ": unexpected argument"} // the explanation follows the URL
+				return &OptionsError{Message: shown + ": unexpected argument", Rejected: "unexpected", Argument: arg} // the explanation follows the URL
 			}
-			return &OptionsError{"unexpected argument " + shown}
+			return &OptionsError{Message: "unexpected argument " + shown, Rejected: "unexpected", Argument: arg}
 		}
 		parsed.Positionals = append(parsed.Positionals, arg)
 		return nil
@@ -146,7 +153,7 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 		}
 		if slices.Contains(spec.Booleans, arg) {
 			if spec.OnceBooleans && parsed.Has(arg) {
-				return nil, &OptionsError{named(arg) + " given twice"}
+				return nil, &OptionsError{Message: named(arg) + " given twice"}
 			}
 			if !parsed.Has(arg) {
 				parsed.Booleans = append(parsed.Booleans, arg)
@@ -157,12 +164,12 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 		if single || slices.Contains(spec.Lists, arg) {
 			i++
 			if i >= len(args) || strings.HasPrefix(args[i], "-") {
-				return nil, &OptionsError{arg + " needs a value"}
+				return nil, &OptionsError{Message: arg + " needs a value"}
 			}
 			value := args[i]
 			if single {
 				if _, ok := parsed.Values[arg]; ok {
-					return nil, &OptionsError{named(arg) + " given twice"}
+					return nil, &OptionsError{Message: named(arg) + " given twice"}
 				}
 				parsed.Values[arg] = value
 				parsed.ValueOrder = append(parsed.ValueOrder, arg)
@@ -181,9 +188,9 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 			}
 			shown := shownArgument(arg)
 			if clientctx.HasAtSign(shown) {
-				return nil, &OptionsError{shown + ": unknown option" + hint} // the explanation follows the URL
+				return nil, &OptionsError{Message: shown + ": unknown option" + hint, Rejected: "unknown", Argument: arg} // the explanation follows the URL
 			}
-			return nil, &OptionsError{"unknown option " + shown + hint}
+			return nil, &OptionsError{Message: "unknown option " + shown + hint, Rejected: "unknown", Argument: arg}
 		}
 		if err := positional(arg); err != nil {
 			return nil, err
