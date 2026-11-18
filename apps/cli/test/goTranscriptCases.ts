@@ -193,6 +193,10 @@ const context51b: TranscriptCase[] = [
   { id: "server.repo.odd-override", title: "the same, human", args: ["server"], files: repoFiles(TOML_FULL, { serverOverride: 42 }), ...IN_REPO },
   { id: "server.repo.null-local", title: "a local.json holding null stops server (TypeScript throws a TypeError)", args: ["server"], files: repoFiles(TOML_FULL, "null\n"), ...IN_REPO, differences: ["uncaught"] },
   { id: "server.odd-settings", title: "a default that is not a non-empty string is no default", args: ["server", "--json"], files: { "config/credentials.json": STORE_SEVERAL, "config/settings.json": '{"defaultServer": ""}\n' } },
+  // A special scheme's backslash starts the path: no user name or password, so Go shows it as it
+  // is. TypeScript (0.22.2 on) masks through the backslash: the backslash-path difference.
+  { id: "server.backslash-path.json", title: "a server whose path follows a backslash is no user name and password", args: ["server", "--json"], files: { "config/credentials.json": credentials({ "https://example.com\\path@segment": { token: "vlt_cli_fakeAAAA" } }), "config/settings.json": '{"defaultServer": "https://example.com\\\\path@segment"}\n' }, differences: ["backslash-path"] },
+  { id: "status.backslash-path.json", title: "the same server in status --json", args: ["status", "--json"], files: { "config/credentials.json": credentials({ "https://example.com\\path@segment": { token: "vlt_cli_fakeAAAA" } }) }, differences: ["backslash-path"] },
   { id: "server.agent-run", title: "inside an agent-safe run: no default, no stored servers", args: ["server", "--json"], unset: ["VARLATCH_CONFIG_DIR"], env: { VARLATCH_AGENT_RUN: "run_1", USERPROFILE: "{{dir}}/home" }, files: { "home/.config/varlatch/credentials.json": STORE_ONE, "home/.config/varlatch/settings.json": '{"defaultServer": "https://a.example"}\n' } },
   { id: "server.extra-argument", title: "server takes no argument", args: ["server", "list"] },
   { id: "server.unknown-option", title: "server's options are strict", args: ["server", "--chek"] },

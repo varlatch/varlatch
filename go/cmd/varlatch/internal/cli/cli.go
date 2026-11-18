@@ -88,10 +88,14 @@ func (r *Run) Getenv(key string) string {
 // with its status.
 type exitError struct {
 	message string
-	code    int
+	// usage is the usage text printed after message: a constant of this
+	// binary, holding nothing the person gave, so the fail-safe that masks
+	// message (which echoes what they gave) leaves it as it is.
+	usage string
+	code  int
 }
 
-func (e *exitError) Error() string { return e.message }
+func (e *exitError) Error() string { return e.message + e.usage }
 
 // Fail is the error that prints message on stderr and exits with code
 // (apps/cli/src/main.ts fail()).
@@ -99,6 +103,14 @@ func Fail(message string, code int) error { return &exitError{message: message, 
 
 // UsageError is a usage error: message on stderr, exit 64 (main.ts usageError()).
 func UsageError(message string) error { return Fail(message, ExitUsage) }
+
+// UsageErrorWithUsage is UsageError(message + usage), usage being one of
+// this binary's usage texts: it is printed after message, outside the
+// fail-safe, so a usage text's own "@<file>" never makes the fail-safe
+// mask the message.
+func UsageErrorWithUsage(message, usage string) error {
+	return &exitError{message: message, usage: usage, code: ExitUsage}
+}
 
 // Main runs the CLI with args (the process's arguments without the program
 // name) and returns the exit status, as apps/cli/src/main.ts main() does.
@@ -130,7 +142,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 		if topic != "" {
 			help, ok := CommandHelp(topic)
 			if !ok {
-				return UsageError("varlatch: no help for " + topic + ": not a command\n\n" + Usage)
+				return UsageErrorWithUsage("varlatch: no help for "+clientctx.MaskURLInValue(topic)+": not a command", "\n\n"+Usage)
 			}
 			return r.println(help)
 		}
@@ -159,7 +171,11 @@ func (r *Run) dispatch(hasCommand bool) error {
 	}
 	c := lookup(r.Command)
 	if c == nil {
-		return UsageError("varlatch: unknown command " + r.Command + "\n\n" + Usage)
+		shown := clientctx.MaskURLInValue(r.Command)
+		if clientctx.HasAtSign(shown) {
+			return UsageErrorWithUsage("varlatch: "+shown+": unknown command", "\n\n"+Usage) // the explanation follows the URL
+		}
+		return UsageErrorWithUsage("varlatch: unknown command "+shown, "\n\n"+Usage)
 	}
 	if c.run == nil {
 		return notBuilt(c)
@@ -180,7 +196,11 @@ func (r *Run) finish(err error) int {
 		// was instead (go/README.md, the Go CLI's accepted differences).
 		e = &exitError{message: "varlatch: " + err.Error(), code: ExitFailure}
 	}
-	fmt.Fprintln(r.Stderr, jsval.NodeText(e.message))
+	// The fail-safe on every failure, whatever it echoes: no URL's user name
+	// and password reaches stderr even where an echo site did not mask its
+	// value (go/README.md, "Diagnostics never print credential values"). A
+	// line with no ":"...at-sign pair keeps its bytes.
+	fmt.Fprintln(r.Stderr, jsval.NodeText(clientctx.MaskUserinfoInText(e.message)+e.usage))
 	if r.everyFailureIsOne {
 		return ExitFailure
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/sigstore/sigstore-go/pkg/root"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/lib/release"
 )
 
@@ -48,24 +49,33 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "varlatch verify-release: "+format+"\n", a...)
+		// The fail-safe, as on every CLI failure.
+		fmt.Fprintln(stderr, clientctx.MaskUserinfoInText("varlatch verify-release: "+fmt.Sprintf(format, a...)))
 		return 1
 	}
 
+	// The precise layer: an error repeating a path given here shows it masked.
+	given := []string{*sumsPath, *bundlePath, *trustedRoot}
+	for _, f := range files {
+		path, _, _ := strings.Cut(f, "=")
+		given = append(given, path)
+	}
+	masked := func(err error) string { return maskPaths(err.Error(), given) }
+
 	sums, err := os.ReadFile(*sumsPath)
 	if err != nil {
-		return fail("%v", err)
+		return fail("%s", masked(err))
 	}
 	bundle, err := os.ReadFile(*bundlePath)
 	if err != nil {
-		return fail("%v", err)
+		return fail("%s", masked(err))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	var trusted root.TrustedMaterial
 	if *trustedRoot != "" {
 		if trusted, err = root.NewTrustedRootFromPath(*trustedRoot); err != nil {
-			return fail("reading the trusted root: %v", err)
+			return fail("reading the trusted root: %s", masked(err))
 		}
 	} else {
 		cache := ""
@@ -88,18 +98,34 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 	for _, f := range files {
 		path, name, ok := strings.Cut(f, "=")
 		if !ok || path == "" || name == "" {
-			return fail("--file needs <path>=<name>, got %q", f)
+			// Masked before it is quoted (the precise layer); fail is the fail-safe.
+			return fail("--file needs <path>=<name>, got %q", clientctx.MaskURLInValue(f))
 		}
 		r, err := os.Open(path)
 		if err != nil {
-			return fail("%v", err)
+			return fail("%s", masked(err))
 		}
 		err = checked.Check(name, r)
 		_ = r.Close()
 		if err != nil {
-			return fail("%s: %v", path, err)
+			return fail("%s: %s", clientctx.MaskURLInValue(path), masked(err))
 		}
-		fmt.Fprintf(stdout, "%s matches SHA256SUMS (%s)\n", path, name)
+		fmt.Fprintf(stdout, "%s matches SHA256SUMS (%s)\n", clientctx.MaskURLInValue(path), name)
 	}
 	return 0
+}
+
+// maskPaths is text with each path given on the command line, where it
+// appears, masked with MaskURLInValue (the precise layer: a path holding a
+// URL's user name and password shows them as [redacted]).
+func maskPaths(text string, paths []string) string {
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if m := clientctx.MaskURLInValue(p); m != p {
+			text = strings.ReplaceAll(text, p, m)
+		}
+	}
+	return text
 }

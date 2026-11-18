@@ -73,7 +73,24 @@ var differences = map[string]transcript.Difference{
 			o.Stderr = got.Stderr
 		}
 	},
+	// TypeScript (0.22.2 on) masks a special scheme's URL from its authority
+	// to the last at-sign before "/", "?" or "#", reading through a
+	// backslash, so the fixture https://example.com\path@segment, which has
+	// no user name or password (the backslash starts the path), is shown as
+	// https://[redacted]@segment. Go reads the authority WHATWG parses and
+	// shows that URL as it is (go/README.md, "Diagnostics never print
+	// credential values"). Accepted only where Go's stdout, with the fixture
+	// URL (as JSON writes it) shown as TypeScript shows it, is the recording.
+	"backslash-path": func(o *transcript.Outcome, got transcript.Outcome) {
+		if strings.ReplaceAll(got.Stdout, backslashPathFixture, "https://[redacted]@segment") == o.Stdout {
+			o.Stdout = got.Stdout
+		}
+	},
 }
+
+// backslashPathFixture is the backslash-path cases' server, as a JSON
+// string holds it.
+const backslashPathFixture = `https://example.com\\path@segment`
 
 // recordedUserAgent is the TypeScript CLI's User-Agent in a recording.
 var recordedUserAgent = regexp.MustCompile(`^varlatch-cli/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)
@@ -118,4 +135,25 @@ func withMarker(env map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// TestBackslashPathDifferenceIsExact: backslash-path accepts Go's stdout
+// only where it differs from the recording by the fixture URL alone; any
+// other host, path or output fails (Sol, #265 round 5).
+func TestBackslashPathDifferenceIsExact(t *testing.T) {
+	recorded := `{"server": "https://[redacted]@segment"}` + "\n"
+	for got, accepted := range map[string]bool{
+		`{"server": "https://example.com\\path@segment"}` + "\n":         true,
+		`{"server": "https://other.example\\path@segment"}` + "\n":       false,
+		`{"server": "https://example.com\\other@segment"}` + "\n":        false,
+		`{"server": "https://other.example\\other@segment"}` + "\n":      false,
+		`{"server": "https://example.com\\path@segment", "x": 1}` + "\n": false,
+		`{"server": "https://example.com/path@segment"}` + "\n":          false,
+	} {
+		want := transcript.Outcome{Stdout: recorded}
+		differences["backslash-path"](&want, transcript.Outcome{Stdout: got})
+		if (want.Stdout == got) != accepted {
+			t.Errorf("%q: accepted %v, want %v", got, want.Stdout == got, accepted)
+		}
+	}
 }

@@ -4,6 +4,7 @@ package clientctx
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -68,10 +69,28 @@ func LoadRepoConfig(repoRoot string) (RepoConfig, error) {
 	if err != nil {
 		return RepoConfig{}, err
 	}
-	table, err := toml.ParseString(jsval.DecodeUTF8(data))
+	source := jsval.DecodeUTF8(data)
+	table, err := toml.ParseString(source)
 	if err != nil {
-		// The message quotes the file's lines: a server URL there keeps its user name and password out.
-		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + MaskUserinfoInText(err.Error())}
+		var parseErr *toml.Error
+		if !errors.As(err, &parseErr) {
+			return RepoConfig{}, err
+		}
+		if HasAtSign(source) {
+			// smol-toml's message quotes the lines around the error, which can
+			// hold part of a URL's user name and password without its at-sign
+			// (a string that runs on past them), where neither masking layer
+			// can see it. A file that holds an at-sign of any form, as the
+			// fail-safe detects one, may hold credentials: its lines are left
+			// out, the explanation and where it is kept (go/README.md, "the
+			// excerpt is left out when the file may hold credentials").
+			return RepoConfig{}, &ContextError{Message: fmt.Sprintf("Invalid %s: Invalid TOML document: %s, line %d, column %d "+
+				"(the file may hold a URL's user name and password, so its lines are not shown)",
+				RepoConfigFile, parseErr.What, parseErr.Line, parseErr.Column)}
+		}
+		// Without an at-sign the file holds no URL's user name and password:
+		// smol-toml's message as it is.
+		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + parseErr.Message}
 	}
 	str := func(key string) string {
 		v, _ := table.Get(key)
