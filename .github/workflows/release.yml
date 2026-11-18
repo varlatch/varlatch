@@ -51,13 +51,9 @@ env:
 jobs:
   validation:
     uses: ./.github/workflows/ci.yml
-    # ci.yml's changes job reads the Actions API (actions: read) to find
-    # the last successful nightly run; a called workflow gets no more than
-    # this grants.
     permissions:
       contents: read
       packages: read
-      actions: read
 
   # Hosted runners first: this job only proves one would start. When hosted
   # minutes have run out GitHub refuses it within seconds; continue-on-error
