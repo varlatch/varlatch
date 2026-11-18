@@ -5,6 +5,7 @@ package g9a
 import (
 	"context"
 	"errors"
+	"maps"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -39,8 +40,16 @@ func TestPlanWriteScale(t *testing.T) {
 			t.Errorf("writeScale %g: %v", s, err)
 		}
 	}
-	if PlannedWrites(35, 900) != 31500 || PlannedWrites(7.0/6, 900) != 1050 || PlannedWrites(0.5, 3) != 2 || PlannedWrites(0, 10) != 0 {
+	if PlannedWrites(35, 900) != 31500 || PlannedWrites(7.0/6, 900) != 1050 || PlannedWrites(0.5, 3) != 2 || PlannedWrites(0, 10) != 0 ||
+		PlannedWrites(0.7*50, 900) != 31500 || PlannedWrites(1e-12, 1) != 1 {
 		t.Error("PlannedWrites")
+	}
+	// A scale just above 1 still schedules writes of both kinds: any
+	// positive rate schedules the one at each phase's start.
+	q := DefaultPlan()
+	q.WriteScale = 1 + 1e-9
+	if err := q.Validate(); err != nil || q.PlannedWriteTotal(WriteDisclose) < 4 || q.PlannedWriteTotal(WriteValue) < 4 {
+		t.Errorf("writeScale 1+1e-9: %v, %d and %d writes", err, q.PlannedWriteTotal(WriteDisclose), q.PlannedWriteTotal(WriteValue))
 	}
 }
 
@@ -131,11 +140,14 @@ func TestWriteLoad(t *testing.T) {
 	events := runWriteLoad(t, p, w, nil)
 	tot := totals(events)
 	d, v := tot[string(WriteDisclose)], tot[string(WriteValue)]
-	if d.Planned != 40 || d.Writes != 40 || d.WritesFailed != 1 || d.WritesBusy != 1 || d.WritesLate != 0 || !strings.Contains(d.Err, "SQLITE_BUSY") {
+	if d.Planned != 40 || d.Writes != 40 || d.WritesFailed != 1 || d.WritesBusy != 1 || d.WritesLate != 0 || d.WritesSkipped != 0 || !strings.Contains(d.Err, "SQLITE_BUSY") {
 		t.Errorf("disclosures: %+v", d)
 	}
 	if v.Planned != 20 || v.Writes != 20 || v.WritesFailed != 1 || v.WritesBusy != 0 || v.Err != "refused" {
 		t.Errorf("value writes: %+v", v)
+	}
+	if d.DurUs <= 0 || d.DurUs > WriteLateTolerance.Microseconds() {
+		t.Errorf("largest dispatch lag %d µs", d.DurUs)
 	}
 	for _, k := range WriteKinds {
 		seen := map[int]bool{}
@@ -146,29 +158,61 @@ func TestWriteLoad(t *testing.T) {
 			t.Errorf("%s numbered %v", k, w.seen[k])
 		}
 	}
-	sum := map[string]int64{}
+	// Each write is counted under the phase that scheduled it, and the
+	// events (the last after every write ended) add up to the totals.
+	sum := map[[2]string]int64{}
 	for _, e := range events {
 		if e.Ev == EvWriteLoad {
-			sum[e.Kind] += e.Writes
-			if e.Phase != "w" && e.Phase != "p" && e.Phase != "" {
-				t.Errorf("phase %q", e.Phase)
-			}
+			sum[[2]string{e.Kind, e.Phase}] += e.Writes
 		}
 	}
-	if sum[string(WriteDisclose)] != 40 || sum[string(WriteValue)] != 20 {
-		t.Errorf("per-second events add up to %v", sum)
+	want := map[[2]string]int64{{"disclose", "w"}: 20, {"disclose", "p"}: 20, {"value", "w"}: 10, {"value", "p"}: 10}
+	if !maps.Equal(sum, want) {
+		t.Errorf("per-phase events %v, want %v", sum, want)
 	}
 }
 
 // Open loop: a write that comes due while WriteInFlight are running is
-// not sent, and counted late.
-func TestWriteLoadLate(t *testing.T) {
+// not sent, and counted skipped.
+func TestWriteLoadSkipped(t *testing.T) {
 	p := writePlan(100, 1) // 200 disclosures due in 2 s
 	block := make(chan struct{})
 	w := &fakeWriter{seen: map[WriteKind][]int{}, block: block}
 	events := runWriteLoad(t, p, w, func() { close(block) })
 	d := totals(events)[string(WriteDisclose)]
-	if d.WritesLate == 0 || d.Writes+d.WritesLate != d.Planned || d.Writes > WriteInFlight {
+	if d.WritesSkipped == 0 || d.Writes+d.WritesSkipped != d.Planned || d.Writes > WriteInFlight || d.WritesLate != 0 {
 		t.Errorf("disclosures: %+v", d)
+	}
+}
+
+// A stalled scheduler: the writes that came due during the stall are
+// dispatched at once when it ends, more than WriteLateTolerance after
+// their time, so they are made and counted late, under their own phase.
+func TestWriteLoadStall(t *testing.T) {
+	p := writePlan(10, 2) // 20 disclosures in each phase, one every 100 ms
+	stalled := false
+	writeDispatchHook = func(k WriteKind, n int) {
+		if k == WriteDisclose && n == 5 && !stalled {
+			stalled = true
+			time.Sleep(WriteLateTolerance + 600*time.Millisecond)
+		}
+	}
+	t.Cleanup(func() { writeDispatchHook = nil })
+	w := &fakeWriter{seen: map[WriteKind][]int{}}
+	events := runWriteLoad(t, p, w, nil)
+	d := totals(events)[string(WriteDisclose)]
+	// Writes 5 to about 10 were due 0.5 to 1.0 s in and dispatched at
+	// about 2.1 s: more than a second late for the first few.
+	if d.WritesLate == 0 || d.Writes != d.Planned || d.WritesSkipped != 0 || d.DurUs < WriteLateTolerance.Microseconds() {
+		t.Errorf("disclosures after a stall: %+v", d)
+	}
+	late := map[string]int64{}
+	for _, e := range events {
+		if e.Ev == EvWriteLoad && e.Kind == "disclose" {
+			late[e.Phase] += e.WritesLate
+		}
+	}
+	if late["w"] != d.WritesLate || late["p"] != 0 {
+		t.Errorf("late writes by phase %v, total %d", late, d.WritesLate)
 	}
 }

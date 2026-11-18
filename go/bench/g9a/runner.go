@@ -220,6 +220,8 @@ type Runner struct {
 	// for the ones in flight (writeload.go).
 	writes     map[WriteKind]*writeCounts
 	writesDone func()
+	writeMu    sync.Mutex
+	writeLast  map[[2]int][5]int64 // the counts at the last flush, by kind and phase
 }
 
 // NewRunner writes the plan to the output directory and opens the event

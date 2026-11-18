@@ -172,9 +172,22 @@ Everything else in the profile stays as it is. The report calls the run
 - It is **inconclusive** when:
   - the WAL never crossed the bound (no size-triggered `TRUNCATE`);
   - the WAL-triggered backup never started;
-  - an added write it planned was not made.
-- It **fails** on an added write that failed, met `SQLITE_BUSY` or was
-  late (due while `WriteInFlight`, 64, were still running).
+  - the writes made and skipped do not add up to the count the report
+    derives from the plan itself (not the server's own count);
+  - either kind made no writes;
+  - the per-phase counts do not add up to the totals;
+  - a backup shows no upload to the destination `varlatchd.conf` names
+    (the same holds for a gate run whose converge runs called the
+    provider).
+- It **fails** on an added write that:
+  - failed or met `SQLITE_BUSY`;
+  - was late: dispatched more than `WriteLateTolerance` (1 s) after its
+    scheduled time, as after a stalled scheduler. A late write is still
+    made, and the report gives the largest lag;
+  - was skipped: due while `WriteInFlight` (64) were still running, so
+    never sent.
+- Each write is counted under the phase that scheduled it. The in-flight
+  writes are drained before the last counts are logged.
 - It is also **inconclusive** without the provider's observed timings
   (below).
 - `events.jsonl` records the added writes per second and kind
@@ -186,9 +199,10 @@ real engine). The run's Coolify stand-in waits the plan's
 untimed first pass). It records each call's observed latency, from the
 request's arrival to its answer, and each `converge_end` carries its
 run's calls (`providerCallsUs`). The report shows the configured delay
-beside the observed distribution (calls, min, median, p95, max). A run
-whose converge runs called the provider without them, or a bound run
-without them, is inconclusive.
+beside the observed distribution (calls, min, median, p95, max). The
+report checks the coverage run by run: a converge run whose timings don't
+match its calls makes the run inconclusive. So does a run whose converge
+runs called the provider, or a bound run, with no timings at all.
 
 G9's bound run uses write scale 1.7: in G9's first run the WAL peaked at
 0.72 of the bound, so the bound needs about 1.39 times its writes. A bound

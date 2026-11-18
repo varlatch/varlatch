@@ -266,6 +266,14 @@ func (p Plan) Validate() error {
 	case p.WriteScale != 0 && (p.WriteScale < 1 || p.WriteScale > MaxWriteScale):
 		return fmt.Errorf("plan: writeScale %g must be 0 (none) or between 1 and %d", p.WriteScale, MaxWriteScale)
 	}
+	// A bound run must add writes of both kinds.
+	if p.BoundRun() {
+		for _, k := range WriteKinds {
+			if p.PlannedWriteTotal(k) == 0 {
+				return fmt.Errorf("plan: writeScale %g schedules no added %s writes", p.WriteScale, k)
+			}
+		}
+	}
 	return nil
 }
 

@@ -29,6 +29,8 @@ type fakeRun struct {
 	// of its identity (addressOf); access replaces it, noAccess drops it.
 	access   []accessRecord
 	noAccess bool
+	// conf is the run's varlatchd.conf (none when empty).
+	conf string
 }
 
 // admitted gives each record the window varlatchd's request window admits it
@@ -188,6 +190,9 @@ func (r *fakeRun) write(t *testing.T) string {
 	}
 	if !r.noAccess {
 		files[FileAccessLog] = al.String()
+	}
+	if r.conf != "" {
+		files[FileConfig] = r.conf
 	}
 	for name, body := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
@@ -1077,11 +1082,16 @@ func TestReportBoundRun(t *testing.T) {
 	bound := func() *fakeRun {
 		r := good()
 		r.plan.WriteScale = 2
-		// The provider stand-in's observed timings (amendment 6).
+		// The provider stand-in's observed timings (amendment 6), and the
+		// backups' uploads to the configured destination.
+		r.conf = "listen = 127.0.0.1:8080\nbackup_destinations_file = /data/s3/destinations.json\nbackup_destination = local\n"
 		for i := range r.events {
-			if r.events[i].Ev == EvConvergeEnd {
+			switch r.events[i].Ev {
+			case EvConvergeEnd:
 				r.events[i].Calls = 3
 				r.events[i].ProviderCallsUs = []int64{201_000, 203_500, 260_000}
+			case EvBackupEnd:
+				r.events[i].UploadedTo = "local"
 			}
 		}
 		// good()'s phases: 20 + 100 + 500 disclosures; 1 × 5 × 20 / 10 =
@@ -1115,8 +1125,53 @@ func TestReportBoundRun(t *testing.T) {
 		{"good", func(*fakeRun) {}, Pass, ""},
 		{"a failed write", totalOf(WriteValue, func(e *Event) { e.WritesFailed, e.Err = 1, "refused" }), Fail, "value writes: 1 of 220 failed (0 SQLITE_BUSY); the first: refused"},
 		{"a busy write", totalOf(WriteDisclose, func(e *Event) { e.WritesFailed, e.WritesBusy, e.Err = 1, 1, "SQLITE_BUSY" }), Fail, "1 of 620 failed (1 SQLITE_BUSY)"},
-		{"late writes", totalOf(WriteDisclose, func(e *Event) { e.Writes, e.WritesLate = 610, 10 }), Fail, "10 not sent on time"},
-		{"writes missing", totalOf(WriteValue, func(e *Event) { e.Writes = 200 }), Inconclusive, "made 200 of its 220 planned value writes"},
+		{"late writes", totalOf(WriteDisclose, func(e *Event) { e.WritesLate, e.DurUs = 10, 1_500_000 }), Fail, "10 dispatched more than 1s after their time (largest lag 1500 ms)"},
+		{"skipped writes", func(r *fakeRun) {
+			totalOf(WriteDisclose, func(e *Event) { e.Writes, e.WritesSkipped = 610, 10 })(r)
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoad && r.events[i].Kind == "disclose" && r.events[i].Phase == "p50" {
+					r.events[i].Writes, r.events[i].WritesSkipped = r.events[i].Writes-10, 10
+				}
+			}
+		}, Fail, "10 not sent (64 in flight)"},
+		{"writes missing", totalOf(WriteValue, func(e *Event) { e.Writes = 200 }), Inconclusive, "made 200 and skipped 0 of its 220 planned value writes"},
+		// Planned counts come from the report's plan: totals that plan and
+		// make nothing are not a pass.
+		{"nothing planned or made", func(r *fakeRun) {
+			r.eventsWithout(func(e Event) bool { return e.Ev == EvWriteLoad })
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoadEnd {
+					r.events[i].Planned, r.events[i].Writes = 0, 0
+				}
+			}
+		}, Inconclusive, "the server planned 0 disclose writes; the plan schedules 620"},
+		{"no writes made", func(r *fakeRun) {
+			r.eventsWithout(func(e Event) bool { return e.Ev == EvWriteLoad && e.Kind == "value" })
+			totalOf(WriteValue, func(e *Event) { e.Writes = 0 })(r)
+		}, Inconclusive, "the bound run made no value writes"},
+		{"the phase table and the totals disagree", func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoad && r.events[i].Kind == "value" && r.events[i].Phase == "p10" {
+					r.events[i].Writes--
+				}
+			}
+		}, Inconclusive, "value writes per phase (219 made, 0 skipped) do not add up to its totals (220, 0)"},
+		{"partial provider timings", func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvConvergeEnd {
+					r.events[i].ProviderCallsUs = r.events[i].ProviderCallsUs[:1]
+					break
+				}
+			}
+		}, Inconclusive, "made 3 provider calls and has 1 observed timings"},
+		{"a backup kept local", func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvBackupEnd {
+					r.events[i].UploadedTo = ""
+				}
+			}
+		}, Inconclusive, `backup 1 has no upload to the configured destination "local"`},
+		{"no destination configured", func(r *fakeRun) { r.conf = "listen = 127.0.0.1:8080\n" }, Inconclusive, "names no backup_destination"},
 		{"no totals", func(r *fakeRun) { r.eventsWithout(func(e Event) bool { return e.Ev == EvWriteLoadEnd }) }, Inconclusive, "no total (write_load_end)"},
 		{"no provider timings", func(r *fakeRun) {
 			for i := range r.events {

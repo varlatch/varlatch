@@ -42,40 +42,96 @@ type Writer interface {
 }
 
 // WriteInFlight bounds the added writes in flight: one that comes due
-// while this many are still running is not sent, and counted late.
+// while this many are still running is not sent (skipped).
 const WriteInFlight = 64
 
-// EvWriteLoad is a second of a bound run's write load for one kind (its
-// phase, the writes that ended in it, failed, met SQLITE_BUSY or were not
-// sent on time); EvWriteLoadEnd is the totals and the writes planned, once
-// the run's work has finished.
+// WriteLateTolerance is how long after its scheduled time a write may be
+// dispatched and still count as on time: a write dispatched later (a
+// stalled scheduler, its timers firing at once) is made, and counted late.
+const WriteLateTolerance = time.Second
+
+// EvWriteLoad is one kind's added writes scheduled in one phase that ended
+// since the previous such event (their counts: made, failed, met
+// SQLITE_BUSY, dispatched late, skipped), logged every second and once
+// more after the last write has ended; EvWriteLoadEnd is one kind's totals
+// and the writes the server planned, after that.
 const (
 	EvWriteLoad    = "write_load"
 	EvWriteLoadEnd = "write_load_end"
 )
 
-// writeCounts are one kind's counters.
+// writeTally counts writes: made, failed, busy, late (dispatched after
+// WriteLateTolerance) and skipped (not sent: WriteInFlight running).
+type writeTally struct{ done, failed, busy, late, skipped atomic.Int64 }
+
+func (t *writeTally) load() [5]int64 {
+	return [5]int64{t.done.Load(), t.failed.Load(), t.busy.Load(), t.late.Load(), t.skipped.Load()}
+}
+
+// writeCounts are one kind's tallies, by the phase that scheduled each
+// write, and its first error and largest dispatch lag.
 type writeCounts struct {
-	done, failed, busy, late atomic.Int64
-	firstErr                 atomic.Pointer[string]
+	phases   []writeTally
+	firstErr atomic.Pointer[string]
+	maxLagUs atomic.Int64
+}
+
+func (c *writeCounts) total() [5]int64 {
+	var t [5]int64
+	for i := range c.phases {
+		for j, v := range c.phases[i].load() {
+			t[j] += v
+		}
+	}
+	return t
 }
 
 // PlannedWrites is how many added writes of each kind a phase schedules:
-// one every 1/rate seconds from its start, the last before its end.
+// one at each i/rate seconds from its start that falls before its end, so
+// any positive rate schedules at least the one at its start. A product
+// within a millionth of a positive whole number counts as that number.
 func PlannedWrites(rate, phaseSeconds float64) int {
-	if rate <= 0 {
+	x := rate * phaseSeconds
+	if !(x > 0) {
 		return 0
 	}
-	return int(math.Ceil(rate*phaseSeconds - 1e-9))
+	if n := math.Round(x); n >= 1 && math.Abs(x-n) < 1e-6 {
+		return int(n)
+	}
+	return int(math.Ceil(x))
 }
+
+// rateOf is a kind's added writes per second in a phase.
+func (p Plan) rateOf(k WriteKind, ph Phase) float64 {
+	d, v := p.WriteRates(ph)
+	if k == WriteDisclose {
+		return d
+	}
+	return v
+}
+
+// PlannedWriteTotal is how many added writes of kind k the plan schedules
+// over all its phases.
+func (p Plan) PlannedWriteTotal(k WriteKind) int {
+	n := 0
+	for _, ph := range p.Phases {
+		n += PlannedWrites(p.rateOf(k, ph), ph.Seconds)
+	}
+	return n
+}
+
+// writeDispatchHook, when set (tests), runs before the scheduler waits for
+// write n of kind: a test stalls the scheduler with it.
+var writeDispatchHook func(kind WriteKind, n int)
 
 // writeLoad runs the plan's added writes from t0 until the load ends or
 // ctx does; each write runs under work, so one that started finishes.
+// writeLoadEnd drains them and logs the last counts and the totals.
 func (r *Runner) writeLoad(ctx, work context.Context, t0 time.Time, w Writer) {
 	p := r.opts.Plan
 	counts := map[WriteKind]*writeCounts{}
 	for _, k := range WriteKinds {
-		counts[k] = &writeCounts{}
+		counts[k] = &writeCounts{phases: make([]writeTally, len(p.Phases))}
 	}
 	r.writes = counts
 	sem := make(chan struct{}, WriteInFlight)
@@ -85,12 +141,14 @@ func (r *Runner) writeLoad(ctx, work context.Context, t0 time.Time, w Writer) {
 		go func() {
 			defer r.bg.Done()
 			c, n, at := counts[kind], 0, t0
-			for _, ph := range p.Phases {
-				d, v := p.WriteRates(ph)
-				rate := map[WriteKind]float64{WriteDisclose: d, WriteValue: v}[kind]
-				planned := PlannedWrites(rate, ph.Seconds)
-				for i := range planned {
+			for pi, ph := range p.Phases {
+				rate := p.rateOf(kind, ph)
+				tally := &c.phases[pi]
+				for i := range PlannedWrites(rate, ph.Seconds) {
 					due := at.Add(time.Duration(float64(i) / rate * float64(time.Second)))
+					if writeDispatchHook != nil {
+						writeDispatchHook(kind, n)
+					}
 					select {
 					case <-time.After(time.Until(due)):
 					case <-ctx.Done():
@@ -99,23 +157,36 @@ func (r *Runner) writeLoad(ctx, work context.Context, t0 time.Time, w Writer) {
 					select {
 					case sem <- struct{}{}:
 					default:
-						c.late.Add(1)
+						tally.skipped.Add(1)
 						n++
 						continue
 					}
+					// Open loop: a write is on time if it is dispatched
+					// within the tolerance of when it was scheduled.
+					lag := time.Since(due)
+					for {
+						m := c.maxLagUs.Load()
+						if lag.Microseconds() <= m || c.maxLagUs.CompareAndSwap(m, lag.Microseconds()) {
+							break
+						}
+					}
+					late := lag > WriteLateTolerance
 					inflight.Add(1)
 					go func(n int) {
 						defer func() { <-sem; inflight.Done() }()
 						busy, err := w.Write(work, kind, n)
 						if busy {
-							c.busy.Add(1)
+							tally.busy.Add(1)
 						}
 						if err != nil {
-							c.failed.Add(1)
+							tally.failed.Add(1)
 							msg := err.Error()
 							c.firstErr.CompareAndSwap(nil, &msg)
 						}
-						c.done.Add(1)
+						if late {
+							tally.late.Add(1)
+						}
+						tally.done.Add(1)
 					}(n)
 					n++
 				}
@@ -123,26 +194,36 @@ func (r *Runner) writeLoad(ctx, work context.Context, t0 time.Time, w Writer) {
 			}
 		}()
 	}
-	// One event a second for each kind: what ended in that second.
-	var last = map[WriteKind][4]int64{}
-	r.every(ctx, t0.Add(time.Second), time.Second, func() {
-		phase := p.phaseAt(time.Since(t0))
-		for _, k := range WriteKinds {
-			c := counts[k]
-			now := [4]int64{c.done.Load(), c.failed.Load(), c.busy.Load(), c.late.Load()}
-			prev := last[k]
-			last[k] = now
+	r.writesDone = inflight.Wait
+	r.writeLast = map[[2]int][5]int64{}
+	r.every(ctx, t0.Add(time.Second), time.Second, r.flushWriteLoad)
+}
+
+// flushWriteLoad logs, for each kind and phase, what ended since the last
+// flush. The per-second sampler calls it, and writeLoadEnd once more after
+// the last write, so the events add up to the totals.
+func (r *Runner) flushWriteLoad() {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	for ki, k := range WriteKinds {
+		c := r.writes[k]
+		for pi := range c.phases {
+			now := c.phases[pi].load()
+			key := [2]int{ki, pi}
+			prev := r.writeLast[key]
 			if now == prev {
 				continue
 			}
-			r.ev.emit(Event{Ev: EvWriteLoad, Kind: string(k), Phase: phase,
-				Writes: now[0] - prev[0], WritesFailed: now[1] - prev[1], WritesBusy: now[2] - prev[2], WritesLate: now[3] - prev[3]})
+			r.writeLast[key] = now
+			r.ev.emit(Event{Ev: EvWriteLoad, Kind: string(k), Phase: r.opts.Plan.Phases[pi].Name,
+				Writes: now[0] - prev[0], WritesFailed: now[1] - prev[1], WritesBusy: now[2] - prev[2], WritesLate: now[3] - prev[3], WritesSkipped: now[4] - prev[4]})
 		}
-	})
-	r.writesDone = inflight.Wait
+	}
 }
 
-// writeLoadEnd logs each kind's totals and the writes the plan scheduled.
+// writeLoadEnd waits for the writes in flight, logs what ended since the
+// last flush, and each kind's totals with the writes the server planned
+// and the largest dispatch lag.
 func (r *Runner) writeLoadEnd() {
 	if r.writes == nil {
 		return
@@ -150,16 +231,12 @@ func (r *Runner) writeLoadEnd() {
 	if r.writesDone != nil {
 		r.writesDone()
 	}
-	p := r.opts.Plan
+	r.flushWriteLoad()
 	for _, k := range WriteKinds {
-		planned := 0
-		for _, ph := range p.Phases {
-			d, v := p.WriteRates(ph)
-			planned += PlannedWrites(map[WriteKind]float64{WriteDisclose: d, WriteValue: v}[k], ph.Seconds)
-		}
 		c := r.writes[k]
-		e := Event{Ev: EvWriteLoadEnd, Kind: string(k), Planned: int64(planned),
-			Writes: c.done.Load(), WritesFailed: c.failed.Load(), WritesBusy: c.busy.Load(), WritesLate: c.late.Load()}
+		t := c.total()
+		e := Event{Ev: EvWriteLoadEnd, Kind: string(k), Planned: int64(r.opts.Plan.PlannedWriteTotal(k)),
+			Writes: t[0], WritesFailed: t[1], WritesBusy: t[2], WritesLate: t[3], WritesSkipped: t[4], DurUs: c.maxLagUs.Load()}
 		if m := c.firstErr.Load(); m != nil {
 			e.Err = *m
 		}

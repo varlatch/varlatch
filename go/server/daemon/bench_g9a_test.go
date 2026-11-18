@@ -519,10 +519,10 @@ func TestBenchBoundRun(t *testing.T) {
 		}
 	}
 	d, v := ends[string(g9a.WriteDisclose)], ends[string(g9a.WriteValue)]
-	if d.Planned != 13 || d.Writes != d.Planned || d.WritesFailed != 0 || d.WritesBusy != 0 || d.WritesLate != 0 {
+	if d.Planned != 13 || d.Writes != d.Planned || d.WritesFailed != 0 || d.WritesBusy != 0 || d.WritesLate != 0 || d.WritesSkipped != 0 {
 		t.Errorf("disclosures: %+v", d)
 	}
-	if v.Planned != 4 || v.Writes != v.Planned || v.WritesFailed != 0 || v.WritesLate != 0 {
+	if v.Planned != 4 || v.Writes != v.Planned || v.WritesFailed != 0 || v.WritesLate != 0 || v.WritesSkipped != 0 {
 		t.Errorf("value writes: %+v", v)
 	}
 }
