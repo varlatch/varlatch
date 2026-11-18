@@ -318,11 +318,16 @@ try {
     inFlight = fakeState().held.find((h) => h.repo === keptRepo) ?? null;
   }
   const writesBeforeRelease = writes();
+  // The stale run's lease: its sync_runs row, which it deletes when it ends.
+  const runsOf = () => JSON.parse(targetOp("probe", ["sync-runs", ctarget.id])).runs;
+  const runsWhileHeld = runsOf();
   const toCancel = ok(await api("POST", `${C}/deletion`, { body: {} }), "scheduling its deletion");
   const released = fakeGitHub({ op: "release", repo: keptRepo }).released;
   const reached = await waitFor(() => writes() > writesBeforeRelease, 30_000);
   const reachedAt = writes();
-  await sleep(10_000); // the stale run tries to commit, and is refused
+  // The stale run has ended (its commit refused) once its row is gone; only
+  // then is the deletion cancelled, so no later run can be what fences it.
+  const staleEnded = await waitFor(() => runsOf() === 0, 60_000);
   const keptBotDuring = (await api("GET", "/v1/organizations", { bearer: keptBot.credential })).status;
   const cancelled = await api("POST", `${C}/deletion/${toCancel.id}/cancel`);
   const cancelledAgain = await api("POST", `${C}/deletion/${toCancel.id}/cancel`);
@@ -356,11 +361,12 @@ try {
   );
   check(
     "deletion.scheduling-fences-runs",
-    "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing",
-    Boolean(firstPush) && inFlight?.name === "SECRET" && Array.isArray(released) && released.includes("SECRET") && Boolean(reached) &&
+    "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once that run has ended and the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing",
+    Boolean(firstPush) && inFlight?.name === "SECRET" && runsWhileHeld >= 1 && Array.isArray(released) && released.includes("SECRET") && Boolean(reached) &&
+      Boolean(staleEnded) &&
       pausedAfterCancel?.state === "paused" && resumed.status === 200 && repushed.status === 202 && Boolean(writtenAgain) &&
       Boolean(ranAgain) && writes() === writesSettled,
-    JSON.stringify({ firstPush: Boolean(firstPush), inFlight, released, reached: Boolean(reached), pausedAfterCancel: pausedAfterCancel?.state,
+    JSON.stringify({ firstPush: Boolean(firstPush), inFlight, runsWhileHeld, released, reached: Boolean(reached), staleEnded: Boolean(staleEnded), pausedAfterCancel: pausedAfterCancel?.state,
       resumed: resumed.status, repushed: repushed.status, writes: writes(), reachedAt, control: { ran: Boolean(ranAgain), writesSettled } }),
   );
 

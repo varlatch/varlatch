@@ -33,6 +33,8 @@ import (
 //	                                 {"needsSync", "nextAttemptAt"}, which it leaves as they are
 //	sync-trigger-position            {"cursor", "latest"}: the converge engine's trigger scan's
 //	                                 position, and the last audit event it reads (not sync.*)
+//	sync-runs <snt_...>              read only: {"runs"}, the Sync Target's runs in progress (its
+//	                                 sync_runs rows; a run deletes its own when it ends)
 //	deletion-teardown <org_...>      read only: the Organization's Sync Targets, Platform
 //	                                 Connections and webhooks, each {id, revoked}, and its
 //	                                 GitHub Apps, each {id, removed, keyKept}, as stored
@@ -105,6 +107,13 @@ func init() {
 				return nil
 			})
 			out = settled
+		case "sync-runs":
+			if len(rest) != 2 || !syncTargetID.MatchString(rest[1]) {
+				return fail(fmt.Errorf("sync-runs: a Sync Target id"))
+			}
+			var runs int64
+			err = store.Reader().QueryRowContext(ctx, `SELECT count(*) FROM sync_runs WHERE target_id = ?`, rest[1]).Scan(&runs)
+			out = map[string]int64{"runs": runs}
 		case "deletion-teardown":
 			if len(rest) != 2 || !orgID.MatchString(rest[1]) {
 				return fail(fmt.Errorf("deletion-teardown: an Organization id (org_...)"))

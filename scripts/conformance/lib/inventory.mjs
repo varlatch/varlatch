@@ -72,6 +72,7 @@ export const CAPABILITIES = [
   "probe:github-app-pending-expired",
   "probe:audit-export-drain-due",
   "probe:deletion-teardown",
+  "probe:sync-runs",
   "probe:sync-trigger-position",
   "maintenance",
   "serve-cli",

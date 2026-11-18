@@ -745,7 +745,8 @@
         "webhook-receiver",
         "object-store",
         "probe:audit-export-drain-due",
-        "probe:deletion-teardown"
+        "probe:deletion-teardown",
+        "probe:sync-runs"
       ],
       "operations": [
         "createOrganization",
@@ -3620,7 +3621,7 @@
     "deletion.scheduling-fences-runs": {
       "suite": "deletion",
       "kind": "conformance",
-      "title": "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing"
+      "title": "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once that run has ended and the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing"
     },
     "deletion.organization-deleted-when-due": {
       "suite": "deletion",

@@ -21,7 +21,10 @@
  * header. The repository endpoints take two kinds of credential, as
  * GitHub's do: the suites' fine-grained tokens (a Bearer or token
  * credential starting with "conformance-", the fake's configured tokens)
- * and installation tokens minted here, within their narrowing. Anything
+ * and installation tokens minted here, within their narrowing. A
+ * repository in an installation of a fake App takes installation tokens
+ * only (403 for a fine-grained token), so a server that minted the right
+ * token but sent another on an App write fails. Anything
  * else (no Authorization header, an App's JWT, a token the fake did not
  * mint) is refused with 401. Coolify: an application app-conformance (redeploys record what
  * it runs: its values at that time) and a service svc-conformance with
@@ -286,8 +289,15 @@ const refused = (res) => answer(res, 401, { message: "Bad credentials" }, DATE()
 // repositories it was narrowed to, with the permission asked.
 const LEVELS = ["read", "write", "admin"];
 const allows = (granted, needed) => granted !== undefined && LEVELS.indexOf(granted) >= LEVELS.indexOf(needed);
+// A repository in an installation of a fake App: the App fixture's, which
+// takes the App's installation tokens only.
+const installedRepo = (owner, repo) => Object.values(state.installations).some((i) =>
+  i.account.login.toLowerCase() === owner.toLowerCase() && i.repos.some((r) => r.toLowerCase() === repo.toLowerCase()));
+
 function tokenReaches(credential, owner, repo, permission, level) {
-  if (credential.kind === "fine-grained") return true; // a suite's token: the repository's own rules
+  // A suite's token: the repository's own rules, except on an App fixture's
+  // repository, which a fine-grained token never reaches.
+  if (credential.kind === "fine-grained") return !installedRepo(owner, repo);
   if (credential.kind !== "installation") return false;
   const t = credential.token;
   const inst = state.installations[t.installationId];

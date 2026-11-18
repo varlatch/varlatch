@@ -108,6 +108,16 @@ test("the fake GitHub's repository writes take a suite's fine-grained token or a
   // A suite's fine-grained token, as the sync suite's Connection uses one.
   assert.equal((await write("anything", "Bearer conformance-sync-1")).status, 201);
   assert.equal((await write("anything", "token conformance-sync-1")).status, 204);
+  // On the App fixture's repositories (in the installation) a fine-grained
+  // token is refused: a server that minted the right token but sent its
+  // configured one on an App write fails.
+  for (const repo of ["api", "web"]) {
+    for (const authorization of ["Bearer conformance-sync-1", "token conformance-sync-1"]) {
+      assert.equal((await write(repo, authorization)).status, 403, `${authorization} on ${repo}: write`);
+      assert.equal((await read(repo, authorization)).status, 403, `${authorization} on ${repo}: public key`);
+      assert.equal((await remove(repo, authorization)).status, 403, `${authorization} on ${repo}: delete`);
+    }
+  }
   // A held repository: a write waits unanswered until released, then lands.
   await control({ op: "hold", repo: "acme-apps/api" });
   const pending = write("api", token);
