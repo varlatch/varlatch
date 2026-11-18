@@ -19,19 +19,23 @@
 #       code=false and tests=affected (no package), so it runs the test job's
 #       repository-wide checks (licenses, notices, the changelog section,
 #       the build) and the secret scan, and skips every TypeScript test. A
-#       mixed change answers for its other paths. The exception is the Go
-#       test data that varlatchd's own tests produce or read (SHARED: the
-#       authorization and audit vectors, the Node.js IDNA table, the HTTP
-#       known differences): it
-#       counts as code in @varlatch/varlatchd, so a change to it runs the
-#       tests that check it against the TypeScript server. The paths behind
-#       each answer go to stderr.
+#       mixed change answers for its other paths. The exceptions are the Go
+#       test data that a package's tests produce or read. varlatchd's (SHARED:
+#       the authorization and audit vectors, the Node.js IDNA table, the HTTP
+#       known differences) and packages/sync's (SYNC_SHARED) count as code,
+#       in @varlatch/varlatchd and @varlatch/sync, so a change to them runs
+#       the tests that check them against the TypeScript code (and the other
+#       code=true jobs). The Go CLI's (CLI_SHARED: its vectors, transcripts
+#       and inventory, which apps/cli's tests compare with what the
+#       TypeScript CLI does) stay Go files here, but `affected` selects
+#       @varlatch/cli for them. The paths behind each answer go to stderr.
 #
 #   scripts/ci-changes.sh affected <base>
 #       Prints the names of the packages to test when tests=affected: those
 #       with a changed file since <base> (committed or not), and every package
-#       that depends on them, and @varlatch/varlatchd for a SHARED file.
-#       Documentation inside a package selects nothing.
+#       that depends on them, @varlatch/varlatchd for a SHARED file,
+#       @varlatch/sync for a SYNC_SHARED one and @varlatch/cli for a
+#       CLI_SHARED one. Documentation inside a package selects nothing.
 #
 # pnpm's own selector (`--filter "...[<base>]"`) maps a changed file outside
 # every package to the workspace root project, which no package depends on
@@ -55,6 +59,10 @@ SHARED='^go/server/(authz|audit|write|custody)/testdata/ts-vectors\.json$|^go/li
 # Go test data that packages/sync's tests produce and replay
 # (go-vectors.test.ts).
 SYNC_SHARED='^go/lib/sync/testdata/ts-exchanges\.json$'
+# Go CLI test data that apps/cli's tests produce from the TypeScript CLI and
+# compare (go-vectors-*.test.ts, go-transcripts.test.ts, cli-inventory.test.ts;
+# internal docs/design/go-cli.md, decision 3). A stale file fails there.
+CLI_SHARED='^go/cmd/varlatch/testdata/(cli-inventory\.json|vectors/[^/]+\.json|transcripts/[^/]+\.json)$|^go/lib/jsjson/testdata/ts-vectors\.json$'
 
 # True when a path lies inside a workspace package (pnpm-workspace.yaml).
 in_package() {
@@ -126,6 +134,11 @@ affected() {
   if (cd "$REPO_ROOT" && { git diff --name-only "$base"; git ls-files --others --exclude-standard; }) | grep -E "$SYNC_SHARED" >/dev/null &&
     [[ " ${names[*]} " != *" @varlatch/sync "* ]]; then
     names+=("@varlatch/sync")
+  fi
+  # apps/cli's tests compare the Go CLI's test data (CLI_SHARED).
+  if (cd "$REPO_ROOT" && { git diff --name-only "$base"; git ls-files --others --exclude-standard; }) | grep -E "$CLI_SHARED" >/dev/null &&
+    [[ " ${names[*]} " != *" @varlatch/cli "* ]]; then
+    names+=("@varlatch/cli")
   fi
   # The Python accessor's tests read the contract and accessor vectors and
   # run the CLI's generator without depending on those packages; each of them
