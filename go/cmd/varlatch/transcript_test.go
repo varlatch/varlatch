@@ -73,7 +73,24 @@ var differences = map[string]transcript.Difference{
 			o.Stderr = got.Stderr
 		}
 	},
+	// TypeScript (0.22.2 on) masks a special scheme's URL from its authority
+	// to the last at-sign before "/", "?" or "#", reading through a
+	// backslash, so https://example.com\path@segment, which has no user name
+	// or password (the backslash starts the path), is shown as
+	// https://[redacted]@segment. Go reads the authority WHATWG parses and
+	// shows that URL as it is (go/README.md, "Diagnostics never print
+	// credential values"). Accepted only where masking Go's stdout that way
+	// gives the recording.
+	"backslash-path": func(o *transcript.Outcome, got transcript.Outcome) {
+		if backslashPath.ReplaceAllString(got.Stdout, "://[redacted]@") == o.Stdout {
+			o.Stdout = got.Stdout
+		}
+	},
 }
+
+// backslashPath is, in JSON text, a URL's host, a backslash (escaped) and
+// the path up to an at-sign: what TypeScript masks and Go shows.
+var backslashPath = regexp.MustCompile(`://[^/\\"\s@?#]+\\\\[^/?#"\s@]*@`)
 
 // recordedUserAgent is the TypeScript CLI's User-Agent in a recording.
 var recordedUserAgent = regexp.MustCompile(`^varlatch-cli/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)
