@@ -2,9 +2,10 @@ name: CI
 
 # Tiers: a draft pull request runs nothing. Marking it ready for review starts
 # its first run (`pnpm ready` does that once `pnpm verify` passes locally), and
-# from then on every push runs the fast checks (test, python-accessor,
-# secret-scan, docker, e2e), with two cuts. The test job tests only the
-# packages the pull request changes and every package that depends on them,
+# from then on every push runs the fast checks (test, test-server,
+# python-accessor, secret-scan, docker, e2e), with two cuts. The test jobs
+# (test-server has the server's tests, test every other package's) test only
+# the packages the pull request changes and every package that depends on them,
 # unless it changes a file outside the workspace packages that is not
 # documentation (the lockfile, the root manifests, tsconfig.base.json,
 # scripts/, infra/, CI itself), which tests every package. A pull request
@@ -177,27 +178,100 @@ jobs:
       # package as a change to the workspace root, which no package depends
       # on, so such a file would select no tests; the changes job answers
       # tests=all for any such file that is not documentation. Every other
-      # event tests every package. Build and typecheck always cover everything.
+      # event tests every package. Build and typecheck always cover
+      # everything. The server's tests run in test-server, beside this job.
       - name: Test
         env:
           TESTS: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.tests || 'all' }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HOSTED: ${{ needs.changes.outputs.hosted }}
         run: |
+          # One package at a time: overlapping suites can starve multi-process
+          # CLI tests of CPU. Two workers on the three-CPU self-hosted slots,
+          # where two full runs with more hit their deadlines (including the
+          # 0.13 control); one per CPU but one on a hosted runner.
+          workers=2
+          if [ "$HOSTED" = true ]; then workers=$(( $(nproc) - 1 )); fi
+          echo "$(nproc) CPUs: ${workers} test workers."
           if [ "$TESTS" != affected ]; then
-            # Match local verification on the three-CPU self-hosted slots:
-            # overlapping suites can starve multi-process CLI tests of CPU.
-            # Two full runs hit their deadlines, including the 0.13 control.
-            pnpm -r --workspace-concurrency=1 test --maxWorkers=2
+            pnpm -r --workspace-concurrency=1 --filter '!@varlatch/varlatchd' test --maxWorkers="$workers"
             exit 0
           fi
           packages=$(scripts/ci-changes.sh affected "$BASE")
+          packages=$(grep -vx '@varlatch/varlatchd' <<< "$packages" || true)
           if [ -z "$packages" ]; then
-            echo "No package changed: no package tests to run."
+            echo "No package other than the server changed: no package tests to run here."
             exit 0
           fi
           filters=()
           while read -r name; do filters+=(--filter "$name"); done <<< "$packages"
-          pnpm --workspace-concurrency=1 "${filters[@]}" test --maxWorkers=2
+          pnpm --workspace-concurrency=1 "${filters[@]}" test --maxWorkers="$workers"
+
+  # The server's tests (@varlatch/varlatchd) take most of the TypeScript test
+  # time, so they run on a runner of their own, beside the test job, and are
+  # selected the same way.
+  test-server:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: [5432:5432]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      VARLATCH_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '0' || '1' }}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Select the server's tests
+        id: select
+        env:
+          TESTS: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.tests || 'all' }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          run=true
+          if [ "$TESTS" = affected ]; then
+            packages=$(scripts/ci-changes.sh affected "$BASE")
+            if ! grep -qx '@varlatch/varlatchd' <<< "$packages"; then
+              echo "Neither the server nor a package it uses changed: no server tests to run."
+              run=false
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+      # The server's tests read other packages' builds (their exports point at
+      # dist/); the test job checks the build itself.
+      - name: Build
+        if: steps.select.outputs.run == 'true'
+        run: pnpm build
+
+      - name: Test the server
+        if: steps.select.outputs.run == 'true'
+        env:
+          HOSTED: ${{ needs.changes.outputs.hosted }}
+        run: |
+          # As in the test job. A worker peaks at about 1.3 GB (one PGlite
+          # per test); a hosted runner has 16 GB.
+          workers=2
+          if [ "$HOSTED" = true ]; then workers=$(( $(nproc) - 1 )); fi
+          echo "$(nproc) CPUs: ${workers} test workers."
+          pnpm --filter @varlatch/varlatchd test --maxWorkers="$workers"
 
   # The Typed Accessor for Python on the oldest and newest Python it
   # supports, each with the standard library only and with a pinned ada-url:
@@ -662,7 +736,7 @@ jobs:
     # On a draft it runs too, and fails: every other job is skipped then, and
     # a skipped required check would read as passed.
     if: always()
-    needs: [hosted-runner, changes, test, python-accessor, secret-scan, installers, docker, multi-arch, contributor-setup, e2e, e2e-cli, backup-recovery]
+    needs: [hosted-runner, changes, test, test-server, python-accessor, secret-scan, installers, docker, multi-arch, contributor-setup, e2e, e2e-cli, backup-recovery]
     # A draft has no probe answer; its one-step verdict runs on a hosted runner.
     runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || (github.event.pull_request.draft && 'ubuntu-latest') || 'varlatch-ci' }}
     timeout-minutes: 5
@@ -670,7 +744,7 @@ jobs:
       - name: Every job passed or was skipped
         env:
           DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
-          RESULTS: "changes=${{ needs.changes.result }} test=${{ needs.test.result }} python-accessor=${{ needs.python-accessor.result }} secret-scan=${{ needs.secret-scan.result }} installers=${{ needs.installers.result }} docker=${{ needs.docker.result }} multi-arch=${{ needs.multi-arch.result }} contributor-setup=${{ needs.contributor-setup.result }} e2e=${{ needs.e2e.result }} e2e-cli=${{ needs.e2e-cli.result }} backup-recovery=${{ needs.backup-recovery.result }}"
+          RESULTS: "changes=${{ needs.changes.result }} test=${{ needs.test.result }} test-server=${{ needs.test-server.result }} python-accessor=${{ needs.python-accessor.result }} secret-scan=${{ needs.secret-scan.result }} installers=${{ needs.installers.result }} docker=${{ needs.docker.result }} multi-arch=${{ needs.multi-arch.result }} contributor-setup=${{ needs.contributor-setup.result }} e2e=${{ needs.e2e.result }} e2e-cli=${{ needs.e2e-cli.result }} backup-recovery=${{ needs.backup-recovery.result }}"
         run: |
           if [ "$DRAFT" = true ]; then
             echo "::error::A draft runs no CI, so there is no verdict. Mark it ready for review (pnpm ready) to run it."
