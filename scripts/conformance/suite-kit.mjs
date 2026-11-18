@@ -176,14 +176,20 @@ export function cliCommand(args) {
  * Runs one operation of the target under test (scripts/conformance/target-op.mjs)
  * and returns its standard output; throws when the operation fails.
  * `input` is passed on standard input, `env` is added to the environment.
+ * `timeoutMs` bounds the call: past it the operation is killed and the
+ * call throws, saying it timed out.
  */
-export function targetOp(operation, args = [], { input, env } = {}) {
+export function targetOp(operation, args = [], { input, env, timeoutMs } = {}) {
   const r = spawnSync(process.execPath, [TARGET_OP, operation, ...args], {
     encoding: "utf8",
     input: input ?? "",
     env: { ...process.env, ...env },
     maxBuffer: 256 * 1024 * 1024,
+    ...(timeoutMs ? { timeout: timeoutMs, killSignal: "SIGKILL" } : {}),
   });
+  if (r.error?.code === "ETIMEDOUT") {
+    throw new Error(`target operation ${[operation, ...args].join(" ")} timed out after ${timeoutMs} ms`);
+  }
   if (r.status !== 0) {
     throw new Error(`target operation ${[operation, ...args].join(" ")} failed (exit ${r.status}): ${(r.stderr || r.stdout).trim().slice(-500)}`);
   }

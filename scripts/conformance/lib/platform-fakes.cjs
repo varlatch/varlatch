@@ -48,7 +48,9 @@
  * hands over; "app" {app} registers one directly and answers its private
  * key; "add-key" {appId}, "delete-key" {appId, pem} and "keep-only-key"
  * {appId, pem} change its keys; "hold" {repo} holds the repository's
- * secret writes unanswered until "release" {repo} answers them;
+ * secret writes unanswered until "release" {repo} answers them (only those
+ * whose client is still connected: a write whose client disconnected is
+ * abandoned, neither stored nor counted);
  * "install" {appId, account, repos, selection} installs it).
  */
 "use strict";
@@ -86,6 +88,8 @@ const state = {
   // true), and the writes held, each answered once released.
   hold: {},
   held: [],
+  // Held writes whose client disconnected before the release.
+  abandoned: [],
   // Secret writes answered, by repository (owner/repo -> count).
   writes: {},
 };
@@ -230,9 +234,17 @@ const GITHUB_ROUTES = [
     handle: (req, res, m, body, credential) => {
       if (credential.kind === "none") return refused(res);
       if (!tokenReaches(credential, m[1], m[2], "secrets", "write")) return answer(res, 403, { message: "Resource not accessible by integration" });
-      // A held repository: the write waits, unanswered, until released.
+      // A held repository: the write waits, unanswered, until released. A
+      // client that disconnects meanwhile (its request timed out) never gets
+      // the answer: its write is abandoned, not released.
       if (state.hold[`${m[1]}/${m[2]}`] && !req.released) {
-        state.held.push({ repo: `${m[1]}/${m[2]}`, name: decodeURIComponent(m[3]), run: () => { req.released = true; github(req, res, body); } });
+        const entry = {
+          repo: `${m[1]}/${m[2]}`, name: decodeURIComponent(m[3]),
+          connected: () => !res.destroyed && !res.writableEnded && !req.socket?.destroyed,
+          run: () => { req.released = true; github(req, res, body); },
+        };
+        res.on("close", () => { entry.disconnected = true; });
+        state.held.push(entry);
         return undefined;
       }
       const secrets = (state.github[`${m[1]}/${m[2]}`] ??= {});
@@ -437,7 +449,8 @@ const control = http.createServer((req, res) => {
         coolify: coolifyState, running: state.running, convex: state.convex, requests: state.requests,
         githubApps: Object.fromEntries(Object.values(state.apps).map((a) => [a.id, { slug: a.slug, keys: a.keys.length }])),
         codesUsed: Object.entries(state.codes).filter(([, v]) => v.used).map(([k]) => k),
-        held: state.held.map((h) => ({ repo: h.repo, name: h.name })),
+        held: state.held.map((h) => ({ repo: h.repo, name: h.name, connected: !h.disconnected && h.connected() })),
+        abandoned: state.abandoned,
         writes: state.writes,
         mints: state.mints,
       });
@@ -459,11 +472,24 @@ const control = http.createServer((req, res) => {
         return answer(res, 200, { holding: c.repo });
       }
       if (c.op === "release") {
+        // Answered: the writes whose client is still connected. A write whose
+        // client went away is abandoned: not answered, not stored, not
+        // counted.
         delete state.hold[c.repo];
         const mine = state.held.filter((h) => h.repo === c.repo);
         state.held = state.held.filter((h) => h.repo !== c.repo);
-        for (const h of mine) h.run();
-        return answer(res, 200, { released: mine.map((h) => h.name) });
+        const released = [];
+        const abandoned = [];
+        for (const h of mine) {
+          if (h.disconnected || !h.connected()) {
+            abandoned.push(h.name);
+            state.abandoned.push({ repo: h.repo, name: h.name });
+          } else {
+            h.run();
+            released.push(h.name);
+          }
+        }
+        return answer(res, 200, { released, abandoned });
       }
       if (c.op === "app") {
         const key = newKey();
