@@ -14,6 +14,7 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/transcript"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
+	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
 // The test binary is also the CLI under test: run with this variable set,
@@ -105,6 +106,49 @@ var differences = map[string]transcript.Difference{
 	"option-value": func(o *transcript.Outcome, _ transcript.Outcome) {
 		o.Stderr = cli.OptionValueDifference(o.Stderr)
 	},
+	// A --json document's fields the API defines as scalars: an object or
+	// array a server sent there is left out by the Go CLI (go/README.md,
+	// "--json documents hold only scalars where the API defines them"), so
+	// the recording's document is compared with those values removed:
+	// env list's name, tier and kind, and status --probe's identity and
+	// organization fields.
+	"json-scalars": func(o *transcript.Outcome, _ transcript.Outcome) {
+		doc, err := jsjson.Parse([]byte(o.Stdout))
+		top, isObject := doc.(jsjson.Object)
+		if err != nil || !isObject {
+			return
+		}
+		if list, ok := top.Value("environments").([]any); ok {
+			out := make([]any, len(list))
+			for i, e := range list {
+				out[i] = withoutNonScalars(e, "name", "tier", "kind")
+			}
+			top = top.Set("environments", out)
+		}
+		if list, ok := top.Value("servers").([]any); ok {
+			out := make([]any, len(list))
+			for i, srv := range list {
+				out[i] = srv
+				s, ok := srv.(jsjson.Object)
+				if !ok {
+					continue
+				}
+				p, ok := s.Value("probe").(jsjson.Object)
+				if !ok {
+					continue
+				}
+				if _, has := p.Get("identity"); has {
+					p = p.Set("identity", withoutNonScalars(p.Value("identity"), "id", "name", "kind"))
+				}
+				if _, has := p.Get("organization"); has {
+					p = p.Set("organization", withoutNonScalars(p.Value("organization"), "id", "slug", "name"))
+				}
+				out[i] = s.Set("probe", p)
+			}
+			top = top.Set("servers", out)
+		}
+		o.Stdout = string(jsjson.StringifyIndent(top, 2)) + "\n"
+	},
 	// An error the TypeScript CLI lets escape (recorded as {{uncaught ...}}):
 	// Node.js prints a stack and exits 1; the Go CLI exits 1 too, with one
 	// line saying what went wrong. Only that stderr is accepted; the status
@@ -127,6 +171,26 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = got.Stdout
 		}
 	},
+}
+
+// withoutNonScalars is v without the named members whose value is an
+// object or an array, when v is an object; anything else as it is.
+func withoutNonScalars(v any, keys ...string) any {
+	o, ok := v.(jsjson.Object)
+	if !ok {
+		return v
+	}
+	out := jsjson.Object{}
+	for _, m := range o {
+		switch m.Value.(type) {
+		case jsjson.Object, []any:
+			if slices.Contains(keys, m.Key) {
+				continue
+			}
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // skillVersion is the version a skill file names.

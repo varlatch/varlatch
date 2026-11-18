@@ -243,80 +243,49 @@ func atSignAt(s []byte, i int) int {
 	return 0
 }
 
-// MaskURLInValue is the precise layer for one value: an argument, a
-// command, a topic or an approval id a failure echoes, or a string a
-// server's answer, the tier cache or stored metadata gives output. Every
-// URL in the value is masked on its own with MaskUserinfo: a value that is
-// one URL as a whole (the backslash-path cases included) exactly as
-// MaskUserinfo masks it, and each URL inside longer text (`Help:
-// https://u:p@h/x`, a query-bearing URL before a credentialed one) found by
-// urlsIn and masked in place. Any other value is kept as it is, an email
-// included (the fail-safe sees whole messages).
+// MaskURLInValue is the layer for one value: an argument, a command, a
+// topic or an approval id a failure echoes, or a string a server's answer,
+// the tier cache or stored metadata gives output. A value that is exactly
+// one URL (it starts with a scheme followed by "//", a special scheme, or
+// "//", and holds no space) is masked precisely with MaskUserinfo, so it
+// keeps its bytes when it has no user name or password (the backslash-path
+// values). Any other value holding an at-sign in any form (other than one
+// right after a [redacted] already there) goes through the whole-text
+// fail-safe, MaskUserinfoInText: free text may be over-masked,
+// never under-masked. Any other value is kept as it is.
 func MaskURLInValue(v string) string {
-	spans := urlsIn(v)
-	if len(spans) == 1 && spans[0][0] == 0 && spans[0][1] == len(v) {
-		return MaskUserinfo(v) // the value is one URL
-	}
-	if len(spans) > 0 {
-		var b strings.Builder
-		at := 0
-		for _, sp := range spans {
-			b.WriteString(v[at:sp[0]])
-			b.WriteString(MaskUserinfo(v[sp[0]:sp[1]]))
-			at = sp[1]
-		}
-		b.WriteString(v[at:])
-		return b.String()
-	}
-	if u, ok := whatwg.ParseURL(v); ok && (u.Username != "" || u.Password != "") {
+	if isOneURL(v) {
 		return MaskUserinfo(v)
 	}
-	if start, special := authorityStart(v); special || start > 0 {
-		return MaskUserinfo(v)
+	// Text whose every at-sign follows a [redacted] this masker wrote (a
+	// refusal that names a masked URL) is already masked: kept, not masked
+	// again.
+	if HasAtSign(strings.ReplaceAll(v, "[redacted]@", "")) {
+		return MaskUserinfoInText(v)
 	}
 	return v
 }
 
-// schemeAt matches a URL scheme and its colon.
-var schemeAt = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*:`)
+// leadingScheme matches a URL scheme and its colon at the start of a value.
+var leadingScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 
-// urlsIn is where each URL in text starts and ends: a scheme at a word
-// boundary followed by "//" (tabs and newlines between, as WHATWG drops
-// them), or a special scheme (which needs no slashes), running to the next
-// space, quote, angle bracket or backtick. Tabs and newlines stay inside a
-// URL, since WHATWG parsing drops them, so a password split by one is
-// still masked whole. A URL is never searched for inside another.
-func urlsIn(text string) [][2]int {
-	var spans [][2]int
-	from := 0
-	for from < len(text) {
-		loc := schemeAt.FindStringIndex(text[from:])
-		if loc == nil {
-			break
-		}
-		start, colon := from+loc[0], from+loc[1]
-		if start > 0 && isSchemeByte(text[start-1]) {
-			from = colon
-			continue
-		}
-		scheme := strings.ToLower(text[start : colon-1])
-		rest := strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(text[colon:min(len(text), colon+16)])
-		if !specialSchemes[scheme] && !strings.HasPrefix(rest, "//") {
-			from = colon
-			continue
-		}
-		end := colon
-		for end < len(text) && strings.IndexByte(" \"'<>`", text[end]) < 0 {
-			end++
-		}
-		spans = append(spans, [2]int{start, end})
-		from = end
+// isOneURL is whether v is one URL as a whole: no space in it, and it
+// starts with "//", or with a scheme that is special or followed by "//"
+// (tabs and newlines between, as WHATWG drops them).
+func isOneURL(v string) bool {
+	if strings.ContainsRune(v, ' ') {
+		return false
 	}
-	return spans
-}
-
-// isSchemeByte is whether c may be part of a scheme: a scheme found right
-// after one is the tail of a longer word, not a URL's start.
-func isSchemeByte(c byte) bool {
-	return isAlpha(c) || c >= '0' && c <= '9' || c == '+' || c == '.' || c == '-'
+	if strings.HasPrefix(v, "//") {
+		return true
+	}
+	loc := leadingScheme.FindStringIndex(v)
+	if loc == nil {
+		return false
+	}
+	if specialSchemes[strings.ToLower(v[:loc[1]-1])] {
+		return true
+	}
+	rest := strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(v[loc[1]:min(len(v), loc[1]+16)])
+	return strings.HasPrefix(rest, "//")
 }

@@ -62,7 +62,7 @@ func (r *Run) resolveFromArgs(cwd string) (*clientctx.Context, error) {
 // or made the same. Every --json document goes through it;
 // TestEveryWriteGoesThroughTheFailSafe fails on any other way to stdout.
 func (r *Run) printJSON(doc jsjson.Object) error {
-	return r.outJSON(string(jsjson.StringifyIndent(RedactValue(doc), 2)))
+	return r.outJSON(redactJSON(doc))
 }
 
 // statusSchemaVersion is status.ts's STATUS_SCHEMA_VERSION, the version of
@@ -258,8 +258,8 @@ func formatStatusHuman(servers []any, repo any) string {
 		}
 		lines = append(lines,
 			"",
-			"Repo          "+jsjson.String(o.Value("repoRoot")),
-			"Project       "+jsjson.String(o.Value("organization"))+"/"+jsjson.String(o.Value("project")),
+			"Repo          "+shownValue(jsjson.String(o.Value("repoRoot"))),
+			"Project       "+shownValue(jsjson.String(o.Value("organization")))+"/"+shownValue(jsjson.String(o.Value("project"))),
 			"Environment   "+shownValue(jsjson.String(o.Value("environment")))+" ("+jsjson.String(o.Value("environmentSource"))+tier+")",
 		)
 	}
@@ -479,21 +479,21 @@ func contextCommand(r *Run) error {
 	}
 	lines := []string{
 		"Server        " + jsjson.String(clientctx.MaskServer(ctx.Server)),
-		"Organization  " + ctx.Organization,
-		"Project       " + ctx.Project,
+		"Organization  " + shownValue(ctx.Organization),
+		"Project       " + shownValue(ctx.Project),
 		"Environment   " + shownValue(jsjson.String(ctx.Environment)),
 		"Source        " + ctx.EnvironmentSource,
 	}
 	if tier := repo.Value("tier"); jsjson.Truthy(tier) {
 		lines = append(lines, "Tier          "+Printable(shownValue(jsjson.String(tier)))+" (cached "+Printable(shownValue(jsjson.String(repo.Value("tierCachedAt"))))+")")
 	}
-	lines = append(lines, "Repo root     "+ctx.RepoRoot)
+	lines = append(lines, "Repo root     "+shownValue(ctx.RepoRoot))
 	if runID != "" {
 		shown := strings.Join(placeholders, ", ")
 		if shown == "" {
 			shown = "none"
 		}
-		lines = append(lines, "Agent run     "+runID+" (Placeholders: "+shown+")")
+		lines = append(lines, "Agent run     "+shownValue(runID)+" (Placeholders: "+shownValue(shown)+")")
 	}
 	return r.println(strings.Join(lines, "\n"))
 }

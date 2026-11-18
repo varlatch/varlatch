@@ -627,7 +627,8 @@
         }
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "json-scalars"
       ],
       "expect": {
         "status": 0,

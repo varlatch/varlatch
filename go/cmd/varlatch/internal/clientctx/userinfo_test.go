@@ -391,23 +391,52 @@ func TestHasAtSignIsTheFailSafesDetection(t *testing.T) {
 	}
 }
 
-// TestMaskURLInValueFindsEveryURL: every URL inside a longer value is masked
-// on its own, wherever it is and whatever comes before it; a value that is
-// one URL is masked exactly as MaskUserinfo masks it.
-func TestMaskURLInValueFindsEveryURL(t *testing.T) {
+// TestMaskURLInValueNeverShowsUserinfo: a value that is exactly one URL is
+// masked precisely (one without a user name or password keeps its bytes);
+// any other value holding an at-sign goes through the whole-text
+// fail-safe, which may over-mask free text but never shows a user name or
+// password, whatever punctuation, list or quoting surrounds the URL.
+func TestMaskURLInValueNeverShowsUserinfo(t *testing.T) {
 	for in, want := range map[string]string{
-		"Help: https://u:p@h/x":                                  "Help: https://[redacted]@h/x",
-		"see https://a.example/?q=1 then https://u:p@h.example":  "see https://a.example/?q=1 then https://[redacted]@h.example",
-		"two: https://u:p@a.example, https://v:q@b.example/path": "two: https://[redacted]@a.example, https://[redacted]@b.example/path",
-		"(http:u:p@h) and ftp:\\\\v:q@g":                         "(http:[redacted]@h) and ftp:\\\\[redacted]@g",
-		"a db: postgres://user:pass@db.example/app":              "a db: postgres://[redacted]@db.example/app",
-		"https://u:p\tq@h.example tail":                          "https://[redacted]@h.example tail",
-		"https://example.com\\path@segment":                      "https://example.com\\path@segment",
-		"https://u:p@h.example":                                  "https://[redacted]@h.example",
-		"x https://example.com\\path@segment":                    "x https://example.com\\path@segment",
-		"ada@example.com, no URL":                                "ada@example.com, no URL",
-		"Help: a note":                                           "Help: a note",
-		"xhttps://u:p@h":                                         "xhttps://[redacted]@h",
+		// One URL: precise.
+		"https://u:p@h.example":               "https://[redacted]@h.example",
+		"https://example.com\\path@segment":   "https://example.com\\path@segment",
+		"http:u:p@h":                          "http:[redacted]@h",
+		"postgres://user:pass@db.example/app": "postgres://[redacted]@db.example/app",
+		"//u:p@h.example":                     "//[redacted]@h.example",
+		"https://u:p@h.example,":              "https://[redacted]@h.example,",
+		"https://u:p'q@h.example":             "https://[redacted]@h.example",
+		// Anything else with an at-sign: the fail-safe.
+		"Help: https://u:p@h/x":                                 "Help:[redacted]@h/x",
+		"see https://a.example/?q=1 then https://u:p@h.example": "see https:[redacted]@h.example",
+		"(https://u:p@h.example)":                               "(https:[redacted]@h.example)",
+		"https://a.example, https://u:p@h.example":              "https:[redacted]@h.example",
+		"a list: https://u:p@a.example,https://v:q@b.example":   "a list:[redacted]@b.example",
+		"contact ada@example.com at https://u:p@h.example":      "contact ada@example.com at https:[redacted]@h.example",
+		`{"url":"https://u:p@h.example"}`:                       `{"url":"https:[redacted]@h.example"}`,
+		"user's https://u:p'q@h.example":                        "user's https:[redacted]@h.example",
+		// No at-sign, or no URL before it: kept.
+		"ada@example.com":            "ada@example.com",
+		"Help: a note":               "Help: a note",
+		"x https://example.com/path": "x https://example.com/path",
+	} {
+		got := MaskURLInValue(in)
+		if got != want {
+			t.Errorf("MaskURLInValue(%q) = %q, want %q", in, got, want)
+		}
+		if strings.Contains(got, ":p@") || strings.Contains(got, ":q@") || strings.Contains(got, ":pass@") || strings.Contains(got, "p'q@") {
+			t.Errorf("MaskURLInValue(%q) shows a password: %q", in, got)
+		}
+	}
+}
+
+// TestMaskURLInValueKeepsWhatIsMasked: text a refusal already masked (every
+// at-sign right after a [redacted]) is not masked again; one more at-sign
+// anywhere puts it through the fail-safe.
+func TestMaskURLInValueKeepsWhatIsMasked(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used": "http://[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used",
+		"see http://[redacted]@a.example and https://u:p@b.example":                                      "see http:[redacted]@b.example",
 	} {
 		if got := MaskURLInValue(in); got != want {
 			t.Errorf("MaskURLInValue(%q) = %q, want %q", in, got, want)

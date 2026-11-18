@@ -384,7 +384,7 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 		{[]string{"VARLATCH_SERVER=https://u:hunter2pass@h.example"}, []string{"server", "--json"}, []string{`"server": "https://[redacted]@h.example"`}},
 		// The tier cache and stored metadata, in human output.
 		{nil, []string{"env", "use", "vlt_cli_nameCANARY"}, []string{"Selected [redacted] for this repository (tier https://[redacted]@h.example)."}},
-		{nil, []string{"status"}, []string{"tier https://[redacted]@h.example", "see https://[redacted]@n.example/x"}},
+		{nil, []string{"status"}, []string{"tier https://[redacted]@h.example", "see https:[redacted]@n.example/x"}},
 		{nil, []string{"context"}, []string{"Tier          https://[redacted]@h.example (cached "}},
 		{nil, []string{"context", "--json"}, []string{`"tier": "https://[redacted]@h.example"`}},
 	} {
@@ -399,6 +399,69 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 		}
 		if strings.Contains(stdout+stderr, "CANARY") || strings.Contains(stdout+stderr, "hunter2pass") {
 			t.Errorf("%v %q: a token or password was printed:\n%s%s", c.env, c.args, stdout, stderr)
+		}
+	}
+}
+
+// TestJSONScalarsOnly: where the API defines a scalar, an object or array a
+// server sends is left out of a --json document, never passed through: env
+// list's name, tier and kind, whoami's documented fields.
+func TestJSONScalarsOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/meta":
+			_, _ = w.Write([]byte(`{"serverVersion":"0.22.0","apiMajor":1,"capabilities":["identity.whoami"]}`))
+		case "/v1/me":
+			_, _ = w.Write([]byte(`{"identity":{"id":"idn_1","name":{"secret":"CANARY"},"kind":"human","email":["CANARY"]},"organization":null,` +
+				`"credential":{"id":"cred_1","name":"laptop","kind":{"a":"CANARY"},"expiresAt":null},"listener":"ordinary"}`))
+		case "/v1/organizations/acme/projects/web/environments":
+			_, _ = w.Write([]byte(`{"items":[{"name":{"x":"CANARY"},"tier":["CANARY"],"kind":"shared"},{"name":"dev","tier":"development","kind":"shared"}]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	s := newSessionRun(t)
+	s.store(map[string]map[string]any{srv.URL: {"token": "vlt_cli_x"}})
+	if err := os.WriteFile(filepath.Join(s.dir, "varlatch.toml"), []byte("server = \""+srv.URL+"\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for args, want := range map[string]string{
+		"env list --json": "{\n  \"version\": 1,\n  \"environments\": [\n    {\n      \"kind\": \"shared\",\n      \"selected\": false\n    },\n" +
+			"    {\n      \"name\": \"dev\",\n      \"tier\": \"development\",\n      \"kind\": \"shared\",\n      \"selected\": true\n    }\n  ]\n}\n",
+		"whoami --json": "{\n  \"version\": 1,\n  \"server\": \"" + srv.URL + "\",\n  \"identity\": {\n    \"id\": \"idn_1\",\n    \"kind\": \"human\"\n  },\n" +
+			"  \"organization\": null,\n  \"credential\": {\n    \"id\": \"cred_1\",\n    \"name\": \"laptop\",\n    \"expiresAt\": null\n  },\n  \"listener\": \"ordinary\"\n}\n",
+	} {
+		status, stdout, stderr := s.run("", strings.Fields(args)...)
+		if status != 0 || stdout != want || stderr != "" {
+			t.Errorf("%s: status %d, stderr %q\nstdout\n%s\nwant\n%s", args, status, stderr, stdout, want)
+		}
+	}
+}
+
+// TestEchoedNamesAreMasked: what human output echoes from the command line,
+// the repository's files and the environment (an Environment name, the
+// Organization and Project, an agent run id) goes through the value masker.
+func TestEchoedNamesAreMasked(t *testing.T) {
+	s := newSessionRun(t)
+	if err := os.WriteFile(filepath.Join(s.dir, "varlatch.toml"), []byte("server = \"https://a.example\"\norganization = \"https://u:hunter2pass@o.example\"\nproject = \"https://v:hunter2pass@p.example\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		env  []string
+		args []string
+		want string
+	}{
+		{nil, []string{"env", "use", "https://u:hunter2pass@e.example"}, "Selected https://[redacted]@e.example for this repository."},
+		{nil, []string{"status"}, "Project       https://[redacted]@o.example/https://[redacted]@p.example"},
+		{nil, []string{"context"}, "Organization  https://[redacted]@o.example"},
+		{nil, []string{"context"}, "Project       https://[redacted]@p.example"},
+		{[]string{"VARLATCH_AGENT_RUN=https://u:hunter2pass@r.example"}, []string{"context"}, "Agent run     https://[redacted]@r.example (Placeholders: none)"},
+	} {
+		status, stdout, stderr := s.runEnv(c.env, "", c.args...)
+		if status != 0 || !strings.Contains(stdout, c.want) || strings.Contains(stdout+stderr, "hunter2pass") {
+			t.Errorf("%v %q: status %d, stderr %q\nstdout\n%s\nwant it to hold %q", c.env, c.args, status, stderr, stdout, c.want)
 		}
 	}
 }

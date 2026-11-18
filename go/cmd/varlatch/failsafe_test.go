@@ -25,9 +25,20 @@ import (
 //   - any fmt.Print, Printf or Println (stdout, unredacted);
 //   - any import of the log package, and any json.NewEncoder;
 //   - outJSON, which writes a document printJSON redacted, called by
-//     anything but printJSON.
+//     anything but printJSON, and a redactedJSON made anywhere but
+//     redactJSON;
+//   - os.NewFile (a stream by its descriptor), syscall.Write and
+//     unix.Write;
+//   - a stream's Write, WriteString, WriteByte or WriteRune, called or
+//     taken as a method value (`w := r.Stdout.Write`).
 //
 // Multi-line calls are one node, so they are judged whole.
+//
+// It is a tripwire, not a security boundary. It does not catch an alias
+// made inside an allow-listed writer (`w := r.Stdout` in Run.out, then a
+// write to w), a stream reached through reflection or unsafe, or a write
+// by a dependency outside go/cmd/varlatch; the writers are few and short,
+// so review covers them.
 func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 	// writers: "file:function" -> whether every write there must carry a
 	// Redact call (main and run only hand the process's streams over;
@@ -91,6 +102,14 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 								t.Errorf("%s: json.NewEncoder", fset.Position(x.Pos()))
 							}
 						}
+						if pkg, ok := sel.X.(*ast.Ident); ok {
+							if pkg.Name == "os" && sel.Sel.Name == "NewFile" {
+								t.Errorf("%s: os.NewFile opens a stream by its descriptor", fset.Position(x.Pos()))
+							}
+							if (pkg.Name == "syscall" || pkg.Name == "unix") && sel.Sel.Name == "Write" {
+								t.Errorf("%s: %s.Write writes a descriptor directly", fset.Position(x.Pos()), pkg.Name)
+							}
+						}
 						if sel.Sel.Name == "outJSON" && site != "internal/cli/contextcmds.go:printJSON" {
 							t.Errorf("%s: outJSON called outside printJSON", fset.Position(x.Pos()))
 						}
@@ -104,7 +123,17 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 					if allowed && mustRedact && writesStream(x) && !redacts(x) {
 						t.Errorf("%s: a write without cli.RedactDiagnostic or cli.RedactOutput", fset.Position(x.Pos()))
 					}
+				case *ast.CompositeLit:
+					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "redactedJSON" && site != "internal/cli/cli.go:redactJSON" {
+						t.Errorf("%s: a redactedJSON made outside redactJSON", fset.Position(x.Pos()))
+					}
 				case *ast.SelectorExpr:
+					switch x.Sel.Name {
+					case "Write", "WriteString", "WriteByte", "WriteRune":
+						if inner, ok := x.X.(*ast.SelectorExpr); ok && isStream(inner.Sel.Name) {
+							t.Errorf("%s: a stream's %s, called or taken as a method value", fset.Position(x.Pos()), x.Sel.Name)
+						}
+					}
 					if isStream(x.Sel.Name) {
 						refs++
 						if !allowed {

@@ -119,8 +119,10 @@ func (r *Run) probe(server string, token any, tokenOK bool) (jsjson.Object, erro
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			shown = append(shown, jsjson.Member{Key: key, Value: v}) // undefined is left out, as JSON.stringify does
+		// undefined is left out, as JSON.stringify does; so is an object or
+		// array where the API defines a scalar.
+		if sv, isScalar := scalar(v); ok && isScalar {
+			shown = append(shown, jsjson.Member{Key: key, Value: sv})
 		}
 	}
 	var org any
@@ -128,7 +130,9 @@ func (r *Run) probe(server string, token any, tokenOK bool) (jsjson.Object, erro
 		o := jsjson.Object{}
 		for _, key := range []string{"id", "slug", "name"} {
 			if v, ok := jsval.Get(organization, key); ok {
-				o = append(o, jsjson.Member{Key: key, Value: v})
+				if sv, isScalar := scalar(v); isScalar {
+					o = append(o, jsjson.Member{Key: key, Value: sv})
+				}
 			}
 		}
 		org = o

@@ -494,32 +494,44 @@ func whoamiDocument(server string, caller any) jsjson.Object {
 		if !known {
 			continue
 		}
-		doc = append(doc, jsjson.Member{Key: m.Key, Value: onlyFields(m.Value, fields)})
+		if v, ok := documented(m.Value, fields); ok {
+			doc = append(doc, jsjson.Member{Key: m.Key, Value: v})
+		}
 	}
 	return doc
 }
 
-// onlyFields is v with only the named fields when it is an object, an
-// object nested in one of them emptied; a value that is not an object
-// stays as it is, an object or array inside it reduced to its scalars.
-func onlyFields(v any, fields []string) any {
-	switch x := v.(type) {
-	case jsjson.Object:
-		out := jsjson.Object{}
-		for _, m := range x {
-			if slices.Contains(fields, m.Key) {
-				out = append(out, jsjson.Member{Key: m.Key, Value: onlyFields(m.Value, nil)})
-			}
-		}
-		return out
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = onlyFields(e, nil)
-		}
-		return out
+// documented is v as the WhoAmI document defines it: an object with only
+// its named fields, each a scalar (tags a list of scalars); a field defined
+// as a scalar (nil fields) only when it is one. An object or array where a
+// scalar is defined is left out, never passed through (false).
+func documented(v any, fields []string) (any, bool) {
+	o, isObject := v.(jsjson.Object)
+	if fields == nil || !isObject {
+		return scalar(v) // null (an Organization of none) is kept, as the API sends it
 	}
-	return v
+	out := jsjson.Object{}
+	for _, m := range o {
+		if !slices.Contains(fields, m.Key) {
+			continue
+		}
+		if m.Key == "tags" {
+			if list, isList := m.Value.([]any); isList {
+				tags := []any{}
+				for _, e := range list {
+					if t, ok := scalar(e); ok {
+						tags = append(tags, t)
+					}
+				}
+				out = append(out, jsjson.Member{Key: m.Key, Value: tags})
+			}
+			continue
+		}
+		if s, ok := scalar(m.Value); ok {
+			out = append(out, jsjson.Member{Key: m.Key, Value: s})
+		}
+	}
+	return out, true
 }
 
 // fetchWhoami is whoami.ts's fetchWhoami: ask the server, after checking
@@ -746,8 +758,10 @@ func (r *Run) envList(ctx *clientctx.Context) error {
 				if err != nil {
 					return err
 				}
-				if ok {
-					entry = append(entry, jsjson.Member{Key: key, Value: v}) // undefined is left out, as JSON.stringify does
+				// undefined is left out, as JSON.stringify does; so is an
+				// object or array where the API defines a string.
+				if s, isScalar := scalar(v); ok && isScalar {
+					entry = append(entry, jsjson.Member{Key: key, Value: s})
 				}
 			}
 			environments[i] = append(entry, jsjson.Member{Key: "selected", Value: selected(e)})
@@ -819,7 +833,7 @@ func (r *Run) envUse() error {
 	if err := clientctx.SaveLocalState(root, state); err != nil {
 		return err
 	}
-	return r.println("Selected " + name + " for this repository" + note + ".")
+	return r.println("Selected " + shownValue(name) + " for this repository" + note + ".")
 }
 
 // selectedTier is the tier of the Environment named name, as the server

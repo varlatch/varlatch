@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -72,8 +73,24 @@ func TestJSONKeysAreLeftAlone(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
 		t.Fatalf("not valid JSON: %v\n%s", err, stdout.String())
 	}
-	want := "{\n  \"vlt_cli_firstAAAA\": \"[redacted]\",\n  \"vlt_cli_secondBBBB\": {\n    \"url\": \"see https://[redacted]@h.example/x\"\n  }\n}\n"
+	want := "{\n  \"vlt_cli_firstAAAA\": \"[redacted]\",\n  \"vlt_cli_secondBBBB\": {\n    \"url\": \"see https:[redacted]@h.example/x\"\n  }\n}\n"
 	if stdout.String() != want || len(parsed) != 2 {
 		t.Errorf("stdout\n%s\nwant\n%s", stdout.String(), want)
+	}
+}
+
+// TestOutJSONTakesOnlyARedactedDocument: outJSON's parameter is the
+// redactedJSON type, which only redactJSON makes (its field is unexported,
+// and the write guard fails on any other composite literal), so a method
+// value of outJSON cannot print arbitrary text; redactJSON redacts every
+// string value, a []string included.
+func TestOutJSONTakesOnlyARedactedDocument(t *testing.T) {
+	if got := reflect.TypeOf((*Run).outJSON).In(1); got != reflect.TypeOf(redactedJSON{}) {
+		t.Fatalf("outJSON takes %v, want redactedJSON", got)
+	}
+	doc := redactJSON(jsjson.Object{{Key: "list", Value: []string{"vlt_cli_listAAAA", "https://u:pass@h.example"}}, {Key: "n", Value: 5}})
+	want := "{\n  \"list\": [\n    \"[redacted]\",\n    \"https://[redacted]@h.example\"\n  ],\n  \"n\": 5\n}"
+	if doc.document != want {
+		t.Errorf("redactJSON:\n%s\nwant\n%s", doc.document, want)
 	}
 }
