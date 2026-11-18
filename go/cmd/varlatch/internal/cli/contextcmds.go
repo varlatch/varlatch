@@ -57,11 +57,12 @@ func (r *Run) resolveFromArgs(cwd string) (*clientctx.Context, error) {
 }
 
 // printJSON writes JSON.stringify(doc, null, 2) and a newline, every
-// string of the document through the fail-safe first (RedactValue). Every
-// --json document goes through it; TestEveryWriteGoesThroughTheFailSafe
-// fails on a document serialised for stdout anywhere else.
+// string value of the document through the fail-safe first (RedactValue),
+// then straight to stdout (outJSON): keys are left alone, never redacted
+// or made the same. Every --json document goes through it;
+// TestEveryWriteGoesThroughTheFailSafe fails on any other way to stdout.
 func (r *Run) printJSON(doc jsjson.Object) error {
-	return r.println(string(jsjson.StringifyIndent(RedactValue(doc), 2)))
+	return r.outJSON(string(jsjson.StringifyIndent(RedactValue(doc), 2)))
 }
 
 // statusSchemaVersion is status.ts's STATUS_SCHEMA_VERSION, the version of
@@ -239,12 +240,12 @@ func formatStatusHuman(servers []any, repo any) string {
 			bits = append(bits, "no expiry recorded")
 		}
 		if name := s.Value("name"); jsjson.Truthy(name) {
-			bits = append(bits, jsjson.String(name))
+			bits = append(bits, shownValue(jsjson.String(name)))
 		}
 		if p, ok := s.Value("probe").(jsjson.Object); ok {
 			bit := "probe: " + jsjson.String(p.Value("state"))
 			if detail := p.Value("detail"); jsjson.Truthy(detail) {
-				bit += " (" + jsjson.String(detail) + ")"
+				bit += " (" + shownValue(jsjson.String(detail)) + ")"
 			}
 			bits = append(bits, bit)
 		}
@@ -253,13 +254,13 @@ func formatStatusHuman(servers []any, repo any) string {
 	if o, ok := repo.(jsjson.Object); ok {
 		tier := ""
 		if t := o.Value("tier"); jsjson.Truthy(t) {
-			tier = ", tier " + jsjson.String(t)
+			tier = ", tier " + shownValue(jsjson.String(t))
 		}
 		lines = append(lines,
 			"",
 			"Repo          "+jsjson.String(o.Value("repoRoot")),
 			"Project       "+jsjson.String(o.Value("organization"))+"/"+jsjson.String(o.Value("project")),
-			"Environment   "+jsjson.String(o.Value("environment"))+" ("+jsjson.String(o.Value("environmentSource"))+tier+")",
+			"Environment   "+shownValue(jsjson.String(o.Value("environment")))+" ("+jsjson.String(o.Value("environmentSource"))+tier+")",
 		)
 	}
 	for i, line := range lines {
@@ -480,11 +481,11 @@ func contextCommand(r *Run) error {
 		"Server        " + jsjson.String(clientctx.MaskServer(ctx.Server)),
 		"Organization  " + ctx.Organization,
 		"Project       " + ctx.Project,
-		"Environment   " + jsjson.String(ctx.Environment),
+		"Environment   " + shownValue(jsjson.String(ctx.Environment)),
 		"Source        " + ctx.EnvironmentSource,
 	}
 	if tier := repo.Value("tier"); jsjson.Truthy(tier) {
-		lines = append(lines, "Tier          "+Printable(jsjson.String(tier))+" (cached "+Printable(jsjson.String(repo.Value("tierCachedAt")))+")")
+		lines = append(lines, "Tier          "+Printable(shownValue(jsjson.String(tier)))+" (cached "+Printable(shownValue(jsjson.String(repo.Value("tierCachedAt"))))+")")
 	}
 	lines = append(lines, "Repo root     "+ctx.RepoRoot)
 	if runID != "" {

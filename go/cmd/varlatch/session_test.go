@@ -362,7 +362,10 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 	}))
 	defer srv.Close()
 	s := newSessionRun(t)
-	s.store(map[string]map[string]any{srv.URL: {"token": "vlt_cli_x", "name": "vlt_cli_storedCANARY", "issuedAt": "2026-01-01T00:00:00.000Z", "expiresAt": "2100-01-01T00:00:00.000Z"}})
+	s.store(map[string]map[string]any{
+		srv.URL:                 {"token": "vlt_cli_x", "name": "vlt_cli_storedCANARY", "issuedAt": "2026-01-01T00:00:00.000Z", "expiresAt": "2100-01-01T00:00:00.000Z"},
+		"https://other.example": {"token": "vlt_cli_y", "name": "see https://u:hunter2pass@n.example/x"},
+	})
 	if err := os.WriteFile(filepath.Join(s.dir, "varlatch.toml"), []byte("server = \""+srv.URL+"\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +382,11 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 		{[]string{"VARLATCH_SERVER=vlt_cli_serverCANARY"}, []string{"server", "--json"}, []string{`"server": "[redacted]"`}},
 		{[]string{"VARLATCH_SERVER=vlt_cli_serverCANARY"}, []string{"server"}, []string{"Server here: [redacted] (from VARLATCH_SERVER)"}},
 		{[]string{"VARLATCH_SERVER=https://u:hunter2pass@h.example"}, []string{"server", "--json"}, []string{`"server": "https://[redacted]@h.example"`}},
+		// The tier cache and stored metadata, in human output.
+		{nil, []string{"env", "use", "vlt_cli_nameCANARY"}, []string{"Selected [redacted] for this repository (tier https://[redacted]@h.example)."}},
+		{nil, []string{"status"}, []string{"tier https://[redacted]@h.example", "see https://[redacted]@n.example/x"}},
+		{nil, []string{"context"}, []string{"Tier          https://[redacted]@h.example (cached "}},
+		{nil, []string{"context", "--json"}, []string{`"tier": "https://[redacted]@h.example"`}},
 	} {
 		status, stdout, stderr := s.runEnv(c.env, "", c.args...)
 		if status != 0 {

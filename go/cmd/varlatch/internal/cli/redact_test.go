@@ -3,8 +3,12 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
 // TestRedactDiagnostic: the fail-safe every diagnostic goes through masks a
@@ -48,5 +52,28 @@ func TestParserEchoesNoOptionValue(t *testing.T) {
 		if !errors.As(err, &o) || o.Message != c.want {
 			t.Errorf("%q: %v, want %q", c.args, err, c.want)
 		}
+	}
+}
+
+// TestJSONKeysAreLeftAlone: printJSON redacts every string value and leaves
+// keys as they are, so two keys that look like tokens stay two distinct
+// keys and the document stays valid JSON.
+func TestJSONKeysAreLeftAlone(t *testing.T) {
+	var stdout bytes.Buffer
+	r := &Run{IO: IO{Stdout: &stdout, Stderr: &bytes.Buffer{}}}
+	doc := jsjson.Object{
+		{Key: "vlt_cli_firstAAAA", Value: "vlt_cli_valueAAAA"},
+		{Key: "vlt_cli_secondBBBB", Value: jsjson.Object{{Key: "url", Value: "see https://u:pass@h.example/x"}}},
+	}
+	if err := r.printJSON(doc); err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, stdout.String())
+	}
+	want := "{\n  \"vlt_cli_firstAAAA\": \"[redacted]\",\n  \"vlt_cli_secondBBBB\": {\n    \"url\": \"see https://[redacted]@h.example/x\"\n  }\n}\n"
+	if stdout.String() != want || len(parsed) != 2 {
+		t.Errorf("stdout\n%s\nwant\n%s", stdout.String(), want)
 	}
 }

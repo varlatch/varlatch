@@ -306,6 +306,16 @@ func (r *Run) out(text string) error {
 	return err
 }
 
+// outJSON writes a --json document printJSON serialised, as it is: every
+// string value in it went through RedactValue already, and its keys are
+// left alone (they come from the API's schema and the CLI's own documents),
+// so the text redactor never touches the document and never makes two keys
+// the same. Only printJSON calls it (TestEveryWriteGoesThroughTheFailSafe).
+func (r *Run) outJSON(document string) error {
+	_, err := io.WriteString(r.Stdout, jsval.NodeText(document)+"\n")
+	return err
+}
+
 // versionCommand is `varlatch --version` and `varlatch version`: `varlatch
 // <version>`. The TypeScript CLI adds `(migration <n>)` from its release
 // manifest; the Go CLI has no migrations (internal docs/design/go-cli.md,

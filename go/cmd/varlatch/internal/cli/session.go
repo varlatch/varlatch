@@ -39,7 +39,8 @@ func shownServers(servers []string) string {
 	return strings.Join(shown, ", ")
 }
 
-// shownValue is a value from a server's answer as human output shows it:
+// shownValue is a value from a server's answer, the tier cache or stored
+// metadata as human output shows it:
 // a URL's user name and password masked (clientctx.MaskURLInValue), any
 // other value as it is. Tokens are redacted for every stdout line by
 // RedactOutput.
@@ -813,7 +814,7 @@ func (r *Run) envUse() error {
 	note := ""
 	if hasTier && jsjson.Truthy(tier) {
 		state = state.Set("selectedTier", tier).Set("tierCachedAt", isoString(time.Now().UTC()))
-		note = " (tier " + Printable(jsjson.String(tier)) + ")"
+		note = " (tier " + Printable(shownValue(jsjson.String(tier))) + ")"
 	}
 	if err := clientctx.SaveLocalState(root, state); err != nil {
 		return err

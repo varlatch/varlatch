@@ -3,38 +3,46 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
-	"os"
 	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// TestEveryWriteGoesThroughTheFailSafe walks every Go file of the CLI
-// (go/cmd/varlatch, tests, generators and the transcript replayer, which
-// only tests use, excepted) and fails on any write to stdout or stderr, any
-// use of the standard log package, and any JSON document serialised for
-// stdout, that does not go through the fail-safe: cli.RedactDiagnostic on
-// stderr, cli.RedactOutput on stdout, and printJSON (cli.RedactValue) for
-// --json documents. Only the allow-listed sites below may write.
+// TestEveryWriteGoesThroughTheFailSafe parses every Go file of the CLI
+// (go/cmd/varlatch; tests, `//go:build ignore` generators and the
+// test-only transcript replayer excepted) and fails on any way to stdout or
+// stderr outside the fail-safe:
+//   - any reference to os.Stdout or os.Stderr, to a Stdout or Stderr field,
+//     or to a stdout or stderr variable, outside the allow-listed sites
+//     (so `w := r.Stderr` or `var out io.Writer = os.Stderr` fails too);
+//   - in an allow-listed writing function, a write whose arguments do not
+//     go through cli.RedactDiagnostic or cli.RedactOutput;
+//   - any fmt.Print, Printf or Println (stdout, unredacted);
+//   - any import of the log package, and any json.NewEncoder;
+//   - outJSON, which writes a document printJSON redacted, called by
+//     anything but printJSON.
+//
+// Multi-line calls are one node, so they are judged whole.
 func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
-	writes := regexp.MustCompile(`\b(Fprint\w*|WriteString|Write)\(\s*(r\.)?(Stdout|Stderr|stdout|stderr|os\.Stdout|os\.Stderr)\b|\b(r\.)?(Stdout|Stderr)\.Write|\blog\.(Print|Fatal|Panic)|"log"`)
-	serialises := regexp.MustCompile(`jsjson\.StringifyIndent\(`)
-	// file: what an allowed line must hold.
-	allowed := map[string][]string{
-		"internal/cli/cli.go": {"RedactDiagnostic(", "RedactOutput("},
-		"verify_release.go":   {"cli.RedactDiagnostic(", "cli.RedactOutput("},
+	// writers: "file:function" -> whether every write there must carry a
+	// Redact call (main and run only hand the process's streams over;
+	// outJSON writes what printJSON already redacted).
+	writers := map[string]bool{
+		"main.go:main":                    false,
+		"main.go:run":                     false,
+		"verify_release.go:verifyRelease": true,
+		"internal/cli/cli.go:finish":      true,
+		"internal/cli/cli.go:warn":        true,
+		"internal/cli/cli.go:out":         true,
+		"internal/cli/cli.go:outJSON":     false,
 	}
-	// The files that serialise JSON on purpose, none of it for stdout: the
-	// stores (files on disk), the agent files, and printJSON itself.
-	serialisers := map[string]bool{
-		"internal/clientctx/store.go":   true,
-		"internal/clientctx/context.go": true,
-		"internal/agents/files.go":      true,
-		"internal/cli/contextcmds.go":   true, // printJSON, through RedactValue
-	}
-	sites := 0
+	fset := token.NewFileSet()
+	refs := 0
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -48,44 +56,117 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if err != nil {
 			return err
 		}
-		text := string(data)
-		if strings.Contains(text, "//go:build ignore") {
-			return nil // a generator, never part of the CLI
+		for _, c := range f.Comments {
+			if strings.Contains(c.Text(), "go:build ignore") || strings.HasPrefix(strings.TrimSpace(c.List[0].Text), "//go:build ignore") {
+				return nil // a generator, never part of the CLI
+			}
 		}
 		path = filepath.ToSlash(path)
-		for i, line := range strings.Split(text, "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "//") {
-				continue
+		for _, imp := range f.Imports {
+			if p, _ := strconv.Unquote(imp.Path.Value); p == "log" {
+				t.Errorf("%s imports log", path)
 			}
-			if writes.MatchString(line) {
-				ok := false
-				for _, need := range allowed[path] {
-					ok = ok || strings.Contains(line, need)
+		}
+		// Each top-level declaration, with the function it is (if any).
+		for _, decl := range f.Decls {
+			fn := ""
+			if fd, ok := decl.(*ast.FuncDecl); ok {
+				fn = fd.Name.Name
+			}
+			site := path + ":" + fn
+			mustRedact, allowed := writers[site]
+			ast.Inspect(decl, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.CallExpr:
+					if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+						if pkg, ok := sel.X.(*ast.Ident); ok {
+							if pkg.Name == "fmt" && strings.HasPrefix(sel.Sel.Name, "Print") {
+								t.Errorf("%s: fmt.%s writes stdout unredacted", fset.Position(x.Pos()), sel.Sel.Name)
+							}
+							if pkg.Name == "json" && sel.Sel.Name == "NewEncoder" {
+								t.Errorf("%s: json.NewEncoder", fset.Position(x.Pos()))
+							}
+						}
+						if sel.Sel.Name == "outJSON" && site != "internal/cli/contextcmds.go:printJSON" {
+							t.Errorf("%s: outJSON called outside printJSON", fset.Position(x.Pos()))
+						}
+						if sel.Sel.Name == "isTerminal" {
+							return false // isTerminal(r.Stdout) reads, never writes
+						}
+					}
+					if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "isTerminal" {
+						return false
+					}
+					if allowed && mustRedact && writesStream(x) && !redacts(x) {
+						t.Errorf("%s: a write without cli.RedactDiagnostic or cli.RedactOutput", fset.Position(x.Pos()))
+					}
+				case *ast.SelectorExpr:
+					if isStream(x.Sel.Name) {
+						refs++
+						if !allowed {
+							t.Errorf("%s: %s reached outside the fail-safe's writers", fset.Position(x.Pos()), x.Sel.Name)
+						}
+					}
+				case *ast.Ident:
+					if (x.Name == "stdout" || x.Name == "stderr") && !allowed {
+						t.Errorf("%s: %s used outside the fail-safe's writers", fset.Position(x.Pos()), x.Name)
+					}
 				}
-				// main.go hands the process's streams to the CLI.
-				ok = ok || path == "main.go" && strings.Contains(line, "os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))")
-				if !ok {
-					t.Errorf("%s:%d writes without the fail-safe: %s", path, i+1, strings.TrimSpace(line))
-				}
-				sites++
-			}
-			if serialises.MatchString(line) && !serialisers[path] {
-				t.Errorf("%s:%d serialises JSON outside printJSON: %s", path, i+1, strings.TrimSpace(line))
-			}
-			if path == "internal/cli/contextcmds.go" && serialises.MatchString(line) && !strings.Contains(line, "RedactValue(") {
-				t.Errorf("%s:%d printJSON serialises without RedactValue: %s", path, i+1, strings.TrimSpace(line))
-			}
+				return true
+			})
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sites == 0 {
-		t.Fatal("found no write at all: the scan is broken")
+	if refs == 0 {
+		t.Fatal("found no stream at all: the scan is broken")
 	}
+}
+
+func isStream(name string) bool { return name == "Stdout" || name == "Stderr" }
+
+// writesStream is whether a call takes a stream as an argument.
+func writesStream(call *ast.CallExpr) bool {
+	for _, a := range call.Args {
+		switch x := a.(type) {
+		case *ast.SelectorExpr:
+			if isStream(x.Sel.Name) {
+				return true
+			}
+		case *ast.Ident:
+			if x.Name == "stdout" || x.Name == "stderr" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// redacts is whether a call's arguments go through a Redact function.
+func redacts(call *ast.CallExpr) bool {
+	found := false
+	for _, a := range call.Args {
+		ast.Inspect(a, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok {
+				name := ""
+				switch f := c.Fun.(type) {
+				case *ast.Ident:
+					name = f.Name
+				case *ast.SelectorExpr:
+					name = f.Sel.Name
+				}
+				if name == "RedactDiagnostic" || name == "RedactOutput" {
+					found = true
+				}
+			}
+			return !found
+		})
+	}
+	return found
 }

@@ -390,3 +390,27 @@ func TestHasAtSignIsTheFailSafesDetection(t *testing.T) {
 		}
 	}
 }
+
+// TestMaskURLInValueFindsEveryURL: every URL inside a longer value is masked
+// on its own, wherever it is and whatever comes before it; a value that is
+// one URL is masked exactly as MaskUserinfo masks it.
+func TestMaskURLInValueFindsEveryURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"Help: https://u:p@h/x":                                  "Help: https://[redacted]@h/x",
+		"see https://a.example/?q=1 then https://u:p@h.example":  "see https://a.example/?q=1 then https://[redacted]@h.example",
+		"two: https://u:p@a.example, https://v:q@b.example/path": "two: https://[redacted]@a.example, https://[redacted]@b.example/path",
+		"(http:u:p@h) and ftp:\\\\v:q@g":                         "(http:[redacted]@h) and ftp:\\\\[redacted]@g",
+		"a db: postgres://user:pass@db.example/app":              "a db: postgres://[redacted]@db.example/app",
+		"https://u:p\tq@h.example tail":                          "https://[redacted]@h.example tail",
+		"https://example.com\\path@segment":                      "https://example.com\\path@segment",
+		"https://u:p@h.example":                                  "https://[redacted]@h.example",
+		"x https://example.com\\path@segment":                    "x https://example.com\\path@segment",
+		"ada@example.com, no URL":                                "ada@example.com, no URL",
+		"Help: a note":                                           "Help: a note",
+		"xhttps://u:p@h":                                         "xhttps://[redacted]@h",
+	} {
+		if got := MaskURLInValue(in); got != want {
+			t.Errorf("MaskURLInValue(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
