@@ -328,9 +328,17 @@ try {
     }
   };
   const heldNow = () => fakeState().held.find((h) => h.repo === keptRepo) ?? null;
+  // The Target as read: only a successful read of this Target, with the
+  // fields compared below, counts; anything else is null.
+  const readTarget = async () => {
+    const r = await api("GET", `${CE}/sync-targets/${ctarget.id}`);
+    const t = r.json;
+    return r.status >= 200 && r.status < 300 && t?.id === ctarget.id && Number.isInteger(t.failureCount) &&
+      (t.lastResult === null || typeof t.lastResult === "string") ? t : null;
+  };
   // What the stale run would change were it to commit anything (its
   // success, or a failure): read while it is held, before it can.
-  const targetBefore = (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json;
+  const targetBefore = await readTarget();
   const atHold = { held: heldNow(), rows: runsOf(30_000) };
   // The stale run: the one run in flight while its write is held.
   const staleGen = atHold.rows?.generations?.length === 1 ? atHold.rows.generations[0] : null;
@@ -344,8 +352,15 @@ try {
   const orderedProof = inFlight?.name === "SECRET" && staleGen !== null && atHold.held?.connected === true &&
     atSchedule.held?.connected === true && (atSchedule.rows?.generations ?? []).includes(staleGen) &&
     JSON.stringify(released) === JSON.stringify(["SECRET"]) && Array.isArray(abandonedWrites) && abandonedWrites.length === 0;
-  // The released write's answer reached the stale run (flushed to its
-  // still-open connection), so it went on to try its commit.
+  // The released write's answer was fully written to the stale run's
+  // connection, so it went on to try its commit. The limitation: neither
+  // server says when a commit is fenced, and the fake cannot see whether
+  // the client still read the answer (it may have given up just before).
+  // The backstop below covers that case: a run that gave up records its
+  // failure unless it is fenced, and a run that read the answer commits
+  // its success unless it is fenced, so either way an unfenced run changes
+  // the Target's failure count or last result, or leaves nothing to write
+  // again.
   const delivery = orderedProof
     ? await waitFor(() => fakeState().deliveries.find((d) => d.repo === keptRepo && d.name === "SECRET" && d.delivered !== null) ?? null, 10_000)
     : null;
@@ -365,8 +380,9 @@ try {
   }
   // A fenced run commits nothing, its failure included: the Target's
   // failure count and last result are those from before it.
-  const targetAfter = staleEnded ? (await api("GET", `${CE}/sync-targets/${ctarget.id}`)).json : null;
-  const committedNothing = staleEnded && targetAfter?.failureCount === targetBefore?.failureCount && targetAfter?.lastResult === targetBefore?.lastResult;
+  const targetAfter = staleEnded ? await readTarget() : null;
+  const committedNothing = staleEnded && targetBefore !== null && targetAfter !== null &&
+    targetAfter.failureCount === targetBefore.failureCount && targetAfter.lastResult === targetBefore.lastResult;
   const fenceTitle = "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once that run has ended and the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing";
   const fenceSoFar = { firstPush: Boolean(firstPush), inFlight, staleGen, atHold, atSchedule, released, abandonedWrites, delivery, staleEnded, lastRows,
     before: targetBefore && [targetBefore.failureCount, targetBefore.lastResult], after: targetAfter && [targetAfter.failureCount, targetAfter.lastResult] };
@@ -378,9 +394,10 @@ try {
     check("deletion.scheduling-fences-runs", fenceTitle, false, JSON.stringify({
       why: !orderedProof
         ? "inconclusive: the deletion was not shown scheduled while the stale run (one generation) was in flight with its write held and connected, or the release was not exactly that write"
-        : delivery?.delivered !== true ? "inconclusive: the released write's answer did not reach the stale run"
+        : delivery?.delivered !== true ? "inconclusive: delivery not provable (the released write's answer was not fully written to the stale run's connection)"
           : !staleEnded ? "the stale run had not ended (its generation's sync_runs row still there) after 60 s"
-            : "the stale run committed something (the Target's failure count or last result changed)",
+            : targetBefore === null || targetAfter === null ? "inconclusive: the Target could not be read before and after the stale run"
+              : "the stale run committed something (the Target's failure count or last result changed)",
       ...fenceSoFar,
     }));
   }

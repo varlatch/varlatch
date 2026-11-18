@@ -261,25 +261,19 @@ const GITHUB_ROUTES = [
       }
       const repoKey = `${m[1]}/${m[2]}`;
       if (req.released) {
-        // A released write counts once its answer reached the client: flushed
-        // ("finish") and the connection still open a moment later. A client
-        // that already gave up (its request timed out) resets the connection
-        // when the answer arrives, so its write stays undelivered.
+        // A released write counts once its answer was fully written to the
+        // client's connection ("finish"); a connection that closed first
+        // leaves it undelivered. Whether the client still read it, the fake
+        // cannot know: the suite's fence check says what it proves without.
         const delivery = { repo: repoKey, name, delivered: null };
         state.deliveries.push(delivery);
-        const socket = req.socket;
-        let gone = Boolean(socket?.destroyed);
-        socket?.once("close", () => { gone = true; });
-        socket?.once("error", () => { gone = true; });
         res.once("finish", () => {
-          setTimeout(() => {
-            if (delivery.delivered !== null) return;
-            delivery.delivered = !gone && !socket?.destroyed;
-            if (delivery.delivered) state.writes[repoKey] = (state.writes[repoKey] ?? 0) + 1;
-          }, 300);
+          if (delivery.delivered !== null) return;
+          delivery.delivered = true;
+          state.writes[repoKey] = (state.writes[repoKey] ?? 0) + 1;
         });
         res.once("close", () => {
-          if (!res.writableFinished && delivery.delivered === null) delivery.delivered = false;
+          if (delivery.delivered === null) delivery.delivered = false;
         });
       } else {
         state.writes[repoKey] = (state.writes[repoKey] ?? 0) + 1;

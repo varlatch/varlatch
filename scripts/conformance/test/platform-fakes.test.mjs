@@ -12,7 +12,6 @@ import { spawn, spawnSync } from "node:child_process";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { request } from "node:https";
-import { connect as tlsConnect } from "node:tls";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,9 +166,9 @@ test("the fake GitHub's repository writes take a suite's fine-grained token or a
   assert.ok(!(state.github["acme-apps/api"] ?? []).includes("LATE"), "an abandoned write is not stored");
   assert.deepEqual(state.abandoned, [{ repo: "acme-apps/api", name: "LATE" }]);
   // The race: the client goes away and the release comes at once, in
-  // either order. The write never counts: abandoned at the release, or
-  // released and then undelivered (its answer never reached an open
-  // socket).
+  // either order. The accounting stays consistent: a write abandoned at the
+  // release is never counted, and a released one is counted exactly when
+  // its answer was fully written (delivered), whatever the order.
   for (let round = 0; round < 10; round++) {
     await control({ op: "hold", repo: "acme-apps/api" });
     const writesRace = (await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json())).writes["acme-apps/api"];
@@ -186,34 +185,24 @@ test("the fake GitHub's repository writes take a suite's fine-grained token or a
     }
     racing.destroy();
     const out = await control({ op: "release", repo: "acme-apps/api" });
-    await new Promise((r) => setTimeout(r, 100));
-    const st = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
-    const delivery = st.deliveries?.find((d) => d.name === `RACE${round}`);
-    assert.equal(st.writes["acme-apps/api"], writesRace, `round ${round}: a write whose client went away was counted`);
-    assert.ok(out.abandoned.includes(`RACE${round}`) || (out.released.includes(`RACE${round}`) && delivery?.delivered === false),
-      `round ${round}: neither abandoned nor undelivered: ${JSON.stringify({ out, delivery })}`);
+    const name = `RACE${round}`;
+    // Until the write's state is terminal: abandoned, or delivered true or false.
+    let st = {};
+    let delivery;
+    for (let i = 0; i < 100; i++) {
+      st = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+      delivery = st.deliveries?.find((d) => d.name === name);
+      if (out.abandoned.includes(name) || (delivery && delivery.delivered !== null)) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    if (out.abandoned.includes(name)) {
+      assert.equal(st.writes["acme-apps/api"], writesRace, `round ${round}: an abandoned write was counted`);
+      assert.equal(delivery, undefined, `round ${round}: an abandoned write has a delivery`);
+    } else {
+      assert.ok(out.released.includes(name) && delivery && delivery.delivered !== null, `round ${round}: no terminal state: ${JSON.stringify({ out, delivery })}`);
+      assert.equal(st.writes["acme-apps/api"], writesRace + (delivery.delivered ? 1 : 0), `round ${round}: counted ${delivery.delivered ? "without" : "despite"} its delivery`);
+    }
   }
-  // Released first, then the client is found gone: a client that already
-  // gave up drops its connection when the answer arrives. The write was
-  // released (its client still connected at the release), but never
-  // delivered, so it is not counted.
-  await control({ op: "hold", repo: "acme-apps/api" });
-  const writesLate = (await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json())).writes["acme-apps/api"];
-  const raw = tlsConnect({ host: "127.0.0.1", port: ports.https, servername: "api.github.com", rejectUnauthorized: false });
-  raw.on("error", () => {});
-  await new Promise((r) => raw.once("secureConnect", r));
-  const lateBody = JSON.stringify({ encrypted_value: "abc", key_id: "conformance-key" });
-  raw.write(`PUT /repos/acme-apps/api/actions/secrets/GAVEUP HTTP/1.1\r\nHost: api.github.com\r\nAuthorization: ${token}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(lateBody)}\r\nConnection: keep-alive\r\n\r\n${lateBody}`);
-  raw.once("data", () => raw.destroy());
-  for (let i = 0; i < 50 && !(state.held ?? []).some((h) => h.name === "GAVEUP"); i++) {
-    await new Promise((r) => setTimeout(r, 20));
-    state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
-  }
-  assert.deepEqual(await control({ op: "release", repo: "acme-apps/api" }), { released: ["GAVEUP"], abandoned: [] }, "released while its client was connected");
-  await new Promise((r) => setTimeout(r, 800));
-  state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
-  assert.equal(state.deliveries.find((d) => d.name === "GAVEUP")?.delivered, false, "a reset after the answer leaves the write undelivered");
-  assert.equal(state.writes["acme-apps/api"], writesLate, "an undelivered write is not counted");
   // The App's own endpoints take its JWT, and never an installation token.
   assert.equal((await github("GET", "/app", app)).status, 200);
   assert.equal((await github("GET", "/app", token)).status, 401);
