@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Download } from "lucide-react";
-import { useMirrorInvalidation, useRealtimeConnected } from "../../lib/realtime";
+import { useRealtimeConnected } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { Button, Status } from "../../components/ui";
 import { PageHeader } from "../../components/PageHeader";
@@ -11,6 +11,7 @@ import { useToast } from "../../components/Toast";
 import { useOrgName } from "../projects/hooks";
 import { AuditTimeline, NO_FILTERS, rangeStart, serverFilters, useServerFiltering, type AuditFilterState } from "./AuditTimeline";
 import { WebhooksSection } from "./WebhooksSection";
+import { useAuditLiveRefresh } from "./liveRefresh";
 
 /**
  * Audit log: one timeline over the authoritative /v1 store. The reactive
@@ -23,7 +24,8 @@ export function AuditPage() {
   const toast = useToast();
   const orgName = useOrgName(org);
   const orgQuery = useQuery({ queryKey: ["org", org], queryFn: () => api.getOrganization(org) });
-  useMirrorInvalidation(orgQuery.data?.id, "*", [["audit", org]]);
+  // Not a plain invalidation: a refused read is an audit event too (liveRefresh.ts).
+  useAuditLiveRefresh(orgQuery.data?.id, org);
   const live = useRealtimeConnected() && Boolean(orgQuery.data);
 
   const [params] = useSearchParams();

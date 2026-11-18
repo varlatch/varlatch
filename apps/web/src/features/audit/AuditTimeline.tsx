@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
-import { FileText, ShieldAlert, X } from "lucide-react";
+import { FileText, Lock, ShieldAlert, X } from "lucide-react";
 import type { AuditEventFilters } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
 import { dayLabel } from "../../lib/time";
@@ -27,6 +27,7 @@ import {
 } from "./parts";
 import { useAuditNames } from "./useAuditNames";
 import { AuditDetail } from "./AuditDetail";
+import { isPermissionDenied } from "./liveRefresh";
 
 /**
  * The audit timeline: plain-English events grouped by day, newest first,
@@ -197,7 +198,12 @@ export function AuditTimeline({
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     // Changing a facet keeps the current lines on screen until the new ones arrive.
     placeholderData: keepPreviousData,
+    // A refusal is an answer, not a hiccup: asking again only records another denial.
+    retry: (failures, err) => !isPermissionDenied(err) && failures < 1,
+    refetchOnWindowFocus: (query) => !isPermissionDenied(query.state.error),
+    refetchOnReconnect: (query) => !isPermissionDenied(query.state.error),
   });
+  const denied = isPermissionDenied(history.error);
 
   const loaded = useMemo(
     () => (history.data?.pages.flatMap((p) => p.items) ?? []) as AuditEvent[],
@@ -374,6 +380,18 @@ export function AuditTimeline({
                 <Skeleton key={i} className="h-6 w-full" />
               ))}
             </div>
+          ) : denied ? (
+            <EmptyState
+              data-testid="audit-denied"
+              icon={<Lock size={20} />}
+              title="You cannot read the audit log"
+              description="Reading it needs the audit.read permission. Ask an owner or admin of this organization for access."
+              actions={
+                <Button size="sm" data-testid="audit-retry" loading={history.isFetching} onClick={() => void history.refetch()}>
+                  Try again
+                </Button>
+              }
+            />
           ) : history.isError ? (
             <EmptyState
               icon={<ShieldAlert size={20} />}

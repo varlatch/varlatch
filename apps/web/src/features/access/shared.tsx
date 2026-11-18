@@ -97,7 +97,13 @@ export const ALL_ACTIONS = [
   "config.sync.manage",
 ];
 
-export function useIdentities(org: string) {
+export function useIdentities(org: string | undefined) {
   const { api } = useSession();
-  return useQuery({ queryKey: ["identities", org], queryFn: () => api.listIdentities(org) });
+  // No slug yet (the account pages before the organizations load): no
+  // request, rather than GET /v1/organizations//identities.
+  return useQuery({
+    queryKey: ["identities", org],
+    queryFn: () => api.listIdentities(org as string),
+    enabled: Boolean(org),
+  });
 }
