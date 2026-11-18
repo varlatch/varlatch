@@ -1231,11 +1231,20 @@ func (r *Report) writeLoad(events []Event, start int64) {
 	for _, k := range WriteKinds {
 		// The writes planned come from the report's plan, not the server.
 		planned := int64(p.PlannedWriteTotal(k))
+		// Every per-phase counter, summed, must be the stream's total, and
+		// a failure, busy, late or skipped write in any phase fails the run
+		// whatever the totals say.
 		var byPhase WriteLoadResult
 		for _, ph := range p.Phases {
 			w := got[key{ph.Name, string(k)}]
 			byPhase.Writes += w.Writes
+			byPhase.Failed += w.Failed
+			byPhase.Busy += w.Busy
+			byPhase.Late += w.Late
 			byPhase.Skipped += w.Skipped
+			if w.Failed > 0 || w.Busy > 0 || w.Late > 0 || w.Skipped > 0 {
+				r.fail("the bound run's %s writes in phase %s: %d failed, %d SQLITE_BUSY, %d late, %d skipped", k, ph.Name, w.Failed, w.Busy, w.Late, w.Skipped)
+			}
 		}
 		e, ok := ends[string(k)]
 		if !ok {
@@ -1267,8 +1276,9 @@ func (r *Report) writeLoad(events []Event, start int64) {
 		case t.Writes+t.Skipped != planned:
 			r.missing("the bound run made %d and skipped %d of its %d planned %s writes", t.Writes, t.Skipped, planned, k)
 		}
-		if byPhase.Writes != t.Writes || byPhase.Skipped != t.Skipped {
-			r.missing("the bound run's %s writes per phase (%d made, %d skipped) do not add up to its totals (%d, %d)", k, byPhase.Writes, byPhase.Skipped, t.Writes, t.Skipped)
+		if byPhase.Writes != t.Writes || byPhase.Failed != t.Failed || byPhase.Busy != t.Busy || byPhase.Late != t.Late || byPhase.Skipped != t.Skipped {
+			r.missing("the bound run's %s writes per phase (%d made, %d failed, %d busy, %d late, %d skipped) do not add up to its totals (%d, %d, %d, %d, %d)",
+				k, byPhase.Writes, byPhase.Failed, byPhase.Busy, byPhase.Late, byPhase.Skipped, t.Writes, t.Failed, t.Busy, t.Late, t.Skipped)
 		}
 	}
 }
@@ -1387,6 +1397,7 @@ func (r *Report) Markdown() string {
 		for _, w := range r.WriteTotals {
 			fmt.Fprintf(&b, "\nLargest dispatch lag, %s: %.1f ms (late beyond %s).", w.Kind, w.MaxLagMs, WriteLateTolerance)
 		}
+		fmt.Fprintf(&b, "\n\nThe %s tolerance guards the write load's arrival pattern only: ADR-0059's %.0f ms p95 applies to retrievals and sets no limit on these writes; at 35 added disclosures a second it bounds any bunching to about 9 writes.", WriteLateTolerance, r.Plan.Thresholds.P95Ms)
 		b.WriteString("\n")
 		b.WriteString("\n")
 	}

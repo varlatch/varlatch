@@ -1125,7 +1125,23 @@ func TestReportBoundRun(t *testing.T) {
 		{"good", func(*fakeRun) {}, Pass, ""},
 		{"a failed write", totalOf(WriteValue, func(e *Event) { e.WritesFailed, e.Err = 1, "refused" }), Fail, "value writes: 1 of 220 failed (0 SQLITE_BUSY); the first: refused"},
 		{"a busy write", totalOf(WriteDisclose, func(e *Event) { e.WritesFailed, e.WritesBusy, e.Err = 1, 1, "SQLITE_BUSY" }), Fail, "1 of 620 failed (1 SQLITE_BUSY)"},
-		{"late writes", totalOf(WriteDisclose, func(e *Event) { e.WritesLate, e.DurUs = 10, 1_500_000 }), Fail, "10 dispatched more than 1s after their time (largest lag 1500 ms)"},
+		{"late writes", func(r *fakeRun) {
+			totalOf(WriteDisclose, func(e *Event) { e.WritesLate, e.DurUs = 10, 1_500_000 })(r)
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoad && r.events[i].Kind == "disclose" && r.events[i].Phase == "p50" {
+					r.events[i].WritesLate = 10
+				}
+			}
+		}, Fail, "10 dispatched more than 250ms after their time (largest lag 1500 ms)"},
+		// A phase row's failure fails the run even when the total reads 0,
+		// and the counters that disagree with the totals are named.
+		{"a failure in a phase row only", func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoad && r.events[i].Kind == "value" && r.events[i].Phase == "p10" {
+					r.events[i].WritesFailed, r.events[i].WritesBusy, r.events[i].WritesLate = 2, 1, 3
+				}
+			}
+		}, Fail, "the bound run's value writes in phase p10: 2 failed, 1 SQLITE_BUSY, 3 late, 0 skipped"},
 		{"skipped writes", func(r *fakeRun) {
 			totalOf(WriteDisclose, func(e *Event) { e.Writes, e.WritesSkipped = 610, 10 })(r)
 			for i := range r.events {
@@ -1155,7 +1171,7 @@ func TestReportBoundRun(t *testing.T) {
 					r.events[i].Writes--
 				}
 			}
-		}, Inconclusive, "value writes per phase (219 made, 0 skipped) do not add up to its totals (220, 0)"},
+		}, Inconclusive, "value writes per phase (219 made, 0 failed, 0 busy, 0 late, 0 skipped) do not add up to its totals (220, 0, 0, 0, 0)"},
 		{"partial provider timings", func(r *fakeRun) {
 			for i := range r.events {
 				if r.events[i].Ev == EvConvergeEnd {
@@ -1230,5 +1246,39 @@ func TestReportBoundRun(t *testing.T) {
 	rep, err = Analyze(r.write(t))
 	if err != nil || rep.BoundRun || !strings.HasPrefix(rep.Markdown(), "# G9a run: PASS") {
 		t.Fatalf("%v %v", err, rep.Markdown()[:40])
+	}
+}
+
+// The per-phase failure case also names the disagreement with the totals.
+func TestReportBoundRunPhaseCounters(t *testing.T) {
+	shortGate(t)
+	r := good()
+	r.plan.WriteScale = 2
+	r.conf = "backup_destination = local\n"
+	for i := range r.events {
+		switch r.events[i].Ev {
+		case EvConvergeEnd:
+			r.events[i].Calls, r.events[i].ProviderCallsUs = 1, []int64{200_500}
+		case EvBackupEnd:
+			r.events[i].UploadedTo = "local"
+		}
+	}
+	for _, k := range []struct {
+		kind    string
+		planned int64
+	}{{"disclose", 620}, {"value", 220}} {
+		r.events = append(r.events,
+			Event{T: at(5), Ev: EvWriteLoad, Kind: k.kind, Phase: "p10", Writes: k.planned, WritesBusy: map[string]int64{"disclose": 1}[k.kind]},
+			Event{T: at(22.95), Ev: EvWriteLoadEnd, Kind: k.kind, Planned: k.planned, Writes: k.planned})
+	}
+	rep, err := Analyze(r.write(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fails, missing := strings.Join(rep.Fails, "\n"), strings.Join(rep.Missing, "\n")
+	if rep.Verdict != Fail || !strings.Contains(fails, "disclose writes in phase p10: 0 failed, 1 SQLITE_BUSY, 0 late, 0 skipped") ||
+		!strings.Contains(missing, "disclose writes per phase (620 made, 0 failed, 1 busy, 0 late, 0 skipped) do not add up to its totals (620, 0, 0, 0, 0)") ||
+		strings.Contains(fails+missing, "value writes in phase") {
+		t.Fatalf("verdict %s: fails %v, inconclusive %v", rep.Verdict, rep.Fails, rep.Missing)
 	}
 }

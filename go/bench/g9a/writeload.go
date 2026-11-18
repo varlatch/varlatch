@@ -48,7 +48,11 @@ const WriteInFlight = 64
 // WriteLateTolerance is how long after its scheduled time a write may be
 // dispatched and still count as on time: a write dispatched later (a
 // stalled scheduler, its timers firing at once) is made, and counted late.
-const WriteLateTolerance = time.Second
+// It guards the write load's arrival pattern only. ADR-0059's 100 ms p95
+// applies to retrievals and sets no limit on these writes. At G9's 35
+// added disclosures a second in the 50/s phase, 250 ms bounds any bunching
+// to about 9 writes.
+const WriteLateTolerance = 250 * time.Millisecond
 
 // EvWriteLoad is one kind's added writes scheduled in one phase that ended
 // since the previous such event (their counts: made, failed, met

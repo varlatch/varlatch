@@ -181,13 +181,20 @@ Everything else in the profile stays as it is. The report calls the run
     provider).
 - It **fails** on an added write that:
   - failed or met `SQLITE_BUSY`;
-  - was late: dispatched more than `WriteLateTolerance` (1 s) after its
-    scheduled time, as after a stalled scheduler. A late write is still
-    made, and the report gives the largest lag;
+  - was late: dispatched more than `WriteLateTolerance` (250 ms) after
+    its scheduled time, as after a stalled scheduler. A late write is
+    still made, and the report gives the largest lag. The tolerance guards
+    the load's arrival pattern only: ADR-0059's 100 ms p95 applies to
+    retrievals and sets no limit on these writes. At G9's 35 added
+    disclosures a second in the 50/s phase, 250 ms bounds any bunching to
+    about 9 writes;
   - was skipped: due while `WriteInFlight` (64) were still running, so
     never sent.
 - Each write is counted under the phase that scheduled it. The in-flight
-  writes are drained before the last counts are logged.
+  writes are drained before the last counts are logged. Every per-phase
+  counter (made, failed, busy, late, skipped) must add up to its stream's
+  total. A failed, busy, late or skipped write in any phase fails the run,
+  whatever the totals say.
 - It is also **inconclusive** without the provider's observed timings
   (below).
 - `events.jsonl` records the added writes per second and kind
