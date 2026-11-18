@@ -50,7 +50,7 @@ func agentsCommand(r *Run) error {
 			// The topic, as echoed, is masked as one value; one holding an
 			// at-sign comes before its explanation (the fail-safe keeps what
 			// follows the last at-sign).
-			shown := clientctx.MaskURLInValue(guideErr.Topic)
+			shown := shownArgument(guideErr.Topic)
 			topics := "; topics: " + strings.Join(guideErr.Topics, ", ")
 			if clientctx.HasAtSign(shown) {
 				return UsageError("varlatch agents guide: " + shown + ": no such guide topic" + topics)

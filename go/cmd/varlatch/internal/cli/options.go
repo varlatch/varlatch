@@ -39,6 +39,24 @@ type OptionSpec struct {
 	EndOfOptions bool `json:"endOfOptions,omitempty"`
 }
 
+// SecretOptions are the options whose value is a credential or part of
+// one. A usage error never echoes such a value, wherever it appears: a
+// `--token=<value>` the parser does not know is shown as
+// `--token=[redacted]` (go/README.md, "Usage errors never echo a
+// credential").
+var SecretOptions = []string{"--token", "--oidc-token", "--access-key-id"}
+
+// shownArgument is an argument as a usage error echoes it: the value of a
+// secret option given as `--name=value` as [redacted], a URL's user name
+// and password masked (MaskURLInValue), and any text in Varlatch's token
+// format as [redacted].
+func shownArgument(arg string) string {
+	if name, _, ok := strings.Cut(arg, "="); ok && slices.Contains(SecretOptions, name) {
+		return name + "=" + Redacted
+	}
+	return varlatchToken.ReplaceAllLiteralString(clientctx.MaskURLInValue(arg), Redacted)
+}
+
 // Alias is one other name for an option.
 type Alias struct{ From, To string }
 
@@ -67,7 +85,7 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 	parsed := &ParsedOptions{Values: map[string]string{}, Lists: map[string][]string{}}
 	positional := func(arg string) error {
 		if len(parsed.Positionals) >= spec.Positionals {
-			shown := clientctx.MaskURLInValue(arg)
+			shown := shownArgument(arg)
 			if clientctx.HasAtSign(shown) {
 				return &OptionsError{shown + ": unexpected argument"} // the explanation follows the URL
 			}
@@ -140,7 +158,7 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 			if spec.EndOfOptions {
 				hint = ` (a value that begins with "-" goes after --)`
 			}
-			shown := clientctx.MaskURLInValue(arg)
+			shown := shownArgument(arg)
 			if clientctx.HasAtSign(shown) {
 				return nil, &OptionsError{shown + ": unknown option" + hint} // the explanation follows the URL
 			}

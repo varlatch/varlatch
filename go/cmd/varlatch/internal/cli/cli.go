@@ -148,7 +148,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 		if topic != "" {
 			help, ok := CommandHelp(topic)
 			if !ok {
-				return UsageErrorWithUsage("varlatch: no help for "+clientctx.MaskURLInValue(topic)+": not a command", "\n\n"+Usage)
+				return UsageErrorWithUsage("varlatch: no help for "+shownArgument(topic)+": not a command", "\n\n"+Usage)
 			}
 			return r.println(help)
 		}
@@ -177,7 +177,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 	}
 	c := lookup(r.Command)
 	if c == nil {
-		shown := clientctx.MaskURLInValue(r.Command)
+		shown := shownArgument(r.Command)
 		if clientctx.HasAtSign(shown) {
 			return UsageErrorWithUsage("varlatch: "+shown+": unknown command", "\n\n"+Usage) // the explanation follows the URL
 		}

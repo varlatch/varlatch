@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -451,18 +452,65 @@ func whoamiCommand(r *Run) error {
 	}
 	base := strings.TrimRight(server, "/")
 	if parsed.Has("--json") {
-		// main.ts's printJson: the schema version first, then the document.
-		doc := jsjson.Object{{Key: "version", Value: statusSchemaVersion}, {Key: "server", Value: shownServer(base)}}
-		for _, m := range spread(caller) {
-			doc = doc.Set(m.Key, m.Value)
-		}
-		return r.printJSON(doc)
+		return r.printJSON(whoamiDocument(shownServer(base), caller))
 	}
 	text, err := formatWhoamiHuman(shownServer(base), caller)
 	if err != nil {
 		return err
 	}
 	return r.println(text)
+}
+
+// whoamiFields is the WhoAmI document of the API (packages/protocol
+// openapi.yaml): the fields `whoami --json` shows, each object's own
+// fields beside it. Nothing else /v1/me answers is shown.
+var whoamiFields = map[string][]string{
+	"identity":     {"id", "name", "kind", "email"},
+	"organization": {"id", "slug", "name", "createdAt"},
+	"credential":   {"id", "name", "kind", "expiresAt"},
+	"listener":     nil,
+	"tailnet":      {"recognized", "reason", "tailnet", "nodeId", "nodeName", "tags", "userLogin"},
+}
+
+// whoamiDocument is `whoami --json`'s document: the schema version, the
+// server (masked, and never replaced by the answer), then the fields of the
+// WhoAmI document the answer holds, in the answer's order, each object
+// keeping only its own documented fields. The TypeScript CLI spreads the
+// whole answer after the server (go/README.md, "whoami --json shows only
+// the documented fields").
+func whoamiDocument(server string, caller any) jsjson.Object {
+	doc := jsjson.Object{{Key: "version", Value: statusSchemaVersion}, {Key: "server", Value: server}}
+	for _, m := range spread(caller) {
+		fields, known := whoamiFields[m.Key]
+		if !known {
+			continue
+		}
+		doc = append(doc, jsjson.Member{Key: m.Key, Value: onlyFields(m.Value, fields)})
+	}
+	return doc
+}
+
+// onlyFields is v with only the named fields when it is an object, an
+// object nested in one of them emptied; a value that is not an object
+// stays as it is, an object or array inside it reduced to its scalars.
+func onlyFields(v any, fields []string) any {
+	switch x := v.(type) {
+	case jsjson.Object:
+		out := jsjson.Object{}
+		for _, m := range x {
+			if slices.Contains(fields, m.Key) {
+				out = append(out, jsjson.Member{Key: m.Key, Value: onlyFields(m.Value, nil)})
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = onlyFields(e, nil)
+		}
+		return out
+	}
+	return v
 }
 
 // fetchWhoami is whoami.ts's fetchWhoami: ask the server, after checking

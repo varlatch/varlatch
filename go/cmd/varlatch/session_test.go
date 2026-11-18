@@ -160,42 +160,43 @@ func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 		store  map[string]map[string]any
 		args   []string
 		status int
-		shown  string
+		// stdout and stderr, each exactly: an error moving to stdout fails.
+		stdout, stderr string
 	}
 	const whoamiUsage = "Usage: varlatch whoami [--server <url>] [--json]\n"
 	// A refusal from the API client (5.1c): the explanation follows the URL.
 	const refused = ": a server URL with a user name or password can't be used; remove them and try again"
 	checks := []check{
-		{"login refuses it", nil, []string{"login", "--server", withPassword, "--token", "vlt_cli_x"}, 1,
+		{"login refuses it", nil, []string{"login", "--server", withPassword, "--token", "vlt_cli_x"}, 1, "",
 			"varlatch:[redacted]@127.0.0.1:2/v1/meta" + refused + "\n"},
 		{"logout of a stored one", map[string]map[string]any{withPassword: {"token": "vlt_cli_x", "credentialId": "cred_1", "expiresAt": "2100-01-01T00:00:00.000Z"}}, []string{"logout"}, 0,
-			"http://[redacted]@127.0.0.1:2: removed locally; server revocation failed (http://[redacted]@127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live until 2100-01-01T00:00:00.000Z.\n"},
-		{"logout naming several", map[string]map[string]any{withPassword: {"token": "a"}, "https://b.example": {"token": "b"}}, []string{"logout"}, 64,
+			"http://[redacted]@127.0.0.1:2: removed locally; server revocation failed (http://[redacted]@127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live until 2100-01-01T00:00:00.000Z.\n", ""},
+		{"logout naming several", map[string]map[string]any{withPassword: {"token": "a"}, "https://b.example": {"token": "b"}}, []string{"logout"}, 64, "",
 			"Multiple servers stored:[redacted]@127.0.0.1:2, https://b.example\nPass --server <url> or --all.\n"},
-		{"logout of one not stored", map[string]map[string]any{"https://b.example": {"token": "b"}}, []string{"logout", "--server", "https://u:hunter2pass@nosuch.example"}, 1,
+		{"logout of one not stored", map[string]map[string]any{"https://b.example": {"token": "b"}}, []string{"logout", "--server", "https://u:hunter2pass@nosuch.example"}, 1, "",
 			"varlatch logout:[redacted]@nosuch.example: no credential is stored for this server\n"},
-		{"logout with no server here", map[string]map[string]any{withPassword: {"token": "a"}}, []string{"logout"}, 64,
+		{"logout with no server here", map[string]map[string]any{withPassword: {"token": "a"}}, []string{"logout"}, 64, "",
 			"No server here; stored:[redacted]@127.0.0.1:2\nPass --server <url> or --all.\n"},
-		{"whoami naming several", map[string]map[string]any{withPassword: {"token": "a"}, "https://b.example": {"token": "b"}}, []string{"whoami"}, 64,
+		{"whoami naming several", map[string]map[string]any{withPassword: {"token": "a"}, "https://b.example": {"token": "b"}}, []string{"whoami"}, 64, "",
 			"varlatch whoami:[redacted]@127.0.0.1:2, https://b.example: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage},
-		{"whoami refuses it", map[string]map[string]any{withPassword: {"token": "vlt_cli_x"}}, []string{"whoami"}, 1,
+		{"whoami refuses it", map[string]map[string]any{withPassword: {"token": "vlt_cli_x"}}, []string{"whoami"}, 1, "",
 			"varlatch:[redacted]@127.0.0.1:2/v1/meta" + refused + "\n"},
 		// WHATWG's authority variants for a special scheme: any run of "/"
 		// and "\\" after the scheme, or none, starts the authority.
 		{"logout of a stored one, three slashes", map[string]map[string]any{tripleSlash: {"token": "vlt_cli_x", "credentialId": "cred_1"}}, []string{"logout"}, 0,
-			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed (http:///[redacted]@127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live.\n"},
+			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed (http:///[redacted]@127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live.\n", ""},
 		{"logout --all, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout", "--all"}, 0,
 			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n" +
-				"http:\\\\[redacted]@127.0.0.1:3: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n"},
-		{"logout naming several, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout"}, 64,
+				"http:\\\\[redacted]@127.0.0.1:3: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n", ""},
+		{"logout naming several, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout"}, 64, "",
 			"Multiple servers stored:[redacted]@127.0.0.1:3\nPass --server <url> or --all.\n"},
-		{"whoami --json refuses it, three slashes", map[string]map[string]any{tripleSlash: {"token": "vlt_cli_x"}}, []string{"whoami", "--json"}, 1,
+		{"whoami --json refuses it, three slashes", map[string]map[string]any{tripleSlash: {"token": "vlt_cli_x"}}, []string{"whoami", "--json"}, 1, "",
 			"varlatch:[redacted]@127.0.0.1:2/v1/meta" + refused + "\n"},
-		{"whoami --json --server refuses it, backslashes", map[string]map[string]any{backslashes: {"token": "vlt_cli_x"}}, []string{"whoami", "--json", "--server", backslashes}, 1,
+		{"whoami --json --server refuses it, backslashes", map[string]map[string]any{backslashes: {"token": "vlt_cli_x"}}, []string{"whoami", "--json", "--server", backslashes}, 1, "",
 			"varlatch:[redacted]@127.0.0.1:3/v1/meta" + refused + "\n"},
-		{"whoami --json naming several, backslashes and no slashes", map[string]map[string]any{backslashes: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami", "--json"}, 64,
+		{"whoami --json naming several, backslashes and no slashes", map[string]map[string]any{backslashes: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami", "--json"}, 64, "",
 			"varlatch whoami:[redacted]@127.0.0.1:4: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage},
-		{"whoami naming several, three slashes and no slashes", map[string]map[string]any{tripleSlash: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami"}, 64,
+		{"whoami naming several, three slashes and no slashes", map[string]map[string]any{tripleSlash: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami"}, 64, "",
 			"varlatch whoami:[redacted]@127.0.0.1:4: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage},
 	}
 	for _, c := range checks {
@@ -211,8 +212,8 @@ func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 			// The whole output, exactly: every explanation survives the
 			// fail-safe (Run.finish), which masks from a message's first
 			// scheme colon to its last at-sign.
-			if status != c.status || stdout+stderr != c.shown {
-				t.Fatalf("status %d\nstdout %q\nstderr %q\nwant %d and\n%q", status, stdout, stderr, c.status, c.shown)
+			if status != c.status || stdout != c.stdout || stderr != c.stderr {
+				t.Fatalf("status %d\nstdout %q\nstderr %q\nwant %d,\nstdout %q\nstderr %q", status, stdout, stderr, c.status, c.stdout, c.stderr)
 			}
 			if strings.Contains(stdout+stderr, "hunter2pass") {
 				t.Errorf("a URL's password was printed:\n%s%s", stdout, stderr)
@@ -239,5 +240,80 @@ func TestLoginLaterMethodsSayNotYet(t *testing.T) {
 		if entries, _ := os.ReadDir(s.config); len(entries) != 0 {
 			t.Errorf("%v: wrote %d files", args, len(entries))
 		}
+	}
+}
+
+// TestUsageErrorsNeverEchoACredential: a usage error never echoes the value
+// of an option that holds a credential, nor a token in Varlatch's format,
+// wherever it was given: `--token=<value>` is an unknown option to the
+// parser, a stray token an unexpected argument or an unknown command
+// (go/README.md, "Usage errors never echo a credential").
+func TestUsageErrorsNeverEchoACredential(t *testing.T) {
+	loginUsage := func(s *sessionRun) string {
+		_, stdout, _ := s.run("", "login", "--help")
+		return stdout
+	}
+	for _, c := range []struct {
+		args []string
+		want string // the first line of stderr
+	}{
+		{[]string{"login", "--server", "https://a.example", "--token=vlt_cli_secretCANARY"}, "varlatch login: unknown option --token=[redacted]"},
+		{[]string{"login", "--server", "https://a.example", "--token=plainCANARY"}, "varlatch login: unknown option --token=[redacted]"},
+		{[]string{"login", "--server", "https://a.example", "--oidc", "--org", "acme", "--oidc-token=eyJCANARY"}, "varlatch login: unknown option --oidc-token=[redacted]"},
+		{[]string{"login", "--server", "https://a.example", "--token-stdin", "vlt_cli_secretCANARY"}, "varlatch login: unexpected argument [redacted]"},
+		{[]string{"whoami", "vlt_cli_secretCANARY"}, "varlatch whoami: unexpected argument [redacted]"},
+		{[]string{"vlt_cli_secretCANARY"}, "varlatch: unknown command [redacted]"},
+	} {
+		s := newSessionRun(t)
+		status, stdout, stderr := s.run("", c.args...)
+		first, _, _ := strings.Cut(stderr, "\n")
+		if status != 64 || stdout != "" || first != c.want {
+			t.Errorf("%q: status %d, stdout %q, stderr %q; want 64 and %q", c.args, status, stdout, stderr, c.want)
+		}
+		if strings.Contains(stdout+stderr, "CANARY") {
+			t.Errorf("%q: the credential was echoed:\n%s", c.args, stderr)
+		}
+		if c.args[0] == "login" && !strings.HasSuffix(stderr, loginUsage(s)) {
+			t.Errorf("%q: the usage does not follow:\n%s", c.args, stderr)
+		}
+	}
+}
+
+// TestWhoamiJSONShowsOnlyTheDocumentedFields: `whoami --json` shows the
+// server it asked, masked, and only the fields of the WhoAmI document,
+// whatever else /v1/me answers: a server of the answer's own (with a user
+// name and password) never replaces it, and no other field, at the top or
+// inside identity and credential, is passed through.
+func TestWhoamiJSONShowsOnlyTheDocumentedFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/meta":
+			_, _ = w.Write([]byte(`{"serverVersion":"0.22.0","apiMajor":1,"capabilities":["identity.whoami"]}`))
+		case "/v1/me":
+			_, _ = w.Write([]byte(`{"server":"https://u:hunter2pass@h.example","identity":{"id":"idn_1","name":"Ada","kind":"human","email":null,"token":"vlt_cli_leakCANARY"},` +
+				`"organization":{"id":"org_1","slug":"acme","name":"Acme","secret":"CANARY"},"credential":{"id":"cred_1","name":"laptop","kind":"cli","expiresAt":null,"token":{"value":"CANARY"}},` +
+				`"listener":"ordinary","token":"vlt_cli_leakCANARY","extra":{"a":"CANARY"}}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	s := newSessionRun(t)
+	s.store(map[string]map[string]any{srv.URL: {"token": "vlt_cli_x"}})
+	status, stdout, stderr := s.run("", "whoami", "--json")
+	want := "{\n" +
+		"  \"version\": 1,\n" +
+		"  \"server\": \"" + srv.URL + "\",\n" +
+		"  \"identity\": {\n    \"id\": \"idn_1\",\n    \"name\": \"Ada\",\n    \"kind\": \"human\",\n    \"email\": null\n  },\n" +
+		"  \"organization\": {\n    \"id\": \"org_1\",\n    \"slug\": \"acme\",\n    \"name\": \"Acme\"\n  },\n" +
+		"  \"credential\": {\n    \"id\": \"cred_1\",\n    \"name\": \"laptop\",\n    \"kind\": \"cli\",\n    \"expiresAt\": null\n  },\n" +
+		"  \"listener\": \"ordinary\"\n" +
+		"}\n"
+	if status != 0 || stderr != "" || stdout != want {
+		t.Fatalf("status %d, stderr %q\nstdout\n%s\nwant\n%s", status, stderr, stdout, want)
+	}
+	if strings.Contains(stdout, "CANARY") || strings.Contains(stdout, "hunter2pass") {
+		t.Errorf("a field outside the document was shown:\n%s", stdout)
 	}
 }
