@@ -146,6 +146,42 @@ that class of disk only. Runs on shared infrastructure need the owner's
 approval first, with the load agreed (the profile above), as for every
 load test.
 
+### Bound runs (`-write-scale`)
+
+G9 asks that when the WAL never reaches the shipped bound under the
+profile, "a separate run at the same bound raises the write rate until
+the trigger fires and passes the same criteria". `g9a plan -write-scale s`
+(1 to 4, recorded as `writeScale` in the plan) makes such a bound run. The
+server then adds, in every phase, writes in W1's mix, open loop and
+in-process through the production paths, so they are not requests of the
+load:
+
+- **disclosures:** (s − 1) × the phase's rate a second, by the manifest's
+  identities, through the read path of values, with the audit event
+  committed before the value is decrypted;
+- **value writes:** (s − 1) × k × targets / period a second (the converge
+  runs' own rate), each a new version and its audit event
+  (`values.SetValue`). They go into an extra Project with the same Contract
+  and one environment, which has no Sync Target, so the converge runs'
+  work does not change.
+
+Everything else in the profile stays as it is. The report calls the run
+"G9 (bound run)" and counts it; it is not a diagnostic run.
+
+- It judges the run by every criterion above.
+- It is **inconclusive** when:
+  - the WAL never crossed the bound (no size-triggered `TRUNCATE`);
+  - the WAL-triggered backup never started;
+  - an added write it planned was not made.
+- It **fails** on an added write that failed, met `SQLITE_BUSY` or was
+  late (due while `WriteInFlight`, 64, were still running).
+- `events.jsonl` records the added writes per second and kind
+  (`write_load`), with totals against the plan (`write_load_end`).
+
+G9's bound run uses write scale 1.7: in G9's first run the WAL peaked at
+0.72 of the bound, so the bound needs about 1.39 times its writes. A bound
+run at 1.7 whose WAL stays under the bound is rerun once at 2.0.
+
 G9 (ADR-0059 amendment 6) runs the backups through the shipped backup
 path to an S3-compatible server on the same host. `G9A_BACKUP_DESTINATIONS`
 (a destinations file, absolute, in the `backup_destinations_file` format)

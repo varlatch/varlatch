@@ -1068,3 +1068,83 @@ func TestReportProfileWindow(t *testing.T) {
 		}
 	}
 }
+
+// A bound run (writeScale above 1): labelled and judged as G9's separate
+// run at the same bound, its added writes all made, none failed, busy or
+// late, and the WAL past the bound.
+func TestReportBoundRun(t *testing.T) {
+	shortGate(t)
+	bound := func() *fakeRun {
+		r := good()
+		r.plan.WriteScale = 2
+		// good()'s phases: 20 + 100 + 500 disclosures; 1 × 5 × 20 / 10 =
+		// 10 value writes a second, 20 + 100 + 100.
+		for _, k := range []struct {
+			kind    WriteKind
+			planned int64
+		}{{WriteDisclose, 620}, {WriteValue, 220}} {
+			r.events = append(r.events,
+				Event{T: at(5), Ev: EvWriteLoad, Kind: string(k.kind), Phase: "p10", Writes: k.planned / 2},
+				Event{T: at(15), Ev: EvWriteLoad, Kind: string(k.kind), Phase: "p50", Writes: k.planned - k.planned/2},
+				Event{T: at(22.95), Ev: EvWriteLoadEnd, Kind: string(k.kind), Planned: k.planned, Writes: k.planned})
+		}
+		return r
+	}
+	totalOf := func(kind WriteKind, f func(*Event)) func(*fakeRun) {
+		return func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoadEnd && r.events[i].Kind == string(kind) {
+					f(&r.events[i])
+				}
+			}
+		}
+	}
+	cases := []struct {
+		name    string
+		change  func(*fakeRun)
+		verdict string
+		want    string
+	}{
+		{"good", func(*fakeRun) {}, Pass, ""},
+		{"a failed write", totalOf(WriteValue, func(e *Event) { e.WritesFailed, e.Err = 1, "refused" }), Fail, "value writes: 1 of 220 failed (0 SQLITE_BUSY); the first: refused"},
+		{"a busy write", totalOf(WriteDisclose, func(e *Event) { e.WritesFailed, e.WritesBusy, e.Err = 1, 1, "SQLITE_BUSY" }), Fail, "1 of 620 failed (1 SQLITE_BUSY)"},
+		{"late writes", totalOf(WriteDisclose, func(e *Event) { e.Writes, e.WritesLate = 610, 10 }), Fail, "10 not sent on time"},
+		{"writes missing", totalOf(WriteValue, func(e *Event) { e.Writes = 200 }), Inconclusive, "made 200 of its 220 planned value writes"},
+		{"no totals", func(r *fakeRun) { r.eventsWithout(func(e Event) bool { return e.Ev == EvWriteLoadEnd }) }, Inconclusive, "no total (write_load_end)"},
+		{"the WAL under the bound", func(r *fakeRun) {
+			r.eventsWithout(func(e Event) bool { return e.Ev == EvCheckpoint && e.Trigger != "interval" })
+			for i := range r.events {
+				if r.events[i].Ev == EvWAL {
+					r.events[i].Bytes = 900
+				}
+			}
+		}, Inconclusive, "under the bound (1000): it did not cross it"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := bound()
+			c.change(r)
+			rep, err := Analyze(r.write(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rep.Verdict != c.verdict || !rep.BoundRun {
+				t.Fatalf("verdict %s (bound run %v), want %s: fails %v, inconclusive %v", rep.Verdict, rep.BoundRun, c.verdict, rep.Fails, rep.Missing)
+			}
+			all := strings.Join(append(append([]string{}, rep.Fails...), rep.Missing...), "\n")
+			if c.want != "" && !strings.Contains(all, c.want) {
+				t.Fatalf("no %q in %v %v", c.want, rep.Fails, rep.Missing)
+			}
+			md := rep.Markdown()
+			if !strings.HasPrefix(md, "# G9 (bound run): ") || !strings.Contains(md, "## Write load (bound run)") || (c.name != "no totals" && !strings.Contains(md, "| all | disclose | | 620 |")) {
+				t.Fatalf("markdown:\n%s", md)
+			}
+		})
+	}
+	// Without the write scale, the same events are a G9a run's.
+	r := good()
+	rep, err := Analyze(r.write(t))
+	if err != nil || rep.BoundRun || !strings.HasPrefix(rep.Markdown(), "# G9a run: PASS") {
+		t.Fatalf("%v %v", err, rep.Markdown()[:40])
+	}
+}

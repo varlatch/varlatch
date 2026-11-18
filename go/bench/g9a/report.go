@@ -200,7 +200,29 @@ type Report struct {
 	// feature-parity decision 7), reported only.
 	Converge *ConvergeCost `json:"converge,omitempty"`
 
+	// BoundRun is a bound run (Plan.WriteScale above 1): G9's separate run
+	// at the same bound with a raised write rate. WriteLoad is its added
+	// writes by phase and kind (write_load events), WriteTotals their
+	// totals against the plan's (write_load_end).
+	BoundRun    bool              `json:"boundRun,omitempty"`
+	WriteLoad   []WriteLoadResult `json:"writeLoad,omitempty"`
+	WriteTotals []WriteLoadResult `json:"writeTotals,omitempty"`
+
 	convergeLines []ConvergeLine
+}
+
+// WriteLoadResult is a bound run's added writes of one kind, in one phase
+// or (Phase empty) over the run.
+type WriteLoadResult struct {
+	Phase   string  `json:"phase,omitempty"`
+	Kind    string  `json:"kind"`
+	Rate    float64 `json:"ratePerSecond,omitempty"`
+	Planned int64   `json:"planned"`
+	Writes  int64   `json:"writes"`
+	Failed  int64   `json:"failed"`
+	Busy    int64   `json:"busy"`
+	Late    int64   `json:"late"`
+	Err     string  `json:"firstError,omitempty"`
 }
 
 // ProfileWindow is when the CPU profile ran and when the load's requests
@@ -791,6 +813,9 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	if r.SizeTruncates == 0 {
 		r.missing("the WAL never passed the bound (%d bytes) under load: the size trigger was not shown; raise the write rate at this bound or lower the bound (ADR-0059 G9a)", p.WALBound)
 	}
+	if p.BoundRun() {
+		r.writeLoad(events, start)
+	}
 
 	// A backup overlapped the bound when the size trigger was deferred
 	// while it ran; its own TRUNCATE then has to complete (checked above).
@@ -1097,6 +1122,74 @@ func (r *Report) fsync(events []Event, start, end int64) {
 	}
 }
 
+// writeLoad judges a bound run's added writes, and what a bound run must
+// show beyond the profile's criteria (which all apply): the WAL past the
+// bound at least once (a size-triggered TRUNCATE fired, judged above), the
+// WAL-triggered backup started (judged with the WAL-triggered backups),
+// and every added write made on time and without an error or SQLITE_BUSY.
+func (r *Report) writeLoad(events []Event, start int64) {
+	p := r.Plan
+	r.BoundRun = true
+	r.note("a bound run: the run's writes scaled by %g in W1's mix (G9's separate run at the same bound; the profile is otherwise unchanged)", p.WriteScale)
+	if r.WALPeak < p.WALBound {
+		r.missing("the bound run's WAL peaked at %d bytes, under the bound (%d): it did not cross it (at write scale %g; a bound run at 1.7 that does not is rerun once at 2.0)", r.WALPeak, p.WALBound, p.WriteScale)
+	}
+	type key struct{ phase, kind string }
+	got := map[key]*WriteLoadResult{}
+	for _, ph := range p.Phases {
+		d, v := p.WriteRates(ph)
+		for _, k := range WriteKinds {
+			rate := map[WriteKind]float64{WriteDisclose: d, WriteValue: v}[k]
+			got[key{ph.Name, string(k)}] = &WriteLoadResult{Phase: ph.Name, Kind: string(k), Rate: math.Round(rate*1000) / 1000, Planned: int64(PlannedWrites(rate, ph.Seconds))}
+		}
+	}
+	ends := map[string]Event{}
+	for _, e := range events {
+		switch e.Ev {
+		case EvWriteLoad:
+			w := got[key{e.Phase, e.Kind}]
+			if w == nil {
+				// The last writes can end after the last phase.
+				w = got[key{p.Phases[len(p.Phases)-1].Name, e.Kind}]
+			}
+			if w == nil {
+				continue
+			}
+			w.Writes += e.Writes
+			w.Failed += e.WritesFailed
+			w.Busy += e.WritesBusy
+			w.Late += e.WritesLate
+		case EvWriteLoadEnd:
+			ends[e.Kind] = e
+		}
+	}
+	for _, ph := range p.Phases {
+		for _, k := range WriteKinds {
+			r.WriteLoad = append(r.WriteLoad, *got[key{ph.Name, string(k)}])
+		}
+	}
+	for _, k := range WriteKinds {
+		e, ok := ends[string(k)]
+		if !ok {
+			r.missing("the bound run's %s writes have no total (write_load_end): the write load is not shown", k)
+			continue
+		}
+		t := WriteLoadResult{Kind: string(k), Planned: e.Planned, Writes: e.Writes, Failed: e.WritesFailed, Busy: e.WritesBusy, Late: e.WritesLate, Err: e.Err}
+		r.WriteTotals = append(r.WriteTotals, t)
+		if t.Failed > 0 {
+			r.fail("the bound run's %s writes: %d of %d failed (%d SQLITE_BUSY); the first: %s", k, t.Failed, t.Writes, t.Busy, t.Err)
+		} else if t.Busy > 0 {
+			r.fail("the bound run's %s writes met SQLITE_BUSY %d times", k, t.Busy)
+		}
+		if t.Late > 0 {
+			r.fail("the bound run's %s writes: %d not sent on time (more than %d in flight)", k, t.Late, WriteInFlight)
+		}
+		if t.Writes+t.Late < t.Planned {
+			r.missing("the bound run made %d of its %d planned %s writes", t.Writes+t.Late, t.Planned, k)
+		}
+	}
+}
+
 func (r *Report) finish() {
 	switch {
 	case len(r.Fails) > 0:
@@ -1126,7 +1219,11 @@ func pct(f float64) string { return strconv.FormatFloat(math.Round(f*1e5)/1e3, '
 // Markdown renders the report for people.
 func (r *Report) Markdown() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# G9a run: %s\n\n", strings.ToUpper(r.Verdict))
+	title := "G9a run"
+	if r.BoundRun {
+		title = "G9 (bound run)"
+	}
+	fmt.Fprintf(&b, "# %s: %s\n\n", title, strings.ToUpper(r.Verdict))
 	fmt.Fprintf(&b, "Target: %s %s (build tags %q), sha256 %s\n\n", r.System.Target, r.System.Build.Version, r.System.Build.Tags, r.System.Build.SHA256)
 	list := func(title string, xs []string) {
 		if len(xs) == 0 {
@@ -1153,6 +1250,17 @@ func (r *Report) Markdown() string {
 	}
 	fmt.Fprintf(&b, "\nk6 dropped iterations: %.0f. SQLITE_BUSY seen by the server: %d.\n\n", r.Dropped, r.ServerBusy)
 
+	if r.BoundRun {
+		fmt.Fprintf(&b, "## Write load (bound run)\n\nThe run's writes scaled by %g in W1's mix: per second, (s − 1) × the phase's rate disclosures (the read path of values, its audit event first; in the server, not requests of the load) and (s − 1) × k × targets / period value writes (a new version and its audit event, into an environment no Sync Target reads). Open loop; a write due while %d are in flight is late.\n\n", r.Plan.WriteScale, WriteInFlight)
+		b.WriteString("| phase | kind | per second | planned | made | failed | busy | late |\n|---|---|---:|---:|---:|---:|---:|---:|\n")
+		for _, w := range r.WriteLoad {
+			fmt.Fprintf(&b, "| %s | %s | %g | %d | %d | %d | %d | %d |\n", w.Phase, w.Kind, w.Rate, w.Planned, w.Writes, w.Failed, w.Busy, w.Late)
+		}
+		for _, w := range r.WriteTotals {
+			fmt.Fprintf(&b, "| all | %s | | %d | %d | %d | %d | %d |\n", w.Kind, w.Planned, w.Writes, w.Failed, w.Busy, w.Late)
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "## WAL and checkpoints\n\nBound %d bytes; peak %d bytes (%.2f × the bound). Size-triggered TRUNCATEs under load: %d; deferred by a backup: %d; PASSIVE checkpoints: %d (slowest %.1f ms).\n\n",
 		r.Plan.WALBound, r.WALPeak, float64(r.WALPeak)/float64(r.Plan.WALBound), r.SizeTruncates, r.Deferred, r.Passives, r.MaxPassiveMs)
 	b.WriteString("| window | at s | requests | failed | p95 ms | p99 ms | max ms | throttled periods | throttled ms | cpu.stat span s | note |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n")

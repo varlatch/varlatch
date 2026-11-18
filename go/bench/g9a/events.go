@@ -94,6 +94,15 @@ type Event struct {
 	Requests int64 `json:"requests,omitempty"`
 	Errors   int64 `json:"errors,omitempty"`
 	BusyErrs int64 `json:"busyErrors,omitempty"`
+
+	// write_load, write_load_end (a bound run's added writes; Kind is
+	// theirs): the writes that ended, failed, met SQLITE_BUSY or were not
+	// sent on time, and on write_load_end the writes the plan scheduled.
+	Writes       int64 `json:"writes,omitempty"`
+	WritesFailed int64 `json:"writesFailed,omitempty"`
+	WritesBusy   int64 `json:"writesBusy,omitempty"`
+	WritesLate   int64 `json:"writesLate,omitempty"`
+	Planned      int64 `json:"planned,omitempty"`
 }
 
 // The event kinds.

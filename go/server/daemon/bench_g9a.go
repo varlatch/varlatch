@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +38,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/ids"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/stages"
 	"github.com/varlatch/varlatch/go/server/syncs"
@@ -263,11 +266,11 @@ func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duratio
 			t.store, t.rootKEK = store, rootKEK
 			t0 := time.Now()
 			log.Info("seeding W1", "targets", p.Targets)
-			manifest, writes, err := seedW1(ctx, store, rootKEK, p.Targets, coolify.URL())
+			manifest, writes, err := seedW1(ctx, store, rootKEK, p.Targets, coolify.URL(), p.BoundRun())
 			if err != nil {
 				return fmt.Errorf("seed: %w", err)
 			}
-			t.writes = writes
+			t.writes, t.manifest = writes, manifest
 			seeded := time.Since(t0)
 			if err := runner.WriteManifest(manifest); err != nil {
 				return err
@@ -313,6 +316,10 @@ func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duratio
 		stopped: func() {
 			stopProfile()
 			runner.Finish()
+			if t.values != nil {
+				// The added disclosures' report counts, before the database closes.
+				t.values.Settled()
+			}
 			if err := writeStages(out, hist); err != nil {
 				log.Error("the run's stage timings", "error", err)
 			}
@@ -409,6 +416,12 @@ type benchTarget struct {
 	principal *auth.Principal
 	setupErr  error
 
+	// A bound run's added writes (Write): the load's identities, the read
+	// path of values its disclosures go through, and their principals.
+	manifest   []g9a.ManifestEntry
+	values     *values.Service
+	principals sync.Map // token -> *auth.Principal
+
 	mu        sync.Mutex
 	collected []g9a.TargetRun
 }
@@ -436,7 +449,7 @@ func (t *benchTarget) Backup(ctx context.Context, _ int, o storage.SnapshotOptio
 // import would write, and returns the load's manifest: one entry per
 // source address, alternately a person's and a service identity's
 // credential, each with the Secrets of one environment.
-func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int, coolifyURL string) ([]g9a.ManifestEntry, *benchWrites, error) {
+func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int, coolifyURL string, boundRun bool) ([]g9a.ManifestEntry, *benchWrites, error) {
 	if targets != benchProjects*benchEnvsPer {
 		return nil, nil, fmt.Errorf("W1 has %d Sync Targets; the plan names %d", benchProjects*benchEnvsPer, targets)
 	}
@@ -473,6 +486,7 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int,
 
 	type env struct{ id, name, project, projectSlug string }
 	var envs []env
+	var loadEnv env // a bound run's value writes' environment
 	people := make([]string, benchPeople)
 	services := make([]string, benchServices)
 	tokens := map[string]string{}
@@ -557,6 +571,25 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int,
 				envs = append(envs, e)
 			}
 		}
+		// A bound run's value writes go to an environment of their own, in
+		// a Project with the same Contract and no Connection or Sync
+		// Target, so the converge runs' work does not change.
+		if boundRun {
+			project, slug, rev := ids.New("prj"), "write-load", ids.New("rev")
+			if err := exec(tx, `INSERT INTO projects (id, organization_id, slug, name, contract_authority) VALUES (?, ?, ?, ?, 'git')`, project, org, slug, slug); err != nil {
+				return err
+			}
+			if err := exec(tx, `INSERT INTO contract_revisions (id, project_id, content_hash, contract, created_by) VALUES (?, ?, ?, ?, ?)`, rev, project, contentHash, string(contractText), people[0]); err != nil {
+				return err
+			}
+			if err := exec(tx, `UPDATE projects SET active_contract_revision_id = ? WHERE id = ?`, rev, project); err != nil {
+				return err
+			}
+			loadEnv = env{id: ids.New("env"), name: "env-0", project: project, projectSlug: slug}
+			if err := exec(tx, `INSERT INTO environments (id, project_id, name, kind, tier) VALUES (?, ?, ?, 'shared', 'development')`, loadEnv.id, project, loadEnv.name); err != nil {
+				return err
+			}
+		}
 		// Each person reveals the Organization's Secrets through a Grant
 		// (the member role alone does not reveal a production tier's).
 		for _, person := range people {
@@ -580,7 +613,11 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int,
 		return nil, nil, err
 	}
 	// The values: two versions of each Secret, one environment per job.
-	for _, e := range envs {
+	valued := envs
+	if boundRun {
+		valued = append(slices.Clone(envs), loadEnv)
+	}
+	for _, e := range valued {
 		err := store.Write(ctx, func(tx *storage.Tx) error {
 			for _, key := range keys {
 				value, previous, current := ids.New("val"), ids.New("ver"), ids.New("ver")
@@ -632,6 +669,9 @@ func seedW1(ctx context.Context, store *storage.DB, rootKEK []byte, targets int,
 	for _, e := range envs {
 		writes.envs = append(writes.envs, benchEnv{project: e.project, id: e.id})
 	}
+	if boundRun {
+		writes.load = &benchEnv{project: loadEnv.project, id: loadEnv.id}
+	}
 	return manifest, writes, nil
 }
 
@@ -660,6 +700,8 @@ type benchWrites struct {
 	token, org string
 	keys       []string
 	envs       []benchEnv
+	// load is a bound run's value writes' environment (nil otherwise).
+	load *benchEnv
 }
 
 type benchEnv struct{ project, id string }
@@ -670,6 +712,9 @@ type benchEnv struct{ project, id string }
 // platforms' state the load starts from, untimed.
 func (t *benchTarget) startEngine(w *write.Writer, approvals *auth.Service, policy *outbound.Policy) {
 	t.writer, t.approvals = w, approvals
+	if t.plan.BoundRun() {
+		t.values = values.New(t.store, t.rootKEK, values.Options{Log: t.log, Approvals: approvals})
+	}
 	t.engine = &syncs.Service{Writer: w, Approvals: approvals, RootKEK: t.rootKEK, Policy: policy, Log: t.log, OnRun: t.onRun}
 	t.coolify.setDelay(0)
 	t0 := time.Now()
@@ -765,6 +810,94 @@ func (t *benchTarget) change(ctx context.Context, run int) error {
 		}
 	}
 	return nil
+}
+
+// Write makes one of a bound run's added writes (g9a.Writer), in the
+// server, through the production paths, with SQLITE_BUSY noted as for the
+// load's disclosures:
+//   - a disclosure: manifest entry n mod 20 asks for one of its Secrets, as
+//     k6 does, through the read path of values (its audit event committed
+//     before the value is decrypted); it must answer that one value;
+//   - a value write: a new version of one Secret in the bound run's own
+//     environment (values.SetValue, as PUT …/values/{item} writes it), by
+//     the converge runs' writer.
+func (t *benchTarget) Write(ctx context.Context, kind g9a.WriteKind, n int) (bool, error) {
+	ctx, busy := storage.WithBusyNote(ctx)
+	var err error
+	switch kind {
+	case g9a.WriteDisclose:
+		err = t.addedDisclosure(ctx, n)
+	case g9a.WriteValue:
+		err = t.addedValueWrite(ctx, n)
+	default:
+		err = fmt.Errorf("unknown write kind %q", kind)
+	}
+	return busy(), err
+}
+
+// benchDisclosureRoute is the route the read path names a disclosure by.
+const benchDisclosureRoute = "/v1/organizations/:org/projects/:project/environments/:environment/disclosures"
+
+func (t *benchTarget) addedDisclosure(ctx context.Context, n int) error {
+	if t.values == nil || len(t.manifest) == 0 {
+		return errors.New("the bound run's read path is not set up")
+	}
+	m := t.manifest[n%len(t.manifest)]
+	key := m.Keys[(n/len(t.manifest))%len(m.Keys)]
+	p, err := t.principalFor(ctx, m.Token)
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string][]string{"items": {key}})
+	res, err := t.values.Disclose(ctx, values.Request{Principal: p, RequestID: fmt.Sprintf("g9a-write-%d", n), Method: http.MethodPost, Route: benchDisclosureRoute,
+		Org: m.Org, Project: m.Project, Environment: m.Env}, body)
+	if err != nil {
+		return err
+	}
+	if items, _ := res.Get("items"); reflect.ValueOf(items).Kind() != reflect.Slice || reflect.ValueOf(items).Len() != 1 {
+		return fmt.Errorf("the disclosure of %s answered %s", key, jsvalue.Stringify(res))
+	}
+	return nil
+}
+
+func (t *benchTarget) addedValueWrite(ctx context.Context, n int) error {
+	if t.writes == nil || t.writes.load == nil || t.writer == nil {
+		return errors.New("the bound run's environment is not set up")
+	}
+	p, err := t.principalFor(ctx, t.writes.token)
+	if err != nil {
+		return err
+	}
+	q := query.New(t.store.Reader())
+	project, err := q.LiveProject(ctx, query.LiveProjectParams{OrganizationID: t.writes.org, SlugOrID: t.writes.load.project})
+	if err != nil {
+		return err
+	}
+	env, err := q.LiveEnvironment(ctx, query.LiveEnvironmentParams{ProjectID: t.writes.load.project, NameOrID: t.writes.load.id})
+	if err != nil {
+		return err
+	}
+	item := t.writes.keys[n%len(t.writes.keys)]
+	value := benchSecret(fmt.Sprintf("write-load/%s/%d", item, n))
+	_, _, _, err = values.SetValue(ctx, t.writer, t.rootKEK, p, values.Target{OrganizationID: t.writes.org, Project: project, Env: env}, item,
+		values.SetInput{Value: value}, write.Claim{IdentityID: p.Identity.ID}, time.Now)
+	return err
+}
+
+// principalFor authenticates a seeded credential once.
+func (t *benchTarget) principalFor(ctx context.Context, token string) (*auth.Principal, error) {
+	if p, ok := t.principals.Load(token); ok {
+		return p.(*auth.Principal), nil
+	}
+	if t.approvals == nil {
+		return nil, errors.New("not serving yet")
+	}
+	p, _, err := t.approvals.Authenticate(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	t.principals.Store(token, p)
+	return p, nil
 }
 
 // writeStages writes the run's per-stage timings of its disclosures
