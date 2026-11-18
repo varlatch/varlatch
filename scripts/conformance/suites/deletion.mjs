@@ -330,8 +330,15 @@ try {
   const heldNow = () => fakeState().held.find((h) => h.repo === keptRepo) ?? null;
   // The Target as read: only a successful read of this Target, with the
   // fields compared below, counts; anything else is null.
+  // A read that fails in transport (the fetch or its body) is null too, so
+  // the check reports it as inconclusive rather than the suite erroring.
   const readTarget = async () => {
-    const r = await api("GET", `${CE}/sync-targets/${ctarget.id}`);
+    let r;
+    try {
+      r = await api("GET", `${CE}/sync-targets/${ctarget.id}`);
+    } catch {
+      return null;
+    }
     const t = r.json;
     return r.status >= 200 && r.status < 300 && t?.id === ctarget.id && Number.isInteger(t.failureCount) &&
       (t.lastResult === null || typeof t.lastResult === "string") ? t : null;

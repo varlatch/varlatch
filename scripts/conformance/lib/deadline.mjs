@@ -10,6 +10,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { END_MARKER } from "./deadline-marker.mjs";
 
 export const DEADLINE_ENV = "CONFORMANCE_OP_DEADLINE";
 const SUPERVISOR = fileURLToPath(new URL("./deadline-supervisor.mjs", import.meta.url));
@@ -24,13 +25,16 @@ export function remainingMs(env = process.env) {
 
 /**
  * spawnSync, bounded by the operation's deadline when there is one (and by
- * `timeout` when given). Under a deadline the command runs in a process
- * group of its own (lib/deadline-supervisor.mjs): at the deadline the whole
- * group gets SIGTERM, then SIGKILL after GRACE_MS, and once the command has
- * exited the group gets SIGKILL anyway, so nothing it started outlives the
- * call. The answer is spawnSync's, with `timedOut` set whenever the
- * deadline fired. A deadline already past runs nothing. Without a deadline
- * the command runs as plain spawnSync.
+ * `timeout` when given). Under a deadline the command runs under a
+ * supervisor (lib/deadline-supervisor.mjs) started detached, so it leads a
+ * process group of its own, which the command and everything it starts
+ * share: at the deadline the group gets SIGTERM, then SIGKILL after
+ * GRACE_MS; once the command has exited the supervisor answers and kills
+ * its group, itself included, so nothing outlives the call; and if this
+ * process goes away the supervisor kills its group at once. The answer is
+ * spawnSync's, with `timedOut` set whenever the deadline fired. A deadline
+ * already past runs nothing. Without a deadline the command runs as plain
+ * spawnSync.
  */
 export function deadlineSpawnSync(command, args, options = {}) {
   const left = remainingMs();
@@ -38,26 +42,28 @@ export function deadlineSpawnSync(command, args, options = {}) {
   const limit = Math.min(left, options.timeout ?? Infinity);
   const encoding = options.encoding;
   const decode = (b64) => (encoding ? Buffer.from(b64, "base64").toString(encoding) : Buffer.from(b64, "base64"));
-  if (limit <= 0) {
-    return { status: null, signal: null, timedOut: true, stdout: decode(""), stderr: decode(""), error: Object.assign(new Error("the operation's deadline has passed"), { code: "ETIMEDOUT" }) };
-  }
+  const failed = (message, signal = null) => ({
+    status: null, signal, timedOut: true, stdout: decode(""), stderr: decode(""),
+    error: Object.assign(new Error(message), { code: "ETIMEDOUT" }),
+  });
   const inherit = options.stdio !== undefined && options.stdio !== "pipe";
   const r = spawnSync(process.execPath, [SUPERVISOR, String(Date.now() + limit), String(GRACE_MS), inherit ? "inherit" : "pipe", command, ...args], {
     cwd: options.cwd,
     env: options.env,
-    input: options.input,
-    encoding: "utf8",
+    input: options.input ?? "",
+    detached: true,
+    // The answer comes on fd 3, apart from the command's own output.
+    stdio: ["pipe", inherit ? "inherit" : "pipe", inherit ? "inherit" : "pipe", "pipe"],
     maxBuffer: options.maxBuffer ?? 256 * 1024 * 1024,
-    // A backstop only: the supervisor ends the group itself.
-    timeout: limit + GRACE_MS + 10_000,
+    // A backstop only: the supervisor ends its group itself.
+    timeout: Math.max(0, limit) + GRACE_MS + 10_000,
     killSignal: "SIGKILL",
   });
-  let answer;
-  try {
-    answer = JSON.parse(r.stdout);
-  } catch {
-    return { status: null, signal: r.signal, timedOut: true, stdout: decode(""), stderr: decode(""), error: r.error ?? new Error("the deadline supervisor gave no answer") };
-  }
+  // The supervisor ends by killing its own group, so it dies of SIGKILL
+  // after a complete answer: the end marker says the answer is complete.
+  const raw = r.output?.[3]?.toString("utf8") ?? "";
+  if (!raw.endsWith(END_MARKER)) return failed("the deadline supervisor gave no complete answer", r.signal);
+  const answer = JSON.parse(raw.slice(0, -END_MARKER.length));
   return {
     status: answer.status, signal: answer.signal, timedOut: answer.timedOut,
     stdout: decode(answer.stdout ?? ""), stderr: answer.spawnError ? answer.stderr : decode(answer.stderr ?? ""),

@@ -8,7 +8,7 @@
  * left behind with it.
  */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -105,5 +105,59 @@ test("a command that exits early takes what it left behind with it, and did not 
     assert.deepEqual(running(`sleep ${m}`), [], "a process outlived the call");
   } finally {
     for (const pid of running(`sleep ${m}`)) process.kill(pid, "SIGKILL");
+  }
+});
+
+/** A wrapper process (as target-op.mjs) running `sleep marker` twice under a long deadline, started async; resolves once the sleeps run. */
+async function wrapperWithSleeps(dir, m, { harness = false } = {}) {
+  const wrapper = join(dir, "wrapper.mjs");
+  writeFileSync(wrapper, `import { deadlineSpawnSync } from ${JSON.stringify(DEADLINE)};
+deadlineSpawnSync("sh", ["-c", "sleep ${m} & sleep ${m}; wait"], { encoding: "utf8" });
+`);
+  const env = { ...process.env, [DEADLINE_ENV]: String(Date.now() + 30_000) };
+  let child;
+  if (harness) {
+    // The harness: a process group of its own (as the runner under a
+    // terminal) whose member, the wrapper, runs the supervisor.
+    const h = join(dir, "harness.mjs");
+    writeFileSync(h, `import { spawnSync } from "node:child_process";
+spawnSync(process.execPath, [${JSON.stringify(wrapper)}], { stdio: "ignore" });
+`);
+    child = spawn(process.execPath, [h], { env, detached: true, stdio: "ignore" });
+  } else {
+    child = spawn(process.execPath, [wrapper], { env, stdio: "ignore" });
+  }
+  for (let i = 0; i < 100 && running(`^sleep ${m}$`).length < 2; i++) await sleep(50);
+  assert.equal(running(`^sleep ${m}$`).length, 2, "the sleeps did not start");
+  return child;
+}
+
+test("killing the wrapper leaves nothing running", async () => {
+  const m = marker();
+  const dir = mkdtempSync(join(tmpdir(), "deadline-test-"));
+  try {
+    const wrapper = await wrapperWithSleeps(dir, m);
+    wrapper.kill("SIGKILL");
+    for (let i = 0; i < 40 && running(`sleep ${m}`).length; i++) await sleep(50);
+    assert.deepEqual(running(`sleep ${m}`), [], "a process outlived the wrapper");
+  } finally {
+    for (const pid of running(`sleep ${m}`)) process.kill(pid, "SIGKILL");
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a SIGINT to the harness's group leaves nothing running", async () => {
+  const m = marker();
+  const dir = mkdtempSync(join(tmpdir(), "deadline-test-"));
+  try {
+    const harness = await wrapperWithSleeps(dir, m, { harness: true });
+    const ended = new Promise((r) => harness.once("exit", r));
+    process.kill(-harness.pid, "SIGINT");
+    await ended;
+    for (let i = 0; i < 40 && running(`sleep ${m}`).length; i++) await sleep(50);
+    assert.deepEqual(running(`sleep ${m}`), [], "a process outlived the harness");
+  } finally {
+    for (const pid of running(`sleep ${m}`)) process.kill(pid, "SIGKILL");
+    rmSync(dir, { recursive: true, force: true });
   }
 });
