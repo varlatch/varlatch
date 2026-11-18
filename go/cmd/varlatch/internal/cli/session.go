@@ -94,7 +94,7 @@ func loginCommand(r *Run) error {
 			return contextError(err)
 		}
 		if resolved == nil {
-			return UsageError("varlatch login: no server; pass --server <url> the first time\n" + usage)
+			return UsageErrorWithUsage("varlatch login: no server; pass --server <url> the first time", "\n"+usage)
 		}
 		server = resolved.Server
 	}
@@ -342,10 +342,19 @@ func logoutCommand(r *Run) error {
 			names[i] = s.Server
 		}
 		if resolved == nil {
-			if len(stored) > 1 {
-				return UsageError("Multiple servers stored (" + shownServers(names) + "). Pass --server <url> or --all.")
+			list := shownServers(names)
+			// A list holding an at-sign comes before the explanation: the
+			// fail-safe (Run.finish) keeps what follows the last at-sign.
+			if len(stored) > 1 && clientctx.HasAtSign(list) {
+				return UsageError("Multiple servers stored: " + list + "\nPass --server <url> or --all.")
 			}
-			return UsageError("No server here: pass --server <url> or --all (stored: " + shownServers(names) + ").")
+			if len(stored) > 1 {
+				return UsageError("Multiple servers stored (" + list + "). Pass --server <url> or --all.")
+			}
+			if clientctx.HasAtSign(list) {
+				return UsageError("No server here; stored: " + list + "\nPass --server <url> or --all.")
+			}
+			return UsageError("No server here: pass --server <url> or --all (stored: " + list + ").")
 		}
 		server, err := serverString(resolved.Server)
 		if err != nil {
@@ -360,7 +369,11 @@ func logoutCommand(r *Run) error {
 			}
 		}
 		if targets == nil {
-			return Fail("No stored credential for "+shownServer(server), ExitFailure)
+			shown := shownServer(server)
+			if clientctx.HasAtSign(shown) {
+				return Fail("varlatch logout: "+shown+": no credential is stored for this server", ExitFailure) // the explanation follows the URL
+			}
+			return Fail("No stored credential for "+shown, ExitFailure)
 		}
 	}
 	for _, t := range targets {
@@ -416,10 +429,13 @@ func whoamiCommand(r *Run) error {
 		resolved = nil
 	}
 	if resolved == nil {
-		if len(stored) > 1 {
-			return UsageError("varlatch whoami: credentials are stored for " + shownServers(stored) + "; pass --server <url>\n" + whoamiUsage)
+		if list := shownServers(stored); len(stored) > 1 && clientctx.HasAtSign(list) {
+			// The explanation follows the list: the fail-safe keeps what follows the last at-sign.
+			return UsageErrorWithUsage("varlatch whoami: "+list+": credentials are stored for each of these; pass --server <url>", "\n"+whoamiUsage)
+		} else if len(stored) > 1 {
+			return UsageErrorWithUsage("varlatch whoami: credentials are stored for "+list+"; pass --server <url>", "\n"+whoamiUsage)
 		}
-		return UsageError("varlatch whoami: no server; pass --server <url>, set VARLATCH_SERVER, or run inside a varlatch repository\n" + whoamiUsage)
+		return UsageErrorWithUsage("varlatch whoami: no server; pass --server <url>, set VARLATCH_SERVER, or run inside a varlatch repository", "\n"+whoamiUsage)
 	}
 	server, err := serverString(resolved.Server)
 	if err != nil {

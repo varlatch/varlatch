@@ -46,6 +46,14 @@ func (s *sessionRun) store(servers map[string]map[string]any) {
 	}
 }
 
+// repo makes the run's directory a repository without a server.
+func (s *sessionRun) repo() {
+	s.t.Helper()
+	if err := os.WriteFile(filepath.Join(s.dir, "varlatch.toml"), []byte("organization = \"acme\"\nproject = \"web\"\n"), 0o644); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
 func (s *sessionRun) run(stdin string, args ...string) (int, string, string) {
 	s.t.Helper()
 	cmd := exec.Command(s.exe, args...)
@@ -154,36 +162,41 @@ func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 		status int
 		shown  string
 	}
+	const whoamiUsage = "Usage: varlatch whoami [--server <url>] [--json]\n"
+	// A refusal from the API client (5.1c): the explanation follows the URL.
+	const refused = ": a server URL with a user name or password can't be used; remove them and try again"
 	checks := []check{
 		{"login refuses it", nil, []string{"login", "--server", withPassword, "--token", "vlt_cli_x"}, 1,
-			"Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:2/v1/meta"},
+			"varlatch:[redacted]@127.0.0.1:2/v1/meta" + refused + "\n"},
 		{"logout of a stored one", map[string]map[string]any{withPassword: {"token": "vlt_cli_x", "credentialId": "cred_1", "expiresAt": "2100-01-01T00:00:00.000Z"}}, []string{"logout"}, 0,
-			"http://[redacted]@127.0.0.1:2: removed locally; server revocation failed (Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:2/v1/me/credentials/cred_1)"},
+			"http://[redacted]@127.0.0.1:2: removed locally; server revocation failed (http://[redacted]@127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live until 2100-01-01T00:00:00.000Z.\n"},
 		{"logout naming several", map[string]map[string]any{withPassword: {"token": "a"}, "https://b.example": {"token": "b"}}, []string{"logout"}, 64,
-			"Multiple servers stored (http://[redacted]@127.0.0.1:2, https://b.example)."},
+			"Multiple servers stored:[redacted]@127.0.0.1:2, https://b.example\nPass --server <url> or --all.\n"},
 		{"logout of one not stored", map[string]map[string]any{"https://b.example": {"token": "b"}}, []string{"logout", "--server", "https://u:hunter2pass@nosuch.example"}, 1,
-			"No stored credential for https://[redacted]@nosuch.example"},
+			"varlatch logout:[redacted]@nosuch.example: no credential is stored for this server\n"},
+		{"logout with no server here", map[string]map[string]any{withPassword: {"token": "a"}}, []string{"logout"}, 64,
+			"No server here; stored:[redacted]@127.0.0.1:2\nPass --server <url> or --all.\n"},
 		{"whoami naming several", map[string]map[string]any{withPassword: {"token": "a"}, "https://b.example": {"token": "b"}}, []string{"whoami"}, 64,
-			"credentials are stored for http://[redacted]@127.0.0.1:2, https://b.example;"},
+			"varlatch whoami:[redacted]@127.0.0.1:2, https://b.example: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage},
 		{"whoami refuses it", map[string]map[string]any{withPassword: {"token": "vlt_cli_x"}}, []string{"whoami"}, 1,
-			"Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:2/v1/meta"},
+			"varlatch:[redacted]@127.0.0.1:2/v1/meta" + refused + "\n"},
 		// WHATWG's authority variants for a special scheme: any run of "/"
 		// and "\\" after the scheme, or none, starts the authority.
 		{"logout of a stored one, three slashes", map[string]map[string]any{tripleSlash: {"token": "vlt_cli_x", "credentialId": "cred_1"}}, []string{"logout"}, 0,
-			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed ("},
+			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed (http:///[redacted]@127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live.\n"},
 		{"logout --all, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout", "--all"}, 0,
 			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n" +
 				"http:\\\\[redacted]@127.0.0.1:3: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n"},
 		{"logout naming several, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout"}, 64,
-			"Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\\\[redacted]@127.0.0.1:3)."},
+			"Multiple servers stored:[redacted]@127.0.0.1:3\nPass --server <url> or --all.\n"},
 		{"whoami --json refuses it, three slashes", map[string]map[string]any{tripleSlash: {"token": "vlt_cli_x"}}, []string{"whoami", "--json"}, 1,
-			"Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:2/v1/meta"},
+			"varlatch:[redacted]@127.0.0.1:2/v1/meta" + refused + "\n"},
 		{"whoami --json --server refuses it, backslashes", map[string]map[string]any{backslashes: {"token": "vlt_cli_x"}}, []string{"whoami", "--json", "--server", backslashes}, 1,
-			"Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:3/v1/meta"},
+			"varlatch:[redacted]@127.0.0.1:3/v1/meta" + refused + "\n"},
 		{"whoami --json naming several, backslashes and no slashes", map[string]map[string]any{backslashes: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami", "--json"}, 64,
-			"credentials are stored for http:\\\\[redacted]@127.0.0.1:3, http:[redacted]@127.0.0.1:4;"},
+			"varlatch whoami:[redacted]@127.0.0.1:4: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage},
 		{"whoami naming several, three slashes and no slashes", map[string]map[string]any{tripleSlash: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami"}, 64,
-			"credentials are stored for http:///[redacted]@127.0.0.1:2, http:[redacted]@127.0.0.1:4;"},
+			"varlatch whoami:[redacted]@127.0.0.1:4: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage},
 	}
 	for _, c := range checks {
 		t.Run(c.name, func(t *testing.T) {
@@ -191,9 +204,15 @@ func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 			if c.store != nil {
 				s.store(c.store)
 			}
+			if c.name == "logout with no server here" {
+				s.repo()
+			}
 			status, stdout, stderr := s.run("", c.args...)
-			if status != c.status || !strings.Contains(stdout+stderr, c.shown) {
-				t.Fatalf("status %d\nstdout %q\nstderr %q\nwant %d with %q", status, stdout, stderr, c.status, c.shown)
+			// The whole output, exactly: every explanation survives the
+			// fail-safe (Run.finish), which masks from a message's first
+			// scheme colon to its last at-sign.
+			if status != c.status || stdout+stderr != c.shown {
+				t.Fatalf("status %d\nstdout %q\nstderr %q\nwant %d and\n%q", status, stdout, stderr, c.status, c.shown)
 			}
 			if strings.Contains(stdout+stderr, "hunter2pass") {
 				t.Errorf("a URL's password was printed:\n%s%s", stdout, stderr)
