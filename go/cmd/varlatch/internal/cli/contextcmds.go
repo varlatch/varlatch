@@ -286,7 +286,7 @@ func strictOptions(command string, args []string, spec OptionSpec, usage string)
 	if err != nil {
 		var o *OptionsError
 		if errors.As(err, &o) {
-			return nil, UsageError("varlatch " + command + ": " + o.Message + "\n" + usage)
+			return nil, UsageErrorWithUsage("varlatch "+command+": "+o.Message, "\n"+usage)
 		}
 		return nil, err
 	}
@@ -361,7 +361,7 @@ func (r *Run) showServer(asJSON bool) error {
 	if resolved != nil {
 		here = "Server here: " + jsjson.String(clientctx.MaskServer(resolved.Server)) + " (" + serverSourceWords[resolved.Source] + ")"
 	} else if problem != "" {
-		here += " (" + problem + ")"
+		here += " (" + clientctx.MaskUserinfoInText(problem) + ")" // the net; a varlatch.toml parse error quotes no line of a file with an at-sign
 	}
 	def := clientctx.MaskUserinfo(remembered)
 	if def == "" {
@@ -379,7 +379,11 @@ func (r *Run) showServer(asJSON bool) error {
 // (trailing slashes removed, path kept).
 func (r *Run) useServer(server string, asJSON bool) error {
 	if _, ok := whatwg.ParseURL(server); !ok {
-		return UsageError("varlatch server use: not a URL: " + clientctx.MaskUserinfo(server))
+		shown := clientctx.MaskUserinfo(server)
+		if clientctx.HasAtSign(shown) {
+			return UsageError("varlatch server use: " + shown + ": not a URL") // the explanation follows the URL
+		}
+		return UsageError("varlatch server use: not a URL: " + shown)
 	}
 	key := clientctx.StoredServerKey(server)
 	signedIn, err := clientctx.StoredServers(r.Env)
@@ -388,9 +392,19 @@ func (r *Run) useServer(server string, asJSON bool) error {
 	}
 	if !slices.Contains(signedIn, key) {
 		shown := clientctx.MaskUserinfo(key)
+		list := strings.Join(maskAll(signedIn), ", ")
+		if clientctx.HasAtSign(shown) || clientctx.HasAtSign(list) {
+			// The explanation follows the URL, and the list comes first, so
+			// the fail-safe (which keeps what follows the last at-sign) keeps it.
+			message := ""
+			if len(signedIn) > 0 {
+				message = "varlatch server use: signed in to " + list + "\n"
+			}
+			return UsageError(message + "varlatch server use: " + shown + ": you are not signed in to this server; sign in first with varlatch login --server and its URL")
+		}
 		message := "varlatch server use: you are not signed in to " + shown + ". Sign in first: varlatch login --server " + shown
 		if len(signedIn) > 0 {
-			message += "\nSigned in to: " + strings.Join(maskAll(signedIn), ", ")
+			message += "\nSigned in to: " + list
 		}
 		return UsageError(message)
 	}

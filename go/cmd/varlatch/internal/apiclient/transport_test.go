@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
@@ -178,10 +179,10 @@ func TestFailuresToConnect(t *testing.T) {
 		{"file:///tmp", "fetch failed", "network error"},
 		{closing.URL, "fetch failed", "UND_ERR_SOCKET"},
 		{"not a url", "Failed to parse URL from not a url/v1/meta", ""},
-		{"http://u:p@127.0.0.1:2", "Request cannot be constructed from a URL that includes credentials: http://[redacted]@127.0.0.1:2/v1/meta", ""},
-		{"http://user:hunter2@[::1", "Failed to parse URL from http://[redacted]@[::1/v1/meta", ""},
-		{"http:/user:hunter2@[::1", "Failed to parse URL from http:/[redacted]@[::1/v1/meta", ""},
-		{"HTTP:\\user:hunter2@[::1", "Failed to parse URL from HTTP:\\[redacted]@[::1/v1/meta", ""},
+		{"http://u:p@127.0.0.1:2", "http://[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again", ""},
+		{"http://user:hunter2@[::1", "http://[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
+		{"http:/user:hunter2@[::1", "http:/[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
+		{"HTTP:\\user:hunter2@[::1", "HTTP:\\[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
 	} {
 		_, err := New(Options{Server: c.server}).Meta(context.Background())
 		var f *FetchError
@@ -376,6 +377,25 @@ func TestRedirectWithCredentialsRefused(t *testing.T) {
 		}
 		if len(s.reqs)-before != 1 {
 			t.Errorf("%s: %d requests, want only the first", path, len(s.reqs)-before)
+		}
+	}
+}
+
+// TestRefusalsReadAfterTheFailSafe: the refusals of a URL with a user name
+// and password put the explanation after the URL, so what the CLI's
+// fail-safe keeps (everything after the last at-sign) still says what went
+// wrong, as `varlatch: <message>` reaches stderr.
+func TestRefusalsReadAfterTheFailSafe(t *testing.T) {
+	for raw, want := range map[string]string{
+		"http://u:p@127.0.0.1:2":   "varlatch:[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
+		"http://user:hunter2@[::1": "varlatch:[redacted]@[::1/v1/meta: can't be parsed as a URL",
+	} {
+		_, err := checkURL(raw + "/v1/meta")
+		if err == nil {
+			t.Fatalf("%s: accepted", raw)
+		}
+		if got := clientctx.MaskUserinfoInText("varlatch: " + err.Error()); got != want {
+			t.Errorf("%s: %q, want %q", raw, got, want)
 		}
 	}
 }

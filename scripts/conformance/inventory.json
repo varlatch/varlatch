@@ -737,10 +737,15 @@
       ]
     },
     "deletion": {
-      "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce; an Organization's deletion scheduled, approved by a second admin, cancelled and run when due, and the audit-access tombstone's readers",
+      "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce; an Organization's deletion scheduled, approved by a second admin, cancelled and run when due, and the audit-access tombstone's readers; what the due run tears down (a Sync Target and its Connection, a webhook, the GitHub App) and the audit export's drain, completed or abandoned at its deadline",
       "script": "scripts/conformance/suites/deletion.mjs",
       "needs": [
-        "probe:deletion-due"
+        "probe:deletion-due",
+        "platform-fakes",
+        "webhook-receiver",
+        "object-store",
+        "probe:audit-export-drain-due",
+        "probe:deletion-teardown"
       ],
       "operations": [
         "createOrganization",
@@ -773,7 +778,15 @@
         "listDeletedOrganizationAuditEvents",
         "exportDeletedOrganizationAuditEvents",
         "listDeletedOrganizations",
-        "removeDeletedOrganizationReader"
+        "removeDeletedOrganizationReader",
+        "createPlatformConnection",
+        "createSyncTarget",
+        "getSyncTarget",
+        "createWebhook",
+        "importGitHubApp",
+        "createAuditExport",
+        "pushSyncTarget",
+        "resumeSyncTarget"
       ]
     },
     "doctor": {
@@ -3604,6 +3617,11 @@
       "kind": "conformance",
       "title": "cancelling a scheduled deletion ends the request, restores the machine identities it suspended and writes again; a second cancel is refused"
     },
+    "deletion.scheduling-fences-runs": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "a Sync Target run in flight when its Organization's deletion is scheduled reaches the platform but cannot commit: once the deletion is cancelled and the Target resumed (it stays paused) and pushed, the change is written again, while a push with nothing changed writes nothing"
+    },
     "deletion.organization-deleted-when-due": {
       "suite": "deletion",
       "kind": "conformance",
@@ -3613,6 +3631,26 @@
       "suite": "deletion",
       "kind": "conformance",
       "title": "a deleted Organization's audit is read and exported by the admins fixed as its readers; the Installation Admin lists the tombstone with its readers and removes one, who then reads nothing"
+    },
+    "deletion.teardown-suspended": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "scheduling the deletion pauses the Organization's Sync Targets (a Target that was pushed is paused) and suspends its webhooks, and organization.deletion_scheduled counts them"
+    },
+    "deletion.teardown-ended": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "the due run revokes the Organization's Sync Targets and their Connections, removes its webhooks and its GitHub App (its key deleted), as stored, and organization.deleted counts them"
+    },
+    "deletion.audit-export-drained": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "after the deletion its audit export drains: the final events, organization.deleted among them, reach the bucket, and the drain completes (audit_export.completed in the deleted Organization's audit)"
+    },
+    "deletion.audit-export-drain-deadline": {
+      "suite": "deletion",
+      "kind": "conformance",
+      "title": "an audit export that cannot deliver its final events is abandoned once its drain deadline passes: audit_export.abandoned with the deadline, never completed"
     },
     "doctor.exits-0": {
       "suite": "doctor",

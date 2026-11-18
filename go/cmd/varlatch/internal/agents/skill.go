@@ -69,10 +69,16 @@ func skillBody() string {
 	return strings.TrimLeft(content[end+5:], "\n")
 }
 
-// GuideTopicError is skill.ts's GuideTopicError.
-type GuideTopicError struct{ Message string }
+// GuideTopicError is skill.ts's GuideTopicError: the topic asked for, and
+// the topics there are.
+type GuideTopicError struct {
+	Topic  string
+	Topics []string
+}
 
-func (e *GuideTopicError) Error() string { return e.Message }
+func (e *GuideTopicError) Error() string {
+	return "no guide topic " + e.Topic + "; topics: " + strings.Join(e.Topics, ", ")
+}
 
 // Guide is `varlatch agents guide [topic]`: the skill, or one reference,
 // for a coding agent with a shell but no skill support. topic "" is none.
@@ -89,5 +95,5 @@ func Guide(topic string, given bool) (string, error) {
 			return skillSource(t.path), nil
 		}
 	}
-	return "", &GuideTopicError{"no guide topic " + topic + "; topics: " + strings.Join(names, ", ")}
+	return "", &GuideTopicError{Topic: topic, Topics: names}
 }

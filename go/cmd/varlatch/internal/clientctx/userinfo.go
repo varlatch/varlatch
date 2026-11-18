@@ -3,10 +3,10 @@
 package clientctx
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 )
 
 // The Go CLI never prints a URL's user name and password (go/README.md,
@@ -15,26 +15,44 @@ import (
 // --json documents and messages alike. A URL without them is shown as it
 // is.
 
-// MaskUserinfo is text that may be a URL with what could be its user name
-// and password replaced by [redacted]. It assumes the text may not parse,
-// so it errs towards masking more:
+// MaskUserinfo is a server value with its user name and password replaced
+// by [redacted].
 //
-//   - For a special scheme (http, https, ws, wss, ftp, file, in any case),
-//     the authority starts after any run of "/" and "\" (and the tabs and
-//     newlines WHATWG parsing drops) that follows the scheme, none
-//     included: "http:/u:p@h", "http:\\u:p@h", "http:u:p@h" and
-//     "http:///u:p@h" all have u:p as user name and password.
-//   - Otherwise it starts after the first "//" (tabs and newlines between
-//     its slashes allowed, as WHATWG parsing drops them), or at the start
-//     of the text.
+// Text that parses as a URL (lib/whatwg, as new URL reads it) is masked by
+// its parsed authority: only when it has a user name or a password, and
+// then exactly the span WHATWG reads as them, so every other URL keeps its
+// bytes ("https://example.com\\path@segment" has none: for a special
+// scheme the backslash starts the path).
 //
-// Everything from there to the last "@" before the first "/", "?" or "#"
-// is masked; a backslash does not end it, so a URL that does not parse is
-// masked through it rather than shown.
+// Text that does not parse is masked conservatively, from where its
+// authority would start to the last "@" before the first "?" or "#" (a
+// password may hold "/" or a backslash):
+//
+//   - for a special scheme (http, https, ws, wss, ftp, file, in any case),
+//     after any run of "/" and "\\" that follows the scheme, none
+//     included: "http:/u:p@[::1" and "http:\\\\u:p@[bad" are masked;
+//   - otherwise after the first "//" (tabs and newlines between its
+//     slashes allowed, as WHATWG parsing drops them), or at the start.
 func MaskUserinfo(text string) string {
-	start := authorityStart(text)
+	if u, ok := whatwg.ParseURL(text); ok {
+		if u.Username == "" && u.Password == "" {
+			return text
+		}
+		start, special := authorityStart(text)
+		delims := "/?#"
+		if special {
+			delims = "/\\?#"
+		}
+		return maskTo(text, start, delims)
+	}
+	start, _ := authorityStart(text)
+	return maskTo(text, start, "?#") // a password may hold "/"
+}
+
+// maskTo masks text from start to the last "@" before the first of delims.
+func maskTo(text string, start int, delims string) string {
 	end := len(text)
-	if i := strings.IndexAny(text[start:], "/?#"); i >= 0 {
+	if i := strings.IndexAny(text[start:], delims); i >= 0 {
 		end = start + i
 	}
 	at := strings.LastIndexByte(text[start:end], '@')
@@ -46,8 +64,9 @@ func MaskUserinfo(text string) string {
 
 var specialSchemes = map[string]bool{"http": true, "https": true, "ws": true, "wss": true, "ftp": true, "file": true}
 
-// authorityStart is where MaskUserinfo looks for a user name and password.
-func authorityStart(text string) int {
+// authorityStart is where a user name and password would start, and
+// whether the text's scheme is a special one.
+func authorityStart(text string) (int, bool) {
 	i := 0
 	for i < len(text) && text[i] <= 0x20 { // WHATWG trims leading C0 controls and spaces
 		i++
@@ -63,7 +82,7 @@ func authorityStart(text string) int {
 				for k < len(text) && strings.IndexByte("/\\\t\n\r", text[k]) >= 0 {
 					k++
 				}
-				return k
+				return k, true
 			}
 		}
 	}
@@ -77,10 +96,10 @@ func authorityStart(text string) int {
 			m++
 		}
 		if m < len(text) && text[m] == '/' {
-			return m + 1
+			return m + 1, false
 		}
 	}
-	return 0
+	return 0, false
 }
 
 func isAlpha(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
@@ -108,13 +127,131 @@ func MaskServer(v any) any {
 	return v
 }
 
-// urlInText is a URL's scheme and authority up to its last "@", inside
-// longer text (a quoted line of varlatch.toml): a special scheme followed by
-// any run of "/" and "\\", none included, or any scheme followed by "//".
-var urlInText = regexp.MustCompile(`(?i)(\b(?:https?|wss?|ftp|file):[/\\\t]*|[A-Za-z][A-Za-z0-9+.-]*:/\t*/)[^/?#\s"']*@`)
+// Two layers keep a URL's user name and password out of what the CLI
+// prints (the orchestrator's design, after #265's review):
+//
+//  1. Precise, per value, where its boundaries are known: every echo site
+//     masks the one value it prints (an argument, a command, a help topic,
+//     an approval id, a server, verify-release's --file value and path)
+//     with MaskUserinfo (a server) or MaskURLInValue (an echoed value)
+//     before formatting it into its message. A value without a user name
+//     and password keeps its bytes. A varlatch.toml parse error quotes no
+//     line of a file that holds an at-sign (LoadRepoConfig).
+//  2. A dumb fail-safe on the final text of every failure (Run.finish,
+//     verify-release's failures): MaskUserinfoInText. It is the net, not
+//     the only defence.
 
-// MaskUserinfoInText masks every URL's user name and password in text that
-// holds URLs among other words.
+// MaskUserinfoInText is the fail-safe: one linear pass over the whole
+// message, with no quoting, scheme, list or line rules. For detection, tab,
+// CR and LF are dropped (as WHATWG drops them from a URL), and "@", "\u0040",
+// "\x40", "\U00000040" and "%40" are at-signs. If the message has a ":" that
+// follows a letter and an at-sign anywhere after it, everything from just
+// after the FIRST such ":" up to and including the LAST at-sign of the
+// message, newlines included, becomes "[redacted]@"; what comes before and
+// after is kept. A message with no such pair keeps its bytes.
+//
+// Error output may over-mask: the whole message is masked from the first
+// scheme colon to the last at-sign, so an email after a colon, or a second
+// already-masked URL, takes the text between them with it. That is
+// accepted for failure text, where never leaking comes before byte parity;
+// ordinary output keeps the precise layer's exact bytes.
 func MaskUserinfoInText(text string) string {
-	return urlInText.ReplaceAllString(text, "${1}[redacted]@")
+	kept, at := forAtSigns(text)
+	if kept == nil {
+		return text // no at-sign of any form
+	}
+	colon := -1
+	for i := 1; i < len(kept); i++ {
+		if kept[i] == ':' && isAlpha(kept[i-1]) {
+			colon = i
+			break
+		}
+	}
+	if colon < 0 {
+		return text
+	}
+	last, size := -1, 0
+	for i, n := nextAtSign(kept, colon+1); i >= 0; i, n = nextAtSign(kept, i+n) {
+		last, size = i, n
+	}
+	if last < 0 {
+		return text
+	}
+	return text[:at[colon]+1] + "[redacted]@" + text[at[last+size-1]+1:]
+}
+
+// HasAtSign is whether s holds an at-sign as the fail-safe sees one, by
+// the fail-safe's own detection (forAtSigns, nextAtSign): tab, CR and LF
+// ignored, and "@", "\u0040", "\x40", "\U00000040" and "%40" counted. A
+// message whose echoed value holds one puts its explanation after the
+// value, since the fail-safe keeps only what follows the last at-sign (the
+// explanation follows the URL); a varlatch.toml that holds one has its
+// parse errors shown without the file's lines (LoadRepoConfig).
+func HasAtSign(s string) bool {
+	kept, _ := forAtSigns(s)
+	i, _ := nextAtSign(kept, 0)
+	return i >= 0
+}
+
+// forAtSigns is text as the at-sign detection reads it: without tab, CR
+// and LF (WHATWG drops them from a URL), with where each kept byte is in
+// text; nil when text has no byte an at-sign of any form starts with.
+func forAtSigns(text string) (kept []byte, at []int) {
+	if !strings.ContainsAny(text, "@%\\") {
+		return nil, nil
+	}
+	kept = make([]byte, 0, len(text))
+	at = make([]int, 0, len(text))
+	for i := 0; i < len(text); i++ {
+		if c := text[i]; c != '\t' && c != '\r' && c != '\n' {
+			kept = append(kept, c)
+			at = append(at, i)
+		}
+	}
+	return kept, at
+}
+
+// nextAtSign is the first at-sign in kept (from forAtSigns) at or after
+// from, and its length; -1 when there is none.
+func nextAtSign(kept []byte, from int) (int, int) {
+	for i := from; i < len(kept); i++ {
+		if n := atSignAt(kept, i); n > 0 {
+			return i, n
+		}
+	}
+	return -1, 0
+}
+
+// atSignAt is the length of the at-sign at s[i] ("@", "\u0040", "\x40",
+// "\U00000040" or "%40", any case of hex digits), 0 when there is none.
+func atSignAt(s []byte, i int) int {
+	switch s[i] {
+	case '@':
+		return 1
+	case '%':
+		if i+3 <= len(s) && s[i+1] == '4' && s[i+2] == '0' {
+			return 3
+		}
+	case '\\':
+		for _, e := range []string{"\\" + "u0040", "\\" + "x40", "\\" + "U00000040"} {
+			if i+len(e) <= len(s) && strings.EqualFold(string(s[i:i+len(e)]), e) {
+				return len(e)
+			}
+		}
+	}
+	return 0
+}
+
+// MaskURLInValue is the precise layer for one value echoed in a message
+// (an argument, a command, a help topic, an approval id): MaskUserinfo when the value is a URL or shows an
+// authority (a special scheme, or "//"); any other value as it is, an email
+// included (the fail-safe sees the whole message).
+func MaskURLInValue(v string) string {
+	if _, ok := whatwg.ParseURL(v); ok {
+		return MaskUserinfo(v)
+	}
+	if start, special := authorityStart(v); special || start > 0 {
+		return MaskUserinfo(v)
+	}
+	return v
 }

@@ -245,33 +245,25 @@ func isRedirect(status int) bool {
 func origin(u whatwg.URL) string { return u.Protocol + "//" + u.Host }
 
 // checkURL is fetch's own refusals before it connects: a URL that does not
-// parse, one with credentials. Its messages are fetch's, except that a URL
-// is shown without its user name and password (diagnostics never print
-// credential values).
+// parse, one with credentials. A URL is shown without its user name and
+// password (diagnostics never print credential values), and where it holds
+// an at-sign the explanation follows it, since the CLI's fail-safe keeps
+// what follows the last at-sign (go/README.md, "Diagnostics never print
+// credential values"). A URL that does not parse and holds none keeps
+// fetch's wording.
 func checkURL(raw string) (whatwg.URL, error) {
 	u, ok := whatwg.ParseURL(raw)
 	if !ok {
-		return u, &FetchError{Message: "Failed to parse URL from " + clientctx.MaskUserinfo(raw)}
+		shown := clientctx.MaskUserinfo(raw)
+		if clientctx.HasAtSign(shown) {
+			return u, &FetchError{Message: shown + ": can't be parsed as a URL"}
+		}
+		return u, &FetchError{Message: "Failed to parse URL from " + shown}
 	}
 	if u.Username != "" || u.Password != "" {
-		return u, &FetchError{Message: "Request cannot be constructed from a URL that includes credentials: " + href(u)}
+		return u, &FetchError{Message: clientctx.MaskUserinfo(raw) + ": a server URL with a user name or password can't be used; remove them and try again"}
 	}
 	return u, nil
-}
-
-// href is the URL serialized, its user name and password, if any, shown
-// as [redacted].
-func href(u whatwg.URL) string {
-	path, query := u.RequestTarget()
-	auth := ""
-	if u.Username != "" || u.Password != "" {
-		auth = "[redacted]@"
-	}
-	s := u.Protocol + "//" + auth + u.Host + path
-	if query != "" || u.Search == "?" {
-		s += "?" + query
-	}
-	return s + u.Hash
 }
 
 // resolve is a Location header against the URL it answered.

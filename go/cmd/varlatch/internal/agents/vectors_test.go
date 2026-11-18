@@ -138,7 +138,7 @@ func TestPureEditVectors(t *testing.T) {
 		got, err := Guide(topic, given)
 		if message, ok := c.Get("error"); ok {
 			var e *GuideTopicError
-			if !errors.As(err, &e) || e.Message != message {
+			if !errors.As(err, &e) || e.Error() != message {
 				t.Errorf("guide(%q): %v, want %q", topic, err, message)
 			}
 			continue

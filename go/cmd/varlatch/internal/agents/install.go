@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
@@ -774,7 +775,14 @@ func RunInstall(opts Options) (*Result, error) {
 	}
 	for _, name := range opts.Agents {
 		if _, ok := agentOf(name); !ok {
-			return nil, &Error{"unknown coding agent " + name + "; known: " + strings.Join(known, ", "), true}
+			// The name, as echoed, is masked as one value (a URL's user name
+			// and password); one holding an at-sign comes before its
+			// explanation, which the fail-safe then keeps.
+			shown := clientctx.MaskURLInValue(name)
+			if clientctx.HasAtSign(shown) {
+				return nil, &Error{shown + ": unknown coding agent; known: " + strings.Join(known, ", "), true}
+			}
+			return nil, &Error{"unknown coding agent " + shown + "; known: " + strings.Join(known, ", "), true}
 		}
 	}
 	if opts.Scope == "user" && len(opts.Agents) > 0 {

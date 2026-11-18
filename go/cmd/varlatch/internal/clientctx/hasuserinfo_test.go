@@ -17,6 +17,7 @@ func TestHasUserinfo(t *testing.T) {
 		"varlatch+https://u:PW@host.example":    true,
 		"https://u:PW@":                         true, // does not parse; holds "@"
 		"not a url @ all":                       true,
+		"not a url %40 all":                     true,
 		"https://host.example":                  false,
 		"https://host.example/a@b?c=@#@":        false,
 		"https://:@host.example":                false, // new URL gives no user name and no password

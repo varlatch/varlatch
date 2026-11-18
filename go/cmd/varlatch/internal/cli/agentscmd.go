@@ -45,7 +45,15 @@ func agentsCommand(r *Run) error {
 		text, err := agents.Guide(topic, given)
 		var guideErr *agents.GuideTopicError
 		if errors.As(err, &guideErr) {
-			return UsageError("varlatch agents guide: " + guideErr.Message)
+			// The topic, as echoed, is masked as one value; one holding an
+			// at-sign comes before its explanation (the fail-safe keeps what
+			// follows the last at-sign).
+			shown := clientctx.MaskURLInValue(guideErr.Topic)
+			topics := "; topics: " + strings.Join(guideErr.Topics, ", ")
+			if clientctx.HasAtSign(shown) {
+				return UsageError("varlatch agents guide: " + shown + ": no such guide topic" + topics)
+			}
+			return UsageError("varlatch agents guide: no guide topic " + shown + topics)
 		}
 		_, err = io.WriteString(r.Stdout, text)
 		return err
@@ -182,7 +190,7 @@ func initCommand(r *Run) error {
 		return contextError(err)
 	}
 	if resolved == nil {
-		return UsageError("varlatch init: no server to write in " + clientctx.RepoConfigFile + "; pass --server <url>, or sign in first with varlatch login --server <url>\n" + initUsage)
+		return UsageErrorWithUsage("varlatch init: no server to write in "+clientctx.RepoConfigFile+"; pass --server <url>, or sign in first with varlatch login --server <url>", "\n"+initUsage)
 	}
 	// varlatch.toml is committed: a user name or password in the server URL,
 	// wherever it came from, would be committed with it. Nothing is written,
@@ -220,7 +228,8 @@ func initCommand(r *Run) error {
 	}
 	result, err := agents.RunInstall(agents.Options{Scope: "project", Root: cwd, Version: buildinfo.Version, Mode: "install"})
 	if err != nil {
-		_, werr := io.WriteString(r.Stderr, "varlatch: the files for coding agents were not written ("+err.Error()+"); run varlatch agents install to try again.\n")
+		// Written here, not through finish, so the fail-safe is applied here.
+		_, werr := io.WriteString(r.Stderr, clientctx.MaskUserinfoInText("varlatch: the files for coding agents were not written ("+err.Error()+"); run varlatch agents install to try again.")+"\n")
 		return werr
 	}
 	if targets := agents.ChangedTargets(result); len(targets) > 0 {

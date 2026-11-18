@@ -2243,6 +2243,79 @@
       }
     },
     {
+      "id": "server.backslash-path.json",
+      "title": "a server whose path follows a backslash is no user name and password",
+      "args": [
+        "server",
+        "--json"
+      ],
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"https://example.com\\\\path@segment\": {\n      \"token\": \"vlt_cli_fakeAAAA\"\n    }\n  }\n}\n",
+        "config/settings.json": "{\"defaultServer\": \"https://example.com\\\\path@segment\"}\n"
+      },
+      "differences": [
+        "backslash-path"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://[redacted]@segment\",\n  \"serverSource\": \"default\",\n  \"defaultServer\": \"https://[redacted]@segment\",\n  \"signedIn\": [\n    \"https://[redacted]@segment\"\n  ]\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"https://example.com\\\\path@segment\": {\n      \"token\": \"vlt_cli_fakeAAAA\"\n    }\n  }\n}\n"
+          },
+          "config/settings.json": {
+            "mode": "0644",
+            "content": "{\"defaultServer\": \"https://example.com\\\\path@segment\"}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "status.backslash-path.json",
+      "title": "the same server in status --json",
+      "args": [
+        "status",
+        "--json"
+      ],
+      "files": {
+        "config/credentials.json": "{\n  \"servers\": {\n    \"https://example.com\\\\path@segment\": {\n      \"token\": \"vlt_cli_fakeAAAA\"\n    }\n  }\n}\n"
+      },
+      "differences": [
+        "backslash-path"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"https://[redacted]@segment\",\n      \"name\": null,\n      \"issuedAt\": null,\n      \"expiresAt\": null,\n      \"credentialId\": null,\n      \"expired\": null,\n      \"expiring\": null\n    }\n  ],\n  \"repo\": null\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"https://example.com\\\\path@segment\": {\n      \"token\": \"vlt_cli_fakeAAAA\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
       "id": "server.agent-run",
       "title": "inside an agent-safe run: no default, no stored servers",
       "args": [
