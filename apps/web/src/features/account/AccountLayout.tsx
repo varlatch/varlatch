@@ -20,7 +20,7 @@ export function AccountLayout() {
   useMeRealtime(["credential"], [["me-credentials"]]);
   const profile = useQuery({ queryKey: ["me-profile"], queryFn: () => api.getMyProfile(), retry: false });
   const creds = useQuery({ queryKey: ["me-credentials"], queryFn: () => api.listMyCredentials() });
-  const identities = useIdentities(org ?? "");
+  const identities = useIdentities(org);
   const me = identities.data?.items.find((i) => i.id === identityId);
   const name = profile.data?.name ?? me?.name ?? "Your account";
   const email = displayEmail(profile.data?.email);

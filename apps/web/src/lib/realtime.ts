@@ -82,6 +82,15 @@ export function useMirrorInvalidation(
 }
 
 /**
+ * Org-scoped, with a callback instead of query keys: `onChange` runs when the
+ * org's changeSignal reports a change in any of `domains`. For pages that
+ * decide per query whether a change is worth a refetch (the Audit page).
+ */
+export function useMirrorSignal(orgId: string | undefined, domains: "*" | string[], onChange: () => void): void {
+  useSignal(useOrgDocs(orgId), domains, onChange);
+}
+
+/**
  * Me-scoped counterpart: org-less events (credential lifecycle on /v1/me)
  * signal the acting identity instead of an org. The subscription is scoped
  * server-side to the signed-in identity (the Convex token's subject, or the
