@@ -182,6 +182,18 @@ test("today no target can pass the gate: the doctor and lifecycle replacements a
   }
 });
 
+test("the hand-over's go-client checks may be not applicable only when the CLI under test is not the Go CLI", () => {
+  const handover = Object.keys(inventory.checks).filter((id) => inventory.checks[id].kind === "go-client");
+  assert.ok(handover.length > 0);
+  const outcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" || c.kind === "go-client" ? "not-applicable" : "pass"]));
+  for (const cli of ["source", "0.22.0"]) {
+    const verdict = judgeGate({ inventory, run: run(outcomes, { cli }), walkthrough });
+    assert.ok(!verdict.problems.some((p) => /must run and pass/.test(p)), `${cli}: ${verdict.problems.join("\n")}`);
+  }
+  const verdict = judgeGate({ inventory, run: run(outcomes, { cli: "go" }), walkthrough });
+  assert.ok(verdict.problems.some((p) => /must run and pass: .*cli-handover\./.test(p)), verdict.problems.join("\n"));
+});
+
 test("on the Go server, G11's go-server checks must run: not applicable there fails the gate", () => {
   const outcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" || c.kind === "go-server" ? "not-applicable" : "pass"]));
   const verdict = judgeGate({ inventory, run: run(outcomes, { target: "go-binary:/opt/varlatchd" }), walkthrough });

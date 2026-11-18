@@ -61,19 +61,21 @@ export function predatedFeatures(inventory, version) {
 }
 
 /**
- * Whether a check may be not applicable in a gate run on target: a ts-stack
- * check anywhere; a go-server check (G11 on the Go server's own events)
- * only off the Go server, where it never runs.
+ * Whether a check may be not applicable in a gate run on target with the
+ * CLI `cli` (its spec): a ts-stack check anywhere; a go-server check (G11
+ * on the Go server's own events) only off the Go server, where it never
+ * runs; a go-client check (the CLI hand-over) only when the CLI under test
+ * is not the Go CLI.
  */
-function mayNotApply(inventory, id, target) {
+function mayNotApply(inventory, id, target, cli) {
   const kind = inventory.checks[id]?.kind;
-  return kind === "ts-stack" || (kind === "go-server" && !String(target).startsWith("go-binary"));
+  return kind === "ts-stack" || (kind === "go-server" && !String(target).startsWith("go-binary")) || (kind === "go-client" && cli !== "go");
 }
 
 /** The rules a run's own checks must meet: no expected failure, every replacement passing. */
 function runRules(inventory, run) {
   const problems = [];
-  const missingG11 = run.checks.filter((c) => c.outcome === "not-applicable" && !mayNotApply(inventory, c.id, run.target)).map((c) => c.id);
+  const missingG11 = run.checks.filter((c) => c.outcome === "not-applicable" && !mayNotApply(inventory, c.id, run.target, run.cli)).map((c) => c.id);
   if (missingG11.length > 0) problems.push(`on ${run.target} these checks must run and pass: ${missingG11.join(", ")}`);
   if (run.partial) problems.push("a gate run covers every suite: --suite is not allowed");
   if (!run.ok) problems.push("the run itself did not pass");
@@ -113,7 +115,7 @@ function runRules(inventory, run) {
 /**
  * Judges a run in gate mode.
  *
- *   run         { target, partial, ok, checks: [{ id, outcome }], expectedInForce: [check ids],
+ *   run         { target, cli (the CLI's spec), partial, ok, checks: [{ id, outcome }], expectedInForce: [check ids],
  *                 lacksInForce: [operations], implementation (the target's fingerprint, or null) }
  *   walkthrough null, or { path (relative to the checkout), exists, size, sha256 }
  *   recentCli   null, or the parsed report (conformance-report.json) of a
@@ -148,8 +150,9 @@ export function judgeGate({ inventory, run, walkthrough = null, recentCli = null
  * Why `report` cannot stand in as the recent-CLI gate run for this one;
  * empty when it can. It is judged again from scratch: a complete report of
  * the same target and the same implementation, every inventory check present
- * once and passing (or not applicable, for a ts-stack check, or a go-server
- * check off the Go server), no problem,
+ * once and passing (or not applicable, for a ts-stack check, a go-server
+ * check off the Go server, or a go-client check without the Go CLI), no
+ * problem,
  * a CLI that predates no feature, the same walkthrough evidence, and the
  * gate's own rules on its checks.
  */
@@ -181,12 +184,13 @@ export function recentCliProblems(report, { inventory, target, implementation, w
   if (missing.length > 0) problems.push(`${missing.length} inventory checks are missing from it (${missing.slice(0, 5).join(", ")})`);
   if (extra.length > 0) problems.push(`it has checks the inventory does not (${extra.slice(0, 5).join(", ")})`);
   if (twice.length > 0) problems.push(`it lists checks more than once (${twice.slice(0, 5).join(", ")})`);
-  const bad = checks.filter((c) => !(c?.outcome === "pass" || (c?.outcome === "not-applicable" && mayNotApply(inventory, c?.id, target))));
+  const bad = checks.filter((c) => !(c?.outcome === "pass" || (c?.outcome === "not-applicable" && mayNotApply(inventory, c?.id, target, report.cli?.spec))));
   if (bad.length > 0) problems.push(`${bad.length} of its checks did not pass (${bad.slice(0, 5).map((c) => `${c?.id}: ${c?.outcome}`).join(", ")})`);
 
   // The gate's rules on its own checks, recomputed: its ok is ours, not its.
   const rules = runRules(inventory, {
     target,
+    cli: report.cli?.spec,
     partial: report.partial !== false,
     ok: bad.length === 0 && missing.length === 0 && problems.length === 0,
     checks: checks.map((c) => ({ id: c?.id, outcome: c?.outcome })),

@@ -5,7 +5,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,15 +49,14 @@ func agentsCommand(r *Run) error {
 			// The topic, as echoed, is masked as one value; one holding an
 			// at-sign comes before its explanation (the fail-safe keeps what
 			// follows the last at-sign).
-			shown := clientctx.MaskURLInValue(guideErr.Topic)
+			shown := shownArgument(guideErr.Topic)
 			topics := "; topics: " + strings.Join(guideErr.Topics, ", ")
 			if clientctx.HasAtSign(shown) {
 				return UsageError("varlatch agents guide: " + shown + ": no such guide topic" + topics)
 			}
 			return UsageError("varlatch agents guide: no guide topic " + shown + topics)
 		}
-		_, err = io.WriteString(r.Stdout, text)
-		return err
+		return r.out(text)
 	case "hook":
 		return UsageError("varlatch agents hook: not in this build of the Go CLI yet (slice 5.6a); use the TypeScript CLI for it until then")
 	case "install":
@@ -234,9 +232,8 @@ func initCommand(r *Run) error {
 	}
 	result, err := agents.RunInstall(agents.Options{Scope: "project", Root: cwd, Version: buildinfo.Version, Mode: "install"})
 	if err != nil {
-		// Written here, not through finish, so the fail-safe is applied here.
-		_, werr := io.WriteString(r.Stderr, clientctx.MaskUserinfoInText("varlatch: the files for coding agents were not written ("+err.Error()+"); run varlatch agents install to try again.")+"\n")
-		return werr
+		// Written here, not through finish: r.warn applies the fail-safe.
+		return r.warn("varlatch: the files for coding agents were not written (" + err.Error() + "); run varlatch agents install to try again.")
 	}
 	if targets := agents.ChangedTargets(result); len(targets) > 0 {
 		if err := r.println("Wrote the Varlatch skill and instructions for coding agents: " + strings.Join(targets, ", ") + ". Commit them too."); err != nil {

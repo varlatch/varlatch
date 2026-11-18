@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -63,6 +64,7 @@ type Case struct {
 	Cwd         string            `json:"cwd,omitempty"`
 	Server      []Exchange        `json:"server,omitempty"`
 	Differences []string          `json:"differences,omitempty"`
+	Patterns    []string          `json:"patterns,omitempty"`
 	Expect      Outcome           `json:"expect"`
 }
 
@@ -210,6 +212,12 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	cmd.Stdin = strings.NewReader(c.Stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	for _, name := range c.Patterns {
+		if name != "now" {
+			return Outcome{}, nil, fmt.Errorf("case %s: no pattern %q", c.ID, name)
+		}
+	}
+	began := time.Now().UnixMilli()
 	if err := cmd.Start(); err != nil {
 		return Outcome{}, nil, err
 	}
@@ -224,8 +232,13 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		}
 		status = exit.ExitCode()
 	}
+	end := time.Now().UnixMilli()
 	unfill := func(s string) string {
-		return strings.ReplaceAll(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir, "{{dir}}")
+		s = strings.ReplaceAll(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir, "{{dir}}")
+		if slices.Contains(c.Patterns, "now") {
+			s = NowPattern(s, began, end)
+		}
+		return s
 	}
 	got := Outcome{Status: status, Stdout: unfill(stdout.String()), Stderr: unfill(stderr.String()), Files: map[string]FileState{}}
 	for _, r := range srv.received() {
@@ -249,6 +262,26 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		d(&want, got)
 	}
 	return got, Compare(want, got), nil
+}
+
+// isoTimestamp is Date.prototype.toISOString's form.
+var isoTimestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z`)
+
+// NowPattern is goKit.ts's nowPattern, the "now" pattern: each ISO 8601
+// timestamp with milliseconds from start to end (Unix milliseconds) as
+// {{now}}. A case lists the patterns it needs; a timestamp outside the
+// run's own window is compared as it is.
+func NowPattern(text string, start, end int64) string {
+	return isoTimestamp.ReplaceAllStringFunc(text, func(t string) string {
+		at, err := time.Parse("2006-01-02T15:04:05.000Z", t)
+		if err != nil {
+			return t
+		}
+		if ms := at.UnixMilli(); ms >= start && ms <= end {
+			return "{{now}}"
+		}
+		return t
+	})
 }
 
 // Tree is the final state of everything under dir, dir itself excepted,

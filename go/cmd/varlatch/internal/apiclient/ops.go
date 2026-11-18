@@ -53,3 +53,14 @@ func EncodeURIComponent(s string) string {
 	}
 	return b.String()
 }
+
+// ListOrganizations is GET /v1/organizations: the Organizations the
+// credential can see (login calls it to verify the credential).
+func (c *Client) ListOrganizations(ctx context.Context) (any, error) {
+	return c.Request(ctx, "GET", "/v1/organizations", NoBody, nil)
+}
+
+// ListEnvironments is GET /v1/organizations/<org>/projects/<project>/environments.
+func (c *Client) ListEnvironments(ctx context.Context, org, project string) (any, error) {
+	return c.Request(ctx, "GET", "/v1/organizations/"+EncodeURIComponent(org)+"/projects/"+EncodeURIComponent(project)+"/environments", NoBody, nil)
+}

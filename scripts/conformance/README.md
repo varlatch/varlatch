@@ -85,7 +85,16 @@ Every check has a **kind**:
   without it, and must run and pass on one with it. A gate run on
   `go-binary` refuses it not applicable. Each is listed in the inventory's
   `goServerChecks` with why the TypeScript server cannot pass it, so making
-  a check go-server is visible in review.
+  a check go-server is visible in review;
+- `go-client`: about the Go CLI together with the TypeScript CLI, the
+  hand-over of internal `docs/design/go-cli.md` (decision 11). Its suite
+  says `"client": "go"` and holds only go-client checks. With `--cli
+  go:<path>` the runner pairs the Go CLI with a TypeScript CLI
+  (`--handover-cli source|<version>`, verified as `--cli` is; 0.22.0 by
+  default) and hands its path to the suite (`VARLATCH_HANDOVER_CLI`,
+  suite-kit's `handoverCliCommand`); the check must run and pass on every
+  target. With a TypeScript CLI under test the suite is not started and its
+  checks are not applicable, which a gate run accepts only then.
 
 A run fails on any of these:
 
@@ -94,7 +103,8 @@ A run fails on any of these:
 - a failed check, unless the target's expectations list it (see
   [Expected failures](#expected-failures)); an expected failure that passes;
 - a conformance or component check reported not applicable (a ts-stack or
-  go-server check may be);
+  go-server check may be, and a go-client check when the CLI under test is
+  not the Go CLI);
 - a `PREDATES-CLI` result the runner cannot confirm. It is accepted only for
   a check whose feature names the version that introduced it
   (`introducedIn`), never for a compatibility-core feature, and only when
@@ -589,8 +599,8 @@ own, one its `cliNeeds` lists, is in the file:
 names a slice the Go CLI's inventory says is built. `cliNeeds` is recorded
 conservatively for the checks without a feature (every feature of their
 suite); a slice that finds a check needing less narrows it. The setup's
-`init --org --project --server` (slice 5.1d) comes before `login-token`
-(slice 5.1e), so `login-token`'s entry covers it.
+`init --org --project --server` (slice 5.1d) and token sign-in (slice
+5.1e) are built, so every suite's setup runs on the Go CLI.
 
 ### Features, groups and the compatibility core
 

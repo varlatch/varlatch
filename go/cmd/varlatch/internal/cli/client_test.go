@@ -229,7 +229,7 @@ func TestClientMessagesNeverShowUserinfo(t *testing.T) {
 		EnvTokenExpiryWarning(server, "2026-01-01T00:00:00.000Z", now),
 		EnvTokenExpiryWarning(server, "2100-01-01T00:00:00.000Z", now),
 	} {
-		if strings.Contains(w, "hunter2pass") || !strings.HasPrefix(w, "varlatch: credential for "+shown+" (VARLATCH_TOKEN) ") {
+		if strings.Contains(w, "hunter2pass") || !strings.HasPrefix(w, "varlatch: "+shown+" (VARLATCH_TOKEN): the credential ") {
 			t.Errorf("%q", w)
 		}
 	}
@@ -242,7 +242,8 @@ func TestClientMessagesNeverShowUserinfo(t *testing.T) {
 	if _, err := r.connectClient(server); err != nil {
 		t.Fatal(err)
 	}
-	want := "varlatch: credential for " + shown + " expired 2020-01-02T00:00:00.000Z — run `varlatch login --server " + shown + "`\n"
+	// Through the fail-safe (Run.warn): the server named once, before the explanation.
+	want := "varlatch:[redacted]@v.example: the credential expired 2020-01-02T00:00:00.000Z; run varlatch login --server and this server's URL\n"
 	if stderr.String() != want {
 		t.Errorf("stderr %q, want %q", stderr.String(), want)
 	}

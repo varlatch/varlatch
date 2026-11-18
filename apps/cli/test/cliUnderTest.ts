@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from "node:fs";
 
 /**
  * The CLI a process test runs (internal docs/design/go-cli.md, decision 3):
@@ -11,4 +12,26 @@
 export function cliCommand(bundle: string, args: string[]): [string, string[]] {
   const go = process.env.VARLATCH_TEST_CLI;
   return go ? [go, args] : [process.execPath, [bundle, ...args]];
+}
+
+/** The Go CLI's inventory: which slices are built, and the slice that builds each command. */
+const inventory = JSON.parse(readFileSync(new URL("../../../go/cmd/varlatch/testdata/cli-inventory.json", import.meta.url), "utf8")) as {
+  built: string[];
+  commands: Record<string, { slice: string }>;
+};
+
+/**
+ * Whether the CLI under test is a Go binary that lacks one of `slices`
+ * (internal docs/design/go-cli.md's slices, as "5.2"): a test of what a
+ * later slice builds is skipped against Go with `it.skipIf(goLacks("5.2"))`.
+ * The TypeScript bundle lacks nothing. A skip ends by itself: the slice's
+ * pull request marks it built in the inventory, and the test runs.
+ */
+export function goLacks(...slices: string[]): boolean {
+  return Boolean(process.env.VARLATCH_TEST_CLI) && slices.some((slice) => !inventory.built.includes(slice));
+}
+
+/** goLacks for the slices that build `commands` (the first word of each command line). */
+export function goLacksCommand(...commands: string[]): boolean {
+  return goLacks(...commands.map((command) => inventory.commands[command]?.slice ?? `an unknown command ${command}`));
 }

@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 
@@ -39,6 +40,44 @@ type OptionSpec struct {
 	EndOfOptions bool `json:"endOfOptions,omitempty"`
 }
 
+// shownArgument is an argument as a usage error echoes it. An option
+// written with its value attached, `--name=value` or a short option such
+// as `-Hvalue`, is shown without the value (`--name=[redacted]`,
+// `-H[redacted]`), whatever the option: the value may be a credential
+// (go/README.md, "Diagnostics never print credential values"). Otherwise a
+// URL's user name and password are masked (MaskURLInValue), and any text in
+// Varlatch's token format is shown as [redacted]. Run.finish's fail-safe
+// redacts tokens again, so correctness never depends on this; it keeps the
+// wording precise.
+func shownArgument(arg string) string {
+	if strings.HasPrefix(arg, "--") {
+		if name, _, ok := strings.Cut(arg, "="); ok {
+			return name + "=" + Redacted
+		}
+	} else if strings.HasPrefix(arg, "-") && len(arg) > 2 {
+		return arg[:2] + Redacted
+	}
+	return varlatchToken.ReplaceAllLiteralString(clientctx.MaskURLInValue(arg), Redacted)
+}
+
+// unknownWithValue is an unknown-option message whose option carries an
+// attached value, as the TypeScript CLI words it.
+var unknownWithValue = regexp.MustCompile(`unknown option (--[^=\s]+=|-[^-\s])[^\s]*`)
+
+// OptionValueDifference is a TypeScript usage message as the Go CLI words
+// it: an unknown option's attached value as [redacted] (shownArgument).
+// The transcripts and vectors apply it where they record the TypeScript
+// CLI echoing one.
+func OptionValueDifference(message string) string {
+	return unknownWithValue.ReplaceAllStringFunc(message, func(m string) string {
+		arg := strings.TrimPrefix(m, "unknown option ")
+		if !strings.HasPrefix(arg, "--") && len(arg) <= 2 {
+			return m
+		}
+		return "unknown option " + shownArgument(arg)
+	})
+}
+
 // Alias is one other name for an option.
 type Alias struct{ From, To string }
 
@@ -67,7 +106,7 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 	parsed := &ParsedOptions{Values: map[string]string{}, Lists: map[string][]string{}}
 	positional := func(arg string) error {
 		if len(parsed.Positionals) >= spec.Positionals {
-			shown := clientctx.MaskURLInValue(arg)
+			shown := shownArgument(arg)
 			if clientctx.HasAtSign(shown) {
 				return &OptionsError{shown + ": unexpected argument"} // the explanation follows the URL
 			}
@@ -140,7 +179,7 @@ func ParseOptions(args []string, spec OptionSpec) (*ParsedOptions, error) {
 			if spec.EndOfOptions {
 				hint = ` (a value that begins with "-" goes after --)`
 			}
-			shown := clientctx.MaskURLInValue(arg)
+			shown := shownArgument(arg)
 			if clientctx.HasAtSign(shown) {
 				return nil, &OptionsError{shown + ": unknown option" + hint} // the explanation follows the URL
 			}
