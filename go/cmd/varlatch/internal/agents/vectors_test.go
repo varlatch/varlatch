@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -37,6 +38,10 @@ func loadAgentVectors(t *testing.T) jsjson.Object {
 }
 
 func js(v any) string { return string(jsjson.Stringify(v)) }
+
+// windowsPathSkip is why a recorded case that names a path is skipped on
+// Windows (internal docs/design/go-cli.md, step 5.9).
+const windowsPathSkip = "path separators: Windows expectations not recorded yet (step 5.9)"
 
 func optional(v any) desired {
 	if s, ok := v.(string); ok {
@@ -172,6 +177,13 @@ func TestInstallVectors(t *testing.T) {
 	for i, s := range scenarios {
 		name := s.Value("name").(string)
 		t.Run(name, func(t *testing.T) {
+			// The recorded outcomes name paths as TypeScript printed them on
+			// Linux; on Windows both CLIs print backslashes. Until Windows
+			// outcomes are recorded (step 5.9), a scenario whose outcomes
+			// name a path is not compared there; every other one is.
+			if runtime.GOOS == "windows" && strings.Contains(js(s.Value("steps")), "{{dir}}") {
+				t.Skip(windowsPathSkip)
+			}
 			dir := filepath.Join(scratch, "s"+jsjson.Number(float64(i)))
 			for _, sub := range []string{"project", "home"} {
 				if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {

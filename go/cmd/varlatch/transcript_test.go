@@ -3,10 +3,12 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -163,6 +165,9 @@ func TestTranscripts(t *testing.T) {
 		}
 		for _, c := range f.Cases {
 			t.Run(f.Area+"/"+c.ID, func(t *testing.T) {
+				if runtime.GOOS == "windows" && expectsPath(t, c) {
+					t.Skip(windowsPathSkip)
+				}
 				c.Env = withMarker(c.Env)
 				if slices.Contains(c.Differences, "skill-version") {
 					files := map[string]string{}
@@ -181,6 +186,24 @@ func TestTranscripts(t *testing.T) {
 			})
 		}
 	}
+}
+
+// windowsPathSkip is why a case that expects a path is skipped on Windows
+// (internal docs/design/go-cli.md, step 5.9).
+const windowsPathSkip = "path separators: Windows expectations not recorded yet (step 5.9)"
+
+// expectsPath reports whether a case's recorded outcome names a path under
+// its directory ({{dir}}, the only path placeholder the recorder writes).
+// TypeScript recorded it on Linux; on Windows both CLIs print backslashes,
+// so until Windows outcomes are recorded (step 5.9) such a case is not
+// compared there. Every other case still replays byte for byte.
+func expectsPath(t *testing.T, c transcript.Case) bool {
+	t.Helper()
+	b, err := json.Marshal(c.Expect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Contains(string(b), "{{dir}}")
 }
 
 func withMarker(env map[string]string) map[string]string {
