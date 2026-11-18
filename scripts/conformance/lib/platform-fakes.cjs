@@ -90,6 +90,9 @@ const state = {
   held: [],
   // Held writes whose client disconnected before the release.
   abandoned: [],
+  // Released writes: delivered true once the answer reached a still-open
+  // socket, false when the client was gone, null until either.
+  deliveries: [],
   // Secret writes answered, by repository (owner/repo -> count).
   writes: {},
 };
@@ -256,7 +259,25 @@ const GITHUB_ROUTES = [
       } catch {
         return answer(res, 422, { message: "Invalid request" });
       }
-      state.writes[`${m[1]}/${m[2]}`] = (state.writes[`${m[1]}/${m[2]}`] ?? 0) + 1;
+      const repoKey = `${m[1]}/${m[2]}`;
+      if (req.released) {
+        // A released write counts once its answer was fully written to the
+        // client's connection ("finish"); a connection that closed first
+        // leaves it undelivered. Whether the client still read it, the fake
+        // cannot know: the suite's fence check says what it proves without.
+        const delivery = { repo: repoKey, name, delivered: null };
+        state.deliveries.push(delivery);
+        res.once("finish", () => {
+          if (delivery.delivered !== null) return;
+          delivery.delivered = true;
+          state.writes[repoKey] = (state.writes[repoKey] ?? 0) + 1;
+        });
+        res.once("close", () => {
+          if (delivery.delivered === null) delivery.delivered = false;
+        });
+      } else {
+        state.writes[repoKey] = (state.writes[repoKey] ?? 0) + 1;
+      }
       return answer(res, existed ? 204 : 201, {}, credential.expiry);
     },
   },
@@ -451,6 +472,7 @@ const control = http.createServer((req, res) => {
         codesUsed: Object.entries(state.codes).filter(([, v]) => v.used).map(([k]) => k),
         held: state.held.map((h) => ({ repo: h.repo, name: h.name, connected: !h.disconnected && h.connected() })),
         abandoned: state.abandoned,
+        deliveries: state.deliveries,
         writes: state.writes,
         mints: state.mints,
       });
