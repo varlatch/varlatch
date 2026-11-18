@@ -236,8 +236,27 @@ smoke.
 - `requests.log`: every retrieval, from k6 (`k6/g9a.js`): phase, scheduled
   start, latency counted from the scheduled start, service time, status,
   error (`busy` for `SQLITE_BUSY`), varlatchd's request id and the
-  identity whose credential it carried. k6's dropped iterations (requests
-  it could not send on time) are in `k6-summary.json`.
+  identity whose credential it carried, then the raw dispatch time, the
+  scenario's start and the iteration. k6's dropped iterations (requests it
+  could not send on time) are in `k6-summary.json`. They still fail the
+  run.
+  - **How the scheduled start is found.** The script's scheduled start
+    counts k6's started iterations (`iterationInTest`), which leave the
+    dropped ones out. So after d drops it is d intervals early: in G9's
+    bound run of 2026-11-18, 29 drops at 50/s made every later request
+    read 580 ms late.
+  - **With drops,** the report places each request on its slot instead:
+    its iteration plus the drops before it.
+    - Those drops come from the wall clock: the smallest offset
+      round((dispatch - start) × rate) - iteration over the request and
+      every later one in its phase.
+    - So a request k6 itself sent late keeps its lateness.
+    - The report notes the drops the slots imply beside k6's count.
+  - **Without drops,** nothing changes.
+  - **Older logs** without the dispatch columns are reconstructed from
+    their own (dispatch = schedule + latency − service time).
+  - **The report's split:** for each phase, each request's latency in its
+    two parts, the dispatch's lateness and the service time.
 - `events.jsonl`: from the server: every checkpoint with its mode, why it
   ran (`interval`, `size`, `snapshot`, `close`), start, duration, busy
   result, frames in the log and checkpointed, and the WAL size before and

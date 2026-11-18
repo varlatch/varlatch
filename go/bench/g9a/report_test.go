@@ -158,7 +158,11 @@ func (r *fakeRun) write(t *testing.T) string {
 	}
 	var rq strings.Builder
 	for _, q := range r.reqs {
-		fmt.Fprintf(&rq, "%sR,%s,%d,%d,%d,%d,%s,%s,%s\n", r.prefix, q.Phase, q.SchedUs, q.Lat.Microseconds(), q.Service.Microseconds(), q.Status, q.Err, q.RequestID, q.Identity)
+		fmt.Fprintf(&rq, "%sR,%s,%d,%d,%d,%d,%s,%s,%s", r.prefix, q.Phase, q.SchedUs, q.Lat.Microseconds(), q.Service.Microseconds(), q.Status, q.Err, q.RequestID, q.Identity)
+		if q.DispatchUs != 0 {
+			fmt.Fprintf(&rq, ",%d,%d,%d", q.DispatchUs, q.StartUs, q.Iter)
+		}
+		rq.WriteString("\n")
 		if r.prefix != "" {
 			rq.WriteString(`time="x" level=info msg="something else"` + "\n")
 		}
@@ -1280,5 +1284,94 @@ func TestReportBoundRunPhaseCounters(t *testing.T) {
 		!strings.Contains(missing, "disclose writes per phase (620 made, 0 failed, 1 busy, 0 late, 0 skipped) do not add up to its totals (620, 0, 0, 0, 0)") ||
 		strings.Contains(fails+missing, "value writes in phase") {
 		t.Fatalf("verdict %s: fails %v, inconclusive %v", rep.Verdict, rep.Fails, rep.Missing)
+	}
+}
+
+// k6 drops an iteration when no VU is free, and its iterationInTest counts
+// only the ones it started, so the script's schedule after d drops is d
+// intervals early. In G9's bound run of 2026-11-18, 29 drops at 50/s made
+// every later request read 580 ms late. With drops, the report places each
+// request on its wall-clock slot: 29 drops no longer add 580 ms, the drops
+// still fail the run, and the slots imply exactly k6's 29. The same holds
+// for a log in the older format, without the dispatch columns.
+func TestReportDroppedIterationsShiftNothing(t *testing.T) {
+	shortGate(t)
+	const drops, at50 = 29, 200 // slots 200 to 228 of p50 dropped
+	dropped := func(withDispatch bool) *fakeRun {
+		r := good()
+		var kept []Request
+		starts := map[string]int64{}
+		off := 0.0
+		for _, ph := range r.plan.Phases {
+			starts[ph.Name] = at(off)
+			off += ph.Seconds
+		}
+		slot := map[string]int64{}
+		for _, q := range r.reqs {
+			k := slot[q.Phase]
+			slot[q.Phase]++
+			if q.Phase == "p50" && k >= at50 && k < at50+drops {
+				continue
+			}
+			iter := k
+			if q.Phase == "p50" && k >= at50+drops {
+				iter = k - drops
+			}
+			interval := int64(1e6 / map[string]int{"warmup": 10, "p10": 10, "p50": 50}[q.Phase])
+			dispatch := starts[q.Phase] + k*interval + 2000 // sent 2 ms after its slot
+			if q.Phase == "p50" && k == 150 {
+				dispatch += 400_000 // a stalled k6 sent this one 400 ms late
+			}
+			// What the script computed: the schedule from the iteration.
+			q.SchedUs = starts[q.Phase] + iter*interval
+			q.Lat = time.Duration(dispatch-q.SchedUs)*time.Microsecond + q.Service
+			if withDispatch {
+				q.DispatchUs, q.StartUs, q.Iter = dispatch, starts[q.Phase], iter
+			}
+			kept = append(kept, q)
+		}
+		r.reqs = kept
+		r.dropped = drops
+		return r
+	}
+	for _, withDispatch := range []bool{true, false} {
+		r := dropped(withDispatch)
+		// Unfixed, a request after the drops reads 580 ms late.
+		lastLat := r.reqs[len(r.reqs)-1].Lat
+		if lastLat < 580*time.Millisecond {
+			t.Fatalf("the fixture's last request reads %v, not the script's 580 ms shift", lastLat)
+		}
+		rep, err := Analyze(r.write(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var p50 PhaseResult
+		for _, ph := range rep.Phases {
+			if ph.Name == "p50" {
+				p50 = ph
+			}
+		}
+		b := rep.Schedule
+		fails := strings.Join(rep.Fails, "\n")
+		// The request k6 sent 400 ms late keeps its lateness (402 ms, plus
+		// its 4 ms service): drops before it can only be inferred from the
+		// requests sent on time after it.
+		if p50.Stats.P95 > 10 || p50.Stats.Max != 406 || b == nil || !b.WallClock || b.InferredDrops != drops || b.Moved != 500-at50-drops ||
+			b.MaxShiftMs != 580 || b.Reconstructed == withDispatch {
+			t.Fatalf("with dispatch %v: p50 %+v, schedule %+v", withDispatch, p50.Stats, b)
+		}
+		// The drops are still a failure of the run, and no phase p95 is.
+		if rep.Verdict != Fail || !strings.Contains(fails, "k6 dropped 29 requests") || strings.Contains(fails, "phase p50: p95") {
+			t.Fatalf("with dispatch %v: %s %v", withDispatch, rep.Verdict, rep.Fails)
+		}
+		md := rep.Markdown()
+		if !strings.Contains(md, "from each request's wall-clock slot, since k6 dropped 29 iterations") || !strings.Contains(md, "| p50 | 2.0 | 402.0 | 4.0 | 4.0 |") {
+			t.Fatalf("markdown:\n%s", md)
+		}
+	}
+	// Without drops the iteration slots stand, and nothing moves.
+	rep, err := Analyze(good().write(t))
+	if err != nil || rep.Schedule == nil || rep.Schedule.WallClock || rep.Schedule.Moved != 0 || rep.Verdict != Pass {
+		t.Fatalf("no drops: %v %+v %s", err, rep.Schedule, rep.Verdict)
 	}
 }

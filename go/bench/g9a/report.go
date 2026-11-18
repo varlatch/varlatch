@@ -40,6 +40,11 @@ type Request struct {
 	// RequestID is the server's X-Request-Id, and Identity the manifest
 	// identity whose credential the request carried ("" in older logs).
 	RequestID, Identity string
+	// DispatchUs is when k6 sent it, StartUs its scenario's start, and Iter
+	// its iteration in the scenario (k6's iterationInTest, which leaves out
+	// dropped iterations); all 0 in older logs (dropSafe).
+	DispatchUs, StartUs int64
+	Iter                int64
 }
 
 // Stats are latency percentiles (nearest rank).
@@ -212,6 +217,11 @@ type Report struct {
 	BoundRun    bool              `json:"boundRun,omitempty"`
 	WriteLoad   []WriteLoadResult `json:"writeLoad,omitempty"`
 	WriteTotals []WriteLoadResult `json:"writeTotals,omitempty"`
+
+	// Schedule is how the requests' scheduled starts were found (dropSafe),
+	// and Latency each phase's latency in its parts.
+	Schedule *ScheduleBasis `json:"schedule,omitempty"`
+	Latency  []LatencyParts `json:"latencyParts,omitempty"`
 
 	convergeLines []ConvergeLine
 	startUs       int64 // the run's start, for offsets
@@ -501,7 +511,7 @@ func ReadRequests(path string) ([]Request, error) {
 		}
 		rec := strings.TrimRight(line[i+2:], `" `)
 		p := strings.Split(rec, ",")
-		if len(p) != 6 && len(p) != 8 {
+		if len(p) != 6 && len(p) != 8 && len(p) != 11 {
 			return nil, fmt.Errorf("%s:%d: %d fields in %q", path, n, len(p), rec)
 		}
 		var r Request
@@ -520,8 +530,20 @@ func ReadRequests(path string) ([]Request, error) {
 			return nil, fmt.Errorf("%s:%d: %w", path, n, err)
 		}
 		r.Lat, r.Service, r.Err = time.Duration(lat)*time.Microsecond, time.Duration(svc)*time.Microsecond, p[5]
-		if len(p) == 8 {
+		if len(p) >= 8 {
 			r.RequestID, r.Identity = p[6], p[7]
+		}
+		if len(p) == 11 {
+			var errs []error
+			r.DispatchUs, err = strconv.ParseInt(p[8], 10, 64)
+			errs = append(errs, err)
+			r.StartUs, err = strconv.ParseInt(p[9], 10, 64)
+			errs = append(errs, err)
+			r.Iter, err = strconv.ParseInt(p[10], 10, 64)
+			errs = append(errs, err)
+			if err := errors.Join(errs...); err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", path, n, err)
+			}
 		}
 		out = append(out, r)
 	}
@@ -589,6 +611,21 @@ func Analyze(dir string) (*Report, error) {
 	if r.convergeLines, err = ReadConverge(filepath.Join(dir, FileConverge)); err != nil {
 		return nil, err
 	}
+	// k6's iteration count leaves dropped iterations out: with drops, the
+	// requests go on their wall-clock slots (latency.go).
+	dropped := 0.0
+	if sum.Dropped != nil {
+		dropped = sum.Dropped.Count
+	}
+	b := dropSafe(reqs, r.Plan, dropped)
+	r.Schedule = &b
+	if b.WallClock {
+		r.note("k6 dropped %.0f iterations, so each request was placed on its wall-clock slot (k6's iteration count leaves dropped ones out): %d requests moved, by up to %.0f ms; the slots skip %d before the phases' last requests", dropped, b.Moved, b.MaxShiftMs, b.InferredDrops)
+		if float64(b.InferredDrops) != dropped {
+			r.note("the slots skip %d iterations, k6 counted %.0f dropped: the others came after a phase's last request, or a request started more than half an interval late and its lateness reads up to that much short", b.InferredDrops, dropped)
+		}
+	}
+	r.Latency = latencyParts(reqs, r.Plan)
 	r.analyze(events, reqs, sum)
 	if access == nil {
 		r.missing("no access log: the requests per client address and request window are not shown")
@@ -1384,6 +1421,17 @@ func (r *Report) Markdown() string {
 		fmt.Fprintf(&b, "| %s | %d | %g | %d | %d | %d | %d | %.1f | %.1f | %.1f | %.1f |\n", name, p.Rate, p.Seconds, s.N, p.Expected, s.Failed, p.Busy, s.P50, s.P95, s.P99, s.Max)
 	}
 	fmt.Fprintf(&b, "\nk6 dropped iterations: %.0f. SQLITE_BUSY seen by the server: %d.\n\n", r.Dropped, r.ServerBusy)
+	if len(r.Latency) > 0 {
+		basis := "each request's iteration slot (k6 dropped none)"
+		if r.Schedule != nil && r.Schedule.WallClock {
+			basis = fmt.Sprintf("each request's wall-clock slot, since k6 dropped %.0f iterations and its iteration count leaves them out", r.Schedule.K6Dropped)
+		}
+		fmt.Fprintf(&b, "Latency in its parts, from %s: the dispatch's lateness from the scheduled start, and the service time.\n\n| phase | lateness p99 ms | lateness max ms | service p95 ms | service max ms |\n|---|---:|---:|---:|---:|\n", basis)
+		for _, l := range r.Latency {
+			fmt.Fprintf(&b, "| %s | %.1f | %.1f | %.1f | %.1f |\n", l.Phase, l.LatenessP99Ms, l.LatenessMaxMs, l.ServiceP95Ms, l.ServiceMaxMs)
+		}
+		b.WriteString("\n")
+	}
 
 	if r.BoundRun {
 		fmt.Fprintf(&b, "## Write load (bound run)\n\nThe run's writes scaled by %g in W1's mix: per second, (s − 1) × the phase's rate disclosures (the read path of values, its audit event first; in the server, not requests of the load) and (s − 1) × k × targets / period value writes (a new version and its audit event, into an environment no Sync Target reads). Open loop: a write dispatched more than the tolerance after its time is late, and one due while %d are in flight is skipped (not sent); each is counted under the phase that scheduled it.\n\n", r.Plan.WriteScale, WriteInFlight)
