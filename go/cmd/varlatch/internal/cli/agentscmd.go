@@ -4,6 +4,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/agents"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/toml"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
@@ -192,13 +194,6 @@ func initCommand(r *Run) error {
 	if resolved == nil {
 		return UsageErrorWithUsage("varlatch init: no server to write in "+clientctx.RepoConfigFile+"; pass --server <url>, or sign in first with varlatch login --server <url>", "\n"+initUsage)
 	}
-	// varlatch.toml is committed: a user name or password in the server URL,
-	// wherever it came from, would be committed with it. Nothing is written,
-	// and the URL is not repeated.
-	if server, ok := resolved.Server.(string); ok && clientctx.HasUserinfo(server) {
-		return UsageError("varlatch init: a server URL with a user name or password can't be written to " + clientctx.RepoConfigFile +
-			", so nothing was written; give the server without them (--server <url>)")
-	}
 	said := ""
 	if resolved.Source != clientctx.ServerFlag {
 		said = " (" + serverSourceWords[resolved.Source] + ")"
@@ -208,17 +203,28 @@ func initCommand(r *Run) error {
 		environment = "development"
 	}
 	serverText := jsjson.String(resolved.Server)
+	// Each value as a TOML basic string, escaped, so the file reads back as
+	// exactly what was given.
 	lines := []string{
-		`server = "` + serverText + `"`,
-		`organization = "` + org + `"`,
-		`project = "` + project + `"`,
-		`default_environment = "` + environment + `"`,
+		"server = " + TOMLString(serverText),
+		"organization = " + TOMLString(org),
+		"project = " + TOMLString(project),
+		"default_environment = " + TOMLString(environment),
 		"",
+	}
+	// varlatch.toml is committed: a user name or password in the server URL,
+	// wherever it came from, would be committed with it. The check reads the
+	// server as the file will give it back, so it and the writer cannot
+	// disagree. Nothing is written, and the URL is not repeated.
+	readBack, err := readBackServer(strings.Join(lines, "\n"))
+	if err != nil || readBack != serverText || clientctx.HasUserinfo(readBack) {
+		return UsageError("varlatch init: a server URL with a user name or password can't be written to " + clientctx.RepoConfigFile +
+			"; give the server's address without them. Nothing was written.")
 	}
 	if err := os.WriteFile(filepath.Join(cwd, clientctx.RepoConfigFile), []byte(strings.Join(lines, "\n")), 0o666); err != nil {
 		return err
 	}
-	if err := r.println("Wrote " + clientctx.RepoConfigFile + " for " + serverText + said + ". Commit it; it contains no credentials."); err != nil {
+	if err := r.println("Wrote " + clientctx.RepoConfigFile + " for " + clientctx.MaskUserinfo(serverText) + said + ". Commit it; it contains no credentials."); err != nil {
 		return err
 	}
 	// ADR-0043 Decision 7: the files coding agents read, unless
@@ -248,6 +254,54 @@ func initCommand(r *Run) error {
 		}
 	}
 	return nil
+}
+
+// TOMLString is s as a TOML basic string: quotes, backslashes and control
+// characters escaped, so a TOML reader gives back s byte for byte.
+func TOMLString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04X`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// readBackServer is the server a varlatch.toml with this text gives, read
+// as the CLI reads it (internal/toml, smol-toml's parser).
+func readBackServer(text string) (string, error) {
+	doc, err := toml.ParseString(text)
+	if err != nil {
+		return "", err
+	}
+	v, _ := doc.Get("server")
+	server, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("varlatch.toml: no server")
+	}
+	return server, nil
 }
 
 // isTerminal is a stream's isTTY.

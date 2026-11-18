@@ -2,7 +2,11 @@
 
 package clientctx
 
-import "github.com/varlatch/varlatch/go/lib/whatwg"
+import (
+	"strings"
+
+	"github.com/varlatch/varlatch/go/lib/whatwg"
+)
 
 // HasUserinfo is whether a server URL holds a user name or password, read
 // from the URL itself (WHATWG parsing, as `new URL` reads it), never from
@@ -13,10 +17,19 @@ import "github.com/varlatch/varlatch/go/lib/whatwg"
 // (HasAtSign: "@", "%40", "\u0040", ...), so a malformed URL is never
 // taken for a clean one; that is broader than masking, on purpose, since
 // it decides what may be committed.
+//
+// A URL that parses holds one too when it has a backslash and an at-sign
+// in any form: WHATWG ends a special scheme's authority at the backslash
+// ("https://u:p\u0040host" has the host "u" and the path "\u0040host"),
+// but a reader that decodes escapes, or one that does not take a backslash
+// for a slash, sees "u:p@host".
 func HasUserinfo(server string) bool {
 	u, ok := whatwg.ParseURL(server)
 	if !ok {
 		return HasAtSign(server)
 	}
-	return u.Username != "" || u.Password != ""
+	if u.Username != "" || u.Password != "" {
+		return true
+	}
+	return strings.ContainsRune(server, '\\') && HasAtSign(server)
 }

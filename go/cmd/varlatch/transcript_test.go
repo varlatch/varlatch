@@ -77,6 +77,26 @@ var differences = map[string]transcript.Difference{
 		}
 		o.Files = files
 	},
+	// init writes each value of varlatch.toml as an escaped TOML basic
+	// string, so the file reads back as what was given; the TypeScript CLI
+	// writes the value verbatim between quotes. The recording's lines
+	// become the escaped form of the same values.
+	"toml-escaped": func(o *transcript.Outcome, _ transcript.Outcome) {
+		files := map[string]transcript.FileState{}
+		for path, f := range o.Files {
+			if strings.HasSuffix(path, "varlatch.toml") {
+				lines := strings.Split(f.Content, "\n")
+				for i, line := range lines {
+					if m := verbatimTOMLLine.FindStringSubmatch(line); m != nil {
+						lines[i] = m[1] + " = " + cli.TOMLString(m[2])
+					}
+				}
+				f.Content = strings.Join(lines, "\n")
+			}
+			files[path] = f
+		}
+		o.Files = files
+	},
 	// An error the TypeScript CLI lets escape (recorded as {{uncaught ...}}):
 	// Node.js prints a stack and exits 1; the Go CLI exits 1 too, with one
 	// line saying what went wrong. Only that stderr is accepted; the status
@@ -115,6 +135,9 @@ func withSkillVersion(path, content string) string {
 // backslashPathFixture is the backslash-path cases' server, as a JSON
 // string holds it.
 const backslashPathFixture = `https://example.com\\path@segment`
+
+// verbatimTOMLLine is a line init writes, `key = "<value as given>"`.
+var verbatimTOMLLine = regexp.MustCompile(`^([a-z_]+) = "(.*)"$`)
 
 // recordedUserAgent is the TypeScript CLI's User-Agent in a recording.
 var recordedUserAgent = regexp.MustCompile(`^varlatch-cli/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)

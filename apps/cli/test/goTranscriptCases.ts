@@ -490,7 +490,7 @@ const agentFiles51d: TranscriptCase[] = [
   { id: "init.several-credentials", title: "several credentials and no default: no server", args: INIT, files: { "config/credentials.json": pretty({ servers: { "https://a.example": { token: "vlt_cli_fakeAAAA" }, "https://b.example": { token: "vlt_cli_fakeBBBB" } } }) } },
   { id: "init.empty-server", title: "an empty --server counts as none", args: [...INIT, "--server", ""] },
   { id: "init.no-server", title: "no server anywhere: a usage error, nothing written", args: INIT },
-  { id: "init.raw-values", title: "the values go into varlatch.toml as given", args: ["init", "--org", 'a"b', "--project", "w\\b", "--server", "https://x.example/p q", "--default-environment", "d e", "--no-agent-files"] },
+  { id: "init.raw-values", title: "the values go into varlatch.toml as given", args: ["init", "--org", 'a"b', "--project", "w\\b", "--server", "https://x.example/p q", "--default-environment", "d e", "--no-agent-files"], differences: ["toml-escaped"] },
   { id: "init.bad-settings", title: "an unreadable settings.json", args: INIT, files: { "config/settings.json": "nope" } },
   { id: "init.in-repository", title: "inside a configured repository: nothing to initialize, exit 1", args: INIT_SERVER, files: { "repo/varlatch.toml": TOML_SERVER }, cwd: "repo/sub" },
   { id: "init.in-repository.assisted", title: "the same in assisted mode names --assisted in its commands", args: ["--assisted", ...INIT_SERVER], files: { "repo/varlatch.toml": TOML_SERVER }, cwd: "repo" },

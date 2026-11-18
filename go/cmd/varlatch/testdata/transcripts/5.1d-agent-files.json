@@ -6143,6 +6143,9 @@
         "d e",
         "--no-agent-files"
       ],
+      "differences": [
+        "toml-escaped"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Wrote varlatch.toml for https://x.example/p q. Commit it; it contains no credentials.\n",
