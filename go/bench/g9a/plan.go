@@ -45,6 +45,38 @@ type Plan struct {
 	// IdleProbeSeconds is the fsync probe before the load starts.
 	IdleProbeSeconds float64    `json:"idleProbeSeconds"`
 	Thresholds       Thresholds `json:"thresholds"`
+	// WriteScale s, when above 1, makes the run a bound run: the server
+	// adds a write load that scales the run's writes by s, in W1's mix
+	// (WriteRates), so that the WAL passes the bound under load at the
+	// same bound (ADR-0059 G9: "a separate run at the same bound raises
+	// the write rate until the trigger fires"). 0 or 1 is no write load.
+	WriteScale float64 `json:"writeScale,omitempty"`
+}
+
+// MaxWriteScale is the largest write scale a plan may set.
+const MaxWriteScale = 4
+
+// BoundRun says the plan adds a write load (WriteScale above 1).
+func (p Plan) BoundRun() bool { return p.WriteScale > 1 }
+
+// WriteRates are a phase's added writes per second in a bound run, W1's
+// own writes scaled by WriteScale − 1:
+//   - disclosures: the load's own, (s − 1) × the phase's rate, through the
+//     read path of values with its audit event committed before the value
+//     is decrypted, by the manifest's identities on their environments, as
+//     k6 asks for them (in the server, not over HTTP, so they are not
+//     requests of the load);
+//   - value writes: the converge runs' own (ChangesPerRun values in each
+//     of the Targets' environments every period), (s − 1) ×
+//     ChangesPerRun × Targets / ConvergeEverySeconds a second, each a new
+//     version and its audit event (values.SetValue), into an environment
+//     no Sync Target reads, so the converge runs' work does not change.
+func (p Plan) WriteRates(ph Phase) (disclosures, valueWrites float64) {
+	if !p.BoundRun() {
+		return 0, 0
+	}
+	f := p.WriteScale - 1
+	return f * float64(ph.Rate), f * float64(p.ChangesPerRun*p.Targets) / p.ConvergeEverySeconds
 }
 
 // Phase is a constant arrival rate for a duration. A warm-up phase runs the
@@ -231,6 +263,16 @@ func (p Plan) Validate() error {
 		return errors.New("plan: idleProbeSeconds must be at least 3 (a p99 needs 100 samples of each kind)")
 	case p.Thresholds.P95Ms <= 0 || p.Thresholds.MemoryMiB <= 0 || p.Thresholds.WALPeakFactor <= 0:
 		return errors.New("plan: thresholds must be positive")
+	case p.WriteScale != 0 && (p.WriteScale < 1 || p.WriteScale > MaxWriteScale):
+		return fmt.Errorf("plan: writeScale %g must be 0 (none) or between 1 and %d", p.WriteScale, MaxWriteScale)
+	}
+	// A bound run must add writes of both kinds.
+	if p.BoundRun() {
+		for _, k := range WriteKinds {
+			if p.PlannedWriteTotal(k) == 0 {
+				return fmt.Errorf("plan: writeScale %g schedules no added %s writes", p.WriteScale, k)
+			}
+		}
 	}
 	return nil
 }
@@ -243,7 +285,12 @@ var gatePlan = DefaultPlan
 // can count for the gate. The fsync probe's pacing may differ, and so may a
 // WAL-triggered backup's fraction: ADR-0059 lets a run raise it when no
 // attempt held a TRUNCATE off, with the fraction recorded in its plan (the
-// report names it). Its number of attempts may not.
+// report names it). Its number of attempts may not. So may the write
+// scale: a bound run (WriteScale above 1) is G9's "separate run at the
+// same bound" that "raises the write rate until the trigger fires", which
+// the report labels and judges as such (the orchestrator's decision of
+// 2026-11-17, after the G9 run on the experiments server stayed under the
+// bound).
 func (p Plan) NotGate() []string {
 	g := gatePlan()
 	var d []string

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -269,6 +270,11 @@ func TestBenchRun(t *testing.T) {
 				e.Commits < 20*p.ChangesPerRun || e.WALBytes <= 0 || e.EngineUs <= 0 {
 				t.Fatalf("converge: %+v", e)
 			}
+			// The provider stand-in's observed latency of every call of
+			// the run (amendment 6), each at least the plan's delay.
+			if int64(len(e.ProviderCallsUs)) != e.Calls || slices.Min(e.ProviderCallsUs) < int64(p.ProviderDelayMs)*1000 {
+				t.Fatalf("provider timings: %d for %d calls, min %v", len(e.ProviderCallsUs), e.Calls, e.ProviderCallsUs)
+			}
 			runs++
 		case g9a.EvBackupEnd:
 			// A real backup: its snapshot, and the archive it sealed.
@@ -471,5 +477,52 @@ func TestBenchDestinationFlags(t *testing.T) {
 	}
 	if _, err := os.Stat(data); !os.IsNotExist(err) {
 		t.Errorf("the data directory was made: %v", err)
+	}
+}
+
+// A bound run (writeScale above 1): the server makes the added writes in
+// W1's mix, in-process, through the production paths: disclosures by the
+// load's identities, and value writes into an environment of the bound
+// run's own, which no Sync Target reads. Every planned write is made, none
+// fails, and the requests of the load are only k6's.
+func TestBenchBoundRun(t *testing.T) {
+	p := quickPlan()
+	p.Phases = []g9a.Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 4, Seconds: 3}}
+	p.Backups = nil
+	p.ConvergeEverySeconds = 600 // no converge run; 1 × 5 × 20 / 600 value writes a second
+	p.ProviderDelayMs = 5
+	p.WriteScale = 2     // + 4 disclosures a second in p, 1 in the warm-up
+	p.ChangesPerRun = 30 // 1 × 30 × 20 / 600 = 1 value write a second
+	out := benchRun(t, p, func(base string, manifest []g9a.ManifestEntry) {
+		resp, err := http.Post(base+"/run/start", "", nil)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("/run/start: %v %v", err, resp)
+		}
+		resp.Body.Close()
+		time.Sleep(6 * time.Second)
+	})
+	events, err := g9a.ReadEvents(filepath.Join(out, g9a.FileEvents))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ends := map[string]g9a.Event{}
+	for _, e := range events {
+		switch e.Ev {
+		case g9a.EvWriteLoadEnd:
+			ends[e.Kind] = e
+		case g9a.EvError:
+			t.Fatalf("error: %s", e.Err)
+		case g9a.EvRunEnd:
+			if e.Requests != 0 {
+				t.Fatalf("the added writes counted as requests of the load: %+v", e)
+			}
+		}
+	}
+	d, v := ends[string(g9a.WriteDisclose)], ends[string(g9a.WriteValue)]
+	if d.Planned != 13 || d.Writes != d.Planned || d.WritesFailed != 0 || d.WritesBusy != 0 || d.WritesLate != 0 || d.WritesSkipped != 0 {
+		t.Errorf("disclosures: %+v", d)
+	}
+	if v.Planned != 4 || v.Writes != v.Planned || v.WritesFailed != 0 || v.WritesLate != 0 || v.WritesSkipped != 0 {
+		t.Errorf("value writes: %+v", v)
 	}
 }

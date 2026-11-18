@@ -3,8 +3,9 @@
 // Command g9a runs ADR-0059's storage benchmark (gate G9a) with k6:
 //
 //	g9a plan [-scale f] [-wal-bound b] [-backup-step-pages n -backup-pause-ms ms]
-//	         [-wal-fraction f] [-wal-attempts n]
-//	                                         print a plan (the G9a profile)
+//	         [-wal-fraction f] [-wal-attempts n] [-write-scale s]
+//	                                         print a plan (the G9a profile;
+//	                                         -write-scale makes a bound run)
 //	g9a report dir                           judge a run: exit 0 pass, 1 fail, 2 inconclusive
 //
 // The run itself is served by varlatchd built with the g9a tag
@@ -37,6 +38,7 @@ func main() {
 		pauseMs := fs.Int("backup-pause-ms", 0, "pause between backup steps in ms (default: the engine's)")
 		fraction := fs.Float64("wal-fraction", 0, "WAL-triggered backups start at this fraction of the bound (default 0.95)")
 		attempts := fs.Int("wal-attempts", 0, "most WAL-triggered backups in their phase (default 5)")
+		writeScale := fs.Float64("write-scale", 0, "a bound run: scale the run's writes by this factor in W1's mix (1 to 4; default none)")
 		_ = fs.Parse(os.Args[2:])
 		p := g9a.DefaultPlan()
 		if *scale != 1 {
@@ -61,6 +63,9 @@ func main() {
 			if given["wal-attempts"] {
 				w.MaxAttempts = *attempts
 			}
+		}
+		if given["write-scale"] {
+			p.WriteScale = *writeScale
 		}
 		if err := p.Validate(); err != nil {
 			log.Fatal(err)
@@ -110,6 +115,6 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: g9a plan [-scale f] [-wal-bound bytes] [-wal-fraction f] [-wal-attempts n] | g9a report dir | g9a checkcost dir")
+	fmt.Fprintln(os.Stderr, "usage: g9a plan [-scale f] [-wal-bound bytes] [-wal-fraction f] [-wal-attempts n] [-write-scale s] | g9a report dir | g9a checkcost dir")
 	os.Exit(3)
 }

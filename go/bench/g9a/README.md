@@ -146,6 +146,75 @@ that class of disk only. Runs on shared infrastructure need the owner's
 approval first, with the load agreed (the profile above), as for every
 load test.
 
+### Bound runs (`-write-scale`)
+
+G9 asks that when the WAL never reaches the shipped bound under the
+profile, "a separate run at the same bound raises the write rate until
+the trigger fires and passes the same criteria". `g9a plan -write-scale s`
+(1 to 4, recorded as `writeScale` in the plan) makes such a bound run. The
+server then adds, in every phase, writes in W1's mix, open loop and
+in-process through the production paths, so they are not requests of the
+load:
+
+- **disclosures:** (s − 1) × the phase's rate a second, by the manifest's
+  identities, through the read path of values, with the audit event
+  committed before the value is decrypted;
+- **value writes:** (s − 1) × k × targets / period a second (the converge
+  runs' own rate), each a new version and its audit event
+  (`values.SetValue`). They go into an extra Project with the same Contract
+  and one environment, which has no Sync Target, so the converge runs'
+  work does not change.
+
+Everything else in the profile stays as it is. The report calls the run
+"G9 (bound run)" and counts it; it is not a diagnostic run.
+
+- It judges the run by every criterion above.
+- It is **inconclusive** when:
+  - the WAL never crossed the bound (no size-triggered `TRUNCATE`);
+  - the WAL-triggered backup never started;
+  - the writes made and skipped do not add up to the count the report
+    derives from the plan itself (not the server's own count);
+  - either kind made no writes;
+  - the per-phase counts do not add up to the totals;
+  - a backup shows no upload to the destination `varlatchd.conf` names
+    (the same holds for a gate run whose converge runs called the
+    provider).
+- It **fails** on an added write that:
+  - failed or met `SQLITE_BUSY`;
+  - was late: dispatched more than `WriteLateTolerance` (250 ms) after
+    its scheduled time, as after a stalled scheduler. A late write is
+    still made, and the report gives the largest lag. The tolerance guards
+    the load's arrival pattern only: ADR-0059's 100 ms p95 applies to
+    retrievals and sets no limit on these writes. At G9's 35 added
+    disclosures a second in the 50/s phase, 250 ms bounds any bunching to
+    about 9 writes;
+  - was skipped: due while `WriteInFlight` (64) were still running, so
+    never sent.
+- Each write is counted under the phase that scheduled it. The in-flight
+  writes are drained before the last counts are logged. Every per-phase
+  counter (made, failed, busy, late, skipped) must add up to its stream's
+  total. A failed, busy, late or skipped write in any phase fails the run,
+  whatever the totals say.
+- It is also **inconclusive** without the provider's observed timings
+  (below).
+- `events.jsonl` records the added writes per second and kind
+  (`write_load`), with totals against the plan (`write_load_end`).
+
+**The provider's timings** (ADR-0059 amendment 6, for every run with the
+real engine). The run's Coolify stand-in waits the plan's
+`providerDelayMs` before each answer during the load (0 during the
+untimed first pass). It records each call's observed latency, from the
+request's arrival to its answer, and each `converge_end` carries its
+run's calls (`providerCallsUs`). The report shows the configured delay
+beside the observed distribution (calls, min, median, p95, max). The
+report checks the coverage run by run: a converge run whose timings don't
+match its calls makes the run inconclusive. So does a run whose converge
+runs called the provider, or a bound run, with no timings at all.
+
+G9's bound run uses write scale 1.7: in G9's first run the WAL peaked at
+0.72 of the bound, so the bound needs about 1.39 times its writes. A bound
+run at 1.7 whose WAL stays under the bound is rerun once at 2.0.
+
 G9 (ADR-0059 amendment 6) runs the backups through the shipped backup
 path to an S3-compatible server on the same host. `G9A_BACKUP_DESTINATIONS`
 (a destinations file, absolute, in the `backup_destinations_file` format)

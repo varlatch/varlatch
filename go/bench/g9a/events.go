@@ -94,6 +94,23 @@ type Event struct {
 	Requests int64 `json:"requests,omitempty"`
 	Errors   int64 `json:"errors,omitempty"`
 	BusyErrs int64 `json:"busyErrors,omitempty"`
+
+	// write_load, write_load_end (a bound run's added writes; Kind is
+	// theirs, Phase the phase that scheduled them): the writes made, failed,
+	// met SQLITE_BUSY, dispatched more than WriteLateTolerance after their
+	// time (late, made all the same) and not sent (skipped); on
+	// write_load_end the writes the server planned, and in DurUs the
+	// largest dispatch lag.
+	Writes        int64 `json:"writes,omitempty"`
+	WritesFailed  int64 `json:"writesFailed,omitempty"`
+	WritesBusy    int64 `json:"writesBusy,omitempty"`
+	WritesLate    int64 `json:"writesLate,omitempty"`
+	WritesSkipped int64 `json:"writesSkipped,omitempty"`
+	Planned       int64 `json:"planned,omitempty"`
+
+	// converge_end: the provider stand-in's observed latency of each of
+	// the run's calls, in microseconds (ADR-0059 amendment 6).
+	ProviderCallsUs []int64 `json:"providerCallsUs,omitempty"`
 }
 
 // The event kinds.

@@ -29,6 +29,8 @@ type fakeRun struct {
 	// of its identity (addressOf); access replaces it, noAccess drops it.
 	access   []accessRecord
 	noAccess bool
+	// conf is the run's varlatchd.conf (none when empty).
+	conf string
 }
 
 // admitted gives each record the window varlatchd's request window admits it
@@ -188,6 +190,9 @@ func (r *fakeRun) write(t *testing.T) string {
 	}
 	if !r.noAccess {
 		files[FileAccessLog] = al.String()
+	}
+	if r.conf != "" {
+		files[FileConfig] = r.conf
 	}
 	for name, body := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
@@ -1066,5 +1071,214 @@ func TestReportProfileWindow(t *testing.T) {
 		if !strings.Contains(string(md), fmt.Sprintf("overlaps the load: %t.", c.want)) {
 			t.Errorf("report.md:\n%s", md)
 		}
+	}
+}
+
+// A bound run (writeScale above 1): labelled and judged as G9's separate
+// run at the same bound, its added writes all made, none failed, busy or
+// late, and the WAL past the bound.
+func TestReportBoundRun(t *testing.T) {
+	shortGate(t)
+	bound := func() *fakeRun {
+		r := good()
+		r.plan.WriteScale = 2
+		// The provider stand-in's observed timings (amendment 6), and the
+		// backups' uploads to the configured destination.
+		r.conf = "listen = 127.0.0.1:8080\nbackup_destinations_file = /data/s3/destinations.json\nbackup_destination = local\n"
+		for i := range r.events {
+			switch r.events[i].Ev {
+			case EvConvergeEnd:
+				r.events[i].Calls = 3
+				r.events[i].ProviderCallsUs = []int64{201_000, 203_500, 260_000}
+			case EvBackupEnd:
+				r.events[i].UploadedTo = "local"
+			}
+		}
+		// good()'s phases: 20 + 100 + 500 disclosures; 1 × 5 × 20 / 10 =
+		// 10 value writes a second, 20 + 100 + 100.
+		for _, k := range []struct {
+			kind    WriteKind
+			planned int64
+		}{{WriteDisclose, 620}, {WriteValue, 220}} {
+			r.events = append(r.events,
+				Event{T: at(5), Ev: EvWriteLoad, Kind: string(k.kind), Phase: "p10", Writes: k.planned / 2},
+				Event{T: at(15), Ev: EvWriteLoad, Kind: string(k.kind), Phase: "p50", Writes: k.planned - k.planned/2},
+				Event{T: at(22.95), Ev: EvWriteLoadEnd, Kind: string(k.kind), Planned: k.planned, Writes: k.planned})
+		}
+		return r
+	}
+	totalOf := func(kind WriteKind, f func(*Event)) func(*fakeRun) {
+		return func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoadEnd && r.events[i].Kind == string(kind) {
+					f(&r.events[i])
+				}
+			}
+		}
+	}
+	cases := []struct {
+		name    string
+		change  func(*fakeRun)
+		verdict string
+		want    string
+	}{
+		{"good", func(*fakeRun) {}, Pass, ""},
+		{"a failed write", totalOf(WriteValue, func(e *Event) { e.WritesFailed, e.Err = 1, "refused" }), Fail, "value writes: 1 of 220 failed (0 SQLITE_BUSY); the first: refused"},
+		{"a busy write", totalOf(WriteDisclose, func(e *Event) { e.WritesFailed, e.WritesBusy, e.Err = 1, 1, "SQLITE_BUSY" }), Fail, "1 of 620 failed (1 SQLITE_BUSY)"},
+		{"late writes", func(r *fakeRun) {
+			totalOf(WriteDisclose, func(e *Event) { e.WritesLate, e.DurUs = 10, 1_500_000 })(r)
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoad && r.events[i].Kind == "disclose" && r.events[i].Phase == "p50" {
+					r.events[i].WritesLate = 10
+				}
+			}
+		}, Fail, "10 dispatched more than 250ms after their time (largest lag 1500 ms)"},
+		// A phase row's failure fails the run even when the total reads 0,
+		// and the counters that disagree with the totals are named.
+		{"a failure in a phase row only", func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoad && r.events[i].Kind == "value" && r.events[i].Phase == "p10" {
+					r.events[i].WritesFailed, r.events[i].WritesBusy, r.events[i].WritesLate = 2, 1, 3
+				}
+			}
+		}, Fail, "the bound run's value writes in phase p10: 2 failed, 1 SQLITE_BUSY, 3 late, 0 skipped"},
+		{"skipped writes", func(r *fakeRun) {
+			totalOf(WriteDisclose, func(e *Event) { e.Writes, e.WritesSkipped = 610, 10 })(r)
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoad && r.events[i].Kind == "disclose" && r.events[i].Phase == "p50" {
+					r.events[i].Writes, r.events[i].WritesSkipped = r.events[i].Writes-10, 10
+				}
+			}
+		}, Fail, "10 not sent (64 in flight)"},
+		{"writes missing", totalOf(WriteValue, func(e *Event) { e.Writes = 200 }), Inconclusive, "made 200 and skipped 0 of its 220 planned value writes"},
+		// Planned counts come from the report's plan: totals that plan and
+		// make nothing are not a pass.
+		{"nothing planned or made", func(r *fakeRun) {
+			r.eventsWithout(func(e Event) bool { return e.Ev == EvWriteLoad })
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoadEnd {
+					r.events[i].Planned, r.events[i].Writes = 0, 0
+				}
+			}
+		}, Inconclusive, "the server planned 0 disclose writes; the plan schedules 620"},
+		{"no writes made", func(r *fakeRun) {
+			r.eventsWithout(func(e Event) bool { return e.Ev == EvWriteLoad && e.Kind == "value" })
+			totalOf(WriteValue, func(e *Event) { e.Writes = 0 })(r)
+		}, Inconclusive, "the bound run made no value writes"},
+		{"the phase table and the totals disagree", func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvWriteLoad && r.events[i].Kind == "value" && r.events[i].Phase == "p10" {
+					r.events[i].Writes--
+				}
+			}
+		}, Inconclusive, "value writes per phase (219 made, 0 failed, 0 busy, 0 late, 0 skipped) do not add up to its totals (220, 0, 0, 0, 0)"},
+		{"partial provider timings", func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvConvergeEnd {
+					r.events[i].ProviderCallsUs = r.events[i].ProviderCallsUs[:1]
+					break
+				}
+			}
+		}, Inconclusive, "made 3 provider calls and has 1 observed timings"},
+		{"a backup kept local", func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Ev == EvBackupEnd {
+					r.events[i].UploadedTo = ""
+				}
+			}
+		}, Inconclusive, `backup 1 has no upload to the configured destination "local"`},
+		{"no destination configured", func(r *fakeRun) { r.conf = "listen = 127.0.0.1:8080\n" }, Inconclusive, "names no backup_destination"},
+		{"no totals", func(r *fakeRun) { r.eventsWithout(func(e Event) bool { return e.Ev == EvWriteLoadEnd }) }, Inconclusive, "no total (write_load_end)"},
+		{"no provider timings", func(r *fakeRun) {
+			for i := range r.events {
+				r.events[i].ProviderCallsUs = nil
+			}
+		}, Inconclusive, "observed call timings were not recorded"},
+		{"the WAL under the bound", func(r *fakeRun) {
+			r.eventsWithout(func(e Event) bool { return e.Ev == EvCheckpoint && e.Trigger != "interval" })
+			for i := range r.events {
+				if r.events[i].Ev == EvWAL {
+					r.events[i].Bytes = 900
+				}
+			}
+		}, Inconclusive, "under the bound (1000): it did not cross it"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := bound()
+			c.change(r)
+			rep, err := Analyze(r.write(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rep.Verdict != c.verdict || !rep.BoundRun {
+				t.Fatalf("verdict %s (bound run %v), want %s: fails %v, inconclusive %v", rep.Verdict, rep.BoundRun, c.verdict, rep.Fails, rep.Missing)
+			}
+			all := strings.Join(append(append([]string{}, rep.Fails...), rep.Missing...), "\n")
+			if c.want != "" && !strings.Contains(all, c.want) {
+				t.Fatalf("no %q in %v %v", c.want, rep.Fails, rep.Missing)
+			}
+			md := rep.Markdown()
+			if !strings.HasPrefix(md, "# G9 (bound run): ") || !strings.Contains(md, "## Write load (bound run)") || (c.name != "no totals" && !strings.Contains(md, "| all | disclose | | 620 |")) {
+				t.Fatalf("markdown:\n%s", md)
+			}
+		})
+	}
+	// The provider's timings: the configured delay beside the observed
+	// distribution, over every converge run's calls.
+	rep, err := Analyze(bound().write(t))
+	if err != nil || rep.Provider == nil || *rep.Provider != (ProviderTimings{DelayMs: 200, Calls: 6, MinMs: 201, P50Ms: 203.5, P95Ms: 260, MaxMs: 260}) ||
+		!strings.Contains(rep.Markdown(), "configured delay 200 ms a call during the load; observed per call, arrival to answer, over 6 calls of the converge runs: min 201.0 ms, median 203.5 ms, p95 260.0 ms, max 260.0 ms") {
+		t.Fatalf("provider timings: %v %+v", err, rep.Provider)
+	}
+	// Any run whose converge runs called the provider needs them too.
+	g := good()
+	for i := range g.events {
+		if g.events[i].Ev == EvConvergeEnd {
+			g.events[i].Calls = 120
+		}
+	}
+	if rep, err := Analyze(g.write(t)); err != nil || rep.Verdict != Inconclusive || !strings.Contains(strings.Join(rep.Missing, "\n"), "observed call timings were not recorded") {
+		t.Fatalf("a run without provider timings: %v %v %v", err, rep.Verdict, rep.Missing)
+	}
+	// Without the write scale, the same events are a G9a run's.
+	r := good()
+	rep, err = Analyze(r.write(t))
+	if err != nil || rep.BoundRun || !strings.HasPrefix(rep.Markdown(), "# G9a run: PASS") {
+		t.Fatalf("%v %v", err, rep.Markdown()[:40])
+	}
+}
+
+// The per-phase failure case also names the disagreement with the totals.
+func TestReportBoundRunPhaseCounters(t *testing.T) {
+	shortGate(t)
+	r := good()
+	r.plan.WriteScale = 2
+	r.conf = "backup_destination = local\n"
+	for i := range r.events {
+		switch r.events[i].Ev {
+		case EvConvergeEnd:
+			r.events[i].Calls, r.events[i].ProviderCallsUs = 1, []int64{200_500}
+		case EvBackupEnd:
+			r.events[i].UploadedTo = "local"
+		}
+	}
+	for _, k := range []struct {
+		kind    string
+		planned int64
+	}{{"disclose", 620}, {"value", 220}} {
+		r.events = append(r.events,
+			Event{T: at(5), Ev: EvWriteLoad, Kind: k.kind, Phase: "p10", Writes: k.planned, WritesBusy: map[string]int64{"disclose": 1}[k.kind]},
+			Event{T: at(22.95), Ev: EvWriteLoadEnd, Kind: k.kind, Planned: k.planned, Writes: k.planned})
+	}
+	rep, err := Analyze(r.write(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fails, missing := strings.Join(rep.Fails, "\n"), strings.Join(rep.Missing, "\n")
+	if rep.Verdict != Fail || !strings.Contains(fails, "disclose writes in phase p10: 0 failed, 1 SQLITE_BUSY, 0 late, 0 skipped") ||
+		!strings.Contains(missing, "disclose writes per phase (620 made, 0 failed, 1 busy, 0 late, 0 skipped) do not add up to its totals (620, 0, 0, 0, 0)") ||
+		strings.Contains(fails+missing, "value writes in phase") {
+		t.Fatalf("verdict %s: fails %v, inconclusive %v", rep.Verdict, rep.Fails, rep.Missing)
 	}
 }

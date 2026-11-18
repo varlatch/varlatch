@@ -200,7 +200,50 @@ type Report struct {
 	// feature-parity decision 7), reported only.
 	Converge *ConvergeCost `json:"converge,omitempty"`
 
+	// BoundRun is a bound run (Plan.WriteScale above 1): G9's separate run
+	// at the same bound with a raised write rate. WriteLoad is its added
+	// writes by phase and kind (write_load events), WriteTotals their
+	// totals against the plan's (write_load_end).
+	// Provider is the provider stand-in's timing (ADR-0059 amendment 6):
+	// its configured delay and the latencies observed for the converge
+	// runs' calls.
+	Provider *ProviderTimings `json:"providerTimings,omitempty"`
+
+	BoundRun    bool              `json:"boundRun,omitempty"`
+	WriteLoad   []WriteLoadResult `json:"writeLoad,omitempty"`
+	WriteTotals []WriteLoadResult `json:"writeTotals,omitempty"`
+
 	convergeLines []ConvergeLine
+	startUs       int64 // the run's start, for offsets
+}
+
+// ProviderTimings are the provider stand-in's: the response delay the
+// plan configured during the load, and the latency it observed for each
+// call of the converge runs (from the request's arrival to its answer).
+type ProviderTimings struct {
+	DelayMs float64 `json:"configuredDelayMs"`
+	Calls   int     `json:"calls"`
+	MinMs   float64 `json:"minMs"`
+	P50Ms   float64 `json:"p50Ms"`
+	P95Ms   float64 `json:"p95Ms"`
+	MaxMs   float64 `json:"maxMs"`
+}
+
+// WriteLoadResult is a bound run's added writes of one kind, in one phase
+// or (Phase empty) over the run.
+type WriteLoadResult struct {
+	Phase   string  `json:"phase,omitempty"`
+	Kind    string  `json:"kind"`
+	Rate    float64 `json:"ratePerSecond,omitempty"`
+	Planned int64   `json:"planned"`
+	Writes  int64   `json:"writes"`
+	Failed  int64   `json:"failed"`
+	Busy    int64   `json:"busy"`
+	Late    int64   `json:"late"`
+	Skipped int64   `json:"skipped"`
+	// MaxLagMs is the largest dispatch lag (totals only).
+	MaxLagMs float64 `json:"maxLagMs,omitempty"`
+	Err      string  `json:"firstError,omitempty"`
 }
 
 // ProfileWindow is when the CPU profile ran and when the load's requests
@@ -755,6 +798,9 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	}
 	r.Converges, r.ConvergeMs, r.ConvergesWant = len(convergeDur), stats(convergeDur), p.Converges()
 	r.Converge = convergeCost(convergeEnds, convergeStart, start, r.convergeLines)
+	r.startUs = start
+	r.providerTimings(convergeEnds)
+	r.deliveries(backupEnds, convergeEnds)
 	if fullConverges < r.ConvergesWant {
 		r.missing("%d of the plan's %d converge runs ran over all %d targets during the load", fullConverges, r.ConvergesWant, p.Targets)
 	}
@@ -790,6 +836,9 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	}
 	if r.SizeTruncates == 0 {
 		r.missing("the WAL never passed the bound (%d bytes) under load: the size trigger was not shown; raise the write rate at this bound or lower the bound (ADR-0059 G9a)", p.WALBound)
+	}
+	if p.BoundRun() {
+		r.writeLoad(events, start)
 	}
 
 	// A backup overlapped the bound when the size trigger was deferred
@@ -1097,6 +1146,185 @@ func (r *Report) fsync(events []Event, start, end int64) {
 	}
 }
 
+// providerTimings collects the stand-in's observed call latencies from the
+// converge runs (ADR-0059 amendment 6 makes them part of G9's evidence,
+// beside the configured delay). A run whose converge runs called the
+// provider, or a bound run, without them has not shown them.
+func (r *Report) providerTimings(ends []Event) {
+	var lat []float64
+	calls, uncovered := int64(0), 0
+	for _, e := range ends {
+		calls += e.Calls
+		// Every converge run's calls, each with its timing.
+		if int64(len(e.ProviderCallsUs)) != e.Calls {
+			uncovered++
+			if uncovered <= 3 {
+				r.missing("the converge run ending at %+.1fs made %d provider calls and has %d observed timings (ADR-0059 amendment 6)", off(e.T, r.startUs), e.Calls, len(e.ProviderCallsUs))
+			}
+		}
+		for _, us := range e.ProviderCallsUs {
+			lat = append(lat, float64(us)/1e3)
+		}
+	}
+	if uncovered > 3 {
+		r.missing("%d converge runs in all lack observed timings for some of their provider calls", uncovered)
+	}
+	if len(lat) == 0 {
+		if calls > 0 || r.Plan.BoundRun() {
+			r.missing("the provider stand-in's observed call timings were not recorded (ADR-0059 amendment 6: the configured delay and the timings observed during the run)")
+		}
+		return
+	}
+	slices.Sort(lat)
+	r.Provider = &ProviderTimings{DelayMs: float64(r.Plan.ProviderDelayMs), Calls: len(lat), MinMs: lat[0], P50Ms: rank(lat, 50), P95Ms: rank(lat, 95), MaxMs: lat[len(lat)-1]}
+}
+
+// writeLoad judges a bound run's added writes, and what a bound run must
+// show beyond the profile's criteria (which all apply): the WAL past the
+// bound at least once (a size-triggered TRUNCATE fired, judged above), the
+// WAL-triggered backup started (judged with the WAL-triggered backups),
+// the provider's observed timings recorded (providerTimings), and every
+// added write made on time and without an error or SQLITE_BUSY.
+func (r *Report) writeLoad(events []Event, start int64) {
+	p := r.Plan
+	r.BoundRun = true
+	r.note("a bound run: the run's writes scaled by %g in W1's mix (G9's separate run at the same bound; the profile is otherwise unchanged)", p.WriteScale)
+	if r.WALPeak < p.WALBound {
+		r.missing("the bound run's WAL peaked at %d bytes, under the bound (%d): it did not cross it (at write scale %g; a bound run at 1.7 that does not is rerun once at 2.0)", r.WALPeak, p.WALBound, p.WriteScale)
+	}
+	type key struct{ phase, kind string }
+	got := map[key]*WriteLoadResult{}
+	for _, ph := range p.Phases {
+		for _, k := range WriteKinds {
+			rate := p.rateOf(k, ph)
+			got[key{ph.Name, string(k)}] = &WriteLoadResult{Phase: ph.Name, Kind: string(k), Rate: math.Round(rate*1000) / 1000, Planned: int64(PlannedWrites(rate, ph.Seconds))}
+		}
+	}
+	ends := map[string]Event{}
+	stray := 0
+	for _, e := range events {
+		switch e.Ev {
+		case EvWriteLoad:
+			// Each write is counted under the phase that scheduled it.
+			w := got[key{e.Phase, e.Kind}]
+			if w == nil {
+				stray++
+				continue
+			}
+			w.Writes += e.Writes
+			w.Failed += e.WritesFailed
+			w.Busy += e.WritesBusy
+			w.Late += e.WritesLate
+			w.Skipped += e.WritesSkipped
+		case EvWriteLoadEnd:
+			ends[e.Kind] = e
+		}
+	}
+	if stray > 0 {
+		r.missing("%d write_load events name no phase of the plan: the write load per phase is not shown", stray)
+	}
+	for _, ph := range p.Phases {
+		for _, k := range WriteKinds {
+			r.WriteLoad = append(r.WriteLoad, *got[key{ph.Name, string(k)}])
+		}
+	}
+	for _, k := range WriteKinds {
+		// The writes planned come from the report's plan, not the server.
+		planned := int64(p.PlannedWriteTotal(k))
+		// Every per-phase counter, summed, must be the stream's total, and
+		// a failure, busy, late or skipped write in any phase fails the run
+		// whatever the totals say.
+		var byPhase WriteLoadResult
+		for _, ph := range p.Phases {
+			w := got[key{ph.Name, string(k)}]
+			byPhase.Writes += w.Writes
+			byPhase.Failed += w.Failed
+			byPhase.Busy += w.Busy
+			byPhase.Late += w.Late
+			byPhase.Skipped += w.Skipped
+			if w.Failed > 0 || w.Busy > 0 || w.Late > 0 || w.Skipped > 0 {
+				r.fail("the bound run's %s writes in phase %s: %d failed, %d SQLITE_BUSY, %d late, %d skipped", k, ph.Name, w.Failed, w.Busy, w.Late, w.Skipped)
+			}
+		}
+		e, ok := ends[string(k)]
+		if !ok {
+			r.missing("the bound run's %s writes have no total (write_load_end): the write load is not shown", k)
+			continue
+		}
+		t := WriteLoadResult{Kind: string(k), Planned: planned, Writes: e.Writes, Failed: e.WritesFailed, Busy: e.WritesBusy, Late: e.WritesLate, Skipped: e.WritesSkipped, MaxLagMs: float64(e.DurUs) / 1e3, Err: e.Err}
+		r.WriteTotals = append(r.WriteTotals, t)
+		switch {
+		case planned == 0:
+			r.missing("the bound run's plan schedules no %s writes", k)
+		case e.Planned != planned:
+			r.missing("the server planned %d %s writes; the plan schedules %d", e.Planned, k, planned)
+		}
+		if t.Failed > 0 {
+			r.fail("the bound run's %s writes: %d of %d failed (%d SQLITE_BUSY); the first: %s", k, t.Failed, t.Writes, t.Busy, t.Err)
+		} else if t.Busy > 0 {
+			r.fail("the bound run's %s writes met SQLITE_BUSY %d times", k, t.Busy)
+		}
+		if t.Late > 0 {
+			r.fail("the bound run's %s writes: %d dispatched more than %s after their time (largest lag %.0f ms)", k, t.Late, WriteLateTolerance, t.MaxLagMs)
+		}
+		if t.Skipped > 0 {
+			r.fail("the bound run's %s writes: %d not sent (%d in flight)", k, t.Skipped, WriteInFlight)
+		}
+		switch {
+		case t.Writes == 0:
+			r.missing("the bound run made no %s writes", k)
+		case t.Writes+t.Skipped != planned:
+			r.missing("the bound run made %d and skipped %d of its %d planned %s writes", t.Writes, t.Skipped, planned, k)
+		}
+		if byPhase.Writes != t.Writes || byPhase.Failed != t.Failed || byPhase.Busy != t.Busy || byPhase.Late != t.Late || byPhase.Skipped != t.Skipped {
+			r.missing("the bound run's %s writes per phase (%d made, %d failed, %d busy, %d late, %d skipped) do not add up to its totals (%d, %d, %d, %d, %d)",
+				k, byPhase.Writes, byPhase.Failed, byPhase.Busy, byPhase.Late, byPhase.Skipped, t.Writes, t.Failed, t.Busy, t.Late, t.Skipped)
+		}
+	}
+}
+
+// deliveries requires every backup of a bound run, and of a counted G9
+// run (one whose converge runs called the provider: the real engine), to
+// show its upload to the run's configured destination (ADR-0059
+// amendment 6: G9's backups are the shipped backup path, writing to an
+// S3-compatible server on the same host).
+func (r *Report) deliveries(ends []Event, convergeEnds []Event) {
+	p := r.Plan
+	realEngine := false
+	for _, e := range convergeEnds {
+		realEngine = realEngine || e.Calls > 0
+	}
+	if !p.BoundRun() && !(realEngine && len(p.NotGate()) == 0) {
+		return
+	}
+	dest := configuredDestination(filepath.Join(r.Dir, FileConfig))
+	if dest == "" {
+		r.missing("the run's %s names no backup_destination: G9's backups upload to an S3-compatible server (ADR-0059 amendment 6)", FileConfig)
+		return
+	}
+	for _, e := range ends {
+		if e.UploadedTo != dest {
+			r.missing("backup %d has no upload to the configured destination %q (uploaded to %q): its delivery is not shown", e.Backup, dest, e.UploadedTo)
+		}
+	}
+}
+
+// configuredDestination is varlatchd.conf's backup_destination ("" when
+// the file or the setting is missing).
+func configuredDestination(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == "backup_destination" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 func (r *Report) finish() {
 	switch {
 	case len(r.Fails) > 0:
@@ -1126,7 +1354,11 @@ func pct(f float64) string { return strconv.FormatFloat(math.Round(f*1e5)/1e3, '
 // Markdown renders the report for people.
 func (r *Report) Markdown() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# G9a run: %s\n\n", strings.ToUpper(r.Verdict))
+	title := "G9a run"
+	if r.BoundRun {
+		title = "G9 (bound run)"
+	}
+	fmt.Fprintf(&b, "# %s: %s\n\n", title, strings.ToUpper(r.Verdict))
 	fmt.Fprintf(&b, "Target: %s %s (build tags %q), sha256 %s\n\n", r.System.Target, r.System.Build.Version, r.System.Build.Tags, r.System.Build.SHA256)
 	list := func(title string, xs []string) {
 		if len(xs) == 0 {
@@ -1153,6 +1385,22 @@ func (r *Report) Markdown() string {
 	}
 	fmt.Fprintf(&b, "\nk6 dropped iterations: %.0f. SQLITE_BUSY seen by the server: %d.\n\n", r.Dropped, r.ServerBusy)
 
+	if r.BoundRun {
+		fmt.Fprintf(&b, "## Write load (bound run)\n\nThe run's writes scaled by %g in W1's mix: per second, (s − 1) × the phase's rate disclosures (the read path of values, its audit event first; in the server, not requests of the load) and (s − 1) × k × targets / period value writes (a new version and its audit event, into an environment no Sync Target reads). Open loop: a write dispatched more than the tolerance after its time is late, and one due while %d are in flight is skipped (not sent); each is counted under the phase that scheduled it.\n\n", r.Plan.WriteScale, WriteInFlight)
+		b.WriteString("| phase | kind | per second | planned | made | failed | busy | late | skipped |\n|---|---|---:|---:|---:|---:|---:|---:|---:|\n")
+		for _, w := range r.WriteLoad {
+			fmt.Fprintf(&b, "| %s | %s | %g | %d | %d | %d | %d | %d | %d |\n", w.Phase, w.Kind, w.Rate, w.Planned, w.Writes, w.Failed, w.Busy, w.Late, w.Skipped)
+		}
+		for _, w := range r.WriteTotals {
+			fmt.Fprintf(&b, "| all | %s | | %d | %d | %d | %d | %d | %d |\n", w.Kind, w.Planned, w.Writes, w.Failed, w.Busy, w.Late, w.Skipped)
+		}
+		for _, w := range r.WriteTotals {
+			fmt.Fprintf(&b, "\nLargest dispatch lag, %s: %.1f ms (late beyond %s).", w.Kind, w.MaxLagMs, WriteLateTolerance)
+		}
+		fmt.Fprintf(&b, "\n\nThe %s tolerance guards the write load's arrival pattern only: ADR-0059's %.0f ms p95 applies to retrievals and sets no limit on these writes; at 35 added disclosures a second it bounds any bunching to about 9 writes.", WriteLateTolerance, r.Plan.Thresholds.P95Ms)
+		b.WriteString("\n")
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "## WAL and checkpoints\n\nBound %d bytes; peak %d bytes (%.2f × the bound). Size-triggered TRUNCATEs under load: %d; deferred by a backup: %d; PASSIVE checkpoints: %d (slowest %.1f ms).\n\n",
 		r.Plan.WALBound, r.WALPeak, float64(r.WALPeak)/float64(r.Plan.WALBound), r.SizeTruncates, r.Deferred, r.Passives, r.MaxPassiveMs)
 	b.WriteString("| window | at s | requests | failed | p95 ms | p99 ms | max ms | throttled periods | throttled ms | cpu.stat span s | note |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n")
@@ -1205,6 +1453,10 @@ func (r *Report) Markdown() string {
 	fmt.Fprintf(&b, "## Storage settings\n\nThe production build's: %v%s. WAL bound %d bytes, journal_size_limit %d bytes, batches of up to %d jobs (queue %d), %d read connections, PASSIVE every %d ms, snapshots %d pages every %d ms. Pragmas: %v.\n\n",
 		r.System.Production, map[bool]string{true: "", false: " (" + r.System.SettingsNote + ")"}[r.System.SettingsNote == ""], st.WALBound, st.JournalSizeLimit, st.MaxBatch, st.QueueSize, st.ReadConns, st.PassiveEveryMs, st.SnapshotStepPages, st.SnapshotPauseMs, st.Pragmas)
 	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d of %d planned (duration p50 %.0f ms, max %.0f ms). Backups: %d (%d timed, inside their phase); missed: %d.\n\n", r.Converges, r.ConvergesWant, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups, r.TimedBackups, r.MissedBackups)
+	if pt := r.Provider; pt != nil {
+		fmt.Fprintf(&b, "Provider stand-in (ADR-0059 amendment 6): configured delay %g ms a call during the load; observed per call, arrival to answer, over %d calls of the converge runs: min %.1f ms, median %.1f ms, p95 %.1f ms, max %.1f ms.\n\n",
+			pt.DelayMs, pt.Calls, pt.MinMs, pt.P50Ms, pt.P95Ms, pt.MaxMs)
+	}
 	if r.Converge != nil {
 		r.Converge.markdown(&b)
 	}

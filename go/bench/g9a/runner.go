@@ -127,6 +127,9 @@ type ConvergeResult struct {
 	Err        error
 	Runs       []TargetRun
 	Calls      int64
+	// ProviderCallsUs are the provider stand-in's observed latencies of
+	// this run's calls, in microseconds (ADR-0059 amendment 6).
+	ProviderCallsUs []int64
 }
 
 // TargetRun is one Target's run as the converge engine reports it
@@ -213,6 +216,12 @@ type Runner struct {
 	bg        sync.WaitGroup
 	// convergeMu orders writes to FileConverge.
 	convergeMu sync.Mutex
+	// writes are a bound run's added writes by kind, and writesDone waits
+	// for the ones in flight (writeload.go).
+	writes     map[WriteKind]*writeCounts
+	writesDone func()
+	writeMu    sync.Mutex
+	writeLast  map[[2]int][5]int64 // the counts at the last flush, by kind and phase
 }
 
 // NewRunner writes the plan to the output directory and opens the event
@@ -223,6 +232,9 @@ func NewRunner(opts RunnerOptions) (*Runner, error) {
 	}
 	if opts.Target == nil {
 		return nil, errors.New("g9a: no target")
+	}
+	if _, ok := opts.Target.(Writer); opts.Plan.BoundRun() && !ok {
+		return nil, errors.New("g9a: a bound run (writeScale above 1) needs a target that makes its added writes")
 	}
 	if opts.Logf == nil {
 		opts.Logf = func(string, ...any) {}
@@ -371,6 +383,7 @@ func (r *Runner) watch() {
 func (r *Runner) Finish() {
 	r.Stop()
 	r.bg.Wait()
+	r.writeLoadEnd()
 	// Memory pressure up to the end counts, including during work that
 	// finished after /run/stop.
 	if r.started.Load() != 0 {
@@ -442,8 +455,8 @@ func (r *Runner) handleStart(w http.ResponseWriter, _ *http.Request) {
 }
 
 // runBackground starts the plan's work, counted from t0: the WAL, memory
-// and CPU samplers, the fsync probe under load, converge runs and backups
-// (at their offsets, or from the WAL's size). The samplers end at
+// and CPU samplers, the fsync probe under load, converge runs, backups (at
+// their offsets, or from the WAL's size) and a bound run's added writes. The samplers end at
 // /run/stop. Converge runs are scheduled only inside the load, and a
 // converge run or backup in progress at /run/stop finishes (cancelled only
 // if it is still running two minutes later), so stopping never turns into
@@ -494,7 +507,7 @@ func (r *Runner) runBackground(t0 time.Time) {
 			started := time.Now()
 			r.ev.emit(Event{Ev: EvConvergeStart})
 			res := r.opts.Target.Converge(work)
-			e := Event{Ev: EvConvergeEnd, Targets: res.Targets, Values: res.Values, Failed: res.PushFailed, Calls: res.Calls}
+			e := Event{Ev: EvConvergeEnd, Targets: res.Targets, Values: res.Values, Failed: res.PushFailed, Calls: res.Calls, ProviderCallsUs: res.ProviderCallsUs}
 			for _, run := range res.Runs {
 				e.Commits += run.Commits
 				e.SharedCommits += run.SharedCommits
@@ -515,6 +528,9 @@ func (r *Runner) runBackground(t0 time.Time) {
 			r.ev.emit(e)
 		}()
 	})
+	if p.BoundRun() {
+		r.writeLoad(ctx, work, t0, r.opts.Target.(Writer))
+	}
 	offsets := p.BackupOffsets()
 	for i, b := range p.Backups {
 		r.bg.Add(1)
