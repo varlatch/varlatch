@@ -192,19 +192,25 @@ func TestTranscripts(t *testing.T) {
 // (internal docs/design/go-cli.md, step 5.9).
 const windowsPathSkip = "path separators: Windows expectations not recorded yet (step 5.9)"
 
-// expectsPath reports whether a case's recorded outcome names a path under
-// its directory ({{dir}}, the only path placeholder the recorder writes).
-// TypeScript recorded it on Linux; on Windows both CLIs print backslashes,
-// so until Windows outcomes are recorded (step 5.9) such a case is not
-// compared there. Every other case still replays byte for byte.
+// expectsPath reports whether a case's recorded outcome names a path below
+// its directory: the directory's placeholder followed by a separator
+// (pathBelowDir). TypeScript recorded it on Linux; on Windows both CLIs
+// join such a path with backslashes, so until Windows outcomes are recorded
+// (step 5.9) such a case is not compared there. Every other case, the
+// directory itself named alone included, still replays byte for byte.
 func expectsPath(t *testing.T, c transcript.Case) bool {
 	t.Helper()
 	b, err := json.Marshal(c.Expect)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.Contains(string(b), "{{dir}}")
+	return pathBelowDir.Match(b)
 }
+
+// pathBelowDir matches a path below a placeholder directory. {{dir}} is the
+// only one the recorder writes today; {{home}} is matched too, so a
+// recorder that adds it is covered.
+var pathBelowDir = regexp.MustCompile(`\{\{(dir|home)\}\}[/\\]`)
 
 func withMarker(env map[string]string) map[string]string {
 	out := map[string]string{asCLI: "1"}
@@ -231,6 +237,25 @@ func TestBackslashPathDifferenceIsExact(t *testing.T) {
 		differences["backslash-path"](&want, transcript.Outcome{Stdout: got})
 		if (want.Stdout == got) != accepted {
 			t.Errorf("%q: accepted %v, want %v", got, want.Stdout == got, accepted)
+		}
+	}
+}
+
+// TestWindowsPathSkipIsNarrow: on Windows only a recorded outcome that names
+// a path below the case's directory is skipped; the directory alone, or any
+// other placeholder, is still compared.
+func TestWindowsPathSkipIsNarrow(t *testing.T) {
+	for text, skipped := range map[string]bool{
+		`"repoRoot": "{{dir}}/repo"`:  true,
+		`"root": "{{dir}}\\project"`:  true,
+		`"home": "{{home}}/.config"`:  true,
+		`outside {{dir}}, so nothing`: false,
+		`"root": "{{dir}}"`:           false,
+		`{{server}}/v1/whoami`:        false,
+		`{{skill}}/SKILL.md`:          false,
+	} {
+		if got := pathBelowDir.MatchString(text); got != skipped {
+			t.Errorf("%s: skipped %v, want %v", text, got, skipped)
 		}
 	}
 }

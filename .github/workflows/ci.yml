@@ -19,7 +19,8 @@ name: CI
 # read (scripts/ci-changes.sh). The server's (SHARED) and packages/sync's
 # count as code and select @varlatch/varlatchd (in test-server) and
 # @varlatch/sync, with the other code jobs; the Go CLI's select
-# @varlatch/cli in the test job and nothing else. The slow suites
+# @varlatch/cli in the test job, and with it @varlatch/accessor-python (as
+# any CLI change does), and nothing else. The slow suites
 # (multi-arch, contributor-setup, and the recovery and install-lifecycle steps
 # of backup-recovery) run on a pull request only when it touches what they
 # guard. A merge group (the merge queue) runs a pull request's tiers with

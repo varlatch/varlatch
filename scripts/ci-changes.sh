@@ -28,14 +28,16 @@
 #       code=true jobs). The Go CLI's (CLI_SHARED: its vectors, transcripts
 #       and inventory, which apps/cli's tests compare with what the
 #       TypeScript CLI does) stay Go files here, but `affected` selects
-#       @varlatch/cli for them. The paths behind each answer go to stderr.
+#       @varlatch/cli for them, and with it @varlatch/accessor-python, as for
+#       any CLI change. The paths behind each answer go to stderr.
 #
 #   scripts/ci-changes.sh affected <base>
 #       Prints the names of the packages to test when tests=affected: those
 #       with a changed file since <base> (committed or not), and every package
 #       that depends on them, @varlatch/varlatchd for a SHARED file,
-#       @varlatch/sync for a SYNC_SHARED one and @varlatch/cli for a
-#       CLI_SHARED one. Documentation inside a package selects nothing.
+#       @varlatch/sync for a SYNC_SHARED one, @varlatch/cli for a CLI_SHARED
+#       one, and @varlatch/accessor-python whenever @varlatch/cli is selected.
+#       Documentation inside a package selects nothing.
 #
 # pnpm's own selector (`--filter "...[<base>]"`) maps a changed file outside
 # every package to the workspace root project, which no package depends on

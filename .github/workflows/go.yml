@@ -17,8 +17,9 @@ name: Go
 # path, the Go jobs are skipped and go-ok passes. The Go CLI's own jobs
 # (internal docs/design/go-cli.md, decision 14: its tests on macOS and
 # Windows, and the go-binary x go conformance cell) are selected by paths
-# of their own, the CLI's code and, for the cell, the harness's CLI pieces:
-# in a pull request or merge group that touches them, and nightly. They run on
+# of their own, the CLI's code and every file its tests read and, for the
+# cell, the conformance harness: in a pull request or merge group that
+# touches them, and nightly. They run on
 # GitHub-hosted runners only, never on the self-hosted varlatch-ci runner the
 # TypeScript release uses, and with no fallback to it. When hosted minutes
 # are out these jobs wait or fail; the checks then run locally, outside the
@@ -66,8 +67,14 @@ on:
       - "services/varlatchd/test/helpers/audit-export-fake.ts"
       - "services/varlatchd/test/go-backup-vectors.test.ts"
       - "packages/backup/src/**"
-      # The skill files the Go CLI embeds (skillfiles.gen.go, go generate).
+      # The Go CLI's tests read these, from outside go/: the skill files it
+      # embeds (skillfiles.gen.go, go generate) and the TypeScript CLI's
+      # copy of them, and the features it lacks (client-go.json).
       - "apps/cli/skill/**"
+      - "apps/cli/src/agents/skillFiles.generated.ts"
+      - "scripts/conformance/client-go.json"
+      # Line ends on checkout (the Windows jobs).
+      - ".gitattributes"
   workflow_dispatch:
   # Nightly on main: every Go job, and the cache every pull request restores.
   schedule:
@@ -131,8 +138,14 @@ jobs:
             services/varlatchd/test/go-backup-vectors.test.ts
             packages/backup/src/*
             apps/cli/skill/*
+            apps/cli/src/agents/skillFiles.generated.ts
+            scripts/conformance/client-go.json
+            .gitattributes
           # The Go CLI (internal docs/design/go-cli.md, decision 14): its
-          # code and the shared libraries it may use. These select the CLI's
+          # code, the shared libraries it may use, every file its tests read
+          # from outside go/ (the skill files and the TypeScript CLI's copy of
+          # them, client-go.json), and .gitattributes, which decides the line
+          # ends a Windows checkout gives them. These select the CLI's
           # platform runs (go-cli-platforms).
           CLI_PATTERNS: |
             go/cmd/varlatch/*
@@ -140,25 +153,25 @@ jobs:
             go/go.mod
             go/go.sum
             .github/workflows/go.yml
-          # The same, plus the harness's CLI pieces (the go client, its
-          # lacks, the suites it runs) and the TypeScript process tests run
-          # against Go. These select the go-binary x go cell (go-binary-go-cli).
-          CLI_CONFORMANCE_PATTERNS: |
-            apps/cli/test/*
             apps/cli/skill/*
+            apps/cli/src/agents/skillFiles.generated.ts
             scripts/conformance/client-go.json
-            scripts/conformance/clients.mjs
-            scripts/conformance/lib/client-lacks.mjs
-            scripts/conformance/lib/clients.mjs
-            scripts/conformance/suite-kit.mjs
-            scripts/conformance/run.mjs
-            scripts/conformance/plan.mjs
-            scripts/conformance/inventory.json
-            scripts/conformance/shard.mjs
-            scripts/conformance/shard-weights.json
-            scripts/conformance/suites/*
-            scripts/conformance/targets/go-binary.mjs
-            scripts/conformance/expect/go-binary.json
+            .gitattributes
+          # The same, plus the conformance harness as ci.yml's conformance
+          # tier defines it (the runner, its libraries and data, clients.json
+          # included, the suites and the e2e scripts they run), the shell
+          # and the redaction the job's steps run through, and the
+          # TypeScript process tests run against Go. These select the
+          # go-binary x go cell (go-binary-go-cli).
+          CLI_CONFORMANCE_PATTERNS: |
+            scripts/conformance/*
+            scripts/ci-e2e.sh
+            apps/web/scripts/e2e-*.mjs
+            services/varlatchd/scripts/e2e-*.mjs
+            scripts/ci-shell.sh
+            scripts/redact-output.mjs
+            scripts/redact-tokens.mjs
+            apps/cli/test/*
         run: |
           if [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; then
             printf '%s\n' go=true cli=true cli-conformance=true >> "$GITHUB_OUTPUT"
@@ -921,8 +934,11 @@ jobs:
   # decisions 4 and 14): cmd/varlatch's tests, its recorded transcripts
   # replayed byte for byte included, and those of the shared libraries it is
   # built from. Linux runs the same tests in the go job. A pull request or
-  # merge group runs them when it touches the CLI's code (the changes job's
-  # CLI_PATTERNS); the nightly run always does.
+  # merge group runs them when it touches the CLI's code or a file its tests
+  # read (the changes job's CLI_PATTERNS); the nightly run always does. On
+  # Windows the recorded cases that name a path below their directory are
+  # skipped until step 5.9 records Windows outcomes; the step lists every
+  # skipped test, and the job summary counts them.
   go-cli-platforms:
     needs: changes
     if: needs.changes.outputs.cli == 'true'
@@ -975,8 +991,22 @@ jobs:
           printf "The CLI's libraries:\n%s\n" "$libs"
           # shellcheck disable=SC2086 # one argument per package
           go vet ./cmd/varlatch/... $libs
+          # Verbose, so every skipped test is listed with its reason (on
+          # Windows: the recorded cases that name a path, until step 5.9);
+          # the log leaves out the lines of tests that ran and passed.
           # shellcheck disable=SC2086 # one argument per package
-          go test -count=1 ./cmd/varlatch/... $libs
+          go test -count=1 -v ./cmd/varlatch/... $libs 2>&1 | tee "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
+
+      - name: Skipped tests
+        if: always()
+        run: |
+          log="$RUNNER_TEMP/go-test.log"
+          [ -f "$log" ] || exit 0
+          skipped=$(grep -cE '^[[:space:]]*--- SKIP' "$log" || true)
+          echo "$skipped tests skipped on $RUNNER_OS (each listed with its reason in the step above)." | tee -a "$GITHUB_STEP_SUMMARY"
+          # By test, and by area for the transcripts.
+          grep -E '^[[:space:]]*--- SKIP' "$log" | sed -E 's/^[[:space:]]*--- SKIP: ([^ ]+).*/\1/' \
+            | awk -F/ '{ print ($1 == "TestTranscripts" ? $1 "/" $2 : $1) }' | sort | uniq -c | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Save Go's caches
         if: success() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -995,8 +1025,8 @@ jobs:
   # Shard 1 also runs the TypeScript process tests that must pass against Go
   # (apps/cli/test/go-cli-files.json). Split into three shards as go-binary
   # is. A pull request or merge group runs it when it touches the CLI's code
-  # or the harness's CLI pieces (CLI_CONFORMANCE_PATTERNS); the nightly run
-  # always does. The weekly matrix (conformance.yml) runs the Go CLI against
+  # (CLI_PATTERNS) or the conformance harness (CLI_CONFORMANCE_PATTERNS);
+  # the nightly run always does. The weekly matrix (conformance.yml) runs the Go CLI against
   # both TypeScript targets.
   go-binary-go-cli:
     needs: changes

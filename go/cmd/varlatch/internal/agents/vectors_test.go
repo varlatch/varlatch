@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -42,6 +43,9 @@ func js(v any) string { return string(jsjson.Stringify(v)) }
 // windowsPathSkip is why a recorded case that names a path is skipped on
 // Windows (internal docs/design/go-cli.md, step 5.9).
 const windowsPathSkip = "path separators: Windows expectations not recorded yet (step 5.9)"
+
+// pathBelowDir matches a path below the scenario's directory placeholder.
+var pathBelowDir = regexp.MustCompile(`\{\{(dir|home)\}\}[/\\]`)
 
 func optional(v any) desired {
 	if s, ok := v.(string); ok {
@@ -178,10 +182,11 @@ func TestInstallVectors(t *testing.T) {
 		name := s.Value("name").(string)
 		t.Run(name, func(t *testing.T) {
 			// The recorded outcomes name paths as TypeScript printed them on
-			// Linux; on Windows both CLIs print backslashes. Until Windows
-			// outcomes are recorded (step 5.9), a scenario whose outcomes
-			// name a path is not compared there; every other one is.
-			if runtime.GOOS == "windows" && strings.Contains(js(s.Value("steps")), "{{dir}}") {
+			// Linux; on Windows both CLIs join them with backslashes. Until
+			// Windows outcomes are recorded (step 5.9), a scenario whose
+			// outcomes name a path below its directory is not compared
+			// there; every other one is.
+			if runtime.GOOS == "windows" && pathBelowDir.MatchString(js(s.Value("steps"))) {
 				t.Skip(windowsPathSkip)
 			}
 			dir := filepath.Join(scratch, "s"+jsjson.Number(float64(i)))
