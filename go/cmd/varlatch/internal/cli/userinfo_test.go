@@ -94,7 +94,8 @@ func TestServerURLsNeverShowUserinfo(t *testing.T) {
 				if strings.Contains(out, secret) || strings.Contains(out, "u:") {
 					t.Errorf("%s %q printed the credentials:\n%s", s.dir, s.args, out)
 				}
-				if !strings.Contains(out, "[redacted]@") {
+				// bad's varlatch.toml does not parse: its lines are not shown.
+				if !strings.Contains(out, "[redacted]@") && !(s.dir == "bad" && strings.Contains(out, linesNotShown)) {
 					t.Errorf("%s %q shows no redacted server:\n%s", s.dir, s.args, out)
 				}
 			}
@@ -145,27 +146,29 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 	cases := []struct {
 		cwd  string
 		args []string
+		toml bool // a varlatch.toml parse error: no excerpt, so no URL either
 	}{
-		{dir, []string{"server", "https://alice:fake-pass@example.com"}},
-		{dir, []string{"server", "--json", `https:\\alice:fake-pass@example.com`}},
-		{dir, []string{"server", "--server=https://alice:fake-pass@example.com"}},
-		{dir, []string{"server", "use", "https://alice:fake pass@[bad"}},
-		{dir, []string{"server", "use", "--json", "https://alice:fake-pass@example.com", "http:/bob:fake-two@h"}},
-		{dir, []string{"https://alice:fake-pass@example.com"}},
-		{dir, []string{"help", "http:/alice:fake-pass@example.com"}},
-		{dir, []string{"--approval", "https://alice:fake-pass@example.com", "status"}},
-		{repo, []string{"context", "--json"}},
-		{repo, []string{"server"}},
-		{dir, []string{"server", "https://alice:ftp:@example.com"}},
-		{dir, []string{"server", "use", "https://alice:fake/pass@h"}},
-		{dir, []string{"server", "--https://alice:fake-review-pass@example.com"}},
-		{dir, []string{"server", "https://alice:fake\tlabel:tail@example.com"}},
+		{dir, []string{"server", "https://alice:fake-pass@example.com"}, false},
+		{dir, []string{"server", "--json", `https:\\alice:fake-pass@example.com`}, false},
+		{dir, []string{"server", "--server=https://alice:fake-pass@example.com"}, false},
+		{dir, []string{"server", "use", "https://alice:fake pass@[bad"}, false},
+		{dir, []string{"server", "use", "--json", "https://alice:fake-pass@example.com", "http:/bob:fake-two@h"}, false},
+		{dir, []string{"https://alice:fake-pass@example.com"}, false},
+		{dir, []string{"help", "http:/alice:fake-pass@example.com"}, false},
+		{dir, []string{"--approval", "https://alice:fake-pass@example.com", "status"}, false},
+		{repo, []string{"context", "--json"}, true},
+		{repo, []string{"server"}, true},
+		{dir, []string{"server", "https://alice:ftp:@example.com"}, false},
+		{dir, []string{"server", "use", "https://alice:fake/pass@h"}, false},
+		{dir, []string{"server", "--https://alice:fake-review-pass@example.com"}, false},
+		{dir, []string{"server", "https://alice:fake\tlabel:tail@example.com"}, false},
 	}
 	for _, d := range tomlDirs {
 		cases = append(cases, struct {
 			cwd  string
 			args []string
-		}{d, []string{"context", "--json"}})
+			toml bool
+		}{d, []string{"context", "--json"}, true})
 	}
 	for _, c := range cases {
 		t.Chdir(c.cwd)
@@ -175,16 +178,22 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 		if strings.Contains(out, "fake") {
 			t.Errorf("%q printed the credentials:\n%s", c.args, out)
 		}
-		if !strings.Contains(out, "[redacted]@") {
+		if c.toml && !strings.Contains(out, linesNotShown) {
+			t.Errorf("%q quotes varlatch.toml:\n%s", c.args, out)
+		}
+		if !c.toml && !strings.Contains(out, "[redacted]@") {
 			t.Errorf("%q shows no redacted URL:\n%s", c.args, out)
 		}
 	}
 }
 
-// TestFailuresKeepTextWithoutCredentials: a varlatch.toml parse error whose
-// lines hold no ":"...at-sign pair keeps its bytes; one that quotes a URL
-// next to an email is over-masked, which is accepted for error text, and
-// never shows the URL's or the email's middle as a password would be.
+// linesNotShown ends a varlatch.toml parse error that leaves out the
+// file's lines.
+const linesNotShown = "(the file may hold a URL's user name and password, so its lines are not shown)"
+
+// TestFailuresKeepTextWithoutCredentials: a varlatch.toml parse error in a
+// file without an at-sign quotes its lines as smol-toml does, byte for
+// byte; one in a file with an at-sign quotes none of them.
 func TestFailuresKeepTextWithoutCredentials(t *testing.T) {
 	for line, kept := range map[string]bool{
 		`server = "https://example.com" x`:                 true,
@@ -201,6 +210,72 @@ func TestFailuresKeepTextWithoutCredentials(t *testing.T) {
 		if got := strings.Contains(stderr.String(), line); got != kept {
 			t.Errorf("%s: kept %v, want %v:\n%s", line, got, kept, stderr.String())
 		}
+		if got := strings.Contains(stderr.String(), linesNotShown); got == kept {
+			t.Errorf("%s: lines left out %v, want %v:\n%s", line, got, !kept, stderr.String())
+		}
+	}
+}
+
+// TestTOMLExcerptLeftOutWhenFileMayHoldCredentials: smol-toml's message
+// quotes the lines around a parse error, which can hold a URL's user name
+// and password without the at-sign that follows them (a string running on
+// past the quoted lines), where neither masking layer sees a URL. A file
+// with an at-sign of any form (as the fail-safe detects one) has its parse
+// errors shown with the explanation and where it is, and none of its lines
+// (Sol, #265 round 5), on stderr and in server's stdout alike.
+func TestTOMLExcerptLeftOutWhenFileMayHoldCredentials(t *testing.T) {
+	const org = "organization = \"acme\"\nproject = \"web\"\n"
+	for _, c := range []struct {
+		name, toml string
+		args       []string
+		stdout     bool
+		want       string
+	}{
+		// Sol's reproducer: the excerpt ends after the line that holds the password.
+		{"reproducer", "broken = = 2\nserver = \"\"\"https://alice:fake-review-password\n@example.invalid\"\"\"\n", []string{"context"}, false, "Invalid varlatch.toml: Invalid TOML document: invalid value, line 1, column 10 " + linesNotShown + "\n"},
+		{"reproducer, server", "broken = = 2\nserver = \"\"\"https://alice:fake-review-password\n@example.invalid\"\"\"\n", []string{"server"}, true, "Server here: none (Invalid varlatch.toml: Invalid TOML document: invalid value, line 1, column 10 " + linesNotShown + ")\n"},
+		// The credential on the line before the error.
+		{"line before", org + "server = \"\"\"https://alice:fake-before\n@example.invalid\"\"\"\nbroken = = 2\n", []string{"context"}, false, "Invalid varlatch.toml: Invalid TOML document: invalid value, line 5, column 10 " + linesNotShown + "\n"},
+		// The credential several lines after the error.
+		{"lines after", org + "broken = = 2\na = 1\nb = 2\nc = 3\nserver = \"https://alice:fake-after@example.invalid\"\n", []string{"context"}, false, "Invalid varlatch.toml: Invalid TOML document: invalid value, line 3, column 10 " + linesNotShown + "\n"},
+		{"lines after, server", org + "broken = = 2\na = 1\nb = 2\nc = 3\nserver = \"https://alice:fake-after@example.invalid\"\n", []string{"server"}, true, "Server here: none (Invalid varlatch.toml: Invalid TOML document: invalid value, line 3, column 10 " + linesNotShown + ")\n"},
+		// Every at-sign form the fail-safe knows, an escape split by a tab included.
+		{"escaped", "broken = = 2\nserver = \"https://alice:fake-escaped\\u0040h\"\n", []string{"context"}, false, "Invalid varlatch.toml: Invalid TOML document: invalid value, line 1, column 10 " + linesNotShown + "\n"},
+		{"percent", "broken = = 2\nserver = \"https://alice:fake-percent%40h\"\n", []string{"context"}, false, "Invalid varlatch.toml: Invalid TOML document: invalid value, line 1, column 10 " + linesNotShown + "\n"},
+		{"tab-split", "broken = = 2\nx = 'https://alice:fake-tab\\x4\t0h'\n", []string{"context"}, false, "Invalid varlatch.toml: Invalid TOML document: invalid value, line 1, column 10 " + linesNotShown + "\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "varlatch.toml"), []byte(c.toml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(dir)
+			var stdout, stderr bytes.Buffer
+			Main(c.args, MapEnv{"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config")}, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+			got := stderr.String()
+			if c.stdout {
+				got = stdout.String()
+			}
+			matches := got == c.want // stderr is the message alone
+			if c.stdout {
+				matches = strings.Contains(got, c.want)
+			}
+			if strings.Contains(stdout.String()+stderr.String(), "fake") || !matches {
+				t.Errorf("stdout\n%q\nstderr\n%q\nwant %q", stdout.String(), stderr.String(), c.want)
+			}
+		})
+	}
+	// A file without an at-sign: smol-toml's message, its lines included.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "varlatch.toml"), []byte(org+"server = \"https://example.com\" x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	var stdout, stderr bytes.Buffer
+	Main([]string{"context"}, MapEnv{"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config")}, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+	if want := "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line\n\n" +
+		"2:  project = \"web\"\n3:  server = \"https://example.com\" x\n                                   ^\n\n"; stderr.String() != want {
+		t.Errorf("stderr\n%q\nwant\n%q", stderr.String(), want)
 	}
 }
 
@@ -235,8 +310,7 @@ func TestFailureExplanationsSurvive(t *testing.T) {
 		{"", []string{"--approval", "https://alice:fake@x", "status"}, "varlatch:[redacted]@x: not an approval id\n"},
 		{"", []string{"server", "use", "https://alice:fake@[bad"}, "varlatch server use:[redacted]@[bad: not a URL\n"},
 		{"", []string{"server", "use", "https://alice:fake@z.example"}, "varlatch server use:[redacted]@z.example: you are not signed in to this server; sign in first with varlatch login --server and its URL\n"},
-		{"bad", []string{"context"}, "Invalid varlatch.toml:[redacted]@h.example\" x\n"},
-		{"bad", []string{"context"}, "Invalid TOML document: each key-value declaration must be followed by an end-of-line\n"},
+		{"bad", []string{"context"}, "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line, line 3, column 41 " + linesNotShown + "\n"},
 	} {
 		if err := os.MkdirAll(filepath.Join(dir, c.cwd), 0o755); err != nil {
 			t.Fatal(err)

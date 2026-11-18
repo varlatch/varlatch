@@ -240,25 +240,6 @@ func TestFailSafeMultiLinePasswords(t *testing.T) {
 	}
 }
 
-// TestMaskTOMLStrings: the precise layer for a varlatch.toml parse error.
-func TestMaskTOMLStrings(t *testing.T) {
-	for in, want := range map[string]string{
-		`3:  server = "https://alice:fake pass@example.com" x`:      `3:  server = "https://[redacted]@example.com" x`,
-		`3:  server = "https://alice:fake\"pass@example.com" x`:     `3:  server = "https://[redacted]@example.com" x`,
-		`3:  server = "https://alice:fake\u0040pass@example.com" x`: `3:  server = "https://[redacted]@example.com" x`,
-		"3:  server = 'https://alice:fake@h' x":                     `3:  server = "https://[redacted]@h" x`,
-		"3:  server = \"\"\"https://alice:fake\\U00000040h\"\"\"":   `3:  server = "https://[redacted]@h"`,
-		// Kept: no user name and password, an unclosed string (the fail-safe's).
-		`3:  server = "https://example.com" "ops@example.net"`: `3:  server = "https://example.com" "ops@example.net"`,
-		`3:  server = "https://example.com\\path@segment"`:     `3:  server = "https://example.com\\path@segment"`,
-		`3:  server = "https://alice:fake@h`:                   `3:  server = "https://alice:fake@h`,
-	} {
-		if got := MaskTOMLStrings(in); got != want {
-			t.Errorf("MaskTOMLStrings(%q) =\n %q, want\n %q", in, got, want)
-		}
-	}
-}
-
 // TestFailSafeAgreesWithWHATWG: URLs (with and without credentials, nested
 // schemes, quotes, escapes, "@", spaces, tabs and newlines in their parts,
 // hosts that do not parse) in the contexts failure text puts them. Zero
@@ -344,7 +325,6 @@ func FuzzMaskUserinfoInText(f *testing.F) {
 		if twice := MaskUserinfoInText(once); twice != once {
 			t.Fatalf("not stable: %q -> %q -> %q", text, once, twice)
 		}
-		_ = MaskTOMLStrings(text)
 		_ = MaskUserinfo(text)
 	})
 }
@@ -363,7 +343,6 @@ func TestMaskingIsLinear(t *testing.T) {
 		in := strings.Repeat(unit, size/len(unit)+1)[:size]
 		start := time.Now()
 		MaskUserinfoInText(in)
-		MaskTOMLStrings(in)
 		MaskUserinfo(in)
 		if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
 			t.Errorf("%q repeated to %d bytes: %v", unit, size, elapsed)
@@ -382,5 +361,32 @@ func TestMaskingIsLinearOnLargeMessages(t *testing.T) {
 	}
 	if strings.Contains(out, "u:p") {
 		t.Error("a password survived")
+	}
+}
+
+// TestHasAtSignIsTheFailSafesDetection: HasAtSign finds an at-sign exactly
+// where the fail-safe does, tab, CR and LF ignored in both (Sol, #265 round
+// 5): behind "a:", the fail-safe masks a text if and only if HasAtSign
+// holds for it.
+func TestHasAtSignIsTheFailSafesDetection(t *testing.T) {
+	parts := []string{"@", "%40", `@`, `\x40`, `\U00000040`, `\X40`, `\U0040`, "%4", "%41", `\x41`, `\u004`, "x", "\\", "%", "\t", "\r\n", ""}
+	splits := []string{"%4\t0", "%\n40", `\x4` + "\t0", `\u00` + "\r40", `\U0000` + "\n0040", "\t@\t"}
+	var texts []string
+	for _, a := range parts {
+		for _, b := range parts {
+			texts = append(texts, a+b, a+"\t"+b)
+		}
+	}
+	texts = append(texts, splits...)
+	for _, text := range texts {
+		masked := MaskUserinfoInText("a:"+text) != "a:"+text
+		if HasAtSign(text) != masked {
+			t.Errorf("%q: HasAtSign %v, the fail-safe masks %v", text, HasAtSign(text), masked)
+		}
+	}
+	for _, text := range splits {
+		if !HasAtSign(text) {
+			t.Errorf("%q: an at-sign split by tab, CR or LF is not found", text)
+		}
 	}
 }

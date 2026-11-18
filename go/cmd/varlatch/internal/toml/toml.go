@@ -26,8 +26,14 @@ import (
 )
 
 // Error is smol-toml's TomlError: Message is the whole of its message,
-// "Invalid TOML document: <what>\n\n<code block>".
-type Error struct{ Message string }
+// "Invalid TOML document: <what>\n\n<code block>"; What is <what>, a
+// constant of the parser that never quotes the document, and Line and
+// Column (from 1) are where it is, as TomlError's line and column.
+type Error struct {
+	Message      string
+	What         string
+	Line, Column int
+}
 
 func (e *Error) Error() string { return e.Message }
 
@@ -88,7 +94,7 @@ func (c *ctx) slice(from, to int) []uint16 {
 
 // fail throws TomlError.x(message, ctx, ptr).
 func (c *ctx) fail(message string, ptr int) {
-	panic(&Error{Message: errorMessage(c.s, message, ptr)})
+	panic(newError(c.s, message, ptr))
 }
 
 func (c *ctx) failHere(message string) { c.fail(message, c.p) }
@@ -957,13 +963,18 @@ func str(u []uint16) string { return jsval.FromUTF16(u) }
 
 // error.js
 
-// errorMessage is TomlError's message for ptr in the document.
-func errorMessage(s []uint16, message string, ptr int) string {
+// newError is TomlError for ptr in the document.
+func newError(s []uint16, message string, ptr int) *Error {
 	before := s[:max(0, min(ptr, len(s)))]
 	lines := splitLines(before)
 	line := len(lines)
 	column := len(lines[len(lines)-1]) + 1
-	return "Invalid TOML document: " + message + "\n\n" + codeBlock(s, line, column)
+	return &Error{
+		Message: "Invalid TOML document: " + message + "\n\n" + codeBlock(s, line, column),
+		What:    message,
+		Line:    line,
+		Column:  column,
+	}
 }
 
 // splitLines is .split(/\r?\n/).

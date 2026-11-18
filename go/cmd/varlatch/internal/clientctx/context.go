@@ -4,9 +4,9 @@ package clientctx
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/toml"
@@ -69,17 +69,28 @@ func LoadRepoConfig(repoRoot string) (RepoConfig, error) {
 	if err != nil {
 		return RepoConfig{}, err
 	}
-	table, err := toml.ParseString(jsval.DecodeUTF8(data))
+	source := jsval.DecodeUTF8(data)
+	table, err := toml.ParseString(source)
 	if err != nil {
-		// The message quotes the file's lines: each string's URL is masked (the
-		// precise layer); the fail-safe covers the failure's final text.
-		message := MaskTOMLStrings(err.Error())
-		if what, block, ok := strings.Cut(message, "\n\n"); ok && HasAtSign(block) {
-			// The explanation follows the quoted lines, so the fail-safe (which
-			// keeps what follows the last at-sign) keeps it.
-			return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ":\n\n" + block + what}
+		var parseErr *toml.Error
+		if !errors.As(err, &parseErr) {
+			return RepoConfig{}, err
 		}
-		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + message}
+		if HasAtSign(source) {
+			// smol-toml's message quotes the lines around the error, which can
+			// hold part of a URL's user name and password without its at-sign
+			// (a string that runs on past them), where neither masking layer
+			// can see it. A file that holds an at-sign of any form, as the
+			// fail-safe detects one, may hold credentials: its lines are left
+			// out, the explanation and where it is kept (go/README.md, "the
+			// excerpt is left out when the file may hold credentials").
+			return RepoConfig{}, &ContextError{Message: fmt.Sprintf("Invalid %s: Invalid TOML document: %s, line %d, column %d "+
+				"(the file may hold a URL's user name and password, so its lines are not shown)",
+				RepoConfigFile, parseErr.What, parseErr.Line, parseErr.Column)}
+		}
+		// Without an at-sign the file holds no URL's user name and password:
+		// smol-toml's message as it is.
+		return RepoConfig{}, &ContextError{Message: "Invalid " + RepoConfigFile + ": " + parseErr.Message}
 	}
 	str := func(key string) string {
 		v, _ := table.Get(key)

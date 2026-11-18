@@ -3,9 +3,7 @@
 package clientctx
 
 import (
-	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 	"github.com/varlatch/varlatch/go/lib/whatwg"
@@ -134,10 +132,11 @@ func MaskServer(v any) any {
 //
 //  1. Precise, per value, where its boundaries are known: every echo site
 //     masks the one value it prints (an argument, a command, a help topic,
-//     an approval id, a server, a string of varlatch.toml in a parse error,
-//     verify-release's --file value and path) with MaskUserinfo (a server)
-//     or MaskURLInValue (an echoed value) before formatting it into its
-//     message. A value without a user name and password keeps its bytes.
+//     an approval id, a server, verify-release's --file value and path)
+//     with MaskUserinfo (a server) or MaskURLInValue (an echoed value)
+//     before formatting it into its message. A value without a user name
+//     and password keeps its bytes. A varlatch.toml parse error quotes no
+//     line of a file that holds an at-sign (LoadRepoConfig).
 //  2. A dumb fail-safe on the final text of every failure (Run.finish,
 //     verify-release's failures): MaskUserinfoInText. It is the net, not
 //     the only defence.
@@ -157,17 +156,9 @@ func MaskServer(v any) any {
 // accepted for failure text, where never leaking comes before byte parity;
 // ordinary output keeps the precise layer's exact bytes.
 func MaskUserinfoInText(text string) string {
-	if !strings.ContainsAny(text, "@%\\") {
+	kept, at := forAtSigns(text)
+	if kept == nil {
 		return text // no at-sign of any form
-	}
-	// The message without tab, CR and LF, and where each of its bytes is in text.
-	kept := make([]byte, 0, len(text))
-	at := make([]int, 0, len(text))
-	for i := 0; i < len(text); i++ {
-		if c := text[i]; c != '\t' && c != '\r' && c != '\n' {
-			kept = append(kept, c)
-			at = append(at, i)
-		}
 	}
 	colon := -1
 	for i := 1; i < len(kept); i++ {
@@ -180,11 +171,8 @@ func MaskUserinfoInText(text string) string {
 		return text
 	}
 	last, size := -1, 0
-	for i := colon + 1; i < len(kept); i++ {
-		if n := atSignAt(kept, i); n > 0 {
-			last, size = i, n
-			i += n - 1
-		}
+	for i, n := nextAtSign(kept, colon+1); i >= 0; i, n = nextAtSign(kept, i+n) {
+		last, size = i, n
 	}
 	if last < 0 {
 		return text
@@ -192,18 +180,46 @@ func MaskUserinfoInText(text string) string {
 	return text[:at[colon]+1] + "[redacted]@" + text[at[last+size-1]+1:]
 }
 
-// HasAtSign is whether s holds an at-sign as the fail-safe sees one. A
+// HasAtSign is whether s holds an at-sign as the fail-safe sees one, by
+// the fail-safe's own detection (forAtSigns, nextAtSign): tab, CR and LF
+// ignored, and "@", "\u0040", "\x40", "\U00000040" and "%40" counted. A
 // message whose echoed value holds one puts its explanation after the
 // value, since the fail-safe keeps only what follows the last at-sign (the
-// explanation follows the URL).
+// explanation follows the URL); a varlatch.toml that holds one has its
+// parse errors shown without the file's lines (LoadRepoConfig).
 func HasAtSign(s string) bool {
-	b := []byte(s)
-	for i := range b {
-		if atSignAt(b, i) > 0 {
-			return true
+	kept, _ := forAtSigns(s)
+	i, _ := nextAtSign(kept, 0)
+	return i >= 0
+}
+
+// forAtSigns is text as the at-sign detection reads it: without tab, CR
+// and LF (WHATWG drops them from a URL), with where each kept byte is in
+// text; nil when text has no byte an at-sign of any form starts with.
+func forAtSigns(text string) (kept []byte, at []int) {
+	if !strings.ContainsAny(text, "@%\\") {
+		return nil, nil
+	}
+	kept = make([]byte, 0, len(text))
+	at = make([]int, 0, len(text))
+	for i := 0; i < len(text); i++ {
+		if c := text[i]; c != '\t' && c != '\r' && c != '\n' {
+			kept = append(kept, c)
+			at = append(at, i)
 		}
 	}
-	return false
+	return kept, at
+}
+
+// nextAtSign is the first at-sign in kept (from forAtSigns) at or after
+// from, and its length; -1 when there is none.
+func nextAtSign(kept []byte, from int) (int, int) {
+	for i := from; i < len(kept); i++ {
+		if n := atSignAt(kept, i); n > 0 {
+			return i, n
+		}
+	}
+	return -1, 0
 }
 
 // atSignAt is the length of the at-sign at s[i] ("@", "\u0040", "\x40",
@@ -227,8 +243,7 @@ func atSignAt(s []byte, i int) int {
 }
 
 // MaskURLInValue is the precise layer for one value echoed in a message
-// (an argument, a command, a help topic, an approval id, a string of
-// varlatch.toml): MaskUserinfo when the value is a URL or shows an
+// (an argument, a command, a help topic, an approval id): MaskUserinfo when the value is a URL or shows an
 // authority (a special scheme, or "//"); any other value as it is, an email
 // included (the fail-safe sees the whole message).
 func MaskURLInValue(v string) string {
@@ -239,119 +254,4 @@ func MaskURLInValue(v string) string {
 		return MaskUserinfo(v)
 	}
 	return v
-}
-
-// MaskTOMLStrings is the precise layer for a varlatch.toml parse error,
-// whose code block quotes the file's lines: each string on a line (basic,
-// literal, and their triple-quoted forms, closed on that line) is decoded
-// and masked with MaskURLInValue, and shown re-quoted only when masking
-// changed it. A string not closed on its line is left to the fail-safe.
-func MaskTOMLStrings(text string) string {
-	var b strings.Builder
-	last := 0
-	for i := 0; i < len(text); i++ {
-		c := text[i]
-		if c != '"' && c != '\'' {
-			continue
-		}
-		q := 1
-		if strings.HasPrefix(text[i:], strings.Repeat(string(c), 3)) {
-			q = 3
-		}
-		quote := text[i : i+q]
-		j := i + q
-		closed := false
-		for j < len(text) && text[j] != '\n' {
-			if c == '"' && text[j] == '\\' {
-				j += 2
-				continue
-			}
-			if strings.HasPrefix(text[j:], quote) {
-				closed = true
-				break
-			}
-			j++
-		}
-		if !closed {
-			i = min(j, len(text)) - 1 // the rest of the line is the fail-safe's
-			continue
-		}
-		value := text[i+q : j]
-		if c == '"' {
-			value = decodeQuoted(value)
-		}
-		if masked := MaskURLInValue(value); masked != value {
-			b.WriteString(text[last:i])
-			b.WriteString(requote(masked))
-			last = j + q
-		}
-		i = j + q - 1
-	}
-	b.WriteString(text[last:])
-	return b.String()
-}
-
-// decodeQuoted is a quoted string's value: TOML's and Go's escapes
-// decoded; an escape it does not know is kept as written.
-func decodeQuoted(s string) string {
-	if !strings.Contains(s, "\\") {
-		return s
-	}
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] != '\\' || i+1 >= len(s) {
-			b.WriteByte(s[i])
-			continue
-		}
-		c := s[i+1]
-		simple := map[byte]string{'"': "\"", '\\': "\\", '/': "/", '\'': "'", 'b': "\b", 't': "\t", 'n': "\n", 'f': "\f", 'r': "\r", 'e': "\x1b", 'a': "\a", 'v': "\v"}
-		if r, ok := simple[c]; ok {
-			b.WriteString(r)
-			i++
-			continue
-		}
-		n := map[byte]int{'x': 2, 'u': 4, 'U': 8}[c]
-		if n > 0 && i+2+n <= len(s) {
-			if v, err := strconv.ParseUint(s[i+2:i+2+n], 16, 32); err == nil {
-				if c == 'x' {
-					b.WriteByte(byte(v))
-				} else if utf8.ValidRune(rune(v)) {
-					b.WriteRune(rune(v))
-				} else {
-					b.WriteString(s[i : i+2+n])
-				}
-				i += 1 + n
-				continue
-			}
-		}
-		b.WriteByte(s[i])
-	}
-	return b.String()
-}
-
-// requote quotes a masked value again: backslash, quote and control
-// characters escaped.
-func requote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r == '"' || r == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r < 0x20 || r == 0x7f:
-			b.WriteString(`\u00`)
-			b.WriteString(strconv.FormatInt(int64(r)+0x100, 16)[1:])
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
 }
