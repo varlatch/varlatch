@@ -103,6 +103,10 @@ type Event struct {
 	WritesBusy   int64 `json:"writesBusy,omitempty"`
 	WritesLate   int64 `json:"writesLate,omitempty"`
 	Planned      int64 `json:"planned,omitempty"`
+
+	// converge_end: the provider stand-in's observed latency of each of
+	// the run's calls, in microseconds (ADR-0059 amendment 6).
+	ProviderCallsUs []int64 `json:"providerCallsUs,omitempty"`
 }
 
 // The event kinds.

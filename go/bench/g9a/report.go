@@ -204,11 +204,28 @@ type Report struct {
 	// at the same bound with a raised write rate. WriteLoad is its added
 	// writes by phase and kind (write_load events), WriteTotals their
 	// totals against the plan's (write_load_end).
+	// Provider is the provider stand-in's timing (ADR-0059 amendment 6):
+	// its configured delay and the latencies observed for the converge
+	// runs' calls.
+	Provider *ProviderTimings `json:"providerTimings,omitempty"`
+
 	BoundRun    bool              `json:"boundRun,omitempty"`
 	WriteLoad   []WriteLoadResult `json:"writeLoad,omitempty"`
 	WriteTotals []WriteLoadResult `json:"writeTotals,omitempty"`
 
 	convergeLines []ConvergeLine
+}
+
+// ProviderTimings are the provider stand-in's: the response delay the
+// plan configured during the load, and the latency it observed for each
+// call of the converge runs (from the request's arrival to its answer).
+type ProviderTimings struct {
+	DelayMs float64 `json:"configuredDelayMs"`
+	Calls   int     `json:"calls"`
+	MinMs   float64 `json:"minMs"`
+	P50Ms   float64 `json:"p50Ms"`
+	P95Ms   float64 `json:"p95Ms"`
+	MaxMs   float64 `json:"maxMs"`
 }
 
 // WriteLoadResult is a bound run's added writes of one kind, in one phase
@@ -777,6 +794,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	}
 	r.Converges, r.ConvergeMs, r.ConvergesWant = len(convergeDur), stats(convergeDur), p.Converges()
 	r.Converge = convergeCost(convergeEnds, convergeStart, start, r.convergeLines)
+	r.providerTimings(convergeEnds)
 	if fullConverges < r.ConvergesWant {
 		r.missing("%d of the plan's %d converge runs ran over all %d targets during the load", fullConverges, r.ConvergesWant, p.Targets)
 	}
@@ -1122,11 +1140,38 @@ func (r *Report) fsync(events []Event, start, end int64) {
 	}
 }
 
+// providerTimings collects the stand-in's observed call latencies from the
+// converge runs (ADR-0059 amendment 6 makes them part of G9's evidence,
+// beside the configured delay). A run whose converge runs called the
+// provider, or a bound run, without them has not shown them.
+func (r *Report) providerTimings(ends []Event) {
+	var lat []float64
+	calls := int64(0)
+	for _, e := range ends {
+		calls += e.Calls
+		for _, us := range e.ProviderCallsUs {
+			lat = append(lat, float64(us)/1e3)
+		}
+	}
+	if len(lat) == 0 {
+		if calls > 0 || r.Plan.BoundRun() {
+			r.missing("the provider stand-in's observed call timings were not recorded (ADR-0059 amendment 6: the configured delay and the timings observed during the run)")
+		}
+		return
+	}
+	slices.Sort(lat)
+	r.Provider = &ProviderTimings{DelayMs: float64(r.Plan.ProviderDelayMs), Calls: len(lat), MinMs: lat[0], P50Ms: rank(lat, 50), P95Ms: rank(lat, 95), MaxMs: lat[len(lat)-1]}
+	if int64(len(lat)) != calls {
+		r.note("the provider stand-in observed %d calls; the converge runs counted %d", len(lat), calls)
+	}
+}
+
 // writeLoad judges a bound run's added writes, and what a bound run must
 // show beyond the profile's criteria (which all apply): the WAL past the
 // bound at least once (a size-triggered TRUNCATE fired, judged above), the
 // WAL-triggered backup started (judged with the WAL-triggered backups),
-// and every added write made on time and without an error or SQLITE_BUSY.
+// the provider's observed timings recorded (providerTimings), and every
+// added write made on time and without an error or SQLITE_BUSY.
 func (r *Report) writeLoad(events []Event, start int64) {
 	p := r.Plan
 	r.BoundRun = true
@@ -1313,6 +1358,10 @@ func (r *Report) Markdown() string {
 	fmt.Fprintf(&b, "## Storage settings\n\nThe production build's: %v%s. WAL bound %d bytes, journal_size_limit %d bytes, batches of up to %d jobs (queue %d), %d read connections, PASSIVE every %d ms, snapshots %d pages every %d ms. Pragmas: %v.\n\n",
 		r.System.Production, map[bool]string{true: "", false: " (" + r.System.SettingsNote + ")"}[r.System.SettingsNote == ""], st.WALBound, st.JournalSizeLimit, st.MaxBatch, st.QueueSize, st.ReadConns, st.PassiveEveryMs, st.SnapshotStepPages, st.SnapshotPauseMs, st.Pragmas)
 	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d of %d planned (duration p50 %.0f ms, max %.0f ms). Backups: %d (%d timed, inside their phase); missed: %d.\n\n", r.Converges, r.ConvergesWant, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups, r.TimedBackups, r.MissedBackups)
+	if pt := r.Provider; pt != nil {
+		fmt.Fprintf(&b, "Provider stand-in (ADR-0059 amendment 6): configured delay %g ms a call during the load; observed per call, arrival to answer, over %d calls of the converge runs: min %.1f ms, median %.1f ms, p95 %.1f ms, max %.1f ms.\n\n",
+			pt.DelayMs, pt.Calls, pt.MinMs, pt.P50Ms, pt.P95Ms, pt.MaxMs)
+	}
 	if r.Converge != nil {
 		r.Converge.markdown(&b)
 	}

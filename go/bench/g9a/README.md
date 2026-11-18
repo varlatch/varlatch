@@ -175,8 +175,20 @@ Everything else in the profile stays as it is. The report calls the run
   - an added write it planned was not made.
 - It **fails** on an added write that failed, met `SQLITE_BUSY` or was
   late (due while `WriteInFlight`, 64, were still running).
+- It is also **inconclusive** without the provider's observed timings
+  (below).
 - `events.jsonl` records the added writes per second and kind
   (`write_load`), with totals against the plan (`write_load_end`).
+
+**The provider's timings** (ADR-0059 amendment 6, for every run with the
+real engine). The run's Coolify stand-in waits the plan's
+`providerDelayMs` before each answer during the load (0 during the
+untimed first pass). It records each call's observed latency, from the
+request's arrival to its answer, and each `converge_end` carries its
+run's calls (`providerCallsUs`). The report shows the configured delay
+beside the observed distribution (calls, min, median, p95, max). A run
+whose converge runs called the provider without them, or a bound run
+without them, is inconclusive.
 
 G9's bound run uses write scale 1.7: in G9's first run the WAL peaked at
 0.72 of the bound, so the bound needs about 1.39 times its writes. A bound

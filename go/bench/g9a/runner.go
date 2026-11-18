@@ -127,6 +127,9 @@ type ConvergeResult struct {
 	Err        error
 	Runs       []TargetRun
 	Calls      int64
+	// ProviderCallsUs are the provider stand-in's observed latencies of
+	// this run's calls, in microseconds (ADR-0059 amendment 6).
+	ProviderCallsUs []int64
 }
 
 // TargetRun is one Target's run as the converge engine reports it
@@ -502,7 +505,7 @@ func (r *Runner) runBackground(t0 time.Time) {
 			started := time.Now()
 			r.ev.emit(Event{Ev: EvConvergeStart})
 			res := r.opts.Target.Converge(work)
-			e := Event{Ev: EvConvergeEnd, Targets: res.Targets, Values: res.Values, Failed: res.PushFailed, Calls: res.Calls}
+			e := Event{Ev: EvConvergeEnd, Targets: res.Targets, Values: res.Values, Failed: res.PushFailed, Calls: res.Calls, ProviderCallsUs: res.ProviderCallsUs}
 			for _, run := range res.Runs {
 				e.Commits += run.Commits
 				e.SharedCommits += run.SharedCommits

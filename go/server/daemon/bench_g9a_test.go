@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -268,6 +269,11 @@ func TestBenchRun(t *testing.T) {
 			if e.Err != "" || e.Targets != 20 || e.Values != 20*p.ChangesPerRun || e.Calls < int64(20*(p.ChangesPerRun+1)) ||
 				e.Commits < 20*p.ChangesPerRun || e.WALBytes <= 0 || e.EngineUs <= 0 {
 				t.Fatalf("converge: %+v", e)
+			}
+			// The provider stand-in's observed latency of every call of
+			// the run (amendment 6), each at least the plan's delay.
+			if int64(len(e.ProviderCallsUs)) != e.Calls || slices.Min(e.ProviderCallsUs) < int64(p.ProviderDelayMs)*1000 {
+				t.Fatalf("provider timings: %d for %d calls, min %v", len(e.ProviderCallsUs), e.Calls, e.ProviderCallsUs)
 			}
 			runs++
 		case g9a.EvBackupEnd:

@@ -1077,6 +1077,13 @@ func TestReportBoundRun(t *testing.T) {
 	bound := func() *fakeRun {
 		r := good()
 		r.plan.WriteScale = 2
+		// The provider stand-in's observed timings (amendment 6).
+		for i := range r.events {
+			if r.events[i].Ev == EvConvergeEnd {
+				r.events[i].Calls = 3
+				r.events[i].ProviderCallsUs = []int64{201_000, 203_500, 260_000}
+			}
+		}
 		// good()'s phases: 20 + 100 + 500 disclosures; 1 × 5 × 20 / 10 =
 		// 10 value writes a second, 20 + 100 + 100.
 		for _, k := range []struct {
@@ -1111,6 +1118,11 @@ func TestReportBoundRun(t *testing.T) {
 		{"late writes", totalOf(WriteDisclose, func(e *Event) { e.Writes, e.WritesLate = 610, 10 }), Fail, "10 not sent on time"},
 		{"writes missing", totalOf(WriteValue, func(e *Event) { e.Writes = 200 }), Inconclusive, "made 200 of its 220 planned value writes"},
 		{"no totals", func(r *fakeRun) { r.eventsWithout(func(e Event) bool { return e.Ev == EvWriteLoadEnd }) }, Inconclusive, "no total (write_load_end)"},
+		{"no provider timings", func(r *fakeRun) {
+			for i := range r.events {
+				r.events[i].ProviderCallsUs = nil
+			}
+		}, Inconclusive, "observed call timings were not recorded"},
 		{"the WAL under the bound", func(r *fakeRun) {
 			r.eventsWithout(func(e Event) bool { return e.Ev == EvCheckpoint && e.Trigger != "interval" })
 			for i := range r.events {
@@ -1141,9 +1153,26 @@ func TestReportBoundRun(t *testing.T) {
 			}
 		})
 	}
+	// The provider's timings: the configured delay beside the observed
+	// distribution, over every converge run's calls.
+	rep, err := Analyze(bound().write(t))
+	if err != nil || rep.Provider == nil || *rep.Provider != (ProviderTimings{DelayMs: 200, Calls: 6, MinMs: 201, P50Ms: 203.5, P95Ms: 260, MaxMs: 260}) ||
+		!strings.Contains(rep.Markdown(), "configured delay 200 ms a call during the load; observed per call, arrival to answer, over 6 calls of the converge runs: min 201.0 ms, median 203.5 ms, p95 260.0 ms, max 260.0 ms") {
+		t.Fatalf("provider timings: %v %+v", err, rep.Provider)
+	}
+	// Any run whose converge runs called the provider needs them too.
+	g := good()
+	for i := range g.events {
+		if g.events[i].Ev == EvConvergeEnd {
+			g.events[i].Calls = 120
+		}
+	}
+	if rep, err := Analyze(g.write(t)); err != nil || rep.Verdict != Inconclusive || !strings.Contains(strings.Join(rep.Missing, "\n"), "observed call timings were not recorded") {
+		t.Fatalf("a run without provider timings: %v %v %v", err, rep.Verdict, rep.Missing)
+	}
 	// Without the write scale, the same events are a G9a run's.
 	r := good()
-	rep, err := Analyze(r.write(t))
+	rep, err = Analyze(r.write(t))
 	if err != nil || rep.BoundRun || !strings.HasPrefix(rep.Markdown(), "# G9a run: PASS") {
 		t.Fatalf("%v %v", err, rep.Markdown()[:40])
 	}

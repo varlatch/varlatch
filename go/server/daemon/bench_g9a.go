@@ -722,13 +722,14 @@ func (t *benchTarget) startEngine(w *write.Writer, approvals *auth.Service, poli
 	defer cancel()
 	t.engine.RunOnce(ctx, syncs.RunOptions{})
 	t.take()
+	first := t.coolify.takeTimings()
 	var ok int
 	err := t.store.Reader().QueryRowContext(ctx, `SELECT count(*) FROM sync_targets WHERE failure_count = 0 AND last_result IS NOT NULL AND lease_expires_at IS NULL`).Scan(&ok)
 	if err != nil || ok != t.plan.Targets {
 		t.setupErr = fmt.Errorf("the first converge pass left %d of %d Targets converged (%v)", ok, t.plan.Targets, err)
 		t.log.Error("first converge pass", "error", t.setupErr)
 	}
-	t.log.Info("first converge pass", "targets", ok, "values", t.coolify.writes.Load(), "seconds", time.Since(t0).Seconds())
+	t.log.Info("first converge pass", "targets", ok, "values", t.coolify.writes.Load(), "seconds", time.Since(t0).Seconds(), "providerCalls", len(first))
 	t.coolify.setDelay(time.Duration(t.plan.ProviderDelayMs) * time.Millisecond)
 }
 
@@ -764,13 +765,15 @@ func (t *benchTarget) Converge(ctx context.Context) g9a.ConvergeResult {
 		return g9a.ConvergeResult{Err: t.setupErr}
 	}
 	run := int(t.runs.Add(1))
+	t.coolify.takeTimings() // only this run's calls from here
 	if err := t.change(ctx, run); err != nil {
 		return g9a.ConvergeResult{Err: fmt.Errorf("changing values: %w", err)}
 	}
 	calls, writes := t.coolify.calls.Load(), t.coolify.writes.Load()
 	t.engine.RunOnce(ctx, syncs.RunOptions{})
 	runs := t.take()
-	res := g9a.ConvergeResult{Targets: len(runs), Values: int(t.coolify.writes.Load() - writes), Calls: t.coolify.calls.Load() - calls, Runs: runs}
+	res := g9a.ConvergeResult{Targets: len(runs), Values: int(t.coolify.writes.Load() - writes), Calls: t.coolify.calls.Load() - calls, Runs: runs,
+		ProviderCallsUs: t.coolify.takeTimings()}
 	if err := t.store.Reader().QueryRowContext(ctx, `SELECT count(*) FROM sync_targets WHERE failure_count > 0`).Scan(&res.PushFailed); err != nil {
 		res.Err = err
 	}

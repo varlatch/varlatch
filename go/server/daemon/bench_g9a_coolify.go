@@ -47,6 +47,21 @@ type benchCoolify struct {
 	// writes counts the variables written (POST or PATCH): a converge
 	// run's values.
 	writes atomic.Int64
+	// timings are the calls' observed latencies in microseconds, from the
+	// request's arrival to its answer written (the delay included), since
+	// the last takeTimings (ADR-0059 amendment 6: the request timings
+	// observed during the run).
+	tmu     sync.Mutex
+	timings []int64
+}
+
+// takeTimings answers the calls' latencies observed since the last take.
+func (c *benchCoolify) takeTimings() []int64 {
+	c.tmu.Lock()
+	defer c.tmu.Unlock()
+	out := c.timings
+	c.timings = nil
+	return out
 }
 
 var benchCoolifyPath = regexp.MustCompile(`^/api/v1/applications/([^/]+)(/envs(?:/([^/]+))?|/start|/restart)?$`)
@@ -103,6 +118,13 @@ func (c *benchCoolify) close() { _ = c.srv.Close() }
 
 func (c *benchCoolify) serve(w http.ResponseWriter, r *http.Request) {
 	c.calls.Add(1)
+	arrived := time.Now()
+	defer func() {
+		d := time.Since(arrived).Microseconds()
+		c.tmu.Lock()
+		c.timings = append(c.timings, d)
+		c.tmu.Unlock()
+	}()
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if d := time.Duration(c.delay.Load()); d > 0 {
 		select {
