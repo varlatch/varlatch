@@ -46,7 +46,7 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 	var files fileFlags
 	fs.Var(&files, "file", "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *version == "" || *sumsPath == "" || *bundlePath == "" {
-		fmt.Fprint(stderr, verifyReleaseUsage)
+		fmt.Fprint(stderr, cli.RedactDiagnostic(verifyReleaseUsage))
 		return 2
 	}
 	fail := func(format string, a ...any) int {
@@ -95,7 +95,7 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail("%v", err)
 	}
-	fmt.Fprintf(stdout, "SHA256SUMS of %s is signed by %s\n", *version, release.Identity(*version))
+	fmt.Fprint(stdout, cli.RedactOutput(fmt.Sprintf("SHA256SUMS of %s is signed by %s\n", *version, release.Identity(*version))))
 	for _, f := range files {
 		path, name, ok := strings.Cut(f, "=")
 		if !ok || path == "" || name == "" {
@@ -111,7 +111,7 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return fail("%s: %s", clientctx.MaskURLInValue(path), masked(err))
 		}
-		fmt.Fprintf(stdout, "%s matches SHA256SUMS (%s)\n", clientctx.MaskURLInValue(path), name)
+		fmt.Fprint(stdout, cli.RedactOutput(fmt.Sprintf("%s matches SHA256SUMS (%s)\n", clientctx.MaskURLInValue(path), name)))
 	}
 	return 0
 }

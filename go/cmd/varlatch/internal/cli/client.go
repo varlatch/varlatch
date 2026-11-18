@@ -36,7 +36,7 @@ func (r *Run) maintenanceNotice(wait apiclient.MaintenanceWait) {
 	}
 	r.clients.maintenanceAnnounced = true
 	budget := math.Ceil(float64((wait.RetryIn + wait.Remaining).Milliseconds()) / 1000)
-	r.warn("varlatch: the installation is in maintenance (restore or upgrade); waiting up to " + jsjson.Number(budget) + " s…")
+	_ = r.warn("varlatch: the installation is in maintenance (restore or upgrade); waiting up to " + jsjson.Number(budget) + " s…")
 }
 
 // warnExpiryOnce is main.ts's warnExpiryOnce: at most one expiry warning
@@ -46,7 +46,7 @@ func (r *Run) warnExpiryOnce(warning string) {
 		return
 	}
 	r.clients.expiryWarned = true
-	r.warn(warning)
+	_ = r.warn(warning)
 }
 
 // templateTime is `${safeTime(value)}`: "undefined" for a missing time.

@@ -17,6 +17,7 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
+	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
 // Env is the environment a run sees.
@@ -233,8 +234,42 @@ func RedactDiagnostic(text string) string {
 // warn writes one diagnostic line on stderr through the fail-safe
 // (RedactDiagnostic). Every line the CLI writes on stderr outside
 // Run.finish goes through it.
-func (r *Run) warn(text string) {
-	fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(text)))
+func (r *Run) warn(text string) error {
+	_, err := fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(text)))
+	return err
+}
+
+// RedactOutput is the fail-safe on everything the CLI writes on stdout:
+// every text in Varlatch's token format as [redacted]. The values that hold
+// a URL are masked where they are shown (and, in a --json document, by
+// RedactValue), so ordinary output keeps its bytes.
+func RedactOutput(text string) string {
+	return varlatchToken.ReplaceAllLiteralString(text, Redacted)
+}
+
+// RedactValue is a JSON value with the fail-safe applied to every string
+// in it, keys untouched: a URL's user name and password masked (precisely,
+// clientctx.MaskURLInValue, so a value without them keeps its bytes) and
+// every text in Varlatch's token format as [redacted]. printJSON applies it
+// to every --json document.
+func RedactValue(v any) any {
+	switch x := v.(type) {
+	case string:
+		return RedactOutput(clientctx.MaskURLInValue(x))
+	case jsjson.Object:
+		out := make(jsjson.Object, len(x))
+		for i, m := range x {
+			out[i] = jsjson.Member{Key: m.Key, Value: RedactValue(m.Value)}
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = RedactValue(e)
+		}
+		return out
+	}
+	return v
 }
 
 // storedTokens is safeText.ts's heldCredentials' stored half: every stored
@@ -261,7 +296,13 @@ func storedTokens(env Env) []string {
 // println writes one line on stdout, as console.log does (a lone
 // surrogate as U+FFFD, as Node.js writes it).
 func (r *Run) println(text string) error {
-	_, err := io.WriteString(r.Stdout, jsval.NodeText(text)+"\n")
+	return r.out(text + "\n")
+}
+
+// out is the one place the CLI writes stdout: through the fail-safe
+// (RedactOutput). TestEveryWriteGoesThroughTheFailSafe fails on any other.
+func (r *Run) out(text string) error {
+	_, err := io.WriteString(r.Stdout, jsval.NodeText(RedactOutput(text)))
 	return err
 }
 

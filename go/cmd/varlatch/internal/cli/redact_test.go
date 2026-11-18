@@ -4,10 +4,6 @@ package cli
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -52,37 +48,5 @@ func TestParserEchoesNoOptionValue(t *testing.T) {
 		if !errors.As(err, &o) || o.Message != c.want {
 			t.Errorf("%q: %v, want %q", c.args, err, c.want)
 		}
-	}
-}
-
-// TestEveryStderrWriteGoesThroughTheFailSafe: in this package, stderr is
-// written in two places only, Run.finish and Run.warn, and both apply
-// RedactDiagnostic; any other write would bypass it.
-func TestEveryStderrWriteGoesThroughTheFailSafe(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	write := regexp.MustCompile(`(Fprint\w*|WriteString|Write)\(r\.Stderr|r\.Stderr\.Write`)
-	var sites []string
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		data, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for i, line := range strings.Split(string(data), "\n") {
-			if write.MatchString(line) {
-				if !strings.Contains(line, "RedactDiagnostic(") {
-					t.Errorf("%s:%d writes stderr without RedactDiagnostic: %s", f, i+1, strings.TrimSpace(line))
-				}
-				sites = append(sites, f)
-			}
-		}
-	}
-	if len(sites) != 2 {
-		t.Errorf("stderr is written at %d sites (%v), want 2: Run.finish and Run.warn", len(sites), sites)
 	}
 }

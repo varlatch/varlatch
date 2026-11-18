@@ -56,9 +56,15 @@ func (s *sessionRun) repo() {
 
 func (s *sessionRun) run(stdin string, args ...string) (int, string, string) {
 	s.t.Helper()
+	return s.runEnv(nil, stdin, args...)
+}
+
+// runEnv is run with extra environment variables.
+func (s *sessionRun) runEnv(env []string, stdin string, args ...string) (int, string, string) {
+	s.t.Helper()
 	cmd := exec.Command(s.exe, args...)
 	cmd.Dir = s.dir
-	cmd.Env = []string{asCLI + "=1", "HOME=" + s.dir, "VARLATCH_CONFIG_DIR=" + s.config, "PATH=" + os.Getenv("PATH")}
+	cmd.Env = append([]string{asCLI + "=1", "HOME=" + s.dir, "VARLATCH_CONFIG_DIR=" + s.config, "PATH=" + os.Getenv("PATH")}, env...)
 	cmd.Stdin = strings.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -329,5 +335,62 @@ func TestWhoamiJSONShowsOnlyTheDocumentedFields(t *testing.T) {
 	}
 	if strings.Contains(stdout, "CANARY") || strings.Contains(stdout, "hunter2pass") {
 		t.Errorf("a field outside the document was shown:\n%s", stdout)
+	}
+}
+
+// TestOutputNeverShowsAToken: what the server answers, the environment or
+// the store holds is printed through the fail-safe (printJSON's
+// RedactValue for every --json document, RedactOutput for every stdout
+// line), so a Varlatch token anywhere in it is [redacted], at the top of a
+// document or nested, in --json and human output alike, and a URL's user
+// name and password are masked.
+func TestOutputNeverShowsAToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/meta":
+			_, _ = w.Write([]byte(`{"serverVersion":"0.22.0","apiMajor":1,"capabilities":["identity.whoami"]}`))
+		case "/v1/me":
+			_, _ = w.Write([]byte(`{"identity":{"id":"idn_1","name":"see vlt_svc_nestedCANARY here","kind":"human","email":null},"organization":null,` +
+				`"credential":{"id":"cred_1","name":"vlt_cli_bearerCANARY","kind":"cli","expiresAt":null},"listener":"ordinary",` +
+				`"tailnet":{"recognized":true,"tailnet":"t.ts.net","nodeId":"n1","tags":["tag:vlt_cli_tagCANARY"]}}`))
+		case "/v1/organizations/acme/projects/web/environments":
+			_, _ = w.Write([]byte(`{"items":[{"name":"vlt_cli_nameCANARY","tier":"https://u:hunter2pass@h.example","kind":"vlt_svc_kindCANARY"},{"name":"dev","tier":"development","kind":"shared"}]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	s := newSessionRun(t)
+	s.store(map[string]map[string]any{srv.URL: {"token": "vlt_cli_x", "name": "vlt_cli_storedCANARY", "issuedAt": "2026-01-01T00:00:00.000Z", "expiresAt": "2100-01-01T00:00:00.000Z"}})
+	if err := os.WriteFile(filepath.Join(s.dir, "varlatch.toml"), []byte("server = \""+srv.URL+"\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		env  []string
+		args []string
+		want []string // what stdout must hold
+	}{
+		{nil, []string{"whoami", "--json"}, []string{`"name": "[redacted]"`, `"name": "see [redacted] here"`, `"tag:[redacted]"`}},
+		{nil, []string{"whoami"}, []string{"Identity      see [redacted] here (human, idn_1)", "Credential    [redacted] (cli, cred_1)", "tags tag:[redacted]"}},
+		{nil, []string{"env", "list", "--json"}, []string{`"name": "[redacted]"`, `"tier": "https://[redacted]@h.example"`, `"kind": "[redacted]"`}},
+		{nil, []string{"env", "list"}, []string{"[redacted]  (https://[redacted]@h.example, [redacted])", "dev  (development, shared, selected)"}},
+		{nil, []string{"status", "--json"}, []string{`"name": "[redacted]"`}},
+		{[]string{"VARLATCH_SERVER=vlt_cli_serverCANARY"}, []string{"server", "--json"}, []string{`"server": "[redacted]"`}},
+		{[]string{"VARLATCH_SERVER=vlt_cli_serverCANARY"}, []string{"server"}, []string{"Server here: [redacted] (from VARLATCH_SERVER)"}},
+		{[]string{"VARLATCH_SERVER=https://u:hunter2pass@h.example"}, []string{"server", "--json"}, []string{`"server": "https://[redacted]@h.example"`}},
+	} {
+		status, stdout, stderr := s.runEnv(c.env, "", c.args...)
+		if status != 0 {
+			t.Errorf("%v %q: status %d, stderr %q", c.env, c.args, status, stderr)
+		}
+		for _, w := range c.want {
+			if !strings.Contains(stdout, w) {
+				t.Errorf("%v %q: stdout does not hold %q:\n%s", c.env, c.args, w, stdout)
+			}
+		}
+		if strings.Contains(stdout+stderr, "CANARY") || strings.Contains(stdout+stderr, "hunter2pass") {
+			t.Errorf("%v %q: a token or password was printed:\n%s%s", c.env, c.args, stdout, stderr)
+		}
 	}
 }

@@ -39,6 +39,12 @@ func shownServers(servers []string) string {
 	return strings.Join(shown, ", ")
 }
 
+// shownValue is a value from a server's answer as human output shows it:
+// a URL's user name and password masked (clientctx.MaskURLInValue), any
+// other value as it is. Tokens are redacted for every stdout line by
+// RedactOutput.
+func shownValue(v string) string { return clientctx.MaskURLInValue(v) }
+
 // serverString is a resolved server as the code that uses it reads it: a
 // string. .varlatch/local.json's serverOverride can hold any JSON, and
 // TypeScript's `server.replace(...)` throws a TypeError for anything else.
@@ -236,7 +242,7 @@ func (r *Run) loginWithToken(serverValue any, token string) error {
 	if failure == "" {
 		return r.println("Previous credential revoked.")
 	}
-	r.warn("varlatch: previous credential not revoked (" + failure + ") — it may remain live" + liveUntil(replaced) + ".")
+	_ = r.warn("varlatch: previous credential not revoked (" + failure + ") — it may remain live" + liveUntil(replaced) + ".")
 	return nil
 }
 
@@ -255,11 +261,11 @@ func liveUntil(credential any) string {
 func (r *Run) noteDefaultServer(server string) {
 	set, err := clientctx.RememberServerIfUnset(server, r.Env)
 	if err != nil {
-		r.warn("varlatch: the default server was not saved (" + err.Error() + "); the sign-in is stored.")
+		_ = r.warn("varlatch: the default server was not saved (" + err.Error() + "); the sign-in is stored.")
 		return
 	}
 	if set {
-		r.warn("Default server: " + shownServer(clientctx.StoredServerKey(server)) + ", for commands outside a repository. Change it with: varlatch server use <url>")
+		_ = r.warn("Default server: " + shownServer(clientctx.StoredServerKey(server)) + ", for commands outside a repository. Change it with: varlatch server use <url>")
 	}
 }
 
@@ -551,7 +557,7 @@ func field(base any, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return jsTemplate(v, ok), nil
+	return shownValue(jsTemplate(v, ok)), nil
 }
 
 // formatWhoamiHuman is whoami.ts's formatWhoamiHuman: one labeled line per
@@ -596,7 +602,7 @@ func formatWhoamiHuman(server string, caller any) (string, error) {
 	id, _ := field(identity, "id")
 	lines := []string{"Identity      " + name + " (" + kind + ", " + id + ")"}
 	if email, ok := jsval.Get(identity, "email"); ok && jsjson.Truthy(email) {
-		lines = append(lines, "Email         "+jsjson.String(email))
+		lines = append(lines, "Email         "+shownValue(jsjson.String(email)))
 	}
 	lines = append(lines, "Organization  "+org)
 	credName, credNameOK, err := read(credential, credentialOK, "name")
@@ -605,7 +611,7 @@ func formatWhoamiHuman(server string, caller any) (string, error) {
 	}
 	shownName := "unnamed"
 	if credNameOK && credName != nil {
-		shownName = jsjson.String(credName)
+		shownName = shownValue(jsjson.String(credName))
 	}
 	credKind, _ := field(credential, "kind")
 	credID, _ := field(credential, "id")
@@ -615,7 +621,7 @@ func formatWhoamiHuman(server string, caller any) (string, error) {
 	}
 	lines = append(lines, "Credential    "+shownName+" ("+credKind+", "+credID+"), "+expiry)
 	listener, listenerOK := jsval.Get(caller, "listener")
-	lines = append(lines, "Server        "+server+" ("+jsTemplate(listener, listenerOK)+" listener)")
+	lines = append(lines, "Server        "+server+" ("+shownValue(jsTemplate(listener, listenerOK))+" listener)")
 	if tailnet, ok := jsval.Get(caller, "tailnet"); ok && jsjson.Truthy(tailnet) {
 		device, err := describeDevice(tailnet)
 		if err != nil {
@@ -637,16 +643,16 @@ func describeDevice(device any) (string, error) {
 		reason, ok := get("reason")
 		shown := "unrecognized"
 		if ok && reason != nil {
-			shown = jsjson.String(reason)
+			shown = shownValue(jsjson.String(reason))
 		}
 		return "not recognized (" + shown + ")", nil
 	}
 	nodeID, nodeIDOK := get("nodeId")
 	var node string
 	if nodeName, ok := get("nodeName"); ok && jsjson.Truthy(nodeName) {
-		node = jsjson.String(nodeName) + " (" + jsTemplate(nodeID, nodeIDOK) + ")"
+		node = shownValue(jsjson.String(nodeName)) + " (" + shownValue(jsTemplate(nodeID, nodeIDOK)) + ")"
 	} else {
-		node = "node " + jsTemplate(nodeID, nodeIDOK)
+		node = "node " + shownValue(jsTemplate(nodeID, nodeIDOK))
 	}
 	var who string
 	tags, tagsOK := get("tags")
@@ -662,17 +668,17 @@ func describeDevice(device any) (string, error) {
 		parts := make([]string, len(list))
 		for i, t := range list {
 			if t != nil {
-				parts[i] = jsjson.String(t)
+				parts[i] = shownValue(jsjson.String(t))
 			}
 		}
 		who = "tags " + strings.Join(parts, ", ")
 	} else if login, ok := get("userLogin"); ok && jsjson.Truthy(login) {
-		who = "user " + jsjson.String(login)
+		who = "user " + shownValue(jsjson.String(login))
 	} else {
 		who = "no tags"
 	}
 	tailnet, tailnetOK := get("tailnet")
-	return node + ", " + who + ", on " + jsTemplate(tailnet, tailnetOK), nil
+	return node + ", " + who + ", on " + shownValue(jsTemplate(tailnet, tailnetOK)), nil
 }
 
 // envCommand is `varlatch env list` and `varlatch env use <environment>`.
@@ -764,13 +770,13 @@ func (r *Run) envList(ctx *clientctx.Context) error {
 		var marks []string
 		for _, m := range []any{tier, kind} {
 			if jsjson.Truthy(m) {
-				marks = append(marks, jsjson.String(m))
+				marks = append(marks, shownValue(jsjson.String(m)))
 			}
 		}
 		if selected(e) {
 			marks = append(marks, "selected")
 		}
-		if err := r.println(Printable(jsTemplate(name, nameOK)) + "  (" + Printable(strings.Join(marks, ", ")) + ")"); err != nil {
+		if err := r.println(Printable(shownValue(jsTemplate(name, nameOK))) + "  (" + Printable(strings.Join(marks, ", ")) + ")"); err != nil {
 			return err
 		}
 	}
