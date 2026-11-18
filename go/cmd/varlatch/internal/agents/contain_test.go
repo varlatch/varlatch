@@ -475,8 +475,8 @@ func TestRemoveRefusesAnUnseenName(t *testing.T) {
 // TestOtherFilesNeverExpandAliases: only a project's AGENTS.md/CLAUDE.md
 // pair is written or removed under several names. A skill file that shares
 // its file with an AGENTS.md (in the home directory for --scope user, or in
-// the project) is refused, removed or written, and the AGENTS.md is never
-// touched.
+// the project) is refused, for install and --remove alike, before anything
+// changes, and the AGENTS.md is never touched.
 func TestOtherFilesNeverExpandAliases(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("hard links in the test's own setup")
@@ -488,6 +488,9 @@ func TestOtherFilesNeverExpandAliases(t *testing.T) {
 		mode  string
 	}{
 		{"user scope --remove", "user", "remove"},
+		// The shared file holds the person's own text: install would put the
+		// skill's text in it, and ~/AGENTS.md would lose theirs.
+		{"user scope, an edited shared file", "user", "install"},
 		{"project scope, an edited skill file", "project", "install"},
 		{"project scope --remove", "project", "remove"},
 	} {
@@ -498,7 +501,7 @@ func TestOtherFilesNeverExpandAliases(t *testing.T) {
 			}
 			if c.mode == "install" {
 				// Edited, so install would write it again.
-				writeAt(t, filepath.Join(root, skill), "edited\n")
+				writeAt(t, filepath.Join(root, skill), "# My own notes\n")
 			}
 			agents := filepath.Join(root, "AGENTS.md")
 			os.Remove(agents)
@@ -513,6 +516,11 @@ func TestOtherFilesNeverExpandAliases(t *testing.T) {
 				t.Fatalf("%v, want %q", err, want)
 			}
 			sameSnapshot(t, "the root", before, snapshot(t, root))
+			if c.mode == "install" {
+				if data, _ := os.ReadFile(agents); string(data) != "# My own notes\n" {
+					t.Errorf("AGENTS.md lost the person's text: %q", data)
+				}
+			}
 		})
 	}
 }
