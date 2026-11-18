@@ -27,7 +27,7 @@ import {
 } from "./parts";
 import { useAuditNames } from "./useAuditNames";
 import { AuditDetail } from "./AuditDetail";
-import { isPermissionDenied } from "./liveRefresh";
+import { isPermissionDenied, useAuditReads } from "./liveRefresh";
 
 /**
  * The audit timeline: plain-English events grouped by day, newest first,
@@ -190,20 +190,37 @@ export function AuditTimeline({
   const since = useMemo(() => rangeStart(filters.range), [filters.range]);
   const remote = server ? serverFilters(filters, scope, since) : {};
 
+  const reads = useAuditReads(org);
+  const queryKey = ["audit", org, remote] as const;
   const history = useInfiniteQuery({
-    queryKey: ["audit", org, remote],
-    queryFn: ({ pageParam }) =>
-      api.listAuditEvents(org, { limit: pageSize, ...remote, ...(pageParam ? { cursor: pageParam } : {}) }),
+    queryKey,
+    // Every read, whatever triggered it, goes through the backoff gate.
+    queryFn: ({ pageParam, queryKey: key, signal }) =>
+      reads.read(key, signal, () =>
+        api.listAuditEvents(org, { limit: pageSize, ...remote, ...(pageParam ? { cursor: pageParam } : {}) }),
+      ),
     initialPageParam: "",
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     // Changing a facet keeps the current lines on screen until the new ones arrive.
     placeholderData: keepPreviousData,
     // A refusal is an answer, not a hiccup: asking again only records another denial.
+    // Other failures are retried once, after the backoff.
     retry: (failures, err) => !isPermissionDenied(err) && failures < 1,
-    refetchOnWindowFocus: (query) => !isPermissionDenied(query.state.error),
-    refetchOnReconnect: (query) => !isPermissionDenied(query.state.error),
   });
-  const denied = isPermissionDenied(history.error);
+  // A read waiting out the backoff (or running) resets the query to pending:
+  // keep showing the last failure rather than a skeleton.
+  const error = history.error ?? (history.data === undefined ? reads.lastFailure(queryKey) : undefined);
+  const denied = isPermissionDenied(error);
+  const [retrying, setRetrying] = useState(false);
+  const retry = () => {
+    setRetrying(true);
+    void reads.refreshNow().finally(() => setRetrying(false));
+  };
+  const retryButton = (
+    <Button size="sm" data-testid="audit-retry" loading={retrying} onClick={retry}>
+      Try again
+    </Button>
+  );
 
   const loaded = useMemo(
     () => (history.data?.pages.flatMap((p) => p.items) ?? []) as AuditEvent[],
@@ -374,7 +391,7 @@ export function AuditTimeline({
           aria-label="Audit events"
           ref={nav.listRef as React.RefObject<HTMLElement>}
         >
-          {history.isLoading ? (
+          {history.isLoading && !error ? (
             <div className="space-y-3 p-5">
               {Array.from({ length: 6 }, (_, i) => (
                 <Skeleton key={i} className="h-6 w-full" />
@@ -386,17 +403,15 @@ export function AuditTimeline({
               icon={<Lock size={20} />}
               title="You cannot read the audit log"
               description="Reading it needs the audit.read permission. Ask an owner or admin of this organization for access."
-              actions={
-                <Button size="sm" data-testid="audit-retry" loading={history.isFetching} onClick={() => void history.refetch()}>
-                  Try again
-                </Button>
-              }
+              actions={retryButton}
             />
-          ) : history.isError ? (
+          ) : error ? (
             <EmptyState
+              data-testid="audit-error"
               icon={<ShieldAlert size={20} />}
               title="The audit log is not available"
-              description={String((history.error as Error)?.message ?? history.error)}
+              description={String((error as Error)?.message ?? error)}
+              actions={retryButton}
             />
           ) : visible.length === 0 ? (
             <EmptyState
