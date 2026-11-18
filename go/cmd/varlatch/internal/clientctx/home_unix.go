@@ -17,7 +17,7 @@ func HomeDir(env Env) (string, error) {
 	if home := getenv(env, "HOME"); home != "" {
 		return home, nil
 	}
-	return systemHomeDir()
+	return recordedHomeDir()
 }
 
 // systemHomeDir is the password database's home directory for the

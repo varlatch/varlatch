@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EXIT } from "../src/exitCodes.js";
 import { CLAUDE_DENY, hookCommand, withCodexEnv, withoutCodexEnv } from "../src/agents/guardrails.js";
 import { runInstall, type InstallOptions } from "../src/agents/install.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch agents install --guardrails` (ADR-0043 Decision 8): the hook
@@ -254,7 +255,7 @@ interface Result {
 
 function cli(args: string[], cwd: string, stdin = "", env: Record<string, string> = {}): Promise<Result> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd,
       env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg"), ...env },
       stdio: ["pipe", "pipe", "pipe"],

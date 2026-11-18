@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { EMBEDDED_RELEASE } from "@varlatch/backup";
+import { agentsBlock } from "../src/agents/install.js";
+import { skillFiles } from "../src/agents/skill.js";
 import type { Exchange, TranscriptCase } from "./goKit.js";
 
 /**
@@ -345,8 +348,170 @@ const apiClient51c: TranscriptCase[] = [
   { id: "probe.null-entry", title: "a null stored entry: TypeScript throws before probing", args: ["status", "--probe"], files: storeAt({ "{{server}}": null }), differences: ["uncaught"] },
 ];
 
+// ---- 5.1d: agent files and init with flags --------------------------------
+//
+// The skill files name the CLI's version: a case that starts from installed
+// files, or writes them, lists the "skill-version" difference, and the Go
+// replay puts its own version in both (go/README.md).
+
+const SKILL = ["skill-version"];
+const AGENT_NAMES = ["claude-code", "codex", "cursor", "copilot", "gemini", "opencode", "devin", "amp", "goose", "zed", "cline", "roo", "aider", "jules"];
+
+/** The skill as this TypeScript CLI installs it, under root (a prefix ending in "/", or ""). */
+function installedSkill(root = ""): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const [path, content] of skillFiles(EMBEDDED_RELEASE.version)) {
+    files[`${root}.agents/skills/varlatch/${path}`] = content;
+    files[`${root}.claude/skills/varlatch/${path}`] = content;
+  }
+  return files;
+}
+
+const BLOCK_FILE = `# Rules\n\n${agentsBlock()}\n`;
+const MARKED_CLAUDE = "# Claude\n\n<!-- varlatch: the Varlatch instructions are in AGENTS.md -->\n@AGENTS.md\n";
+const REGION = "# varlatch:begin: added by varlatch agents install; varlatch agents install --remove takes it out";
+const pretty = (v: unknown): string => `${JSON.stringify(v, null, 2)}\n`;
+/** A project's settings, each formatted as the CLI writes it, with the CLI's entries in them. */
+const GUARDED = {
+  "AGENTS.md": BLOCK_FILE,
+  "CLAUDE.md": MARKED_CLAUDE,
+  ".claude/settings.json": pretty({
+    env: { VARLATCH_ASSISTED: "1", OTHER: "x" },
+    permissions: { deny: ["Read(./.env)", "Read(./.env.local)", "Read(./.env.*.local)", "Read(~/.config/varlatch/**)"] },
+    hooks: { PreToolUse: [{ matcher: "Bash|Read|Grep|Edit|MultiEdit|Write|NotebookEdit|mcp__.*", hooks: [{ type: "command", command: "varlatch agents hook --format claude", timeout: 30 }] }] },
+  }),
+  ".codex/hooks.json": pretty({ hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "varlatch agents hook --format codex", timeout: 30 }] }] } }),
+  ".codex/config.toml": `model = "o3"\n\n${REGION}\n[shell_environment_policy.set]\nVARLATCH_ASSISTED = "1"\n\n[mcp_servers.varlatch]\ncommand = "varlatch"\nargs = ["mcp"]\n# varlatch:end\n`,
+  ".mcp.json": pretty({ mcpServers: { varlatch: { command: "varlatch", args: ["mcp"] }, other: { command: "o" } } }),
+  ".vscode/mcp.json": pretty({ servers: { varlatch: { type: "stdio", command: "varlatch", args: ["mcp"] } } }),
+  ".gemini/settings.json": pretty({ context: { fileName: ["GEMINI.md", "AGENTS.md"] }, mcpServers: { varlatch: { command: "varlatch", args: ["mcp", "-e", "dev"] } } }),
+  ".aider.conf.yml": "model: x\nread: AGENTS.md # added by varlatch agents install\n",
+};
+/** Existing files of every kind an adapter reads, as a person left them. */
+const EXISTING_PROJECT = {
+  "AGENTS.md": "# Rules\r\n\r\nUse pnpm.\r\n",
+  "CLAUDE.md": "# Claude\n",
+  ".gemini/settings.json": pretty({ theme: "dark" }),
+  ".aider.conf.yml": "model: gpt-4\n",
+  ".codex/config.toml": 'model = "o3"\n',
+  ".claude/settings.json": '{"permissions":{"allow":["Bash(ls)"]}}\n',
+  "opencode.json": pretty({ $schema: "https://opencode.ai/config.json" }),
+};
+const TOML_SERVER = 'server = "https://repo.example"\norganization = "acme"\nproject = "web"\n';
+const INIT = ["init", "--org", "acme", "--project", "web"];
+const INIT_SERVER = [...INIT, "--server", "https://varlatch.example.com"];
+const install = (...rest: string[]) => ["agents", "install", ...rest];
+
+const agentFiles51d: TranscriptCase[] = [
+  // agents guide: the skill, or one reference, on stdout
+  { id: "guide.skill", title: "agents guide prints the skill's body and its topics", args: ["agents", "guide"] },
+  { id: "guide.assisted", title: "the same in assisted mode", args: ["--assisted", "agents", "guide"] },
+  ...["setup", "run", "agent-run", "self-hosting", "contract"].map((topic): TranscriptCase => ({ id: `guide.${topic}`, title: `agents guide ${topic}`, args: ["agents", "guide", topic] })),
+  { id: "guide.unknown", title: "an unknown topic is a usage error naming the topics", args: ["agents", "guide", "nosuch"] },
+  { id: "guide.case", title: "topics are case-sensitive", args: ["agents", "guide", "SETUP"] },
+  { id: "guide.empty", title: "an empty topic is a topic", args: ["agents", "guide", ""] },
+  { id: "guide.extra", title: "one topic only", args: ["agents", "guide", "run", "extra"] },
+  { id: "guide.option", title: "guide has no options", args: ["agents", "guide", "--topic", "run"] },
+  { id: "guide.json", title: "not even --json", args: ["agents", "guide", "--json"] },
+  // the command line
+  { id: "agents.none", title: "agents without a subcommand is a usage error", args: ["agents"] },
+  { id: "agents.unknown", title: "an unknown subcommand is a usage error", args: ["agents", "nosuch"] },
+  { id: "agents.option-first", title: "an option where the subcommand goes", args: ["agents", "--check"] },
+  ...[
+    ["check-remove", "--check and --remove do not combine", ["--check", "--remove"]],
+    ["scope-unknown", "--scope must be project or user", ["--scope", "system"]],
+    ["scope-missing", "--scope needs a value", ["--scope"]],
+    ["scope-twice", "--scope given twice", ["--scope", "user", "--scope", "project"]],
+    ["agent-unknown", "an unknown coding agent", ["--agent", "nosuch"]],
+    ["agent-unknown-later", "an unknown coding agent after known ones", ["--agent", "codex", "--agent", "Codex"]],
+    ["agent-missing", "--agent needs a value", ["--agent"]],
+    ["agent-option", "--agent followed by an option", ["--agent", "--check"]],
+    ["user-agent", "--agent applies to a project", ["--scope", "user", "--agent", "codex"]],
+    ["user-guardrails", "--guardrails applies to a project", ["--scope", "user", "--guardrails"]],
+    ["user-mcp", "--mcp applies to a project", ["--scope", "user", "--mcp"]],
+    ["typo", "a mistyped option is refused before anything is written", ["--chek"]],
+    ["equals", "--check=true is not --check", ["--check=true"]],
+    ["extra", "install takes no argument", ["extra"]],
+    ["separator", "-- is not an end of options here", ["--", "--check"]],
+    ["short", "no short options", ["-c"]],
+  ].map(([id, title, rest]): TranscriptCase => ({ id: `install.usage.${id}`, title: title as string, args: install(...(rest as string[])) })),
+  // install, check, remove: the project scope
+  { id: "install.empty", title: "a project with nothing: the skill twice and AGENTS.md", args: install(), differences: SKILL },
+  { id: "install.empty.json", title: "--json: the result after the schema version", args: install("--json"), differences: SKILL },
+  { id: "install.empty.assisted", title: "assisted mode changes nothing", args: ["--assisted", ...install()], differences: SKILL },
+  { id: "install.check.missing", title: "--check on a project without the files: missing, exit 1, nothing written", args: install("--check") },
+  { id: "install.check.missing.json", title: "--check --json: drift true, exit 1", args: install("--check", "--json") },
+  { id: "install.check.clean", title: "--check on an installed project: up to date, exit 0", args: install("--check"), files: { ...installedSkill(), "AGENTS.md": BLOCK_FILE }, differences: SKILL },
+  { id: "install.check.differs", title: "--check names an edited skill file and an extra one", args: install("--check"), files: { ...installedSkill(), "AGENTS.md": BLOCK_FILE, ".agents/skills/varlatch/SKILL.md": "edited\n", ".claude/skills/varlatch/old.md": "old\n" }, differences: SKILL },
+  { id: "install.again", title: "install again: an edited file is updated, an old one removed", args: install(), files: { ...installedSkill(), "AGENTS.md": BLOCK_FILE, ".agents/skills/varlatch/references/run.md": "edited\n", ".claude/skills/varlatch/old.md": "old\n" }, differences: SKILL },
+  { id: "install.up-to-date", title: "install on an installed project: up to date", args: install(), files: { ...installedSkill(), "AGENTS.md": BLOCK_FILE }, differences: SKILL },
+  { id: "install.existing", title: "existing files of every adapter, without options", args: install(), files: EXISTING_PROJECT, differences: SKILL },
+  { id: "install.subdirectory", title: "from a subdirectory: the files go to the varlatch.toml root", args: install(), files: { "repo/varlatch.toml": TOML_SERVER, "repo/src/app/index.ts": "" }, cwd: "repo/src/app", differences: SKILL },
+  { id: "install.subdirectory.check", title: "--check from a subdirectory", args: install("--check", "--json"), files: { "repo/varlatch.toml": TOML_SERVER }, cwd: "repo/src" },
+  { id: "install.damaged", title: "AGENTS.md with only a begin marker: exit 78, nothing written", args: install(), files: { "AGENTS.md": "<!-- varlatch:begin -->\nhalf\n" } },
+  { id: "install.damaged.end", title: "AGENTS.md with only an end marker: exit 78", args: install("--remove"), files: { "AGENTS.md": "half\n<!-- varlatch:end -->\n" } },
+  { id: "install.claude-local", title: "CLAUDE.local.md: the import is the human's to add", args: install(), files: { "CLAUDE.local.md": "# Local\n" }, differences: SKILL },
+  { id: "install.not-canonical", title: "settings the CLI would reformat: the edits are the human's", args: install("--guardrails", "--mcp", "--agent", "gemini"), files: { ".gemini/settings.json": '{"theme":"dark"}\n', ".claude/settings.json": "{}", ".mcp.json": "{ nope" }, differences: SKILL },
+  // every coding agent
+  { id: "install.agents.all", title: "every coding agent at once", args: install(...AGENT_NAMES.flatMap((a) => ["--agent", a])), differences: SKILL },
+  ...AGENT_NAMES.map((agent): TranscriptCase => ({ id: `install.agent.${agent}.check`, title: `--agent ${agent} --check: what it would write, and how it reads the files`, args: install("--agent", agent, "--check") })),
+  ...["claude-code", "gemini", "aider", "jules"].map((agent): TranscriptCase => ({ id: `install.agent.${agent}`, title: `--agent ${agent}`, args: install("--agent", agent), differences: SKILL })),
+  { id: "install.agent.repeated", title: "an agent named twice", args: install("--agent", "aider", "--agent", "aider", "--check") },
+  // --guardrails and --mcp
+  { id: "install.guardrails", title: "--guardrails without agents: Claude Code, and Codex only where .codex exists", args: install("--guardrails"), differences: SKILL },
+  { id: "install.guardrails.codex-dir", title: "--guardrails with a .codex directory", args: install("--guardrails"), files: { ".codex/.keep": "" }, differences: SKILL },
+  { id: "install.guardrails.agents", title: "--guardrails for named agents, one without guardrails", args: install("--guardrails", "--agent", "codex", "--agent", "cursor"), differences: SKILL },
+  { id: "install.mcp", title: "--mcp without agents: .mcp.json", args: install("--mcp"), differences: SKILL },
+  ...["codex", "copilot", "cursor", "gemini", "opencode", "devin"].map((agent): TranscriptCase => ({ id: `install.mcp.${agent}`, title: `--mcp --agent ${agent}`, args: install("--mcp", "--agent", agent), differences: SKILL })),
+  { id: "install.everything", title: "--guardrails --mcp over existing files", args: install("--guardrails", "--mcp"), files: EXISTING_PROJECT, differences: SKILL },
+  { id: "install.everything.json", title: "--guardrails --mcp --json for every agent with an adapter", args: install("--guardrails", "--mcp", "--json", "--agent", "claude-code", "--agent", "codex", "--agent", "gemini", "--agent", "aider"), differences: SKILL },
+  { id: "install.guarded.check", title: "--check --guardrails --mcp on a guarded project: only the skill is missing", args: install("--check", "--guardrails", "--mcp"), files: GUARDED },
+  { id: "install.remove", title: "--remove: the CLI's entries come out, differing ones and settings stay, empty directories go", args: install("--remove"), files: { ...installedSkill(), ...GUARDED }, differences: SKILL },
+  { id: "install.remove.json", title: "--remove --json", args: install("--remove", "--json"), files: GUARDED },
+  { id: "install.remove.nothing", title: "--remove with nothing installed", args: install("--remove") },
+  { id: "install.remove.keeps-own", title: "--remove keeps the human's AGENTS.md and CLAUDE.md content", args: install("--remove"), files: { "AGENTS.md": BLOCK_FILE, "CLAUDE.md": MARKED_CLAUDE, ".claude/skills/other/SKILL.md": "x\n" } },
+  // the user scope: HOME
+  { id: "install.user", title: "--scope user writes the skill under HOME", args: install("--scope", "user"), differences: SKILL },
+  { id: "install.user.check", title: "--scope user --check", args: install("--scope", "user", "--check"), files: installedSkill("home/"), differences: SKILL },
+  { id: "install.user.remove", title: "--scope user --remove", args: install("--scope", "user", "--remove", "--json"), files: { ...installedSkill("home/"), "home/.agents/other": "x\n" }, differences: SKILL },
+  { id: "install.user.ignores-project", title: "--scope user ignores the project's files", args: install("--scope", "user"), files: { "AGENTS.md": "# Rules\n" }, differences: SKILL },
+  // init with flags, off a terminal
+  { id: "init.server", title: "init with --server writes varlatch.toml and the agent files", args: INIT_SERVER, differences: SKILL },
+  { id: "init.no-agent-files", title: "--no-agent-files writes varlatch.toml only", args: [...INIT_SERVER, "--no-agent-files"] },
+  { id: "init.default-environment", title: "--default-environment", args: [...INIT_SERVER, "--default-environment", "staging", "--no-agent-files"] },
+  { id: "init.existing-agents", title: "an existing AGENTS.md and CLAUDE.md: the summary names what changed", args: INIT_SERVER, files: { "AGENTS.md": "# Mine\n", "CLAUDE.md": "# Claude\n" }, differences: SKILL },
+  { id: "init.up-to-date", title: "agent files already in place: no summary line", args: INIT_SERVER, files: { ...installedSkill(), "AGENTS.md": BLOCK_FILE }, differences: SKILL },
+  { id: "init.to-do", title: "a CLAUDE.local.md: init says what to do by hand", args: INIT_SERVER, files: { "CLAUDE.local.md": "# Local\n" }, differences: SKILL },
+  { id: "init.agent-files-fail", title: "agent files that cannot be written: init still succeeds and says how to retry", args: INIT_SERVER, files: { "AGENTS.md": "<!-- varlatch:end -->\n" } },
+  { id: "init.env-var", title: "the server from VARLATCH_SERVER", args: [...INIT, "--no-agent-files"], env: { VARLATCH_SERVER: "https://var.example" } },
+  { id: "init.flag-over-env", title: "--server wins over VARLATCH_SERVER", args: [...INIT_SERVER, "--no-agent-files"], env: { VARLATCH_SERVER: "https://var.example" } },
+  { id: "init.default-server", title: "the server from the default server", args: [...INIT, "--no-agent-files"], files: { "config/settings.json": pretty({ defaultServer: "https://default.example" }) } },
+  { id: "init.only-credential", title: "the server from the only stored credential", args: [...INIT, "--no-agent-files"], files: { "config/credentials.json": pretty({ servers: { "https://only.example": { token: "vlt_cli_fakeAAAA" } } }) } },
+  { id: "init.several-credentials", title: "several credentials and no default: no server", args: INIT, files: { "config/credentials.json": pretty({ servers: { "https://a.example": { token: "vlt_cli_fakeAAAA" }, "https://b.example": { token: "vlt_cli_fakeBBBB" } } }) } },
+  { id: "init.empty-server", title: "an empty --server counts as none", args: [...INIT, "--server", ""] },
+  { id: "init.no-server", title: "no server anywhere: a usage error, nothing written", args: INIT },
+  { id: "init.raw-values", title: "the values go into varlatch.toml as given", args: ["init", "--org", 'a"b', "--project", "w\\b", "--server", "https://x.example/p q", "--default-environment", "d e", "--no-agent-files"], differences: ["toml-escaped"] },
+  { id: "init.bad-settings", title: "an unreadable settings.json", args: INIT, files: { "config/settings.json": "nope" } },
+  { id: "init.in-repository", title: "inside a configured repository: nothing to initialize, exit 1", args: INIT_SERVER, files: { "repo/varlatch.toml": TOML_SERVER }, cwd: "repo/sub" },
+  { id: "init.in-repository.assisted", title: "the same in assisted mode names --assisted in its commands", args: ["--assisted", ...INIT_SERVER], files: { "repo/varlatch.toml": TOML_SERVER }, cwd: "repo" },
+  { id: "init.in-repository.marker", title: "a coding agent's marker turns on assisted mode too", args: INIT_SERVER, env: { CLAUDECODE: "1" }, files: { "repo/varlatch.toml": TOML_SERVER }, cwd: "repo" },
+  { id: "init.assisted", title: "assisted mode off a terminal: the flags path", args: ["--assisted", ...INIT_SERVER, "--no-agent-files"] },
+  ...[
+    ["none", "no flags off a terminal: the usage", []],
+    ["org-only", "--org without --project", ["--org", "acme"]],
+    ["project-only", "--project without --org: the usage", ["--project", "web"]],
+    ["typo", "a mistyped --no-agent-files is refused", ["--org", "acme", "--project", "web", "--no-agent-file"]],
+    ["extra", "init takes no argument", ["--org", "acme", "--project", "web", "extra"]],
+    ["project-missing-value", "--project needs a value", ["--org", "acme", "--project"]],
+    ["org-twice", "--org given twice", ["--org", "acme", "--org", "other", "--project", "web"]],
+    ["value-option", "a value that looks like an option", ["--org", "-acme", "--project", "web"]],
+    ["no-agent-files-twice", "--no-agent-files twice is still one", ["--org", "acme", "--project", "web", "--no-agent-files", "--no-agent-files", "--server", "https://s.example"]],
+  ].map(([id, title, rest]): TranscriptCase => ({ id: `init.usage.${id}`, title: title as string, args: ["init", ...(rest as string[])] })),
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
   "5.1c-api-client": apiClient51c,
+  "5.1d-agent-files": agentFiles51d,
 };

@@ -12,14 +12,19 @@
 // and columns count UTF-16 code units, as JavaScript's do, so the message's
 // line, column and caret are the same.
 //
-// The values the CLI reads are strings; the others are kept only as far as
-// the parser's own checks need them (a number or a date is "other").
+// Strings, tables and arrays are Go values; a boolean, number or date is
+// an Other, holding the value JavaScript holds (a boolean, a number, or a
+// date's JSON text), so that two documents compare as the TypeScript CLI
+// compares them (JSON.stringify of the parsed document).
 package toml
 
 import (
+	"fmt"
+	"math"
 	"math/big"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
@@ -66,8 +71,40 @@ func (t *Table) set(k string, v any) {
 // Array is a TOML array.
 type Array struct{ Items []any }
 
-// Other is a boolean, number or date: a value the CLI never reads.
-type Other struct{ Kind string }
+// Other is a boolean, number or date. Value is the boolean, the number
+// (float64, as JavaScript holds it), or for a date the text of its
+// toJSON(), smol-toml's TomlDate.toISOString().
+type Other struct {
+	Kind  string
+	Value any
+}
+
+// NewTable is an empty table, for code that builds the document it
+// expects a parse to give.
+func NewTable() *Table { return newTable() }
+
+// Set is t[k] = v.
+func (t *Table) Set(k string, v any) { t.set(k, v) }
+
+// Clone is a shallow copy of t ({...t}).
+func (t *Table) Clone() *Table {
+	c := &Table{keys: append([]string(nil), t.keys...), values: make(map[string]any, len(t.values))}
+	for k, v := range t.values {
+		c.values[k] = v
+	}
+	return c
+}
+
+// Without is t without k ({[k]: _, ...rest} = t).
+func (t *Table) Without(k string) *Table {
+	c := newTable()
+	for _, key := range t.keys {
+		if key != k {
+			c.set(key, t.values[key])
+		}
+	}
+	return c
+}
 
 // nan stands for charCodeAt past the end, which is NaN in JavaScript: it
 // equals nothing and is neither less nor greater than anything.
@@ -516,7 +553,7 @@ func extractValue(c *ctx, end int) any {
 			c.fail("invalid value", errPtr)
 		}
 		c.p++
-		return Other{Kind: "boolean"}
+		return Other{Kind: "boolean", Value: true}
 	}
 	if ch == 'f' {
 		for _, want := range "alse" {
@@ -526,7 +563,7 @@ func extractValue(c *ctx, end int) any {
 			}
 		}
 		c.p++
-		return Other{Kind: "boolean"}
+		return Other{Kind: "boolean", Value: false}
 	}
 	if ch == '+' || ch == '-' {
 		sign := 1
@@ -561,7 +598,10 @@ func parseNumber(c *ctx, startPtr int, startChr int, sign int, endChr int) any {
 			c.fail("invalid value", startPtr)
 		}
 		c.p++
-		return Other{Kind: "number"}
+		if sign < 0 {
+			return number(math.Inf(-1))
+		}
+		return number(math.Inf(1))
 	}
 	if ch == 'n' {
 		c.p++
@@ -573,16 +613,17 @@ func parseNumber(c *ctx, startPtr int, startChr int, sign int, endChr int) any {
 			c.fail("invalid value", startPtr)
 		}
 		c.p++
-		return Other{Kind: "number"}
+		return number(math.NaN())
 	}
 	if ch == '0' {
 		c.p++
+		// 0, never -0: smol-toml returns the literal 0 for "-0" too.
 		if c.p >= len(c.s) {
-			return Other{Kind: "number"}
+			return number(0)
 		}
 		ch = c.at(c.p)
 		if isEndOfValue(ch, endChr) {
-			return Other{Kind: "number"}
+			return number(0)
 		}
 		if sign == 0 {
 			switch ch {
@@ -638,21 +679,28 @@ func parseNumber(c *ctx, startPtr int, startChr int, sign int, endChr int) any {
 		}
 	}
 	if state == 0 {
-		return Other{Kind: "number"}
+		s := 1
+		if sign < 0 {
+			s = -1
+		}
+		return number(float64((startChr - '0') * s))
 	}
 	if state&1 == 0 {
 		c.fail("unfinished numeric value", startPtr)
-	}
-	if state > 1 {
-		return Other{Kind: "number"} // parseFloat: never refused
 	}
 	text := str(c.slice(startPtr, c.p))
 	if hasUnderscores {
 		text = strings.ReplaceAll(text, "_", "")
 	}
-	parseInteger(c, text, 10, startPtr)
-	return Other{Kind: "number"}
+	if state > 1 {
+		// parseFloat: never refused; out of range is Infinity or 0, as there.
+		f, _ := strconv.ParseFloat(text, 64)
+		return number(f)
+	}
+	return number(parseInteger(c, text, 10, startPtr))
 }
+
+func number(f float64) Other { return Other{Kind: "number", Value: f} }
 
 func parseIntegerBaseN(c *ctx, startPtr int, base int, endChr int) any {
 	underscore := 1
@@ -681,8 +729,7 @@ func parseIntegerBaseN(c *ctx, startPtr int, base int, endChr int) any {
 		c.failHere("unfinished numeric value")
 	}
 	text := strings.ReplaceAll(str(c.slice(startPtr+2, c.p)), "_", "")
-	parseInteger(c, text, base, startPtr)
-	return Other{Kind: "number"}
+	return number(parseInteger(c, text, base, startPtr))
 }
 
 // maxSafe is Number.MAX_SAFE_INTEGER.
@@ -690,13 +737,19 @@ var maxSafe = big.NewInt(1<<53 - 1)
 
 // parseInteger refuses what parseInt(str, base) cannot hold exactly
 // (Number.isSafeInteger): an integer beyond 2^53 - 1 rounds to 2^53 or more.
-// str holds an optional sign and then digits of the base only.
-func parseInteger(c *ctx, text string, base int, startPtr int) {
+// str holds an optional sign and then digits of the base only. It is the
+// value parseInt gives.
+func parseInteger(c *ctx, text string, base int, startPtr int) float64 {
 	digits := strings.TrimLeft(text, "+-")
 	n, ok := new(big.Int).SetString(digits, base)
 	if !ok || n.CmpAbs(maxSafe) > 0 {
 		c.fail("integer value cannot be represented losslessly", startPtr)
 	}
+	f := float64(n.Int64())
+	if strings.HasPrefix(text, "-") {
+		f = -f
+	}
+	return f
 }
 
 func parseDate(c *ctx, ch int, endChr int) any {
@@ -788,40 +841,82 @@ func parseTime(c *ctx, ch int, endChr int) any {
 // readDate is extract.js's readDate with useLegacyDate (the default): a
 // TomlDate, refused when it is not a valid Date.
 func readDate(c *ctx, text []uint16, typ int, unsafeDelim bool, errPtr int) any {
-	if !tomlDateValid(text, typ, unsafeDelim) {
+	iso, ok := tomlDate(text, typ, unsafeDelim)
+	if !ok {
 		c.fail("invalid date", errPtr)
 	}
-	return Other{Kind: "date"}
+	return Other{Kind: "date", Value: iso}
 }
 
-// tomlDateValid is date.js's TomlDate constructor for a "fast type"
-// followed by isValid(): whether new Date(...) of the string it builds is
-// a valid time.
-func tomlDateValid(u []uint16, fasttype int, unsafeDelim bool) bool {
+// tomlDate is date.js's TomlDate constructor for a "fast type", then
+// isValid() and toISOString(): whether new Date(...) of the string it
+// builds is a valid time, and the text TomlDate gives it.
+func tomlDate(u []uint16, fasttype int, unsafeDelim bool) (string, bool) {
 	date := u
 	sl := func(from, to int) []uint16 {
 		from = max(0, min(from, len(date)))
 		to = max(from, min(to, len(date)))
 		return date[from:to]
 	}
+	hasDate, hasTime := fasttype != 4, fasttype != 3
+	offset, local := "Z", false
 	if fasttype < 3 {
 		if h, ok := jsval.ToNumber(sl(11, 13)); ok && h > 23 {
-			return false // new Date('') is invalid
+			return "", false // new Date('') is invalid
 		}
 		if fasttype == 2 {
+			local = true
 			date = append(append([]uint16(nil), date...), 'Z')
+		} else if last := date[len(date)-1]; last != 'Z' && last != 'z' {
+			offset = str(sl(len(date)-6, len(date)))
 		}
 		if unsafeDelim {
 			date = append(append(append([]uint16(nil), sl(0, 10)...), 'T'), sl(11, len(date))...)
 		}
 	} else if fasttype == 4 {
 		if h, ok := jsval.ToNumber(sl(0, 2)); ok && h > 23 {
-			return false
+			return "", false
 		}
 		date = append(append(utf16.Encode([]rune("0000-01-01T")), date...), 'Z')
 	}
-	_, ok := jsval.DateParse(str(date))
-	return ok
+	ms, ok := jsval.DateParse(str(date))
+	if !ok {
+		return "", false
+	}
+	iso := isoString(ms)
+	switch {
+	case hasDate && !hasTime:
+		return iso[:10], true
+	case hasTime && !hasDate:
+		return iso[11:23], true
+	case local:
+		return iso[:len(iso)-1], true
+	case offset == "Z" || offset == "z" || len(offset) != 6:
+		return iso, true
+	}
+	// The offset as authored: the time in that offset, then the offset.
+	minutes := (int(offset[1]-'0')*10+int(offset[2]-'0'))*60 + int(offset[4]-'0')*10 + int(offset[5]-'0')
+	if offset[0] != '-' {
+		minutes = -minutes
+	}
+	shifted := isoString(ms - float64(minutes)*60e3)
+	return shifted[:len(shifted)-1] + offset, true
+}
+
+// isoString is Date.prototype.toISOString for a valid time value.
+func isoString(ms float64) string {
+	t := time.UnixMilli(int64(ms)).UTC()
+	year := t.Year()
+	var y string
+	switch {
+	case year >= 0 && year <= 9999:
+		y = fmt.Sprintf("%04d", year)
+	case year < 0:
+		y = fmt.Sprintf("-%06d", -year)
+	default:
+		y = fmt.Sprintf("+%06d", year)
+	}
+	return fmt.Sprintf("%s-%02d-%02dT%02d:%02d:%02d.%03dZ", y, int(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond()/1e6)
 }
 
 // primitive.js

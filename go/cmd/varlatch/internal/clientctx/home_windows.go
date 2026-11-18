@@ -15,7 +15,7 @@ func HomeDir(env Env) (string, error) {
 	if home := getenv(env, "USERPROFILE"); home != "" {
 		return home, nil
 	}
-	return systemHomeDir()
+	return recordedHomeDir()
 }
 
 // systemHomeDir is the profile directory of the process's user; a

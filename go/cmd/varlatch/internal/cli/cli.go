@@ -93,6 +93,8 @@ type exitError struct {
 	// message (which echoes what they gave) leaves it as it is.
 	usage string
 	code  int
+	// silent: the command printed what it had to say (process.exitCode).
+	silent bool
 }
 
 func (e *exitError) Error() string { return e.message + e.usage }
@@ -100,6 +102,10 @@ func (e *exitError) Error() string { return e.message + e.usage }
 // Fail is the error that prints message on stderr and exits with code
 // (apps/cli/src/main.ts fail()).
 func Fail(message string, code int) error { return &exitError{message: message, code: code} }
+
+// ExitWith ends a command that has printed its output with code, as
+// setting process.exitCode does: nothing more is printed.
+func ExitWith(code int) error { return &exitError{code: code, silent: true} }
 
 // UsageError is a usage error: message on stderr, exit 64 (main.ts usageError()).
 func UsageError(message string) error { return Fail(message, ExitUsage) }
@@ -189,6 +195,12 @@ func (r *Run) finish(err error) int {
 		return ExitOK
 	}
 	err = r.mapClientError(err)
+	// No home directory to find the configuration in: the command line (or
+	// the environment) must give one, as in main.ts's catch.
+	var noHome *clientctx.HomeDirectoryError
+	if errors.As(err, &noHome) {
+		err = Fail(noHome.Error(), ExitUsage)
+	}
 	var e *exitError
 	if !errors.As(err, &e) {
 		// An error no command turned into a message: TypeScript lets it
@@ -200,7 +212,9 @@ func (r *Run) finish(err error) int {
 	// and password reaches stderr even where an echo site did not mask its
 	// value (go/README.md, "Diagnostics never print credential values"). A
 	// line with no ":"...at-sign pair keeps its bytes.
-	fmt.Fprintln(r.Stderr, jsval.NodeText(clientctx.MaskUserinfoInText(e.message)+e.usage))
+	if !e.silent {
+		fmt.Fprintln(r.Stderr, jsval.NodeText(clientctx.MaskUserinfoInText(e.message)+e.usage))
+	}
 	if r.everyFailureIsOne {
 		return ExitFailure
 	}
