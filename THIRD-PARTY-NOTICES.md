@@ -29,7 +29,7 @@ The release manifest (`varlatch-release.json`) pins each of these by digest.
 
 | Base image | Used by | License | Contents |
 | --- | --- | --- | --- |
-| `nginx:1.29-alpine` | varlatch-web | BSD-2-Clause (nginx) | nginx on Alpine Linux; Alpine packages are under their own licenses |
+| `nginx:1.31.9-alpine` | varlatch-web | BSD-2-Clause (nginx) | nginx on Alpine Linux; Alpine packages are under their own licenses |
 | `node:26-slim` | convex-deploy, varlatch-web, varlatchd | MIT (Node.js) | Node.js, whose LICENSE lists the components it bundles, on Debian; Debian packages are under their own licenses |
 
 The convex-deploy image also contains `generate_key` from the Convex

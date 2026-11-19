@@ -22,7 +22,7 @@ RUN pnpm --filter @varlatch/protocol generate \
  && pnpm --filter @varlatch/sdk build \
  && pnpm --filter @varlatch/web build
 
-FROM nginx:1.29-alpine
+FROM nginx:1.31.9-alpine
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY apps/web/docker-entrypoint.d/10-varlatch-config.sh /docker-entrypoint.d/
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
