@@ -477,6 +477,19 @@ describe("a destination's reset after a body without a declared length", () => {
     expect(events).toContainEqual({ kind: "incomplete-prefix", item: "API_KEY", length: prefix.length });
     expect(events.some((e) => e.kind === "aborted")).toBe(false);
   });
+
+  it("a reset after a chunked body's last chunk does not undo its clean end", async () => {
+    const prefix = SECRET.slice(0, 12);
+    const chunk = `data ${prefix}`;
+    const head = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n${chunk.length.toString(16)}\r\n${chunk}\r\n0\r\n\r\n`;
+    const port = await resetting(head, (raw) => raw.resetAndDestroy());
+    const { broker: b, events } = await broker(port);
+    const r = await agent(b, `https://127.0.0.1:${port}/`);
+    expect(r.complete).toBe(true);
+    expect(r.body.toString()).toBe(chunk);
+    expect(events).toContainEqual({ kind: "incomplete-prefix", item: "API_KEY", length: prefix.length });
+    expect(events.some((e) => e.kind === "aborted")).toBe(false);
+  });
 });
 
 describe("hold-back (tests 27 and 28)", () => {
