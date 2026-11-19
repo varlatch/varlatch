@@ -14,10 +14,6 @@
       "reason": "varlatch mcp: not ported to the Go CLI yet",
       "slice": "5.6b"
     },
-    "run-redact": {
-      "reason": "varlatch run --redact: not ported to the Go CLI yet",
-      "slice": "5.4c"
-    },
     "run-strict": {
       "reason": "varlatch run --strict: not ported to the Go CLI yet",
       "slice": "5.4f"

@@ -10,6 +10,7 @@
     "test/exportContextCli.test.ts",
     "test/login-token-stdin.test.ts",
     "test/machine-interface.test.ts",
+    "test/redact-run.test.ts",
     "test/run-signals.test.ts",
     "test/server-text-cli.test.ts",
     "test/token-expiry-warning.test.ts"
