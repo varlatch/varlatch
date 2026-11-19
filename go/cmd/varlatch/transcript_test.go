@@ -363,8 +363,13 @@ func TestTranscripts(t *testing.T) {
 				// Skipped before it joins the parallel cases or takes a
 				// slot: on Windows, a case whose outcome names a path below
 				// its directory is not compared until step 5.9.
-				if runtime.GOOS == "windows" && expectsPath(t, c) {
-					t.Skip(windowsPathSkip)
+				if runtime.GOOS == "windows" {
+					if expectsPath(t, c) {
+						t.Skip(windowsPathSkip)
+					}
+					if expectsDirInJSON(c) {
+						t.Skip(windowsJSONDirSkip)
+					}
 				}
 				t.Parallel()
 				slots <- struct{}{}
@@ -412,6 +417,34 @@ func expectsPath(t *testing.T, c transcript.Case) bool {
 // only one the recorder writes today; {{home}} is matched too, so a
 // recorder that adds it is covered.
 var pathBelowDir = regexp.MustCompile(`\{\{(dir|home)\}\}[/\\]`)
+
+// windowsJSONDirSkip is why a case that names its directory inside a JSON
+// string is skipped on Windows (step 5.9).
+const windowsJSONDirSkip = "a directory inside a JSON string: Windows expectations not recorded yet (step 5.9)"
+
+// dirInJSONString matches a placeholder directory inside a JSON string.
+var dirInJSONString = regexp.MustCompile(`"[^"\n]*\{\{(dir|home)\}\}[^"\n]*"`)
+
+// expectsDirInJSON reports whether a case's recorded outcome names its
+// directory inside a JSON string (stdout, stderr, a file it writes, or a
+// request body). The replayer gives the directory back as {{dir}} as it is
+// printed; on Windows JSON escapes its backslashes, so until Windows
+// outcomes are recorded (step 5.9) such a case is not compared there.
+func expectsDirInJSON(c transcript.Case) bool {
+	texts := []string{c.Expect.Stdout, c.Expect.Stderr}
+	for _, f := range c.Expect.Files {
+		texts = append(texts, f.Content)
+	}
+	for _, r := range c.Expect.Requests {
+		texts = append(texts, string(r.Body))
+	}
+	for _, text := range texts {
+		if dirInJSONString.MatchString(text) {
+			return true
+		}
+	}
+	return false
+}
 
 func withMarker(env map[string]string) map[string]string {
 	out := map[string]string{asCLI: "1"}
@@ -461,6 +494,18 @@ func TestWindowsPathSkipIsNarrow(t *testing.T) {
 		`{{skill}}/SKILL.md`:          false,
 	} {
 		if got := pathBelowDir.MatchString(text); got != skipped {
+			t.Errorf("%s: skipped %v, want %v", text, got, skipped)
+		}
+	}
+	// A directory inside a JSON string is skipped too; outside one, alone,
+	// it is compared.
+	for text, skipped := range map[string]bool{
+		`{"offline": "No varlatch.toml found from {{dir}} upward"}`: true,
+		`{"root": "{{dir}}"}`:                         true,
+		`No varlatch.toml found from {{dir}} upward.`: false,
+		`{"server": "{{server}}"}`:                    false,
+	} {
+		if got := expectsDirInJSON(transcript.Case{Expect: transcript.Outcome{Stdout: text}}); got != skipped {
 			t.Errorf("%s: skipped %v, want %v", text, got, skipped)
 		}
 	}
