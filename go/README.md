@@ -628,6 +628,11 @@ comes. `verify-release`, which the installers run, is Go's own.
     at once, names, classes and reasons, never a value, and the run ends
     with 78 before the command starts (`5.4f-strict.json`, one case per
     kind). A server without strict retrieval gets 78, never a default run.
+    The checks come after the strict retrieval, whose one answer holds the
+    Contract and the values: an `--allow-inherited` or `--omit` name that
+    is refused, or a violation, ends a run whose values were already
+    disclosed to the CLI process (and recorded as a disclosure); nothing
+    reaches the command before every check.
   - **Not built yet.** `--redact` outside assisted mode (5.4c),
     `--agent-safe` (with `--strict` too) and a run inside an agent-safe run
     (5.5b) refuse with the CLI's not-built message (64).
