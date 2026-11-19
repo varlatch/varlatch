@@ -135,6 +135,16 @@ func TestInviteShowsOnlyAnInvitationToken(t *testing.T) {
 	if r.showableInvite("vlt_invite_" + strings.Repeat("E", 43)) {
 		t.Error("a token holding a registered secret was shown")
 	}
+	// A token that is part of a known secret: registered, stored, or in flight.
+	inside := func(c string) string { return "vlt_invite_" + strings.Repeat(c, 43) }
+	r.Secrets.Remember("prefix-" + inside("F") + "-suffix")
+	r.Secrets.Stored = func() []string { return []string{"x" + inside("G") + "y"} }
+	r.holdValue("[" + inside("H") + "]")
+	for _, c := range []string{"F", "G", "H"} {
+		if r.showableInvite(inside(c)) {
+			t.Errorf("a token inside a known secret (%s) was shown", c)
+		}
+	}
 }
 
 // TestInviteNeverPrintsAnotherSecret runs invite against a server that

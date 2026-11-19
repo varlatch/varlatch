@@ -308,23 +308,30 @@ var inviteTokenFormat = regexp.MustCompile(`^vlt_invite_[A-Za-z0-9_-]{43}$`)
 
 // InviteNotShown is invite's message when the server's answer holds no
 // token it may print. It names nothing from the answer.
-const InviteNotShown = "varlatch invite: the server's answer holds no invitation token in Varlatch's format, or holds a credential or value this run knows, so no link is printed."
+const InviteNotShown = "varlatch invite: the server's answer holds no invitation token in Varlatch's format, or holds a credential or value this run knows, so no link is printed. The server may have created the invitation anyway: revoke it under Pending invitations in the dashboard."
 
 // showableInvite says whether invite may print token, the one secret it
 // shows on purpose: only an invitation token in the servers' format that
-// holds no secret the run knows (its bearer, VARLATCH_TOKEN, a stored
-// credential, a value in flight). A server that answers with anything else
-// gets nothing printed (go/README.md, "invite shows only an invitation
-// token").
+// neither holds nor is part of a secret the run knows (its bearer,
+// VARLATCH_TOKEN, a stored credential, a value in flight). A server that
+// answers with anything else gets nothing printed (go/README.md, "`invite`
+// prints only an invitation token").
 func (r *Run) showableInvite(token string) bool {
 	if !inviteTokenFormat.MatchString(token) {
 		return false
 	}
-	if r.Secrets != nil && r.Secrets.maskHeld(token) != token {
-		return false
+	if r.Secrets != nil {
+		if r.Secrets.maskHeld(token) != token {
+			return false
+		}
+		for _, h := range r.Secrets.held() {
+			if strings.Contains(h, token) {
+				return false
+			}
+		}
 	}
 	for _, v := range r.inFlight {
-		if v != "" && strings.Contains(token, v) {
+		if v != "" && (strings.Contains(token, v) || strings.Contains(v, token)) {
 			return false
 		}
 	}

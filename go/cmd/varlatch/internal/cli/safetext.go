@@ -207,11 +207,9 @@ func (s *Secrets) Mask(text string) string {
 	return varlatchToken.ReplaceAllLiteralString(s.maskHeld(text), Redacted)
 }
 
-// maskHeld is Mask without the token formats: every exact occurrence of a
-// secret the run knows (registered, VARLATCH_TOKEN, a stored credential)
-// replaced by Redacted, longest first. maskHeld(text) == text says text
-// holds none of them.
-func (s *Secrets) maskHeld(text string) string {
+// held is every secret the run knows (registered, VARLATCH_TOKEN, a stored
+// credential) that is long enough to mask, longest first.
+func (s *Secrets) held() []string {
 	all := slices.Clone(s.known)
 	held := []string{}
 	if s.Token != "" {
@@ -227,8 +225,16 @@ func (s *Secrets) maskHeld(text string) string {
 	}
 	secrets := slices.DeleteFunc(all, func(v string) bool { return utf16Len(v) < MinMaskedLength })
 	slices.SortStableFunc(secrets, func(a, b string) int { return utf16Len(b) - utf16Len(a) })
+	return secrets
+}
+
+// maskHeld is Mask without the token formats: every exact occurrence of a
+// secret the run knows (registered, VARLATCH_TOKEN, a stored credential)
+// replaced by Redacted, longest first. maskHeld(text) == text says text
+// holds none of them.
+func (s *Secrets) maskHeld(text string) string {
 	out := text
-	for _, secret := range secrets {
+	for _, secret := range s.held() {
 		out = strings.ReplaceAll(out, secret, Redacted)
 	}
 	return out

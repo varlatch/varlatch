@@ -87,10 +87,8 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, c := range f.Comments {
-			if strings.Contains(c.Text(), "go:build ignore") || strings.HasPrefix(strings.TrimSpace(c.List[0].Text), "//go:build ignore") {
-				return nil // a generator, never part of the CLI
-			}
+		if hasBuildIgnore(f) {
+			return nil // a generator, never part of the CLI
 		}
 		path = rel
 		for _, imp := range f.Imports {
@@ -287,5 +285,43 @@ func TestFailSafeGuardPathsOnWindows(t *testing.T) {
 	// An allow-listed site is named the same from a Windows path.
 	if site := slashed(`internal\cli\cli.go`, '\\') + ":finish"; site != "internal/cli/cli.go:finish" {
 		t.Errorf("site %q", site)
+	}
+}
+
+// hasBuildIgnore says whether f carries the real `//go:build ignore`
+// constraint: a line comment of exactly that text before the package
+// clause. A comment that merely mentions it does not count.
+func hasBuildIgnore(f *ast.File) bool {
+	for _, group := range f.Comments {
+		if group.Pos() >= f.Package {
+			break
+		}
+		for _, c := range group.List {
+			if strings.TrimSpace(c.Text) == "//go:build ignore" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestHasBuildIgnoreNeedsTheConstraint: only the constraint line before
+// the package clause exempts a file from the write guard.
+func TestHasBuildIgnoreNeedsTheConstraint(t *testing.T) {
+	for src, want := range map[string]bool{
+		"//go:build ignore\n\npackage main\n":                                           true,
+		"// SPDX-License-Identifier: Apache-2.0\n\n//go:build ignore\n\npackage main\n": true,
+		"// Not built: see go:build ignore files.\npackage main\n":                      false,
+		"/* //go:build ignore */\npackage main\n":                                       false,
+		"package main\n\n//go:build ignore\n":                                           false,
+		"//go:build ignore_other\n\npackage main\n":                                     false,
+	} {
+		f, err := parser.ParseFile(token.NewFileSet(), "x.go", src, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hasBuildIgnore(f); got != want {
+			t.Errorf("%q: %v, want %v", src, got, want)
+		}
 	}
 }
