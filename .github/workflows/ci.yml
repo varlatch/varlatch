@@ -442,7 +442,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - name: Install Chromium
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       - name: Contributor setup end to end
         run: ./scripts/test-dev-setup.sh
 
@@ -477,7 +477,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - name: Install Chromium
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       - name: Run clean-room E2E suites
         env:
           SHARD: ${{ matrix.shard }}
@@ -517,7 +517,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - name: Install Chromium
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       - name: Run the conformance suites with CLI 0.22.0
         run: node scripts/conformance/run.mjs --target ts-source --cli 0.22.0
 
@@ -720,7 +720,7 @@ jobs:
         run: node scripts/test-ingress-public.mjs
       - name: Install Chromium for the setup enrollment
         if: needs.changes.outputs.lifecycle == 'true'
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       # ADR-0035 D7: one command from an empty directory, resumable.
       - name: varlatch setup end to end
         if: needs.changes.outputs.lifecycle == 'true'
