@@ -22,8 +22,10 @@ package backup
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -105,39 +107,63 @@ func (b BEK) derive(salt []byte) ([]byte, error) {
 	return scrypt.Key(b.material, salt, 32768, 8, 1, 32)
 }
 
-// KeyCache holds the key derived for one archive's salt, so a backup that
-// seals an archive and then checks it derives the key once (ADR-0059
-// Decision 7: the backup's CPU). Seal and OpenWith use it through their
-// options; a different salt derives again and replaces it. Clear zeroes
-// it: call it when the run that owns the cache ends. The archive format is
+// KeyCache holds the key derived for one archive's salt and one BEK, so a
+// backup that seals an archive and then checks it derives the key once
+// (ADR-0059 Decision 7: the backup's CPU). Seal and OpenWith use it through
+// their options. A hit needs both the salt and the BEK: the cache keeps an
+// HMAC of the BEK under a random key of its own (never the BEK itself) and
+// compares it in constant time, so another BEK, an empty one or a cleared
+// one always takes the full derivation and fails as it would without the
+// cache. A miss derives again and replaces the entry. Clear zeroes it: call
+// it when the run that owns the cache ends. The archive format is
 // unchanged: only how often the same key is derived.
 type KeyCache struct {
 	mu   sync.Mutex
+	mac  []byte // the cache's own HMAC key, random, made on first use
 	salt []byte
+	bek  []byte // HMAC-SHA256(mac, the BEK's kind and material)
 	key  []byte
 }
 
-// derive is the archive key for salt, from the cache when it holds that
-// salt's, else derived (and kept); a nil cache derives. The caller clears
-// the copy it gets.
+// bekTag is the HMAC of b's kind and material under the cache's key.
+func (c *KeyCache) bekTag(b BEK) []byte {
+	if c.mac == nil {
+		c.mac = make([]byte, 32)
+		_, _ = rand.Read(c.mac)
+	}
+	h := hmac.New(sha256.New, c.mac)
+	if b.passphrase {
+		h.Write([]byte{1})
+	} else {
+		h.Write([]byte{0})
+	}
+	h.Write(b.material)
+	return h.Sum(nil)
+}
+
+// derive is the archive key for salt and b, from the cache when it holds
+// that pair's, else derived (and kept); a nil cache derives. The caller
+// clears the copy it gets.
 func (c *KeyCache) derive(b BEK, salt []byte) ([]byte, error) {
-	if c == nil {
+	if c == nil || len(b.material) == 0 {
 		return b.derive(salt)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.key == nil || !bytes.Equal(c.salt, salt) {
+	tag := c.bekTag(b)
+	if c.key == nil || !bytes.Equal(c.salt, salt) || subtle.ConstantTimeCompare(c.bek, tag) != 1 {
 		key, err := b.derive(salt)
 		if err != nil {
 			return nil, err
 		}
 		clear(c.key)
-		c.salt, c.key = bytes.Clone(salt), key
+		c.salt, c.bek, c.key = bytes.Clone(salt), tag, key
 	}
 	return bytes.Clone(c.key), nil
 }
 
-// Clear zeroes the cached key and forgets it.
+// Clear zeroes the cached key, its HMAC key and the BEK's tag, and forgets
+// them.
 func (c *KeyCache) Clear() {
 	if c == nil {
 		return
@@ -145,7 +171,9 @@ func (c *KeyCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	clear(c.key)
-	c.salt, c.key = nil, nil
+	clear(c.mac)
+	clear(c.bek)
+	c.mac, c.salt, c.bek, c.key = nil, nil, nil, nil
 }
 
 var keyPattern = regexp.MustCompile(`^(?:[a-fA-F0-9]{64}|[A-Za-z0-9+/]{43}=)$`)
@@ -425,8 +453,11 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 	if err != nil {
 		return nil, err
 	}
+	// The decrypted files are removed on any way out (an error, a panic)
+	// until the caller owns them through the Opened returned.
+	owned := false
 	defer func() {
-		if err != nil {
+		if !owned {
 			_ = os.RemoveAll(dir)
 		}
 	}()
@@ -516,6 +547,7 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 	if err := os.Remove(plainPath); err != nil {
 		return nil, err
 	}
+	owned = true
 	return &Opened{Manifest: m, ManifestJSON: raw, dir: dir}, nil
 }
 

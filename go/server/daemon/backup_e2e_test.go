@@ -368,7 +368,7 @@ func killDuringBackup(t *testing.T, phase string) {
 	dir := filepath.Join(in.data, backups.Dir)
 	inPhase := func() bool {
 		works, _ := filepath.Glob(filepath.Join(dir, ".work-*", backup.ComponentDatabase))
-		partials, _ := filepath.Glob(filepath.Join(dir, "*.partial"))
+		partials, _ := filepath.Glob(filepath.Join(dir, ".work-*", "*.partial"))
 		if phase == "snapshot" {
 			return len(works) > 0 && len(partials) == 0
 		}

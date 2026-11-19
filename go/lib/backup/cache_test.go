@@ -144,3 +144,95 @@ func TestOpenAndDescribePaced(t *testing.T) {
 		t.Fatalf("describe with a failing pacer: %v", err)
 	}
 }
+
+// A cache hit needs the BEK too, not only the salt: on a warm cache, with
+// the archive's own salt, another key, an empty BEK or a cleared one takes
+// the full derivation and fails as it would without the cache. The cache
+// keeps no copy of the BEK, only an HMAC under a key of its own.
+func TestKeyCacheBindsTheBEK(t *testing.T) {
+	key := make([]byte, 32)
+	rand.Read(key)
+	bek, _ := KeyBEK(key)
+	dir := t.TempDir()
+	files, paths := components(t, dir, 200_000, 10)
+	manifest := goManifest(t, envelope.GenerateKey(), files)
+	out := filepath.Join(dir, "a.vlt")
+	keys := &KeyCache{}
+	if err := Seal(out, manifest, paths, bek, SealOptions{Keys: keys}); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(keys.bek, key) || bytes.Equal(keys.bek, key) {
+		t.Fatal("the cache holds the BEK's material")
+	}
+	warm := func(t *testing.T) {
+		t.Helper()
+		o, err := OpenWith(out, bek, dir, OpenOptions{Keys: keys})
+		if err != nil {
+			t.Fatalf("the right BEK on a warm cache: %v", err)
+		}
+		o.Close()
+	}
+	other := make([]byte, 32)
+	rand.Read(other)
+	wrong, _ := KeyBEK(other)
+	cleared, _ := KeyBEK(key)
+	cleared.Clear()
+	for _, c := range []struct {
+		name string
+		bek  BEK
+		want error
+	}{
+		{"another key", wrong, ErrIntegrity},
+		{"a cleared key", cleared, ErrIntegrity},
+		{"an empty BEK", BEK{}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			warm(t)
+			before := Derivations()
+			o, err := OpenWith(out, c.bek, dir, OpenOptions{Keys: keys})
+			if err == nil {
+				o.Close()
+				t.Fatal("opened with the wrong BEK from a warm cache")
+			}
+			if c.want != nil && !errors.Is(err, c.want) {
+				t.Fatalf("error %v, want %v", err, c.want)
+			}
+			if c.want != nil && Derivations()-before != 1 {
+				t.Fatalf("%d derivations, want the full derivation (1)", Derivations()-before)
+			}
+			// The right BEK still opens it afterwards.
+			warm(t)
+		})
+	}
+	keys.Clear()
+	if keys.bek != nil || keys.mac != nil {
+		t.Fatal("Clear left the BEK's tag or the cache's HMAC key")
+	}
+}
+
+// OpenWith removes its decrypted files on a panic too (a pacer's, here,
+// after the first chunk was written), until the caller owns them.
+func TestOpenCleansUpOnPanic(t *testing.T) {
+	key := make([]byte, 32)
+	rand.Read(key)
+	bek, _ := KeyBEK(key)
+	dir := t.TempDir()
+	files, paths := components(t, dir, 3<<20, 10)
+	manifest := goManifest(t, envelope.GenerateKey(), files)
+	out := filepath.Join(dir, "a.vlt")
+	if err := Seal(out, manifest, paths, bek, SealOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	scratch := t.TempDir()
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("no panic")
+			}
+		}()
+		_, _ = OpenWith(out, bek, scratch, OpenOptions{Pace: func(int64) error { panic("pacer") }})
+	}()
+	if left, _ := os.ReadDir(scratch); len(left) != 0 {
+		t.Fatalf("a panicking open left %d entries in its scratch directory", len(left))
+	}
+}

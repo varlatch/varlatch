@@ -304,7 +304,7 @@ func TestConcurrencyAndStop(t *testing.T) {
 	go func() {
 		// Sealing 8 MiB at 1 MiB/s: stop it while it runs.
 		for {
-			if m, _ := filepath.Glob(filepath.Join(f.dir, Dir, "*.partial")); len(m) > 0 {
+			if m, _ := filepath.Glob(filepath.Join(f.dir, Dir, ".work-*", "*.partial")); len(m) > 0 {
 				close(sealing)
 				return
 			}

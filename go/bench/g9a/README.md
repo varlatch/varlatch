@@ -90,7 +90,9 @@ Without a plan the G9a profile runs: one minute of warm-up at 10/s, then
 10/s for 15 minutes with a backup at 7 minutes, 30/s for 5 minutes, and
 50/s for 15 minutes with a backup started from the WAL's size (36 minutes
 of load). A smoke run scales it (`g9a plan -scale 0.05 -wal-bound 524288
--backup-step-pages 256`; CI runs that, see `.github/workflows/go.yml`).
+-backup-step-pages 64 -backup-pause-ms 100`; CI runs that, see
+`.github/workflows/go.yml`: the small snapshot must outlast the 2 s
+checkpoint tick).
 Any plan but the profile is a diagnostic run: the report judges it by the
 same criteria but never calls it a pass. The one exception is the
 WAL-triggered backup's fraction, below.
