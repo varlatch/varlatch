@@ -198,8 +198,9 @@ func (r *Run) prepareMcp(args *mcpArgs) (mcp.Options, error) {
 	if token == "" {
 		return mcp.Options{}, mcpFail("not authenticated to "+shown+"; run `varlatch login` or set VARLATCH_TOKEN", ExitDenied)
 	}
-	// A server echoing the bearer back gets it masked by the fail-safe.
-	r.Secrets.Remember(token)
+	// A server echoing the bearer back gets it masked by the fail-safe, in
+	// a tool's result on stdout as in a diagnostic, whatever its shape.
+	r.holdCredential(token)
 	client := apiclient.New(apiclient.Options{
 		Server:    url,
 		Token:     token,

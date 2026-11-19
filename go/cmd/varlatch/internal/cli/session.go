@@ -130,8 +130,9 @@ func loginCommand(r *Run) error {
 			return err
 		}
 	}
-	// A server echoing the credential back in an error message gets it masked (issue #119).
-	r.Secrets.Remember(token)
+	// A server echoing the credential back gets it masked (issue #119),
+	// wherever it is shown.
+	r.holdCredential(token)
 	if token == "" {
 		if login.Has("--oidc") {
 			return notInThisBuild("OIDC sign-in (--oidc)", "5.2")

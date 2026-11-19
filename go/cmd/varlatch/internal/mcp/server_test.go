@@ -382,3 +382,38 @@ func TestAPIErrorsWithCodeAndRequest(t *testing.T) {
 		t.Fatalf("%v %q", isError, text)
 	}
 }
+
+// panicking is a client whose organizations listing panics.
+type panicking struct{ Client }
+
+func (panicking) ListOrganizations(context.Context) (any, error) { panic("a handler's own fault") }
+
+// TestAHandlerThatPanicsIsAnInternalError: a panic in a request's handler
+// is answered with -32603, as the SDK answers a handler that throws, and
+// the server answers the next request.
+func TestAHandlerThatPanicsIsAnInternalError(t *testing.T) {
+	client, _ := fakeServer(t, map[string]any{})
+	var out strings.Builder
+	in := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"varlatch_list_organizations","arguments":{}}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"ping"}` + "\n"
+	New(Options{Client: panicking{client}}).Serve(context.Background(), strings.NewReader(in), func(l string) { out.WriteString(l) })
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("answers %q", out.String())
+	}
+	answers := map[float64]map[string]any{}
+	for _, l := range lines {
+		var a map[string]any
+		if err := json.Unmarshal([]byte(l), &a); err != nil {
+			t.Fatal(err)
+		}
+		answers[a["id"].(float64)] = a
+	}
+	e, _ := answers[1]["error"].(map[string]any)
+	if e == nil || e["code"] != float64(-32603) || e["message"] != "a handler's own fault" {
+		t.Errorf("the panicking call: %v", answers[1])
+	}
+	if _, ok := answers[2]["result"]; !ok {
+		t.Errorf("the ping after it: %v", answers[2])
+	}
+}

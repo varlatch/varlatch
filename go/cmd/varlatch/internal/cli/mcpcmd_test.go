@@ -186,7 +186,14 @@ func TestMcpUserAgent(t *testing.T) {
 // an error, and a tool answer holding it, reach the host with it masked:
 // every line goes through the CLI's fail-safe.
 func TestMcpNeverShowsTheCredential(t *testing.T) {
-	const token = "vlt_cli_mcpCanaryAAAA"
+	// Varlatch's own format, and a bearer of any other shape (#297's
+	// review: only the vlt_ format was masked in a tool's result).
+	for _, token := range []string{"vlt_cli_mcpCanaryAAAA", "plainword_bearer_canary_9f3a"} {
+		t.Run(token[:9], func(t *testing.T) { mcpNeverShows(t, token) })
+	}
+}
+
+func mcpNeverShows(t *testing.T, token string) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/v1/organizations" {

@@ -431,6 +431,19 @@ func redactSpans(text string, spans []span) string {
 	return b.String()
 }
 
+// holdCredential registers a bearer this run sends: masked in a server's
+// free text (Secrets.Remember) and, whatever its shape (not only
+// Varlatch's vlt_ format), in everything the run writes on stdout and
+// stderr (holdValue), so a server that echoes it back in an answer the run
+// prints never gets it shown. Like Remember, only a bearer of at least
+// MinMaskedLength: a shorter one would match ordinary words.
+func (r *Run) holdCredential(token string) {
+	r.Secrets.Remember(token)
+	if utf16Len(token) >= MinMaskedLength {
+		r.holdValue(token)
+	}
+}
+
 // holdValue registers a secret value this run handles, so no output or
 // diagnostic shows it (RedactDiagnostic, RedactOutput, RedactValue).
 func (r *Run) holdValue(value string) {

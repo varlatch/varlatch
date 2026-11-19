@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"sync"
@@ -396,8 +397,14 @@ func (s *Server) answer(ctx context.Context, m message, handler func(context.Con
 }
 
 // run checks task creation, as the protocol does before the handler, then
-// runs the handler.
-func (s *Server) run(ctx context.Context, m message, handler func(context.Context, any) (any, error)) (any, error) {
+// runs the handler. A handler that panics is answered as the SDK answers
+// one that throws: -32603 with what it was, and the server serves on.
+func (s *Server) run(ctx context.Context, m message, handler func(context.Context, any) (any, error)) (r any, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			r, err = nil, fmt.Errorf("%v", p)
+		}
+	}()
 	if taskAugmented(m.params) {
 		return nil, errors.New("Server does not support task creation (required for " + m.method + ")")
 	}
