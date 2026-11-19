@@ -133,7 +133,7 @@ var userCodeShape = regexp.MustCompile(`^[A-Z]{4}-[A-Z]{4}$`)
 // out past the deadline.
 func (r *Run) deviceClient(server, token string) *apiclient.Client {
 	none := time.Duration(0)
-	return apiclient.New(apiclient.Options{Server: server, Token: token, UserAgent: r.UserAgent(), MaintenanceRetry: &none, Env: r.Env})
+	return r.newClient(apiclient.Options{Server: server, Token: token, UserAgent: r.UserAgent(), MaintenanceRetry: &none, Env: r.Env})
 }
 
 // startDeviceLogin is `varlatch login --server <url> --start [--ttl <s>]`.
