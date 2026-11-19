@@ -364,18 +364,29 @@ func (r *Run) maskShown(v any) any {
 		return r.Secrets.Mask(x)
 	case jsjson.Object:
 		// A key holding a secret is masked as values are, and kept unique:
-		// a second "[redacted]" becomes "[redacted] (2)", and so on.
-		out := make(jsjson.Object, 0, len(x))
+		// a second "[redacted]" becomes "[redacted] (2)", and so on. The
+		// keys masking leaves alone keep their names (a key that is
+		// "[redacted]" in the answer included), so a masked key takes the
+		// first name no other key has, wherever that key comes.
+		masked := make([]string, len(x))
 		used := map[string]bool{}
-		for _, m := range x {
-			key := m.Key
-			if masked := RedactDiagnostic(r.Secrets.Mask(key), r.inFlight...); masked != key {
-				key = masked
-				for n := 2; used[key]; n++ {
-					key = masked + " (" + strconv.Itoa(n) + ")"
-				}
+		for i, m := range x {
+			if k := RedactDiagnostic(r.Secrets.Mask(m.Key), r.inFlight...); k != m.Key {
+				masked[i] = k
+			} else {
+				used[m.Key] = true
 			}
-			used[key] = true
+		}
+		out := make(jsjson.Object, 0, len(x))
+		for i, m := range x {
+			key := m.Key
+			if masked[i] != "" {
+				key = masked[i]
+				for n := 2; used[key]; n++ {
+					key = masked[i] + " (" + strconv.Itoa(n) + ")"
+				}
+				used[key] = true
+			}
 			out = append(out, jsjson.Member{Key: key, Value: r.maskShown(m.Value)})
 		}
 		return out
