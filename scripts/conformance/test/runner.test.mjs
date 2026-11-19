@@ -80,8 +80,26 @@ const { reporter } = await import("./suite-kit.mjs");
 reporter().finish();
 `);
 
+  // The suite's first import: in mode end-import-child it starts a child at
+  // import time, before any other module of the suite runs, which looks for
+  // the end-of-suite nonce in its environment, in the suite's initial
+  // environment, and on fds 3 and 4.
+  writeFileSync(join(dst, "stub-first.mjs"), `
+import { spawnSync } from "node:child_process";
+if (process.env.STUB_MODE === "end-import-child") {
+  const probe = [
+    'echo "import-child env=\${CONFORMANCE_END_NONCE:-absent}"',
+    'echo "import-child proc-env=$(tr "\\\\0" "\\\\n" < /proc/$PPID/environ | grep -c CONFORMANCE_END)"',
+    '{ cat <&4; } 2>/dev/null && echo import-child-fd4-open || echo import-child-fd4-closed',
+    '{ echo x >&3; } 2>/dev/null && echo import-child-fd3-open || echo import-child-fd3-closed',
+  ].join("; ");
+  spawnSync("sh", ["-c", probe], { stdio: ["ignore", "inherit", "inherit"] });
+}
+`);
+
   // The suite: what it prints and how it ends, by STUB_MODE.
   writeFileSync(join(dst, "stub-suite.mjs"), `
+import "./stub-first.mjs";
 const mode = process.env.STUB_MODE;
 const line = (status, id) => console.log(\`\${status}  [\${id}] \${id}\`);
 // A CLI step and the checks that depend on it, judged through suite-kit.
@@ -91,14 +109,15 @@ const kitMode = mode.startsWith("step-") || mode.startsWith("raw-") || mode.star
 if (mode.startsWith("end-")) {
   // The end-of-suite channel's cases: every check but the lacking one
   // reported, then each mode ends its own way.
-  const earlyNonce = process.env.CONFORMANCE_END_NONCE;
+  const { endNonce } = await import("./lib/end-channel.mjs");
+  const earlyNonce = endNonce();
   const { reporter } = await import("./suite-kit.mjs");
   const { spawnSync } = await import("node:child_process");
   const { writeSync } = await import("node:fs");
   const kit = reporter();
   for (const id of ${JSON.stringify(coreChecks)}) kit.check(id, id, true);
   kit.check("stub.base", "stub.base", true);
-  if (mode === "end-finish") {
+  if (mode === "end-finish" || mode === "end-import-child") {
     kit.finish();
   } else if (mode === "end-natural") {
     // No finish(): the script runs to its natural end.
@@ -523,4 +542,15 @@ test("the runner: an exit that does not match the marker fails the run: another 
   const signal = run("end-signal", "", "go:/stub/varlatch");
   assert.equal(signal.status, 1, signal.out);
   assert.match(signal.out, /stub: did not finish: it was killed by SIGKILL after its end-of-suite marker/);
+});
+
+test("the runner: the end-of-suite nonce is never in the environment, even for a child the suite's first import starts", () => {
+  const r = run("end-import-child", "", "go:/stub/varlatch");
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /import-child env=absent/);
+  assert.match(r.out, /import-child proc-env=0/);
+  assert.match(r.out, /import-child-fd4-closed/);
+  assert.match(r.out, /import-child-fd3-closed/);
+  // The suite itself still ended through finish() with the runner's nonce.
+  assert.equal(outcomeOf(r.report, "stub.scanned"), "client-lacks");
 });

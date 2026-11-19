@@ -63,7 +63,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
 import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
 import { judgeGate } from "./lib/gate.mjs";
@@ -142,17 +142,25 @@ function loadExpectations(targetName, inventory, openapi) {
 }
 
 /** Runs one suite as its own process group; streams its output and returns it. */
+const END_PRELOAD = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "lib", "end-preload.mjs")).href;
+
 function runSuite(script, args, env, cwd) {
   return new Promise((resolvePromise) => {
     // The end-of-suite channel: fd 3, a pipe of this suite's alone, and a
-    // nonce made for this suite (suite-kit's finish() writes both).
+    // nonce made for this suite (suite-kit's finish() writes both). The
+    // nonce goes on fd 4, never in the environment: the preload reads it
+    // and closes fd 4 before any module of the suite runs.
     const nonce = randomBytes(16).toString("hex");
-    const child = spawn(process.execPath, [script, ...args], {
+    const child = spawn(process.execPath, ["--import", END_PRELOAD, script, ...args], {
       cwd,
-      env: { ...env, CONFORMANCE_END_NONCE: nonce },
-      stdio: ["ignore", "pipe", "pipe", "pipe"],
+      env,
+      stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
       detached: true,
     });
+    child.stdio[4].on("error", () => {
+      // The suite exited before reading it; its end is judged without it.
+    });
+    child.stdio[4].end(nonce);
     let stdout = "";
     let stderr = "";
     let endChannel = "";

@@ -40,25 +40,23 @@
  * `END <suite> <nonce> <exit code>` to fd 3, a pipe the runner opens for the
  * suite alone (never stdout or stderr, so no output of the suite or of a
  * process it starts can stand for it), with the nonce the runner made for
- * this suite (CONFORMANCE_END_NONCE), and exits with that code. A suite that
- * never calls finish() (a crash, a stalled await, a process.exit elsewhere)
- * writes nothing there, and the runner fails the run: what the suite did not
- * report then never counts as lacking. The nonce leaves this process's
- * environment when the kit loads, so no process a suite starts receives it,
- * and a process started with the default stdio never receives fd 3.
+ * this suite, and exits with that code. A suite that never calls finish() (a
+ * crash, a stalled await, a process.exit elsewhere) writes nothing there,
+ * and the runner fails the run: what the suite did not report then never
+ * counts as lacking. The nonce is never in the environment: the runner
+ * writes it to fd 4, and a preload (lib/end-preload.mjs, `node --import`)
+ * reads it and closes fd 4 before any module of the suite runs. A process
+ * started with the default stdio receives neither fd.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DEADLINE_ENV, GRACE_MS } from "./lib/deadline.mjs";
+import { endNonce } from "./lib/end-channel.mjs";
 import { predates } from "./lib/inventory.mjs";
 
 const TARGET_OP = fileURLToPath(new URL("./target-op.mjs", import.meta.url));
 
-// The end-of-suite nonce, kept here and out of the environment every
-// process this suite starts inherits.
-const END_NONCE = process.env.CONFORMANCE_END_NONCE ?? "";
-delete process.env.CONFORMANCE_END_NONCE;
 /** The fd of the runner's end-of-suite channel. */
 export const END_FD = 3;
 const ID = /^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9.-]*$/;
@@ -242,11 +240,20 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
     finish(summary) {
       const code = failures > 0 ? 1 : 0;
       if (failures > 0 && summary) console.error(`${failures} ${summary} failed`);
-      if (END_NONCE) {
+      const nonce = endNonce();
+      if (nonce) {
+        // The whole marker, or the suite did not end: a short write leaves
+        // a line the runner refuses, and the exit is never 0.
+        const marker = Buffer.from(`END ${process.env.CONFORMANCE_SUITE || ""} ${nonce} ${code}\n`);
+        let written = -1;
         try {
-          writeSync(END_FD, `END ${process.env.CONFORMANCE_SUITE || ""} ${END_NONCE} ${code}\n`);
+          written = writeSync(END_FD, marker);
         } catch (err) {
           console.error(`the end-of-suite channel (fd ${END_FD}) is not open: ${err.message}`);
+        }
+        if (written !== marker.length) {
+          if (written >= 0) console.error(`the end-of-suite marker was cut short: ${written} of ${marker.length} bytes written`);
+          process.exit(code || 1);
         }
       }
       process.exit(code);
