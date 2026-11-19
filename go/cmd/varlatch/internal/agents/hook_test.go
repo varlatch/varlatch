@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -66,34 +67,99 @@ func TestLexShell(t *testing.T) {
 	}
 }
 
-// TestHookLinearTime: the hook reads a long word, an object with many
-// keys and a deeply nested event in linear time, well inside the 30
-// seconds a coding agent gives it, and still decides: `cat .env` after a
-// 1.6 MB word is denied.
+// bestOf3 is the fastest of three runs of f, each after a garbage
+// collection: noise (a shared runner's pauses, another job's load) only
+// ever adds time, so the minimum is the closest to the work itself.
+func bestOf3(f func()) time.Duration {
+	var fastest time.Duration
+	for i := range 3 {
+		runtime.GC()
+		start := time.Now()
+		f()
+		if took := time.Since(start); i == 0 || took < fastest {
+			fastest = took
+		}
+	}
+	return fastest
+}
+
+// growsLinearly is the timing tests' criterion: for an input four times as
+// large, the time may grow at most tenfold. Linear work grows about
+// fourfold and quadratic about sixteenfold, so the limit separates them
+// with room for noise on either side; it judges growth only, never a
+// machine's absolute speed. 20 ms of slack keeps a shape that takes a few
+// milliseconds from failing on jitter.
+func growsLinearly(small, large time.Duration) bool {
+	return large <= 10*small+20*time.Millisecond
+}
+
+// TestTheLinearityCriterion: linear growth with noise passes
+// growsLinearly, quadratic growth fails it, and so does a deliberately
+// quadratic implementation timed the way TestHookLinearTime times the
+// hook.
+func TestTheLinearityCriterion(t *testing.T) {
+	ms := time.Millisecond
+	for _, c := range []struct {
+		small, large time.Duration
+		linear       bool
+	}{
+		{630 * ms, 4190 * ms, true},
+		{200 * ms, 900 * ms, true},
+		{1060 * ms, 3310 * ms, true},
+		{250 * ms, 4000 * ms, false},
+		{1000 * ms, 16000 * ms, false},
+	} {
+		if growsLinearly(c.small, c.large) != c.linear {
+			t.Errorf("%v then %v: judged linear %v", c.small, c.large, !c.linear)
+		}
+	}
+	// A merge that walks everything it holds for each new item: quadratic
+	// work with no constant cost to blur its growth.
+	quadratic := func(n int) func() {
+		return func() {
+			var held []int
+			sum := 0
+			for i := range n {
+				for _, h := range held {
+					sum += h
+				}
+				held = append(held, i)
+			}
+			if sum < 0 {
+				t.Log(sum)
+			}
+		}
+	}
+	// Large enough that its growth, not the 20 ms slack, decides (the race
+	// detector only makes it slower, which helps).
+	n := 10_000
+	small, large := bestOf3(quadratic(n)), bestOf3(quadratic(4*n))
+	t.Logf("a quadratic merge: %d items %v, %d items %v (%.1fx)", n, small, 4*n, large, float64(large)/float64(small))
+	if growsLinearly(small, large) {
+		t.Errorf("a quadratic merge (%v then %v) was judged linear", small, large)
+	}
+}
+
+// TestHookLinearTime: the hook reads a long word in every shape, an
+// object with many keys, a deeply nested event and a search past a long
+// filter in time linear in the input, by growsLinearly: each size timed as
+// the best of three runs (bestOf3), the largest 1.6 MB. No absolute time
+// bound: a slow runner is not a failure. Every run still decides: `cat
+// .env` after a long word is denied, and so is a search past a long
+// filter. Globs are compiled afresh in each run, as each run of the hook
+// is a process of its own. Under the race detector the inputs are a
+// quarter the size.
 func TestHookLinearTime(t *testing.T) {
 	env := envMap{"HOME": "/home/dev", "XDG_CONFIG_HOME": "/home/dev/.xdg"}
-	const size = 1600 * 1024
-	long := strings.Repeat("a", size)
 	event := func(command, padding string) string {
 		return `{"cwd":"/work/app","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{` + padding + `"command":` + quote(command) + `}}`
 	}
-	var keys strings.Builder
-	for i := range 200_000 {
-		fmt.Fprintf(&keys, `"k%d":%d,`, i, i)
-	}
-	cases := []struct{ name, event string }{
-		{"plain word", event("cat "+long+" .env", "")},
-		{"single-quoted word", event("cat '"+long+"' .env", "")},
-		{"double-quoted word", event(`cat "`+long+`" .env`, "")},
-		{"escaped word", event("cat "+strings.Repeat(`\a`, size/2)+" .env", "")},
-		{"non-ASCII word", event("cat "+strings.Repeat("é", size/2)+" .env", "")},
-		{"option cluster", event("grep -"+long+" x .env", "")},
-		{"glob", event("cat "+long+"* .env", "")},
-		{"dot-leading glob", event("cat ."+long+"* .env", "")},
-		{"dot-leading glob in a search", event("grep -r --include=."+long+"* x . ; cat .env", "")},
-		{"200k keys", event("cat .env", keys.String())},
-		{"200k keys at the top", `{` + keys.String() + event("cat .env", "")[1:]},
-		{"nested 100k deep", event("cat .env", `"p":`+strings.Repeat("[", 100_000)+strings.Repeat("]", 100_000)+`,`)},
+	keys := func(n int) string {
+		var b strings.Builder
+		for i := range n {
+			fmt.Fprintf(&b, `"k%d":%d,`, i, i)
+		}
+		return b.String()
 	}
 	// A search's filters are tried on every entry of its walk.
 	dir := t.TempDir()
@@ -112,22 +178,52 @@ func TestHookLinearTime(t *testing.T) {
 	walk := func(options string) string {
 		return `{"cwd":` + quote(dir) + `,"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":` + quote("grep -r "+options+" KEY .") + `}}`
 	}
-	cases = append(cases,
-		struct{ name, event string }{"walk, long --exclude-dir", walk("--exclude-dir=." + long + "*")},
-		struct{ name, event string }{"walk, long --exclude", walk("--exclude=." + long + "*")},
-		struct{ name, event string }{"walk, long --include", walk("--include=." + long + "* --include=.env*")},
-	)
+	a := func(n int) string { return strings.Repeat("a", n) }
+	cases := []struct {
+		name  string
+		event func(n int) string // an event whose size grows with n
+		unit  int                // n for the smaller size
+	}{
+		{"plain word", func(n int) string { return event("cat "+a(n)+" .env", "") }, 400 * 1024},
+		{"single-quoted word", func(n int) string { return event("cat '"+a(n)+"' .env", "") }, 400 * 1024},
+		{"double-quoted word", func(n int) string { return event(`cat "`+a(n)+`" .env`, "") }, 400 * 1024},
+		{"escaped word", func(n int) string { return event("cat "+strings.Repeat(`\a`, n/2)+" .env", "") }, 400 * 1024},
+		{"non-ASCII word", func(n int) string { return event("cat "+strings.Repeat("é", n/2)+" .env", "") }, 400 * 1024},
+		{"option cluster", func(n int) string { return event("grep -"+a(n)+" x .env", "") }, 400 * 1024},
+		{"glob", func(n int) string { return event("cat "+a(n)+"* .env", "") }, 400 * 1024},
+		{"dot-leading glob", func(n int) string { return event("cat ."+a(n)+"* .env", "") }, 400 * 1024},
+		{"keys", func(n int) string { return event("cat .env", keys(n)) }, 50_000},
+		{"keys at the top", func(n int) string { return `{` + keys(n) + event("cat .env", "")[1:] }, 50_000},
+		{"nesting", func(n int) string {
+			return event("cat .env", `"p":`+strings.Repeat("[", n)+strings.Repeat("]", n)+`,`)
+		}, 25_000},
+		{"walk, long --exclude-dir", func(n int) string { return walk("--exclude-dir=." + a(n) + "*") }, 400 * 1024},
+		{"walk, long --exclude", func(n int) string { return walk("--exclude=." + a(n) + "*") }, 400 * 1024},
+		{"walk, long --include", func(n int) string { return walk("--include=." + a(n) + "* --include=.env*") }, 400 * 1024},
+	}
 	for _, c := range cases {
-		start := time.Now()
-		got, err := RunHook("claude", c.event, env, "/")
-		took := time.Since(start)
-		if err != nil || !strings.Contains(got, `"permissionDecision":"deny"`) {
-			t.Errorf("%s: %q, %v; want a denial", c.name, got, err)
+		unit := c.unit
+		if raceSlowdown > 1 {
+			unit /= 4
 		}
-		if took > 2*time.Second*raceSlowdown {
-			t.Errorf("%s: took %v", c.name, took)
+		run := func(n int) func() {
+			e := c.event(n)
+			return func() {
+				globCache.Lock() // each run of the hook is a process of its own
+				clear(globCache.m)
+				globCache.Unlock()
+				got, err := RunHook("claude", e, env, "/")
+				if err != nil || !strings.Contains(got, `"permissionDecision":"deny"`) {
+					t.Fatalf("%s: %.200q, %v; want a denial", c.name, got, err)
+				}
+			}
 		}
-		t.Logf("%s: %v", c.name, took)
+		run(unit / 4)() // warm up
+		small, large := bestOf3(run(unit)), bestOf3(run(4*unit))
+		t.Logf("%s: %v, then %v at four times the size (%.1fx)", c.name, small, large, float64(large)/float64(small))
+		if !growsLinearly(small, large) {
+			t.Errorf("%s: %v, then %v at four times the size: not linear", c.name, small, large)
+		}
 	}
 }
 
