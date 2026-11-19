@@ -459,6 +459,9 @@ jobs:
       - name: install.sh, the G9a runner and the restore drill pass shellcheck
         run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh
 
+      - name: The release's asset scripts pass shellcheck
+        run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh
+
       # G13 (ADR-0059 step 4.14), and the Go replacement of
       # scripts/test-backup-s3.mjs: the S3 client against a local S3 server
       # (the pinned MinIO image): uploads in one request and multipart,
@@ -834,6 +837,21 @@ jobs:
           cd go
           go generate ./server/web
           go build -tags conformance -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+      # The Go release assets (internal docs/design/go-step6.md, slice
+      # 6.1a), built from this commit exactly as release.yml builds them for
+      # a tag of 0.50.0 or later: the dashboard just generated, which must
+      # be clean and from this commit, every binary, the stamped installers,
+      # the unit and SHA256SUMS; then checked as release.yml checks them
+      # before signing. A version no release uses; nothing is signed,
+      # uploaded or published.
+      - name: The release's Go assets build and check
+        if: matrix.shard == 1
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          version="0.0.0-check.${GITHUB_RUN_NUMBER}"
+          go/release/build-assets.sh --version "$version" --out "$RUNNER_TEMP/release-assets"
+          go/release/check-assets.sh "$RUNNER_TEMP/release-assets" "$version"
       # G3 (ADR-0059 step 3.6), the direction the Go tests cannot take: the
       # TypeScript server's own read path (its effective-configuration and
       # disclosure routes, in PGlite) opens a database fixture whose
