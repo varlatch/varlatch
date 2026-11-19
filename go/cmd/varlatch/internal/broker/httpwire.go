@@ -42,9 +42,13 @@ const (
 	maxHeadBytes    = 16 * 1024
 	maxHeaderFields = 2000
 	maxChunkLine    = 4 * 1024
-	headTimeout     = 60 * time.Second
-	requestTimeout  = 300 * time.Second
-	keepAliveIdle   = 5 * time.Second
+)
+
+// The timeouts: variables so that a test can shorten them.
+var (
+	headTimeout    = 60 * time.Second
+	requestTimeout = 300 * time.Second
+	keepAliveIdle  = 5 * time.Second
 )
 
 // methods are Node.js's http.METHODS.
