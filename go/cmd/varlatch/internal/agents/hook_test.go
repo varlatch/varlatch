@@ -136,7 +136,9 @@ func growth(t *testing.T, name string, floor time.Duration, startLarge, limitLar
 		if !capped {
 			f := run(n)
 			f() // warm up
-			if timed(f) < floor {
+			// The faster of two probes: one stalled probe never stops the
+			// sizing early.
+			if min(timed(f), timed(f)) < floor {
 				n = next
 				continue
 			}

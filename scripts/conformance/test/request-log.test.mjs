@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { START_ALLOWANCE, WINDOW_MS, assess, expectedRefusal, waitMs } from "../lib/request-log.mjs";
+import { START_ALLOWANCE, WINDOW_MS, assess, declared429, expectedRefusal, waitMs } from "../lib/request-log.mjs";
 import { requestsFromNginxLog } from "../targets/nginx-log.mjs";
 
 const line = (client, time, path, status = 200, method = "GET", forwardedFor = "-") =>
@@ -95,4 +95,26 @@ test("pacing: waits until enough trailing requests have aged out, per client", (
   assert.ok(records.filter((r) => r.completedAt + span > now + wait - 100).length > START_ALLOWANCE);
   // Another client's quiet history does not shorten it.
   assert.equal(waitMs([...records, record({ client: "b", completedAt: now - 500 })], now), wait);
+});
+
+test("a declared 429 excuses exactly one refusal of its request, in its window, for the suite allowed to declare it", () => {
+  const token429 = (completedAt) => record({ method: "POST", path: "/v1/auth/device/token", status: 429, completedAt, resolutionMs: 0 });
+  const { declarations, errors } = declared429(
+    "cli-handover",
+    `PASS  [x] y\nEXPECTED-429  [cli-handover.device-ts-slow-down-go-keeps] POST /v1/auth/device/token ${T0} ${T0 + 3_000}\n`,
+  );
+  assert.deepEqual(errors, []);
+  assert.equal(declarations.length, 1);
+  // The one poll it declared.
+  assert.equal(assess([token429(T0 + 1_000)], { declared: declarations }).refusals.length, 0);
+  // A second 429 in the same window is a refusal: one each.
+  assert.equal(assess([token429(T0 + 1_000), token429(T0 + 2_000)], { declared: declarations }).refusals.length, 1);
+  // Outside its window, or another request, or none declared: a refusal.
+  assert.equal(assess([token429(T0 + 10_000)], { declared: declarations }).refusals.length, 1);
+  assert.equal(assess([record({ method: "POST", path: "/v1/auth/device", status: 429, completedAt: T0 + 1_000, resolutionMs: 0 })], { declared: declarations }).refusals.length, 1);
+  assert.equal(assess([token429(T0 + 1_000)]).refusals.length, 1);
+  // Only cli-handover may declare, and only that request; a malformed line fails.
+  assert.match(declared429("device", `EXPECTED-429  [device.x] POST /v1/auth/device/token ${T0} ${T0 + 1}`).errors[0], /device may not declare/);
+  assert.match(declared429("cli-handover", `EXPECTED-429  [cli-handover.x] POST /v1/auth/device ${T0} ${T0 + 1}`).errors[0], /may not declare a 429 for POST \/v1\/auth\/device$/);
+  assert.match(declared429("cli-handover", "EXPECTED-429 somewhere").errors[0], /malformed/);
 });
