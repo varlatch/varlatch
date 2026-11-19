@@ -194,6 +194,10 @@ func findVarlatchd(self, pathList string, root bool) (string, error) {
 		// The file, the directory it is in, and the PATH entry that led
 		// to it (which may hold a symbolic link to it): whoever can write
 		// any of them chooses what runs. The file run is the one checked.
+		// A window remains between the check and the exec: whoever can
+		// write the parent of a directory checked here (someone other than
+		// root) could rename it in between. It is accepted: os/exec has no
+		// fexecve to run the very file that was checked.
 		real, err := filepath.EvalSymlinks(candidate)
 		if err != nil {
 			return "", &unsafeVarlatchd{path: candidate, why: "it cannot be resolved"}

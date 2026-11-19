@@ -304,7 +304,10 @@ func TestFindVarlatchdBesideFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	beside, onPath := filepath.Join(install, name), filepath.Join(decoy, name)
+	// The beside one is found through the resolved executable, so it is
+	// named by its resolved path (macOS's /var is /private/var; Windows's
+	// TEMP may hold an 8.3 short name); one on PATH is named as PATH gives it.
+	beside, onPath := filepath.Join(resolved(t, install), name), filepath.Join(decoy, name)
 	check := func(what, self, want string) {
 		t.Helper()
 		got, err := findVarlatchd(self, decoy, false)
@@ -355,7 +358,9 @@ func TestFindVarlatchdAsRoot(t *testing.T) {
 		t.Skip("the temporary files are root's own here")
 	}
 	dir := fakeVarlatchd(t)
-	path := filepath.Join(dir, "varlatchd")
+	// As root, the program checked and run is the resolved one, and a
+	// refusal names it (macOS's /var is /private/var).
+	path := filepath.Join(resolved(t, dir), "varlatchd")
 	if _, err := findVarlatchd("", dir, true); !isUnsafe(err, path, "is not owned by root") {
 		t.Errorf("not root's: %v", err)
 	}
@@ -376,7 +381,7 @@ func TestFindVarlatchdAsRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(filepath.Dir(self), "varlatchd"), []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := findVarlatchd(self, dir, true); err != nil || got != filepath.Join(filepath.Dir(self), "varlatchd") {
+	if got, err := findVarlatchd(self, dir, true); err != nil || got != filepath.Join(resolved(t, filepath.Dir(self)), "varlatchd") {
 		t.Errorf("beside, as root: %q %v", got, err)
 	}
 	// What root may run: a system program, root's, in root's directory.
@@ -404,6 +409,17 @@ func TestFindVarlatchdAsRoot(t *testing.T) {
 	if got := called(t, dir); got != nil {
 		t.Errorf("varlatchd ran: %q", got)
 	}
+}
+
+// resolved is path with every symbolic link (and, on Windows, every short
+// name) resolved, as findVarlatchd resolves the executable.
+func resolved(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
 }
 
 func isUnsafe(err error, path, why string) bool {
