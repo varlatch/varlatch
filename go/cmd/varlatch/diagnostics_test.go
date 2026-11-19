@@ -145,3 +145,45 @@ func TestStatusProbeMasksNestedCredentials(t *testing.T) {
 		}
 	}
 }
+
+// TestNestedCredentialsBehindOuterOnes: a stored server whose own
+// credentials hide the only letter-preceded colon, with a credentialed
+// scheme-relative URL nested in its query, is shown by server, status
+// --probe (human and --json, its probe detail included) and logout --all's
+// revocation reason with neither credential.
+func TestNestedCredentialsBehindOuterOnes(t *testing.T) {
+	const server = "//outer:outer-pass@gateway.example/?next=//alice1:inner-pass@upstream.example"
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config")
+	if err := os.MkdirAll(config, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(map[string]any{"servers": map[string]map[string]string{server: {"token": "vlt_cli_x", "credentialId": "cred_1"}}})
+	if err := os.WriteFile(filepath.Join(config, "credentials.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"server"}, {"server", "--json"}, {"status", "--probe"}, {"status", "--probe", "--json"}, {"logout", "--all"}} {
+		cmd := exec.Command(exe, args...)
+		cmd.Dir = dir
+		cmd.Env = []string{asCLI + "=1", "HOME=" + dir, "VARLATCH_CONFIG_DIR=" + config, "PATH=" + os.Getenv("PATH")}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, stderr.String())
+		}
+		out := stdout.String() + stderr.String()
+		if strings.Contains(out, "pass") || strings.Contains(out, "alice1") || strings.Contains(out, "outer:") || !strings.Contains(out, "[redacted]@upstream.example") {
+			t.Errorf("%v:\n%s", args, out)
+		}
+		if args[0] == "status" && !strings.Contains(out, "can't be parsed as a URL") {
+			t.Errorf("%v shows no probe detail:\n%s", args, out)
+		}
+		if args[0] == "logout" && !strings.Contains(out, "server revocation failed (") {
+			t.Errorf("%v shows no revocation reason:\n%s", args, out)
+		}
+	}
+}

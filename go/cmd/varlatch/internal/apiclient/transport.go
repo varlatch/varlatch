@@ -254,14 +254,14 @@ func origin(u whatwg.URL) string { return u.Protocol + "//" + u.Host }
 func checkURL(raw string) (whatwg.URL, error) {
 	u, ok := whatwg.ParseURL(raw)
 	if !ok {
-		shown := clientctx.MaskUserinfo(raw)
+		shown := clientctx.MaskURLInValue(raw)
 		if clientctx.HasAtSign(shown) {
 			return u, &FetchError{Message: shown + ": can't be parsed as a URL"}
 		}
 		return u, &FetchError{Message: "Failed to parse URL from " + shown}
 	}
 	if u.Username != "" || u.Password != "" {
-		return u, &FetchError{Message: clientctx.MaskUserinfo(raw) + ": a server URL with a user name or password can't be used; remove them and try again"}
+		return u, &FetchError{Message: clientctx.MaskURLInValue(raw) + ": a server URL with a user name or password can't be used; remove them and try again"}
 	}
 	return u, nil
 }

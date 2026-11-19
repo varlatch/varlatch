@@ -471,3 +471,39 @@ func TestMaskURLInValueComposes(t *testing.T) {
 		}
 	}
 }
+
+// TestMaskURLInValueUnionOfSpans: both maskers' spans are taken on the
+// original value and their union replaced once, so removing the outer
+// credentials (the only colon after a letter) never hides inner ones from
+// the fail-safe; a colon after a digit or a letter of any script counts.
+func TestMaskURLInValueUnionOfSpans(t *testing.T) {
+	for in, want := range map[string]string{
+		"//outer:outer-pass@gateway.example/?next=//alice1:inner-pass@upstream.example": "//[redacted]@upstream.example",
+		"https://outer:outer-pass@gateway.example/?next=//alice1:inner-pass@up.example": "https:[redacted]@up.example",
+		"u1:p@h.example":                 "u1:[redacted]@h.example",
+		"https://h.example/?x=//u1:p@h2": "https:[redacted]@h2",
+		"é:secret@h.example":             "é:[redacted]@h.example",
+		"see //ünï:secret@h.example":     "see //ünï:[redacted]@h.example",
+		"ada@example.com":                "ada@example.com",
+		"add the line @AGENTS.md":        "add the line @AGENTS.md",
+	} {
+		got := MaskURLInValue(in)
+		if got != want {
+			t.Errorf("MaskURLInValue(%q) = %q, want %q", in, got, want)
+		}
+		for _, secret := range []string{"pass", "alice1", "secret", ":p@"} {
+			if strings.Contains(got, secret) {
+				t.Errorf("MaskURLInValue(%q) = %q shows %q", in, got, secret)
+			}
+		}
+	}
+	for in, want := range map[string]string{
+		"x u1:p@h": "x u1:[redacted]@h",
+		"x é:p@h":  "x é:[redacted]@h",
+		"x -:p@h":  "x -:p@h",
+	} {
+		if got := MaskUserinfoInText(in); got != want {
+			t.Errorf("MaskUserinfoInText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

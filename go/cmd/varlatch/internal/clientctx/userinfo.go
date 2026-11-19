@@ -4,6 +4,8 @@ package clientctx
 
 import (
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 	"github.com/varlatch/varlatch/go/lib/whatwg"
@@ -34,32 +36,42 @@ import (
 //   - otherwise after the first "//" (tabs and newlines between its
 //     slashes allowed, as WHATWG parsing drops them), or at the start.
 func MaskUserinfo(text string) string {
+	start, end, ok := userinfoSpan(text)
+	if !ok {
+		return text
+	}
+	return text[:start] + "[redacted]" + text[end:]
+}
+
+// userinfoSpan is the bytes MaskUserinfo replaces: [start, end), end at
+// the "@" that follows them; false when it replaces nothing.
+func userinfoSpan(text string) (int, int, bool) {
 	if u, ok := whatwg.ParseURL(text); ok {
 		if u.Username == "" && u.Password == "" {
-			return text
+			return 0, 0, false
 		}
 		start, special := authorityStart(text)
 		delims := "/?#"
 		if special {
 			delims = "/\\?#"
 		}
-		return maskTo(text, start, delims)
+		return spanTo(text, start, delims)
 	}
 	start, _ := authorityStart(text)
-	return maskTo(text, start, "?#") // a password may hold "/"
+	return spanTo(text, start, "?#") // a password may hold "/"
 }
 
-// maskTo masks text from start to the last "@" before the first of delims.
-func maskTo(text string, start int, delims string) string {
+// spanTo is text from start to the last "@" before the first of delims.
+func spanTo(text string, start int, delims string) (int, int, bool) {
 	end := len(text)
 	if i := strings.IndexAny(text[start:], delims); i >= 0 {
 		end = start + i
 	}
 	at := strings.LastIndexByte(text[start:end], '@')
 	if at <= 0 {
-		return text
+		return 0, 0, false
 	}
-	return text[:start] + "[redacted]" + text[start+at:]
+	return start, start + at, true
 }
 
 var specialSchemes = map[string]bool{"http": true, "https": true, "ws": true, "wss": true, "ftp": true, "file": true}
@@ -145,7 +157,7 @@ func MaskServer(v any) any {
 // message, with no quoting, scheme, list or line rules. For detection, tab,
 // CR and LF are dropped (as WHATWG drops them from a URL), and "@", "\u0040",
 // "\x40", "\U00000040" and "%40" are at-signs. If the message has a ":" that
-// follows a letter and an at-sign anywhere after it, everything from just
+// follows a letter or a digit (any script) and an at-sign anywhere after it, everything from just
 // after the FIRST such ":" up to and including the LAST at-sign of the
 // message, newlines included, becomes "[redacted]@"; what comes before and
 // after is kept. A message with no such pair keeps its bytes.
@@ -156,28 +168,42 @@ func MaskServer(v any) any {
 // accepted for failure text, where never leaking comes before byte parity;
 // ordinary output keeps the precise layer's exact bytes.
 func MaskUserinfoInText(text string) string {
+	from, _, atEnd, ok := failSafeSpan(text)
+	if !ok {
+		return text
+	}
+	return text[:from] + "[redacted]@" + text[atEnd:]
+}
+
+// failSafeSpan is what the fail-safe masks, in text's own bytes: from just
+// after the first ":" that follows a letter or a digit (any script) to the
+// last at-sign of any form after it, which starts at atStart and ends at
+// atEnd; false when the text has no such pair.
+func failSafeSpan(text string) (from, atStart, atEnd int, ok bool) {
 	kept, at := forAtSigns(text)
 	if kept == nil {
-		return text // no at-sign of any form
+		return 0, 0, 0, false // no at-sign of any form
 	}
 	colon := -1
 	for i := 1; i < len(kept); i++ {
-		if kept[i] == ':' && isAlpha(kept[i-1]) {
-			colon = i
-			break
+		if kept[i] == ':' {
+			if r, _ := utf8.DecodeLastRune(kept[:i]); unicode.IsLetter(r) || unicode.IsDigit(r) {
+				colon = i
+				break
+			}
 		}
 	}
 	if colon < 0 {
-		return text
+		return 0, 0, 0, false
 	}
 	last, size := -1, 0
 	for i, n := nextAtSign(kept, colon+1); i >= 0; i, n = nextAtSign(kept, i+n) {
 		last, size = i, n
 	}
 	if last < 0 {
-		return text
+		return 0, 0, 0, false
 	}
-	return text[:at[colon]+1] + "[redacted]@" + text[at[last+size-1]+1:]
+	return at[colon] + 1, at[last], at[last+size-1] + 1, true
 }
 
 // HasAtSign is whether s holds an at-sign as the fail-safe sees one, by
@@ -244,22 +270,46 @@ func atSignAt(s []byte, i int) int {
 
 // MaskURLInValue is the masker for every string the CLI shows that comes
 // from outside it: a server's answer, stored configuration, the command
-// line, the environment, an API client's refusal. It composes, never
-// chooses:
-//  1. when the value parses as a URL (or is scheme-relative, starting with
-//     "//"), the precise authority mask, MaskUserinfo;
-//  2. then, always, the whole-text fail-safe, MaskUserinfoInText, on the
-//     result, so a credentialed URL anywhere else in it (a query, a
-//     fragment, free text around it) is masked too.
-//
+// line, the environment, an API client's refusal. It composes both
+// maskers on the original value, never one on the other's output: the
+// precise authority span (MaskUserinfo's, when the value parses as a URL
+// or is scheme-relative, starting with "//") and the whole-text
+// fail-safe's span (from the first ":" after a letter or a digit to the
+// last at-sign). Their union is replaced once with [redacted], each
+// at-sign kept, so a credentialed URL anywhere in the value (a query, a
+// fragment, text around it) is masked, whatever the other masker removed.
 // Token redaction is the output's own last step (cli.RedactOutput,
 // cli.RedactDiagnostic). Already-masked text may be masked again
 // (`https://[redacted]@h` reads `https:[redacted]@h`): cosmetic, never a
 // leak. A value without an at-sign keeps its bytes.
 func MaskURLInValue(v string) string {
-	s := v
+	// Both maskers' spans, each computed on the original value, never on
+	// the other's output; their union is replaced once.
+	var spans [][2]int
 	if _, ok := whatwg.ParseURL(v); ok || strings.HasPrefix(v, "//") {
-		s = MaskUserinfo(v)
+		if start, end, ok := userinfoSpan(v); ok {
+			spans = append(spans, [2]int{start, end})
+		}
 	}
-	return MaskUserinfoInText(s)
+	if from, atStart, _, ok := failSafeSpan(v); ok {
+		spans = append(spans, [2]int{from, atStart})
+	}
+	if len(spans) == 0 {
+		return v
+	}
+	if len(spans) == 2 && spans[1][0] < spans[0][0] {
+		spans[0], spans[1] = spans[1], spans[0]
+	}
+	if len(spans) == 2 && spans[1][0] <= spans[0][1] {
+		spans = [][2]int{{spans[0][0], max(spans[0][1], spans[1][1])}}
+	}
+	var b strings.Builder
+	at := 0
+	for _, sp := range spans {
+		b.WriteString(v[at:sp[0]])
+		b.WriteString("[redacted]")
+		at = sp[1]
+	}
+	b.WriteString(v[at:])
+	return b.String()
 }
