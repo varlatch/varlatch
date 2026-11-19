@@ -65,11 +65,21 @@ func TestVectors(t *testing.T) {
 					env[m.Key] = strings.ReplaceAll(m.Value.(string), "{{dir}}", dir)
 				}
 			}
+			if runtime.GOOS == "windows" {
+				// The recorder's home is HOME; on Windows, os.homedir() (and
+				// clientctx.HomeDir) reads USERPROFILE.
+				env["USERPROFILE"] = env["HOME"]
+			}
 			limits := limitsOf(defaults)
 			if l, ok := c.Value("limits").(jsjson.Object); ok {
 				limits = limitsOf(l)
 			}
-			unfill := func(s string) string { return strings.ReplaceAll(s, dir, "{{dir}}") }
+			// The directory as it is, and as a JSON string holds it (its
+			// backslashes doubled on Windows).
+			quoted := strings.Trim(string(jsjson.Stringify(dir)), `"`)
+			unfill := func(s string) string {
+				return strings.ReplaceAll(strings.ReplaceAll(s, dir, "{{dir}}"), quoted, "{{dir}}")
+			}
 			expect := c.Value("expect").(jsjson.Object)
 			report, err := Find(env, c.Value("dir").(string), dir, limits)
 			if want, isError := expect.Get("error"); isError {

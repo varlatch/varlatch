@@ -237,8 +237,15 @@ func jsonPath(o jsjson.Object, b, key string) jsjson.Object {
 	return o
 }
 
+// errNotDirectory is opendir's ENOTDIR for a path that is not a
+// directory, the same on every platform.
+var errNotDirectory = errors.New("not a directory")
+
 // errnoName is libuv's name for a system error a file operation meets.
 func errnoName(err error) string {
+	if errors.Is(err, errNotDirectory) {
+		return "ENOTDIR"
+	}
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		if name := errnoNames[errno]; name != "" {
@@ -321,7 +328,7 @@ func (w *walk) visit(abs, rel string, nested bool, depth int) {
 	if err == nil {
 		var info os.FileInfo
 		if info, err = f.Stat(); err == nil && !info.IsDir() {
-			err = syscall.ENOTDIR
+			err = errNotDirectory
 		}
 		if err != nil {
 			_ = f.Close()
