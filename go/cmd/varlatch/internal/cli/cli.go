@@ -197,6 +197,11 @@ func (r *Run) dispatch(hasCommand bool) error {
 		return UsageErrorWithUsage("varlatch: unknown command "+shown, "\n\n"+Usage)
 	}
 	if c.run == nil {
+		if c.partial != nil {
+			if handled, err := c.partial(r); handled {
+				return err
+			}
+		}
 		return notBuilt(c)
 	}
 	return c.run(r)
@@ -228,7 +233,10 @@ func (r *Run) finish(err error) int {
 	if !e.silent {
 		fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(e.message, r.inFlight...)+e.usage))
 	}
-	if r.everyFailureIsOne {
+	// A failure of scan is 1 (main.ts's fail()); a status scan sets itself
+	// (process.exitCode: ExitWith, silent), such as --find-files' 2, is
+	// kept.
+	if r.everyFailureIsOne && !e.silent {
 		return ExitFailure
 	}
 	return e.code
