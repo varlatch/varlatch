@@ -12,9 +12,8 @@ import (
 )
 
 // The Go CLI never prints a server URL's user name and password (go/README.md,
-// "Diagnostics never print credential values"): every way status, server,
-// server use and context show a server, configured or stored, shows
-// [redacted] in their place. The TypeScript CLI prints them as they are.
+// "server-display"): every way status, server, server use and context show
+// a server, configured or stored, shows its display form, without them.
 func TestServerURLsNeverShowUserinfo(t *testing.T) {
 	const secret = "s3cr3t-pw"
 	write := func(path, text string) {
@@ -27,8 +26,9 @@ func TestServerURLsNeverShowUserinfo(t *testing.T) {
 		}
 	}
 	type step struct {
-		dir  string // relative to the case's directory
-		args []string
+		dir   string // relative to the case's directory
+		args  []string
+		shows string // what the output holds: the server's display form, in context
 	}
 	cases := []struct {
 		name  string
@@ -42,12 +42,12 @@ func TestServerURLsNeverShowUserinfo(t *testing.T) {
 				"config/settings.json":    `{"defaultServer": "https://u:` + secret + `@a.example"}`,
 			},
 			steps: []step{
-				{".", []string{"status"}}, {".", []string{"status", "--json"}},
-				{".", []string{"server"}}, {".", []string{"server", "--json"}},
-				{".", []string{"server", "use", "https://u:" + secret + "@b.example"}},
-				{".", []string{"server", "use", "https://u:" + secret + "@[bad"}},
-				{".", []string{"server", "use", "https://u:" + secret + "@a.example"}},
-				{".", []string{"server", "use", "--json", "https://u:" + secret + "@a.example/"}},
+				{".", []string{"status"}, "https://a.example  (expires"}, {".", []string{"status", "--json"}, `"server": "https://a.example"`},
+				{".", []string{"server"}, "Server here: https://a.example (the default server)"}, {".", []string{"server", "--json"}, `"defaultServer": "https://a.example"`},
+				{".", []string{"server", "use", "https://u:" + secret + "@b.example"}, "you are not signed in to https://b.example. Sign in first: varlatch login --server and its URL"},
+				{".", []string{"server", "use", "https://u:" + secret + "@[bad"}, "not a URL: [unrecognised server URL]"},
+				{".", []string{"server", "use", "https://u:" + secret + "@a.example"}, "Default server: https://a.example"},
+				{".", []string{"server", "use", "--json", "https://u:" + secret + "@a.example/"}, `"defaultServer": "https://a.example"`},
 			},
 		},
 		{
@@ -58,10 +58,12 @@ func TestServerURLsNeverShowUserinfo(t *testing.T) {
 				"local/.varlatch/local.json": `{"serverOverride": ["https://u:` + secret + `@local.example"]}`,
 			},
 			steps: []step{
-				{"repo", []string{"context"}}, {"repo", []string{"context", "--json"}},
-				{"repo", []string{"status", "--json"}}, {"repo", []string{"server"}}, {"repo", []string{"server", "--json"}},
-				{"local", []string{"context"}}, {"local", []string{"context", "--json"}}, {"local", []string{"server"}},
-				{"repo", []string{"context", "--server", "https://u:" + secret + "@flag.example"}},
+				{"repo", []string{"context"}, "Server        https://repo.example"}, {"repo", []string{"context", "--json"}, `"server": "https://repo.example"`},
+				{"repo", []string{"status", "--json"}, `"server": "https://repo.example"`}, {"repo", []string{"server"}, "Server here: https://repo.example (from varlatch.toml)"},
+				{"repo", []string{"server", "--json"}, `"server": "https://repo.example"`},
+				{"local", []string{"context"}, "Server        https://local.example"}, {"local", []string{"context", "--json"}, `"https://local.example"`},
+				{"local", []string{"server"}, "Server here: https://local.example (from .varlatch/local.json)"},
+				{"repo", []string{"context", "--server", "https://u:" + secret + "@flag.example"}, "Server        https://flag.example"},
 			},
 		},
 		{
@@ -72,7 +74,7 @@ func TestServerURLsNeverShowUserinfo(t *testing.T) {
 				"bad/varlatch.toml":    "organization = \"acme\"\nproject = \"web\"\nserver = \"https://u:" + secret + "@h.example\" x\n",
 			},
 			steps: []step{
-				{"none", []string{"context"}}, {"bad", []string{"context"}}, {"bad", []string{"server"}},
+				{"none", []string{"context"}, `for example: server = "https://a.example".`}, {"bad", []string{"context"}, linesNotShown}, {"bad", []string{"server"}, linesNotShown},
 			},
 		},
 	}
@@ -95,8 +97,8 @@ func TestServerURLsNeverShowUserinfo(t *testing.T) {
 					t.Errorf("%s %q printed the credentials:\n%s", s.dir, s.args, out)
 				}
 				// bad's varlatch.toml does not parse: its lines are not shown.
-				if !strings.Contains(out, "[redacted]@") && !(s.dir == "bad" && strings.Contains(out, linesNotShown)) {
-					t.Errorf("%s %q shows no redacted server:\n%s", s.dir, s.args, out)
+				if !strings.Contains(out, s.shows) {
+					t.Errorf("%s %q does not show %q:\n%s", s.dir, s.args, s.shows, out)
 				}
 			}
 		})
@@ -181,7 +183,7 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 		if c.toml && !strings.Contains(out, linesNotShown) {
 			t.Errorf("%q quotes varlatch.toml:\n%s", c.args, out)
 		}
-		if !c.toml && !strings.Contains(out, "[redacted]@") && !strings.Contains(out, "=[redacted]") {
+		if !c.toml && !strings.Contains(out, "[redacted]@") && !strings.Contains(out, "=[redacted]") && !strings.Contains(out, "[unrecognised server URL]") {
 			t.Errorf("%q shows no redacted URL:\n%s", c.args, out)
 		}
 	}
@@ -282,8 +284,10 @@ func TestTOMLExcerptLeftOutWhenFileMayHoldCredentials(t *testing.T) {
 // TestFailureExplanationsSurvive: a message echoing a value with a URL's
 // user name and password puts its explanation after the value (an accepted
 // wording difference from TypeScript), so what the fail-safe keeps, after
-// the last at-sign, still says what went wrong. Pinned through Main, the
-// fail-safe included, and for 5.1c's client messages through Run.finish.
+// the last at-sign, still says what went wrong; a message naming a server
+// shows its display form instead, which holds no at-sign, in TypeScript's
+// wording. Pinned through Main, the fail-safe included, and for 5.1c's
+// client messages through Run.finish.
 func TestFailureExplanationsSurvive(t *testing.T) {
 	dir := t.TempDir()
 	write := func(rel, text string) {
@@ -308,8 +312,9 @@ func TestFailureExplanationsSurvive(t *testing.T) {
 		{"", []string{"server", "--https://alice:fake@example.com"}, "varlatch server:[redacted]@example.com: unknown option\nUsage: varlatch server [--json]"},
 		{"", []string{"https://alice:fake@example.com"}, "varlatch:[redacted]@example.com: unknown command\n\nvarlatch — "},
 		{"", []string{"--approval", "https://alice:fake@x", "status"}, "varlatch:[redacted]@x: not an approval id\n"},
-		{"", []string{"server", "use", "https://alice:fake@[bad"}, "varlatch server use:[redacted]@[bad: not a URL\n"},
-		{"", []string{"server", "use", "https://alice:fake@z.example"}, "varlatch server use:[redacted]@z.example: you are not signed in to this server; sign in first with varlatch login --server and its URL\n"},
+		// A server is shown as its display form (server-display).
+		{"", []string{"server", "use", "https://alice:fake@[bad"}, "varlatch server use: not a URL: [unrecognised server URL]\n"},
+		{"", []string{"server", "use", "https://alice:fake@z.example"}, "varlatch server use: you are not signed in to https://z.example. Sign in first: varlatch login --server and its URL\nSigned in to: https://a.example\n"},
 		{"bad", []string{"context"}, "Invalid varlatch.toml: Invalid TOML document: each key-value declaration must be followed by an end-of-line, line 3, column 41 " + linesNotShown + "\n"},
 	} {
 		if err := os.MkdirAll(filepath.Join(dir, c.cwd), 0o755); err != nil {
@@ -333,16 +338,16 @@ func TestFailureExplanationsSurvive(t *testing.T) {
 		{"not authenticated", func(r *Run) error {
 			_, err := r.connectClient("https://alice:fake@n.example")
 			return err
-		}, "Not authenticated to https:[redacted]@n.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
+		}, "Not authenticated to https://n.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
 			"adding --start to approve in a browser on any device, or --token-stdin to pipe a credential\n"},
 		{"credentials refused", func(r *Run) error {
 			_, err := r.plainClient("https://alice:fake@n.example", "vlt_cli_fake").Meta(context.Background())
 			return err
-		}, "varlatch:[redacted]@n.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again\n"},
+		}, "varlatch: https://n.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again\n"},
 		{"does not parse", func(r *Run) error {
 			_, err := r.plainClient("https://alice:fake@[bad", "vlt_cli_fake").Meta(context.Background())
 			return err
-		}, "varlatch:[redacted]@[bad/v1/meta: can't be parsed as a URL\n"},
+		}, "varlatch: Failed to parse URL from [unrecognised server URL]\n"},
 	} {
 		r, stderr := testRun(MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()})
 		r.finish(c.err(r))

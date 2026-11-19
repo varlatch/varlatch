@@ -62,7 +62,7 @@ func agentsCommand(r *Run) error {
 	case "install":
 		return r.agentsInstall(rest)
 	}
-	return UsageError(agentsUsage)
+	return UsageOnly(agentsUsage)
 }
 
 func (r *Run) agentsInstall(args []string) error {
@@ -179,7 +179,7 @@ func initCommand(r *Run) error {
 		return UsageError("varlatch init: guided init on a terminal is not in this build of the Go CLI yet (slice 5.8a); pass --org and --project, or use the TypeScript CLI for it until then")
 	}
 	if !hasOrg {
-		return UsageError(initUsage)
+		return UsageOnly(initUsage)
 	}
 	if !hasProject {
 		return UsageError("Provide --project")
@@ -222,7 +222,7 @@ func initCommand(r *Run) error {
 	if err := os.WriteFile(filepath.Join(cwd, clientctx.RepoConfigFile), []byte(strings.Join(lines, "\n")), 0o666); err != nil {
 		return err
 	}
-	if err := r.println("Wrote " + clientctx.RepoConfigFile + " for " + clientctx.MaskUserinfo(serverText) + said + ". Commit it; it contains no credentials."); err != nil {
+	if err := r.println("Wrote " + clientctx.RepoConfigFile + " for " + clientctx.DisplayServer(serverText) + said + ". Commit it; it contains no credentials."); err != nil {
 		return err
 	}
 	// ADR-0043 Decision 7: the files coding agents read, unless

@@ -22,13 +22,10 @@ import (
 // v0.22.0. The other ways of signing in (the browser, --oidc, --start and
 // --wait) are slice 5.2's.
 
-// shownServer is a server URL as the Go CLI prints it: its user name and
-// password, if any, as [redacted] (go/README.md, the accepted difference
-// "Diagnostics never print credential values"), wherever WHATWG parsing
-// would find them (clientctx.MaskUserinfo: after any run of slashes and
-// backslashes for a special scheme, none included). Every other URL is
-// printed as it is.
-func shownServer(server string) string { return clientctx.MaskUserinfo(server) }
+// shownServer is a server URL as the Go CLI prints it: its allow-listed
+// display form (clientctx.DisplayServer; go/README.md, the accepted
+// difference "server-display"), so an ordinary URL is printed as it is.
+func shownServer(server string) string { return clientctx.DisplayServer(server) }
 
 // shownServers is shownServer for each, joined with ", ".
 func shownServers(servers []string) string {
@@ -39,7 +36,8 @@ func shownServers(servers []string) string {
 	return strings.Join(shown, ", ")
 }
 
-// shownValue is a value from a server's answer as human output shows it:
+// shownValue is a value from a server's answer, the tier cache or stored
+// metadata as human output shows it:
 // a URL's user name and password masked (clientctx.MaskURLInValue), any
 // other value as it is. Tokens are redacted for every stdout line by
 // RedactOutput.
@@ -312,7 +310,7 @@ func (r *Run) revokeStored(server string, credential any) (string, error) {
 		}
 		// The reason is printed (logout on stdout, login on stderr): no
 		// Varlatch token in it, whatever made it.
-		return varlatchToken.ReplaceAllLiteralString(err.Error(), Redacted), nil
+		return varlatchToken.ReplaceAllLiteralString(clientctx.MaskURLInValue(err.Error()), Redacted), nil
 	}
 	return "", nil
 }
@@ -352,16 +350,8 @@ func logoutCommand(r *Run) error {
 		}
 		if resolved == nil {
 			list := shownServers(names)
-			// A list holding an at-sign comes before the explanation: the
-			// fail-safe (Run.finish) keeps what follows the last at-sign.
-			if len(stored) > 1 && clientctx.HasAtSign(list) {
-				return UsageError("Multiple servers stored: " + list + "\nPass --server <url> or --all.")
-			}
 			if len(stored) > 1 {
 				return UsageError("Multiple servers stored (" + list + "). Pass --server <url> or --all.")
-			}
-			if clientctx.HasAtSign(list) {
-				return UsageError("No server here; stored: " + list + "\nPass --server <url> or --all.")
 			}
 			return UsageError("No server here: pass --server <url> or --all (stored: " + list + ").")
 		}
@@ -378,11 +368,7 @@ func logoutCommand(r *Run) error {
 			}
 		}
 		if targets == nil {
-			shown := shownServer(server)
-			if clientctx.HasAtSign(shown) {
-				return Fail("varlatch logout: "+shown+": no credential is stored for this server", ExitFailure) // the explanation follows the URL
-			}
-			return Fail("No stored credential for "+shown, ExitFailure)
+			return Fail("No stored credential for "+shownServer(server), ExitFailure)
 		}
 	}
 	for _, t := range targets {
@@ -408,6 +394,12 @@ func logoutCommand(r *Run) error {
 
 // whoamiUsage is main.ts's WHOAMI_USAGE.
 const whoamiUsage = "Usage: varlatch whoami [--server <url>] [--json]"
+
+// envUsage and envUseUsage are main.ts's env usage lines.
+const (
+	envUsage    = "Usage: varlatch env <use|list>"
+	envUseUsage = "Usage: varlatch env use <environment>"
+)
 
 // whoamiCommand is `varlatch whoami [--server <url>] [--json]` (capability
 // identity.whoami): which identity the credential this CLI would use
@@ -438,11 +430,8 @@ func whoamiCommand(r *Run) error {
 		resolved = nil
 	}
 	if resolved == nil {
-		if list := shownServers(stored); len(stored) > 1 && clientctx.HasAtSign(list) {
-			// The explanation follows the list: the fail-safe keeps what follows the last at-sign.
-			return UsageErrorWithUsage("varlatch whoami: "+list+": credentials are stored for each of these; pass --server <url>", "\n"+whoamiUsage)
-		} else if len(stored) > 1 {
-			return UsageErrorWithUsage("varlatch whoami: credentials are stored for "+list+"; pass --server <url>", "\n"+whoamiUsage)
+		if len(stored) > 1 {
+			return UsageErrorWithUsage("varlatch whoami: credentials are stored for "+shownServers(stored)+"; pass --server <url>", "\n"+whoamiUsage)
 		}
 		return UsageErrorWithUsage("varlatch whoami: no server; pass --server <url>, set VARLATCH_SERVER, or run inside a varlatch repository", "\n"+whoamiUsage)
 	}
@@ -493,32 +482,44 @@ func whoamiDocument(server string, caller any) jsjson.Object {
 		if !known {
 			continue
 		}
-		doc = append(doc, jsjson.Member{Key: m.Key, Value: onlyFields(m.Value, fields)})
+		if v, ok := documented(m.Value, fields); ok {
+			doc = append(doc, jsjson.Member{Key: m.Key, Value: v})
+		}
 	}
 	return doc
 }
 
-// onlyFields is v with only the named fields when it is an object, an
-// object nested in one of them emptied; a value that is not an object
-// stays as it is, an object or array inside it reduced to its scalars.
-func onlyFields(v any, fields []string) any {
-	switch x := v.(type) {
-	case jsjson.Object:
-		out := jsjson.Object{}
-		for _, m := range x {
-			if slices.Contains(fields, m.Key) {
-				out = append(out, jsjson.Member{Key: m.Key, Value: onlyFields(m.Value, nil)})
-			}
-		}
-		return out
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = onlyFields(e, nil)
-		}
-		return out
+// documented is v as the WhoAmI document defines it: an object with only
+// its named fields, each a scalar (tags a list of scalars); a field defined
+// as a scalar (nil fields) only when it is one. An object or array where a
+// scalar is defined is left out, never passed through (false).
+func documented(v any, fields []string) (any, bool) {
+	o, isObject := v.(jsjson.Object)
+	if fields == nil || !isObject {
+		return scalar(v) // null (an Organization of none) is kept, as the API sends it
 	}
-	return v
+	out := jsjson.Object{}
+	for _, m := range o {
+		if !slices.Contains(fields, m.Key) {
+			continue
+		}
+		if m.Key == "tags" {
+			if list, isList := m.Value.([]any); isList {
+				tags := []any{}
+				for _, e := range list {
+					if t, ok := scalar(e); ok {
+						tags = append(tags, t)
+					}
+				}
+				out = append(out, jsjson.Member{Key: m.Key, Value: tags})
+			}
+			continue
+		}
+		if s, ok := scalar(m.Value); ok {
+			out = append(out, jsjson.Member{Key: m.Key, Value: s})
+		}
+	}
+	return out, true
 }
 
 // fetchWhoami is whoami.ts's fetchWhoami: ask the server, after checking
@@ -700,7 +701,7 @@ func envCommand(r *Run) error {
 		return contextError(err)
 	}
 	if !hasSub || sub != "list" {
-		return UsageError("Usage: varlatch env <use|list>")
+		return UsageOnly(envUsage)
 	}
 	return r.envList(ctx)
 }
@@ -745,8 +746,10 @@ func (r *Run) envList(ctx *clientctx.Context) error {
 				if err != nil {
 					return err
 				}
-				if ok {
-					entry = append(entry, jsjson.Member{Key: key, Value: v}) // undefined is left out, as JSON.stringify does
+				// undefined is left out, as JSON.stringify does; so is an
+				// object or array where the API defines a string.
+				if s, isScalar := scalar(v); ok && isScalar {
+					entry = append(entry, jsjson.Member{Key: key, Value: s})
 				}
 			}
 			environments[i] = append(entry, jsjson.Member{Key: "selected", Value: selected(e)})
@@ -790,7 +793,7 @@ func (r *Run) envList(ctx *clientctx.Context) error {
 // `env list` runs in CI across tracked directories and never writes.
 func (r *Run) envUse() error {
 	if len(r.Args) < 2 {
-		return UsageError("Usage: varlatch env use <environment>")
+		return UsageOnly(envUseUsage)
 	}
 	name := r.Args[1]
 	cwd, err := Cwd()
@@ -813,12 +816,12 @@ func (r *Run) envUse() error {
 	note := ""
 	if hasTier && jsjson.Truthy(tier) {
 		state = state.Set("selectedTier", tier).Set("tierCachedAt", isoString(time.Now().UTC()))
-		note = " (tier " + Printable(jsjson.String(tier)) + ")"
+		note = " (tier " + Printable(shownValue(jsjson.String(tier))) + ")"
 	}
 	if err := clientctx.SaveLocalState(root, state); err != nil {
 		return err
 	}
-	return r.println("Selected " + name + " for this repository" + note + ".")
+	return r.println("Selected " + shownValue(name) + " for this repository" + note + ".")
 }
 
 // selectedTier is the tier of the Environment named name, as the server

@@ -5,9 +5,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -40,17 +42,19 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(config, "credentials.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// By the server as status shows it: with [redacted] for a user name and password.
-	want := map[string]string{
-		"http://127.0.0.1:2":            "the credential contains a character that is not allowed in an HTTP header",
-		"http://127.0.0.1:3":            "the credential contains a character that is not allowed in an HTTP header",
-		"http://[redacted]@127.0.0.1:2": "http://[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
-		"http://[redacted]@[::1":        "http://[redacted]@[::1/v1/meta: can't be parsed as a URL",
-		"http:/[redacted]@[::1":         "http:/[redacted]@[::1/v1/meta: can't be parsed as a URL",
+	// Each server as status shows it (clientctx.DisplayServer: no user name
+	// or password, an unrecognised URL as a placeholder) and its probe's
+	// refusal, which names the refused URL the same way.
+	want := []string{
+		"http://127.0.0.1:2  the credential contains a character that is not allowed in an HTTP header",
+		"http://127.0.0.1:3  the credential contains a character that is not allowed in an HTTP header",
+		"http://127.0.0.1:2  http://127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
+		"[unrecognised server URL]  Failed to parse URL from [unrecognised server URL]",
+		"[unrecognised server URL]  Failed to parse URL from [unrecognised server URL]",
 	}
-	// Nothing printed may hold a token or a URL's password.
+	// Nothing printed may hold a token or a URL's user name or password.
 	leaks := func(text string) bool {
-		return strings.Contains(text, "secret") || strings.Contains(text, "hunter2pass")
+		return strings.Contains(text, "secret") || strings.Contains(text, "hunter2pass") || strings.Contains(text, "user:")
 	}
 	run := func(args ...string) (string, string) {
 		cmd := exec.Command(exe, args...)
@@ -73,13 +77,20 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Servers) != len(want) || stderr != "" {
-		t.Fatalf("%d servers, stderr %q", len(doc.Servers), stderr)
+	if stderr != "" {
+		t.Fatalf("stderr %q", stderr)
 	}
+	var got []string
 	for _, s := range doc.Servers {
-		if s.Probe.State != "unreachable" || s.Probe.Detail != want[s.Server] {
-			t.Errorf("%s: %s (%s), want unreachable (%s)", s.Server, s.Probe.State, s.Probe.Detail, want[s.Server])
+		if s.Probe.State != "unreachable" {
+			t.Errorf("%s: %s, want unreachable", s.Server, s.Probe.State)
 		}
+		got = append(got, s.Server+"  "+s.Probe.Detail)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("status --probe --json: servers and details\n%q\nwant\n%q", got, want)
 	}
 	if leaks(stdout) {
 		t.Errorf("status --probe --json shows a credential:\n%s", stdout)
@@ -88,9 +99,186 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	if leaks(human) || stderr != "" {
 		t.Errorf("status --probe shows a credential:\n%s%s", human, stderr)
 	}
-	for server := range want {
-		if !strings.Contains(human, server+"  (") {
-			t.Errorf("the human format has no line for %s:\n%s", server, human)
+	// The human format names each server the same way and keeps each
+	// refusal as the client wrote it.
+	for _, line := range want {
+		server, detail, _ := strings.Cut(line, "  ")
+		if !strings.Contains(human, server+"  (no expiry recorded, probe: unreachable ("+detail+"))") {
+			t.Errorf("the human format has no line for %s (%s):\n%s", server, detail, human)
+		}
+	}
+}
+
+// TestStatusProbeMasksNestedCredentials: a stored server whose query and
+// fragment name credentialed URLs, with and without credentials of its
+// own, is shown by status --probe, human and --json, and in each probe's
+// refusal, as its display form: no user name or password, and the query
+// and fragment left out with their markers.
+func TestStatusProbeMasksNestedCredentials(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config")
+	if err := os.MkdirAll(config, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := map[string]any{"servers": map[string]map[string]string{
+		"http://127.0.0.1:2/?next=http://a:hunter2pass@b.example#http://c:hunter2pass@d.example":               {"token": "vlt_cli_secretAAAA"},
+		"http://u:hunter2pass@127.0.0.1:2/?next=http://a:hunter2pass@b.example#http://c:hunter2pass@d.example": {"token": "vlt_cli_secretBBBB"},
+		"//u:hunter2pass@127.0.0.1:2/?next=http://a:hunter2pass@b.example":                                     {"token": "vlt_cli_secretCCCC"},
+	}}
+	data, _ := json.Marshal(store)
+	if err := os.WriteFile(filepath.Join(config, "credentials.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"status", "--probe", "--json"}, {"status", "--probe"}, {"status", "--json"}, {"status"}} {
+		cmd := exec.Command(exe, args...)
+		cmd.Dir = dir
+		cmd.Env = []string{asCLI + "=1", "HOME=" + dir, "VARLATCH_CONFIG_DIR=" + config, "PATH=" + os.Getenv("PATH")}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, stderr.String())
+		}
+		out := stdout.String() + stderr.String()
+		if strings.Contains(out, "hunter2pass") || strings.Contains(out, "secret") || strings.Contains(out, "example") ||
+			!strings.Contains(out, "http://127.0.0.1:2/?[redacted]#[redacted]") || !strings.Contains(out, "//127.0.0.1:2/?[redacted]") {
+			t.Errorf("%v shows a credential or not each server's display form:\n%s", args, out)
+		}
+	}
+}
+
+// TestNestedCredentialsBehindOuterOnes: a stored server holding
+// credentials, its own or nested in its query (a scheme-relative URL with
+// outer and inner credentials, a leading space, a token as the nested
+// user name with no colon, a percent-encoded nested URL: Sol, #278 rounds
+// 4 to 6), is shown by server, context, status --probe (human and --json,
+// its probe detail included) and logout --all's revocation reason as its
+// display form, with no part of any credential.
+func TestNestedCredentialsBehindOuterOnes(t *testing.T) {
+	for i, c := range []struct {
+		server, shown string
+		secrets       []string
+	}{
+		{"//outer:outer-pass@gateway.example/?next=//alice1:inner-pass@upstream.example", "//gateway.example/?[redacted]", []string{"outer", "pass", "alice1", "upstream"}},
+		{" //ci-bot_:example-password@upstream.example", "//upstream.example", []string{"ci-bot", "password"}},
+		{"//gateway.example/?next=//ghp_RoundSixCanary@upstream.example", "//gateway.example/?[redacted]", []string{"ghp_", "RoundSix", "upstream"}},
+		{"//gateway.example/?next=%2F%2Fci-bot%3ARoundSixPassword%40upstream.example", "//gateway.example/?[redacted]", []string{"ci-bot", "RoundSix", "upstream", "%3A", "%40"}},
+	} {
+		// Named by index: a test's name is in its temporary directory's path,
+		// which context prints.
+		t.Run(fmt.Sprint("server ", i), func(t *testing.T) { nestedCredentials(t, c.server, c.shown, c.secrets) })
+	}
+}
+
+func nestedCredentials(t *testing.T, server, shown string, secrets []string) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config")
+	if err := os.MkdirAll(config, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(map[string]any{"servers": map[string]map[string]string{server: {"token": "vlt_cli_x", "credentialId": "cred_1"}}})
+	if err := os.WriteFile(filepath.Join(config, "credentials.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// context runs in a repository, given the server as VARLATCH_SERVER.
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "varlatch.toml"), []byte("organization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"server"}, {"server", "--json"}, {"context"}, {"context", "--json"}, {"status", "--probe"}, {"status", "--probe", "--json"}, {"logout", "--all"}} {
+		cmd := exec.Command(exe, args...)
+		cmd.Dir = dir
+		cmd.Env = []string{asCLI + "=1", "HOME=" + dir, "VARLATCH_CONFIG_DIR=" + config, "PATH=" + os.Getenv("PATH")}
+		if args[0] == "context" {
+			cmd.Dir = repo
+			cmd.Env = append(cmd.Env, "VARLATCH_SERVER="+server)
+		}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, stderr.String())
+		}
+		out := stdout.String() + stderr.String()
+		for _, secret := range secrets {
+			if strings.Contains(out, secret) {
+				t.Errorf("%v shows %q:\n%s", args, secret, out)
+			}
+		}
+		if !strings.Contains(out, shown) {
+			t.Errorf("%v does not show %q:\n%s", args, shown, out)
+		}
+		if args[0] == "status" && !strings.Contains(out, "Failed to parse URL from "+shown) {
+			t.Errorf("%v shows no probe detail naming the display form:\n%s", args, out)
+		}
+		if args[0] == "logout" && !strings.Contains(out, shown+": removed locally; server revocation failed (Failed to parse URL from "+shown) {
+			t.Errorf("%v shows no revocation reason:\n%s", args, out)
+		}
+	}
+}
+
+// TestMatrixParametersNeverShow: a server whose path holds a matrix
+// parameter (Sol, #278 round 7), given as VARLATCH_SERVER or stored, is
+// shown with its path from the parameter's segment on as "/[redacted]",
+// by server --json, context, and status --probe --json (the repository's
+// server, a stored one and its probe detail).
+func TestMatrixParametersNeverShow(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config")
+	repo := filepath.Join(dir, "repo")
+	for _, d := range []string{config, repo} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Port 1 is never connected to: the probe fails before anything is sent.
+	data, _ := json.Marshal(map[string]any{"servers": map[string]map[string]string{
+		"http://127.0.0.1:1/varlatch;jsessionid=RoundSevenStored": {"token": "vlt_cli_x"},
+	}})
+	if err := os.WriteFile(filepath.Join(config, "credentials.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "varlatch.toml"), []byte("organization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		args  []string
+		shows []string
+	}{
+		{[]string{"server", "--json"}, []string{`"server": "https://gateway.example/[redacted]"`, `"http://127.0.0.1:1/[redacted]"`}},
+		{[]string{"context"}, []string{"Server        https://gateway.example/[redacted]"}},
+		{[]string{"status", "--probe", "--json"}, []string{`"server": "https://gateway.example/[redacted]"`, `"server": "http://127.0.0.1:1/[redacted]"`}},
+	} {
+		cmd := exec.Command(exe, c.args...)
+		cmd.Dir = repo
+		cmd.Env = []string{asCLI + "=1", "HOME=" + dir, "VARLATCH_CONFIG_DIR=" + config, "PATH=" + os.Getenv("PATH"),
+			"VARLATCH_SERVER=https://gateway.example/varlatch;jsessionid=RoundSevenCanary"}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%v: %v\n%s", c.args, err, stderr.String())
+		}
+		out := stdout.String() + stderr.String()
+		if strings.Contains(out, "RoundSeven") || strings.Contains(out, "jsessionid") {
+			t.Errorf("%v shows the session id:\n%s", c.args, out)
+		}
+		for _, want := range c.shows {
+			if !strings.Contains(out, want) {
+				t.Errorf("%v does not show %s:\n%s", c.args, want, out)
+			}
 		}
 	}
 }
