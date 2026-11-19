@@ -625,9 +625,6 @@ func upstreamHeaders(resp *http.Response) []Pair {
 			out = append(out, Pair{name, latin1([]byte(v))})
 		}
 	}
-	if resp.ContentLength >= 0 && resp.Header.Get("Content-Length") == "" && len(resp.TransferEncoding) == 0 {
-		out = append(out, Pair{"Content-Length", strconv.FormatInt(resp.ContentLength, 10)})
-	}
 	return out
 }
 
@@ -747,7 +744,9 @@ func (f forwardTo) substituted(r Request, hadLength bool, s *Scrubber) {
 		// No protocol switch on a substituted request: the rest could not be scrubbed.
 		stop()
 		resp.Body.Close()
-		deny(f.w, f.h, 502, "the destination switched protocols; not relayed on a substituted request")
+		message := "the destination switched protocols; not relayed on a substituted request"
+		f.b.opts.Report(Event{Kind: "aborted", Reason: message})
+		deny(f.w, f.h, 502, message)
 		return
 	}
 	touch()
