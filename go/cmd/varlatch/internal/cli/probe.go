@@ -33,14 +33,9 @@ func (r *Run) probeServer(server string, token any, tokenOK bool) jsjson.Object 
 	if errors.As(err, &api) {
 		return jsjson.Object{{Key: "state", Value: "invalid"}, {Key: "detail", Value: safeCode(api.Code)}}
 	}
-	// The API client's refusals are built by the masker: marked so by their
-	// type, they are not masked again on the way out (clientctx.Sanitized).
-	var detail any = err.Error()
-	var fetch *apiclient.FetchError
-	if errors.As(err, &fetch) {
-		detail = clientctx.Sanitized(err.Error())
-	}
-	return jsjson.Object{{Key: "state", Value: "unreachable"}, {Key: "detail", Value: detail}}
+	// Its text goes out through the composed masker like any other
+	// (RedactValue in --json, shownValue in the human format).
+	return jsjson.Object{{Key: "state", Value: "unreachable"}, {Key: "detail", Value: err.Error()}}
 }
 
 func (r *Run) probe(server string, token any, tokenOK bool) (jsjson.Object, error) {

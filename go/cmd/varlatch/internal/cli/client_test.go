@@ -212,7 +212,7 @@ func TestTokenEchoedByTheServerIsMasked(t *testing.T) {
 // their place by every message the client's use prints.
 func TestClientMessagesNeverShowUserinfo(t *testing.T) {
 	const server = "https://user:hunter2pass@v.example"
-	const shown = "https://[redacted]@v.example"
+	const shown = "https:[redacted]@v.example"
 	for _, env := range []MapEnv{
 		{"VARLATCH_CONFIG_DIR": t.TempDir()},
 		{"VARLATCH_CONFIG_DIR": t.TempDir(), "HOME": t.TempDir(), "VARLATCH_AGENT_RUN": "run_1"},

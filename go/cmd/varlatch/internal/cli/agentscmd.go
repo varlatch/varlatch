@@ -222,7 +222,7 @@ func initCommand(r *Run) error {
 	if err := os.WriteFile(filepath.Join(cwd, clientctx.RepoConfigFile), []byte(strings.Join(lines, "\n")), 0o666); err != nil {
 		return err
 	}
-	if err := r.println("Wrote " + clientctx.RepoConfigFile + " for " + clientctx.MaskUserinfo(serverText) + said + ". Commit it; it contains no credentials."); err != nil {
+	if err := r.println("Wrote " + clientctx.RepoConfigFile + " for " + clientctx.MaskURLInValue(serverText) + said + ". Commit it; it contains no credentials."); err != nil {
 		return err
 	}
 	// ADR-0043 Decision 7: the files coding agents read, unless

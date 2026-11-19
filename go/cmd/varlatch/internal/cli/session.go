@@ -28,7 +28,7 @@ import (
 // would find them (clientctx.MaskUserinfo: after any run of slashes and
 // backslashes for a special scheme, none included). Every other URL is
 // printed as it is.
-func shownServer(server string) string { return clientctx.MaskUserinfo(server) }
+func shownServer(server string) string { return clientctx.MaskURLInValue(server) }
 
 // shownServers is shownServer for each, joined with ", ".
 func shownServers(servers []string) string {
@@ -313,7 +313,7 @@ func (r *Run) revokeStored(server string, credential any) (string, error) {
 		}
 		// The reason is printed (logout on stdout, login on stderr): no
 		// Varlatch token in it, whatever made it.
-		return varlatchToken.ReplaceAllLiteralString(err.Error(), Redacted), nil
+		return varlatchToken.ReplaceAllLiteralString(clientctx.MaskURLInValue(err.Error()), Redacted), nil
 	}
 	return "", nil
 }

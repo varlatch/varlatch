@@ -254,8 +254,6 @@ func RedactOutput(text string) string {
 // to every --json document.
 func RedactValue(v any) any {
 	switch x := v.(type) {
-	case clientctx.Sanitized:
-		return RedactOutput(string(x)) // a masker made it: tokens only, never masked twice
 	case string:
 		return RedactOutput(clientctx.MaskURLInValue(x))
 	case jsjson.Object:

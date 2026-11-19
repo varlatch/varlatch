@@ -3,7 +3,6 @@
 package clientctx
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -111,7 +110,7 @@ func isAlpha(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' 
 func MaskServer(v any) any {
 	switch x := v.(type) {
 	case string:
-		return MaskUserinfo(x)
+		return MaskURLInValue(x)
 	case []any:
 		out := make([]any, len(x))
 		for i, e := range x {
@@ -243,69 +242,24 @@ func atSignAt(s []byte, i int) int {
 	return 0
 }
 
-// MaskURLInValue is the layer for one value: an argument, a command, a
-// topic or an approval id a failure echoes, or a string a server's answer,
-// the tier cache or stored metadata gives output. A value that is exactly
-// one URL is masked precisely with MaskUserinfo: it has a URL's shape (it
-// starts with a scheme followed by "//", a special scheme, or "//", and
-// holds no space), it parses as a URL, and nothing after its authority
-// holds an at-sign in any form. Any other value holding an at-sign goes
-// through the whole-text fail-safe, MaskUserinfoInText: free text may be
-// over-masked, never under-masked. The value's content never exempts it;
-// text a masker already made is marked by its type (Sanitized) instead,
-// where the caller knows it. Any other value is kept as it is.
+// MaskURLInValue is the masker for every string the CLI shows that comes
+// from outside it: a server's answer, stored configuration, the command
+// line, the environment, an API client's refusal. It composes, never
+// chooses:
+//  1. when the value parses as a URL (or is scheme-relative, starting with
+//     "//"), the precise authority mask, MaskUserinfo;
+//  2. then, always, the whole-text fail-safe, MaskUserinfoInText, on the
+//     result, so a credentialed URL anywhere else in it (a query, a
+//     fragment, free text around it) is masked too.
+//
+// Token redaction is the output's own last step (cli.RedactOutput,
+// cli.RedactDiagnostic). Already-masked text may be masked again
+// (`https://[redacted]@h` reads `https:[redacted]@h`): cosmetic, never a
+// leak. A value without an at-sign keeps its bytes.
 func MaskURLInValue(v string) string {
-	if isOneURL(v) {
-		return MaskUserinfo(v)
+	s := v
+	if _, ok := whatwg.ParseURL(v); ok || strings.HasPrefix(v, "//") {
+		s = MaskUserinfo(v)
 	}
-	if HasAtSign(v) {
-		return MaskUserinfoInText(v)
-	}
-	return v
-}
-
-// Sanitized is text a masker made, every URL in it already shown without
-// its user name and password (an API client's refusal, built with
-// MaskUserinfo). The output fail-safes pass it as it is, masking it again
-// only for tokens, so it is never masked twice; nothing else is ever
-// trusted for what it contains.
-type Sanitized string
-
-// leadingScheme matches a URL scheme and its colon at the start of a value.
-var leadingScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
-
-// isOneURL is whether v is one URL as a whole: no space in it, and it
-// starts with "//", or with a scheme that is special or followed by "//"
-// (tabs and newlines between, as WHATWG drops them).
-func isOneURL(v string) bool {
-	if strings.ContainsRune(v, ' ') {
-		return false
-	}
-	if _, ok := whatwg.ParseURL(v); !ok && !strings.HasPrefix(v, "//") {
-		return false
-	}
-	special := false
-	if !strings.HasPrefix(v, "//") {
-		loc := leadingScheme.FindStringIndex(v)
-		if loc == nil {
-			return false
-		}
-		special = specialSchemes[strings.ToLower(v[:loc[1]-1])]
-		rest := strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(v[loc[1]:min(len(v), loc[1]+16)])
-		if !special && !strings.HasPrefix(rest, "//") {
-			return false
-		}
-	}
-	// Nothing after the authority may hold an at-sign: a query or path
-	// naming a second, credentialed URL takes the fail-safe.
-	start, _ := authorityStart(v)
-	delims := "/?#"
-	if special {
-		delims = "/\\?#"
-	}
-	end := len(v)
-	if i := strings.IndexAny(v[start:], delims); i >= 0 {
-		end = start + i
-	}
-	return !HasAtSign(v[end:])
+	return MaskUserinfoInText(s)
 }

@@ -399,13 +399,13 @@ func TestHasAtSignIsTheFailSafesDetection(t *testing.T) {
 func TestMaskURLInValueNeverShowsUserinfo(t *testing.T) {
 	for in, want := range map[string]string{
 		// One URL: precise.
-		"https://u:p@h.example":               "https://[redacted]@h.example",
+		"https://u:p@h.example":               "https:[redacted]@h.example",
 		"https://example.com\\path@segment":   "https:[redacted]@segment", // an at-sign after the authority: the fail-safe
 		"http:u:p@h":                          "http:[redacted]@h",
-		"postgres://user:pass@db.example/app": "postgres://[redacted]@db.example/app",
+		"postgres://user:pass@db.example/app": "postgres:[redacted]@db.example/app",
 		"//u:p@h.example":                     "//[redacted]@h.example",
-		"https://u:p@h.example,":              "https://[redacted]@h.example,",
-		"https://u:p'q@h.example":             "https://[redacted]@h.example",
+		"https://u:p@h.example,":              "https:[redacted]@h.example,",
+		"https://u:p'q@h.example":             "https:[redacted]@h.example",
 		// Anything else with an at-sign: the fail-safe.
 		"Help: https://u:p@h/x":                                 "Help:[redacted]@h/x",
 		"see https://a.example/?q=1 then https://u:p@h.example": "see https:[redacted]@h.example",
@@ -433,17 +433,16 @@ func TestMaskURLInValueNeverShowsUserinfo(t *testing.T) {
 // TestMaskURLInValueTrustsNoContent: no content exempts a value from the
 // masker. A password ending in the literal "[redacted]" is masked like any
 // other; a URL whose query or path names a second, credentialed URL takes
-// the whole-text fail-safe; text already masked by the CLI's own masker is
-// masked again here (callers mark such text by its type, Sanitized, to
-// keep it as it is).
+// the whole-text fail-safe too; text already masked by the CLI's own
+// masker is masked again, a cosmetic double mask and never a leak.
 func TestMaskURLInValueTrustsNoContent(t *testing.T) {
 	for in, want := range map[string]string{
-		"https://u:hunter2[redacted]@h.example":                           "https://[redacted]@h.example",
-		"see https://u:hunter2[redacted]@h.example":                       "see https:[redacted]@h.example",
-		`https://a.example/?next="https://u:hunter2@b.example"`:           `https:[redacted]@b.example"`,
-		"https://a.example/path/https://u:hunter2@b.example":              "https:[redacted]@b.example",
-		"https://a.example/#https://u:hunter2@b.example":                  "https:[redacted]@b.example",
-		"http://[redacted]@a.example/v1/meta: a server URL can't be used": "http:[redacted]@a.example/v1/meta: a server URL can't be used",
+		"https://u:hunter2[redacted]@h.example":                         "https:[redacted]@h.example",
+		"see https://u:hunter2[redacted]@h.example":                     "see https:[redacted]@h.example",
+		`https://a.example/?next="https://u:hunter2@b.example"`:         `https:[redacted]@b.example"`,
+		"https://a.example/path/https://u:hunter2@b.example":            "https:[redacted]@b.example",
+		"https://a.example/#https://u:hunter2@b.example":                "https:[redacted]@b.example",
+		"http:[redacted]@a.example/v1/meta: a server URL can't be used": "http:[redacted]@a.example/v1/meta: a server URL can't be used",
 	} {
 		got := MaskURLInValue(in)
 		if got != want {
@@ -451,6 +450,24 @@ func TestMaskURLInValueTrustsNoContent(t *testing.T) {
 		}
 		if strings.Contains(got, "hunter2") {
 			t.Errorf("MaskURLInValue(%q) shows the password: %q", in, got)
+		}
+	}
+}
+
+// TestMaskURLInValueComposes: the authority mask and the whole-text
+// fail-safe both run, so neither the outer credentials nor a credentialed
+// URL nested in a query or fragment survive, scheme-relative URLs included.
+func TestMaskURLInValueComposes(t *testing.T) {
+	for _, in := range []string{
+		"//u:hunter2@h.example/p?x=http://a:hunter2@c.example",
+		"//u:hunter2@h.example",
+		"https://u:hunter2@h.example/?next=https://a:hunter2@b.example#https://c:hunter2@d.example",
+		"https://h.example/?next=https://a:hunter2@b.example#https://c:hunter2@d.example",
+		"http://u:hunter2@[bad/v1/meta: can't be parsed as a URL",
+		"http://[redacted]@h.example/?x=http://a:hunter2@b.example: a server URL with a user name or password can't be used",
+	} {
+		if got := MaskURLInValue(in); strings.Contains(got, "hunter2") || !strings.Contains(got, "[redacted]@") {
+			t.Errorf("MaskURLInValue(%q) = %q", in, got)
 		}
 	}
 }

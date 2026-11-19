@@ -119,7 +119,7 @@ func serverStatus(server string, credential any, now float64) (jsjson.Object, er
 		expiring = state == "expiring"
 	}
 	return jsjson.Object{
-		{Key: "server", Value: clientctx.MaskUserinfo(server)},
+		{Key: "server", Value: clientctx.MaskURLInValue(server)},
 		{Key: "name", Value: field("name")},
 		{Key: "issuedAt", Value: field("issuedAt")},
 		{Key: "expiresAt", Value: field("expiresAt")},
@@ -244,9 +244,7 @@ func formatStatusHuman(servers []any, repo any) string {
 		}
 		if p, ok := s.Value("probe").(jsjson.Object); ok {
 			bit := "probe: " + jsjson.String(p.Value("state"))
-			if d, sanitized := p.Value("detail").(clientctx.Sanitized); sanitized && d != "" {
-				bit += " (" + string(d) + ")" // a masker made it (RedactOutput still redacts tokens)
-			} else if detail := p.Value("detail"); jsjson.Truthy(detail) {
+			if detail := p.Value("detail"); jsjson.Truthy(detail) {
 				bit += " (" + shownValue(jsjson.String(detail)) + ")"
 			}
 			bits = append(bits, bit)
@@ -349,11 +347,11 @@ func (r *Run) showServer(asJSON bool) error {
 			server, source = clientctx.MaskServer(resolved.Server), resolved.Source
 		}
 		if remembered != "" {
-			def = clientctx.MaskUserinfo(remembered)
+			def = clientctx.MaskURLInValue(remembered)
 		}
 		list := make([]any, len(signedIn))
 		for i, s := range signedIn {
-			list[i] = clientctx.MaskUserinfo(s)
+			list[i] = clientctx.MaskURLInValue(s)
 		}
 		return r.printJSON(jsjson.Object{
 			{Key: "version", Value: 1},
@@ -369,7 +367,7 @@ func (r *Run) showServer(asJSON bool) error {
 	} else if problem != "" {
 		here += " (" + clientctx.MaskUserinfoInText(problem) + ")" // the net; a varlatch.toml parse error quotes no line of a file with an at-sign
 	}
-	def := clientctx.MaskUserinfo(remembered)
+	def := clientctx.MaskURLInValue(remembered)
 	if def == "" {
 		def = "none"
 	}
@@ -385,7 +383,7 @@ func (r *Run) showServer(asJSON bool) error {
 // (trailing slashes removed, path kept).
 func (r *Run) useServer(server string, asJSON bool) error {
 	if _, ok := whatwg.ParseURL(server); !ok {
-		shown := clientctx.MaskUserinfo(server)
+		shown := clientctx.MaskURLInValue(server)
 		if clientctx.HasAtSign(shown) {
 			return UsageError("varlatch server use: " + shown + ": not a URL") // the explanation follows the URL
 		}
@@ -397,7 +395,7 @@ func (r *Run) useServer(server string, asJSON bool) error {
 		return err
 	}
 	if !slices.Contains(signedIn, key) {
-		shown := clientctx.MaskUserinfo(key)
+		shown := clientctx.MaskURLInValue(key)
 		list := strings.Join(maskAll(signedIn), ", ")
 		if clientctx.HasAtSign(shown) || clientctx.HasAtSign(list) {
 			// The explanation follows the URL, and the list comes first, so
@@ -418,16 +416,16 @@ func (r *Run) useServer(server string, asJSON bool) error {
 		return contextError(err)
 	}
 	if asJSON {
-		return r.printJSON(jsjson.Object{{Key: "version", Value: 1}, {Key: "defaultServer", Value: clientctx.MaskUserinfo(key)}})
+		return r.printJSON(jsjson.Object{{Key: "version", Value: 1}, {Key: "defaultServer", Value: clientctx.MaskURLInValue(key)}})
 	}
-	return r.println("Default server: " + clientctx.MaskUserinfo(key))
+	return r.println("Default server: " + clientctx.MaskURLInValue(key))
 }
 
 // maskAll is MaskUserinfo of each server.
 func maskAll(servers []string) []string {
 	out := make([]string, len(servers))
 	for i, s := range servers {
-		out[i] = clientctx.MaskUserinfo(s)
+		out[i] = clientctx.MaskURLInValue(s)
 	}
 	return out
 }

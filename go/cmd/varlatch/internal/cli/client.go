@@ -61,7 +61,7 @@ func templateTime(value any) string {
 // a stored credential, "" when there is nothing to say.
 func ExpiryWarning(server string, credential any, now float64) string {
 	state := ExpiryState(credential, now)
-	server = clientctx.MaskUserinfo(server) // diagnostics never print credential values
+	server = clientctx.MaskURLInValue(server) // diagnostics never print credential values
 	var expiresAt any
 	if credential != nil {
 		expiresAt, _ = jsval.Get(credential, "expiresAt")
@@ -95,7 +95,7 @@ func EnvTokenExpiryWarning(server, expiresAt string, now float64) string {
 	if !ok {
 		return ""
 	}
-	server = clientctx.MaskUserinfo(server) // diagnostics never print credential values
+	server = clientctx.MaskURLInValue(server) // diagnostics never print credential values
 	const remedy = "issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN"
 	// The header's text is the server's: only a timestamp is shown (issue #119).
 	shown := templateTime(expiresAt)
@@ -186,7 +186,7 @@ func (r *Run) connectClient(server string) (*apiclient.Client, error) {
 	agentRun := clientctx.AgentRunOf(r.Env)
 	// The server as these messages show it: diagnostics never print
 	// credential values, a URL's user name and password included.
-	shown := clientctx.MaskUserinfo(server)
+	shown := clientctx.MaskURLInValue(server)
 	if token == "" && agentRun != "" {
 		return nil, Fail("Not authenticated to "+shown+": this command runs inside agent-safe run "+agentRun+", which gives the "+
 			"Agent no Varlatch credential and never uses the operator's.\nFor read access to configuration metadata, "+

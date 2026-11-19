@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
@@ -90,21 +89,8 @@ func TestOutJSONTakesOnlyARedactedDocument(t *testing.T) {
 		t.Fatalf("outJSON takes %v, want redactedJSON", got)
 	}
 	doc := redactJSON(jsjson.Object{{Key: "list", Value: []string{"vlt_cli_listAAAA", "https://u:pass@h.example"}}, {Key: "n", Value: 5}})
-	want := "{\n  \"list\": [\n    \"[redacted]\",\n    \"https://[redacted]@h.example\"\n  ],\n  \"n\": 5\n}"
+	want := "{\n  \"list\": [\n    \"[redacted]\",\n    \"https:[redacted]@h.example\"\n  ],\n  \"n\": 5\n}"
 	if doc.document != want {
 		t.Errorf("redactJSON:\n%s\nwant\n%s", doc.document, want)
-	}
-}
-
-// TestSanitizedIsNotMaskedTwice: text the API client's masker made
-// (clientctx.Sanitized) keeps its masked URLs as they are, with only tokens
-// redacted; the same text as a plain string goes through the fail-safe.
-func TestSanitizedIsNotMaskedTwice(t *testing.T) {
-	const refusal = "http://[redacted]@h.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again vlt_cli_tokenAAAA"
-	if got := RedactValue(clientctx.Sanitized(refusal)); got != "http://[redacted]@h.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again [redacted]" {
-		t.Errorf("Sanitized: %q", got)
-	}
-	if got := RedactValue(refusal); got != "http:[redacted]@h.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again [redacted]" {
-		t.Errorf("string: %q", got)
 	}
 }

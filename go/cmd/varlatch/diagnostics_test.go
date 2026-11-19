@@ -41,16 +41,15 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(config, "credentials.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// By the server as status shows it: with [redacted] for a user name and password.
+	// By the server as status shows it, through the composed masker (the
+	// authority mask, then the whole-text fail-safe), refusals included:
+	// with [redacted] for a user name and password. The two servers that do
+	// not parse read the same.
 	want := map[string]string{
-		"http://127.0.0.1:2":            "the credential contains a character that is not allowed in an HTTP header",
-		"http://127.0.0.1:3":            "the credential contains a character that is not allowed in an HTTP header",
-		"http://[redacted]@127.0.0.1:2": "http://[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
-		// A server that does not parse is not one URL: the JSON document's
-		// fail-safe masks it as text, so both read the same. Each refusal is
-		// the client's own, already masked (clientctx.Sanitized), and kept as
-		// it is.
-		"http:[redacted]@[::1": "http://[redacted]@[::1/v1/meta: can't be parsed as a URL\nhttp:/[redacted]@[::1/v1/meta: can't be parsed as a URL",
+		"http://127.0.0.1:2":          "the credential contains a character that is not allowed in an HTTP header",
+		"http://127.0.0.1:3":          "the credential contains a character that is not allowed in an HTTP header",
+		"http:[redacted]@127.0.0.1:2": "http:[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
+		"http:[redacted]@[::1":        "http:[redacted]@[::1/v1/meta: can't be parsed as a URL",
 	}
 	// Nothing printed may hold a token or a URL's password.
 	leaks := func(text string) bool {
@@ -94,7 +93,7 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	}
 	// The human format names each server precisely and keeps each refusal
 	// as the client wrote it.
-	for _, server := range []string{"http://127.0.0.1:2", "http://127.0.0.1:3", "http://[redacted]@127.0.0.1:2", "http://[redacted]@[::1", "http:/[redacted]@[::1"} {
+	for _, server := range []string{"http://127.0.0.1:2", "http://127.0.0.1:3", "http:[redacted]@127.0.0.1:2", "http:[redacted]@[::1"} {
 		if !strings.Contains(human, server+"  (") {
 			t.Errorf("the human format has no line for %s:\n%s", server, human)
 		}
@@ -104,6 +103,45 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 			if !strings.Contains(human, "probe: unreachable ("+detail+")") {
 				t.Errorf("the human format does not keep the refusal %q:\n%s", detail, human)
 			}
+		}
+	}
+}
+
+// TestStatusProbeMasksNestedCredentials: a stored server whose query and
+// fragment name credentialed URLs, with and without credentials of its
+// own, is shown by status --probe, human and --json, and in each probe's
+// refusal, with no user name or password anywhere.
+func TestStatusProbeMasksNestedCredentials(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config")
+	if err := os.MkdirAll(config, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := map[string]any{"servers": map[string]map[string]string{
+		"http://127.0.0.1:2/?next=http://a:hunter2pass@b.example#http://c:hunter2pass@d.example":               {"token": "vlt_cli_secretAAAA"},
+		"http://u:hunter2pass@127.0.0.1:2/?next=http://a:hunter2pass@b.example#http://c:hunter2pass@d.example": {"token": "vlt_cli_secretBBBB"},
+		"//u:hunter2pass@127.0.0.1:2/?next=http://a:hunter2pass@b.example":                                     {"token": "vlt_cli_secretCCCC"},
+	}}
+	data, _ := json.Marshal(store)
+	if err := os.WriteFile(filepath.Join(config, "credentials.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"status", "--probe", "--json"}, {"status", "--probe"}, {"status", "--json"}, {"status"}} {
+		cmd := exec.Command(exe, args...)
+		cmd.Dir = dir
+		cmd.Env = []string{asCLI + "=1", "HOME=" + dir, "VARLATCH_CONFIG_DIR=" + config, "PATH=" + os.Getenv("PATH")}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, stderr.String())
+		}
+		out := stdout.String() + stderr.String()
+		if strings.Contains(out, "hunter2pass") || strings.Contains(out, "secret") || strings.Count(out, "[redacted]@") < 3 {
+			t.Errorf("%v shows a credential or masks too little:\n%s", args, out)
 		}
 	}
 }
