@@ -1440,6 +1440,125 @@ const hook56a: TranscriptCase[] = [
   { id: "hook.assisted", title: "the same under --assisted", args: ["--assisted", ...HOOK("claude")], stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
 ];
 
+// ---- 5.6b: varlatch mcp ----------------------------------------------------------
+//
+// The server as an MCP host runs it: JSON-RPC lines on stdin, all sent at
+// once and stdin then closed, so each case also shows that the server
+// answers what it holds before it exits. One call that reaches the server
+// per case, since concurrent calls reach the fake server in any order. The
+// protocol itself (every message, every tool's checks) is in the MCP
+// vectors (go/cmd/varlatch/testdata/vectors/mcp.json).
+
+const MCP_TOKEN = "vlt_cli_mcpAAAA";
+const MCP = (...rest: string[]) => ["mcp", "--server", "{{server}}", ...rest];
+const MCP_ENV = { VARLATCH_TOKEN: MCP_TOKEN };
+const MCP_DIFFERENCES = ["user-agent", "mcp-version"];
+const rpc = (id: unknown, method: string, params?: unknown) => JSON.stringify({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) });
+const INITIALIZE = rpc(0, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "host", version: "1" } });
+const INITIALIZED = JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" });
+const lines = (...l: string[]) => `${l.join("\n")}\n`;
+const callTool = (id: number, name: string, args: Record<string, unknown> = {}) => rpc(id, "tools/call", { name, arguments: args });
+const mcpSession = (...calls: string[]) => lines(INITIALIZE, INITIALIZED, ...calls);
+const mcp = (c: TranscriptCase): TranscriptCase => ({ env: MCP_ENV, ...c, differences: [...(c.differences ?? []), ...MCP_DIFFERENCES] });
+const ORG_PATH = "/v1/organizations/acme";
+const MCP_META = { serverVersion: "0.22.0", apiMajor: 1, capabilities: [] as string[] };
+const MCP_META_WHOAMI = { ...MCP_META, capabilities: ["identity.whoami"] };
+const VALUE_PATH = `${ENV}/values`;
+const CONTRACT_ITEMS = (items: unknown[]) => contractAnswer({ ...ACTIVE, contract: { ...ACTIVE.contract, items } });
+const PLAIN = item("PORT", { sensitive: false });
+const mcpPut = (name: string, body: Record<string, unknown> = { versionId: sid("ver", name) }): Exchange => ({ method: "PUT", path: `${VALUE_PATH}/${name}`, status: 200, answer: body });
+const IN_MCP_REPO = repoFiles('server = "{{server}}"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n');
+
+const mcp56b: TranscriptCase[] = [
+  // Startup: the options, the variables, and each refusal.
+  { id: "help", title: "--help prints the usage", args: ["mcp", "--help"] },
+  { id: "help.short", title: "-h too", args: ["mcp", "-h"] },
+  { id: "help.then-unknown", title: "every argument is read before --help is acted on", args: ["mcp", "--help", "--nope"] },
+  { id: "unknown-option", title: "an unknown option: 64 and the usage", args: ["mcp", "--json"] },
+  { id: "equals-form", title: "--server=<url> is not a form mcp reads", args: ["mcp", "--server={{server}}"] },
+  { id: "needs-value", title: "--server needs a value", args: ["mcp", "--server"] },
+  { id: "needs-value.org", title: "--org needs a value", args: ["mcp", "--org"] },
+  { id: "allow-disclose", title: "--allow-disclose is refused, not ignored", args: MCP("--allow-disclose"), env: MCP_ENV },
+  { id: "allow-disclose.env", title: "VARLATCH_MCP_ALLOW_DISCLOSE=1 is refused", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "1" } },
+  { id: "allow-disclose.env-any", title: "any value but empty or 0 is refused", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "false" } },
+  mcp({ id: "allow-disclose.env-zero", title: "VARLATCH_MCP_ALLOW_DISCLOSE=0 starts the server", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "0" }, stdin: lines(rpc(1, "ping")) }),
+  mcp({ id: "allow-disclose.env-empty", title: "an empty VARLATCH_MCP_ALLOW_DISCLOSE starts the server", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "" }, stdin: lines(rpc(1, "ping")) }),
+  { id: "no-server", title: "outside a repository with no server: 64", args: ["mcp"], env: MCP_ENV },
+  { id: "no-server.empty-variable", title: "an empty VARLATCH_SERVER is no server", args: ["mcp"], env: { ...MCP_ENV, VARLATCH_SERVER: "" } },
+  { id: "not-signed-in", title: "no credential for the server: 77", args: MCP() },
+  { id: "not-signed-in.userinfo", title: "the server's user name and password are never shown", args: ["mcp", "--server", "http://user:pw-canary@127.0.0.1:9"], differences: ["server-display"] },
+  { id: "agent-run.writes", title: "inside an agent-safe run --allow-writes is refused", args: MCP("--allow-writes"), env: { ...MCP_ENV, VARLATCH_AGENT_RUN: "run_1" } },
+  { id: "agent-run.writes-env", title: "and so is VARLATCH_MCP_ALLOW_WRITES=1", args: MCP(), env: { ...MCP_ENV, VARLATCH_AGENT_RUN: "run_1", VARLATCH_MCP_ALLOW_WRITES: "1" } },
+  { id: "agent-run.no-credential", title: "inside an agent-safe run without the run's credential: 77 with the --agent-metadata hint", args: MCP(), env: { VARLATCH_AGENT_RUN: "run_1" } },
+  mcp({ id: "agent-run.read-only", title: "inside an agent-safe run with its credential: the read tools", args: MCP(), env: { ...MCP_ENV, VARLATCH_AGENT_RUN: "run_1" }, stdin: lines(rpc(1, "tools/list")) }),
+
+  // The protocol: what the host sees without the server.
+  mcp({ id: "session.basics", title: "initialize, initialized, tools/list and ping", args: MCP(), stdin: mcpSession(rpc(1, "tools/list"), rpc(2, "ping")) }),
+  mcp({ id: "session.versions", title: "each supported version is echoed, any other gets the latest", args: MCP(), stdin: lines(
+    rpc(1, "initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "h", version: "1" } }),
+    rpc(2, "initialize", { protocolVersion: "1999-01-01", capabilities: {}, clientInfo: { name: "h", version: "1" } })) }),
+  mcp({ id: "session.malformed", title: "lines that are not JSON-RPC are dropped without a word; a method it lacks is -32601", args: MCP(), stdin: lines("garbage", "{}", '{"jsonrpc":"2.0","id":1,"result":{}}', rpc(1.5, "ping"), rpc(1, "resources/list"), JSON.stringify({ jsonrpc: "2.0", method: "notifications/unknown" }), rpc(2, "ping")) }),
+  mcp({ id: "session.invalid-params", title: "a request its method's schema refuses: -32603 with zod's issues", args: MCP(), stdin: lines(rpc(1, "initialize", {}), rpc(2, "tools/call", { arguments: [] })) }),
+  mcp({ id: "session.task", title: "task creation is refused", args: MCP(), stdin: lines(rpc(1, "tools/call", { name: "varlatch_whoami", task: {} })) }),
+  mcp({ id: "session.no-trailing-newline", title: "a last line without a line break is never read", args: MCP(), stdin: `${rpc(1, "ping")}\n${rpc(2, "ping")}` }),
+  mcp({ id: "session.empty", title: "nothing on stdin: exits 0", args: MCP() }),
+  mcp({ id: "tools.writes-flag", title: "--allow-writes adds the two write tools", args: MCP("--allow-writes"), stdin: lines(rpc(1, "tools/list")) }),
+  mcp({ id: "tools.writes-env", title: "so does VARLATCH_MCP_ALLOW_WRITES=1", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_WRITES: "1" }, stdin: lines(rpc(1, "tools/list")) }),
+  mcp({ id: "tools.writes-env-other", title: "VARLATCH_MCP_ALLOW_WRITES=true does not", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_WRITES: "true" }, stdin: lines(rpc(1, "tools/list"), callTool(2, "varlatch_set_value", { item: "A", value: "1" })) }),
+  mcp({ id: "tools.unknown", title: "an unknown tool, and a name every JavaScript object has", args: MCP(), stdin: lines(callTool(1, "varlatch_reveal_value"), callTool(2, "toString")) }),
+
+  // whoami and the defaults.
+  mcp({ id: "whoami.no-capability", title: "whoami on a server that cannot say who a credential belongs to", args: MCP("--org", "acme"), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META)] }),
+  mcp({ id: "whoami.caller", title: "whoami with the caller", args: MCP("--organization", "acme", "--project", "web", "--environment", "dev"), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META_WHOAMI), ok("/v1/me", ME_FULL)] }),
+  mcp({ id: "whoami.caller-refused", title: "whoami when /v1/me refuses the credential", args: MCP("-e", "prod"), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META_WHOAMI), { method: "GET", path: "/v1/me", status: 401, answer: apiError(401, "UNAUTHENTICATED", "credential expired") }] }),
+  mcp({ id: "whoami.repo", title: "in a repository: the defaults from its context, and --env over them", args: ["mcp", "--env", "staging"], files: IN_MCP_REPO, cwd: "repo", stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META)] }),
+  mcp({ id: "whoami.empty-flag", title: "--org \"\" is a default, an empty one", args: MCP("--org", ""), stdin: lines(callTool(1, "varlatch_whoami"), callTool(2, "varlatch_list_projects")), server: [ok("/v1/meta", MCP_META)] }),
+  mcp({ id: "whoami.meta-malformed", title: "a meta answer without a capability list: the TypeError's message", args: MCP(), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", { serverVersion: "0.22.0", capabilities: 5 })] }),
+  mcp({ id: "whoami.unreachable", title: "a server that cannot be reached", args: ["mcp", "--server", "http://127.0.0.1:9"], stdin: lines(callTool(1, "varlatch_whoami")) }),
+
+  // The read tools.
+  mcp({ id: "read.organizations", title: "list organizations", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations")), server: [ok("/v1/organizations", { items: [{ id: "org_1", slug: "acme", name: "Acme" }], nextCursor: null })] }),
+  mcp({ id: "read.projects", title: "list projects, the organization from the arguments", args: MCP(), stdin: lines(callTool(1, "varlatch_list_projects", { organization: "a c/me" })), server: [ok("/v1/organizations/a%20c%2Fme/projects", { items: [], nextCursor: null })] }),
+  mcp({ id: "read.projects.none", title: "no organization anywhere: the tool says so, no request", args: MCP(), stdin: lines(callTool(1, "varlatch_list_projects")) }),
+  mcp({ id: "read.environments", title: "list environments", args: MCP("--org", "acme", "--project", "web"), stdin: lines(callTool(1, "varlatch_list_environments")), server: [ok(ENVS_PATH, { items: ALL_ENVS.slice(0, 2), nextCursor: null })] }),
+  mcp({ id: "read.effective", title: "effective configuration with includeValues", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_effective_configuration", { includeValues: true })), server: [effective([{ name: "PORT", sensitive: false, source: "self", value: "8080" }], "?include=values")] }),
+  mcp({ id: "read.effective.metadata", title: "and without", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_effective_configuration")), server: [effective([{ name: "API_KEY", sensitive: true, source: "self" }])] }),
+  mcp({ id: "read.validate", title: "validate an environment (POST with an empty body)", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_validate_environment")), server: [{ method: "POST", path: `${ENV}/validate`, status: 200, answer: { valid: true, issues: [], notEvaluated: [] } }] }),
+  mcp({ id: "read.contract", title: "the active contract", args: MCP("--org", "acme", "--project", "web"), stdin: lines(callTool(1, "varlatch_get_active_contract")), server: [contractAnswer()] }),
+  mcp({ id: "read.audit", title: "audit events with a limit and a cursor (form-encoded)", args: MCP("--org", "acme"), stdin: lines(callTool(1, "varlatch_list_audit_events", { limit: 5, cursor: "a b/c+é" })), server: [ok(`${ORG_PATH}/audit-events?limit=5&cursor=a+b%2Fc%2B%C3%A9`, { items: [], nextCursor: null })] }),
+  mcp({ id: "read.audit.invalid", title: "a limit out of range: the input's error, no request", args: MCP("--org", "acme"), stdin: lines(callTool(1, "varlatch_list_audit_events", { limit: 500 })) }),
+  mcp({ id: "read.refused", title: "an API error as the tool's error", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations")), server: [denied("/v1/organizations")] }),
+  mcp({ id: "read.empty-answer", title: "an answer with no body: the SDK refuses the result", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations")), server: [{ method: "GET", path: "/v1/organizations", status: 200, headers: {} }] }),
+  mcp({ id: "read.cancelled", title: "a call cancelled while its request is out gets no answer", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations"), JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1, reason: "host" } }), rpc(2, "ping")), server: [ok("/v1/organizations", { items: [], nextCursor: null })] }),
+  mcp({ id: "read.cancelled-before", title: "a cancellation before the call changes nothing", args: MCP(), stdin: lines(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } }), callTool(1, "varlatch_list_organizations")), server: [ok("/v1/organizations", { items: [], nextCursor: null })] }),
+
+  // The writes.
+  ...((): TranscriptCase[] => {
+    const w = (id: string, title: string, args: Record<string, unknown>, server: Exchange[]): TranscriptCase =>
+      mcp({ id: `write.${id}`, title, args: MCP("--org", "acme", "--project", "web", "-e", "dev", "--allow-writes"), stdin: lines(callTool(1, `varlatch_${id.startsWith("delete") ? "delete" : "set"}_value`, args)), server });
+    return [
+      w("set.secret", "a Secret's value is refused, after reading only the contract", { item: "API_KEY", value: "s3cr3t-canary" }, [CONTRACT_ITEMS([item("API_KEY")])]),
+      w("set.uncontracted", "an item outside the contract counts as a Secret", { item: "OTHER", value: "x" }, [CONTRACT_ITEMS([PLAIN])]),
+      w("set.no-contract", "no active contract (404): a Secret", { item: "PORT", value: "1" }, [denied(CONTRACT_PATH, "GET", 404, "RESOURCE_NOT_FOUND")]),
+      w("set.contract-error", "a contract read that fails otherwise: the API error", { item: "PORT", value: "1" }, [denied(CONTRACT_PATH, "GET", 500, "INTERNAL")]),
+      w("set.present", "replacing a value the environment has needs replace", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), effective([{ name: "PORT", sensitive: false, source: "self" }])]),
+      w("set.inherited", "and so does overriding an inherited one", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), effective([{ name: "PORT", sensitive: false, source: "parent" }])]),
+      w("set.unknown", "presence that cannot be checked counts as existing", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), denied(`${ENV}/effective-configuration`)]),
+      w("set.absent", "a new value is stored, with expectedVersionId", { item: "PORT", value: "1", expectedVersionId: "ver_x" }, [CONTRACT_ITEMS([PLAIN]), effective([]), mcpPut("PORT")]),
+      w("set.replace", "replace naming the item skips the presence check", { item: "PORT", value: "2", replace: "PORT" }, [CONTRACT_ITEMS([PLAIN]), mcpPut("PORT")]),
+      w("set.replace-other", "replace naming another item: refused before any request", { item: "PORT", value: "2", replace: "HOST" }, []),
+      w("set.malformed-contract", "a contract whose items are not a list: the TypeError's message", { item: "PORT", value: "1" }, [contractAnswer({ ...ACTIVE, contract: { items: "x" } })]),
+      w("set.malformed-effective", "an effective configuration whose items are not a list", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), ok(`${ENV}/effective-configuration`, { items: 5 })]),
+      w("set.conflict", "a version conflict from the server", { item: "PORT", value: "1", replace: "PORT", expectedVersionId: "ver_old" }, [CONTRACT_ITEMS([PLAIN]), { method: "PUT", path: `${VALUE_PATH}/PORT`, status: 409, answer: apiError(409, "VERSION_CONFLICT", "the value changed") }]),
+      w("delete", "a deletion with confirm", { item: "PORT", confirm: "PORT" }, [{ method: "DELETE", path: `${VALUE_PATH}/PORT`, status: 204, headers: {} }]),
+      w("delete.no-confirm", "a deletion without confirm: refused, no request", { item: "PORT" }, []),
+      w("delete.refused", "a deletion the server refuses", { item: "PORT", confirm: "PORT" }, [denied(`${VALUE_PATH}/PORT`, "DELETE")]),
+    ];
+  })(),
+  mcp({ id: "write.without-flag", title: "without --allow-writes the write tools do not exist", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_delete_value", { item: "PORT", confirm: "PORT" })) }),
+  mcp({ id: "write.expired", title: "a credential the server no longer takes", args: MCP("--org", "acme", "--project", "web", "-e", "dev", "--allow-writes"), stdin: lines(callTool(1, "varlatch_set_value", { item: "PORT", value: "1" })), server: [{ method: "GET", path: CONTRACT_PATH, status: 401, answer: apiError(401, "UNAUTHENTICATED", "credential expired") }] }),
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
@@ -1453,4 +1572,5 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.4d-scan": scan54d,
   "5.4e-find-files": findFiles54e,
   "5.6a-hook": hook56a,
+  "5.6b-mcp": mcp56b,
 };

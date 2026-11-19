@@ -1,0 +1,3286 @@
+{
+  "schema": 2,
+  "comment": "Recorded from the TypeScript CLI by apps/cli/test/go-transcripts.test.ts; do not edit. Regenerate with VARLATCH_WRITE_GO_VECTORS=1.",
+  "area": "5.6b-mcp",
+  "cases": [
+    {
+      "id": "help",
+      "title": "--help prints the usage",
+      "args": [
+        "mcp",
+        "--help"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "Usage:\n  varlatch mcp [--server <url>] [--org <slug>] [--project <slug>] [-e <env>] [--allow-writes]\n               (a Model Context Protocol server over stdio, for MCP hosts without a shell: read tools; --allow-writes\n                adds non-secret writes; no tool returns or writes a Secret's value)\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "help.short",
+      "title": "-h too",
+      "args": [
+        "mcp",
+        "-h"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "Usage:\n  varlatch mcp [--server <url>] [--org <slug>] [--project <slug>] [-e <env>] [--allow-writes]\n               (a Model Context Protocol server over stdio, for MCP hosts without a shell: read tools; --allow-writes\n                adds non-secret writes; no tool returns or writes a Secret's value)\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "help.then-unknown",
+      "title": "every argument is read before --help is acted on",
+      "args": [
+        "mcp",
+        "--help",
+        "--nope"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "Usage:\n  varlatch mcp [--server <url>] [--org <slug>] [--project <slug>] [-e <env>] [--allow-writes]\n               (a Model Context Protocol server over stdio, for MCP hosts without a shell: read tools; --allow-writes\n                adds non-secret writes; no tool returns or writes a Secret's value)\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "unknown-option",
+      "title": "an unknown option: 64 and the usage",
+      "args": [
+        "mcp",
+        "--json"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: unknown option --json\nUsage: varlatch mcp [--server <url>] [--org <slug>] [--project <slug>] [--environment <name>] [--allow-writes]\n\nRuns a Model Context Protocol server over stdio for MCP hosts without a shell.\nDefaults for org/project/environment come from the repository context of the\nworking directory (varlatch.toml, .varlatch/local.json); flags override.\nAuthentication uses VARLATCH_TOKEN or the stored credential for the server;\ninside an agent-safe run, only the run's agent-run credential.\n\nRead tools only by default. --allow-writes (or VARLATCH_MCP_ALLOW_WRITES=1)\nadds varlatch_set_value, which refuses a Secret's value, and\nvarlatch_delete_value. No tool returns a Secret's value.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "equals-form",
+      "title": "--server=<url> is not a form mcp reads",
+      "args": [
+        "mcp",
+        "--server={{server}}"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: unknown option --server={{server}}\nUsage: varlatch mcp [--server <url>] [--org <slug>] [--project <slug>] [--environment <name>] [--allow-writes]\n\nRuns a Model Context Protocol server over stdio for MCP hosts without a shell.\nDefaults for org/project/environment come from the repository context of the\nworking directory (varlatch.toml, .varlatch/local.json); flags override.\nAuthentication uses VARLATCH_TOKEN or the stored credential for the server;\ninside an agent-safe run, only the run's agent-run credential.\n\nRead tools only by default. --allow-writes (or VARLATCH_MCP_ALLOW_WRITES=1)\nadds varlatch_set_value, which refuses a Secret's value, and\nvarlatch_delete_value. No tool returns a Secret's value.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "needs-value",
+      "title": "--server needs a value",
+      "args": [
+        "mcp",
+        "--server"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: --server needs a value\nUsage: varlatch mcp [--server <url>] [--org <slug>] [--project <slug>] [--environment <name>] [--allow-writes]\n\nRuns a Model Context Protocol server over stdio for MCP hosts without a shell.\nDefaults for org/project/environment come from the repository context of the\nworking directory (varlatch.toml, .varlatch/local.json); flags override.\nAuthentication uses VARLATCH_TOKEN or the stored credential for the server;\ninside an agent-safe run, only the run's agent-run credential.\n\nRead tools only by default. --allow-writes (or VARLATCH_MCP_ALLOW_WRITES=1)\nadds varlatch_set_value, which refuses a Secret's value, and\nvarlatch_delete_value. No tool returns a Secret's value.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "needs-value.org",
+      "title": "--org needs a value",
+      "args": [
+        "mcp",
+        "--org"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: --org needs a value\nUsage: varlatch mcp [--server <url>] [--org <slug>] [--project <slug>] [--environment <name>] [--allow-writes]\n\nRuns a Model Context Protocol server over stdio for MCP hosts without a shell.\nDefaults for org/project/environment come from the repository context of the\nworking directory (varlatch.toml, .varlatch/local.json); flags override.\nAuthentication uses VARLATCH_TOKEN or the stored credential for the server;\ninside an agent-safe run, only the run's agent-run credential.\n\nRead tools only by default. --allow-writes (or VARLATCH_MCP_ALLOW_WRITES=1)\nadds varlatch_set_value, which refuses a Secret's value, and\nvarlatch_delete_value. No tool returns a Secret's value.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "allow-disclose",
+      "title": "--allow-disclose is refused, not ignored",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--allow-disclose"
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: secret disclosure through MCP has been removed: no MCP host can keep a tool result out of the model's context. Remove --allow-disclose (and VARLATCH_MCP_ALLOW_DISCLOSE). An agent uses a Secret through varlatch run, or through the Broker with varlatch request inside an agent-safe run.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "allow-disclose.env",
+      "title": "VARLATCH_MCP_ALLOW_DISCLOSE=1 is refused",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_MCP_ALLOW_DISCLOSE": "1"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: secret disclosure through MCP has been removed: no MCP host can keep a tool result out of the model's context. Remove --allow-disclose (and VARLATCH_MCP_ALLOW_DISCLOSE). An agent uses a Secret through varlatch run, or through the Broker with varlatch request inside an agent-safe run.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "allow-disclose.env-any",
+      "title": "any value but empty or 0 is refused",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_MCP_ALLOW_DISCLOSE": "false"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: secret disclosure through MCP has been removed: no MCP host can keep a tool result out of the model's context. Remove --allow-disclose (and VARLATCH_MCP_ALLOW_DISCLOSE). An agent uses a Secret through varlatch run, or through the Broker with varlatch request inside an agent-safe run.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_MCP_ALLOW_DISCLOSE": "0"
+      },
+      "id": "allow-disclose.env-zero",
+      "title": "VARLATCH_MCP_ALLOW_DISCLOSE=0 starts the server",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_MCP_ALLOW_DISCLOSE": ""
+      },
+      "id": "allow-disclose.env-empty",
+      "title": "an empty VARLATCH_MCP_ALLOW_DISCLOSE starts the server",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "no-server",
+      "title": "outside a repository with no server: 64",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: no server configured; pass --server, set VARLATCH_SERVER, or run inside a varlatch repository\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "no-server.empty-variable",
+      "title": "an empty VARLATCH_SERVER is no server",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_SERVER": ""
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: no server configured; pass --server, set VARLATCH_SERVER, or run inside a varlatch repository\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "not-signed-in",
+      "title": "no credential for the server: 77",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "expect": {
+        "status": 77,
+        "stdout": "",
+        "stderr": "varlatch mcp: not authenticated to {{server}}; run `varlatch login` or set VARLATCH_TOKEN\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "not-signed-in.userinfo",
+      "title": "the server's user name and password are never shown",
+      "args": [
+        "mcp",
+        "--server",
+        "http://user:pw-canary@127.0.0.1:9"
+      ],
+      "differences": [
+        "server-display"
+      ],
+      "expect": {
+        "status": 77,
+        "stdout": "",
+        "stderr": "varlatch mcp: not authenticated to http://[redacted]@127.0.0.1:9; run `varlatch login` or set VARLATCH_TOKEN\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-run.writes",
+      "title": "inside an agent-safe run --allow-writes is refused",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--allow-writes"
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_AGENT_RUN": "run_1"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: this runs inside agent-safe run run_1, whose only credential is read-only; --allow-writes does not apply here\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-run.writes-env",
+      "title": "and so is VARLATCH_MCP_ALLOW_WRITES=1",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_AGENT_RUN": "run_1",
+        "VARLATCH_MCP_ALLOW_WRITES": "1"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch mcp: this runs inside agent-safe run run_1, whose only credential is read-only; --allow-writes does not apply here\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-run.no-credential",
+      "title": "inside an agent-safe run without the run's credential: 77 with the --agent-metadata hint",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_1"
+      },
+      "expect": {
+        "status": 77,
+        "stdout": "",
+        "stderr": "varlatch mcp: not authenticated to {{server}}: this runs inside agent-safe run run_1, which gives the Agent no Varlatch credential and never uses the operator's (VARLATCH_AGENT_RUN is set). For read access to configuration metadata, the operator relaunches the run with --agent-metadata.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_AGENT_RUN": "run_1"
+      },
+      "id": "agent-run.read-only",
+      "title": "inside an agent-safe run with its credential: the read tools",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"tools\":[{\"name\":\"varlatch_whoami\",\"title\":\"Caller, server, and context info\",\"description\":\"Show who this MCP server acts as (the identity, its organization, and the credential, a person's or a machine's), the varlatch server, the resolved default organization/project/environment, and whether this MCP server was started with writes enabled. No tool ever returns a Secret's value.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_organizations\",\"title\":\"List organizations\",\"description\":\"List organizations the current credential can see.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_projects\",\"title\":\"List projects\",\"description\":\"List projects in an organization.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_environments\",\"title\":\"List environments\",\"description\":\"List environments in a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_effective_configuration\",\"title\":\"Effective configuration\",\"description\":\"Get the effective configuration of an environment (contract items, provenance, versions). With includeValues, non-secret values are included; secrets are never returned by this tool.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"},\"includeValues\":{\"description\":\"Include non-secret plaintext values\",\"type\":\"boolean\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_validate_environment\",\"title\":\"Validate environment\",\"description\":\"Validate an environment against its active contract and return the validation report. Items this credential may not read (Secrets need secret.reveal) are listed in notEvaluated; valid is true only when every item was evaluated.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_get_active_contract\",\"title\":\"Get active contract\",\"description\":\"Get the active configuration-contract revision for a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_audit_events\",\"title\":\"List audit events\",\"description\":\"List recent audit events for an organization (paged).\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":200},\"cursor\":{\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "session.basics",
+      "title": "initialize, initialized, tools/list and ping",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"host\",\"version\":\"1\"}}}\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"varlatch\",\"version\":\"0.22.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}\n{\"result\":{\"tools\":[{\"name\":\"varlatch_whoami\",\"title\":\"Caller, server, and context info\",\"description\":\"Show who this MCP server acts as (the identity, its organization, and the credential, a person's or a machine's), the varlatch server, the resolved default organization/project/environment, and whether this MCP server was started with writes enabled. No tool ever returns a Secret's value.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_organizations\",\"title\":\"List organizations\",\"description\":\"List organizations the current credential can see.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_projects\",\"title\":\"List projects\",\"description\":\"List projects in an organization.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_environments\",\"title\":\"List environments\",\"description\":\"List environments in a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_effective_configuration\",\"title\":\"Effective configuration\",\"description\":\"Get the effective configuration of an environment (contract items, provenance, versions). With includeValues, non-secret values are included; secrets are never returned by this tool.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"},\"includeValues\":{\"description\":\"Include non-secret plaintext values\",\"type\":\"boolean\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_validate_environment\",\"title\":\"Validate environment\",\"description\":\"Validate an environment against its active contract and return the validation report. Items this credential may not read (Secrets need secret.reveal) are listed in notEvaluated; valid is true only when every item was evaluated.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_get_active_contract\",\"title\":\"Get active contract\",\"description\":\"Get the active configuration-contract revision for a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_audit_events\",\"title\":\"List audit events\",\"description\":\"List recent audit events for an organization (paged).\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":200},\"cursor\":{\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":2}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "session.versions",
+      "title": "each supported version is echoed, any other gets the latest",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"h\",\"version\":\"1\"}}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"1999-01-01\",\"capabilities\":{},\"clientInfo\":{\"name\":\"h\",\"version\":\"1\"}}}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"varlatch\",\"version\":\"0.22.0\"}},\"jsonrpc\":\"2.0\",\"id\":1}\n{\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"varlatch\",\"version\":\"0.22.0\"}},\"jsonrpc\":\"2.0\",\"id\":2}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "session.malformed",
+      "title": "lines that are not JSON-RPC are dropped without a word; a method it lacks is -32601",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "garbage\n{}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"ping\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"resources/list\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/unknown\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":2}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "session.invalid-params",
+      "title": "a request its method's schema refuses: -32603 with zod's issues",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"arguments\":[]}}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"protocolVersion\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"capabilities\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"clientInfo\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"name\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"record\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"arguments\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected record, received array\\\"\\n  }\\n]\"}}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "session.task",
+      "title": "task creation is refused",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_whoami\",\"task\":{}}}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603,\"message\":\"Server does not support task creation (required for tools/call)\"}}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "session.no-trailing-newline",
+      "title": "a last line without a line break is never read",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "session.empty",
+      "title": "nothing on stdin: exits 0",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "tools.writes-flag",
+      "title": "--allow-writes adds the two write tools",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"tools\":[{\"name\":\"varlatch_whoami\",\"title\":\"Caller, server, and context info\",\"description\":\"Show who this MCP server acts as (the identity, its organization, and the credential, a person's or a machine's), the varlatch server, the resolved default organization/project/environment, and whether this MCP server was started with writes enabled. No tool ever returns a Secret's value.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_organizations\",\"title\":\"List organizations\",\"description\":\"List organizations the current credential can see.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_projects\",\"title\":\"List projects\",\"description\":\"List projects in an organization.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_environments\",\"title\":\"List environments\",\"description\":\"List environments in a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_effective_configuration\",\"title\":\"Effective configuration\",\"description\":\"Get the effective configuration of an environment (contract items, provenance, versions). With includeValues, non-secret values are included; secrets are never returned by this tool.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"},\"includeValues\":{\"description\":\"Include non-secret plaintext values\",\"type\":\"boolean\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_validate_environment\",\"title\":\"Validate environment\",\"description\":\"Validate an environment against its active contract and return the validation report. Items this credential may not read (Secrets need secret.reveal) are listed in notEvaluated; valid is true only when every item was evaluated.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_get_active_contract\",\"title\":\"Get active contract\",\"description\":\"Get the active configuration-contract revision for a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_audit_events\",\"title\":\"List audit events\",\"description\":\"List recent audit events for an organization (paged).\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":200},\"cursor\":{\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_set_value\",\"title\":\"Set value\",\"description\":\"Set a non-secret configuration value in an environment. A Secret's value is refused (Secrets, and items outside the Contract, never pass through MCP), with or without replace. Replacing a value the environment already has, or inherits from its parent, is the human's decision: ask them first, and with their approval pass the item's name again as replace. Pass expectedVersionId for optimistic concurrency; it does not stand in for replace.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"},\"item\":{\"type\":\"string\",\"description\":\"Item name from the contract, e.g. DATABASE_URL\"},\"value\":{\"type\":\"string\"},\"expectedVersionId\":{\"type\":\"string\"},\"replace\":{\"description\":\"Required to replace an existing value: the item's name again, given only after the human approved replacing it\",\"type\":\"string\"}},\"required\":[\"item\",\"value\"]},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_delete_value\",\"title\":\"Delete value\",\"description\":\"Delete a configuration value from an environment. Deleting is the human's decision, for that item in that environment: ask them first, and with their approval pass the item's name again as confirm. Without it, nothing is deleted.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"},\"item\":{\"type\":\"string\"},\"confirm\":{\"description\":\"Required: the item's name again, given only after the human approved deleting it in this environment\",\"type\":\"string\"}},\"required\":[\"item\"]},\"execution\":{\"taskSupport\":\"forbidden\"}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_MCP_ALLOW_WRITES": "1"
+      },
+      "id": "tools.writes-env",
+      "title": "so does VARLATCH_MCP_ALLOW_WRITES=1",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"tools\":[{\"name\":\"varlatch_whoami\",\"title\":\"Caller, server, and context info\",\"description\":\"Show who this MCP server acts as (the identity, its organization, and the credential, a person's or a machine's), the varlatch server, the resolved default organization/project/environment, and whether this MCP server was started with writes enabled. No tool ever returns a Secret's value.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_organizations\",\"title\":\"List organizations\",\"description\":\"List organizations the current credential can see.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_projects\",\"title\":\"List projects\",\"description\":\"List projects in an organization.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_environments\",\"title\":\"List environments\",\"description\":\"List environments in a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_effective_configuration\",\"title\":\"Effective configuration\",\"description\":\"Get the effective configuration of an environment (contract items, provenance, versions). With includeValues, non-secret values are included; secrets are never returned by this tool.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"},\"includeValues\":{\"description\":\"Include non-secret plaintext values\",\"type\":\"boolean\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_validate_environment\",\"title\":\"Validate environment\",\"description\":\"Validate an environment against its active contract and return the validation report. Items this credential may not read (Secrets need secret.reveal) are listed in notEvaluated; valid is true only when every item was evaluated.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_get_active_contract\",\"title\":\"Get active contract\",\"description\":\"Get the active configuration-contract revision for a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_audit_events\",\"title\":\"List audit events\",\"description\":\"List recent audit events for an organization (paged).\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":200},\"cursor\":{\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_set_value\",\"title\":\"Set value\",\"description\":\"Set a non-secret configuration value in an environment. A Secret's value is refused (Secrets, and items outside the Contract, never pass through MCP), with or without replace. Replacing a value the environment already has, or inherits from its parent, is the human's decision: ask them first, and with their approval pass the item's name again as replace. Pass expectedVersionId for optimistic concurrency; it does not stand in for replace.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"},\"item\":{\"type\":\"string\",\"description\":\"Item name from the contract, e.g. DATABASE_URL\"},\"value\":{\"type\":\"string\"},\"expectedVersionId\":{\"type\":\"string\"},\"replace\":{\"description\":\"Required to replace an existing value: the item's name again, given only after the human approved replacing it\",\"type\":\"string\"}},\"required\":[\"item\",\"value\"]},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_delete_value\",\"title\":\"Delete value\",\"description\":\"Delete a configuration value from an environment. Deleting is the human's decision, for that item in that environment: ask them first, and with their approval pass the item's name again as confirm. Without it, nothing is deleted.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"},\"item\":{\"type\":\"string\"},\"confirm\":{\"description\":\"Required: the item's name again, given only after the human approved deleting it in this environment\",\"type\":\"string\"}},\"required\":[\"item\"]},\"execution\":{\"taskSupport\":\"forbidden\"}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA",
+        "VARLATCH_MCP_ALLOW_WRITES": "true"
+      },
+      "id": "tools.writes-env-other",
+      "title": "VARLATCH_MCP_ALLOW_WRITES=true does not",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"A\",\"value\":\"1\"}}}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"tools\":[{\"name\":\"varlatch_whoami\",\"title\":\"Caller, server, and context info\",\"description\":\"Show who this MCP server acts as (the identity, its organization, and the credential, a person's or a machine's), the varlatch server, the resolved default organization/project/environment, and whether this MCP server was started with writes enabled. No tool ever returns a Secret's value.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_organizations\",\"title\":\"List organizations\",\"description\":\"List organizations the current credential can see.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_projects\",\"title\":\"List projects\",\"description\":\"List projects in an organization.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_environments\",\"title\":\"List environments\",\"description\":\"List environments in a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_effective_configuration\",\"title\":\"Effective configuration\",\"description\":\"Get the effective configuration of an environment (contract items, provenance, versions). With includeValues, non-secret values are included; secrets are never returned by this tool.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"},\"includeValues\":{\"description\":\"Include non-secret plaintext values\",\"type\":\"boolean\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_validate_environment\",\"title\":\"Validate environment\",\"description\":\"Validate an environment against its active contract and return the validation report. Items this credential may not read (Secrets need secret.reveal) are listed in notEvaluated; valid is true only when every item was evaluated.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"environment\":{\"description\":\"Environment name (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_get_active_contract\",\"title\":\"Get active contract\",\"description\":\"Get the active configuration-contract revision for a project.\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"project\":{\"description\":\"Project slug (defaults to the resolved repo context)\",\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}},{\"name\":\"varlatch_list_audit_events\",\"title\":\"List audit events\",\"description\":\"List recent audit events for an organization (paged).\",\"inputSchema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"organization\":{\"description\":\"Organization slug (defaults to the resolved repo context)\",\"type\":\"string\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":200},\"cursor\":{\"type\":\"string\"}}},\"execution\":{\"taskSupport\":\"forbidden\"}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Tool varlatch_set_value not found\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":2}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "tools.unknown",
+      "title": "an unknown tool, and a name every JavaScript object has",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_reveal_value\",\"arguments\":{}}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"toString\",\"arguments\":{}}}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Tool varlatch_reveal_value not found\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Tool toString disabled\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":2}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "whoami.no-capability",
+      "title": "whoami on a server that cannot say who a credential belongs to",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_whoami\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"server\\\": \\\"{{server}}\\\",\\n  \\\"caller\\\": null,\\n  \\\"callerUnavailable\\\": \\\"this server (0.22.0) cannot say who a credential belongs to (no identity.whoami capability)\\\",\\n  \\\"meta\\\": {\\n    \\\"serverVersion\\\": \\\"0.22.0\\\",\\n    \\\"apiMajor\\\": 1,\\n    \\\"capabilities\\\": []\\n  },\\n  \\\"defaults\\\": {\\n    \\\"organization\\\": \\\"acme\\\"\\n  },\\n  \\\"allowWrites\\\": false,\\n  \\\"secretValues\\\": \\\"never returned or written through MCP\\\"\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "whoami.caller",
+      "title": "whoami with the caller",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--organization",
+        "acme",
+        "--project",
+        "web",
+        "--environment",
+        "dev"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_whoami\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 200,
+          "answer": {
+            "identity": {
+              "id": "idn_1",
+              "name": "Ada",
+              "kind": "human",
+              "email": "ada@example.com"
+            },
+            "organization": null,
+            "credential": {
+              "id": "cred_a",
+              "name": "laptop",
+              "kind": "cli",
+              "expiresAt": "2100-01-01T00:00:00.000Z"
+            },
+            "listener": "ordinary"
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"server\\\": \\\"{{server}}\\\",\\n  \\\"caller\\\": {\\n    \\\"identity\\\": {\\n      \\\"id\\\": \\\"idn_1\\\",\\n      \\\"name\\\": \\\"Ada\\\",\\n      \\\"kind\\\": \\\"human\\\",\\n      \\\"email\\\": \\\"ada@example.com\\\"\\n    },\\n    \\\"organization\\\": null,\\n    \\\"credential\\\": {\\n      \\\"id\\\": \\\"cred_a\\\",\\n      \\\"name\\\": \\\"laptop\\\",\\n      \\\"kind\\\": \\\"cli\\\",\\n      \\\"expiresAt\\\": \\\"2100-01-01T00:00:00.000Z\\\"\\n    },\\n    \\\"listener\\\": \\\"ordinary\\\"\\n  },\\n  \\\"meta\\\": {\\n    \\\"serverVersion\\\": \\\"0.22.0\\\",\\n    \\\"apiMajor\\\": 1,\\n    \\\"capabilities\\\": [\\n      \\\"identity.whoami\\\"\\n    ]\\n  },\\n  \\\"defaults\\\": {\\n    \\\"organization\\\": \\\"acme\\\",\\n    \\\"project\\\": \\\"web\\\",\\n    \\\"environment\\\": \\\"dev\\\"\\n  },\\n  \\\"allowWrites\\\": false,\\n  \\\"secretValues\\\": \\\"never returned or written through MCP\\\"\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "whoami.caller-refused",
+      "title": "whoami when /v1/me refuses the credential",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "-e",
+        "prod"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_whoami\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "identity.whoami"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/me",
+          "status": 401,
+          "answer": {
+            "error": {
+              "code": "UNAUTHENTICATED",
+              "message": "credential expired",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"server\\\": \\\"{{server}}\\\",\\n  \\\"caller\\\": null,\\n  \\\"callerUnavailable\\\": \\\"varlatch API error 401 (UNAUTHENTICATED, request req_00000000-0000-4000-8000-000000000000): credential expired\\\",\\n  \\\"meta\\\": {\\n    \\\"serverVersion\\\": \\\"0.22.0\\\",\\n    \\\"apiMajor\\\": 1,\\n    \\\"capabilities\\\": [\\n      \\\"identity.whoami\\\"\\n    ]\\n  },\\n  \\\"defaults\\\": {\\n    \\\"environment\\\": \\\"prod\\\"\\n  },\\n  \\\"allowWrites\\\": false,\\n  \\\"secretValues\\\": \\\"never returned or written through MCP\\\"\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "whoami.repo",
+      "title": "in a repository: the defaults from its context, and --env over them",
+      "args": [
+        "mcp",
+        "--env",
+        "staging"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+      },
+      "cwd": "repo",
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_whoami\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"server\\\": \\\"{{server}}\\\",\\n  \\\"caller\\\": null,\\n  \\\"callerUnavailable\\\": \\\"this server (0.22.0) cannot say who a credential belongs to (no identity.whoami capability)\\\",\\n  \\\"meta\\\": {\\n    \\\"serverVersion\\\": \\\"0.22.0\\\",\\n    \\\"apiMajor\\\": 1,\\n    \\\"capabilities\\\": []\\n  },\\n  \\\"defaults\\\": {\\n    \\\"organization\\\": \\\"acme\\\",\\n    \\\"project\\\": \\\"web\\\",\\n    \\\"environment\\\": \\\"staging\\\"\\n  },\\n  \\\"allowWrites\\\": false,\\n  \\\"secretValues\\\": \\\"never returned or written through MCP\\\"\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "whoami.empty-flag",
+      "title": "--org \"\" is a default, an empty one",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        ""
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_whoami\",\"arguments\":{}}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_projects\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"No organization given and none resolved from context; pass the \\\"organization\\\" argument or run varlatch mcp inside a varlatch repo / with --org.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":2}\n{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"server\\\": \\\"{{server}}\\\",\\n  \\\"caller\\\": null,\\n  \\\"callerUnavailable\\\": \\\"this server (0.22.0) cannot say who a credential belongs to (no identity.whoami capability)\\\",\\n  \\\"meta\\\": {\\n    \\\"serverVersion\\\": \\\"0.22.0\\\",\\n    \\\"apiMajor\\\": 1,\\n    \\\"capabilities\\\": []\\n  },\\n  \\\"defaults\\\": {\\n    \\\"organization\\\": \\\"\\\"\\n  },\\n  \\\"allowWrites\\\": false,\\n  \\\"secretValues\\\": \\\"never returned or written through MCP\\\"\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "whoami.meta-malformed",
+      "title": "a meta answer without a capability list: the TypeError's message",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_whoami\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "capabilities": 5
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"capabilities.includes is not a function\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "whoami.unreachable",
+      "title": "a server that cannot be reached",
+      "args": [
+        "mcp",
+        "--server",
+        "http://127.0.0.1:9"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_whoami\",\"arguments\":{}}}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"fetch failed\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.organizations",
+      "title": "list organizations",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_organizations\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "org_1",
+                "slug": "acme",
+                "name": "Acme"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"items\\\": [\\n    {\\n      \\\"id\\\": \\\"org_1\\\",\\n      \\\"slug\\\": \\\"acme\\\",\\n      \\\"name\\\": \\\"Acme\\\"\\n    }\\n  ],\\n  \\\"nextCursor\\\": null\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.projects",
+      "title": "list projects, the organization from the arguments",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_projects\",\"arguments\":{\"organization\":\"a c/me\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/a%20c%2Fme/projects",
+          "status": 200,
+          "answer": {
+            "items": [],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"items\\\": [],\\n  \\\"nextCursor\\\": null\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/a%20c%2Fme/projects",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.projects.none",
+      "title": "no organization anywhere: the tool says so, no request",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_projects\",\"arguments\":{}}}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"No organization given and none resolved from context; pass the \\\"organization\\\" argument or run varlatch mcp inside a varlatch repo / with --org.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.environments",
+      "title": "list environments",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_environments\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "env_development_shared",
+                "name": "development-shared",
+                "tier": "development",
+                "kind": "shared",
+                "createdAt": "2026-11-01T10:00:00.000Z"
+              },
+              {
+                "id": "env_development_personal",
+                "name": "development-personal",
+                "tier": "development",
+                "kind": "personal",
+                "createdAt": "2026-11-01T10:00:00.000Z"
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"items\\\": [\\n    {\\n      \\\"id\\\": \\\"env_development_shared\\\",\\n      \\\"name\\\": \\\"development-shared\\\",\\n      \\\"tier\\\": \\\"development\\\",\\n      \\\"kind\\\": \\\"shared\\\",\\n      \\\"createdAt\\\": \\\"2026-11-01T10:00:00.000Z\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"env_development_personal\\\",\\n      \\\"name\\\": \\\"development-personal\\\",\\n      \\\"tier\\\": \\\"development\\\",\\n      \\\"kind\\\": \\\"personal\\\",\\n      \\\"createdAt\\\": \\\"2026-11-01T10:00:00.000Z\\\"\\n    }\\n  ],\\n  \\\"nextCursor\\\": null\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.effective",
+      "title": "effective configuration with includeValues",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_effective_configuration\",\"arguments\":{\"includeValues\":true}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"environmentId\\\": \\\"env_1\\\",\\n  \\\"items\\\": [\\n    {\\n      \\\"name\\\": \\\"PORT\\\",\\n      \\\"sensitive\\\": false,\\n      \\\"source\\\": \\\"self\\\",\\n      \\\"value\\\": \\\"8080\\\"\\n    }\\n  ]\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.effective.metadata",
+      "title": "and without",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_effective_configuration\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"environmentId\\\": \\\"env_1\\\",\\n  \\\"items\\\": [\\n    {\\n      \\\"name\\\": \\\"API_KEY\\\",\\n      \\\"sensitive\\\": true,\\n      \\\"source\\\": \\\"self\\\"\\n    }\\n  ]\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.validate",
+      "title": "validate an environment (POST with an empty body)",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_validate_environment\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/validate",
+          "status": 200,
+          "answer": {
+            "valid": true,
+            "issues": [],
+            "notEvaluated": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"valid\\\": true,\\n  \\\"issues\\\": [],\\n  \\\"notEvaluated\\\": []\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/validate",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {}
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.contract",
+      "title": "the active contract",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_get_active_contract\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": true,
+                  "type": "string",
+                  "rotationHint": "Issue a new key at the provider, then revoke the old one."
+                },
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "integer"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"id\\\": \\\"crv_active\\\",\\n  \\\"contentHash\\\": \\\"sha256:aaaa\\\",\\n  \\\"active\\\": true,\\n  \\\"contract\\\": {\\n    \\\"schemaVersion\\\": 1,\\n    \\\"semanticsVersion\\\": 3,\\n    \\\"items\\\": [\\n      {\\n        \\\"name\\\": \\\"API_KEY\\\",\\n        \\\"required\\\": {\\n          \\\"kind\\\": \\\"never\\\"\\n        },\\n        \\\"sensitive\\\": true,\\n        \\\"type\\\": \\\"string\\\",\\n        \\\"rotationHint\\\": \\\"Issue a new key at the provider, then revoke the old one.\\\"\\n      },\\n      {\\n        \\\"name\\\": \\\"PORT\\\",\\n        \\\"required\\\": {\\n          \\\"kind\\\": \\\"never\\\"\\n        },\\n        \\\"sensitive\\\": false,\\n        \\\"type\\\": \\\"integer\\\"\\n      }\\n    ]\\n  }\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.audit",
+      "title": "audit events with a limit and a cursor (form-encoded)",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_audit_events\",\"arguments\":{\"limit\":5,\"cursor\":\"a b/c+é\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/audit-events?limit=5&cursor=a+b%2Fc%2B%C3%A9",
+          "status": 200,
+          "answer": {
+            "items": [],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"items\\\": [],\\n  \\\"nextCursor\\\": null\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/audit-events?limit=5&cursor=a+b%2Fc%2B%C3%A9",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.audit.invalid",
+      "title": "a limit out of range: the input's error, no request",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_audit_events\",\"arguments\":{\"limit\":500}}}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Input validation error: Invalid arguments for tool varlatch_list_audit_events: Too big: expected number to be <=200 at limit\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.refused",
+      "title": "an API error as the tool's error",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_organizations\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations",
+          "status": 403,
+          "answer": {
+            "error": {
+              "code": "PERMISSION_DENIED",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"varlatch API error 403 (PERMISSION_DENIED, request req_00000000-0000-4000-8000-000000000000): refused\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.empty-answer",
+      "title": "an answer with no body: the SDK refuses the result",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_organizations\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations",
+          "status": 200,
+          "headers": {}
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"MCP error -32602: Invalid tools/call result: [\\n  {\\n    \\\"code\\\": \\\"invalid_union\\\",\\n    \\\"errors\\\": [\\n      [\\n        {\\n          \\\"expected\\\": \\\"string\\\",\\n          \\\"code\\\": \\\"invalid_type\\\",\\n          \\\"path\\\": [\\n            \\\"text\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n        }\\n      ],\\n      [\\n        {\\n          \\\"code\\\": \\\"invalid_value\\\",\\n          \\\"values\\\": [\\n            \\\"image\\\"\\n          ],\\n          \\\"path\\\": [\\n            \\\"type\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected \\\\\\\"image\\\\\\\"\\\"\\n        },\\n        {\\n          \\\"expected\\\": \\\"string\\\",\\n          \\\"code\\\": \\\"invalid_type\\\",\\n          \\\"path\\\": [\\n            \\\"data\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n        },\\n        {\\n          \\\"expected\\\": \\\"string\\\",\\n          \\\"code\\\": \\\"invalid_type\\\",\\n          \\\"path\\\": [\\n            \\\"mimeType\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n        }\\n      ],\\n      [\\n        {\\n          \\\"code\\\": \\\"invalid_value\\\",\\n          \\\"values\\\": [\\n            \\\"audio\\\"\\n          ],\\n          \\\"path\\\": [\\n            \\\"type\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected \\\\\\\"audio\\\\\\\"\\\"\\n        },\\n        {\\n          \\\"expected\\\": \\\"string\\\",\\n          \\\"code\\\": \\\"invalid_type\\\",\\n          \\\"path\\\": [\\n            \\\"data\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n        },\\n        {\\n          \\\"expected\\\": \\\"string\\\",\\n          \\\"code\\\": \\\"invalid_type\\\",\\n          \\\"path\\\": [\\n            \\\"mimeType\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n        }\\n      ],\\n      [\\n        {\\n          \\\"expected\\\": \\\"string\\\",\\n          \\\"code\\\": \\\"invalid_type\\\",\\n          \\\"path\\\": [\\n            \\\"name\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n        },\\n        {\\n          \\\"expected\\\": \\\"string\\\",\\n          \\\"code\\\": \\\"invalid_type\\\",\\n          \\\"path\\\": [\\n            \\\"uri\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n        },\\n        {\\n          \\\"code\\\": \\\"invalid_value\\\",\\n          \\\"values\\\": [\\n            \\\"resource_link\\\"\\n          ],\\n          \\\"path\\\": [\\n            \\\"type\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected \\\\\\\"resource_link\\\\\\\"\\\"\\n        }\\n      ],\\n      [\\n        {\\n          \\\"code\\\": \\\"invalid_value\\\",\\n          \\\"values\\\": [\\n            \\\"resource\\\"\\n          ],\\n          \\\"path\\\": [\\n            \\\"type\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input: expected \\\\\\\"resource\\\\\\\"\\\"\\n        },\\n        {\\n          \\\"code\\\": \\\"invalid_union\\\",\\n          \\\"errors\\\": [\\n            [\\n              {\\n                \\\"expected\\\": \\\"object\\\",\\n                \\\"code\\\": \\\"invalid_type\\\",\\n                \\\"path\\\": [],\\n                \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n              }\\n            ],\\n            [\\n              {\\n                \\\"expected\\\": \\\"object\\\",\\n                \\\"code\\\": \\\"invalid_type\\\",\\n                \\\"path\\\": [],\\n                \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n              }\\n            ]\\n          ],\\n          \\\"path\\\": [\\n            \\\"resource\\\"\\n          ],\\n          \\\"message\\\": \\\"Invalid input\\\"\\n        }\\n      ]\\n    ],\\n    \\\"path\\\": [\\n      \\\"content\\\",\\n      0\\n    ],\\n    \\\"message\\\": \\\"Invalid input\\\"\\n  }\\n]\"}}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.cancelled",
+      "title": "a call cancelled while its request is out gets no answer",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_organizations\",\"arguments\":{}}}\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":1,\"reason\":\"host\"}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations",
+          "status": 200,
+          "answer": {
+            "items": [],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":2}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "read.cancelled-before",
+      "title": "a cancellation before the call changes nothing",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":1}}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_list_organizations\",\"arguments\":{}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations",
+          "status": 200,
+          "answer": {
+            "items": [],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.secret",
+      "title": "a Secret's value is refused, after reading only the contract",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"API_KEY\",\"value\":\"s3cr3t-canary\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"API_KEY is a Secret, and its value is never written through MCP: the value would be in the model's context. Store it with `varlatch --assisted values set API_KEY --generate hex:32` (a new random value), `--from-file <path>`, `--stdin`, or `varlatch --assisted import <file>`; or ask the human to run `varlatch values set API_KEY` in their own terminal. Nothing was stored.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.uncontracted",
+      "title": "an item outside the contract counts as a Secret",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"OTHER\",\"value\":\"x\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"OTHER is a Secret, and its value is never written through MCP: the value would be in the model's context. Store it with `varlatch --assisted values set OTHER --generate hex:32` (a new random value), `--from-file <path>`, `--stdin`, or `varlatch --assisted import <file>`; or ask the human to run `varlatch values set OTHER` in their own terminal. Nothing was stored.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.no-contract",
+      "title": "no active contract (404): a Secret",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 404,
+          "answer": {
+            "error": {
+              "code": "RESOURCE_NOT_FOUND",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"PORT is a Secret, and its value is never written through MCP: the value would be in the model's context. Store it with `varlatch --assisted values set PORT --generate hex:32` (a new random value), `--from-file <path>`, `--stdin`, or `varlatch --assisted import <file>`; or ask the human to run `varlatch values set PORT` in their own terminal. Nothing was stored.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.contract-error",
+      "title": "a contract read that fails otherwise: the API error",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 500,
+          "answer": {
+            "error": {
+              "code": "INTERNAL",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"varlatch API error 500 (INTERNAL, request req_00000000-0000-4000-8000-000000000000): refused\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.present",
+      "title": "replacing a value the environment has needs replace",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"PORT already has a value in dev; setting it replaces that value. Replacing it is the human's decision, for this item only: ask them, and with their approval pass replace: \\\"PORT\\\". Nothing was stored.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.inherited",
+      "title": "and so does overriding an inherited one",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "parent"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"dev inherits a value for PORT from its parent environment; setting it here overrides that value in dev. Replacing it is the human's decision, for this item only: ask them, and with their approval pass replace: \\\"PORT\\\". Nothing was stored.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.unknown",
+      "title": "presence that cannot be checked counts as existing",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+          "status": 403,
+          "answer": {
+            "error": {
+              "code": "PERMISSION_DENIED",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"whether PORT already has a value in dev cannot be checked (403 PERMISSION_DENIED), so it counts as existing. Replacing it is the human's decision, for this item only: ask them, and with their approval pass replace: \\\"PORT\\\". Nothing was stored.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.absent",
+      "title": "a new value is stored, with expectedVersionId",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\",\"expectedVersionId\":\"ver_x\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": []
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+          "status": 200,
+          "answer": {
+            "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"versionId\\\": \\\"ver_portaaaaaaaaaaaaaaaaaaaaaa\\\"\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "PUT",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "value": "1",
+              "expectedVersionId": "ver_x"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.replace",
+      "title": "replace naming the item skips the presence check",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"2\",\"replace\":\"PORT\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+          "status": 200,
+          "answer": {
+            "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"versionId\\\": \\\"ver_portaaaaaaaaaaaaaaaaaaaaaa\\\"\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "PUT",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "value": "2"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.replace-other",
+      "title": "replace naming another item: refused before any request",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"2\",\"replace\":\"HOST\"}}}\n",
+      "server": [],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"replace names HOST, but this call sets PORT; approval for one item never covers another. Nothing was stored.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.malformed-contract",
+      "title": "a contract whose items are not a list: the TypeError's message",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "items": "x"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"contract?.items?.find is not a function\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.malformed-effective",
+      "title": "an effective configuration whose items are not a list",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+          "status": 200,
+          "answer": {
+            "items": 5
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"(effective.items ?? []).find is not a function\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.set.conflict",
+      "title": "a version conflict from the server",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\",\"replace\":\"PORT\",\"expectedVersionId\":\"ver_old\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+          "status": 409,
+          "answer": {
+            "error": {
+              "code": "VERSION_CONFLICT",
+              "message": "the value changed",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"varlatch API error 409 (VERSION_CONFLICT, request req_00000000-0000-4000-8000-000000000000): the value changed\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "PUT",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "value": "1",
+              "expectedVersionId": "ver_old"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.delete",
+      "title": "a deletion with confirm",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_delete_value\",\"arguments\":{\"item\":\"PORT\",\"confirm\":\"PORT\"}}}\n",
+      "server": [
+        {
+          "method": "DELETE",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+          "status": 204,
+          "headers": {}
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"deleted\\\": \\\"PORT\\\",\\n  \\\"environment\\\": \\\"dev\\\"\\n}\"}]},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "DELETE",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.delete.no-confirm",
+      "title": "a deletion without confirm: refused, no request",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_delete_value\",\"arguments\":{\"item\":\"PORT\"}}}\n",
+      "server": [],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"deleting PORT from dev is the human's decision, for this item in this environment. Ask the human, and with their approval for PORT in dev, pass confirm: \\\"PORT\\\". Nothing was deleted.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.delete.refused",
+      "title": "a deletion the server refuses",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_delete_value\",\"arguments\":{\"item\":\"PORT\",\"confirm\":\"PORT\"}}}\n",
+      "server": [
+        {
+          "method": "DELETE",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+          "status": 403,
+          "answer": {
+            "error": {
+              "code": "PERMISSION_DENIED",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"varlatch API error 403 (PERMISSION_DENIED, request req_00000000-0000-4000-8000-000000000000): refused\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "DELETE",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/values/PORT",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.without-flag",
+      "title": "without --allow-writes the write tools do not exist",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_delete_value\",\"arguments\":{\"item\":\"PORT\",\"confirm\":\"PORT\"}}}\n",
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Tool varlatch_delete_value not found\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "VARLATCH_TOKEN": "vlt_cli_mcpAAAA"
+      },
+      "id": "write.expired",
+      "title": "a credential the server no longer takes",
+      "args": [
+        "mcp",
+        "--server",
+        "{{server}}",
+        "--org",
+        "acme",
+        "--project",
+        "web",
+        "-e",
+        "dev",
+        "--allow-writes"
+      ],
+      "stdin": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"varlatch_set_value\",\"arguments\":{\"item\":\"PORT\",\"value\":\"1\"}}}\n",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 401,
+          "answer": {
+            "error": {
+              "code": "UNAUTHENTICATED",
+              "message": "credential expired",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "mcp-version"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"varlatch API error 401 (UNAUTHENTICATED, request req_00000000-0000-4000-8000-000000000000): credential expired\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_mcpAAAA",
+              "user-agent": "varlatch-mcp/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    }
+  ]
+}

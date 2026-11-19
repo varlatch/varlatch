@@ -64,7 +64,7 @@ SYNC_SHARED='^go/lib/sync/testdata/ts-exchanges\.json$'
 # Go CLI test data that apps/cli's tests produce from the TypeScript CLI and
 # compare (go-vectors-*.test.ts, go-transcripts.test.ts, cli-inventory.test.ts;
 # internal docs/design/go-cli.md, decision 3). A stale file fails there.
-CLI_SHARED='^go/cmd/varlatch/testdata/(cli-inventory\.json|vectors/[^/]+\.json|transcripts/[^/]+\.json)$|^go/lib/jsjson/testdata/ts-vectors\.json$'
+CLI_SHARED='^go/cmd/varlatch/testdata/(cli-inventory\.json|built/[^/]+|vectors/[^/]+\.json|transcripts/[^/]+\.json)$|^go/lib/jsjson/testdata/ts-vectors\.json$'
 
 # True when a path lies inside a workspace package (pnpm-workspace.yaml).
 in_package() {

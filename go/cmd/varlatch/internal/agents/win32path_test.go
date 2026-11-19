@@ -5,6 +5,7 @@ package agents
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -134,6 +135,7 @@ func TestHookStoreWindowsForms(t *testing.T) {
 	windowsPaths(t, func() {
 		unc := envMap{"HOME": `C:\Users\dev`, "XDG_CONFIG_HOME": `\\srv\share\cfg`}
 		drive := envMap{"HOME": `C:\Users\dev`, "XDG_CONFIG_HOME": `C:\cfg`}
+		device := envMap{"HOME": `C:\Users\dev`, "XDG_CONFIG_HOME": `\\?\C:\cfg`}
 		for _, c := range []struct {
 			env    envMap
 			path   string
@@ -151,6 +153,17 @@ func TestHookStoreWindowsForms(t *testing.T) {
 			{drive, `C:\Users\dev\.Config\Varlatch\credentials.json`, true},
 			{drive, `C:\cfg\varlatch2\credentials.json`, false},
 			{drive, `C:\cfg2\varlatch\credentials.json`, false},
+			// Win32 leaves out a component's trailing dots and spaces, but not
+			// in a \\?\ path, which is taken as written.
+			{drive, `C:\cfg\varlatch.\credentials.json`, true},
+			{drive, `C:\cfg\varlatch \credentials.json`, true},
+			{drive, `C:\cfg\varlatch. . \credentials.json`, true},
+			{drive, `C:\cfg. \Varlatch.\credentials.json`, true},
+			{drive, `\\?\C:\cfg\varlatch.\credentials.json`, false},
+			{drive, `\\.\C:\cfg\varlatch \credentials.json`, false},
+			// The store's own directory given in device form.
+			{device, `C:\cfg\varlatch\credentials.json`, true},
+			{device, `c:\CFG\varlatch.\credentials.json`, true},
 		} {
 			if got := read(c.env, c.path); strings.Contains(got, "credential store is off limits") != c.denied {
 				t.Errorf("%s: %q, denied %v", c.path, got, c.denied)
@@ -176,6 +189,58 @@ func TestHookStoreCaseOffWindows(t *testing.T) {
 		got, err := RunHook("claude", event, env, "/")
 		if err != nil || strings.Contains(got, "credential store is off limits") != denied {
 			t.Errorf("%s: %q, %v; denied %v", path, got, err, denied)
+		}
+	}
+}
+
+// TestHookEnvCaseOnWindows: on Windows, whose names are compared without
+// regard to case, `.ENV` is `.env`: read, named in inline code, or found by
+// a search, it is denied; `.ENV.EXAMPLE` is the template. Elsewhere `.ENV`
+// is another name, as hook.ts reads it.
+func TestHookEnvCaseOnWindows(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".ENV.Local"), []byte("A=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := envMap{"HOME": t.TempDir()}
+	decide := func(tool, input string) string {
+		event := `{"cwd":` + string(jsjson.Stringify(dir)) + `,"hook_event_name":"PreToolUse","tool_name":"` + tool + `","tool_input":` + input + `}`
+		got, err := RunHook("claude", event, env, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	cases := []struct {
+		name, tool, input string
+		onWindows         bool // denied on Windows; never elsewhere
+		native            bool // walks the directory: on Windows itself only
+	}{
+		{"cat .ENV", "Bash", `{"command":"cat .ENV"}`, true, false},
+		{"cat .Env.Production", "Bash", `{"command":"cat .Env.Production"}`, true, false},
+		{"cat .EnvRC", "Bash", `{"command":"cat .EnvRC"}`, true, false},
+		{"an existing .ENV-like file", "Bash", `{"command":"cat .ENV-old"}`, false, false},
+		{"Read .ENV", "Read", `{"file_path":".ENV"}`, true, false},
+		{"inline code", "Bash", `{"command":"node -e \"require('fs').readFileSync('.ENV')\""}`, true, false},
+		{"a search finds .ENV.Local", "Bash", `{"command":"grep -r KEY ."}`, true, true},
+		{"the template", "Bash", `{"command":"cat .ENV.EXAMPLE"}`, false, false},
+	}
+	windowsPaths(t, func() {
+		for _, c := range cases {
+			if c.native && runtime.GOOS != "windows" {
+				continue // Windows paths cannot be walked here
+			}
+			if got := decide(c.tool, c.input); strings.Contains(got, `"deny"`) != c.onWindows {
+				t.Errorf("Windows, %s: %q, denied %v", c.name, got, c.onWindows)
+			}
+		}
+	})
+	if onWindows {
+		return
+	}
+	for _, c := range cases {
+		if got := decide(c.tool, c.input); strings.Contains(got, `"deny"`) {
+			t.Errorf("off Windows, %s: %q, denied", c.name, got)
 		}
 	}
 }

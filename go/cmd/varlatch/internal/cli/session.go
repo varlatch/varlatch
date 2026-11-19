@@ -170,8 +170,9 @@ func loginCommand(r *Run) error {
 		}
 	}
 	// A server echoing the credential back in an error message gets it
-	// masked (issue #119), and no output or diagnostic shows it.
-	r.holdSecret(token)
+	// masked (issue #119), and no output or diagnostic shows it, whatever
+	// its length: the person gave it (--token or --token-stdin).
+	r.holdCredential(token, true)
 	// Issuance metadata (ADR-0032): stored so expiry is knowable offline.
 	// An explicit --token has none: its entry stays metadata-free.
 	var issued any
@@ -953,6 +954,15 @@ func (r *Run) envUse() error {
 	state = kept
 	note := ""
 	if hasTier && jsjson.Truthy(tier) {
+		// The server's word, with the bearer and every other value the run
+		// holds (and any Varlatch token) taken out before it is kept, so no
+		// later command, offline, can print one; what is shown is masked
+		// again when it is printed.
+		if text, ok := tier.(string); ok {
+			tier = RedactOutput(text, r.inFlight...)
+		} else if tier, err = RedactValue(tier, r.inFlight...); err != nil {
+			return err
+		}
 		state = state.Set("selectedTier", tier).Set("tierCachedAt", isoString(time.Now().UTC()))
 		note = " (tier " + Printable(shownValue(jsjson.String(tier))) + ")"
 	}
@@ -978,7 +988,7 @@ func (r *Run) selectedTier(cwd, name string) (any, bool) {
 	if err != nil || token == "" {
 		return nil, false
 	}
-	api := apiclient.New(apiclient.Options{
+	api := r.newClient(apiclient.Options{
 		Server:              server,
 		Token:               token,
 		UserAgent:           r.UserAgent(),
