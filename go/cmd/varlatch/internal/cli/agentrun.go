@@ -626,6 +626,11 @@ func issueWithTargets(brokerAPI *apiclient.Client, ctx *clientctx.Context, items
 	}
 	canonical, err := targets.Canonical(items, given)
 	if err != nil {
+		// Go is stricter than TypeScript, which leaves the Capability to its
+		// TTL here: a run that is refused revokes what it was issued.
+		if revokeErr := revokeQuietly(brokerAPI, ctx, cap.id); revokeErr != nil {
+			return nil, revokeErr
+		}
 		return nil, err
 	}
 	if !sameTargetsJSON(recorded, canonical) {
@@ -772,6 +777,9 @@ type mediatedRun struct {
 	childEnv    func(placeholders map[string]string, proxyURL string, credential *mintedCredential) (*orderedEnv, []string)
 }
 
+// startBroker is broker.Start; a test makes it fail.
+var startBroker = broker.Start
+
 // exerciseMaintenance is runMediated's maintenanceRetryMs: an Agent's
 // request is waiting on each exercise, so during isolating maintenance the
 // run gives up quickly and the Broker answers 503 with Retry-After.
@@ -830,7 +838,7 @@ func (r *Run) runMediated(run mediatedRun) error {
 		exercised.Withheld = stringList(fieldOf(result, "withheld"))
 		return exercised, nil
 	}
-	running, err := broker.Start(broker.Options{
+	running, err := startBroker(broker.Options{
 		Placeholders: placeholders,
 		Destinations: run.cap.destinations,
 		Targets:      run.cap.targets,
@@ -840,6 +848,9 @@ func (r *Run) runMediated(run mediatedRun) error {
 		RootCAs:      apiclient.RootPool(r.Env),
 	})
 	if err != nil {
+		// Stricter than TypeScript (which leaves it to the TTL): nothing
+		// starts, so the Capability is revoked.
+		_ = revokeQuietly(run.brokerAPI, run.ctx, run.cap.id)
 		return err
 	}
 
@@ -847,6 +858,7 @@ func (r *Run) runMediated(run mediatedRun) error {
 	if run.mint != nil {
 		if minted, err = run.mint(); err != nil {
 			_ = running.Close()
+			_ = revokeQuietly(run.brokerAPI, run.ctx, run.cap.id)
 			return err
 		}
 	}

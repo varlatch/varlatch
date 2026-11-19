@@ -470,11 +470,40 @@ func (h *responseHead) get(name string) (string, bool) {
 
 var statusLine = regexp.MustCompile(`^HTTP/(\d)\.(\d) (\d{3})(?: (.*))?$`)
 
+// maxResponseHead is Node.js's --max-http-header-size default: a response
+// head (its status line and headers) larger than this is refused.
+const maxResponseHead = 16 * 1024
+
+// errHeadOverflow is Node's HPE_HEADER_OVERFLOW: the code is all that is
+// reported, never the head's bytes.
+var errHeadOverflow = errors.New("HPE_HEADER_OVERFLOW")
+
+// headLine reads one line of a response head, counting it against left:
+// errHeadOverflow once the head would pass maxResponseHead, without
+// reading more than that into memory.
+func headLine(br *bufio.Reader, left *int) (string, error) {
+	var b []byte
+	for {
+		frag, err := br.ReadSlice('\n')
+		*left -= len(frag)
+		if *left < 0 {
+			return "", errHeadOverflow
+		}
+		b = append(b, frag...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return string(b), err
+	}
+}
+
 // readResponseHead reads one response head; interim (1xx) responses but
-// 101 are skipped, as Node's client skips them.
+// 101 are skipped, as Node's client skips them. Each head is bounded at
+// maxResponseHead.
 func readResponseHead(br *bufio.Reader) (*responseHead, error) {
 	for {
-		line, err := br.ReadString('\n')
+		left := maxResponseHead
+		line, err := headLine(br, &left)
 		if err != nil {
 			return nil, err
 		}
@@ -485,7 +514,7 @@ func readResponseHead(br *bufio.Reader) (*responseHead, error) {
 		h := &responseHead{version: m[1] + "." + m[2], reason: m[4]}
 		h.status, _ = strconv.Atoi(m[3])
 		for {
-			line, err := br.ReadString('\n')
+			line, err := headLine(br, &left)
 			if err != nil {
 				return nil, err
 			}
