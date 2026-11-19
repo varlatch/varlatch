@@ -38,11 +38,22 @@ func TestMain(m *testing.M) {
 		slices.Sort(names)
 		envNames, _ := json.Marshal(names)
 		_ = os.WriteFile(filepath.Join(dir, "env.json"), envNames, 0o644)
-		out, _ := os.ReadFile(filepath.Join(dir, "stdout"))
-		errText, _ := os.ReadFile(filepath.Join(dir, "stderr"))
+		if f, err := os.OpenFile(filepath.Join(dir, "calls.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644); err == nil {
+			_, _ = f.Write(append(args, '\n'))
+			_ = f.Close()
+		}
+		// With --yes, the answer of the "-yes" files when there are any.
+		suffix := ""
+		if slices.Contains(os.Args[1:], "--yes") {
+			if _, err := os.Stat(filepath.Join(dir, "status-yes")); err == nil {
+				suffix = "-yes"
+			}
+		}
+		out, _ := os.ReadFile(filepath.Join(dir, "stdout"+suffix))
+		errText, _ := os.ReadFile(filepath.Join(dir, "stderr"+suffix))
 		_, _ = os.Stdout.Write(out)
 		_, _ = os.Stderr.Write(errText)
-		status, _ := os.ReadFile(filepath.Join(dir, "status"))
+		status, _ := os.ReadFile(filepath.Join(dir, "status"+suffix))
 		code, _ := strconv.Atoi(strings.TrimSpace(string(status)))
 		os.Exit(code)
 	}
@@ -89,6 +100,38 @@ func answer(t *testing.T, dir, stdout, stderr string, status int) {
 		}
 	}
 	_ = os.Remove(filepath.Join(dir, "args.json"))
+	_ = os.Remove(filepath.Join(dir, "calls.jsonl"))
+	for _, name := range []string{"stdout-yes", "stderr-yes", "status-yes"} {
+		_ = os.Remove(filepath.Join(dir, name))
+	}
+}
+
+// answerYes sets what the fake varlatchd in dir answers to a run with --yes.
+func answerYes(t *testing.T, dir, stdout, stderr string, status int) {
+	t.Helper()
+	for name, content := range map[string]string{"stdout-yes": stdout, "stderr-yes": stderr, "status-yes": strconv.Itoa(status)} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// calls is every run of the fake varlatchd in dir, in order.
+func calls(t *testing.T, dir string) [][]string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "calls.jsonl"))
+	if err != nil {
+		return nil
+	}
+	var out [][]string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var args []string
+		if err := json.Unmarshal([]byte(line), &args); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, args)
+	}
+	return out
 }
 
 // called is what the fake varlatchd in dir was run with, nil if it was not.
@@ -277,6 +320,13 @@ func TestAdminWithTheRealVarlatchd(t *testing.T) {
 		if code != 0 || out != c.out || errText != "" {
 			t.Errorf("%v: %d %q %q, want %q", c.args, code, out, errText, c.out)
 		}
+	}
+	// tailnet repin compares the pin with a running node: offline,
+	// varlatchd's refusal and its 1 (step 6.2b).
+	var stdout, stderr bytes.Buffer
+	code := Main([]string{"tailnet", "repin", "--config", conf}, MapEnv{"PATH": bin, "HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+	if code != 1 || !strings.Contains(stderr.String(), "it runs in a running varlatchd with tailnet = on") {
+		t.Errorf("tailnet repin offline: %d %q %q", code, stdout.String(), stderr.String())
 	}
 	// A configuration that is not valid: varlatchd's 78, its message shown.
 	bad := filepath.Join(install, "bad.conf")
@@ -469,5 +519,126 @@ func TestHelpAdminIsTheGoUsage(t *testing.T) {
 		if code != 0 || stdout.String() != adminUsage+"\n" || stderr.String() != "" {
 			t.Errorf("%v: %d %q %q", args, code, stdout.String(), stderr.String())
 		}
+	}
+}
+
+// repinView is a varlatchd answer to `admin tailnet repin --json`.
+func repinView(outcome, message string, pin string) string {
+	return `{"pinned":{"controlUrl":"","tailnetId":"T1","suffix":"old.ts.net","pinnedAt":"2026-11-01T00:00:00Z"},"observed":{"controlUrl":"","tailnetId":"T1","suffix":"corp.ts.net"},` +
+		`"reason":"suffix-changed","closed":"suffix-changed","missing":false,"offered":true,` +
+		`"pinnedText":"suffix old.ts.net, tailnet T1, control https://controlplane.tailscale.com","observedText":"suffix corp.ts.net, tailnet T1, control https://controlplane.tailscale.com",` +
+		`"outcome":"` + outcome + `","message":"` + message + `","pin":` + pin + `}` + "\n"
+}
+
+// TestTailnetRepinFront: `varlatch tailnet repin` asks varlatchd for its
+// JSON answer and shows varlatchd's text (or, with --json, the answer);
+// on a terminal, an offered re-pin or adoption is confirmed, then done
+// with --yes (step 6.2b).
+func TestTailnetRepinFront(t *testing.T) {
+	dir := fakeVarlatchd(t)
+	run := func(stdin string, args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := Main(append([]string{"tailnet", "repin"}, args...), MapEnv{"PATH": dir, "HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": t.TempDir()},
+			IO{Stdin: strings.NewReader(stdin), Stdout: &stdout, Stderr: &stderr})
+		return code, stdout.String(), stderr.String()
+	}
+	const shown = "pinned:   suffix old.ts.net, tailnet T1, control https://controlplane.tailscale.com\nobserved: suffix corp.ts.net, tailnet T1, control https://controlplane.tailscale.com\n"
+	offered := "The tailnet's MagicDNS suffix changed under the same tailnet. Run again with --yes to pin the observed suffix and reopen tailnet access."
+	repinned := "Re-pinned the tailnet from old.ts.net to corp.ts.net; tailnet access is open."
+	newPin := `{"controlUrl":"","tailnetId":"T1","suffix":"corp.ts.net","pinnedAt":"2026-11-19T00:00:00Z"}`
+
+	// Off a terminal: varlatchd's text, nothing asked.
+	answer(t, dir, repinView("suffix-changed", offered, "null"), "", 0)
+	if code, out, errText := run(""); code != 0 || out != shown+offered+"\n" || errText != "" {
+		t.Fatalf("view: %d %q %q", code, out, errText)
+	}
+	if got := calls(t, dir); len(got) != 1 || !slices.Equal(got[0], []string{"admin", "tailnet", "repin", "--json"}) {
+		t.Fatalf("view ran %q", got)
+	}
+	// --yes, --config: one run with both.
+	answer(t, dir, repinView("repinned", repinned, newPin), "", 0)
+	if code, out, _ := run("", "--yes", "--config", "/etc/v.conf"); code != 0 || out != shown+repinned+"\n" {
+		t.Fatalf("--yes: %d %q", code, out)
+	}
+	if got := calls(t, dir); len(got) != 1 || !slices.Equal(got[0], []string{"admin", "tailnet", "repin", "--json", "--yes", "--config", "/etc/v.conf"}) {
+		t.Fatalf("--yes ran %q", got)
+	}
+	// --json: varlatchd's answer, as JSON.stringify(doc, null, 2).
+	answer(t, dir, repinView("suffix-changed", offered, "null"), "", 0)
+	if code, out, _ := run("", "--json"); code != 0 || !strings.HasPrefix(out, "{\n  \"pinned\": {") || !strings.Contains(out, "\n  \"outcome\": \"suffix-changed\",\n") {
+		t.Fatalf("--json: %d %q", code, out)
+	}
+	// A refusal: the text, the message on stderr, varlatchd's status.
+	answer(t, dir, repinView("not-repinnable", "tailnet: not re-pinnable (tailnet-changed). Tailnet access stays closed.", "null"), "", 1)
+	if code, out, errText := run(""); code != 1 || out != shown || errText != "varlatch tailnet repin: tailnet: not re-pinnable (tailnet-changed). Tailnet access stays closed.\n" {
+		t.Fatalf("refusal: %d %q %q", code, out, errText)
+	}
+	// varlatchd refused before any answer (offline): what it said, its status.
+	answer(t, dir, "", "varlatchd admin tailnet repin: it runs in a running varlatchd with tailnet = on\n", 1)
+	if code, out, errText := run(""); code != 1 || out != "" || !strings.Contains(errText, "it runs in a running varlatchd") {
+		t.Fatalf("offline: %d %q %q", code, out, errText)
+	}
+
+	// On a terminal: confirmed, then done with --yes.
+	repinTerminal = func(*Run) bool { return true }
+	defer func() { repinTerminal = func(r *Run) bool { return isTerminal(r.Stdin) && isTerminal(r.Stdout) } }()
+	answer(t, dir, repinView("suffix-changed", offered, "null"), "", 0)
+	answerYes(t, dir, repinView("repinned", repinned, newPin), "", 0)
+	if code, out, _ := run("y\n"); code != 0 || out != shown+offered+"\nRe-pin the tailnet now and reopen tailnet access? [y/N] "+repinned+"\n" {
+		t.Fatalf("confirmed: %d %q", code, out)
+	}
+	if got := calls(t, dir); len(got) != 2 || !slices.Contains(got[1], "--yes") || slices.Contains(got[1], "--adopt") {
+		t.Fatalf("confirmed ran %q", got)
+	}
+	// Declined: nothing re-pinned, varlatchd run once.
+	answer(t, dir, repinView("suffix-changed", offered, "null"), "", 0)
+	answerYes(t, dir, repinView("repinned", repinned, newPin), "", 0)
+	if code, out, _ := run("n\n"); code != 0 || !strings.HasSuffix(out, "[y/N] Nothing was re-pinned.\n") {
+		t.Fatalf("declined: %d %q", code, out)
+	}
+	if got := calls(t, dir); len(got) != 1 {
+		t.Fatalf("declined ran %q", got)
+	}
+	// An adoption, asked for with --adopt: confirmed, then --yes --adopt.
+	adoptMsg := "the pin is missing, but this node was enrolled before: tailnet access stays closed. If the observed tailnet is the one this installation trusts, run again with --yes --adopt."
+	answer(t, dir, repinView("adoption-needed", adoptMsg, "null"), "", 1)
+	answerYes(t, dir, repinView("adopted", "Adopted corp.ts.net as the pinned tailnet; tailnet access is open.", newPin), "", 0)
+	if code, out, _ := run("yes\n", "--adopt"); code != 0 || !strings.Contains(out, "Adopt the observed tailnet as the pin and open tailnet access? [y/N] Adopted corp.ts.net") {
+		t.Fatalf("adopt: %d %q", code, out)
+	}
+	if got := calls(t, dir); len(got) != 2 || !slices.Equal(got[0], []string{"admin", "tailnet", "repin", "--json"}) || !slices.Equal(got[1], []string{"admin", "tailnet", "repin", "--json", "--yes", "--adopt"}) {
+		t.Fatalf("adopt ran %q", got)
+	}
+	// Without --adopt, an adoption is never offered: varlatchd's refusal.
+	answer(t, dir, repinView("adoption-needed", adoptMsg, "null"), "", 1)
+	if code, _, errText := run(""); code != 1 || !strings.Contains(errText, "run again with --yes --adopt") {
+		t.Fatalf("adoption not asked: %d %q", code, errText)
+	}
+	if got := calls(t, dir); len(got) != 1 {
+		t.Fatalf("adoption not asked ran %q", got)
+	}
+
+	// Refused before anything runs.
+	answer(t, dir, "", "", 0)
+	for _, c := range []struct {
+		args []string
+		has  string
+	}{
+		{[]string{"--nope"}, "varlatch tailnet repin: unknown option --nope"},
+		{[]string{"extra"}, "unexpected argument extra"},
+		{[]string{"--config"}, "--config needs a file"},
+		{[]string{"--dir", "/srv"}, "--dir names a Compose installation"},
+	} {
+		if code, out, errText := run("", c.args...); code != 64 || out != "" || !strings.Contains(errText, c.has) {
+			t.Errorf("%v: %d %q %q", c.args, code, out, errText)
+		}
+		if got := calls(t, dir); got != nil {
+			t.Errorf("%v: varlatchd ran %q", c.args, got)
+		}
+	}
+	// The rest of `tailnet` is still slice 5.7a's.
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"tailnet", "requirements"}, MapEnv{"PATH": dir, "HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}); code != 64 || !strings.Contains(stderr.String(), "not in this build of the Go CLI yet (slice 5.7a)") {
+		t.Errorf("tailnet requirements: %d %q", code, stderr.String())
 	}
 }

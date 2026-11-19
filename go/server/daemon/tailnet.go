@@ -18,9 +18,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/httpserver"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/tailnet"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 // The tailnet listener (ADR-0059 Decision 5, step 4.13b): varlatchd's own
@@ -232,7 +236,14 @@ func tailnetArgs(rest []string) (repinArgs, string) {
 // pin the tailnet matches again after a change; with --yes --adopt it pins
 // the tailnet an enrolled node without a pin is on. A different tailnet
 // (StableID or control URL) is refused: that means enrolling the node
-// again. Every re-pin is kept in the pin's history and logged.
+// again. Every re-pin is kept in the pin's history, logged, and recorded
+// as the audit event tailnet.repinned (by the host operator, committed
+// before the pin changes; no re-pin without its event).
+//
+// The text is as before. With --json it prints one document instead,
+// --yes or not (repinResult): the view's fields under stable names, the
+// outcome, the lines the text gives, and the pin after a re-pin; the exit
+// status is the text's.
 func runTailnetRepin(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io.Writer) int {
 	a, msg := tailnetArgs(rest)
 	if msg != "" {
@@ -244,58 +255,129 @@ func runTailnetRepin(ctx context.Context, env *hostEnv, rest []string, stdout, s
 			"Start varlatchd (with tailnet = on in varlatchd.conf) and run it again.")
 		return ExitFailure
 	}
-	v := env.tailnet.RepinView(ctx)
-	if a.asJSON && !a.yes {
-		b, _ := json.Marshal(v)
+	res := repin(ctx, env, a)
+	if a.asJSON {
+		b, _ := json.Marshal(res)
 		fmt.Fprintln(stdout, string(b))
-		return ExitOK
+		return res.code
 	}
-	pinned, observed := "none", "unknown"
+	fmt.Fprintf(stdout, "pinned:   %s\nobserved: %s\n", res.PinnedText, res.ObservedText)
+	if res.Message != "" {
+		if res.code != ExitOK {
+			fmt.Fprintln(stderr, "varlatchd admin tailnet repin: "+res.Message)
+		} else {
+			fmt.Fprintln(stdout, res.Message)
+		}
+	}
+	return res.code
+}
+
+// repinResult is what a re-pin did, as --json prints it (stable names).
+type repinResult struct {
+	tailnet.RepinView
+	// PinnedText and ObservedText are the text's "pinned:" and "observed:"
+	// values.
+	PinnedText   string `json:"pinnedText"`
+	ObservedText string `json:"observedText"`
+	// Outcome is one of: nothing-observed, adoption-needed, enrolling,
+	// holds, not-repinnable, suffix-changed, reopen-offered (these change
+	// nothing), repinned, reopened, adopted, failed.
+	Outcome string `json:"outcome"`
+	// Message is the text's last line (on stderr when the status is not 0).
+	Message string `json:"message"`
+	// Pin is the pin after a re-pin, null otherwise.
+	Pin  *tailnet.Pin `json:"pin"`
+	code int
+}
+
+// repin decides, and with --yes does, the re-pin.
+func repin(ctx context.Context, env *hostEnv, a repinArgs) repinResult {
+	v := env.tailnet.RepinView(ctx)
+	res := repinResult{RepinView: v, PinnedText: "none", ObservedText: "unknown"}
 	if v.Pinned != nil && !v.Pinned.Enrolling {
-		pinned = describePin(v.Pinned.ControlURL, v.Pinned.TailnetID, v.Pinned.Suffix)
+		res.PinnedText = describePin(v.Pinned.ControlURL, v.Pinned.TailnetID, v.Pinned.Suffix)
 	}
 	if v.Observed != nil {
-		observed = describePin(v.Observed.ControlURL, v.Observed.TailnetID, v.Observed.Suffix)
+		res.ObservedText = describePin(v.Observed.ControlURL, v.Observed.TailnetID, v.Observed.Suffix)
 	}
-	fmt.Fprintf(stdout, "pinned:   %s\nobserved: %s\n", pinned, observed)
-	refuse := func(msg string) int {
-		fmt.Fprintln(stderr, "varlatchd admin tailnet repin: "+msg)
-		return ExitFailure
+	done := func(outcome, message string, code int) repinResult {
+		res.Outcome, res.Message, res.code = outcome, message, code
+		return res
 	}
 	switch {
 	case v.Observed == nil:
-		return refuse(tailnet.ErrNothingToRepin.Error())
+		return done("nothing-observed", tailnet.ErrNothingToRepin.Error(), ExitFailure)
 	case v.Missing && !a.adopt:
-		return refuse("the pin is missing, but this node was enrolled before: tailnet access stays closed. If the observed tailnet is the one this installation trusts, run again with --yes --adopt.")
+		return done("adoption-needed", "the pin is missing, but this node was enrolled before: tailnet access stays closed. If the observed tailnet is the one this installation trusts, run again with --yes --adopt.", ExitFailure)
 	case v.Pinned != nil && v.Pinned.Enrolling:
-		fmt.Fprintln(stdout, "The node is enrolling: its tailnet is pinned the first time it runs on one.")
-		return ExitOK
+		return done("enrolling", "The node is enrolling: its tailnet is pinned the first time it runs on one.", ExitOK)
 	case !v.Missing && v.Reason == "" && v.Closed == "":
-		fmt.Fprintln(stdout, "The pin holds: nothing to re-pin.")
-		return ExitOK
+		return done("holds", "The pin holds: nothing to re-pin.", ExitOK)
 	case !v.Offered:
-		return refuse(fmt.Sprintf("%s (%s). Tailnet access stays closed.", tailnet.ErrNotRepinnable.Error(), v.Reason))
+		return done("not-repinnable", fmt.Sprintf("%s (%s). Tailnet access stays closed.", tailnet.ErrNotRepinnable.Error(), v.Reason), ExitFailure)
 	case !a.yes && v.Reason == tailnet.PinSuffix:
-		fmt.Fprintln(stdout, "The tailnet's MagicDNS suffix changed under the same tailnet. Run again with --yes to pin the observed suffix and reopen tailnet access.")
-		return ExitOK
+		return done("suffix-changed", "The tailnet's MagicDNS suffix changed under the same tailnet. Run again with --yes to pin the observed suffix and reopen tailnet access.", ExitOK)
 	case !a.yes:
-		fmt.Fprintf(stdout, "The tailnet matches its pin again, but access stays closed since it changed (%s). Run again with --yes to reopen tailnet access.\n", v.Closed)
-		return ExitOK
+		return done("reopen-offered", fmt.Sprintf("The tailnet matches its pin again, but access stays closed since it changed (%s). Run again with --yes to reopen tailnet access.", v.Closed), ExitOK)
 	}
-	old, next, err := env.tailnet.Repin(ctx, a.adopt)
+	w := &write.Writer{Store: env.store, Gates: env.gates}
+	record := func(old, next *tailnet.Pin) error {
+		return w.Job(ctx, nil, func(ctx context.Context, tx *storage.Tx) error {
+			_, err := audit.Record(ctx, tx, repinEvent(old, next, v))
+			return err
+		})
+	}
+	old, next, err := env.tailnet.Repin(ctx, a.adopt, record)
 	switch {
 	case err != nil:
-		return refuse(err.Error())
+		return done("failed", err.Error(), ExitFailure)
 	case next == nil:
-		fmt.Fprintln(stdout, "The pin holds: nothing to re-pin.")
-	case old == nil:
-		fmt.Fprintf(stdout, "Adopted %s as the pinned tailnet; tailnet access is open.\n", next.Suffix)
-	case old.Suffix != next.Suffix:
-		fmt.Fprintf(stdout, "Re-pinned the tailnet from %s to %s; tailnet access is open.\n", old.Suffix, next.Suffix)
-	default:
-		fmt.Fprintf(stdout, "Reopened tailnet access on %s.\n", next.Suffix)
+		return done("holds", "The pin holds: nothing to re-pin.", ExitOK)
 	}
-	return ExitOK
+	res.Pin = next
+	switch {
+	case old == nil:
+		return done("adopted", fmt.Sprintf("Adopted %s as the pinned tailnet; tailnet access is open.", next.Suffix), ExitOK)
+	case old.Suffix != next.Suffix:
+		return done("repinned", fmt.Sprintf("Re-pinned the tailnet from %s to %s; tailnet access is open.", old.Suffix, next.Suffix), ExitOK)
+	default:
+		return done("reopened", fmt.Sprintf("Reopened tailnet access on %s.", next.Suffix), ExitOK)
+	}
+}
+
+// repinEvent is the audit event of a re-pin: tailnet.repinned, by the host
+// operator (no identity: the control socket's peer is the data
+// directory's owner or root), with what changed and why, and no value:
+// suffixes, the tailnet's StableID and the closure's reason, never the
+// control server's URL.
+func repinEvent(old, next *tailnet.Pin, v tailnet.RepinView) audit.Event {
+	action := "adopted"
+	var from any
+	if old != nil {
+		from = old.Suffix
+		action = "reopened"
+		if old.Suffix != next.Suffix {
+			action = "repinned"
+		}
+	}
+	var reason any
+	if v.Reason != "" {
+		reason = v.Reason
+	} else if v.Closed != "" {
+		reason = v.Closed
+	}
+	return audit.Event{
+		Type: "tailnet.repinned", Decision: audit.Info,
+		Resource: jsvalue.Object{{Key: "tailnet", Value: next.TailnetID}},
+		Metadata: jsvalue.Object{
+			{Key: "action", Value: action},
+			{Key: "fromSuffix", Value: from},
+			{Key: "toSuffix", Value: next.Suffix},
+			{Key: "tailnetId", Value: next.TailnetID},
+			{Key: "reason", Value: reason},
+			{Key: "operator", Value: true},
+		},
+	}
 }
 
 func describePin(controlURL, tailnetID, suffix string) string {

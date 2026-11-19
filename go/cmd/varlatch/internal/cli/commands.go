@@ -42,7 +42,7 @@ var commands = []command{
 	{name: "contract", slice: "5.3b", run: contractCommand},
 	{name: "types", slice: "5.3c", run: typesCommand},
 	{name: "invite", slice: "5.7a"},
-	{name: "tailnet", slice: "5.7a"},
+	{name: "tailnet", slice: "5.7a", partial: tailnetRepin},
 	{name: "audit", slice: "5.7a"},
 	{name: "org", slice: "5.7a"},
 	{name: "project", slice: "5.7a"},

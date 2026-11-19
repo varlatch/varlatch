@@ -4,7 +4,6 @@ package tailnet
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -416,19 +415,21 @@ func (m *Manager) checkLocked(ctx context.Context) {
 }
 
 // RepinView is what a re-pin shows the operator.
+// Its JSON names are stable: `varlatchd admin tailnet repin --json` prints
+// them, and `varlatch tailnet repin` reads them.
 type RepinView struct {
-	Pinned   *Pin
-	Observed *Observed
+	Pinned   *Pin      `json:"pinned"`
+	Observed *Observed `json:"observed"`
 	// Reason is Pin.Check's on what the node is on now, "" when it holds.
-	Reason string
+	Reason string `json:"reason"`
 	// Closed is the latched closure's reason, "" when none.
-	Closed string
+	Closed string `json:"closed"`
 	// Missing: the node was enrolled before but its pin is missing; only
 	// an adoption pins it.
-	Missing bool
+	Missing bool `json:"missing"`
 	// Offered is whether a re-pin (or, when Missing, an adoption) may take
 	// the observed tailnet.
-	Offered bool
+	Offered bool `json:"offered"`
 }
 
 // RepinView is the pinned and the observed tailnet, from a fresh check.
@@ -470,7 +471,11 @@ var (
 // nil on an adoption; new nil when there was nothing to do). Only the host
 // calls it (`varlatchd admin tailnet repin`, which step 6's `varlatch
 // tailnet repin` runs).
-func (m *Manager) Repin(ctx context.Context, adopt bool) (*Pin, *Pin, error) {
+//
+// record, when not nil, is called with the old and the new pin once the
+// re-pin is decided and before anything is changed: the host's audit
+// event, committed first. When it fails, nothing is re-pinned.
+func (m *Manager) Repin(ctx context.Context, adopt bool, record func(old, next *Pin) error) (*Pin, *Pin, error) {
 	m.checking.Lock()
 	defer m.checking.Unlock()
 	m.checkLocked(ctx)
@@ -495,7 +500,13 @@ func (m *Manager) Repin(ctx context.Context, adopt bool) (*Pin, *Pin, error) {
 			return m.pin, nil, err
 		}
 	}
+	if record != nil {
+		if err := record(m.pin, next); err != nil {
+			return m.pin, nil, err
+		}
+	}
 	if err := SavePin(filepath.Join(m.dataDir, PinFile), next); err != nil {
+		m.log.Error("the re-pin is recorded in the audit log, but the pin could not be saved: nothing changed", "error", err)
 		return m.pin, nil, err
 	}
 	old := m.pin
@@ -677,17 +688,4 @@ func (m *Manager) persistLocked() {
 		return
 	}
 	m.persisted.json, m.persisted.at = key, now
-}
-
-// MarshalJSON lets a view print as JSON (the host command's --json).
-func (v RepinView) MarshalJSON() ([]byte, error) {
-	type view struct {
-		Pinned   *Pin      `json:"pinned"`
-		Observed *Observed `json:"observed"`
-		Reason   string    `json:"reason"`
-		Closed   string    `json:"closed"`
-		Missing  bool      `json:"missing"`
-		Offered  bool      `json:"offered"`
-	}
-	return json.Marshal(view(v))
 }
