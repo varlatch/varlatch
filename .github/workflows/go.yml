@@ -781,6 +781,20 @@ jobs:
         with:
           go-version: 1.27.4
           cache: false
+      # The conformance binaries' module and build caches, shared by go-binary
+      # and go-binary-go-cli (the same CGO_ENABLED=0 builds of varlatchd, and
+      # the CLI); restored only, saved by go-binary-go-cli's first shard on
+      # the nightly run, as the other Go jobs' caches are.
+      - name: Restore Go's caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-conformance-
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 12.3.4
@@ -898,7 +912,7 @@ jobs:
           VARLATCH_REQUIRE_GO_BINARY: "1"
         run: VARLATCH_GO_BINARY="$RUNNER_TEMP/varlatchd" node --test scripts/conformance/test/go-binary.test.mjs
       - name: Install Chromium
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       # G13's restore drill (ADR-0059 step 4.14): a Go archive restored into
       # a fresh container that holds only the archive and the two keys (a
       # scratch image with varlatchd alone, no network), and the source's
@@ -1120,6 +1134,20 @@ jobs:
         with:
           go-version: 1.27.4
           cache: false
+      # The conformance binaries' module and build caches, shared by go-binary
+      # and go-binary-go-cli (the same CGO_ENABLED=0 builds of varlatchd, and
+      # the CLI); restored only, saved by go-binary-go-cli's first shard on
+      # the nightly run, as the other Go jobs' caches are.
+      - name: Restore Go's caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-conformance-
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 12.3.4
@@ -1147,7 +1175,7 @@ jobs:
           [ "${#files[@]}" -gt 0 ] || { echo "apps/cli/test/go-cli-files.json lists no file"; exit 1; }
           VARLATCH_TEST_CLI="$RUNNER_TEMP/varlatch" pnpm --filter @varlatch/cli exec vitest run "${files[@]}"
       - name: Install Chromium
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       - name: Run the conformance suites with the Go CLI
         env:
           SHARD: ${{ matrix.shard }}
@@ -1159,6 +1187,14 @@ jobs:
           path: conformance-report.json
           retention-days: 30
           if-no-files-found: warn
+      - name: Save Go's caches
+        if: success() && matrix.shard == 1 && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
 
   # The required check (the main ruleset's merge queue): every Go job
   # succeeded or was skipped because none of its paths changed.
