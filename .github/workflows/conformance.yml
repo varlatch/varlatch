@@ -159,7 +159,7 @@ jobs:
           cd go
           go build -o "$RUNNER_TEMP/varlatch" ./cmd/varlatch
       - name: Install Chromium
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: matrix.target == 'ts-source'
         with:

@@ -1282,6 +1282,35 @@ const types53c: TranscriptCase[] = [
   t({ id: "no-repository", title: "outside a repository", args: ["types", "--out", "config.ts"], files: {} }),
 ];
 
+// ---- 5.6a: the guardrail hook ---------------------------------------------------
+//
+// `agents hook --format <agent>` as a coding agent runs it: one pre-tool-use
+// event on stdin, the answer on stdout. The events name no directory, so the
+// case's directory is the tool call's; every other event is in the hook
+// vectors (go/cmd/varlatch/testdata/vectors/hook.json).
+
+const hookEvent = (tool_name: string, tool_input: unknown, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ session_id: "s", hook_event_name: "PreToolUse", tool_name, tool_input, ...extra });
+const HOOK = (format: string) => ["agents", "hook", "--format", format];
+const ENV_FILE = { ".env": "API_KEY=fake\n" };
+
+const hook56a: TranscriptCase[] = [
+  { id: "hook.claude.denied", title: "Claude Code: reading .env is denied, on stdout with status 0", args: HOOK("claude"), stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
+  { id: "hook.codex.denied", title: "Codex: the same decision", args: HOOK("codex"), stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
+  { id: "hook.allowed", title: "an allowed call: no decision, nothing printed", args: HOOK("claude"), stdin: hookEvent("Bash", { command: "npm test" }) },
+  { id: "hook.store", title: "the credential store is denied", args: HOOK("claude"), stdin: hookEvent("Read", { file_path: "{{dir}}/home/.config/varlatch/credentials.json" }) },
+  { id: "hook.run-env", title: "printing the environment of a varlatch run is denied", args: HOOK("codex"), stdin: hookEvent("Bash", { command: "varlatch run -- env" }) },
+  { id: "hook.search", title: "a recursive search that would print .env lines is denied", args: HOOK("claude"), stdin: hookEvent("Bash", { command: "grep -r KEY ." }), files: { ...ENV_FILE, "src/app.ts": "x\n" } },
+  { id: "hook.other-event", title: "another event: no decision", args: HOOK("claude"), stdin: hookEvent("Bash", { command: "cat .env" }, { hook_event_name: "PostToolUse" }), files: ENV_FILE },
+  { id: "hook.garbage", title: "input it cannot read: no decision, status 0", args: HOOK("claude"), stdin: "garbage" },
+  { id: "hook.empty", title: "nothing on stdin: no decision", args: HOOK("codex") },
+  { id: "hook.no-format", title: "--format is needed", args: ["agents", "hook"], stdin: hookEvent("Bash", { command: "cat .env" }) },
+  { id: "hook.unknown-format", title: "--format names one of the two", args: HOOK("cursor"), stdin: hookEvent("Bash", { command: "cat .env" }) },
+  { id: "hook.extra", title: "no argument after the options", args: [...HOOK("claude"), "extra"], stdin: hookEvent("Bash", { command: "cat .env" }) },
+  { id: "hook.unknown-option", title: "an unknown option", args: [...HOOK("claude"), "--json"], stdin: hookEvent("Bash", { command: "cat .env" }) },
+  { id: "hook.assisted", title: "the same under --assisted", args: ["--assisted", ...HOOK("claude")], stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
@@ -1292,4 +1321,5 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.3a-values": values53a,
   "5.3b-contracts": contracts53b,
   "5.3c-types": types53c,
+  "5.6a-hook": hook56a,
 };
