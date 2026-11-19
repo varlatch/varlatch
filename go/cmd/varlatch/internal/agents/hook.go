@@ -145,11 +145,21 @@ func globMatches(glob, name string) bool {
 
 var envDotted = regexp.MustCompile(`^\.env\..+`)
 
+// envName is a name as the file system compares it, for the .env checks:
+// on Windows, whose file names are compared without regard to case, in
+// lower case (`.ENV` is `.env` there); elsewhere as it is.
+func envName(name string) string {
+	if onWindows {
+		return strings.ToLower(name)
+	}
+	return name
+}
+
 // IsProtectedEnvFile is whether a name is a .env file by its name alone:
 // `.env`, `.envrc`, or `.env.<anything>`, other than the two templates; or
 // a glob that matches one.
 func IsProtectedEnvFile(path string) bool {
-	name := nameOf(path)
+	name := envName(nameOf(path))
 	if envTemplates[name] {
 		return false
 	}
@@ -170,7 +180,7 @@ func statOf(path string) os.FileInfo {
 // isEnvLikeFile is an existing file, other than a template, whose name
 // starts with `.env`.
 func isEnvLikeFile(path string) bool {
-	name := nameOf(path)
+	name := envName(nameOf(path))
 	info := statOf(path)
 	return strings.HasPrefix(name, ".env") && !envTemplates[name] && info != nil && info.Mode().IsRegular()
 }
@@ -185,13 +195,6 @@ func cleanPath(p string) string {
 		return win32Normalize(p)
 	}
 	return filepath.Clean(p)
-}
-
-func pathSeparator() string {
-	if onWindows {
-		return `\`
-	}
-	return "/"
 }
 
 // resolvePath is Node.js's path.resolve(cwd, path).
@@ -215,7 +218,7 @@ func resolvePath(cwd, path string) string {
 func isProtectedEnvPath(path string, ctx hookContext) bool {
 	full := resolvePath(ctx.cwd, expandPath(path, ctx))
 	name := nameOf(path)
-	if envTemplates[name] {
+	if envTemplates[envName(name)] {
 		return false
 	}
 	if isGlob(name) {
@@ -331,21 +334,43 @@ func windowsLocal(p string) string {
 	return p
 }
 
-// inDir is whether path is dir or below it. On Windows names are compared
-// without regard to case, and a `\\?\` or `\\.\` prefix is left out, so that
-// `c:\Cfg\Varlatch\credentials.json` and `\\?\C:\cfg\varlatch\...` are in
-// `C:\cfg\varlatch`; elsewhere byte for byte.
+// inDir is whether path is dir or below it. On Windows a path is compared
+// as Windows names its file: without regard to case, without a `\\?\` or
+// `\\.\` prefix, and, for a path without one, with each component's trailing
+// dots and spaces left out, as Win32 leaves them out (`c:\Cfg\Varlatch\`,
+// `C:\cfg\varlatch.\` and `\\?\C:\cfg\varlatch\` are in `C:\cfg\varlatch`; a
+// `\\?\` path is taken as written, so `\\?\C:\cfg\varlatch.\` is not).
+// Elsewhere byte for byte.
 func inDir(path, dir string) bool {
-	sep := pathSeparator()
-	prefix := dir
-	if !strings.HasSuffix(prefix, sep) {
-		prefix += sep
-	}
 	if !onWindows {
+		prefix := dir
+		if !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
 		return path == dir || strings.HasPrefix(path, prefix)
 	}
-	path, dir, prefix = windowsLocal(path), windowsLocal(dir), windowsLocal(prefix)
+	path, dir = windowsComparable(path), windowsComparable(dir)
+	prefix := dir
+	if !strings.HasSuffix(prefix, `\`) {
+		prefix += `\`
+	}
 	return strings.EqualFold(path, dir) || len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+}
+
+// windowsComparable is a Windows path as the file it names: without a
+// `\\?\` or `\\.\` prefix; a path without one with each component's trailing
+// run of dots and spaces left out (a component of nothing else is kept).
+func windowsComparable(p string) string {
+	if local := windowsLocal(p); local != p {
+		return local
+	}
+	parts := strings.Split(p, `\`)
+	for i, part := range parts {
+		if trimmed := strings.TrimRight(part, ". "); trimmed != "" {
+			parts[i] = trimmed
+		}
+	}
+	return strings.Join(parts, `\`)
 }
 
 // isInStore is whether a path is in the credential store.
@@ -822,11 +847,19 @@ func inlineCode(name string, words []string) (string, bool) {
 	return "", false
 }
 
-var envFileInCode = regexp.MustCompile(`(?:^|[^\w.-])(\.env[\w.-]*)`)
+var (
+	envFileInCode = regexp.MustCompile(`(?:^|[^\w.-])(\.env[\w.-]*)`)
+	// envFileInCodeFold is the same on Windows, where `.ENV` is `.env`.
+	envFileInCodeFold = regexp.MustCompile(`(?i)(?:^|[^\w.-])(\.env[\w.-]*)`)
+)
 
 // codeNamesEnvFile is whether a piece of code names a protected .env file.
 func codeNamesEnvFile(code string) bool {
-	for _, m := range envFileInCode.FindAllStringSubmatch(code, -1) {
+	pattern := envFileInCode
+	if onWindows {
+		pattern = envFileInCodeFold
+	}
+	for _, m := range pattern.FindAllStringSubmatch(code, -1) {
 		if IsProtectedEnvFile(m[1]) {
 			return true
 		}
@@ -1242,7 +1275,7 @@ func searchReadsEnvUnder(root string, s *search) bool {
 				}) {
 					queue = append(queue, item{path, cur.level + 1})
 				}
-			case mode.IsRegular() && strings.HasPrefix(entry.Name(), ".env") && !envTemplates[entry.Name()]:
+			case mode.IsRegular() && strings.HasPrefix(envName(entry.Name()), ".env") && !envTemplates[envName(entry.Name())]:
 				if searchReads(s, path, path[len(root)+1:]) {
 					return true
 				}

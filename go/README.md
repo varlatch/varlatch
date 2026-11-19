@@ -483,9 +483,12 @@ comes. `verify-release`, which the installers run, is Go's own.
   rooted without a drive (`/home/dev/...`) is absolute, and a UNC path's
   share follows any run of separators after the server. It compares a
   path with the credential store's directories, and with its
-  `.config/varlatch` backstop, without regard to case and without a
-  `\\?\` or `\\.\` prefix, as Windows names files
-  (`TestHookStoreWindowsForms`); elsewhere byte for byte
+  `.config/varlatch` backstop, as Windows names files: without regard to
+  case, without a `\\?\` or `\\.\` prefix, and, in a path without one, with
+  each component's trailing dots and spaces left out, as Win32 leaves
+  them out (`TestHookStoreWindowsForms`); and it reads `.env` names
+  without regard to case there (`.ENV` is `.env`,
+  `TestHookEnvCaseOnWindows`). Elsewhere byte for byte
   (`TestHookStoreCaseOffWindows`). `TestHookDeniesWithThisPlatformsPaths`
   holds a `.env` read, a search and the store to a denial with the
   platform's own paths. `internal/cli`'s

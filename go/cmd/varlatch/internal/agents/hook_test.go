@@ -363,8 +363,9 @@ func TestHookSplitSurrogatePair(t *testing.T) {
 
 // TestHookLongReaderIsLinear: a reader with many distinct words checks each
 // once (a set of its arguments), in time linear in the words, by
-// growsLinearly (checked against the argument list word by word, 50,000
-// words took 14 seconds); every run still denies the `.env` at its end.
+// growsLinearly and timed by growth (checked against the argument list
+// word by word, 50,000 words took 14 seconds); every run still denies the
+// `.env` at its end.
 func TestHookLongReaderIsLinear(t *testing.T) {
 	env := envMap{"HOME": "/home/dev"}
 	run := func(n int) func() {
@@ -382,14 +383,8 @@ func TestHookLongReaderIsLinear(t *testing.T) {
 			}
 		}
 	}
-	n := 12_500
-	if raceSlowdown > 1 {
-		n /= 4
-	}
-	run(n / 4)() // warm up
-	small, large := bestOf3(run(n)), bestOf3(run(4*n))
-	t.Logf("%d words %v, %d words %v (%.1fx)", n, small, 4*n, large, float64(large)/float64(small))
+	small, large := growth(t, "a long reader", minSmall, 100_000, 1<<21, nil, run)
 	if !growsLinearly(small, large) {
-		t.Errorf("%d words %v, %d words %v: not linear", n, small, 4*n, large)
+		t.Errorf("a long reader: %v, then %v at eight times the words: not linear", small, large)
 	}
 }
