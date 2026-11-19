@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -510,9 +510,11 @@ function onTerminal(c: TranscriptCase, argv: string[], cwd: string, env: Record<
     let shown = "";
     child.stdout.on("data", (d: Buffer) => (shown += d.toString("utf8")));
     child.on("error", reject);
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, "utf8") : "");
-      const out = { status: code ?? 1, stdout: read(outFile), stderr: read(errFile), terminal: shown.replace(/\r\n/g, "\n") };
+      // script(1) ended by a signal: 128 plus its number, as a shell reports it (the replay's exitStatus).
+      const status = code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : 1);
+      const out = { status, stdout: read(outFile), stderr: read(errFile), terminal: shown.replace(/\r\n/g, "\n") };
       rmSync(streams, { recursive: true, force: true });
       resolve(out);
     });

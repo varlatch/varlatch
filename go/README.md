@@ -410,9 +410,9 @@ comes. `verify-release`, which the installers run, is Go's own.
   its stdout, its stderr or both, and its stdin): the recorder uses
   util-linux `script`, the replay opens one itself (`creack/pty`, Linux
   and macOS; skipped on Windows), and what the terminal displayed is
-  compared as `expect.terminal`, its `\r\n` as `\n`. Regenerate after changing the cases with
-  `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/cli exec vitest run
-  test/go-transcripts.test.ts`.
+  compared as `expect.terminal`, its `\r\n` as `\n`. Regenerate after
+  changing the cases with `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter
+  @varlatch/cli exec vitest run test/go-transcripts.test.ts`.
 - `testdata/vectors/framework.json`: what the TypeScript code answers for
   the option parser, help, safe text, assisted mode, the global options,
   the User-Agents and the exit status of an API error
