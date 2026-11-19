@@ -413,7 +413,7 @@ func (r *Run) useServer(server string, asJSON bool) error {
 	if !slices.Contains(signedIn, key) {
 		shown := clientctx.DisplayServer(key)
 		list := strings.Join(clientctx.DisplayServers(signedIn), ", ")
-		command := "varlatch login --server " + shown
+		command := "varlatch login --server " + shellWord(shown)
 		if shown != key {
 			command = "varlatch login --server and its URL" // a command naming what is shown would not work
 		}

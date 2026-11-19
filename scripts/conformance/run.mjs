@@ -153,7 +153,8 @@ function runSuite(script, args, env, cwd) {
     const nonce = randomBytes(16).toString("hex");
     const child = spawn(process.execPath, ["--import", END_PRELOAD, script, ...args], {
       cwd,
-      env,
+      // Not a secret: tells the preload that fd 4 is the runner's.
+      env: { ...env, CONFORMANCE_NONCE_FD: "4" },
       stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
       detached: true,
     });

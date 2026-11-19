@@ -7,6 +7,7 @@
     "5.1c",
     "5.1d",
     "5.1e",
+    "5.2",
     "5.3a",
     "5.3b",
     "5.3c"
@@ -3543,7 +3544,14 @@
         "none: the error"
       ],
       "source": "apps/cli/src/oidcLogin.ts",
-      "cases": []
+      "cases": [
+        "transcripts/5.2-sign-in.json#oidc.flag",
+        "transcripts/5.2-sign-in.json#oidc.flag-over-env",
+        "transcripts/5.2-sign-in.json#oidc.env",
+        "transcripts/5.2-sign-in.json#oidc.env-over-actions",
+        "transcripts/5.2-sign-in.json#oidc.actions",
+        "transcripts/5.2-sign-in.json#oidc.none"
+      ]
     },
     {
       "name": "assisted",

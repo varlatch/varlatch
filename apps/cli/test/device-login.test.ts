@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { EXIT } from "../src/exitCodes.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * Device-authorization sign-in in the CLI (design notes "Device-authorization
@@ -138,7 +139,7 @@ function spawned(args: string[], config: string, options: { env?: Record<string,
   const started = Date.now();
   let child!: ReturnType<typeof spawn>;
   const done = new Promise<Result>((resolve, reject) => {
-    child = spawn(process.execPath, [bundle, ...args], {
+    child = spawn(...cliCommand(bundle, args), {
       cwd: options.cwd ?? dir,
       env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: config, ...options.env },
       stdio: ["pipe", "pipe", "pipe"],

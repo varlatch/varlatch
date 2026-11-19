@@ -71,6 +71,38 @@ func fetchFailed(code string, cause error) *FetchError {
 	return &FetchError{Message: "fetch failed", Code: code, Cause: cause}
 }
 
+// AbortError is the error fetch rejects with when its signal aborts: a
+// TimeoutError for AbortSignal.timeout (a context whose deadline passed),
+// an AbortError for a controller's abort (a context cancelled, Ctrl-C).
+// It is not a network failure (exitCodes.ts's networkFailure).
+type AbortError struct {
+	Timeout bool
+	Cause   error // context.Cause: what the abort was given, if anything
+}
+
+func (e *AbortError) Error() string {
+	if e.Timeout {
+		return "The operation was aborted due to timeout"
+	}
+	return "This operation was aborted"
+}
+
+func (e *AbortError) Unwrap() error { return e.Cause }
+
+// aborted is the AbortError for a context that is done, else nil.
+func aborted(ctx context.Context) *AbortError {
+	if ctx.Err() == nil {
+		return nil
+	}
+	return &AbortError{Timeout: errors.Is(ctx.Err(), context.DeadlineExceeded), Cause: context.Cause(ctx)}
+}
+
+// IsAbort is deviceLogin.ts's isAbort: a request its signal ended.
+func IsAbort(err error) bool {
+	var a *AbortError
+	return errors.As(err, &a)
+}
+
 // BodyError is the TypeError reading an answer's body rejects with when
 // the connection ends before the body does: "terminated". It is not a
 // network failure to exitCodes.ts (its message is not "fetch failed").

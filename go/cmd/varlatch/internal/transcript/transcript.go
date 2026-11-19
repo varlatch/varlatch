@@ -16,11 +16,13 @@ package transcript
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,7 +46,7 @@ import (
 const Schema = 2
 
 // RecordedHeaders are the request headers a recording keeps (goKit.ts).
-var RecordedHeaders = []string{"authorization", "user-agent", "content-type", "accept", "idempotency-key"}
+var RecordedHeaders = []string{"authorization", "user-agent", "content-type", "accept", "idempotency-key", "varlatch-approval"}
 
 // File is one area's recording.
 type File struct {
@@ -67,8 +69,29 @@ type Case struct {
 	Server      []Exchange        `json:"server,omitempty"`
 	Differences []string          `json:"differences,omitempty"`
 	Patterns    []string          `json:"patterns,omitempty"`
-	Expect      Outcome           `json:"expect"`
+	// Callback answers the browser sign-in's loopback callback as the
+	// sign-in page does: once stdout holds the printed address, Body is
+	// POSTed to the callback it names, Times times (1 when 0), each on a
+	// connection of its own.
+	Callback *Callback `json:"callback,omitempty"`
+	// Signal sends Ctrl-C once stderr holds After.
+	Signal *Signal `json:"signal,omitempty"`
+	Expect Outcome `json:"expect"`
 }
+
+// Callback is a case's browser sign-in callback.
+type Callback struct {
+	Body  string `json:"body"`
+	Times int    `json:"times,omitempty"`
+}
+
+// Signal is a case's Ctrl-C.
+type Signal struct {
+	After string `json:"after"`
+}
+
+// ErrUnsupported is a case this platform cannot replay (Ctrl-C on Windows).
+var ErrUnsupported = errors.New("the case cannot be replayed on this platform")
 
 // Exchange is one request the fake server expects, in order, and its answer.
 type Exchange struct {
@@ -105,6 +128,8 @@ type Outcome struct {
 	Stderr   string               `json:"stderr"`
 	Requests []Request            `json:"requests"`
 	Files    map[string]FileState `json:"files"`
+	// Callbacks is what each callback POST got: its status, or "refused".
+	Callbacks []string `json:"callbacks,omitempty"`
 }
 
 // Request is one request the fake server received.
@@ -268,17 +293,24 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		cmd.Env = append(cmd.Env, k+"="+env[k])
 	}
 	cmd.Stdin = strings.NewReader(c.Stdin)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	for _, name := range c.Patterns {
-		if name != "now" && name != "generated" && name != "release" {
-			return Outcome{}, nil, fmt.Errorf("case %s: no pattern %q", c.ID, name)
+		if _, err := ApplyPatterns([]string{name}, "", 0, 0); err != nil {
+			return Outcome{}, nil, fmt.Errorf("case %s: %w", c.ID, err)
 		}
 	}
+	if c.Signal != nil && runtime.GOOS == "windows" {
+		return Outcome{}, nil, ErrUnsupported
+	}
+	watch := &watcher{c: c}
+	cmd.Stdout, cmd.Stderr = watch.stream(&watch.stdout), watch.stream(&watch.stderr)
 	began := time.Now().UnixMilli()
 	if err := cmd.Start(); err != nil {
 		return Outcome{}, nil, err
 	}
+	watch.mu.Lock()
+	watch.process = cmd.Process
+	watch.react() // what the run wrote before the process was known
+	watch.mu.Unlock()
 	timer := time.AfterFunc(60*time.Second, func() { _ = cmd.Process.Kill() })
 	err = cmd.Wait()
 	timer.Stop()
@@ -288,20 +320,17 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		if !asExit(err, &exit) {
 			return Outcome{}, nil, err
 		}
-		status = exit.ExitCode()
+		status = exitStatus(exit)
 	}
+	callbacks := watch.callbacksDone()
 	end := time.Now().UnixMilli()
 	unfill := func(s string) string {
 		s = strings.ReplaceAll(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir, "{{dir}}")
-		if slices.Contains(c.Patterns, "now") {
-			s = NowPattern(s, began, end)
-		}
-		if release {
-			s = ReleaseUnfill(s)
-		}
+		s, _ = ApplyPatterns(c.Patterns, s, began, end)
 		return s
 	}
-	got := Outcome{Status: status, Stdout: unfill(stdout.String()), Stderr: unfill(stderr.String()), Files: map[string]FileState{}}
+	stdout, stderr := watch.text()
+	got := Outcome{Status: status, Stdout: unfill(stdout), Stderr: unfill(stderr), Files: map[string]FileState{}, Callbacks: callbacks}
 	for _, r := range srv.received() {
 		r.Path = unfill(r.Path)
 		for k, v := range r.Headers {
@@ -311,7 +340,7 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		got.Requests = append(got.Requests, r)
 	}
 	if slices.Contains(c.Patterns, "generated") {
-		got.Requests = GeneratedPattern(c.Args, got.Requests, stdout.String()+stderr.String())
+		got.Requests = GeneratedPattern(c.Args, got.Requests, stdout+stderr)
 	}
 	if got.Files, err = Tree(dir, unfill); err != nil {
 		return got, nil, err
@@ -428,6 +457,157 @@ func NowPattern(text string, start, end int64) string {
 	})
 }
 
+// LaterPattern is goKit.ts's laterPattern, the "now+<s>" pattern: each
+// timestamp from start to end plus seconds, as {{now+<s>}}.
+func LaterPattern(text string, start, end int64, seconds int64) string {
+	return isoTimestamp.ReplaceAllStringFunc(text, func(t string) string {
+		at, err := time.Parse("2006-01-02T15:04:05.000Z", t)
+		if err != nil {
+			return t
+		}
+		if ms := at.UnixMilli() - seconds*1000; ms >= start && ms <= end {
+			return "{{now+" + strconv.FormatInt(seconds, 10) + "}}"
+		}
+		return t
+	})
+}
+
+// callbackPort is the loopback callback's port in a printed sign-in address.
+var callbackPort = regexp.MustCompile(`(callback=http%3A%2F%2F127\.0\.0\.1%3A)\d+(%2F)`)
+
+// laterName is a "now+<s>" pattern's name.
+var laterName = regexp.MustCompile(`^now\+(\d+)$`)
+
+// ApplyPatterns is goKit.ts's applyPatterns: the patterns a case names,
+// in order: "now", "now+<s>", "callback" (the loopback port as {{port}})
+// and "release" (ReleaseUnfill); "generated" applies to request bodies
+// (GeneratedPattern).
+func ApplyPatterns(patterns []string, text string, start, end int64) (string, error) {
+	for _, name := range patterns {
+		switch m := laterName.FindStringSubmatch(name); {
+		case name == "now":
+			text = NowPattern(text, start, end)
+		case m != nil:
+			seconds, _ := strconv.ParseInt(m[1], 10, 64)
+			text = LaterPattern(text, start, end, seconds)
+		case name == "callback":
+			text = callbackPort.ReplaceAllString(text, "${1}{{port}}${2}")
+		case name == "release":
+			text = ReleaseUnfill(text)
+		case name == "generated":
+			// Applies to request bodies (GeneratedPattern), not to text.
+		default:
+			return text, fmt.Errorf("no pattern %q", name)
+		}
+	}
+	return text, nil
+}
+
+// watcher collects a run's output as it comes, and acts on it: the
+// callback once stdout prints the address, Ctrl-C once stderr says the
+// case's text.
+type watcher struct {
+	c              Case
+	mu             sync.Mutex
+	stdout, stderr bytes.Buffer
+	process        *os.Process
+	called         bool
+	signalled      bool
+	done           chan []string
+}
+
+type watchedStream struct {
+	w   *watcher
+	buf *bytes.Buffer
+}
+
+func (s watchedStream) Write(p []byte) (int, error) {
+	s.w.mu.Lock()
+	defer s.w.mu.Unlock()
+	s.buf.Write(p)
+	s.w.react()
+	return len(p), nil
+}
+
+func (w *watcher) stream(buf *bytes.Buffer) io.Writer { return watchedStream{w, buf} }
+
+// callbackAddress is the callback a printed sign-in address names.
+var callbackAddress = regexp.MustCompile(`callback=(\S+)\n`)
+
+// react runs with the lock held, after each write.
+func (w *watcher) react() {
+	if cb := w.c.Callback; cb != nil && !w.called {
+		if m := callbackAddress.FindStringSubmatch(w.stdout.String()); m != nil {
+			w.called = true
+			target, err := url.QueryUnescape(m[1])
+			times := max(cb.Times, 1)
+			w.done = make(chan []string, 1)
+			go func() {
+				var got []string
+				for range times {
+					if err != nil {
+						got = append(got, "refused")
+						continue
+					}
+					got = append(got, postOnce(target, cb.Body))
+				}
+				w.done <- got
+			}()
+		}
+	}
+	if sig := w.c.Signal; sig != nil && !w.signalled && w.process != nil && strings.Contains(w.stderr.String(), sig.After) {
+		w.signalled = true
+		_ = w.process.Signal(os.Interrupt)
+	}
+}
+
+// callbacksDone waits for the callbacks' answers, if any were made.
+func (w *watcher) callbacksDone() []string {
+	w.mu.Lock()
+	done := w.done
+	w.mu.Unlock()
+	if w.c.Callback == nil {
+		return nil
+	}
+	if done == nil {
+		return []string{}
+	}
+	select {
+	case got := <-done:
+		return got
+	case <-time.After(5 * time.Second):
+		return []string{"no answer"}
+	}
+}
+
+func (w *watcher) text() (string, string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stdout.String(), w.stderr.String()
+}
+
+// postOnce POSTs body to target on a connection of its own: the status, or
+// "refused".
+func postOnce(target, body string) string {
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 10 * time.Second}
+	res, err := client.Post(target, "application/json", strings.NewReader(body))
+	if err != nil {
+		return "refused"
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	_ = res.Body.Close()
+	return strconv.Itoa(res.StatusCode)
+}
+
+// exitStatus is a run's status as a shell reports it: 128 plus the signal
+// for a process a signal ended (130 for Ctrl-C).
+func exitStatus(exit *exec.ExitError) int {
+	if code := exit.ExitCode(); code >= 0 {
+		return code
+	}
+	return signalStatus(exit)
+}
+
 // Tree is the final state of everything under dir, dir itself excepted,
 // as goKit.ts's listTree records it: every file with its content, every
 // directory (its path ends in "/"), every symbolic link with its target
@@ -532,6 +712,9 @@ func Compare(want, got Outcome) []string {
 		sorted = append(sorted, k)
 	}
 	sort.Strings(sorted)
+	if !slices.Equal(want.Callbacks, got.Callbacks) {
+		problems = append(problems, fmt.Sprintf("the callbacks got %q, want %q", got.Callbacks, want.Callbacks))
+	}
 	for _, name := range sorted {
 		w, inWant := want.Files[name]
 		g, inGot := got.Files[name]
