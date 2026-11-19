@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## 0.22.4 (2026-11-19)
+## 0.22.4 (2026-11-20)
 
 A CLI release: a fix to the agent-safe Broker's response scrubbing. The
 server is unchanged apart from its version and the CLI its image carries
