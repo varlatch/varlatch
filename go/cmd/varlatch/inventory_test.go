@@ -85,7 +85,7 @@ func builtSlices(t *testing.T) []string {
 	return built
 }
 
-var builtName = regexp.MustCompile(`^5\.[0-9][a-z]?$`)
+var builtName = regexp.MustCompile(`^5\.[0-9]+[a-z]?$`)
 
 // recorded is one transcript case, with the command it runs after the
 // global options.

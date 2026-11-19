@@ -31,7 +31,8 @@ const inventory = {
  * (internal docs/design/go-cli.md's slices, as "5.2"): a test of what a
  * later slice builds is skipped against Go with `it.skipIf(goLacks("5.2"))`.
  * The TypeScript bundle lacks nothing. A skip ends by itself: the slice's
- * pull request marks it built in the inventory, and the test runs.
+ * pull request adds its file under go/cmd/varlatch/testdata/built/, and
+ * the test runs.
  */
 export function goLacks(...slices: string[]): boolean {
   return Boolean(process.env.VARLATCH_TEST_CLI) && slices.some((slice) => !inventory.built.includes(slice));
