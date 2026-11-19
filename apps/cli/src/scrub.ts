@@ -240,6 +240,11 @@ export async function relayScrubbed(opts: {
       const out = matcher.push(chunk as Buffer);
       if (out.length > 0 && !res.write(out)) await drained(res);
     }
+    // A body that ends with the connection also reads as ended (and
+    // complete) when the connection is reset: only a response whose
+    // connection did not fail is a clean end, and only a clean end releases
+    // what the matcher holds.
+    if (!upstream.complete || upstream.socket?.errored) throw new Error("the destination's response did not end cleanly");
     const end = matcher.end();
     if (end.incompletePrefix) report({ kind: "incomplete-prefix", ...end.incompletePrefix });
     watchdog.stop();
