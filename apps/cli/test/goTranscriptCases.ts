@@ -6,7 +6,7 @@ import { skillFiles } from "../src/agents/skill.js";
 import { generateTypesModule } from "../src/typegen.js";
 import { generatePythonModule } from "../src/typegenPython.js";
 import { ITEMS, contractItem, revision } from "./fixtures.js";
-import type { Exchange, TranscriptCase } from "./goKit.js";
+import { type Exchange, PLATFORM_PUBLIC_KEY_WORD, type TranscriptCase } from "./goKit.js";
 
 /**
  * The transcript cases, by area (one file each under
@@ -1692,6 +1692,136 @@ const admin57a: TranscriptCase[] = [
   a({ id: "member.unknown-option", title: "member is parsed strictly", args: ["member", "list", "--all"] }),
 ];
 
+// ---------------------------------------------------------------------------
+// 5.8b: sync check and sync push, against the fake platforms (goKit.ts's
+// platformServer: api.github.com, coolify.conformance.test and
+// convex.conformance.test). Every request a platform receives is recorded;
+// a case that sends none says so with an empty script. A value a case
+// stores appears only in what a platform receives, never in the output.
+
+const SYNC_TOKEN = "platform-token-canary-0001";
+const OTHER_TOKEN = "platform-token-canary-0002";
+const GH_ENV = { GITHUB_TOKEN: "github-token-must-not-be-read", GH_TOKEN: "gh-token-must-not-be-read" };
+const syncItem = (name: string, sensitive: boolean, value: string | null) => ({ name, sensitive, source: "self", value: sensitive ? null : value });
+const SYNC_ITEMS = [syncItem("API_TOKEN", true, null), syncItem("DATABASE_URL", true, null), syncItem("LOG_LEVEL", false, "info"), syncItem("PIN", true, null)];
+const SECRET_VALUES: Record<string, string> = { API_TOKEN: "api-token-value-canary", DATABASE_URL: "postgres://app:db-canary@db.internal/app", PIN: "q7Zx2Kw" };
+const syncEffective = (items: unknown[] = SYNC_ITEMS, contract: unknown = null) => ok(`${ENV}/effective-configuration?include=values`, { environmentId: "env_dev", items, manifest: { manifestVersion: 1, contract } });
+const disclose = (names: string[] = Object.keys(SECRET_VALUES)) => exch("POST", `${ENV}/disclosures`, 200, { items: names.map((n) => ({ name: n, versionId: `ver_${n}`, value: SECRET_VALUES[n] })), withheld: [] });
+const SYNC = (sub: string, ...rest: string[]) => ["sync", sub, ...rest];
+const GH = ["--platform", "github-actions", "--base", "acme", "--repo", "web"];
+const COOLIFY = ["--platform", "coolify", "--base", "https://coolify.conformance.test", "--app", "app-uuid-0001"];
+const COOLIFY_SVC = ["--platform", "coolify", "--base", "https://coolify.conformance.test", "--service", "svc-uuid-0001"];
+const CONVEX = ["--platform", "convex", "--base", "https://convex.conformance.test"];
+const TOKEN_ENV = { VARLATCH_SYNC_TOKEN: SYNC_TOKEN, ...GH_ENV };
+const plat = (method: string, path: string, status: number, answer?: unknown): Exchange => ({ method, path, status, ...(answer === undefined ? { headers: {} } : { answer }) });
+const COOLIFY_ROWS = [
+  { uuid: "r1", key: "API_TOKEN", value: SECRET_VALUES.API_TOKEN, is_preview: false },
+  { uuid: "r2", key: "LOG_LEVEL", value: "debug", is_preview: false },
+  { uuid: "r3", key: "OLD_FLAG", value: "x", is_preview: false },
+  { uuid: "r4", key: "COOLIFY_FQDN", value: "https://app.example", is_preview: false },
+];
+const coolifyEnvs = (rows: unknown = COOLIFY_ROWS, status = 200) => plat("GET", "/api/v1/applications/app-uuid-0001/envs", status, rows);
+const CONVEX_VARS = [{ name: "API_TOKEN", value: "something-else" }, { name: "LOG_LEVEL", value: "info" }, { name: "PIN", value: SECRET_VALUES.PIN }];
+const convexQuery = (vars: unknown = CONVEX_VARS, status = 200) => plat("POST", "/api/query", status, status === 200 ? { status: "success", value: vars } : { code: "Unauthenticated" });
+const ghKey = (path = "/repos/acme/web/actions/secrets") => plat("GET", `${path}/public-key`, 200, { key_id: "key-1", key: PLATFORM_PUBLIC_KEY_WORD });
+const ghPut = (name: string, status = 201, path = "/repos/acme/web/actions/secrets") => plat("PUT", `${path}/${name}`, status);
+const SERVICE_ROWS = [
+  { uuid: "s1", key: "API_TOKEN", value: SECRET_VALUES.API_TOKEN },
+  { uuid: "s2", key: "LOG_LEVEL", value: "info" },
+  { uuid: "s3", key: "PIN" },
+];
+const SERVICE_COMPOSE = "services:\n  backend:\n    environment:\n      LOG_LEVEL: warn\n      API_TOKEN: ${API_TOKEN}\n  dashboard:\n    image: x\n";
+const CYCLIC_COMPOSE = "services:\n  backend: &loop\n    environment:\n      API_TOKEN: ${API_TOKEN}\n    extends: *loop\n";
+const serviceRecord = (compose: string) => ({ uuid: "svc-uuid-0001", name: "convex", compose_parsing_version: 5, docker_compose_raw: compose, docker_compose: "services:\n  backend:\n    env_file: [.env]\n" });
+const s = (c: Omit<TranscriptCase, "differences" | "files" | "cwd"> & { files?: Record<string, string>; cwd?: string; differences?: string[] }): TranscriptCase => v(c);
+
+const sync58b: TranscriptCase[] = [
+  // the command line
+  s({ id: "sync.none", title: "sync alone (64)", args: ["sync"] }),
+  s({ id: "sync.unknown", title: "an unknown subcommand (64)", args: ["sync", "pull"] }),
+  s({ id: "check.no-platform", title: "check without --platform (64), nothing sent", args: SYNC("check", "--base", "acme") }),
+  s({ id: "check.no-base", title: "check without --base (64)", args: SYNC("check", "--platform", "github-actions") }),
+  s({ id: "check.unknown-option", title: "check is strict: a push-only option (64)", args: SYNC("check", ...GH, "--build-time", "true") }),
+  s({ id: "check.unknown-platform", title: "an unknown platform (64), nothing sent", args: SYNC("check", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  s({ id: "check.bad-base", title: "a Coolify base that is not https (64), nothing sent", args: SYNC("check", "--platform", "coolify", "--base", "http://coolify.conformance.test", "--app", "app-uuid-0001"), env: TOKEN_ENV, platform: [] }),
+  s({ id: "check.no-repo", title: "GitHub without --repo (64), nothing sent", args: SYNC("check", "--platform", "github-actions", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  s({ id: "push.no-platform", title: "push without --platform (64, after the context)", args: SYNC("push", "--base", "acme") }),
+  s({ id: "push.no-base", title: "push without --base (64)", args: SYNC("push", "--platform", "convex") }),
+  s({ id: "push.unknown-platform", title: "push to an unknown platform (1), nothing sent", args: SYNC("push", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  s({ id: "push.bad-destination", title: "push to Coolify with both --app and --service (1), nothing sent", args: SYNC("push", ...COOLIFY, "--service", "svc-uuid-0001"), env: TOKEN_ENV, platform: [] }),
+
+  // sync check, GitHub Actions: write-only, nothing read or disclosed
+  s({ id: "check.github", title: "GitHub Actions: values are write-only, so no key is compared (2); nothing is disclosed", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  s({ id: "check.github.json", title: "the same, --json", args: SYNC("check", ...GH, "--gh-environment", "prod", "--json"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  s({ id: "check.github.contract", title: "with an active Contract: its items are the keys", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [{ ...syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }) }, ok("/v1/organizations/acme/projects/web/contract", { id: "crv_1", contract: { items: [{ name: "API_TOKEN" }, { name: "NEW_ONE" }, { name: "VARLATCH_RUN_CONTEXT" }] } })], platform: [] }),
+  s({ id: "check.github.contract-403", title: "a Contract this identity may not read: the stored items, said", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }), { ...ok("/v1/organizations/acme/projects/web/contract", apiError(403, "PERMISSION_DENIED")), status: 403 }], platform: [] }),
+
+  // sync check, Coolify: the platform first, then only the Secrets it holds are disclosed
+  s({ id: "check.coolify", title: "Coolify: read first, then the one Secret it holds disclosed; drift (1), never a value", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  s({ id: "check.coolify.json", title: "the same, --json", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  s({ id: "check.coolify.map", title: "--map renames; only the mapped key is compared", args: SYNC("check", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN=OLD_FLAG"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  s({ id: "check.coolify.exclude", title: "--exclude a prefix", args: SYNC("check", ...COOLIFY, "--exclude", "API_*", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs()] }),
+  s({ id: "check.map-unknown", title: "--map naming no stored item (64, after reading the Environment)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  s({ id: "check.map-and-exclude", title: "--map with --exclude (64)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  s({ id: "check.coolify.unauthorized", title: "Coolify refuses the token: not checked (2), nothing disclosed", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs({ message: "Unauthenticated." }, 401)] }),
+  s({ id: "check.coolify.garbage", title: "an answer that is not JSON: not checked (2), the body never repeated", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [{ ...coolifyEnvs(`<html>${SECRET_VALUES.API_TOKEN}</html>`), headers: { "content-type": "text/html" } }] }),
+  s({ id: "check.disclosure-denied", title: "the disclosure refused: said, the Secret not compared", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), { ...exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED")) }], platform: [coolifyEnvs()] }),
+
+  // the credential's variable: --token-env, VARLATCH_SYNC_TOKEN, never GITHUB_TOKEN or GH_TOKEN
+  s({ id: "check.token-env.given", title: "--token-env names the variable read", args: SYNC("check", ...COOLIFY, "--token-env", "MY_COOLIFY"), env: { MY_COOLIFY: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  s({ id: "check.token-env.absent", title: "without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  s({ id: "check.token-env.empty", title: "--token-env naming an empty variable: not checked (2), GITHUB_TOKEN and GH_TOKEN not read, nothing sent to the platform", args: SYNC("check", ...COOLIFY, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, server: [syncEffective()], platform: [] }),
+  s({ id: "check.token-env.unset", title: "no VARLATCH_SYNC_TOKEN and no --token-env: not checked (2)", args: SYNC("check", ...COOLIFY, "--json"), env: GH_ENV, server: [syncEffective()], platform: [] }),
+  s({ id: "push.token-env.given", title: "push: --token-env names the variable GitHub gets", args: SYNC("push", ...GH, "--token-env", "MY_GITHUB", "--map", "LOG_LEVEL"), env: { MY_GITHUB: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  s({ id: "push.token-env.absent", title: "push without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  s({ id: "push.token-env.empty", title: "push with --token-env naming an empty variable (1): nothing read, disclosed or sent", args: SYNC("push", ...GH, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, platform: [] }),
+
+  // sync check, Convex
+  s({ id: "check.convex", title: "Convex: read, the Secrets it holds disclosed, compared", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
+  s({ id: "check.convex.json", title: "the same, --json", args: SYNC("check", ...CONVEX, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
+  s({ id: "check.convex.unauthorized", title: "Convex refuses the key: not checked (2)", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective()], platform: [convexQuery(null, 401)] }),
+
+  // sync push, GitHub Actions: the public key, then one sealed value per secret
+  s({ id: "push.github", title: "GitHub Actions: every readable value, sealed to the repository's key", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("DATABASE_URL"), ghPut("LOG_LEVEL"), ghPut("PIN")] }),
+  s({ id: "push.github.environment", title: "--gh-environment: the environment's secrets", args: SYNC("push", ...GH, "--gh-environment", "prod", "--map", "API_TOKEN=deploy_token"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey("/repos/acme/web/environments/prod/secrets"), ghPut("DEPLOY_TOKEN", 201, "/repos/acme/web/environments/prod/secrets")] }),
+  s({ id: "push.github.skipped", title: "a name GitHub reserves and one not readable are skipped (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN=GITHUB_TOKEN", "--map", "MISSING", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  s({ id: "push.github.nothing", title: "nothing readable to push (1): the platform never reached", args: SYNC("push", ...GH, "--map", "MISSING"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
+  s({ id: "push.github.exclude", title: "--exclude without --map", args: SYNC("push", ...GH, "--exclude", "PIN", "--exclude", "DATABASE_*"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("LOG_LEVEL")] }),
+  s({ id: "push.map-and-exclude", title: "--map with --exclude (1), after the disclosure, nothing sent to the platform", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
+  s({ id: "push.github.put-fails", title: "one secret refused: failed, the rest pushed (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN", 422), ghPut("LOG_LEVEL")] }),
+  s({ id: "push.disclosure-denied", title: "the disclosure refused: non-sensitive values only", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED"))], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  s({ id: "push.github.key-refused", title: "the public key refused: the adapter's error stops the push (TypeScript lets it escape)", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("GET", "/repos/acme/web/actions/secrets/public-key", 401, { message: "Bad credentials" })], differences: ["uncaught"] }),
+
+  // sync push, Coolify and Convex
+  s({ id: "push.coolify", title: "Coolify application: read, then each value written", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" }), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r1" })] }),
+  s({ id: "push.coolify.refused", title: "Coolify refuses a write: failed (1), the platform's words masked", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 422, { message: `token ${SYNC_TOKEN} may not write` })] }),
+  s({ id: "check.coolify.service", title: "a Coolify service: its compose file's use of each name, said", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
+  s({ id: "check.coolify.service.json", title: "the same, --json", args: SYNC("check", ...COOLIFY_SVC, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
+  s({ id: "check.coolify.service.cycle", title: "a compose file with an alias inside its own anchor (step 4 defect 6): Go reports usage unchecked", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(CYCLIC_COMPOSE))], differences: ["compose-usage-unchecked"] }),
+  s({ id: "check.github.environment-flag", title: "-e names the Environment compared", args: SYNC("check", ...GH, "-e", "dev"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  s({ id: "push.coolify.build-time", title: "Coolify application: --build-time and --platform-expands go with each write", args: SYNC("push", ...COOLIFY, "--build-time", "true", "--platform-expands", "SERVICE_URL_API,SERVICE_FQDN_API", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
+  // A disclosed item without a string value: none is withheld in check and not readable in push; a number never matches the platform's text
+  // (TypeScript throws pushing a number, so that push is pinned by internal/cli's TestPushReadsOnlyStringValues, not a transcript)
+  s({ id: "check.coolify.value-absent", title: "a disclosed Secret without a value: withheld (2), never compared as text", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "undefined", is_preview: false }])] }),
+  s({ id: "check.coolify.value-null", title: "a disclosed Secret whose value is null: withheld (2)", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: null }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "null", is_preview: false }])] }),
+  s({ id: "check.coolify.value-number", title: "a disclosed Secret that is a number: differs (1) from the same digits on the platform", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: 12345 }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "12345", is_preview: false }])] }),
+  s({ id: "push.coolify.value-absent", title: "a disclosed Secret without a value is not readable: not pushed (1)", args: SYNC("push", ...COOLIFY, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
+  // A push to a Coolify service: its compose file read first; a name Coolify sets is skipped, a value with $ the compose file copies is refused
+  s({
+    id: "push.coolify.service",
+    title: "Coolify service: usage read before any write; MY_URL skipped (Coolify sets it), API_TOKEN refused ($ copied into the compose file), LOG_LEVEL written (1)",
+    args: SYNC("push", ...COOLIFY_SVC, "--map", "LOG_LEVEL", "--map", "API_TOKEN", "--map", "MY_URL"),
+    env: TOKEN_ENV,
+    server: [syncEffective([...SYNC_ITEMS, syncItem("MY_URL", false, "https://my.example")]), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: "tok$en-canary-value" }], withheld: [] })],
+    platform: [
+      plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord("services:\n  backend:\n    environment:\n      LOG_LEVEL: ${LOG_LEVEL}\n      API_TOKEN: ''\n      MY_URL: ${SERVICE_URL_BACKEND}\n")),
+      plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS),
+      plat("PATCH", "/api/v1/services/svc-uuid-0001/envs", 201, { uuid: "s2" }),
+    ],
+  }),
+  s({ id: "push.convex", title: "Convex: one batch", args: SYNC("push", ...CONVEX, "--map", "LOG_LEVEL", "--map", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("POST", "/api/update_environment_variables", 200, {})] }),
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
@@ -1705,4 +1835,5 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.4e-find-files": findFiles54e,
   "5.6a-hook": hook56a,
   "5.7a-admin": admin57a,
+  "5.8b-sync": sync58b,
 };

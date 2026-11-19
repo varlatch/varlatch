@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
+import https from "node:https";
+import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sealedBoxOpen } from "@varlatch/sync";
 import { build } from "esbuild";
 import { EMBEDDED_RELEASE } from "@varlatch/backup";
 
@@ -97,6 +99,22 @@ export interface TranscriptCase {
   callback?: { body: string; times?: number };
   /** Ctrl-C: SIGINT once standard error holds `after`. */
   signal?: { after: string };
+  /**
+   * The fake platforms' script (platformServer): the requests the Platform
+   * Adapters send to api.github.com, coolify.conformance.test and
+   * convex.conformance.test, in order, and their answers. A case that
+   * reaches a platform gives one, so every request it sends is recorded.
+   */
+  platform?: Exchange[];
+}
+
+/** A request the fake platforms received: its host, and a sealed GitHub value opened (openSealed). */
+export interface PlatformRequest {
+  method: string;
+  host: string;
+  path: string;
+  headers: Record<string, string>;
+  body: unknown;
 }
 
 export interface RecordedRequest {
@@ -114,6 +132,8 @@ export interface RecordedCase extends TranscriptCase {
     /** What each callback POST got: its status, or "refused" when nothing took the connection. */
     callbacks?: string[];
     requests: RecordedRequest[];
+    /** Every request the fake platforms received, when the case gives them a script. */
+    platformRequests?: PlatformRequest[];
     /**
      * The case directory's final tree (listTree): a file's content (UTF-8)
      * and POSIX mode, a directory (path ending in "/", no content), a
@@ -370,6 +390,131 @@ function postOnce(url: string, body: string): Promise<string> {
   });
 }
 
+/**
+ * The fake platforms (5.8b): the host names the Platform Adapters address,
+ * served by one HTTPS server with a certificate for them, which the CLI
+ * trusts through NODE_EXTRA_CA_CERTS. The TypeScript CLI reaches it through
+ * an HTTPS proxy (NODE_USE_ENV_PROXY=1 and HTTPS_PROXY: Node.js's fetch then
+ * sends CONNECT host:443, which the kit's proxy tunnels to the fake); the
+ * Go CLI's replay routes the same names to it (VARLATCH_TEST_PLATFORM).
+ * Neither reaches a real platform.
+ */
+export const PLATFORM_HOSTS = ["api.github.com", "coolify.conformance.test", "convex.conformance.test"];
+
+/** The fake GitHub repository's key pair: X25519, the secret key the bytes 1 to 32 (go/cmd/varlatch/internal/transcript has the same). */
+const PLATFORM_SECRET_KEY = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+export const PLATFORM_PUBLIC_KEY = "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=";
+/**
+ * What a case's platform answer says in place of the public key: both fake
+ * platforms serve PLATFORM_PUBLIC_KEY there, so a recording holds this
+ * word, never a high-entropy value a secret scan would read as a key.
+ */
+export const PLATFORM_PUBLIC_KEY_WORD = "{{platform-public-key}}";
+
+/** The request headers a platform recording keeps: the credential shows which variable was read. Not the User-Agent: Coolify and Convex get fetch's default, which is the runtime's, not the adapter's. */
+const PLATFORM_HEADERS = ["authorization", "content-type", "accept", "x-github-api-version"];
+
+/**
+ * A sealed GitHub value is random each time it is sealed: a recording keeps
+ * what it holds, `{{sealed <value>}}`, opened with the fake's key (or
+ * `{{sealed, not opened}}`), never the box.
+ */
+function openSealed(body: unknown): unknown {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return body;
+  const sealed = (body as Record<string, unknown>).encrypted_value;
+  if (typeof sealed !== "string") return body;
+  const opened = sealedBoxOpen(Buffer.from(sealed, "base64"), Buffer.from(PLATFORM_PUBLIC_KEY, "base64"), PLATFORM_SECRET_KEY);
+  return { ...body, encrypted_value: opened ? `{{sealed ${Buffer.from(opened).toString("utf8")}}}` : "{{sealed, not opened}}" };
+}
+
+let platformCert: { dir: string; cert: string; key: string } | null = null;
+
+/** The fake platforms' certificate, made once per run (openssl), for every PLATFORM_HOSTS name. */
+function platformCertificate(): { cert: string; key: string; file: string } {
+  if (!platformCert) {
+    const dir = mkdtempSync(join(tmpdir(), "varlatch-platform-"));
+    const san = PLATFORM_HOSTS.map((h) => `DNS:${h}`).join(",");
+    execFileSync("openssl", ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-days", "1",
+      "-keyout", join(dir, "key.pem"), "-out", join(dir, "cert.pem"), "-subj", "/CN=varlatch-transcript-platforms", "-addext", `subjectAltName=${san}`], { stdio: "ignore" });
+    platformCert = { dir, cert: readFileSync(join(dir, "cert.pem"), "utf8"), key: readFileSync(join(dir, "key.pem"), "utf8") };
+    process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
+  }
+  return { cert: platformCert.cert, key: platformCert.key, file: join(platformCert.dir, "cert.pem") };
+}
+
+/** The fake platforms for one case: the HTTPS server answering its script, and the proxy the TypeScript CLI reaches it through. */
+async function platformServer(script: Exchange[]): Promise<{ env: Record<string, string>; requests: PlatformRequest[]; close: () => Promise<void> }> {
+  const certificate = platformCertificate();
+  const queue = [...script];
+  const requests: PlatformRequest[] = [];
+  const fake = https.createServer({ cert: certificate.cert, key: certificate.key }, (req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (d: Buffer) => chunks.push(d));
+    req.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      const headers: Record<string, string> = {};
+      for (const name of PLATFORM_HEADERS) {
+        const v = req.headers[name];
+        if (typeof v === "string") headers[name] = v;
+      }
+      let body: unknown = text === "" ? null : text;
+      try {
+        if (text !== "") body = JSON.parse(text);
+      } catch {
+        // kept as text
+      }
+      requests.push({ method: req.method ?? "", host: req.headers.host ?? "", path: req.url ?? "", headers, body: openSealed(body) });
+      const next = queue.shift();
+      if (!next || next.method !== req.method || next.path !== req.url) {
+        res.writeHead(599, { "content-type": "text/plain" });
+        res.end("unexpected request");
+        return;
+      }
+      res.writeHead(next.status, next.headers ?? { "content-type": "application/json" });
+      res.end(
+        next.answer === undefined
+          ? ""
+          : typeof next.answer === "string"
+            ? next.answer
+            : JSON.stringify(next.answer).split(JSON.stringify(PLATFORM_PUBLIC_KEY_WORD)).join(JSON.stringify(PLATFORM_PUBLIC_KEY)),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => fake.listen(0, "127.0.0.1", resolve));
+  const port = (fake.address() as AddressInfo).port;
+  const proxy = http.createServer((_req, res) => {
+    res.writeHead(403);
+    res.end();
+  });
+  proxy.on("connect", (req: http.IncomingMessage, socket: net.Socket, head: Buffer) => {
+    const [host, hostPort] = (req.url ?? "").split(":");
+    if (!PLATFORM_HOSTS.includes(host ?? "") || hostPort !== "443") {
+      socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+      return;
+    }
+    const upstream = net.connect(port, "127.0.0.1", () => {
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    upstream.on("error", () => socket.destroy());
+    socket.on("error", () => upstream.destroy());
+  });
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const proxyPort = (proxy.address() as AddressInfo).port;
+  return {
+    env: { NODE_USE_ENV_PROXY: "1", HTTPS_PROXY: `http://127.0.0.1:${proxyPort}`, NODE_EXTRA_CA_CERTS: certificate.file },
+    requests,
+    close: async () => {
+      proxy.closeAllConnections?.();
+      fake.closeAllConnections?.();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await new Promise<void>((resolve) => fake.close(() => resolve()));
+    },
+  };
+}
+
 /** Runs one case against the bundle and records it. */
 export async function recordCase(bundle: string, c: TranscriptCase): Promise<RecordedCase> {
   if (process.platform !== "win32") process.umask(TRANSCRIPT_UMASK);
@@ -405,6 +550,7 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const platforms = c.platform ? await platformServer(c.platform) : null;
   try {
     const release = c.patterns?.includes("release") ? releasePattern(EMBEDDED_RELEASE.version) : { fill: (t: string) => t, unfill: (t: string) => t };
     for (const [path, content] of Object.entries(c.files ?? {})) {
@@ -424,6 +570,8 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
     };
     for (const name of c.unset ?? []) delete env[name];
     for (const [k, v] of Object.entries(c.env ?? {})) env[k] = fill(v, origin, dir);
+    // Not part of the case's environment: how this recorder reaches its fake platforms.
+    Object.assign(env, platforms?.env ?? {});
     const start = Date.now();
     const callbacks: string[] = [];
     const result = await new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
@@ -470,9 +618,11 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
         requests: generated(JSON.parse(now(JSON.stringify(unfillDeep(requests, origin, dir)))) as RecordedRequest[]),
         files,
         ...(c.callback ? { callbacks } : {}),
+        ...(platforms ? { platformRequests: JSON.parse(now(JSON.stringify(unfillDeep(platforms.requests, origin, dir)))) as PlatformRequest[] } : {}),
       },
     };
   } finally {
+    await platforms?.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });
   }

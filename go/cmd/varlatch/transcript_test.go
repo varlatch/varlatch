@@ -3,9 +3,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/envschema"
@@ -46,10 +49,83 @@ func TestMain(m *testing.M) {
 				}
 			}
 		}
+		// The platform client never reaches the network here (5.8b).
+		apiclient.PlatformDial = replayPlatformDial(os.Getenv(transcript.PlatformEnv))
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	setTranscriptUmask()
 	os.Exit(m.Run())
+}
+
+// replayPlatformDial is the platform client's dialer while a CLI under
+// test runs: a fake platform's host name at port 443 reaches the replay's
+// server at fake, when the case has one; every other platform host, a fake
+// platform when the case has none, and any address that is not loopback
+// is refused, so no case can ever reach a real platform (api.github.com).
+func replayPlatformDial(fake string) func(ctx context.Context, network, address string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case slices.Contains(transcript.PlatformHosts, host):
+			if fake == "" || port != "443" {
+				return nil, fmt.Errorf("transcript replay: %s has no fake platform in this case", address)
+			}
+			address = fake
+		case host != "localhost" && !isLoopbackIP(host):
+			return nil, fmt.Errorf("transcript replay: %s is not a fake platform, and a replay never dials the network", address)
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+}
+
+func isLoopbackIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// TestReplayNeverDialsAPlatform: the replay's dialer sends a fake
+// platform's host to the fake, refuses it when the case has none, and
+// refuses every address that is not loopback.
+func TestReplayNeverDialsAPlatform(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	fake := ln.Addr().String()
+	for _, c := range []struct {
+		fake, address string
+		dials         bool
+	}{
+		{fake, "api.github.com:443", true},
+		{"", "api.github.com:443", false},
+		{fake, "api.github.com:80", false},
+		{"", "coolify.conformance.test:443", false},
+		{fake, "github.com:443", false},
+		{fake, "203.0.113.7:443", false},
+		{fake, fake, true},
+	} {
+		conn, err := replayPlatformDial(c.fake)(context.Background(), "tcp", c.address)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if (err == nil) != c.dials {
+			t.Errorf("fake %q, %s: dialed %v (%v), want %v", c.fake, c.address, err == nil, err, c.dials)
+		}
+	}
 }
 
 // versionLine is the TypeScript CLI's --version: `varlatch <version>
@@ -317,6 +393,33 @@ var differences = map[string]transcript.Difference{
 			o.Stderr = accepted
 		}
 	},
+	// A Coolify service's compose file with an alias inside its own anchor
+	// (step 4 defect 6; go/README.md, "compose-usage-unchecked"): the
+	// TypeScript adapter overflows its stack and sync check dies; lib/sync
+	// reads the file as unreadable, so Go reports the service's usage
+	// unchecked and finishes the comparison, disclosing the Secrets it
+	// compares as any check does. Accepted only where the recording is that
+	// RangeError, Go's stderr says usage was not checked for that reason,
+	// Go's stdout ends with a verdict, and Go's requests are the recorded
+	// ones and one disclosure.
+	"compose-usage-unchecked": func(o *transcript.Outcome, got transcript.Outcome) {
+		if o.Status != 1 || o.Stdout != "" || o.Stderr != "{{uncaught RangeError: Maximum call stack size exceeded}}\n" {
+			return
+		}
+		if !strings.Contains(got.Stderr, "varlatch: usage: usage not checked: the service's compose file is too large or could not be read\n") ||
+			!composeVerdict.MatchString(got.Stdout) || len(got.Requests) != len(o.Requests)+1 {
+			return
+		}
+		for i, r := range o.Requests {
+			if got.Requests[i].Method != r.Method || got.Requests[i].Path != r.Path {
+				return
+			}
+		}
+		if extra := got.Requests[len(o.Requests)]; extra.Method != "POST" || !strings.HasSuffix(extra.Path, "/disclosures") {
+			return
+		}
+		o.Status, o.Stdout, o.Stderr, o.Requests = got.Status, got.Stdout, got.Stderr, got.Requests
+	},
 	// `contract show` shows a sensitive item's default as [redacted]
 	// (go/README.md, "No message holds a value"). Accepted only where Go's
 	// stdout is the recorded document with exactly those defaults replaced.
@@ -334,6 +437,9 @@ var differences = map[string]transcript.Difference{
 // schemaFragment is a packages/env-schema error that quotes the file: the
 // message and the quoted fragment.
 var schemaFragment = regexp.MustCompile(`(?s)^(\.env\.schema line [0-9]+: (?:Unrecognized line|Unexpected text after the value|Malformed decorator|Unsupported @required form|Unsupported @sensitive form|Unsupported @type)): (.*)\n$`)
+
+// composeVerdict is sync check's last line: its verdict and tally.
+var composeVerdict = regexp.MustCompile(`\n(in sync|DRIFT|INCOMPLETE): [0-9]+ match, [0-9]+ differ, [0-9]+ missing on the platform, [0-9]+ extra on the platform, [0-9]+ not compared\n$`)
 
 // recordedActivation is a recorded `contract activate` success.
 var recordedActivation = regexp.MustCompile(`^Activated .+\.\n$`)
@@ -645,5 +751,39 @@ func TestValueFreeUsageIsExact(t *testing.T) {
 		if (want.Stderr == got) != accepted {
 			t.Errorf("%q: accepted %v, want %v", got, want.Stderr == got, accepted)
 		}
+	}
+}
+
+// TestComposeUsageUncheckedIsExact: compose-usage-unchecked accepts only
+// Go's finished check with usage unchecked for its fixed reason, a verdict
+// and one more request, the disclosure; never against another recording.
+func TestComposeUsageUncheckedIsExact(t *testing.T) {
+	read := transcript.Request{Method: "GET", Path: "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values"}
+	disclose := transcript.Request{Method: "POST", Path: "/v1/organizations/acme/projects/web/environments/dev/disclosures"}
+	recorded := transcript.Outcome{Status: 1, Stderr: "{{uncaught RangeError: Maximum call stack size exceeded}}\n", Requests: []transcript.Request{read}}
+	stderr := "varlatch: no active Contract: x\nvarlatch: usage: usage not checked: the service's compose file is too large or could not be read\n"
+	stdout := "coolify https://coolify.conformance.test svc-uuid-0001 against dev:\n  match  API_TOKEN\nin sync: 1 match, 0 differ, 0 missing on the platform, 0 extra on the platform, 0 not compared\n"
+	good := transcript.Outcome{Status: 0, Stdout: stdout, Stderr: stderr, Requests: []transcript.Request{read, disclose}}
+	for _, c := range []struct {
+		name     string
+		got      transcript.Outcome
+		accepted bool
+	}{
+		{"usage unchecked, a verdict, the disclosure", good, true},
+		{"usage checked", transcript.Outcome{Status: 0, Stdout: stdout, Stderr: "varlatch: no active Contract: x\n", Requests: good.Requests}, false},
+		{"no verdict", transcript.Outcome{Status: 1, Stdout: "", Stderr: stderr, Requests: good.Requests}, false},
+		{"another request", transcript.Outcome{Status: 0, Stdout: stdout, Stderr: stderr, Requests: []transcript.Request{read, {Method: "POST", Path: "/v1/other"}}}, false},
+		{"two more requests", transcript.Outcome{Status: 0, Stdout: stdout, Stderr: stderr, Requests: []transcript.Request{read, disclose, disclose}}, false},
+	} {
+		want := recorded
+		differences["compose-usage-unchecked"](&want, c.got)
+		if accepted := want.Stdout == c.got.Stdout && want.Stderr == c.got.Stderr && len(want.Requests) == len(c.got.Requests); accepted != c.accepted {
+			t.Errorf("%s: accepted %v, want %v", c.name, accepted, c.accepted)
+		}
+	}
+	other := transcript.Outcome{Status: 1, Stderr: "{{uncaught TypeError: x}}\n", Requests: []transcript.Request{read}}
+	differences["compose-usage-unchecked"](&other, good)
+	if other.Stdout == good.Stdout {
+		t.Error("accepted against a recording of another error")
 	}
 }

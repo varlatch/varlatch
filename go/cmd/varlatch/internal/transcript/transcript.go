@@ -76,7 +76,9 @@ type Case struct {
 	Callback *Callback `json:"callback,omitempty"`
 	// Signal sends Ctrl-C once stderr holds After.
 	Signal *Signal `json:"signal,omitempty"`
-	Expect Outcome `json:"expect"`
+	// Platform is the fake platforms' script (platform.go).
+	Platform []Exchange `json:"platform,omitempty"`
+	Expect   Outcome    `json:"expect"`
 }
 
 // Callback is a case's browser sign-in callback.
@@ -130,6 +132,9 @@ type Outcome struct {
 	Files    map[string]FileState `json:"files"`
 	// Callbacks is what each callback POST got: its status, or "refused".
 	Callbacks []string `json:"callbacks,omitempty"`
+	// PlatformRequests is every request the fake platforms received, when
+	// the case gives them a script.
+	PlatformRequests []PlatformRequest `json:"platformRequests,omitempty"`
 }
 
 // Request is one request the fake server received.
@@ -268,6 +273,13 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		return Outcome{}, nil, err
 	}
 	defer srv.close()
+	var platforms *platformServer
+	if c.Platform != nil {
+		if platforms, err = newPlatformServer(c.Platform); err != nil {
+			return Outcome{}, nil, err
+		}
+		defer platforms.close()
+	}
 	fill := func(s string) string {
 		return strings.ReplaceAll(strings.ReplaceAll(s, "{{server}}", srv.origin), "{{dir}}", dir)
 	}
@@ -307,6 +319,11 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	}
 	for k, v := range c.Env {
 		env[k] = fill(v)
+	}
+	// Not part of the case's environment: how the CLI under test reaches the fake platforms.
+	if platforms != nil {
+		env[PlatformEnv] = platforms.addr
+		env["NODE_EXTRA_CA_CERTS"] = platforms.cert
 	}
 	args := make([]string, len(c.Args))
 	for i, a := range c.Args {
@@ -367,6 +384,14 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	}
 	if slices.Contains(c.Patterns, "generated") {
 		got.Requests = GeneratedPattern(c.Args, got.Requests, stdout+stderr)
+	}
+	if platforms != nil {
+		got.PlatformRequests = []PlatformRequest{}
+		for _, r := range platforms.received() {
+			r.Path = unfill(r.Path)
+			r.Body = json.RawMessage(unfill(string(r.Body)))
+			got.PlatformRequests = append(got.PlatformRequests, r)
+		}
 	}
 	if got.Files, err = Tree(dir, unfill); err != nil {
 		return got, nil, err
@@ -693,6 +718,7 @@ func mapKeys(m map[string]string) func(func(string) bool) {
 func clone(o Outcome) Outcome {
 	c := o
 	c.Requests = slices.Clone(o.Requests)
+	c.PlatformRequests = slices.Clone(o.PlatformRequests)
 	c.Files = map[string]FileState{}
 	for k, v := range o.Files {
 		c.Files[k] = v
@@ -726,6 +752,7 @@ func Compare(want, got Outcome) []string {
 			}
 		}
 	}
+	problems = append(problems, comparePlatform(want.PlatformRequests, got.PlatformRequests)...)
 	names := map[string]bool{}
 	for k := range want.Files {
 		names[k] = true
