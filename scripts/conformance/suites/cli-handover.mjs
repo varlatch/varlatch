@@ -10,25 +10,36 @@ import "../../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in out
  * a TypeScript CLI under test its checks are not applicable (kind
  * go-client).
  *
- *   cli-handover.mjs <origin> <credential A> <credential B>   (run by scripts/conformance/run.mjs)
+ *   cli-handover.mjs <origin> <credential A> <credential B> <enrollment URL>   (run by scripts/conformance/run.mjs)
  *
  * The credentials are two fresh CLI credentials of the admin identity, one
- * per direction. The runner seeded organization acme, project api with the
- * environments development and production.
+ * per direction; the enrollment URL is a recovery grant for the admin, whose
+ * passkey (a virtual authenticator) approves and denies device sign-ins. The
+ * runner seeded organization acme, project api with the environments
+ * development and production.
  *
  * Token sign-in both ways (slice 5.1e): signed in by one CLI, the other
  * finds the credential and the default server; both write the store alike;
  * a logout by one is seen by the other.
+ *
+ * Device sign-in both ways (slice 5.2): a `login --start` by one CLI is
+ * waited for by the other, which reaches its deadline (75) with the entry
+ * kept; the first continues it with the interval kept (no poll before it is
+ * due); approved in the browser, the other collects and stores it and the
+ * entry goes; a denial seen by the other removes the entry; the file's and
+ * its directory's modes after each step; and both refuse to start one
+ * inside an agent-safe run.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cliCommand, handoverCliCommand, reporter } from "../suite-kit.mjs";
 
-const [origin, tokenA, tokenB] = process.argv.slice(2);
-if (!origin || !tokenA || !tokenB) {
-  console.error("Usage: cli-handover.mjs <origin> <credential A> <credential B>");
+const [origin, tokenA, tokenB, enrollUrl] = process.argv.slice(2);
+if (!origin || !tokenA || !tokenB || !enrollUrl?.includes("#")) {
+  console.error("Usage: cli-handover.mjs <origin> <credential A> <credential B> <enrollment URL>");
   process.exit(64);
 }
 const { check, error, finish } = reporter({ detailOnFailure: true });
@@ -42,8 +53,8 @@ const CLIS = { go: cliCommand, ts: handoverCliCommand };
  * directory and home, from `cwd` (a checkout of acme/api, or a directory
  * outside any repository), with nothing from the host's Varlatch settings.
  */
-function run(which, args, { config, cwd, input = "" }) {
-  const env = { PATH: process.env.PATH ?? "", HOME: config, VARLATCH_CONFIG_DIR: config, VARLATCH_ASSISTED: "0", VARLATCH_NODE_CHECK: "off" };
+function run(which, args, { config, cwd, input = "", env: extra = {} }) {
+  const env = { PATH: process.env.PATH ?? "", HOME: config, VARLATCH_CONFIG_DIR: config, VARLATCH_ASSISTED: "0", VARLATCH_NODE_CHECK: "off", ...extra };
   const r = spawnSync(...CLIS[which](args), { cwd, env, input, encoding: "utf8", timeout: 90_000 });
   return { code: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
@@ -166,9 +177,147 @@ try {
     logouts.every((l) => l.ok),
     logouts.map((l) => l.detail).join(" | "),
   );
+  await deviceHandover();
 } catch (err) {
   error(`cli-handover: ${err.message}`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
 finish("CLI hand-over check(s)");
+
+/** pending-sign-ins.json in `config`: its entry for the origin, and the file's and the directory's modes; null when there is no file. */
+function pending(config) {
+  const path = join(config, "pending-sign-ins.json");
+  if (!existsSync(path)) return null;
+  const entry = Object.values(JSON.parse(readFileSync(path, "utf8")).servers ?? {})[0] ?? null;
+  return { entry, mode: statSync(path).mode & 0o777, dirMode: statSync(config).mode & 0o777 };
+}
+/** Whether a pending-sign-ins.json state is private: the file 0600 in a 0700 directory. */
+function privateModes(p) {
+  return process.platform === "win32" || (p?.mode === 0o600 && p?.dirMode === 0o700);
+}
+/** The credential `config` stores for the origin, or null. */
+function stored(config) {
+  const f = file(config, "credentials.json");
+  return f ? ((JSON.parse(f.text).servers ?? {})[origin] ?? null) : null;
+}
+
+/** The device sign-in hand-over, with a browser whose passkey approves and denies (the device suite's flow). */
+async function deviceHandover() {
+  const { chromium } = createRequire(new URL("../../../apps/web/package.json", import.meta.url))("playwright");
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("WebAuthn.enable");
+    await cdp.send("WebAuthn.addVirtualAuthenticator", {
+      options: { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+    });
+    await page.goto(enrollUrl);
+    await page.click("#enroll");
+    await page.waitForFunction(() => /API credential|failed/.test(document.getElementById("status").textContent), null, { timeout: 20000 });
+    if (!/API credential/.test(await page.textContent("#status"))) throw new Error("the passkey was not enrolled");
+    const decide = async (userCode, decision) => {
+      await page.goto(`${origin}/device`);
+      await page.waitForSelector('[data-testid="device-code-input"]', { timeout: 20000 });
+      await page.fill('[data-testid="device-code-input"]', userCode);
+      await page.click('[data-testid="device-continue"]');
+      await page.waitForSelector('[data-testid="device-confirm"]', { timeout: 10000 });
+      await page.click(`[data-testid="device-${decision}"]`);
+      await page.waitForSelector('[data-testid="device-result"]', { timeout: 20000 });
+      return page.getAttribute('[data-testid="device-result"]', "data-decision");
+    };
+    const outside = mkdtempSync(join(scratch, "outside-"));
+
+    // The check IDs, spelled out (the inventory test reads them from this file).
+    const IDS = {
+      ts: { waits: "cli-handover.device-ts-start-go-waits", collects: "cli-handover.device-ts-start-go-collects", denied: "cli-handover.device-ts-start-go-denied" },
+      go: { waits: "cli-handover.device-go-start-ts-waits", collects: "cli-handover.device-go-start-ts-collects", denied: "cli-handover.device-go-start-ts-denied" },
+    };
+    for (const [starter, waiter] of [["ts", "go"], ["go", "ts"]]) {
+      // Started by one; the other waits to its deadline, the entry kept; the first continues within the interval.
+      const config = mkdtempSync(join(scratch, `${starter}-starts-device-`));
+      const started = run(starter, ["login", "--server", origin, "--start", "--json"], { config, cwd: outside });
+      let doc = {};
+      try {
+        doc = JSON.parse(started.stdout);
+      } catch {
+        // judged below
+      }
+      const afterStart = pending(config);
+      const early = run(waiter, ["login", "--server", origin, "--wait", "--timeout", "3"], { config, cwd: outside });
+      const afterEarly = pending(config);
+      const begun = Date.now();
+      const kept = run(starter, ["login", "--server", origin, "--wait", "--timeout", "1"], { config, cwd: outside });
+      const afterKept = pending(config);
+      check(
+        IDS[starter].waits,
+        `a device sign-in started with the ${starter === "ts" ? "TypeScript" : "Go"} CLI: the other's --wait reaches its deadline (75) with the entry kept, and the first continues it with the interval kept (no early poll); the file 0600 in a 0700 directory after each step`,
+        started.code === 0 &&
+          /^[A-Z]{4}-[A-Z]{4}$/.test(doc.userCode ?? "") &&
+          afterStart?.entry?.userCode === doc.userCode &&
+          early.code === 75 &&
+          typeof afterEarly?.entry?.lastPolledAt === "string" &&
+          afterEarly.entry.deviceCode === afterStart.entry.deviceCode &&
+          kept.code === 75 &&
+          Date.now() - begun < 5000 &&
+          afterKept?.entry?.lastPolledAt === afterEarly.entry.lastPolledAt &&
+          afterKept?.entry?.interval === afterEarly.entry.interval &&
+          [afterStart, afterEarly, afterKept].every(privateModes) &&
+          holdsNoCredential(started.out + early.out + kept.out) &&
+          !(started.out + early.out + kept.out).includes(afterStart?.entry?.deviceCode ?? "no device code"),
+        `start ${tail(started)}; ${waiter} wait ${tail(early)}; ${starter} wait ${tail(kept)}; entries ${JSON.stringify([afterStart, afterEarly, afterKept].map((p) => p && { mode: p.mode.toString(8), dirMode: p.dirMode.toString(8), lastPolledAt: p.entry?.lastPolledAt, interval: p.entry?.interval }))}`,
+      );
+
+      // Approved in the browser: the other collects and stores it, and the entry goes.
+      const decision = await decide(doc.userCode ?? "", "approve");
+      const done = run(waiter, ["login", "--server", origin, "--wait"], { config, cwd: outside });
+      const credential = stored(config);
+      check(
+        IDS[starter].collects,
+        `approved in the browser, a device sign-in started with the ${starter === "ts" ? "TypeScript" : "Go"} CLI is collected and stored by the other, and the entry removed`,
+        decision === "approved" &&
+          done.code === 0 &&
+          /^Logged in to /.test(done.stdout) &&
+          typeof credential?.token === "string" &&
+          !done.out.includes(credential.token) &&
+          pending(config) === null &&
+          (process.platform === "win32" || file(config, "credentials.json")?.mode === 0o600),
+        `decision ${decision}; ${waiter} wait ${tail(done)}`,
+      );
+
+      // A denial seen by the other: 77, the entry removed, the stored credential kept.
+      const second = run(starter, ["login", "--server", origin, "--start", "--json"], { config, cwd: outside });
+      let code = "";
+      try {
+        code = JSON.parse(second.stdout).userCode ?? "";
+      } catch {
+        // judged below
+      }
+      const denial = await decide(code, "deny");
+      const denied = run(waiter, ["login", "--server", origin, "--wait"], { config, cwd: outside });
+      check(
+        IDS[starter].denied,
+        `denied in the browser, a device sign-in started with the ${starter === "ts" ? "TypeScript" : "Go"} CLI ends for the other with 77, the entry removed and the stored credential kept`,
+        second.code === 0 && denial === "denied" && denied.code === 77 && /denied/.test(denied.stderr) && pending(config) === null && stored(config)?.token === credential?.token,
+        `start ${tail(second)}; decision ${denial}; ${waiter} wait ${tail(denied)}`,
+      );
+    }
+
+    // Both refuse to start one inside an agent-safe run, before any request or file.
+    const refusals = ["ts", "go"].map((which) => {
+      const config = mkdtempSync(join(scratch, `${which}-agent-run-`));
+      const r = run(which, ["login", "--server", origin, "--start"], { config, cwd: outside, env: { VARLATCH_AGENT_RUN: "run_handover" } });
+      return { ok: r.code === 64 && /agent-safe run run_handover/.test(r.stderr) && pending(config) === null, detail: `${which} ${tail(r)}` };
+    });
+    check(
+      "cli-handover.device-refused-in-agent-run",
+      "inside an agent-safe run, both CLIs refuse to start a device sign-in (64) and write no pending sign-in",
+      refusals.every((r) => r.ok),
+      refusals.map((r) => r.detail).join(" | "),
+    );
+  } finally {
+    await browser.close();
+  }
+}

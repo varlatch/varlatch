@@ -212,7 +212,7 @@
       ]
     },
     "cli-handover": {
-      "title": "the hand-over between the Go CLI and the TypeScript CLI: token sign-in both ways (internal docs/design/go-cli.md, decision 11)",
+      "title": "the hand-over between the Go CLI and the TypeScript CLI: token and device sign-in both ways (internal docs/design/go-cli.md, decision 11)",
       "script": "scripts/conformance/suites/cli-handover.mjs",
       "client": "go",
       "operations": [
@@ -221,7 +221,14 @@
         "getMeta",
         "listOrganizations",
         "whoami",
-        "listEnvironments"
+        "listEnvironments",
+        "enroll-page",
+        "browser-session",
+        "getMyProfile",
+        "startDeviceSignIn",
+        "collectDeviceSignIn",
+        "lookupDeviceSignIn",
+        "decideDeviceSignIn"
       ],
       "cliNeeds": [
         "login-token",
@@ -1073,6 +1080,48 @@
       "suite": "cli-handover",
       "kind": "go-client",
       "title": "a logout with either CLI empties the store and forgets the default server for the other: whoami is refused (77)"
+    },
+    "cli-handover.device-ts-start-go-waits": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a device sign-in started with the TypeScript CLI: the other's --wait reaches its deadline (75) with the entry kept, and the first continues it with the interval kept (no early poll); the file 0600 in a 0700 directory after each step"
+    },
+    "cli-handover.device-ts-start-go-collects": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "approved in the browser, a device sign-in started with the TypeScript CLI is collected and stored by the other, and the entry removed"
+    },
+    "cli-handover.device-ts-start-go-denied": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "denied in the browser, a device sign-in started with the TypeScript CLI ends for the other with 77, the entry removed and the stored credential kept"
+    },
+    "cli-handover.device-go-start-ts-waits": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a device sign-in started with the Go CLI: the other's --wait reaches its deadline (75) with the entry kept, and the first continues it with the interval kept (no early poll); the file 0600 in a 0700 directory after each step"
+    },
+    "cli-handover.device-go-start-ts-collects": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "approved in the browser, a device sign-in started with the Go CLI is collected and stored by the other, and the entry removed"
+    },
+    "cli-handover.device-go-start-ts-denied": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "denied in the browser, a device sign-in started with the Go CLI ends for the other with 77, the entry removed and the stored credential kept"
+    },
+    "cli-handover.device-refused-in-agent-run": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "inside an agent-safe run, both CLIs refuse to start a device sign-in (64) and write no pending sign-in"
     },
     "dashboard.enrollment-dashboard-origin": {
       "suite": "dashboard",

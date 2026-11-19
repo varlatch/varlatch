@@ -101,11 +101,27 @@ var ErrSyntax = errors.New("not valid JSON")
 
 // Parse is JSON.parse(text) after fetch's UTF-8 decoding (a leading
 // byte order mark is dropped). Bytes that are not UTF-8 read as U+FFFD.
+// Nesting deeper than MaxDepth is refused: code that walks the value
+// recursively afterwards (Stringify among it) stays within Go's stack.
 func Parse(text []byte) (any, error) {
+	return parse(text, MaxDepth)
+}
+
+// ParseDeep is Parse with no bound on nesting, as V8's JSON.parse has
+// none of its own short of memory. The caller must not walk the value
+// recursively.
+func ParseDeep(text []byte) (any, error) {
+	return parse(text, -1)
+}
+
+// MaxDepth is how deeply Parse lets values nest.
+const MaxDepth = 10000
+
+func parse(text []byte, maxDepth int) (any, error) {
 	text = bytes.TrimPrefix(text, []byte("\xef\xbb\xbf"))
 	p := jsonParser{s: text}
 	p.space()
-	v, err := p.value(0)
+	v, err := p.value(maxDepth)
 	if err != nil {
 		return nil, err
 	}
@@ -120,9 +136,6 @@ type jsonParser struct {
 	s []byte
 	i int
 }
-
-// maxDepth bounds nesting; V8 has a stack limit of its own, far deeper.
-const maxDepth = 10000
 
 func (p *jsonParser) space() {
 	for p.i < len(p.s) {
@@ -143,92 +156,159 @@ func (p *jsonParser) literal(word string, v any) (any, error) {
 	return v, nil
 }
 
-func (p *jsonParser) value(depth int) (any, error) {
-	if depth > maxDepth || p.i >= len(p.s) {
-		return nil, ErrSyntax
+// container is an array or object being read.
+type container struct {
+	isObject bool
+	array    []any
+	object   objectBuilder
+	key      string // the key whose value comes next
+}
+
+// objectBuilder builds an Object as Object.Set would, key by key, in
+// linear time: an index finds a repeated key, and array-index keys are
+// sorted once at the end (a stable sort of the first-insertion order is
+// what sorting after each insertion gives).
+type objectBuilder struct {
+	members  Object
+	index    map[string]int
+	numbered bool
+}
+
+func (b *objectBuilder) set(key string, value any) {
+	if b.index == nil {
+		b.index = map[string]int{}
 	}
-	switch c := p.s[p.i]; {
-	case c == '{':
-		p.i++
-		o := Object{}
-		p.space()
-		if p.i < len(p.s) && p.s[p.i] == '}' {
-			p.i++
-			return o, nil
+	if i, ok := b.index[key]; ok {
+		b.members[i].Value = value
+		return
+	}
+	b.index[key] = len(b.members)
+	b.members = append(b.members, Member{key, value})
+	if _, ok := arrayIndex(key); ok {
+		b.numbered = true
+	}
+}
+
+func (b *objectBuilder) done() Object {
+	if b.numbered {
+		slices.SortStableFunc(b.members, compareKeys)
+	}
+	return b.members
+}
+
+// key reads an object key and its colon.
+func (p *jsonParser) key() (string, error) {
+	p.space()
+	if p.i >= len(p.s) || p.s[p.i] != '"' {
+		return "", ErrSyntax
+	}
+	k, err := p.str()
+	if err != nil {
+		return "", err
+	}
+	p.space()
+	if p.i >= len(p.s) || p.s[p.i] != ':' {
+		return "", ErrSyntax
+	}
+	p.i++
+	p.space()
+	return k, nil
+}
+
+// value reads one value, its containers on a stack of its own rather than
+// Go's, refusing nesting deeper than maxDepth (none when negative).
+func (p *jsonParser) value(maxDepth int) (any, error) {
+	var stack []*container
+	for {
+		if maxDepth >= 0 && len(stack) > maxDepth || p.i >= len(p.s) {
+			return nil, ErrSyntax
 		}
-		for {
-			p.space()
-			if p.i >= len(p.s) || p.s[p.i] != '"' {
-				return nil, ErrSyntax
-			}
-			k, err := p.str()
-			if err != nil {
-				return nil, err
-			}
-			p.space()
-			if p.i >= len(p.s) || p.s[p.i] != ':' {
-				return nil, ErrSyntax
-			}
+		var v any
+		var err error
+		switch c := p.s[p.i]; {
+		case c == '{':
 			p.i++
 			p.space()
-			v, err := p.value(depth + 1)
+			if p.i < len(p.s) && p.s[p.i] == '}' {
+				p.i++
+				v = Object{}
+				break
+			}
+			k, err := p.key()
 			if err != nil {
 				return nil, err
 			}
-			o = o.Set(k, v)
+			stack = append(stack, &container{isObject: true, key: k})
+			continue
+		case c == '[':
+			p.i++
+			p.space()
+			if p.i < len(p.s) && p.s[p.i] == ']' {
+				p.i++
+				v = []any{}
+				break
+			}
+			stack = append(stack, &container{})
+			p.space()
+			continue
+		case c == '"':
+			v, err = p.str()
+		case c == 't':
+			v, err = p.literal("true", true)
+		case c == 'f':
+			v, err = p.literal("false", false)
+		case c == 'n':
+			v, err = p.literal("null", nil)
+		case c == '-' || (c >= '0' && c <= '9'):
+			v, err = p.number()
+		default:
+			err = ErrSyntax
+		}
+		if err != nil {
+			return nil, err
+		}
+		// v is complete: put it in its container, closing the containers
+		// it completes, until one has more to read.
+		for {
+			if len(stack) == 0 {
+				return v, nil
+			}
+			top := stack[len(stack)-1]
+			closer := byte(']')
+			if top.isObject {
+				top.object.set(top.key, v)
+				closer = '}'
+			} else {
+				top.array = append(top.array, v)
+			}
 			p.space()
 			if p.i >= len(p.s) {
 				return nil, ErrSyntax
 			}
-			if p.s[p.i] == '}' {
+			if p.s[p.i] == closer {
 				p.i++
-				return o, nil
+				stack = stack[:len(stack)-1]
+				if top.isObject {
+					v = top.object.done()
+				} else {
+					v = top.array
+				}
+				continue
 			}
 			if p.s[p.i] != ',' {
 				return nil, ErrSyntax
 			}
 			p.i++
+			if top.isObject {
+				if top.key, err = p.key(); err != nil {
+					return nil, err
+				}
+			} else {
+				p.space()
+			}
+			break
 		}
-	case c == '[':
-		p.i++
-		a := []any{}
-		p.space()
-		if p.i < len(p.s) && p.s[p.i] == ']' {
-			p.i++
-			return a, nil
-		}
-		for {
-			p.space()
-			v, err := p.value(depth + 1)
-			if err != nil {
-				return nil, err
-			}
-			a = append(a, v)
-			p.space()
-			if p.i >= len(p.s) {
-				return nil, ErrSyntax
-			}
-			if p.s[p.i] == ']' {
-				p.i++
-				return a, nil
-			}
-			if p.s[p.i] != ',' {
-				return nil, ErrSyntax
-			}
-			p.i++
-		}
-	case c == '"':
-		return p.str()
-	case c == 't':
-		return p.literal("true", true)
-	case c == 'f':
-		return p.literal("false", false)
-	case c == 'n':
-		return p.literal("null", nil)
-	case c == '-' || (c >= '0' && c <= '9'):
-		return p.number()
 	}
-	return nil, ErrSyntax
 }
 
 func digitsAt(s []byte, i int) int {
