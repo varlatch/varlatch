@@ -170,8 +170,9 @@ func loginCommand(r *Run) error {
 		}
 	}
 	// A server echoing the credential back in an error message gets it
-	// masked (issue #119), and no output or diagnostic shows it.
-	r.holdSecret(token)
+	// masked (issue #119), and no output or diagnostic shows it, whatever
+	// its length: the person gave it (--token or --token-stdin).
+	r.holdCredential(token, true)
 	// Issuance metadata (ADR-0032): stored so expiry is knowable offline.
 	// An explicit --token has none: its entry stays metadata-free.
 	var issued any

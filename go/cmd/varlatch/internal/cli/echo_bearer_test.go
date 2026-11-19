@@ -31,6 +31,36 @@ func TestEchoedBearerNeverReachesStdout(t *testing.T) {
 	for name, token := range map[string]string{"long": "plainword_bearer_canary_9f3a", "short": "q7Zk"} {
 		t.Run(name, func(t *testing.T) { echoedBearerNeverShown(t, token) })
 	}
+	// A short bearer given to login, with --token or on stdin, and no
+	// VARLATCH_TOKEN: held because the person gave it, though shorter than
+	// the length the CLI masks otherwise.
+	t.Run("short login", func(t *testing.T) {
+		const token = "q7Zk"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/v1/meta" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"serverVersion": "0.22.0", "apiMajor": 1, "capabilities": []string{}})
+				return
+			}
+			w.WriteHeader(403)
+			bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "PERMISSION_DENIED", "message": "refused " + bearer, "requestId": "r"}})
+		}))
+		defer srv.Close()
+		for _, c := range []struct {
+			args  []string
+			stdin string
+		}{
+			{[]string{"login", "--server", srv.URL, "--token", token}, ""},
+			{[]string{"login", "--server", srv.URL, "--token-stdin"}, token + "\n"},
+		} {
+			var stdout, stderr bytes.Buffer
+			code := Main(c.args, MapEnv{"HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(c.stdin), Stdout: &stdout, Stderr: &stderr})
+			if code == 0 || !strings.Contains(stderr.String(), "PERMISSION_DENIED") || strings.Contains(stdout.String()+stderr.String(), token) {
+				t.Errorf("%v: status %d\nstdout %q\nstderr %q", c.args, code, stdout.String(), stderr.String())
+			}
+		}
+	})
 }
 
 func echoedBearerNeverShown(t *testing.T, token string) {
