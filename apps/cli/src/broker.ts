@@ -238,7 +238,8 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
 
   const server = http.createServer((req, res) => {
     void handleRequest(req, res).catch((err: unknown) => {
-      if (err instanceof BeforeHeaders || err instanceof Cutoff) report({ kind: "aborted", reason: err.message });
+      // After the headers, the relay has reported its abort already.
+      if ((err instanceof BeforeHeaders || err instanceof Cutoff) && !res.headersSent) report({ kind: "aborted", reason: err.message });
       if (res.headersSent) res.destroy();
       else if (isMaintenance(err)) deny(res, 503, "the Varlatch installation is in maintenance (restore or upgrade); retry later", { "Retry-After": "15" });
       else deny(res, 502, err instanceof Error ? err.message : "internal error");
