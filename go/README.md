@@ -529,6 +529,24 @@ comes. `verify-release`, which the installers run, is Go's own.
   (the draft, the resolved Contract's canonical bytes and hash, or the
   error) and every valid Contract of `lib/contract`'s normalization vectors
   pushed with `--file` (`TestContractPushSendsTheSameRevision`).
+- The matcher and the redaction engine (slice 5.4a, decision 10):
+  `internal/matcher` is `packages/matcher` (the forms of a value, the
+  byte-level Aho-Corasick automaton with its hold-back, `StreamMatcher`,
+  which replaces each overlap region once, `StreamScanner`, and the
+  whole-input references) and `redact.ts`'s `OutputRedaction` (its
+  notices, and the relay of the child's two streams, which never releases
+  held bytes on a timer and discards them after an interrupt, a failed
+  read or a failed destination). No command uses it yet (5.4b).
+  `testdata/vectors/matcher.json` (`apps/cli/test/go-vectors-matcher.test.ts`)
+  holds both to 364 streams: every case of `packages/matcher`'s tests and of
+  `redact.test.ts`, seeded overlaps, every encoded form at every base64
+  alignment, multi-byte, lone-surrogate and binary text, 400 Secrets, and
+  long inputs. Go replays each at every byte split, byte by byte and at
+  random chunkings against the recorded output, and each recorded chunking
+  push by push (what was emitted, held and pending); the scanner's
+  occurrences likewise, and 12 relays. Matching is linear in the input,
+  however many matches one chunk holds (`TestMatcherIsLinear`; the
+  TypeScript merge is quadratic per chunk, step 5 defect 29).
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden
@@ -2496,6 +2514,7 @@ Not reproduced:
 | `apps/cli/src/options.ts` `parseOptions`, a positional argument named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, `hasOwnProperty`) for a command whose options have aliases (step 5 defect 11, not a security defect) | `spec.aliases[arg]` reads the prototype, so `arg` becomes a function and `arg.startsWith` throws a `TypeError`: Node.js prints the stack and exits 1 | an ordinary argument | `internal/cli` `TestPrototypeNamesAreOrdinaryArguments` | none |
 | `apps/cli/src/agents/install.ts` `AGENTS`, `skill.ts` `GUIDE_TOPICS` and `mcpConfig.ts` `MCP_FILES_BY_AGENT`, a coding agent or guide topic named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, ...) (step 5 defect 15, not a security defect) | the lookups read the prototype, so the name passes as known: `agents install --agent constructor` installs and prints `constructor reads undefined` (in `--json`, an agent without `reads`), with `--mcp` it throws a `TypeError` before writing; `agents guide constructor` throws a `TypeError`: Node.js prints the stack and exits 1 | an unknown coding agent or topic: the usage error every other unknown name gets (64), nothing written | `internal/agents` `TestPrototypeNamesAreUnknown` | none |
 | `apps/cli/src/validation.ts` `REQUIRES_HINT`, a requirement named like a property of `Object.prototype` (`constructor`, `toString`, ...) in `validate`'s report (step 5 defect 23, not a security defect) | the lookup reads the prototype, so `validate` prints a function's source as the requirement: `not evaluated: A (function Object() { [native code] })` | a requirement the protocol does not define: `not evaluated: A (an unrecognized requirement)` | `internal/cli` `TestValidationRequiresHintReadsOwnNames` | none |
+| `packages/matcher` `matcher.ts` `StreamMatcher.push`, a chunk of output holding many matches (step 5 defect 29, not a security defect) | each match is merged by walking every pending segment, and a chunk's matches all stay pending until it is merged, so masking a chunk takes time quadratic in its matches: a 64 KB chunk of a repeated Secret in 170 ms, 1 MB in 45 s; `run --redact` slows down, and still masks correctly | the merge looks only at the segments that end after the match's start, with the same result; linear | `internal/matcher` `TestMatcherIsLinear` and the vectors | none |
 | `packages/sync` `coolifyCompose.ts` `classifyComposeUsage`, a Compose file with an alias inside its own anchor (step 4 defect 6, not a security defect) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack, so the Coolify adapter's `inspectUsage` throws a `RangeError` though it never should: varlatchd's engine catches it (its `usage-unchecked` note says "the destination could not be read"), the CLI's `sync check` fails | `lib/sync` reads the file as unreadable: usage unchecked, every verdict unknown, the note's reason "the service's compose file is too large or could not be read" | `lib/sync` `TestTypeScriptExchanges`, the case "divergence: an alias inside its own anchor" | none |
 
 The TypeScript admin CLI refuses an ordinary command during maintenance
