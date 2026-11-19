@@ -2267,6 +2267,110 @@
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
       },
       "cwd": "repo",
+      "id": "run.surrogate",
+      "title": "a value with an unpaired surrogate reaches the command as one U+FFFD",
+      "args": [
+        "run",
+        "--",
+        "node",
+        "-e",
+        "console.log('s='+process.env.SURR+' bytes='+Buffer.from(process.env.SURR).toString('hex'))"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "SURR",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "SURR",
+                "value": "surrogate-\ud83d-value",
+                "versionId": "ver_surraaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "s=surrogate-�-value bytes=737572726f676174652defbfbd2d76616c7565\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
       "id": "run.no-command",
       "title": "a command that does not exist: spawn ... ENOENT (TypeScript lets the error escape)",
       "args": [
@@ -7847,6 +7951,135 @@
       "expect": {
         "status": 0,
         "stdout": "{\"args\":[],\"API_KEY\":\"[REDACTED:API_KEY]\",\"PORT\":\"8080\"}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "assisted.surrogate",
+      "title": "assisted mode masks a Secret with an unpaired surrogate as the command echoes it",
+      "args": [
+        "run",
+        "--",
+        "node",
+        "-e",
+        "console.log('s='+process.env.SURR)"
+      ],
+      "env": {
+        "VARLATCH_ASSISTED": "1"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "SURR",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "SURR",
+                "value": "surrogate-\ud83d-value",
+                "versionId": "ver_surraaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 404,
+          "answer": {
+            "error": {
+              "code": "NOT_FOUND",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "s=[REDACTED:SURR]\n",
         "stderr": "",
         "requests": [
           {

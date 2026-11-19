@@ -1231,6 +1231,13 @@ const revisionAnswer = (extra: Record<string, unknown> = {}): Exchange =>
 const exportedEffective = (digest = DIGEST_A) => effectiveAt(ENV, runItems(), { stateDigest: digest, manifest: MANIFEST });
 const ASSISTED = { VARLATCH_ASSISTED: "1" };
 const CONTRACT_NONE = denied(CONTRACT_PATH, "GET", 404, "NOT_FOUND");
+// A stored value with an unpaired surrogate (JSON allows it, UTF-8 cannot):
+// the command gets it as Node.js's spawn encodes it, one U+FFFD, and
+// assisted masking matches that form.
+const SURROGATE_VALUE = "surrogate-\uD83D-value";
+const SURROGATE_ITEMS = [{ name: "SURR", sensitive: true, source: "self", value: null }];
+const SURROGATE_DISCLOSED = disclosed([{ name: "SURR", value: SURROGATE_VALUE }]);
+const PRINT_SURROGATE = ["--", "node", "-e", "console.log('s='+process.env.SURR+' bytes='+Buffer.from(process.env.SURR).toString('hex'))"];
 
 const run54b: TranscriptCase[] = [
   // The command line
@@ -1265,6 +1272,7 @@ const run54b: TranscriptCase[] = [
   v({ id: "run.withheld", title: "a value the server withholds is named", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, runItems([{ name: "REGION", sensitive: false, source: "self", value: null }])), API_KEY_DISCLOSED] }),
   v({ id: "run.empty", title: "nothing stored: the command still starts", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, []), disclosed([])] }),
   v({ id: "run.not-signed-in", title: "no credential: 77, nothing started", args: ["run", ...runChildArgs()], files: NOT_SIGNED_IN }),
+  v({ id: "run.surrogate", title: "a value with an unpaired surrogate reaches the command as one U+FFFD", args: ["run", ...PRINT_SURROGATE], server: [effectiveAt(ENV, SURROGATE_ITEMS), SURROGATE_DISCLOSED] }),
   v({ id: "run.no-command", title: "a command that does not exist: spawn ... ENOENT (TypeScript lets the error escape)", args: ["run", "--", "varlatch-no-such-command-5-4b"], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED], differences: ["spawn-error"] }),
   // --omit
   v({ id: "omit.secret", title: "--omit a Secret: never asked for, and the inherited copy removed", args: ["run", "--omit", "API_KEY", ...runChildArgs()], env: { API_KEY: "inherited" }, server: [effectiveAt(ENV, runItems())] }),
@@ -1293,6 +1301,7 @@ const run54b: TranscriptCase[] = [
   // Assisted mode
   v({ id: "assisted.masked", title: "assisted mode masks the delivered Secret in the command's output", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, contractAnswer({ ...ACTIVE, contract: RUN_CONTRACT })] }),
   v({ id: "assisted.sensitive-number", title: "an item marked sensitive by any truthy value is masked", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, [{ name: "API_KEY", sensitive: 1, source: "self", value: null }, { name: "PORT", sensitive: false, source: "self", value: "8080" }]), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "assisted.surrogate", title: "assisted mode masks a Secret with an unpaired surrogate as the command echoes it", args: ["run", "--", "node", "-e", "console.log('s='+process.env.SURR)"], env: ASSISTED, server: [effectiveAt(ENV, SURROGATE_ITEMS), SURROGATE_DISCLOSED, CONTRACT_NONE] }),
   v({ id: "assisted.option", title: "--assisted masks too", args: ["--assisted", "run", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
   v({ id: "assisted.inherited", title: "an inherited value under a Contract Secret's name is masked too", args: ["run", ...runChildArgs()], env: { ...ASSISTED, LEGACY_KEY: "inherited-legacy-value" }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, contractAnswer({ ...ACTIVE, contract: { ...RUN_CONTRACT, items: [...RUN_CONTRACT.items, item("LEGACY_KEY")] } })] }),
   v({ id: "assisted.contract-denied", title: "no contract.read: masked under stored names only, said", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, denied(CONTRACT_PATH)] }),

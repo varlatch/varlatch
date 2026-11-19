@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/matcher"
 )
 
@@ -43,7 +44,14 @@ func (r *Run) runChild(command string, args []string, env []string, redaction *m
 	if err != nil {
 		return 0, spawnError(command, err)
 	}
-	cmd := &exec.Cmd{Path: path, Args: append([]string{command}, args...), Env: env, Stdin: r.Stdin}
+	// The command gets the environment as Node.js's spawn encodes it: a
+	// stored value's unpaired surrogate (kept as WTF-8 bytes by lib/jsjson)
+	// as U+FFFD, the text the matcher masks (matcher.DeliveredText).
+	encoded := make([]string, len(env))
+	for i, kv := range env {
+		encoded[i] = jsval.NodeText(kv)
+	}
+	cmd := &exec.Cmd{Path: path, Args: append([]string{command}, args...), Env: encoded, Stdin: r.Stdin}
 	var pairs []matcher.Pair
 	var writeEnds []*os.File
 	if redaction == nil {

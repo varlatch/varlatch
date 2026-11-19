@@ -574,6 +574,10 @@ comes. `verify-release`, which the installers run, is Go's own.
     instead of ending the CLI: SIGPIPE is handled while the relay runs, and
     the command starts with SIGPIPE's default
     (`TestRunSurvivesAClosedStdout`).
+  - **The command's environment** is encoded as Node.js's spawn encodes
+    it: a stored value's unpaired surrogate (kept as WTF-8 bytes by
+    `lib/jsjson`) reaches the command as one U+FFFD, the form the matcher
+    masks (`run.surrogate`, `assisted.surrogate`).
   - **Finding the command.** As libuv does: in the command's own `PATH` on
     POSIX; on Windows, `.com` or `.exe` only, a `.bat` or `.cmd` file
     refused (decision 4, `TestLookCommandAsLibuv`).
