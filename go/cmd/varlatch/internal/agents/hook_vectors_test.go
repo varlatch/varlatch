@@ -52,9 +52,13 @@ func TestHookVectors(t *testing.T) {
 			stdin = strings.ReplaceAll(stdin, `"{{nest}}"`, strings.Repeat("[", int(nest))+strings.Repeat("]", int(nest)))
 		}
 		dir := ""
+		// The directory goes into the event as JSON text: on Windows its
+		// backslashes are escapes to JSON.
+		jsonDir := ""
 		if cwd == "{{dir}}" {
 			dir = project(t, c)
-			stdin, cwd = strings.ReplaceAll(stdin, "{{dir}}", dir), dir
+			jsonDir = strings.Trim(string(jsjson.Stringify(dir)), `"`)
+			stdin, cwd = strings.ReplaceAll(stdin, "{{dir}}", jsonDir), dir
 		}
 		got, err := RunHook(jsjson.String(c.Value("format")), stdin, env, cwd)
 		if err != nil {
@@ -62,7 +66,7 @@ func TestHookVectors(t *testing.T) {
 			continue
 		}
 		if dir != "" {
-			got = strings.ReplaceAll(got, dir, "{{dir}}")
+			got = strings.ReplaceAll(got, jsonDir, "{{dir}}")
 		}
 		if want := jsjson.String(c.Value("expect")); got != want {
 			t.Errorf("%s: stdin %q\n got %q\nwant %q", id, jsjson.String(c.Value("stdin")), got, want)

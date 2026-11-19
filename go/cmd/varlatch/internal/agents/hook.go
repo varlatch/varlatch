@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -173,8 +174,31 @@ func isEnvLikeFile(path string) bool {
 	return strings.HasPrefix(name, ".env") && !envTemplates[name] && info != nil && info.Mode().IsRegular()
 }
 
-// resolvePath is Node.js's path.resolve(cwd, path) on POSIX.
+// onWindows is whether paths are Windows paths: hook.ts's `node:path` is
+// then path.win32 (win32path.go).
+var onWindows = runtime.GOOS == "windows"
+
+// cleanPath is Node.js's path.normalize, without a trailing separator.
+func cleanPath(p string) string {
+	if onWindows {
+		return win32Normalize(p)
+	}
+	return filepath.Clean(p)
+}
+
+func pathSeparator() string {
+	if onWindows {
+		return `\`
+	}
+	return "/"
+}
+
+// resolvePath is Node.js's path.resolve(cwd, path).
 func resolvePath(cwd, path string) string {
+	if onWindows {
+		wd, _ := os.Getwd()
+		return win32Resolve(wd, cwd, path)
+	}
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path)
 	}
@@ -247,7 +271,7 @@ func storeDirs(ctx hookContext) ([]string, error) {
 	}
 	var dirs []string
 	for _, d := range []string{filepath.Dir(configured), filepath.Dir(fallback), resolvePath(ctx.home, filepath.Join(".config", "varlatch"))} {
-		if d = filepath.Clean(d); !slices.Contains(dirs, d) {
+		if d = cleanPath(d); !slices.Contains(dirs, d) {
 			dirs = append(dirs, d)
 		}
 	}
@@ -294,15 +318,25 @@ func isInStore(path string, ctx hookContext) (bool, error) {
 	if strings.Contains(expanded, "$") {
 		return false, nil
 	}
-	abs := filepath.Clean(resolvePath(ctx.cwd, expanded))
+	// `normalize(isAbsolute(expanded) ? expanded : resolve(ctx.cwd, expanded))`:
+	// on Windows a path rooted without a drive (/home/dev/...) is absolute,
+	// as it is to Node.js, and stays without one, as the store's
+	// directories do.
+	var abs string
+	switch {
+	case onWindows && win32IsAbsolute(expanded):
+		abs = cleanPath(expanded)
+	default:
+		abs = cleanPath(resolvePath(ctx.cwd, expanded))
+	}
 	dirs, err := storeDirs(ctx)
 	if err != nil {
 		return false, err
 	}
 	for _, dir := range dirs {
 		prefix := dir
-		if !strings.HasSuffix(prefix, string(filepath.Separator)) {
-			prefix += string(filepath.Separator)
+		if sep := pathSeparator(); !strings.HasSuffix(prefix, sep) {
+			prefix += sep
 		}
 		if abs == dir || strings.HasPrefix(abs, prefix) {
 			return true, nil

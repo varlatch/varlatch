@@ -478,7 +478,12 @@ comes. `verify-release`, which the installers run, is Go's own.
   10,000 for every other caller), keeps a word's UTF-8 bytes whole, reads
   in linear time, and turns a panic into no decision. Its globs are
   matched as RE2 regular expressions (Go's `regexp`), compiled once per
-  run. `internal/cli`'s
+  run. On Windows it resolves and compares paths as Node.js's `path.win32`
+  does (`win32path.go`, held to Node.js's answers by `TestWin32Paths`): a
+  path rooted without a drive (`/home/dev/...`) is absolute, so a path
+  naming the credential store meets the store's directories, and
+  `TestHookDeniesWithThisPlatformsPaths` holds a `.env` read, a search
+  and the store to a denial with the platform's own paths. `internal/cli`'s
   `agentscmd.go` is the commands and `init` with its flags (`--org`,
   `--project`, `--server`, `--default-environment`, `--no-agent-files`);
   `init` on a terminal without them (guided) is slice 5.8a.
