@@ -4,13 +4,13 @@ package broker
 
 import (
 	"math"
-	"net/netip"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 )
 
 // Destination matching against the Capability's canonical selectors
@@ -131,12 +131,8 @@ func canonicalHost(raw string) string {
 	return host
 }
 
-// isIP is net.isIP: an IPv4 address in dotted decimal or an IPv6 address
-// (a zone included).
-func isIP(host string) bool {
-	_, err := netip.ParseAddr(host)
-	return err == nil
-}
+// isIP is net.isIP.
+func isIP(host string) bool { return whatwg.IsIP(host) != 0 }
 
 // MatchesSelectors is matchesSelectors: a wildcard matches names under its
 // suffix only, never an address.
