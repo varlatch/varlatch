@@ -3,8 +3,10 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
 	"io"
 	"os"
 	"path/filepath"
@@ -25,7 +27,7 @@ import (
 // guide`, `agents install` with every option, and `init` with its flags
 // off a terminal, ported from apps/cli/src/main.ts over internal/agents.
 // `agents hook` is slice 5.6a's (agents/hook.go); `init` on a terminal
-// (guided) is 5.8a.
+// (guided) is slice 5.8a's (guidedinit.go).
 
 const agentsUsage = "Usage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]" +
 	"|hook --format <claude|codex>>"
@@ -227,7 +229,7 @@ func initCommand(r *Run) error {
 	// ADR-0058 Decision 2: guided only on a terminal (both ends), outside
 	// assisted mode, when --org or --project is missing (slice 5.8a).
 	if !r.Assisted.On && isTerminal(r.Stdin) && isTerminal(r.Stdout) && (!hasOrg || !hasProject) {
-		return UsageError("varlatch init: guided init on a terminal is not in this build of the Go CLI yet (slice 5.8a); pass --org and --project, or use the TypeScript CLI for it until then")
+		return r.runGuidedInit(cwd, opts)
 	}
 	if !hasOrg {
 		return UsageOnly(initUsage)
@@ -251,14 +253,20 @@ func initCommand(r *Run) error {
 	if !ok {
 		environment = "development"
 	}
-	serverText := jsjson.String(resolved.Server)
+	return r.writeRepository(cwd, repoConfig{jsjson.String(resolved.Server), org, project, environment}, said, opts.Has("--no-agent-files"))
+}
+
+// writeRepository writes varlatch.toml and, unless noAgentFiles, the files
+// coding agents read: init's writer, with its flags and guided.
+func (r *Run) writeRepository(cwd string, config repoConfig, said string, noAgentFiles bool) error {
+	serverText := config.server
 	// Each value as a TOML basic string, escaped, so the file reads back as
 	// exactly what was given.
 	lines := []string{
 		"server = " + TOMLString(serverText),
-		"organization = " + TOMLString(org),
-		"project = " + TOMLString(project),
-		"default_environment = " + TOMLString(environment),
+		"organization = " + TOMLString(config.organization),
+		"project = " + TOMLString(config.project),
+		"default_environment = " + TOMLString(config.defaultEnvironment),
 		"",
 	}
 	// varlatch.toml is committed: a user name or password in the server URL,
@@ -278,7 +286,7 @@ func initCommand(r *Run) error {
 	}
 	// ADR-0043 Decision 7: the files coding agents read, unless
 	// --no-agent-files. A failure here leaves the project initialized.
-	if opts.Has("--no-agent-files") {
+	if noAgentFiles {
 		return nil
 	}
 	result, err := agents.RunInstall(agents.Options{Scope: "project", Root: cwd, Version: buildinfo.Version, Mode: "install"})
@@ -302,6 +310,89 @@ func initCommand(r *Run) error {
 		}
 	}
 	return nil
+}
+
+// runGuidedInit is main.ts's guided init (ADR-0058 Decision 2): on a
+// terminal, asking for what the flags leave out.
+func (r *Run) runGuidedInit(cwd string, opts *ParsedOptions) error {
+	serverFlag, _ := opts.Value("--server")
+	here := ""
+	resolved, err := clientctx.ResolveServer(cwd, serverFlag, r.Env)
+	if _, isContext := clientctx.IsContextError(err); err != nil && !isContext {
+		return err
+	}
+	if err == nil && resolved != nil {
+		here = jsjson.String(resolved.Server)
+	}
+	deps := guidedDeps{
+		cwd:            cwd,
+		prompt:         newTerminalPrompter(r),
+		out:            r.println,
+		err:            r.warn,
+		server:         here,
+		validateServer: validatePublicURL,
+		signIn:         r.guidedClient,
+		writeRepository: func(config repoConfig) error {
+			return r.writeRepository(cwd, config, "", opts.Has("--no-agent-files"))
+		},
+		holdValue: r.holdValue,
+	}
+	deps.organization, _ = opts.Value("--org")
+	deps.project, _ = opts.Value("--project")
+	deps.defaultEnvironment, _ = opts.Value("--default-environment")
+	code, err := guidedInit(deps)
+	if err != nil {
+		return err
+	}
+	if code != ExitOK {
+		return ExitWith(code)
+	}
+	return nil
+}
+
+// guidedClient is main.ts's signIn for guided init: a client for the
+// server with the stored credential when the server accepts it (any answer
+// but 401 is the run's failure), else after varlatch login's browser
+// hand-off (guidedSignIn), which prints nothing a server sent.
+func (r *Run) guidedClient(server string) (guidedAPI, error) {
+	existing, err := r.loadToken(server)
+	if err != nil {
+		return nil, err
+	}
+	if existing != "" {
+		api := r.plainClient(server, existing)
+		_, err := api.ListOrganizations(context.Background())
+		if err == nil {
+			return api, nil
+		}
+		var refused *apiclient.APIError
+		if !errors.As(err, &refused) || refused.Status != 401 {
+			return nil, err
+		}
+	}
+	_, err = guidedSignIn(server, signInParts{
+		browserLogin: r.browserLogin,
+		client:       func(token string) guidedSignInAPI { return r.plainClient(server, token) },
+		save: func(credential jsjson.Object) error {
+			if err := clientctx.SaveCredential(server, credential, r.Env); err != nil {
+				return err
+			}
+			r.noteDefaultServer(server)
+			return nil
+		},
+		out: r.println,
+	})
+	if err != nil {
+		return nil, err
+	}
+	token, err := r.loadToken(server)
+	if err != nil {
+		return nil, err
+	}
+	if token == "" {
+		return nil, Fail("Not authenticated to "+shownServer(server), ExitDenied)
+	}
+	return r.plainClient(server, token), nil
 }
 
 // TOMLString is s as a TOML basic string: quotes, backslashes and control
