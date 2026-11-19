@@ -581,8 +581,11 @@ while it lacks CLI features the suites exercise. `client-go.json` lists
 them, each with the slice that builds it, the client's counterpart of a
 target's `lacks` (one file, since the gaps are the client's, the same on
 every target). A check lacks when its feature, a feature its suite's setup
-uses (`suites.<name>.cliNeeds`), or, for a check without a feature of its
-own, one its `cliNeeds` lists, is in the file:
+uses (`suites.<name>.cliNeeds`), or one its `cliNeeds` lists, is in the
+file. A check's `cliNeeds` names what it needs besides its own feature (a
+`types` check that starts the generated module's application under
+`run --export-context` needs `run-export-context`), or, for a check without
+a feature, everything it needs:
 
 - the runner reports it `client-lacks` itself; a suite cannot;
 - a suite all of whose checks lack something is not started; otherwise it
@@ -594,6 +597,12 @@ own, one its `cliNeeds` lists, is in the file:
 - only the `go` client has gaps; a TypeScript CLI ignores the file;
 - gate mode refuses any client-lacks: G1 at 0.50.0 runs the Go CLI with
   nothing left out.
+
+`client-runtime`'s two whole-suite checks, "the audit export holds no
+value" and "varlatchd logs hold no value", need no CLI feature of their
+own. On the Go CLI before slices 5.4b and 5.4d they cover only what the
+suite's setup and `types` did: no run or scan has disclosed anything yet,
+so they prove the server side only until those slices land.
 
 `go/cmd/varlatch`'s `TestClientLacksNotStale` also fails while an entry
 names a slice the Go CLI's inventory says is built. `cliNeeds` is recorded
