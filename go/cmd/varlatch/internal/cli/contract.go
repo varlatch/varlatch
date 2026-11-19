@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -104,6 +105,17 @@ func (r *Run) contractPush(ctx *clientctx.Context, api *lazyClient) error {
 		if err != nil {
 			return Fail(err.Error(), ExitFailure)
 		}
+		// Its sensitive defaults are values from here on, before the
+		// environment list is asked for or anything resolved.
+		for _, it := range draft.Items {
+			sensitive := draft.DefaultSensitive
+			if it.Sensitive != nil {
+				sensitive = *it.Sensitive
+			}
+			if sensitive && it.DefaultValue != nil {
+				r.holdValue(*it.DefaultValue)
+			}
+		}
 		var environments []envschema.Environment
 		if len(draft.EnvironmentNames) > 0 {
 			if environments, err = r.rootEnvironments(ctx, api); err != nil {
@@ -199,18 +211,28 @@ func (r *Run) contractPush(ctx *clientctx.Context, api *lazyClient) error {
 		active, activeOK = false, false
 	}
 	version, versionOK := jsval.Get(revision, "semanticsVersion")
-	// The server's identifiers, hash and version only of their shapes.
-	shownRev := idOrUnrecognized(id, idOK, "rev")
-	shownHash := UnrecognizedHash
-	if h, ok := hash.(string); ok && contentHash.MatchString(h) {
-		shownHash = h
+	// The server's identifiers and hash only of their shapes and holding no
+	// value in flight, so redaction never rewrites one: anything else is
+	// not shown (null in --json), and said once on stderr.
+	rev, revOK := r.serverIdentifier(id, idOK, serverID("rev"))
+	hashText, hashOK := r.serverIdentifier(hash, true, contentHash)
+	if !revOK || !hashOK {
+		r.eprintln("varlatch: the server's revision id or content hash is not shown: it does not have the server's shape, or it holds a value this command sends")
+	}
+	shownRev, shownHash := UnrecognizedID, UnrecognizedHash
+	var jsonRev, jsonHash any
+	if revOK {
+		shownRev, jsonRev = rev, rev
+	}
+	if hashOK {
+		shownHash, jsonHash = hashText, hashText
 	}
 	var shownVersion any = UnrecognizedVersion
 	if f, ok := version.(float64); ok && f == math.Trunc(f) && f >= 1 && f < 1000 {
 		shownVersion = f
 	}
 	if hasArg(r.Args, "--json") {
-		doc := jsjson.Object{{Key: "id", Value: shownRev}, {Key: "contentHash", Value: shownHash}}
+		doc := jsjson.Object{{Key: "id", Value: jsonRev}, {Key: "contentHash", Value: jsonHash}}
 		if activeOK {
 			doc = append(doc, jsjson.Member{Key: "active", Value: jsjson.Truthy(active)})
 		}
@@ -233,10 +255,32 @@ func (r *Run) contractPush(ctx *clientctx.Context, api *lazyClient) error {
 	if err := r.println("Contract Semantics version " + versionText); err != nil {
 		return err
 	}
-	if !jsjson.Truthy(active) {
+	if !jsjson.Truthy(active) && revOK {
 		return r.println("Activate with: varlatch contract activate " + shownRev)
 	}
 	return nil
+}
+
+// serverIdentifier is an identifier or hash from an answer as the CLI
+// shows it: a string of the server's shape that holds no value in flight
+// (which redaction would rewrite), else false.
+func (r *Run) serverIdentifier(v any, present bool, shape *regexp.Regexp) (string, bool) {
+	s, ok := v.(string)
+	if !ok || !present || !shape.MatchString(s) || r.holdsValue(s) {
+		return "", false
+	}
+	return s, true
+}
+
+// holdsValue is whether text holds a value in flight, as it is or as
+// Printable shows it.
+func (r *Run) holdsValue(text string) bool {
+	for _, v := range r.inFlight {
+		if v != "" && (strings.Contains(text, v) || strings.Contains(text, Printable(v))) {
+			return true
+		}
+	}
+	return false
 }
 
 // ContractFileBody is the Contract `contract push --file` sends: the file
@@ -315,9 +359,20 @@ func (r *Run) maskShown(v any) any {
 	case string:
 		return r.Secrets.Mask(x)
 	case jsjson.Object:
-		out := make(jsjson.Object, len(x))
-		for i, m := range x {
-			out[i] = jsjson.Member{Key: m.Key, Value: r.maskShown(m.Value)}
+		// A key holding a secret is masked as values are, and kept unique:
+		// a second "[redacted]" becomes "[redacted] (2)", and so on.
+		out := make(jsjson.Object, 0, len(x))
+		used := map[string]bool{}
+		for _, m := range x {
+			key := m.Key
+			if masked := RedactDiagnostic(r.Secrets.Mask(key), r.inFlight...); masked != key {
+				key = masked
+				for n := 2; used[key]; n++ {
+					key = masked + " (" + strconv.Itoa(n) + ")"
+				}
+			}
+			used[key] = true
+			out = append(out, jsjson.Member{Key: key, Value: r.maskShown(m.Value)})
 		}
 		return out
 	case []any:

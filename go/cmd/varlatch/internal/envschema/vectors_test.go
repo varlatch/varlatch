@@ -236,6 +236,11 @@ func TestEnvSchemaResolutions(t *testing.T) {
 		t.Fatalf("only %d resolutions", len(f.Resolutions))
 	}
 	hashes := map[string]bool{}
+	// One draft per source, parsed once: each is resolved again for every
+	// list, so a resolution never depends on a fresh parse, nor changes the
+	// draft it reads.
+	drafts := map[string]*Draft{}
+	resolved := map[string]int{}
 	for _, v := range f.Resolutions {
 		var envs []Environment
 		for _, e := range v.Environments {
@@ -245,10 +250,15 @@ func TestEnvSchemaResolutions(t *testing.T) {
 			}
 			envs = append(envs, env)
 		}
-		draft, err := Parse(v.Source)
-		if err != nil {
-			t.Fatalf("%q: %v", v.Source, err)
+		draft, ok := drafts[v.Source]
+		if !ok {
+			var err error
+			if draft, err = Parse(v.Source); err != nil {
+				t.Fatalf("%q: %v", v.Source, err)
+			}
+			drafts[v.Source] = draft
 		}
+		resolved[v.Source]++
 		c, err := Resolve(draft, envs)
 		if v.Error != nil {
 			if err == nil || err.Error() != *v.Error {
@@ -260,6 +270,15 @@ func TestEnvSchemaResolutions(t *testing.T) {
 			t.Errorf("%q against %d environments: got %s %s %v, want %s %s", v.Source, len(envs), c.Bytes(), c.Hash(), err, v.Canonical, v.Hash)
 		}
 		hashes[v.Hash] = true
+	}
+	twice := 0
+	for _, n := range resolved {
+		if n > 1 {
+			twice++
+		}
+	}
+	if twice < 2 {
+		t.Errorf("only %d drafts were resolved more than once", twice)
 	}
 	if len(hashes) < 3 {
 		t.Errorf("the resolutions give only %d distinct revisions", len(hashes))

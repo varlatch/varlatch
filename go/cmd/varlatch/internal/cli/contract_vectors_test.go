@@ -104,14 +104,15 @@ func TestContractNeverShowsASecret(t *testing.T) {
 func TestContractPushReadsTheProtocolsTypes(t *testing.T) {
 	s := newValuesServer(t)
 	s.answer("POST", contractPath+"/revisions", 201, `{"active": {"yes": true}, "contentHash": "x", "semanticsVersion": "3"}`)
-	code, stdout, _ := runIn(t, s, "", map[string]string{"c.json": `{"schemaVersion": 1, "items": []}`}, nil, "contract", "push", "--file", "c.json")
+	code, stdout, stderr := runIn(t, s, "", map[string]string{"c.json": `{"schemaVersion": 1, "items": []}`}, nil, "contract", "push", "--file", "c.json")
 	if code != 0 || strings.Contains(stdout, "[active]") || !strings.Contains(stdout, "Revision "+UnrecognizedID+" ("+UnrecognizedHash+")") ||
-		!strings.Contains(stdout, "Contract Semantics version "+UnrecognizedVersion) || !strings.Contains(stdout, "Activate with:") {
-		t.Errorf("status %d, %q", code, stdout)
+		!strings.Contains(stdout, "Contract Semantics version "+UnrecognizedVersion) || strings.Contains(stdout, "Activate with:") ||
+		!strings.Contains(stderr, "is not shown") {
+		t.Errorf("status %d, %q %q", code, stdout, stderr)
 	}
 	s = newValuesServer(t)
 	s.answer("GET", "/v1/organizations/acme/projects/web/environments", 200, `{"items": [{"name": "staging", "parentEnvironmentId": null}]}`)
-	code, stdout, stderr := runIn(t, s, "", map[string]string{".env.schema": "# @required=env(staging)\nKEY=\n"}, nil, "contract", "push", "--schema", ".env.schema")
+	code, stdout, stderr = runIn(t, s, "", map[string]string{".env.schema": "# @required=env(staging)\nKEY=\n"}, nil, "contract", "push", "--schema", ".env.schema")
 	if code != 1 || stdout != "" || !strings.Contains(stderr, "unexpected shape (items[0])") || strings.Contains(stderr, "undefined") {
 		t.Errorf("status %d, %q %q", code, stdout, stderr)
 	}
@@ -119,5 +120,71 @@ func TestContractPushReadsTheProtocolsTypes(t *testing.T) {
 	defer s.mu.Unlock()
 	if len(s.sent) != 0 {
 		t.Errorf("sent %q", s.sent)
+	}
+}
+
+// TestContractIdentifiersAreNeverRewritten: an id or hash is shown only of
+// the server's shape and holding no value in flight, so redaction never
+// rewrites one; else null in --json (the placeholder in human text) and a
+// note on stderr. A sensitive default "ab" sent with the push is in flight.
+func TestContractIdentifiersAreNeverRewritten(t *testing.T) {
+	file := `{"schemaVersion": 1, "items": [{"name": "API_KEY", "required": {"kind": "never"}, "sensitive": true, "type": "string", "defaultValue": "ab"}]}`
+	clean := `rev_` + strings.Repeat("q", 26)
+	holding := `rev_ab` + strings.Repeat("q", 24)
+	hash := "sha256:" + strings.Repeat("0", 64)
+	holdingHash := "sha256:ab" + strings.Repeat("0", 62)
+	for name, c := range map[string]struct {
+		id, hash string
+		shown    bool
+	}{
+		"clean":          {clean, hash, true},
+		"id holds":       {holding, hash, false},
+		"hash holds":     {clean, holdingHash, false},
+		"id of no shape": {"rev_X", hash, false},
+	} {
+		for _, asJSON := range []bool{true, false} {
+			t.Run(name+map[bool]string{true: " --json", false: ""}[asJSON], func(t *testing.T) {
+				s := newValuesServer(t)
+				s.answer("POST", contractPath+"/revisions", 201, `{"id": "`+c.id+`", "contentHash": "`+c.hash+`", "active": false, "semanticsVersion": 3}`)
+				args := []string{"contract", "push", "--file", "c.json"}
+				if asJSON {
+					args = append(args, "--json")
+				}
+				_, stdout, stderr := runIn(t, s, "", map[string]string{"c.json": file}, nil, args...)
+				if strings.Contains(stdout, "[redacted]") {
+					t.Errorf("an identifier was rewritten: %q", stdout)
+				}
+				if c.shown != (strings.Contains(stdout, c.id) && strings.Contains(stdout, c.hash)) || c.shown == strings.Contains(stderr, "is not shown") {
+					t.Errorf("shown %v: %q %q", c.shown, stdout, stderr)
+				}
+				if asJSON && !c.shown && !strings.Contains(stdout, "null") {
+					t.Errorf("no null: %q", stdout)
+				}
+			})
+		}
+	}
+}
+
+// TestContractShowMasksKeys: an object key holding a secret is masked as a
+// value is, and the keys stay unique.
+func TestContractShowMasksKeys(t *testing.T) {
+	s := newValuesServer(t)
+	s.answer("GET", contractPath, 200, `{"id": "rev_x", "`+canary+`": 1, "x`+canary+`": 2, "vlt_cli_secretTestAAAA": 3, "contract": {"schemaVersion": 1, "items": [
+		{"name": "API_KEY", "required": {"kind": "never"}, "sensitive": true, "type": "string", "defaultValue": "`+canary+`"}]}}`)
+	code, stdout, stderr := runIn(t, s, "", nil, nil, "contract", "show")
+	noneShown(t, stdout, stderr, canary, "vlt_cli_secretTestAAAA")
+	doc, err := jsjson.Parse([]byte(stdout))
+	if err != nil || code != 0 {
+		t.Fatalf("status %d, %v: %q", code, err, stdout)
+	}
+	keys := map[string]bool{}
+	for _, m := range doc.(jsjson.Object) {
+		if keys[m.Key] {
+			t.Errorf("key %q twice: %q", m.Key, stdout)
+		}
+		keys[m.Key] = true
+	}
+	if len(keys) != 5 {
+		t.Errorf("%d keys: %q", len(keys), stdout)
 	}
 }
