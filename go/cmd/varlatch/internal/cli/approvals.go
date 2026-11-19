@@ -162,6 +162,9 @@ var interrupts = func() (<-chan os.Signal, func()) {
 	return ch, func() { signal.Stop(ch) }
 }
 
+// exitNow ends the process at once (a second Ctrl-C). Tests replace it.
+var exitNow = os.Exit
+
 // cancelBudget bounds the best-effort cancel after Ctrl-C.
 const cancelBudget = 3 * time.Second
 
@@ -177,15 +180,20 @@ func (r *Run) waitInterruptibly(api *apiclient.Client, approval any, announce []
 	defer cancel()
 	var once sync.Once
 	interrupted := make(chan struct{})
+	// The handler listens until this function returns, not until the wait
+	// is cancelled: a second Ctrl-C while the approval is being cancelled
+	// (up to cancelBudget) exits at once.
+	finished := make(chan struct{})
+	defer close(finished)
 	go func() {
 		for {
 			select {
-			case <-ctx.Done():
+			case <-finished:
 				return
 			case <-signals:
 				select {
 				case <-interrupted:
-					os.Exit(ExitInterrupted) // the second Ctrl-C
+					exitNow(ExitInterrupted) // the second Ctrl-C
 				default:
 				}
 				once.Do(func() { close(interrupted); cancel() })

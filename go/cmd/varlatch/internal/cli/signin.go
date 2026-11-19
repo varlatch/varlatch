@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -52,9 +53,12 @@ func browserCommand(goos, url string, env Env) []string {
 }
 
 // callbackNonce is the random path of the loopback callback: only a POST to
-// exactly that path is the sign-in's, so another local process that finds
-// the port cannot deliver a bearer of its choosing (go/README.md, the
-// accepted difference "loopback-nonce").
+// exactly that path is the sign-in's, so delivering a bearer takes the
+// path, not just the port (go/README.md, the accepted difference
+// "loopback-nonce"). The path is in the sign-in address, which the
+// browser's command line holds while it runs: it keeps out what cannot
+// read that, such as a web page, not another process of the same machine
+// that can.
 func callbackNonce() (string, error) {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
@@ -88,6 +92,8 @@ func (r *Run) browserLogin(server string) (string, error) {
 	result := make(chan delivered, 1)
 	var taken atomic.Bool
 	path := "/" + nonce
+	port := listener.Addr().(*net.TCPAddr).Port
+	portText := strconv.Itoa(port)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -97,7 +103,11 @@ func (r *Run) browserLogin(server string) (string, error) {
 		// Chrome Local Network Access: page -> loopback requires this on the
 		// preflight or the fetch fails with a bare "Failed to fetch".
 		w.Header().Set("Access-Control-Allow-Private-Network", "true")
-		if req.URL.Path != path {
+		// Only this listener's own address (a name another host resolves to
+		// 127.0.0.1 is not it: DNS rebinding) and only its random path, the
+		// path compared in constant time.
+		if req.Host != "127.0.0.1:"+portText && req.Host != "localhost:"+portText ||
+			subtle.ConstantTimeCompare([]byte(req.URL.Path), []byte(path)) != 1 {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -147,8 +157,7 @@ func (r *Run) browserLogin(server string) (string, error) {
 		_ = server2.Shutdown(ctx)
 		cancel()
 	}()
-	port := listener.Addr().(*net.TCPAddr).Port
-	callback := "http://127.0.0.1:" + strconv.Itoa(port) + path
+	callback := "http://127.0.0.1:" + portText + path
 	trimmed := strings.TrimRight(server, "/")
 	address := trimmed + "/enroll?callback=" + apiclient.EncodeURIComponent(callback)
 	if err := r.println("Complete passkey sign-in in your browser:"); err != nil {

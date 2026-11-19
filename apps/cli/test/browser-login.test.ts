@@ -127,8 +127,9 @@ describe("browser login", () => {
   it("with VARLATCH_NO_BROWSER, prints the address in the documented two lines and signs in when the page calls back", async () => {
     const r = await browserLogin("1");
     expect(r.first).toBe("Complete passkey sign-in in your browser:");
-    // The Go CLI's callback has a random path, so only the sign-in's own page can deliver to it (go/README.md, "loopback-nonce").
-    expect(r.second).toMatch(/^ {2}http:\/\/127\.0\.0\.1:\d+\/enroll\?callback=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F(?:[A-Za-z0-9_-]{32})?$/);
+    // The Go CLI's callback is at a random 32-character path (go/README.md, "loopback-nonce"); the TypeScript CLI's at "/".
+    const callbackPath = process.env.VARLATCH_TEST_CLI ? "[A-Za-z0-9_-]{32}" : "";
+    expect(r.second).toMatch(new RegExp(`^ {2}http:\\/\\/127\\.0\\.0\\.1:\\d+\\/enroll\\?callback=http%3A%2F%2F127\\.0\\.0\\.1%3A\\d+%2F${callbackPath}$`));
     expect(r.second.startsWith(`  ${origin}/enroll?callback=`)).toBe(true);
     expect(r.callbackStatus).toBe(200);
     expect(r.code, r.stderr).toBe(0);

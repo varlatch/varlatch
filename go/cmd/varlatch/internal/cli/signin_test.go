@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -40,9 +41,11 @@ func (b *syncBuffer) String() string {
 var printedCallback = regexp.MustCompile(`callback=(\S+)\n`)
 
 // TestBrowserCallbackTakesOnlyItsPath: the loopback listener is on
-// 127.0.0.1 only; a POST to any path but its random one is refused (404)
-// and does not end the sign-in; the sign-in's own POST delivers the bearer;
-// and the listener takes no connection after it (single use).
+// 127.0.0.1 only; a POST to any path but its random one, or to it under
+// another Host (DNS rebinding), is refused (404); a GET (405) or a preflight
+// OPTIONS (204) on its path is answered; none of them ends the sign-in or
+// uses up the callback; the sign-in's own POST delivers the bearer; and the
+// listener takes no connection after it (single use).
 func TestBrowserCallbackTakesOnlyItsPath(t *testing.T) {
 	var stdout syncBuffer
 	r := &Run{IO: IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &syncBuffer{}}, Env: MapEnv{"VARLATCH_NO_BROWSER": "1"}, Secrets: &Secrets{}}
@@ -66,14 +69,37 @@ func TestBrowserCallbackTakesOnlyItsPath(t *testing.T) {
 	if err != nil || u.Hostname() != "127.0.0.1" || len(strings.TrimPrefix(u.Path, "/")) != 32 {
 		t.Fatalf("callback %q: not on 127.0.0.1 with a random path", callback)
 	}
-	post := func(target, body string) int {
+	send := func(method, target, host, body string) int {
 		client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 5 * time.Second}
-		res, err := client.Post(target, "application/json", strings.NewReader(body))
+		req, err := http.NewRequest(method, target, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if host != "" {
+			req.Host = host
+		}
+		res, err := client.Do(req)
 		if err != nil {
 			return 0 // refused
 		}
 		res.Body.Close()
 		return res.StatusCode
+	}
+	post := func(target, body string) int { return send("POST", target, "", body) }
+	port := u.Port()
+	for _, c := range []struct {
+		method, host string
+		want         int
+	}{
+		{"POST", "rebound.example:" + port, http.StatusNotFound},
+		{"POST", "127.0.0.1:1", http.StatusNotFound},
+		{"GET", "", http.StatusMethodNotAllowed},
+		{"OPTIONS", "", http.StatusNoContent},
+		{"GET", "localhost:" + port, http.StatusMethodNotAllowed},
+	} {
+		if got := send(c.method, callback, c.host, `{"token":"vlt_web_forged"}`); got != c.want {
+			t.Errorf("%s with Host %q got %d, want %d", c.method, c.host, got, c.want)
+		}
 	}
 	if got := post("http://"+u.Host+"/", `{"token":"vlt_web_forged"}`); got != http.StatusNotFound {
 		t.Errorf("a POST to / got %d, want 404", got)
@@ -201,5 +227,48 @@ func TestRerunCommand(t *testing.T) {
 	}
 	if got := rerunCommand([]string{"--assisted", "org", "freeze"}, "apr_1", true); got != "varlatch --approval apr_1 --assisted org freeze" {
 		t.Errorf("--assisted twice: %q", got)
+	}
+}
+
+// TestSecondCtrlCExitsAtOnce: after a first Ctrl-C the CLI cancels the
+// approval (up to cancelBudget); a second Ctrl-C during that cancel exits
+// 130 at once, as TypeScript's handler does.
+func TestSecondCtrlCExitsAtOnce(t *testing.T) {
+	cancelSeen := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if strings.HasSuffix(req.URL.Path, "/cancel") {
+			close(cancelSeen)
+			<-release // the cancel hangs
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	defer close(release)
+	signals := make(chan os.Signal, 2)
+	exited := make(chan int, 2)
+	savedInterrupts, savedExit := interrupts, exitNow
+	interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+	exitNow = func(code int) { exited <- code }
+	defer func() { interrupts, exitNow = savedInterrupts, savedExit }()
+
+	r := &Run{IO: IO{Stdout: &bytes.Buffer{}, Stderr: &syncBuffer{}}, Env: MapEnv{}, Secrets: &Secrets{}}
+	approval, _ := jsjson.Parse([]byte(`{"id":"apr_1","state":"pending","interval":30,"expiresAt":"2100-01-01T00:00:00.000Z"}`))
+	go func() { _, _ = r.waitInterruptibly(r.plainClient(srv.URL, "vlt_cli_x"), approval, nil) }()
+	signals <- os.Interrupt
+	select {
+	case <-cancelSeen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first Ctrl-C did not cancel the approval")
+	}
+	signals <- os.Interrupt
+	select {
+	case code := <-exited:
+		if code != ExitInterrupted {
+			t.Errorf("exited %d, want 130", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the second Ctrl-C did not exit at once")
 	}
 }

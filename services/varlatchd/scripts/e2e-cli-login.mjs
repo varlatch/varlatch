@@ -60,6 +60,9 @@ const home = mkdtempSync(join(tmpdir(), "varlatch-login-e2e-"));
 const cli = spawn(...cliCommand(["login", "--server", base]), {
   env: { ...process.env, VARLATCH_ASSISTED: "0", VARLATCH_CONFIG_DIR: home, DISPLAY: "" },
 });
+// Its exit, from the start: a CLI that completes the sign-in before the
+// browser's page settles must not exit unobserved.
+const exited = new Promise((resolve) => cli.on("exit", resolve));
 let out = "";
 cli.stdout.on("data", (d) => (out += d.toString()));
 cli.stderr.on("data", (d) => (out += d.toString()));
@@ -94,7 +97,7 @@ if (!check("cli-login.browser-delivered-credential-cli-callback", "browser deliv
   finish();
 }
 
-const code = await new Promise((resolve) => cli.on("exit", resolve));
+const code = await exited;
 const completed = code === 0 && /Logged in to/.test(out);
 check("cli-login.login-completed", "varlatch login completed", completed, completed ? out.trim().split("\n").pop() : `CLI exit ${code}: ${out}`);
 
