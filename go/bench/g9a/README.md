@@ -236,8 +236,33 @@ smoke.
 - `requests.log`: every retrieval, from k6 (`k6/g9a.js`): phase, scheduled
   start, latency counted from the scheduled start, service time, status,
   error (`busy` for `SQLITE_BUSY`), varlatchd's request id and the
-  identity whose credential it carried. k6's dropped iterations (requests
-  it could not send on time) are in `k6-summary.json`.
+  identity whose credential it carried, then the raw dispatch time, the
+  scenario's start and the iteration. k6's dropped iterations (requests it
+  could not send on time) are in `k6-summary.json`. They still fail the
+  run.
+  - **G9's measure** is latency from each request's scheduled start: its
+    scenario's start plus its iteration (`iterationInTest`) over the rate.
+  - **Without drops,** that is each request's slot, and the report judges
+    latency from it. One limit remains: k6 assigns `iterationInTest` after
+    it hands the iteration to a VU, so a stall can reorder a few requests
+    by a few slots (20 ms each at 50/s).
+  - **With drops,** `iterationInTest` leaves the dropped iterations out.
+    The script's schedule is then one interval early per earlier drop: in
+    G9's bound run of 2026-11-18, 29 drops at 50/s read 580 ms late on
+    every later request. The real slot is not known, and the report infers
+    none.
+    - The run fails on the drops.
+    - No phase or window p95 is judged.
+    - The tables show HTTP time from the send (k6's `blocked` +
+      `duration`), with the windows taken by send time, reported only, not
+      the G9 measure.
+    - The report also gives the dispatch lateness against the iteration
+      slot, as an upper bound: it includes one interval per earlier drop.
+  - **Older logs** without the dispatch columns take the send from their
+    own (schedule + latency − HTTP time).
+  - **The report's split:** for each phase, over every request
+    (transport failures included), the latency in its two parts: the
+    dispatch's lateness and the HTTP time.
 - `events.jsonl`: from the server: every checkpoint with its mode, why it
   ran (`interval`, `size`, `snapshot`, `close`), start, duration, busy
   result, frames in the log and checkpointed, and the WAL size before and

@@ -593,9 +593,13 @@ jobs:
           CGO_ENABLED: "1"
           VARLATCH_REQUIRE_DASHBOARD: "1"
         # The installer tests run shells, not Go concurrency; go runs them once.
+        # -timeout is per package binary: cmd/varlatch replays every CLI
+        # transcript as a race-instrumented process, and its case count grows
+        # with each slice, so it gets 20 minutes rather than go's default 10,
+        # inside the job's 40.
         run: |
           # shellcheck disable=SC2046 # one argument per package
-          go test -count=1 -race $(go list ./... | grep -v '/go/install$')
+          go test -count=1 -race -timeout 20m $(go list ./... | grep -v '/go/install$')
 
       - name: Save Go's caches
         if: success() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
