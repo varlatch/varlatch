@@ -65,7 +65,7 @@ func TestValidationVectors(t *testing.T) {
 		code, _ := jsval.Get(want, "exitCode")
 		stdout, _ := jsval.Get(want, "stdout")
 		stderr, _ := jsval.Get(want, "stderr")
-		if got.ExitCode != int(code.(float64)) || !slices.Equal(nonNil(got.Stdout), strings_(stdout)) || !slices.Equal(nonNil(got.Stderr), strings_(stderr)) {
+		if got.ExitCode != int(code.(float64)) || !slices.Equal(nonNil(got.Out), strings_(stdout)) || !slices.Equal(nonNil(got.Err), strings_(stderr)) {
 			t.Errorf("%s:\n got %+v\nwant %s", jsjson.Stringify(report), got, jsjson.Stringify(want))
 		}
 		document, err := ValidationDocument(environment, report, got.ExitCode)
@@ -172,7 +172,7 @@ func TestValidationRequiresHintReadsOwnNames(t *testing.T) {
 		"  not evaluated: B (an unrecognized requirement; a Requirement (e.g. Tailnet Constraint) is not met)",
 		"  not evaluated: C (needs secret.reveal)",
 	}
-	if !slices.Equal(got.Stderr, want) || got.ExitCode != 2 {
-		t.Errorf("got %q (%d), want %q", got.Stderr, got.ExitCode, want)
+	if !slices.Equal(got.Err, want) || got.ExitCode != 2 {
+		t.Errorf("got %q (%d), want %q", got.Err, got.ExitCode, want)
 	}
 }

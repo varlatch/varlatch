@@ -126,6 +126,11 @@ func UsageErrorWithUsage(message, usage string) error {
 	return &exitError{message: message, usage: usage, code: ExitUsage}
 }
 
+// UsageOnly is UsageError(usage), usage being one of this binary's usage
+// texts and the whole message: printed outside the fail-safe, byte for
+// byte as TypeScript prints it, never masked.
+func UsageOnly(usage string) error { return UsageErrorWithUsage("", usage) }
+
 // Main runs the CLI with args (the process's arguments without the program
 // name) and returns the exit status, as apps/cli/src/main.ts main() does.
 func Main(args []string, env Env, streams IO) int {
@@ -231,19 +236,18 @@ func (r *Run) finish(err error) int {
 
 // RedactDiagnostic is the fail-safe every diagnostic goes through before it
 // is written, failures (Run.finish) and warnings (Run.warn) alike. Every
-// sensitive span is found in the original text first: a URL's user name
-// and password (clientctx.UserinfoSpansInText, from the first scheme colon
-// to the last at-sign), every text in Varlatch's token format, and each
-// exact occurrence of a secret value in flight (values), whatever its
-// length; overlapping spans are merged, and each is replaced once, by
-// [redacted] (a URL's at-sign by "@" when nothing else covers it). So no
-// detection depends on another's replacement: a value "@" never hides the
-// at-sign that marks a password. Text with none keeps its bytes.
+// sensitive span is found in the original text first and their union is
+// replaced once: clientctx's fail-safe spans (MaskUserinfoInText's: a URL's
+// user name and password, each up to its at-sign), every text in
+// Varlatch's token format, and each exact occurrence of a secret value in
+// flight (values), whatever its length. A merged region reads
+// "[redacted]@" when it ends with a fail-safe span's at-sign that no value
+// in flight covers, "[redacted]" otherwise. So no detection depends on
+// another's replacement (a value "@" never hides the at-sign that marks a
+// password), and with no values in flight the bytes are the fail-safe's
+// and the token redaction's, as before. Text with none keeps its bytes.
 func RedactDiagnostic(text string, values ...string) string {
-	var spans []span
-	if userinfo, atSign, ok := clientctx.UserinfoSpansInText(text); ok {
-		spans = append(spans, span{userinfo[0], userinfo[1], Redacted}, span{atSign[0], atSign[1], "@"})
-	}
+	spans := atSignSpans(clientctx.FailSafeSpans(text))
 	return redactSpans(text, append(append(spans, tokenSpans(text)...), valueSpans(text, values)...))
 }
 
@@ -274,22 +278,18 @@ func RedactOutput(text string, values ...string) string {
 }
 
 // RedactValue is a JSON value with the fail-safe applied to every string
-// in it, keys untouched: a URL's user name and password (precisely,
-// clientctx.URLValueUserinfoSpan, so a value without them keeps its
-// bytes), every text in Varlatch's token format, and each exact
-// occurrence of a secret value in flight (values), all found in the
-// original string and replaced once, as [redacted]. printJSON applies it
-// to every --json document, so a value is matched in the string that holds
-// it, never in the serialised text (a short value never touches a number or
-// an escape).
+// in it, keys untouched: clientctx's composed masker's spans (MaskURLInValue's,
+// so a value without a user name and password keeps its bytes), every text
+// in Varlatch's token format, and each exact occurrence of a secret value
+// in flight (values), all found in the original string and their union
+// replaced once (RedactDiagnostic's rule). redactJSON applies it to every
+// --json document, so a value is matched in the string that holds it,
+// never in the serialised text (a short value never touches a number or an
+// escape).
 func RedactValue(v any, values ...string) any {
 	switch x := v.(type) {
 	case string:
-		var spans []span
-		if start, end, ok := clientctx.URLValueUserinfoSpan(x); ok {
-			spans = append(spans, span{start, end, Redacted})
-		}
-		return redactSpans(x, append(append(spans, tokenSpans(x)...), valueSpans(x, values)...))
+		return redactString(x, values)
 	case jsjson.Object:
 		out := make(jsjson.Object, len(x))
 		for i, m := range x {
@@ -302,21 +302,56 @@ func RedactValue(v any, values ...string) any {
 			out[i] = RedactValue(e, values...)
 		}
 		return out
+	case []string:
+		out := make([]string, len(x))
+		for i, e := range x {
+			out[i] = redactString(e, values)
+		}
+		return out
 	}
-	return v
+	return v // nil, bool, float64, int: nothing to redact
 }
 
-// span is a part of a text, [a, b), to be replaced by with.
+// redactString is RedactValue for one string.
+func redactString(s string, values []string) string {
+	spans := atSignSpans(clientctx.ValueSpans(s))
+	return redactSpans(s, append(append(spans, tokenSpans(s)...), valueSpans(s, values)...))
+}
+
+// scalar is v when it is a JSON scalar (null, a boolean, a number or a
+// string), and false for an object or an array: a field a document defines
+// as a scalar never passes a server's nested value through.
+func scalar(v any) (any, bool) {
+	switch v.(type) {
+	case nil, bool, float64, string:
+		return v, true
+	}
+	return nil, false
+}
+
+// span is a part of a text, [a, b), to be redacted: one of clientctx's
+// fail-safe spans (atSign: it ends just after an at-sign, replaced alone
+// by "[redacted]@"), a token, or a value in flight (value).
 type span struct {
-	a, b int
-	with string
+	a, b   int
+	atSign bool
+	value  bool
+}
+
+// atSignSpans are clientctx's spans, each ending just after an at-sign.
+func atSignSpans(spans [][2]int) []span {
+	out := make([]span, len(spans))
+	for i, s := range spans {
+		out[i] = span{a: s[0], b: s[1], atSign: true}
+	}
+	return out
 }
 
 // tokenSpans are the texts in Varlatch's token format.
 func tokenSpans(text string) []span {
 	var out []span
 	for _, m := range varlatchToken.FindAllStringIndex(text, -1) {
-		out = append(out, span{m[0], m[1], Redacted})
+		out = append(out, span{a: m[0], b: m[1]})
 	}
 	return out
 }
@@ -339,7 +374,7 @@ func valueSpans(text string, values []string) []span {
 				if i < 0 {
 					break
 				}
-				out = append(out, span{from + i, from + i + len(form), Redacted})
+				out = append(out, span{a: from + i, b: from + i + len(form), value: true})
 				from += i + 1
 			}
 		}
@@ -347,9 +382,12 @@ func valueSpans(text string, values []string) []span {
 	return out
 }
 
-// redactSpans replaces the spans of text, in one pass over the original:
-// spans that overlap are merged into one [redacted] (a span replaced by
-// something else, a URL's at-sign, keeps that only alone).
+// redactSpans replaces the union of spans in text, in one pass over the
+// original: spans that overlap or touch are one region (as clientctx's
+// replaceSpans merges its own). A region reads "[redacted]@" when it ends
+// with an at-sign span's end that no value span reaches, "[redacted]"
+// otherwise, so a value in flight that is (or ends with) the at-sign is
+// never written back.
 func redactSpans(text string, spans []span) string {
 	if len(spans) == 0 {
 		return text
@@ -360,22 +398,34 @@ func redactSpans(text string, spans []span) string {
 		}
 		return y.b - x.b
 	})
-	var merged []span
+	type region struct {
+		a, b               int
+		atSignEnd, valueAt bool
+	}
+	var merged []region
 	for _, s := range spans {
-		if n := len(merged); n > 0 && s.a < merged[n-1].b {
+		if n := len(merged); n > 0 && s.a <= merged[n-1].b {
 			last := &merged[n-1]
-			last.b = max(last.b, s.b)
-			last.with = Redacted
+			switch {
+			case s.b > last.b:
+				last.b, last.atSignEnd, last.valueAt = s.b, s.atSign, s.value
+			case s.b == last.b:
+				last.atSignEnd = last.atSignEnd || s.atSign
+				last.valueAt = last.valueAt || s.value
+			}
 			continue
 		}
-		merged = append(merged, s)
+		merged = append(merged, region{a: s.a, b: s.b, atSignEnd: s.atSign, valueAt: s.value})
 	}
 	var b strings.Builder
 	at := 0
-	for _, s := range merged {
-		b.WriteString(text[at:s.a])
-		b.WriteString(s.with)
-		at = s.b
+	for _, m := range merged {
+		b.WriteString(text[at:m.a])
+		b.WriteString(Redacted)
+		if m.atSignEnd && !m.valueAt {
+			b.WriteString("@")
+		}
+		at = m.b
 	}
 	b.WriteString(text[at:])
 	return b.String()
@@ -423,11 +473,24 @@ func (r *Run) out(text string) error {
 	return err
 }
 
-// document writes a --json document printJSON serialised: the values in
-// flight were redacted in its strings (RedactValue), so here only the
-// token formats (RedactOutput without values) are.
-func (r *Run) document(text string) error {
-	_, err := io.WriteString(r.Stdout, jsval.NodeText(RedactOutput(text))+"\n")
+// redactedJSON is a --json document serialised after every string value in
+// it went through RedactValue. Only redactJSON makes one (its field is
+// unexported, and TestEveryWriteGoesThroughTheFailSafe fails on any other
+// composite literal of it), so outJSON can never print arbitrary text.
+type redactedJSON struct{ document string }
+
+// redactJSON is JSON.stringify(doc, null, 2) of doc with RedactValue
+// applied, the values in flight included: keys are left alone (they come
+// from the API's schema and the CLI's own documents), so no two keys are
+// ever made the same.
+func redactJSON(doc jsjson.Object, values ...string) redactedJSON {
+	return redactedJSON{document: string(jsjson.StringifyIndent(RedactValue(doc, values...), 2))}
+}
+
+// outJSON writes a redacted --json document and a newline, as it is: the
+// text redactor never touches it.
+func (r *Run) outJSON(doc redactedJSON) error {
+	_, err := io.WriteString(r.Stdout, jsval.NodeText(doc.document)+"\n")
 	return err
 }
 

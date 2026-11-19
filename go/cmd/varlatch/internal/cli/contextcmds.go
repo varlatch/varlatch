@@ -62,11 +62,12 @@ func (r *Run) resolveArgs(cwd string, args []string) (*clientctx.Context, error)
 }
 
 // printJSON writes JSON.stringify(doc, null, 2) and a newline, every
-// string of the document through the fail-safe first (RedactValue). Every
-// --json document goes through it; TestEveryWriteGoesThroughTheFailSafe
-// fails on a document serialised for stdout anywhere else.
+// string value of the document through the fail-safe first (RedactValue),
+// then straight to stdout (outJSON): keys are left alone, never redacted
+// or made the same. Every --json document goes through it;
+// TestEveryWriteGoesThroughTheFailSafe fails on any other way to stdout.
 func (r *Run) printJSON(doc jsjson.Object) error {
-	return r.document(string(jsjson.StringifyIndent(RedactValue(doc, r.inFlight...), 2)))
+	return r.outJSON(redactJSON(doc, r.inFlight...))
 }
 
 // statusSchemaVersion is status.ts's STATUS_SCHEMA_VERSION, the version of
@@ -123,7 +124,7 @@ func serverStatus(server string, credential any, now float64) (jsjson.Object, er
 		expiring = state == "expiring"
 	}
 	return jsjson.Object{
-		{Key: "server", Value: clientctx.MaskUserinfo(server)},
+		{Key: "server", Value: clientctx.DisplayServer(server)},
 		{Key: "name", Value: field("name")},
 		{Key: "issuedAt", Value: field("issuedAt")},
 		{Key: "expiresAt", Value: field("expiresAt")},
@@ -152,7 +153,7 @@ func repoStatus(ctx *clientctx.Context, local any) (jsjson.Object, error) {
 		cachedAt, _, _ = clientctx.LocalField(local, "tierCachedAt")
 	}
 	return jsjson.Object{
-		{Key: "server", Value: clientctx.MaskServer(ctx.Server)},
+		{Key: "server", Value: clientctx.DisplayServerValue(ctx.Server)},
 		{Key: "organization", Value: ctx.Organization},
 		{Key: "project", Value: ctx.Project},
 		{Key: "environment", Value: ctx.Environment},
@@ -244,12 +245,12 @@ func formatStatusHuman(servers []any, repo any) string {
 			bits = append(bits, "no expiry recorded")
 		}
 		if name := s.Value("name"); jsjson.Truthy(name) {
-			bits = append(bits, jsjson.String(name))
+			bits = append(bits, shownValue(jsjson.String(name)))
 		}
 		if p, ok := s.Value("probe").(jsjson.Object); ok {
 			bit := "probe: " + jsjson.String(p.Value("state"))
 			if detail := p.Value("detail"); jsjson.Truthy(detail) {
-				bit += " (" + jsjson.String(detail) + ")"
+				bit += " (" + shownValue(jsjson.String(detail)) + ")"
 			}
 			bits = append(bits, bit)
 		}
@@ -258,13 +259,13 @@ func formatStatusHuman(servers []any, repo any) string {
 	if o, ok := repo.(jsjson.Object); ok {
 		tier := ""
 		if t := o.Value("tier"); jsjson.Truthy(t) {
-			tier = ", tier " + jsjson.String(t)
+			tier = ", tier " + shownValue(jsjson.String(t))
 		}
 		lines = append(lines,
 			"",
-			"Repo          "+jsjson.String(o.Value("repoRoot")),
-			"Project       "+jsjson.String(o.Value("organization"))+"/"+jsjson.String(o.Value("project")),
-			"Environment   "+jsjson.String(o.Value("environment"))+" ("+jsjson.String(o.Value("environmentSource"))+tier+")",
+			"Repo          "+shownValue(jsjson.String(o.Value("repoRoot"))),
+			"Project       "+shownValue(jsjson.String(o.Value("organization")))+"/"+shownValue(jsjson.String(o.Value("project"))),
+			"Environment   "+shownValue(jsjson.String(o.Value("environment")))+" ("+jsjson.String(o.Value("environmentSource"))+tier+")",
 		)
 	}
 	for i, line := range lines {
@@ -310,7 +311,7 @@ func serverCommand(r *Run) error {
 			return err
 		}
 		if len(parsed.Positionals) == 0 {
-			return UsageError(serverUsage)
+			return UsageOnly(serverUsage)
 		}
 		return r.useServer(parsed.Positionals[0], parsed.Has("--json"))
 	}
@@ -348,14 +349,14 @@ func (r *Run) showServer(asJSON bool) error {
 	if asJSON {
 		var server, source, def any
 		if resolved != nil {
-			server, source = clientctx.MaskServer(resolved.Server), resolved.Source
+			server, source = clientctx.DisplayServerValue(resolved.Server), resolved.Source
 		}
 		if remembered != "" {
-			def = clientctx.MaskUserinfo(remembered)
+			def = clientctx.DisplayServer(remembered)
 		}
 		list := make([]any, len(signedIn))
 		for i, s := range signedIn {
-			list[i] = clientctx.MaskUserinfo(s)
+			list[i] = clientctx.DisplayServer(s)
 		}
 		return r.printJSON(jsjson.Object{
 			{Key: "version", Value: 1},
@@ -367,17 +368,17 @@ func (r *Run) showServer(asJSON bool) error {
 	}
 	here := "Server here: none"
 	if resolved != nil {
-		here = "Server here: " + jsjson.String(clientctx.MaskServer(resolved.Server)) + " (" + serverSourceWords[resolved.Source] + ")"
+		here = "Server here: " + jsjson.String(clientctx.DisplayServerValue(resolved.Server)) + " (" + serverSourceWords[resolved.Source] + ")"
 	} else if problem != "" {
 		here += " (" + clientctx.MaskUserinfoInText(problem) + ")" // the net; a varlatch.toml parse error quotes no line of a file with an at-sign
 	}
-	def := clientctx.MaskUserinfo(remembered)
-	if def == "" {
-		def = "none"
+	def := "none"
+	if remembered != "" {
+		def = clientctx.DisplayServer(remembered)
 	}
 	in := "none"
 	if len(signedIn) > 0 {
-		in = strings.Join(maskAll(signedIn), ", ")
+		in = strings.Join(clientctx.DisplayServers(signedIn), ", ")
 	}
 	return r.println(here + "\nDefault server: " + def + "\nSigned in to: " + in)
 }
@@ -387,11 +388,7 @@ func (r *Run) showServer(asJSON bool) error {
 // (trailing slashes removed, path kept).
 func (r *Run) useServer(server string, asJSON bool) error {
 	if _, ok := whatwg.ParseURL(server); !ok {
-		shown := clientctx.MaskUserinfo(server)
-		if clientctx.HasAtSign(shown) {
-			return UsageError("varlatch server use: " + shown + ": not a URL") // the explanation follows the URL
-		}
-		return UsageError("varlatch server use: not a URL: " + shown)
+		return UsageError("varlatch server use: not a URL: " + clientctx.DisplayServer(server))
 	}
 	key := clientctx.StoredServerKey(server)
 	signedIn, err := clientctx.StoredServers(r.Env)
@@ -399,18 +396,13 @@ func (r *Run) useServer(server string, asJSON bool) error {
 		return err
 	}
 	if !slices.Contains(signedIn, key) {
-		shown := clientctx.MaskUserinfo(key)
-		list := strings.Join(maskAll(signedIn), ", ")
-		if clientctx.HasAtSign(shown) || clientctx.HasAtSign(list) {
-			// The explanation follows the URL, and the list comes first, so
-			// the fail-safe (which keeps what follows the last at-sign) keeps it.
-			message := ""
-			if len(signedIn) > 0 {
-				message = "varlatch server use: signed in to " + list + "\n"
-			}
-			return UsageError(message + "varlatch server use: " + shown + ": you are not signed in to this server; sign in first with varlatch login --server and its URL")
+		shown := clientctx.DisplayServer(key)
+		list := strings.Join(clientctx.DisplayServers(signedIn), ", ")
+		command := "varlatch login --server " + shown
+		if shown != key {
+			command = "varlatch login --server and its URL" // a command naming what is shown would not work
 		}
-		message := "varlatch server use: you are not signed in to " + shown + ". Sign in first: varlatch login --server " + shown
+		message := "varlatch server use: you are not signed in to " + shown + ". Sign in first: " + command
 		if len(signedIn) > 0 {
 			message += "\nSigned in to: " + list
 		}
@@ -420,18 +412,9 @@ func (r *Run) useServer(server string, asJSON bool) error {
 		return contextError(err)
 	}
 	if asJSON {
-		return r.printJSON(jsjson.Object{{Key: "version", Value: 1}, {Key: "defaultServer", Value: clientctx.MaskUserinfo(key)}})
+		return r.printJSON(jsjson.Object{{Key: "version", Value: 1}, {Key: "defaultServer", Value: clientctx.DisplayServer(key)}})
 	}
-	return r.println("Default server: " + clientctx.MaskUserinfo(key))
-}
-
-// maskAll is MaskUserinfo of each server.
-func maskAll(servers []string) []string {
-	out := make([]string, len(servers))
-	for i, s := range servers {
-		out[i] = clientctx.MaskUserinfo(s)
-	}
-	return out
+	return r.println("Default server: " + clientctx.DisplayServer(key))
 }
 
 // placeholderValue is agentRun.ts's PLACEHOLDER_VALUE.
@@ -482,22 +465,22 @@ func contextCommand(r *Run) error {
 		return r.printJSON(doc)
 	}
 	lines := []string{
-		"Server        " + jsjson.String(clientctx.MaskServer(ctx.Server)),
-		"Organization  " + ctx.Organization,
-		"Project       " + ctx.Project,
-		"Environment   " + jsjson.String(ctx.Environment),
+		"Server        " + jsjson.String(clientctx.DisplayServerValue(ctx.Server)),
+		"Organization  " + shownValue(ctx.Organization),
+		"Project       " + shownValue(ctx.Project),
+		"Environment   " + shownValue(jsjson.String(ctx.Environment)),
 		"Source        " + ctx.EnvironmentSource,
 	}
 	if tier := repo.Value("tier"); jsjson.Truthy(tier) {
-		lines = append(lines, "Tier          "+Printable(jsjson.String(tier))+" (cached "+Printable(jsjson.String(repo.Value("tierCachedAt")))+")")
+		lines = append(lines, "Tier          "+Printable(shownValue(jsjson.String(tier)))+" (cached "+Printable(shownValue(jsjson.String(repo.Value("tierCachedAt"))))+")")
 	}
-	lines = append(lines, "Repo root     "+ctx.RepoRoot)
+	lines = append(lines, "Repo root     "+shownValue(ctx.RepoRoot))
 	if runID != "" {
 		shown := strings.Join(placeholders, ", ")
 		if shown == "" {
 			shown = "none"
 		}
-		lines = append(lines, "Agent run     "+runID+" (Placeholders: "+shown+")")
+		lines = append(lines, "Agent run     "+shownValue(runID)+" (Placeholders: "+shownValue(shown)+")")
 	}
 	return r.println(strings.Join(lines, "\n"))
 }

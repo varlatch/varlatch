@@ -28,9 +28,11 @@ import (
 // value").
 
 const (
-	valuesSetUsage    = "Usage: varlatch values set <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<value> | --stdin | --from-file <path> | --generate <spec>]"
-	valuesRotateUsage = "Usage: varlatch values rotate <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]"
-	valuesDeleteUsage = "Usage: varlatch values delete <ITEM> [-e <environment>] [--server <url>] [--confirm <ITEM>]"
+	valuesSetUsage            = "Usage: varlatch values set <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<value> | --stdin | --from-file <path> | --generate <spec>]"
+	valuesRotateUsage         = "Usage: varlatch values rotate <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]"
+	valuesDeleteUsage         = "Usage: varlatch values delete <ITEM> [-e <environment>] [--server <url>] [--confirm <ITEM>]"
+	valuesRotateCompleteUsage = "Usage: varlatch values rotate-complete <ITEM>"
+	valuesUsage               = "Usage: varlatch values <set|list|delete|rotate|rotate-complete>"
 )
 
 // lazyClient is main.ts's client(ctx): the API client of the context's
@@ -71,7 +73,7 @@ func (r *Run) contextOptions(args []string, environment string, server any) stri
 	_, flagged := flagArg(args, "--server")
 	out := "-e " + environment
 	if flagged || r.Getenv("VARLATCH_SERVER") != "" {
-		out += " --server " + jsjson.String(clientctx.MaskServer(server))
+		out += " --server " + jsjson.String(clientctx.DisplayServerValue(server))
 	}
 	return out
 }
@@ -101,7 +103,7 @@ func valuesCommand(r *Run) error {
 		return r.valuesList(ctx, api)
 	case len(r.Args) > 0 && sub == "rotate-complete":
 		if len(r.Args) < 2 {
-			return UsageError("Usage: varlatch values rotate-complete <ITEM>")
+			return UsageOnly(valuesRotateCompleteUsage)
 		}
 		item := r.Args[1]
 		c, err := api.get()
@@ -113,7 +115,7 @@ func valuesCommand(r *Run) error {
 		}
 		return r.println(item + " rotation complete — previous value retired.")
 	}
-	return UsageError("Usage: varlatch values <set|list|delete|rotate|rotate-complete>")
+	return UsageOnly(valuesUsage)
 }
 
 // valueFreeOptions is strictOptions for a command whose arguments may hold
@@ -164,13 +166,13 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 		return err
 	}
 	if len(parsed.Positionals) < 2 || strings.HasPrefix(parsed.Positionals[1], "-") {
-		return UsageError(usage)
+		return UsageOnly(usage)
 	}
 	item := parsed.Positionals[1]
 	grace, hasGrace := parsed.Value("--grace")
 	if hasGrace && !wholeSeconds.MatchString(grace) {
 		// The value is not repeated: a refused argument may be a Secret.
-		return UsageError("varlatch values rotate: --grace needs a whole number of seconds\n" + usage)
+		return UsageErrorWithUsage("varlatch values rotate: --grace needs a whole number of seconds", "\n"+usage)
 	}
 	// --replace names the one item this command replaces: approval for one item never covers another.
 	replace, hasReplace := parsed.Value("--replace")
@@ -180,7 +182,7 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 			verb = "rotates"
 		}
 		// The name given is not repeated: a refused argument may be a Secret.
-		return UsageError("varlatch values " + sub + ": --replace names another item, but this command " + verb + " " + item + "; approval for one item never covers another.\n" + usage)
+		return UsageErrorWithUsage("varlatch values "+sub+": --replace names another item, but this command "+verb+" "+item+"; approval for one item never covers another.", "\n"+usage)
 	}
 	// The value source and the generator are part of the command line: checked before any request.
 	options := secretinput.Options{Stdin: parsed.Has("--stdin")}
@@ -614,12 +616,12 @@ func (r *Run) valuesDelete() error {
 		return err
 	}
 	if len(parsed.Positionals) < 2 {
-		return UsageError(valuesDeleteUsage)
+		return UsageOnly(valuesDeleteUsage)
 	}
 	item := parsed.Positionals[1]
 	confirm, hasConfirm := parsed.Value("--confirm")
 	if hasConfirm && confirm != item {
-		return UsageError("varlatch values delete: --confirm names " + confirm + ", but this command deletes " + item + "; approval for one item never covers another.\n" + valuesDeleteUsage)
+		return UsageErrorWithUsage("varlatch values delete: --confirm names "+confirm+", but this command deletes "+item+"; approval for one item never covers another.", "\n"+valuesDeleteUsage)
 	}
 	var where []string
 	if env, ok := parsed.Value("--environment"); ok {

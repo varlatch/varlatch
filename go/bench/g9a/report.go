@@ -40,6 +40,11 @@ type Request struct {
 	// RequestID is the server's X-Request-Id, and Identity the manifest
 	// identity whose credential the request carried ("" in older logs).
 	RequestID, Identity string
+	// DispatchUs is when k6 sent it, StartUs its scenario's start, and Iter
+	// its iteration in the scenario (k6's iterationInTest, which leaves out
+	// dropped iterations); all 0 in older logs (latency.go).
+	DispatchUs, StartUs int64
+	Iter                int64
 }
 
 // Stats are latency percentiles (nearest rank).
@@ -212,6 +217,11 @@ type Report struct {
 	BoundRun    bool              `json:"boundRun,omitempty"`
 	WriteLoad   []WriteLoadResult `json:"writeLoad,omitempty"`
 	WriteTotals []WriteLoadResult `json:"writeTotals,omitempty"`
+
+	// Schedule is what the requests' latency is counted from (latency.go),
+	// and Latency each phase's latency in its parts.
+	Schedule *ScheduleBasis `json:"schedule,omitempty"`
+	Latency  []LatencyParts `json:"latencyParts,omitempty"`
 
 	convergeLines []ConvergeLine
 	startUs       int64 // the run's start, for offsets
@@ -501,7 +511,7 @@ func ReadRequests(path string) ([]Request, error) {
 		}
 		rec := strings.TrimRight(line[i+2:], `" `)
 		p := strings.Split(rec, ",")
-		if len(p) != 6 && len(p) != 8 {
+		if len(p) != 6 && len(p) != 8 && len(p) != 11 {
 			return nil, fmt.Errorf("%s:%d: %d fields in %q", path, n, len(p), rec)
 		}
 		var r Request
@@ -520,8 +530,20 @@ func ReadRequests(path string) ([]Request, error) {
 			return nil, fmt.Errorf("%s:%d: %w", path, n, err)
 		}
 		r.Lat, r.Service, r.Err = time.Duration(lat)*time.Microsecond, time.Duration(svc)*time.Microsecond, p[5]
-		if len(p) == 8 {
+		if len(p) >= 8 {
 			r.RequestID, r.Identity = p[6], p[7]
+		}
+		if len(p) == 11 {
+			var errs []error
+			r.DispatchUs, err = strconv.ParseInt(p[8], 10, 64)
+			errs = append(errs, err)
+			r.StartUs, err = strconv.ParseInt(p[9], 10, 64)
+			errs = append(errs, err)
+			r.Iter, err = strconv.ParseInt(p[10], 10, 64)
+			errs = append(errs, err)
+			if err := errors.Join(errs...); err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", path, n, err)
+			}
 		}
 		out = append(out, r)
 	}
@@ -589,6 +611,19 @@ func Analyze(dir string) (*Report, error) {
 	if r.convergeLines, err = ReadConverge(filepath.Join(dir, FileConverge)); err != nil {
 		return nil, err
 	}
+	// What latency is counted from (latency.go): each request's scheduled
+	// start without drops, the G9 measure; with drops it cannot be measured,
+	// and HTTP time from the send is shown, reported only.
+	dropped := 0.0
+	if sum.Dropped != nil {
+		dropped = sum.Dropped.Count
+	}
+	r.Latency = latencyParts(reqs, r.Plan)
+	b := latencyBasis(reqs, dropped)
+	r.Schedule = &b
+	if !b.Judged {
+		r.missing("k6 dropped %.0f iterations, and its iteration count leaves them out, so no request's latency from its scheduled start can be measured: no phase or window p95 is judged; the tables show HTTP time from the send, reported only, not the G9 measure (the drops fail the run)", dropped)
+	}
 	r.analyze(events, reqs, sum)
 	if access == nil {
 		r.missing("no access log: the requests per client address and request window are not shown")
@@ -619,6 +654,11 @@ func profileWindow(w ProfileSpan, reqs []Request) *ProfileWindow {
 func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	p := r.Plan
 	th := p.Thresholds
+	// The drops first, so a run that did not finish still shows them.
+	if sum.Dropped != nil {
+		r.Dropped = sum.Dropped.Count
+	}
+	judged := r.Schedule == nil || r.Schedule.Judged
 	if r.System.Target != TargetVarlatchd {
 		r.missing("the load ran against %s, not varlatchd: it does not pass G9a (ADR-0059, Order)", r.System.Target)
 	}
@@ -675,14 +715,13 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			r.fail("phase %s: %d failed requests (%d SQLITE_BUSY)", ph.Name, pr.Stats.Failed, pr.Busy)
 		}
 		if pr.Stats.P95 > th.P95Ms {
-			r.fail("phase %s: p95 %.1f ms over %.0f ms", ph.Name, pr.Stats.P95, th.P95Ms)
+			if judged {
+				r.fail("phase %s: p95 %.1f ms over %.0f ms", ph.Name, pr.Stats.P95, th.P95Ms)
+			}
 		}
 	}
 	for name, qs := range byPhase {
 		r.fail("%d requests from phase %q, which the plan does not have", len(qs), name)
-	}
-	if sum.Dropped != nil {
-		r.Dropped = sum.Dropped.Count
 	}
 	if r.Dropped > 0 {
 		r.fail("k6 dropped %.0f requests (not sent on time)", r.Dropped)
@@ -897,7 +936,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			}
 		}
 		r.Windows[i].Stats = stats(in)
-		if s := r.Windows[i].Stats; s.N > 0 && (s.P95 > th.P95Ms || s.Failed > 0) {
+		if s := r.Windows[i].Stats; s.N > 0 && ((judged && s.P95 > th.P95Ms) || s.Failed > 0) {
 			r.fail("%s window at %+.1fs: p95 %.1f ms, %d failed of %d", w.Kind, w.Offset, s.P95, s.Failed, s.N)
 		}
 	}
@@ -1374,7 +1413,11 @@ func (r *Report) Markdown() string {
 	list("Not shown (inconclusive)", r.Missing)
 	list("Notes", r.Notes)
 
-	b.WriteString("## Phases\n\n| phase | rate/s | seconds | requests | expected | failed | busy | p50 ms | p95 ms | p99 ms | max ms |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	measure := "Latency is counted from each request's scheduled start (its iteration slot), G9's measure."
+	if r.Schedule != nil && !r.Schedule.Judged {
+		measure = fmt.Sprintf("**k6 dropped %.0f iterations: latency from the scheduled start cannot be measured, and the p95 and windows below are HTTP time from the send, reported only, not the G9 measure.**", r.Schedule.K6Dropped)
+	}
+	b.WriteString("## Phases\n\n" + measure + "\n\n| phase | rate/s | seconds | requests | expected | failed | busy | p50 ms | p95 ms | p99 ms | max ms |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, p := range r.Phases {
 		name := p.Name
 		if p.Warmup {
@@ -1384,6 +1427,17 @@ func (r *Report) Markdown() string {
 		fmt.Fprintf(&b, "| %s | %d | %g | %d | %d | %d | %d | %.1f | %.1f | %.1f | %.1f |\n", name, p.Rate, p.Seconds, s.N, p.Expected, s.Failed, p.Busy, s.P50, s.P95, s.P99, s.Max)
 	}
 	fmt.Fprintf(&b, "\nk6 dropped iterations: %.0f. SQLITE_BUSY seen by the server: %d.\n\n", r.Dropped, r.ServerBusy)
+	if len(r.Latency) > 0 {
+		lateness := "the dispatch's lateness from its iteration slot (its scheduled start)"
+		if r.Schedule != nil && !r.Schedule.Judged {
+			lateness = "reported only, not the G9 measure: the dispatch's lateness against its iteration slot, an upper bound (one interval too much per earlier drop)"
+		}
+		fmt.Fprintf(&b, "Latency in its parts, over every request of the phase (transport failures included): %s, and the HTTP time from the send (k6's blocked + duration). k6 assigns an iteration after it hands it to a VU, so a stall can reorder a few requests by a few slots (one interval each).\n\n| phase | lateness p99 ms | lateness max ms | HTTP time p95 ms | HTTP time max ms |\n|---|---:|---:|---:|---:|\n", lateness)
+		for _, l := range r.Latency {
+			fmt.Fprintf(&b, "| %s | %.1f | %.1f | %.1f | %.1f |\n", l.Phase, l.LatenessP99Ms, l.LatenessMaxMs, l.HTTPP95Ms, l.HTTPMaxMs)
+		}
+		b.WriteString("\n")
+	}
 
 	if r.BoundRun {
 		fmt.Fprintf(&b, "## Write load (bound run)\n\nThe run's writes scaled by %g in W1's mix: per second, (s − 1) × the phase's rate disclosures (the read path of values, its audit event first; in the server, not requests of the load) and (s − 1) × k × targets / period value writes (a new version and its audit event, into an environment no Sync Target reads). Open loop: a write dispatched more than the tolerance after its time is late, and one due while %d are in flight is skipped (not sent); each is counted under the phase that scheduled it.\n\n", r.Plan.WriteScale, WriteInFlight)
@@ -1413,6 +1467,9 @@ func (r *Report) Markdown() string {
 		fmt.Fprintf(&b, "| %s | %.1f | %d | %d | %.1f | %.1f | %.1f %s| %s |\n", w.Kind, w.Offset, s.N, s.Failed, s.P95, s.P99, s.Max, cpu, w.Note)
 	}
 	fmt.Fprintf(&b, "\nWindows are widened by %gs on both sides. Their CPU throttling is the change in cpu.stat between the samples that bracket them (reported only).\n\n", r.Plan.Thresholds.WindowPadSeconds)
+	if r.Schedule != nil && !r.Schedule.Judged {
+		b.WriteString("With k6's drops, the windows hold the requests sent in them and their p95 is HTTP time from the send: reported only, not the G9 measure.\n\n")
+	}
 
 	if len(r.WALBackups) > 0 {
 		b.WriteString("## WAL-triggered backups\n\n")

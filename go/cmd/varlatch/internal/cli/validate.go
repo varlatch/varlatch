@@ -31,8 +31,9 @@ var requiresHint = map[string]string{
 
 // ValidationOutcome is validation.ts's ValidationOutcome.
 type ValidationOutcome struct {
-	Stdout   []string
-	Stderr   []string
+	// Out are the lines for standard output, Err those for standard error.
+	Out      []string
+	Err      []string
 	ExitCode int
 }
 
@@ -243,7 +244,7 @@ func ValidationOutcomeOf(environment string, report any) (ValidationOutcome, err
 	invalid, _ := listOr(report, "invalid")
 	unresolved, _ := listOr(report, "unresolved")
 	if valid, _ := jsval.Get(report, "valid"); jsjson.Truthy(valid) && complete {
-		return ValidationOutcome{Stdout: []string{environment + ": valid"}, ExitCode: validateValid}, nil
+		return ValidationOutcome{Out: []string{environment + ": valid"}, ExitCode: validateValid}, nil
 	}
 	unresolvedList, err := iterate(unresolved, "unresolved")
 	if err != nil {
@@ -262,21 +263,21 @@ func ValidationOutcomeOf(environment string, report any) (ValidationOutcome, err
 			}
 		}
 	}
-	var stderr []string
+	var errLines []string
 	switch {
 	case failed && complete:
-		stderr = append(stderr, environment+": INVALID")
+		errLines = append(errLines, environment+": INVALID")
 	case failed:
-		stderr = append(stderr, environment+": INVALID (some items not evaluated)")
+		errLines = append(errLines, environment+": INVALID (some items not evaluated)")
 	default:
-		stderr = append(stderr, environment+": INCOMPLETE: not every item could be evaluated with this identity's access")
+		errLines = append(errLines, environment+": INCOMPLETE: not every item could be evaluated with this identity's access")
 	}
 	missingList, err := iterate(missing, "missing")
 	if err != nil {
 		return ValidationOutcome{}, err
 	}
 	for _, name := range missingList {
-		stderr = append(stderr, "  missing: "+jsjson.String(name))
+		errLines = append(errLines, "  missing: "+jsjson.String(name))
 	}
 	invalidList, err := iterate(invalid, "invalid")
 	if err != nil {
@@ -288,7 +289,7 @@ func ValidationOutcomeOf(environment string, report any) (ValidationOutcome, err
 			return ValidationOutcome{}, err
 		}
 		reason, _ := prop(item, "reason")
-		stderr = append(stderr, "  invalid: "+name+" — "+reason)
+		errLines = append(errLines, "  invalid: "+name+" — "+reason)
 	}
 	for _, item := range unresolvedList {
 		name, err := prop(item, "name")
@@ -296,9 +297,9 @@ func ValidationOutcomeOf(environment string, report any) (ValidationOutcome, err
 			return ValidationOutcome{}, err
 		}
 		if reason, _ := jsval.Get(item, "reason"); reason == "authority" {
-			stderr = append(stderr, "  unresolved: "+name+" (references non-sensitive values; needs config.value.read)")
+			errLines = append(errLines, "  unresolved: "+name+" (references non-sensitive values; needs config.value.read)")
 		} else {
-			stderr = append(stderr, "  unresolved: "+name+" (a reference stays literal when delivered)")
+			errLines = append(errLines, "  unresolved: "+name+" (a reference stays literal when delivered)")
 		}
 	}
 	notEvaluatedList, err := iterate(notEvaluated, "notEvaluated")
@@ -322,13 +323,13 @@ func ValidationOutcomeOf(environment string, report any) (ValidationOutcome, err
 		if reason, _ := jsval.Get(item, "reason"); reason == "requirement" {
 			why = requires + "; a Requirement (e.g. Tailnet Constraint) is not met"
 		}
-		stderr = append(stderr, "  not evaluated: "+name+" ("+why+")")
+		errLines = append(errLines, "  not evaluated: "+name+" ("+why+")")
 	}
 	code := validateIncomplete
 	if failed {
 		code = validateInvalid
 	}
-	return ValidationOutcome{Stderr: stderr, ExitCode: code}, nil
+	return ValidationOutcome{Err: errLines, ExitCode: code}, nil
 }
 
 // ValidationDocument is validation.ts's validationDocument: the report's
@@ -401,12 +402,12 @@ func validateCommand(r *Run) error {
 		return nil
 	}
 	// Item names and reasons from the server, one line each: escaped (issue #119).
-	for _, line := range outcome.Stdout {
+	for _, line := range outcome.Out {
 		if err := r.println(Printable(line)); err != nil {
 			return err
 		}
 	}
-	for _, line := range outcome.Stderr {
+	for _, line := range outcome.Err {
 		r.eprintln(Printable(line))
 	}
 	if outcome.ExitCode != 0 {

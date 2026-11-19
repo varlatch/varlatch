@@ -158,7 +158,11 @@ func (r *fakeRun) write(t *testing.T) string {
 	}
 	var rq strings.Builder
 	for _, q := range r.reqs {
-		fmt.Fprintf(&rq, "%sR,%s,%d,%d,%d,%d,%s,%s,%s\n", r.prefix, q.Phase, q.SchedUs, q.Lat.Microseconds(), q.Service.Microseconds(), q.Status, q.Err, q.RequestID, q.Identity)
+		fmt.Fprintf(&rq, "%sR,%s,%d,%d,%d,%d,%s,%s,%s", r.prefix, q.Phase, q.SchedUs, q.Lat.Microseconds(), q.Service.Microseconds(), q.Status, q.Err, q.RequestID, q.Identity)
+		if q.DispatchUs != 0 {
+			fmt.Fprintf(&rq, ",%d,%d,%d", q.DispatchUs, q.StartUs, q.Iter)
+		}
+		rq.WriteString("\n")
 		if r.prefix != "" {
 			rq.WriteString(`time="x" level=info msg="something else"` + "\n")
 		}
@@ -1280,5 +1284,156 @@ func TestReportBoundRunPhaseCounters(t *testing.T) {
 		!strings.Contains(missing, "disclose writes per phase (620 made, 0 failed, 1 busy, 0 late, 0 skipped) do not add up to its totals (620, 0, 0, 0, 0)") ||
 		strings.Contains(fails+missing, "value writes in phase") {
 		t.Fatalf("verdict %s: fails %v, inconclusive %v", rep.Verdict, rep.Fails, rep.Missing)
+	}
+}
+
+// droppedRun is good() with the iterations k6 dropped in p50 left out, as
+// the script logs the rest: its schedule from iterationInTest, so one
+// interval early per earlier drop. late maps a p50 slot to how much later
+// than its slot k6 sent it.
+func droppedRun(drop func(slot int64) bool, late map[int64]int64, withDispatch bool) (*fakeRun, int) {
+	r := good()
+	var kept []Request
+	starts := map[string]int64{}
+	off := 0.0
+	for _, ph := range r.plan.Phases {
+		starts[ph.Name] = at(off)
+		off += ph.Seconds
+	}
+	slot, drops := map[string]int64{}, map[string]int64{}
+	n := 0
+	for _, q := range r.reqs {
+		k := slot[q.Phase]
+		slot[q.Phase]++
+		if q.Phase == "p50" && drop(k) {
+			drops[q.Phase]++
+			n++
+			continue
+		}
+		iter := k - drops[q.Phase]
+		interval := int64(1e6 / map[string]int{"warmup": 10, "p10": 10, "p50": 50}[q.Phase])
+		dispatch := starts[q.Phase] + k*interval + 2000 // sent 2 ms after its slot
+		if q.Phase == "p50" {
+			dispatch += late[k]
+		}
+		q.SchedUs = starts[q.Phase] + iter*interval // what the script computed
+		q.Lat = time.Duration(dispatch-q.SchedUs)*time.Microsecond + q.Service
+		if withDispatch {
+			q.DispatchUs, q.StartUs, q.Iter = dispatch, starts[q.Phase], iter
+		}
+		kept = append(kept, q)
+	}
+	r.reqs = kept
+	r.dropped = float64(n)
+	return r, n
+}
+
+// G9a's measure is latency from each request's scheduled start. k6's
+// iterationInTest leaves dropped iterations out, so with drops the script's
+// schedule is early by one interval per earlier drop (in G9's bound run of
+// 2026-11-18, 29 drops added 580 ms to every later request) and no
+// request's slot is known. The report then judges no phase or window p95,
+// infers no slot, and shows HTTP time from the send, reported only; the
+// drops fail the run. The regression: a request sent late and the very
+// next slot dropped. Inferring slots from the wall clock gave the late
+// request the dropped slot and erased its lateness; now nothing is inferred
+// and the reported lateness (an upper bound) keeps it.
+func TestReportDropsJudgeNoLatency(t *testing.T) {
+	shortGate(t)
+	for _, withDispatch := range []bool{true, false} {
+		r, n := droppedRun(func(k int64) bool { return k == 151 || (k >= 200 && k < 229) }, map[int64]int64{150: 20_000}, withDispatch)
+		if n != 30 {
+			t.Fatalf("%d drops", n)
+		}
+		// The script's schedule after the drops: 30 intervals early.
+		if lat := r.reqs[len(r.reqs)-1].Lat; lat < 600*time.Millisecond {
+			t.Fatalf("the fixture's last request reads %v, not the script's 600 ms shift", lat)
+		}
+		rep, err := Analyze(r.write(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fails, missing := strings.Join(rep.Fails, "\n"), strings.Join(rep.Missing, "\n")
+		if b := rep.Schedule; b == nil || b.Judged || b.K6Dropped != 30 || b.Reconstructed == withDispatch {
+			t.Fatalf("with dispatch %v: schedule %+v", withDispatch, rep.Schedule)
+		}
+		if rep.Verdict != Fail || !strings.Contains(fails, "k6 dropped 30 requests") || strings.Contains(fails, "p95") ||
+			!strings.Contains(missing, "no request's latency from its scheduled start can be measured") {
+			t.Fatalf("with dispatch %v: %s, fails %v, inconclusive %v", withDispatch, rep.Verdict, rep.Fails, rep.Missing)
+		}
+		// The tables are HTTP time from the send: the shift is gone, and so
+		// is any lateness, which the parts report as an upper bound.
+		var p50 PhaseResult
+		for _, ph := range rep.Phases {
+			if ph.Name == "p50" {
+				p50 = ph
+			}
+		}
+		var parts LatencyParts
+		for _, l := range rep.Latency {
+			if l.Phase == "p50" {
+				parts = l
+			}
+		}
+		if p50.Stats.P95 != 4 || p50.Stats.Max != 4 || parts.HTTPMaxMs != 4 || parts.LatenessMaxMs != 602 {
+			t.Fatalf("with dispatch %v: p50 %+v, parts %+v", withDispatch, p50.Stats, parts)
+		}
+		md := rep.Markdown()
+		for _, want := range []string{"k6 dropped 30 iterations: latency from the scheduled start cannot be measured", "reported only, not the G9 measure: the dispatch's lateness against its iteration slot, an upper bound",
+			"With k6's drops, the windows hold the requests sent in them", "a stall can reorder a few requests"} {
+			if !strings.Contains(md, want) {
+				t.Fatalf("with dispatch %v: no %q in\n%s", withDispatch, want, md)
+			}
+		}
+	}
+	// Only the late request, one slot dropped right after it: its upper
+	// bound reads its 20 ms (plus the 2 ms every request has), not 0.
+	r, _ := droppedRun(func(k int64) bool { return k == 151 }, map[int64]int64{150: 20_000}, true)
+	rep, err := Analyze(r.write(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range rep.Latency {
+		if l.Phase == "p50" && l.LatenessMaxMs != 22 {
+			t.Fatalf("late then dropped: parts %+v", l)
+		}
+	}
+}
+
+// Without drops, latency is counted from each request's iteration slot, the
+// G9 measure, unchanged: a request k6 sent 400 ms late reads it.
+func TestReportNoDropsJudgedFromSlot(t *testing.T) {
+	shortGate(t)
+	r, _ := droppedRun(func(int64) bool { return false }, map[int64]int64{150: 400_000}, true)
+	rep, err := Analyze(r.write(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p50 PhaseResult
+	for _, ph := range rep.Phases {
+		if ph.Name == "p50" {
+			p50 = ph
+		}
+	}
+	if b := rep.Schedule; b == nil || !b.Judged || p50.Stats.Max != 406 || p50.Stats.P95 != 6 || rep.Verdict != Pass {
+		t.Fatalf("no drops: %+v, p50 %+v, %s %v %v", rep.Schedule, p50.Stats, rep.Verdict, rep.Fails, rep.Missing)
+	}
+	if !strings.Contains(rep.Markdown(), "Latency is counted from each request's scheduled start (its iteration slot), G9's measure.") {
+		t.Fatal("no measure line")
+	}
+}
+
+// A run without run_end still shows k6's drops: the headline and the note
+// agree.
+func TestReportDropsShownWithoutRunEnd(t *testing.T) {
+	shortGate(t)
+	r, _ := droppedRun(func(k int64) bool { return k >= 200 && k < 205 }, nil, true)
+	r.eventsWithout(func(e Event) bool { return e.Ev == EvRunEnd })
+	rep, err := Analyze(r.write(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Dropped != 5 || !strings.Contains(rep.Markdown(), "k6 dropped iterations: 5.") || !strings.Contains(strings.Join(rep.Fails, "\n"), "did not finish") {
+		t.Fatalf("dropped %v: %v", rep.Dropped, rep.Fails)
 	}
 }

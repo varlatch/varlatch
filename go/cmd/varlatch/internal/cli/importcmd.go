@@ -78,7 +78,7 @@ func importCommand(r *Run) error {
 		return err
 	}
 	if len(parsed.Positionals) == 0 {
-		return UsageError(importUsage)
+		return UsageOnly(importUsage)
 	}
 	opts := importOptions{
 		file:         parsed.Positionals[0],
@@ -115,7 +115,7 @@ func importCommand(r *Run) error {
 		if token != "" || !opts.dryRun {
 			target.ctx, target.api = ctx, r.client(ctx)
 		} else {
-			target.offline = "not signed in to " + jsjson.String(clientctx.MaskServer(ctx.Server))
+			target.offline = "not signed in to " + jsjson.String(clientctx.DisplayServerValue(ctx.Server))
 		}
 	}
 	code, err := r.runImport(opts, target)

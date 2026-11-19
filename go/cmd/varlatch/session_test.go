@@ -153,9 +153,9 @@ func TestLoginNeverShowsTheCredential(t *testing.T) {
 }
 
 // TestSessionCommandsNeverShowUserinfo: a server URL with a user name and
-// password, given or stored, is printed by login, logout and whoami with
-// [redacted] in their place (go/README.md, "Diagnostics never print
-// credential values"), and nothing is sent to it.
+// password, given or stored, is printed by login, logout and whoami as its
+// display form, without them (go/README.md, "server-display"), and nothing
+// is sent to it.
 func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 	const withPassword = "http://user:hunter2pass@127.0.0.1:2"
 	const tripleSlash = "http:///user:hunter2pass@127.0.0.1:2"
@@ -170,40 +170,41 @@ func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 		stdout, stderr string
 	}
 	const whoamiUsage = "Usage: varlatch whoami [--server <url>] [--json]\n"
-	// A refusal from the API client (5.1c): the explanation follows the URL.
+	// A refusal from the API client (5.1c), naming the URL's display form.
 	const refused = ": a server URL with a user name or password can't be used; remove them and try again"
 	checks := []check{
 		{"login refuses it", nil, []string{"login", "--server", withPassword, "--token", "vlt_cli_x"}, 1, "",
-			"varlatch:[redacted]@127.0.0.1:2/v1/meta" + refused + "\n"},
+			"varlatch: http://127.0.0.1:2/v1/meta" + refused + "\n"},
 		{"logout of a stored one", map[string]map[string]any{withPassword: {"token": "vlt_cli_x", "credentialId": "cred_1", "expiresAt": "2100-01-01T00:00:00.000Z"}}, []string{"logout"}, 0,
-			"http://[redacted]@127.0.0.1:2: removed locally; server revocation failed (http://[redacted]@127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live until 2100-01-01T00:00:00.000Z.\n", ""},
+			"http://127.0.0.1:2: removed locally; server revocation failed (http://127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live until 2100-01-01T00:00:00.000Z.\n", ""},
 		{"logout naming several", map[string]map[string]any{withPassword: {"token": "a"}, "https://b.example": {"token": "b"}}, []string{"logout"}, 64, "",
-			"Multiple servers stored:[redacted]@127.0.0.1:2, https://b.example\nPass --server <url> or --all.\n"},
+			"Multiple servers stored (http://127.0.0.1:2, https://b.example). Pass --server <url> or --all.\n"},
 		{"logout of one not stored", map[string]map[string]any{"https://b.example": {"token": "b"}}, []string{"logout", "--server", "https://u:hunter2pass@nosuch.example"}, 1, "",
-			"varlatch logout:[redacted]@nosuch.example: no credential is stored for this server\n"},
+			"No stored credential for https://nosuch.example\n"},
 		{"logout with no server here", map[string]map[string]any{withPassword: {"token": "a"}}, []string{"logout"}, 64, "",
-			"No server here; stored:[redacted]@127.0.0.1:2\nPass --server <url> or --all.\n"},
+			"No server here: pass --server <url> or --all (stored: http://127.0.0.1:2).\n"},
 		{"whoami naming several", map[string]map[string]any{withPassword: {"token": "a"}, "https://b.example": {"token": "b"}}, []string{"whoami"}, 64, "",
-			"varlatch whoami:[redacted]@127.0.0.1:2, https://b.example: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage},
+			"varlatch whoami: credentials are stored for http://127.0.0.1:2, https://b.example; pass --server <url>\n" + whoamiUsage},
 		{"whoami refuses it", map[string]map[string]any{withPassword: {"token": "vlt_cli_x"}}, []string{"whoami"}, 1, "",
-			"varlatch:[redacted]@127.0.0.1:2/v1/meta" + refused + "\n"},
+			"varlatch: http://127.0.0.1:2/v1/meta" + refused + "\n"},
 		// WHATWG's authority variants for a special scheme: any run of "/"
-		// and "\\" after the scheme, or none, starts the authority.
+		// and "\\" after the scheme, or none, starts the authority. The display
+		// form keeps that run as given.
 		{"logout of a stored one, three slashes", map[string]map[string]any{tripleSlash: {"token": "vlt_cli_x", "credentialId": "cred_1"}}, []string{"logout"}, 0,
-			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed (http:///[redacted]@127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live.\n", ""},
+			"http:///127.0.0.1:2: removed locally; server revocation failed (http:///127.0.0.1:2/v1/me/credentials/cred_1" + refused + ") — the credential may remain live.\n", ""},
 		{"logout --all, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout", "--all"}, 0,
-			"http:///[redacted]@127.0.0.1:2: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n" +
-				"http:\\\\[redacted]@127.0.0.1:3: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n", ""},
+			"http:///127.0.0.1:2: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n" +
+				"http:\\\\127.0.0.1:3: removed locally; server revocation failed (no credential id recorded by this login) — the credential may remain live.\n", ""},
 		{"logout naming several, three slashes and backslashes", map[string]map[string]any{tripleSlash: {"token": "a"}, backslashes: {"token": "b"}}, []string{"logout"}, 64, "",
-			"Multiple servers stored:[redacted]@127.0.0.1:3\nPass --server <url> or --all.\n"},
+			"Multiple servers stored (http:///127.0.0.1:2, http:\\\\127.0.0.1:3). Pass --server <url> or --all.\n"},
 		{"whoami --json refuses it, three slashes", map[string]map[string]any{tripleSlash: {"token": "vlt_cli_x"}}, []string{"whoami", "--json"}, 1, "",
-			"varlatch:[redacted]@127.0.0.1:2/v1/meta" + refused + "\n"},
+			"varlatch: http:///127.0.0.1:2/v1/meta" + refused + "\n"},
 		{"whoami --json --server refuses it, backslashes", map[string]map[string]any{backslashes: {"token": "vlt_cli_x"}}, []string{"whoami", "--json", "--server", backslashes}, 1, "",
-			"varlatch:[redacted]@127.0.0.1:3/v1/meta" + refused + "\n"},
+			"varlatch: http:\\\\127.0.0.1:3/v1/meta" + refused + "\n"},
 		{"whoami --json naming several, backslashes and no slashes", map[string]map[string]any{backslashes: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami", "--json"}, 64, "",
-			"varlatch whoami:[redacted]@127.0.0.1:4: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage},
+			"varlatch whoami: credentials are stored for http:\\\\127.0.0.1:3, http:127.0.0.1:4; pass --server <url>\n" + whoamiUsage},
 		{"whoami naming several, three slashes and no slashes", map[string]map[string]any{tripleSlash: {"token": "a"}, noSlashes: {"token": "b"}}, []string{"whoami"}, 64, "",
-			"varlatch whoami:[redacted]@127.0.0.1:4: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage},
+			"varlatch whoami: credentials are stored for http:///127.0.0.1:2, http:127.0.0.1:4; pass --server <url>\n" + whoamiUsage},
 	}
 	for _, c := range checks {
 		t.Run(c.name, func(t *testing.T) {
@@ -215,13 +216,11 @@ func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 				s.repo()
 			}
 			status, stdout, stderr := s.run("", c.args...)
-			// The whole output, exactly: every explanation survives the
-			// fail-safe (Run.finish), which masks from a message's first
-			// scheme colon to its last at-sign.
+			// The whole output, exactly.
 			if status != c.status || stdout != c.stdout || stderr != c.stderr {
 				t.Fatalf("status %d\nstdout %q\nstderr %q\nwant %d,\nstdout %q\nstderr %q", status, stdout, stderr, c.status, c.stdout, c.stderr)
 			}
-			if strings.Contains(stdout+stderr, "hunter2pass") {
+			if strings.Contains(stdout+stderr, "hunter2pass") || strings.Contains(stdout+stderr, "user:") {
 				t.Errorf("a URL's password was printed:\n%s%s", stdout, stderr)
 			}
 		})
@@ -289,12 +288,12 @@ func TestUsageErrorsNeverEchoACredential(t *testing.T) {
 }
 
 // TestLoginServerTokenIsNeverEchoed: a token given as the server is
-// refused by the API client as a URL that does not parse; the refusal
-// reaches stderr through the fail-safe, which redacts it.
+// refused by the API client as a URL that does not parse, and the refusal
+// names it as an unrecognised server URL, never as given.
 func TestLoginServerTokenIsNeverEchoed(t *testing.T) {
 	s := newSessionRun(t)
 	status, stdout, stderr := s.run("", "login", "--server", "vlt_cli_secretCANARY", "--token", "vlt_cli_x")
-	if status != 1 || stdout != "" || stderr != "varlatch: Failed to parse URL from [redacted]/v1/meta\n" {
+	if status != 1 || stdout != "" || stderr != "varlatch: Failed to parse URL from [unrecognised server URL]\n" {
 		t.Errorf("status %d, stdout %q, stderr %q", status, stdout, stderr)
 	}
 }
@@ -343,7 +342,7 @@ func TestWhoamiJSONShowsOnlyTheDocumentedFields(t *testing.T) {
 // RedactValue for every --json document, RedactOutput for every stdout
 // line), so a Varlatch token anywhere in it is [redacted], at the top of a
 // document or nested, in --json and human output alike, and a URL's user
-// name and password are masked.
+// name and password are masked; a server is shown as its display form.
 func TestOutputNeverShowsAToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -352,7 +351,7 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 			_, _ = w.Write([]byte(`{"serverVersion":"0.22.0","apiMajor":1,"capabilities":["identity.whoami"]}`))
 		case "/v1/me":
 			_, _ = w.Write([]byte(`{"identity":{"id":"idn_1","name":"see vlt_svc_nestedCANARY here","kind":"human","email":null},"organization":null,` +
-				`"credential":{"id":"cred_1","name":"vlt_cli_bearerCANARY","kind":"cli","expiresAt":null},"listener":"ordinary",` +
+				`"credential":{"id":"cred_1","name":"vlt_cli_bearerCANARY","kind":"https://u:hunter2pass[redacted]@k.example","expiresAt":null},"listener":"ordinary",` +
 				`"tailnet":{"recognized":true,"tailnet":"t.ts.net","nodeId":"n1","tags":["tag:vlt_cli_tagCANARY"]}}`))
 		case "/v1/organizations/acme/projects/web/environments":
 			_, _ = w.Write([]byte(`{"items":[{"name":"vlt_cli_nameCANARY","tier":"https://u:hunter2pass@h.example","kind":"vlt_svc_kindCANARY"},{"name":"dev","tier":"development","kind":"shared"}]}`))
@@ -362,7 +361,10 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 	}))
 	defer srv.Close()
 	s := newSessionRun(t)
-	s.store(map[string]map[string]any{srv.URL: {"token": "vlt_cli_x", "name": "vlt_cli_storedCANARY", "issuedAt": "2026-01-01T00:00:00.000Z", "expiresAt": "2100-01-01T00:00:00.000Z"}})
+	s.store(map[string]map[string]any{
+		srv.URL:                 {"token": "vlt_cli_x", "name": "vlt_cli_storedCANARY", "issuedAt": "2026-01-01T00:00:00.000Z", "expiresAt": "2100-01-01T00:00:00.000Z"},
+		"https://other.example": {"token": "vlt_cli_y", "name": "see https://u:hunter2pass@n.example/x"},
+	})
 	if err := os.WriteFile(filepath.Join(s.dir, "varlatch.toml"), []byte("server = \""+srv.URL+"\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -371,14 +373,21 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 		args []string
 		want []string // what stdout must hold
 	}{
-		{nil, []string{"whoami", "--json"}, []string{`"name": "[redacted]"`, `"name": "see [redacted] here"`, `"tag:[redacted]"`}},
-		{nil, []string{"whoami"}, []string{"Identity      see [redacted] here (human, idn_1)", "Credential    [redacted] (cli, cred_1)", "tags tag:[redacted]"}},
-		{nil, []string{"env", "list", "--json"}, []string{`"name": "[redacted]"`, `"tier": "https://[redacted]@h.example"`, `"kind": "[redacted]"`}},
-		{nil, []string{"env", "list"}, []string{"[redacted]  (https://[redacted]@h.example, [redacted])", "dev  (development, shared, selected)"}},
+		// A password ending in the literal "[redacted]" is masked like any other.
+		{nil, []string{"whoami", "--json"}, []string{`"name": "[redacted]"`, `"name": "see [redacted] here"`, `"tag:[redacted]"`, `"kind": "https:[redacted]@k.example"`}},
+		{nil, []string{"whoami"}, []string{"Identity      see [redacted] here (human, idn_1)", "Credential    [redacted] (https:[redacted]@k.example, cred_1)", "tags tag:[redacted]"}},
+		{nil, []string{"env", "list", "--json"}, []string{`"name": "[redacted]"`, `"tier": "https:[redacted]@h.example"`, `"kind": "[redacted]"`}},
+		{nil, []string{"env", "list"}, []string{"[redacted]  (https:[redacted]@h.example, [redacted])", "dev  (development, shared, selected)"}},
 		{nil, []string{"status", "--json"}, []string{`"name": "[redacted]"`}},
-		{[]string{"VARLATCH_SERVER=vlt_cli_serverCANARY"}, []string{"server", "--json"}, []string{`"server": "[redacted]"`}},
-		{[]string{"VARLATCH_SERVER=vlt_cli_serverCANARY"}, []string{"server"}, []string{"Server here: [redacted] (from VARLATCH_SERVER)"}},
-		{[]string{"VARLATCH_SERVER=https://u:hunter2pass@h.example"}, []string{"server", "--json"}, []string{`"server": "https://[redacted]@h.example"`}},
+		{[]string{"VARLATCH_SERVER=vlt_cli_serverCANARY"}, []string{"server", "--json"}, []string{`"server": "[unrecognised server URL]"`}},
+		{[]string{"VARLATCH_SERVER=vlt_cli_serverCANARY"}, []string{"server"}, []string{"Server here: [unrecognised server URL] (from VARLATCH_SERVER)"}},
+		{[]string{"VARLATCH_SERVER=https://u:hunter2pass@h.example"}, []string{"server", "--json"}, []string{`"server": "https://h.example"`}},
+		{[]string{"VARLATCH_SERVER=https://h.example/?token=vlt_cli_queryCANARY"}, []string{"server", "--json"}, []string{`"server": "https://h.example/?[redacted]"`}},
+		// The tier cache and stored metadata, in human output.
+		{nil, []string{"env", "use", "vlt_cli_nameCANARY"}, []string{"Selected [redacted] for this repository (tier https:[redacted]@h.example)."}},
+		{nil, []string{"status"}, []string{"tier https:[redacted]@h.example", "see https:[redacted]@n.example/x"}},
+		{nil, []string{"context"}, []string{"Tier          https:[redacted]@h.example (cached "}},
+		{nil, []string{"context", "--json"}, []string{`"tier": "https:[redacted]@h.example"`}},
 	} {
 		status, stdout, stderr := s.runEnv(c.env, "", c.args...)
 		if status != 0 {
@@ -391,6 +400,69 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 		}
 		if strings.Contains(stdout+stderr, "CANARY") || strings.Contains(stdout+stderr, "hunter2pass") {
 			t.Errorf("%v %q: a token or password was printed:\n%s%s", c.env, c.args, stdout, stderr)
+		}
+	}
+}
+
+// TestJSONScalarsOnly: where the API defines a scalar, an object or array a
+// server sends is left out of a --json document, never passed through: env
+// list's name, tier and kind, whoami's documented fields.
+func TestJSONScalarsOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/meta":
+			_, _ = w.Write([]byte(`{"serverVersion":"0.22.0","apiMajor":1,"capabilities":["identity.whoami"]}`))
+		case "/v1/me":
+			_, _ = w.Write([]byte(`{"identity":{"id":"idn_1","name":{"secret":"CANARY"},"kind":"human","email":["CANARY"]},"organization":null,` +
+				`"credential":{"id":"cred_1","name":"laptop","kind":{"a":"CANARY"},"expiresAt":null},"listener":"ordinary"}`))
+		case "/v1/organizations/acme/projects/web/environments":
+			_, _ = w.Write([]byte(`{"items":[{"name":{"x":"CANARY"},"tier":["CANARY"],"kind":"shared"},{"name":"dev","tier":"development","kind":"shared"}]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	s := newSessionRun(t)
+	s.store(map[string]map[string]any{srv.URL: {"token": "vlt_cli_x"}})
+	if err := os.WriteFile(filepath.Join(s.dir, "varlatch.toml"), []byte("server = \""+srv.URL+"\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for args, want := range map[string]string{
+		"env list --json": "{\n  \"version\": 1,\n  \"environments\": [\n    {\n      \"kind\": \"shared\",\n      \"selected\": false\n    },\n" +
+			"    {\n      \"name\": \"dev\",\n      \"tier\": \"development\",\n      \"kind\": \"shared\",\n      \"selected\": true\n    }\n  ]\n}\n",
+		"whoami --json": "{\n  \"version\": 1,\n  \"server\": \"" + srv.URL + "\",\n  \"identity\": {\n    \"id\": \"idn_1\",\n    \"kind\": \"human\"\n  },\n" +
+			"  \"organization\": null,\n  \"credential\": {\n    \"id\": \"cred_1\",\n    \"name\": \"laptop\",\n    \"expiresAt\": null\n  },\n  \"listener\": \"ordinary\"\n}\n",
+	} {
+		status, stdout, stderr := s.run("", strings.Fields(args)...)
+		if status != 0 || stdout != want || stderr != "" {
+			t.Errorf("%s: status %d, stderr %q\nstdout\n%s\nwant\n%s", args, status, stderr, stdout, want)
+		}
+	}
+}
+
+// TestEchoedNamesAreMasked: what human output echoes from the command line,
+// the repository's files and the environment (an Environment name, the
+// Organization and Project, an agent run id) goes through the value masker.
+func TestEchoedNamesAreMasked(t *testing.T) {
+	s := newSessionRun(t)
+	if err := os.WriteFile(filepath.Join(s.dir, "varlatch.toml"), []byte("server = \"https://a.example\"\norganization = \"https://u:hunter2pass@o.example\"\nproject = \"https://v:hunter2pass@p.example\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		env  []string
+		args []string
+		want string
+	}{
+		{nil, []string{"env", "use", "https://u:hunter2pass@e.example"}, "Selected https:[redacted]@e.example for this repository."},
+		{nil, []string{"status"}, "Project       https:[redacted]@o.example/https:[redacted]@p.example"},
+		{nil, []string{"context"}, "Organization  https:[redacted]@o.example"},
+		{nil, []string{"context"}, "Project       https:[redacted]@p.example"},
+		{[]string{"VARLATCH_AGENT_RUN=https://u:hunter2pass@r.example"}, []string{"context"}, "Agent run     https:[redacted]@r.example (Placeholders: none)"},
+	} {
+		status, stdout, stderr := s.runEnv(c.env, "", c.args...)
+		if status != 0 || !strings.Contains(stdout, c.want) || strings.Contains(stdout+stderr, "hunter2pass") {
+			t.Errorf("%v %q: status %d, stderr %q\nstdout\n%s\nwant it to hold %q", c.env, c.args, status, stderr, stdout, c.want)
 		}
 	}
 }

@@ -178,11 +178,15 @@ func TestFailuresToConnect(t *testing.T) {
 		{"ftp://127.0.0.1:2", "fetch failed", "network error"},
 		{"file:///tmp", "fetch failed", "network error"},
 		{closing.URL, "fetch failed", "UND_ERR_SOCKET"},
-		{"not a url", "Failed to parse URL from not a url/v1/meta", ""},
-		{"http://u:p@127.0.0.1:2", "http://[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again", ""},
-		{"http://user:hunter2@[::1", "http://[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
-		{"http:/user:hunter2@[::1", "http:/[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
-		{"HTTP:\\user:hunter2@[::1", "HTTP:\\[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
+		// The refused URL is named by its display form (clientctx.DisplayServer,
+		// go/README.md "server-display"): no user name or password, and a URL
+		// that does not parse as a placeholder, never as given.
+		{"not a url", "Failed to parse URL from [unrecognised server URL]", ""},
+		{"http://u:p@127.0.0.1:2", "http://127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again", ""},
+		{"http://user:hunter2@[::1", "Failed to parse URL from [unrecognised server URL]", ""},
+		{"http:/user:hunter2@[::1", "Failed to parse URL from [unrecognised server URL]", ""},
+		{"HTTP:\\user:hunter2@[::1", "Failed to parse URL from [unrecognised server URL]", ""},
+		{"//h.example/?next=//ghp_RefusalCanary@u.example", "Failed to parse URL from //h.example/?[redacted]", ""},
 	} {
 		_, err := New(Options{Server: c.server}).Meta(context.Background())
 		var f *FetchError
@@ -382,13 +386,12 @@ func TestRedirectWithCredentialsRefused(t *testing.T) {
 }
 
 // TestRefusalsReadAfterTheFailSafe: the refusals of a URL with a user name
-// and password put the explanation after the URL, so what the CLI's
-// fail-safe keeps (everything after the last at-sign) still says what went
-// wrong, as `varlatch: <message>` reaches stderr.
+// and password name its display form, which holds no at-sign, so the CLI's
+// fail-safe leaves `varlatch: <message>` as it is on stderr.
 func TestRefusalsReadAfterTheFailSafe(t *testing.T) {
 	for raw, want := range map[string]string{
-		"http://u:p@127.0.0.1:2":   "varlatch:[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
-		"http://user:hunter2@[::1": "varlatch:[redacted]@[::1/v1/meta: can't be parsed as a URL",
+		"http://u:p@127.0.0.1:2":   "varlatch: http://127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
+		"http://user:hunter2@[::1": "varlatch: Failed to parse URL from [unrecognised server URL]",
 	} {
 		_, err := checkURL(raw + "/v1/meta")
 		if err == nil {
