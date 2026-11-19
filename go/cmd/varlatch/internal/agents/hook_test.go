@@ -323,3 +323,73 @@ func TestHookStricterReadings(t *testing.T) {
 		}
 	}
 }
+
+// TestHookSplitSurrogatePair: a surrogate pair a shell quote splits
+// (`.en'v\ud83d'\ude00`) is two U+FFFD, as a shell given that command line
+// reads it: the hook checks `.env` + U+FFFD U+FFFD, not `.env😀`
+// (go/README.md, "A surrogate pair split by a quote"). A lone surrogate in
+// a path is U+FFFD too, as the file system receives it.
+func TestHookSplitSurrogatePair(t *testing.T) {
+	env := envMap{"HOME": "/home/dev"}
+	for _, c := range []struct {
+		file, command string
+		denied        bool
+	}{
+		{".env��", `cat .en'v\ud83d'\ude00`, true},
+		{".env\U0001F600", `cat .en'v\ud83d'\ude00`, false},
+		{".env\U0001F600", `cat .env😀`, true},
+		{".env�", `cat .env\ud800`, true},
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, c.file), []byte("A=1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		event := `{"cwd":` + string(jsjson.Stringify(dir)) + `,"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"` + c.command + `"}}`
+		got, err := RunHook("claude", event, env, "/")
+		if err != nil || strings.Contains(got, ".env files are off limits") != c.denied {
+			t.Errorf("file %q, %s: %q, %v; denied %v", c.file, c.command, got, err, c.denied)
+		}
+	}
+	// The Read tool's path, the same way.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env�"), []byte("A=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	event := `{"cwd":` + string(jsjson.Stringify(dir)) + `,"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":".env\ud800"}}`
+	if got, _ := RunHook("claude", event, env, "/"); !strings.Contains(got, ".env files are off limits") {
+		t.Errorf("Read: %q", got)
+	}
+}
+
+// TestHookLongReaderIsLinear: a reader with many distinct words checks each
+// once (a set of its arguments), in time linear in the words, by
+// growsLinearly (checked against the argument list word by word, 50,000
+// words took 14 seconds); every run still denies the `.env` at its end.
+func TestHookLongReaderIsLinear(t *testing.T) {
+	env := envMap{"HOME": "/home/dev"}
+	run := func(n int) func() {
+		var b strings.Builder
+		b.WriteString("cat")
+		for i := range n {
+			fmt.Fprintf(&b, " f%d", i)
+		}
+		b.WriteString(" .env")
+		e := `{"cwd":"/work/app","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":` + quote(b.String()) + `}}`
+		return func() {
+			got, err := RunHook("claude", e, env, "/")
+			if err != nil || !strings.Contains(got, ".env files are off limits") {
+				t.Fatalf("%q, %v", got, err)
+			}
+		}
+	}
+	n := 12_500
+	if raceSlowdown > 1 {
+		n /= 4
+	}
+	run(n / 4)() // warm up
+	small, large := bestOf3(run(n)), bestOf3(run(4*n))
+	t.Logf("%d words %v, %d words %v (%.1fx)", n, small, 4*n, large, float64(large)/float64(small))
+	if !growsLinearly(small, large) {
+		t.Errorf("%d words %v, %d words %v: not linear", n, small, 4*n, large)
+	}
+}

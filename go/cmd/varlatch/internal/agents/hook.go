@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
@@ -1275,6 +1276,14 @@ var shellCodeFlag = regexp.MustCompile(`^-[a-zA-Z]*c[a-zA-Z]*$`)
 
 var findRuns = []string{"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf"}
 
+// checkSegment is the first denial for one simple command, or "".
+//
+// Three shapes of command take time quadratic in their length in hook.ts:
+// a reader with many distinct words (cat a b c ...), a search with many
+// roots (rg a b c ..., each root walked on its own, up to the walk's
+// bound), and a long chain of `varlatch run --` (each link checks the rest
+// of the line again). The first is linear here (a set of the arguments);
+// the other two are quadratic here too.
 func (h *hook) checkSegment(seg segment, ctx hookContext, underRun bool, depth int) (string, error) {
 	for _, input := range seg.inputs {
 		if isProtectedEnvPath(input, ctx) {
@@ -1398,10 +1407,16 @@ func (h *hook) checkSegment(seg segment, ctx hookContext, underRun bool, depth i
 			args = append(slices.Clone(args[:last]), args[last+1:]...)
 		}
 	}
+	// The arguments as a set: `args.includes(w)` for every word would take
+	// time quadratic in a long `cat a b c ...`.
+	isArg := make(map[string]bool, len(args))
+	for _, a := range args {
+		isArg[a] = true
+	}
 	for _, w := range words[1:] {
 		// --env-file=.env, and git's rev:path form (HEAD:.env).
 		for _, candidate := range []string{w, w[strings.LastIndexByte(w, '=')+1:], w[strings.LastIndexByte(w, ':')+1:]} {
-			if reads && slices.Contains(args, w) && isProtectedEnvPath(candidate, ctx) {
+			if reads && isArg[w] && isProtectedEnvPath(candidate, ctx) {
 				return denyEnvFile, nil
 			}
 			if in, err := isInStore(candidate, ctx); err != nil || in {
@@ -1494,6 +1509,7 @@ func (h *hook) checkToolCall(toolName string, toolInput any, ctx hookContext) (s
 	if !ok {
 		return "", nil
 	}
+	input = asReceived(input)
 	command, _ := input.Get("command")
 	var paths []string
 	switch c := command.(type) {
@@ -1538,6 +1554,34 @@ func (h *hook) checkToolCall(toolName string, toolInput any, ctx hookContext) (s
 		return checkSearch(grepToolSearch(input), ctx), nil
 	}
 	return "", nil
+}
+
+// asReceived is a tool call's strings as the command or the file system
+// receives them: a lone UTF-16 surrogate, which JSON can carry and Node.js
+// writes as U+FFFD, is U+FFFD (jsval.NodeText). The strings the hook reads
+// are the input's own and those of its arrays. A surrogate pair a shell
+// quote splits (`.en'v\ud83d'\ude00`) is then two U+FFFD, as a shell
+// given that command line reads it (go/README.md, "A surrogate pair split
+// by a quote").
+func asReceived(input jsjson.Object) jsjson.Object {
+	out := make(jsjson.Object, len(input))
+	for i, m := range input {
+		switch v := m.Value.(type) {
+		case string:
+			m.Value = jsval.NodeText(v)
+		case []any:
+			list := make([]any, len(v))
+			for j, e := range v {
+				if s, isString := e.(string); isString {
+					e = jsval.NodeText(s)
+				}
+				list[j] = e
+			}
+			m.Value = list
+		}
+		out[i] = m
+	}
+	return out
 }
 
 // grepToolSearch is Claude Code's Grep tool as a search: its path (the
@@ -1591,7 +1635,7 @@ func RunHook(format, stdin string, env clientctx.Env, processCwd string) (string
 	}
 	ctx := hookContext{cwd: processCwd, env: env}
 	if cwd, ok := event.Value("cwd").(string); ok {
-		ctx.cwd = cwd
+		ctx.cwd = jsval.NodeText(cwd)
 	}
 	if home, _ := env.LookupEnv("HOME"); home != "" {
 		ctx.home = home

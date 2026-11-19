@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { CONTROL_VERSION, controlMcpServer } from "./controlCli.js";
+import { cliCommand } from "./cliUnderTest.js";
 import { McpStdio } from "./mcpStdio.js";
 
 /**
@@ -22,6 +23,10 @@ import { McpStdio } from "./mcpStdio.js";
  * - inside an agent-safe run the operator's stored credential is never used,
  *   with VARLATCH_CONFIG_DIR unset;
  * - the old varlatch-mcp entry point runs the same code.
+ *
+ * Against the Go CLI (VARLATCH_TEST_CLI, go-cli-files.json) the same probes
+ * run `varlatch mcp` from the Go binary; the old entry point and the
+ * release bundle's own checks are TypeScript's alone.
  *
  * Negative control: the same probes against the 0.13 @varlatch/mcp-server
  * (built from the v0.13.0 release commit) find the disclosure tool, a
@@ -118,12 +123,14 @@ function operatorHome(): Record<string, string> {
   return { PATH: process.env.PATH ?? "", HOME: home, VARLATCH_ASSISTED: "0" };
 }
 
-type Entry = { name: string; command: string[] };
-const RELEASE: Entry = { name: "varlatch mcp (release bundle)", command: [RELEASE_BUNDLE, "mcp"] };
-const OLD: Entry = { name: "varlatch-mcp (old entry point)", command: [OLD_ENTRY] };
+type Entry = { name: string; exec: string; args: string[] };
+const GO = Boolean(process.env.VARLATCH_TEST_CLI);
+const [cliExec, cliArgs] = cliCommand(RELEASE_BUNDLE, ["mcp"]);
+const RELEASE: Entry = { name: GO ? "varlatch mcp (Go CLI)" : "varlatch mcp (release bundle)", exec: cliExec, args: cliArgs };
+const OLD: Entry = { name: "varlatch-mcp (old entry point)", exec: process.execPath, args: [OLD_ENTRY] };
 
 function connect(entry: Entry, extra: string[], env: Record<string, string>): Promise<McpStdio> {
-  return McpStdio.start(process.execPath, [...entry.command, ...extra], env, repo);
+  return McpStdio.start(entry.exec, [...entry.args, ...extra], env, repo);
 }
 const READ_TOOLS = [
   "varlatch_effective_configuration",
@@ -136,7 +143,7 @@ const READ_TOOLS = [
   "varlatch_whoami",
 ];
 
-describe.each([RELEASE, OLD])("$name", (entry) => {
+describe.each(GO ? [RELEASE] : [RELEASE, OLD])("$name", (entry) => {
   const env = () => ({ ...operatorHome(), VARLATCH_TOKEN: "vlt_cli_test" });
 
   it("lists the read tools, the write tools only with --allow-writes, and never a disclosure tool", async () => {
@@ -217,7 +224,7 @@ describe.each([RELEASE, OLD])("$name", (entry) => {
       [["--allow-writes", "--allow-disclose"], {}],
       [[], { VARLATCH_MCP_ALLOW_DISCLOSE: "1" }],
     ] as [string[], Record<string, string>][]) {
-      const r = spawnSync(process.execPath, [...entry.command, ...extra], { env: { ...env(), ...more }, cwd: repo, encoding: "utf8", timeout: 20_000 });
+      const r = spawnSync(entry.exec, [...entry.args, ...extra], { env: { ...env(), ...more }, cwd: repo, encoding: "utf8", timeout: 20_000 });
       expect(r.status).toBe(64);
       expect(r.stderr).toMatch(/secret disclosure through MCP has been removed/);
     }
@@ -225,7 +232,7 @@ describe.each([RELEASE, OLD])("$name", (entry) => {
   });
 
   it("inside an agent-safe run with VARLATCH_CONFIG_DIR unset, never uses the operator's stored credential (77)", () => {
-    const r = spawnSync(process.execPath, entry.command, {
+    const r = spawnSync(entry.exec, entry.args, {
       env: { ...operatorHome(), VARLATCH_AGENT_RUN: "run_0123456789abcdef" },
       cwd: repo,
       encoding: "utf8",
@@ -256,9 +263,10 @@ describe.each([RELEASE, OLD])("$name", (entry) => {
   });
 });
 
-describe("the release bundle", () => {
+describe(GO ? "the Go CLI" : "the release bundle", () => {
   it("reports the CLI's own version to MCP hosts", async () => {
-    const version = spawnSync(process.execPath, [RELEASE_BUNDLE, "--version"], { encoding: "utf8" }).stdout.split(" ")[1];
+    const [exec, args] = cliCommand(RELEASE_BUNDLE, ["--version"]);
+    const version = /^varlatch (\S+)/.exec(spawnSync(exec, args, { encoding: "utf8" }).stdout)?.[1];
     const client = await connect(RELEASE, [], { ...operatorHome(), VARLATCH_TOKEN: "vlt_cli_test" });
     expect(client.serverInfo).toMatchObject({ name: "varlatch", version });
     // The same version in its User-Agent to varlatchd.
@@ -267,14 +275,14 @@ describe("the release bundle", () => {
     expect(requests.map((r) => r.userAgent)).toContain(`varlatch-mcp/${version} (${process.platform}; ${process.arch})`);
   });
 
-  it("the old entry point says it is deprecated and names varlatch mcp", () => {
+  it.skipIf(GO)("the old entry point says it is deprecated and names varlatch mcp", () => {
     const r = spawnSync(process.execPath, [OLD_ENTRY, "--allow-disclose"], { env: operatorHome(), cwd: repo, encoding: "utf8", timeout: 20_000 });
     expect(r.stderr).toMatch(/this entry point is deprecated; configure your MCP host with `varlatch mcp` instead/);
   });
 });
 
 describe(`negative control: the ${CONTROL_VERSION} @varlatch/mcp-server, same probes`, () => {
-  const entry = (): Entry => ({ name: "0.13", command: [control] });
+  const entry = (): Entry => ({ name: "0.13", exec: process.execPath, args: [control] });
 
   it("lists and dispatches the disclosure tool, returning the Secret, and writes a Secret's value", async () => {
     const client = await connect(entry(), ["--allow-disclose", "--allow-writes"], { ...operatorHome(), VARLATCH_TOKEN: "vlt_cli_test" });

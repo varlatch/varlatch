@@ -18,10 +18,6 @@
       "reason": "varlatch login --start and --wait: device sign-in: not ported to the Go CLI yet",
       "slice": "5.2"
     },
-    "mcp": {
-      "reason": "varlatch mcp: not ported to the Go CLI yet",
-      "slice": "5.6b"
-    },
     "run": {
       "reason": "varlatch run: a default run: not ported to the Go CLI yet",
       "slice": "5.4b"
