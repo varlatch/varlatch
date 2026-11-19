@@ -227,27 +227,6 @@ func TestSessionCommandsNeverShowUserinfo(t *testing.T) {
 	}
 }
 
-// TestLoginLaterMethodsSayNotYet: the sign-in methods of slice 5.2 are a
-// usage error that says so, before anything is read, sent or written.
-func TestLoginLaterMethodsSayNotYet(t *testing.T) {
-	for _, args := range [][]string{
-		{"login", "--server", "http://127.0.0.1:2"},
-		{"login", "--server", "http://127.0.0.1:2", "--oidc", "--org", "acme"},
-		{"login", "--server", "http://127.0.0.1:2", "--start"},
-		{"login", "--server", "http://127.0.0.1:2", "--wait"},
-		{"--assisted", "login", "--server", "http://127.0.0.1:2"},
-	} {
-		s := newSessionRun(t)
-		status, stdout, stderr := s.run("", args...)
-		if status != 64 || stdout != "" || !strings.Contains(stderr, "not in this build of the Go CLI yet (slice 5.2)") {
-			t.Errorf("%v: status %d, stdout %q, stderr %q", args, status, stdout, stderr)
-		}
-		if entries, _ := os.ReadDir(s.config); len(entries) != 0 {
-			t.Errorf("%v: wrote %d files", args, len(entries))
-		}
-	}
-}
-
 // TestUsageErrorsNeverEchoACredential: a usage error never echoes the value
 // of an option that holds a credential, nor a token in Varlatch's format,
 // wherever it was given: `--token=<value>` is an unknown option to the

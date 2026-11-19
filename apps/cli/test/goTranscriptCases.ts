@@ -771,6 +771,156 @@ const session51e: TranscriptCase[] = [
   { id: "env.use.agent-run", title: "inside an agent-safe run the operator's credential is not used: no tier", args: ["env", "use", "dev"], env: { VARLATCH_AGENT_RUN: "run_0123" }, unset: ["VARLATCH_CONFIG_DIR"], files: { ...inRepo(), "home/.config/varlatch/credentials.json": credentials({ "{{server}}": STORED_LIVE }) }, ...IN_REPO },
 ];
 
+// ---- 5.2: sign-in and approvals --------------------------------------------
+//
+// Device sign-in (--start, --wait), the browser sign-in through its loopback
+// callback, OIDC sign-in with each token source, and step-up approvals
+// (through whoami, which talks to its server with the step-up handling).
+// pending-sign-ins.json is recorded after each step: a --start case writes
+// it, and the --wait cases start from the entry it writes. The device code,
+// the hand-off bearer and the OIDC tokens are canaries: they appear in no
+// output, only in the files meant to hold them.
+
+const DEVICE_CODE = "dc_canary_" + "x".repeat(33);
+const USER_CODE = "WDJB-MJHT";
+const STARTED = { deviceCode: DEVICE_CODE, userCode: USER_CODE, verificationUri: "{{server}}/device", expiresIn: 600, interval: 1 };
+const ISSUED_DEVICE = { id: "cred_dev", token: "vlt_cli_deviceISSUED", expiresAt: "2100-01-01T00:00:00.000Z" };
+const err = (status: number, code: string, details?: Record<string, unknown>) => ({ error: { code, message: code.toLowerCase(), requestId: "req_00000000-0000-4000-8000-000000000000", ...(details ? { details } : {}) } });
+const post = (path: string, status: number, answer?: unknown, headers?: Record<string, string>): Exchange => ({ method: "POST", path, status, ...(answer === undefined ? {} : { answer }), ...(headers ? { headers } : {}) });
+const startAnswer = (answer: unknown = STARTED, status = 201) => post("/v1/auth/device", status, answer);
+const poll = (status: number, answer: unknown) => post("/v1/auth/device/token", status, answer);
+const pendingPoll = (interval = 1) => poll(428, err(428, "AUTHORIZATION_PENDING", { interval }));
+const DEVICE = [...ONLINE];
+const deviceArgs = (...rest: string[]) => ["login", "--server", "{{server}}", ...rest];
+const PENDING_ENTRY = { server: "{{server}}", deviceCode: DEVICE_CODE, userCode: USER_CODE, verificationUri: "{{server}}/device", expiresAt: "2100-01-01T00:00:00.000Z", interval: 1, startedAt: "2026-11-01T10:00:00.000Z" };
+const pendingFile = (entry: Record<string, unknown> = PENDING_ENTRY) => ({ "config/pending-sign-ins.json": `${JSON.stringify({ servers: { "{{server}}": entry } }, null, 2)}\n` });
+const LOGGED_IN = [ok("/v1/meta", LOGIN_META), ORGS];
+const device = (c: TranscriptCase): TranscriptCase => ({ ...c, differences: [...(c.differences ?? []), ...DEVICE] });
+
+const deviceStart: TranscriptCase[] = [
+  { id: "start", title: "--start: the address, the code and its expiry; the entry written 0600 in a 0700 directory", args: deviceArgs("--start"), server: [startAnswer()], patterns: ["now", "now+600"] },
+  { id: "start.json", title: "--start --json: one document", args: deviceArgs("--start", "--json"), server: [startAnswer()], patterns: ["now", "now+600"] },
+  { id: "start.ttl", title: "--ttl goes to the server", args: deviceArgs("--start", "--ttl", "120"), server: [startAnswer()], patterns: ["now", "now+600"] },
+  { id: "start.ttl-low", title: "--ttl below 60 is refused before any request", args: deviceArgs("--start", "--ttl", "59") },
+  { id: "start.ttl-not-whole", title: "--ttl that is not whole seconds", args: deviceArgs("--start", "--ttl", "1e3") },
+  { id: "start.timeout", title: "--timeout applies to --wait", args: deviceArgs("--start", "--timeout", "5") },
+  { id: "start.oidc-option", title: "--org applies to --oidc", args: deviceArgs("--start", "--org", "acme") },
+  { id: "start.assisted", title: "assisted mode with no method starts a device sign-in, in the agent's words", args: ["--assisted", "login", "--server", "{{server}}"], server: [startAnswer()], patterns: ["now", "now+600"] },
+  { id: "start.assisted-json", title: "the same, --json", args: ["--assisted", "login", "--server", "{{server}}", "--json"], server: [startAnswer()], patterns: ["now", "now+600"] },
+  { id: "start.replaces-earlier", title: "a second --start replaces a live earlier one and says so", args: deviceArgs("--start"), files: pendingFile(), server: [startAnswer()], patterns: ["now", "now+600"] },
+  { id: "start.replaces-expired", title: "an expired earlier one is replaced silently", args: deviceArgs("--start"), files: pendingFile({ ...PENDING_ENTRY, expiresAt: "2020-01-01T00:00:00.000Z" }), server: [startAnswer()], patterns: ["now", "now+600"] },
+  { id: "start.http-elsewhere", title: "http:// to a host that is not loopback is refused before any request", args: ["login", "--server", "http://varlatch.example.com/base/", "--start"] },
+  { id: "start.other-scheme", title: "another scheme is refused", args: ["login", "--server", "ftp://varlatch.example.com", "--start"] },
+  { id: "start.not-a-url", title: "a server that is not a URL is refused", args: ["login", "--server", "varlatch.example.com", "--start"], differences: ["server-display"] },
+  { id: "start.unsupported", title: "a server without device sign-in (404)", args: deviceArgs("--start"), server: [startAnswer(err(404, "RESOURCE_NOT_FOUND"), 404)] },
+  { id: "start.maintenance", title: "a server in maintenance (69)", args: deviceArgs("--start"), server: [startAnswer(err(503, "MAINTENANCE"), 503)] },
+  { id: "start.refused", title: "the server refuses (1), its message masked", args: deviceArgs("--start"), server: [startAnswer(err(400, "VALIDATION_FAILED"), 400)] },
+  { id: "start.server-error", title: "a server error (69)", args: deviceArgs("--start"), server: [startAnswer(err(500, "INTERNAL"), 500)] },
+  { id: "start.redirect", title: "a redirect is never followed: the code is not sent there", args: deviceArgs("--start"), server: [post("/v1/auth/device", 302, undefined, { location: "https://elsewhere.example/v1/auth/device" })] },
+  { id: "start.bad-answer", title: "an answer that is not a device sign-in (a user code of another shape)", args: deviceArgs("--start"), server: [startAnswer({ ...STARTED, userCode: "wdjb-mjht" })] },
+  { id: "start.https-only-verification", title: "a verification address that is not HTTPS (or loopback) is refused", args: deviceArgs("--start"), server: [startAnswer({ ...STARTED, verificationUri: "http://elsewhere.example/device" })] },
+  { id: "start.unreachable", title: "a server that cannot be reached (69)", args: ["login", "--server", "http://127.0.0.1:1", "--start"] },
+  { id: "start.agent-run", title: "refused inside an agent-safe run before anything is read or written", args: deviceArgs("--start"), env: { VARLATCH_AGENT_RUN: "run_1" }, files: pendingFile() },
+].map(device);
+
+const deviceWait: TranscriptCase[] = [
+  { id: "wait.approved", title: "--wait: collected, verified, stored; the entry removed; the first server becomes the default", args: deviceArgs("--wait"), files: pendingFile(), server: [poll(201, ISSUED_DEVICE), ...LOGGED_IN], patterns: ["now"] },
+  { id: "wait.json", title: "--wait --json: one document", args: deviceArgs("--wait", "--json"), files: pendingFile(), server: [poll(201, ISSUED_DEVICE), ...LOGGED_IN], patterns: ["now"] },
+  { id: "wait.pending-then-approved", title: "pending, then approved after the interval", args: deviceArgs("--wait"), files: pendingFile(), server: [pendingPoll(1), poll(201, ISSUED_DEVICE), ...LOGGED_IN], patterns: ["now"] },
+  { id: "wait.deadline", title: "still pending at the deadline: 75, the entry kept with when it polled", args: deviceArgs("--wait", "--timeout", "1"), files: pendingFile(), server: [pendingPoll(1)], patterns: ["now"] },
+  { id: "wait.deadline-json", title: "the same, --json", args: deviceArgs("--wait", "--timeout", "1", "--json"), files: pendingFile(), server: [pendingPoll(1)], patterns: ["now"] },
+  { id: "wait.slow-down", title: "slow_down: the interval grows and is kept for the next --wait", args: deviceArgs("--wait", "--timeout", "2"), files: pendingFile(), server: [poll(429, err(429, "SLOW_DOWN", { interval: 6 }))], patterns: ["now"] },
+  { id: "wait.denied", title: "denied in the browser: 77, the entry removed", args: deviceArgs("--wait"), files: pendingFile(), server: [poll(403, err(403, "ACCESS_DENIED"))] },
+  { id: "wait.expired", title: "expired: 77, the entry removed", args: deviceArgs("--wait"), files: pendingFile(), server: [poll(410, err(410, "EXPIRED"))] },
+  { id: "wait.expired-collected", title: "expired, with a credential collected earlier: named for revocation", args: deviceArgs("--wait"), files: pendingFile({ ...PENDING_ENTRY, collectedCredentialId: "cred_lost" }), server: [poll(410, err(410, "EXPIRED"))] },
+  { id: "wait.consumed-recovery", title: "collected but not stored by an earlier --wait: named for revocation, the entry removed", args: deviceArgs("--wait"), files: pendingFile({ ...PENDING_ENTRY, collectedCredentialId: "cred_lost" }), server: [poll(409, err(409, "CONSUMED", { credentialId: "cred_lost" }))] },
+  { id: "wait.consumed-json", title: "the same, --json", args: deviceArgs("--wait", "--json"), files: pendingFile({ ...PENDING_ENTRY, collectedCredentialId: "cred_lost" }), server: [poll(409, err(409, "CONSUMED", { credentialId: "cred_lost" }))] },
+  { id: "wait.consumed-unknown", title: "consumed, with no credential named anywhere", args: deviceArgs("--wait"), files: pendingFile(), server: [poll(409, err(409, "CONSUMED"))] },
+  { id: "wait.consumed-stored", title: "consumed, and stored already by an earlier --wait: signed in", args: deviceArgs("--wait"), files: { ...pendingFile(), ...storeAt({ "{{server}}": { token: "vlt_cli_deviceISSUED", issuedAt: "2026-11-01T10:00:00.000Z", expiresAt: "2100-01-01T00:00:00.000Z", credentialId: "cred_dev" } }) }, server: [poll(409, err(409, "CONSUMED", { credentialId: "cred_dev" }))] },
+  { id: "wait.verify-fails", title: "collected, but the credential does not verify: not stored, named for revocation, the entry kept with it", args: deviceArgs("--wait"), files: pendingFile(), server: [poll(201, ISSUED_DEVICE), { ...ok("/v1/meta", err(401, "INVALID_CREDENTIAL")), status: 401 }] },
+  { id: "wait.replaces", title: "a live stored credential is revoked once the new one is stored", args: deviceArgs("--wait"), files: { ...pendingFile(), ...storeAt({ "{{server}}": STORED_LIVE }) }, server: [poll(201, ISSUED_DEVICE), ...LOGGED_IN, del("/v1/me/credentials/cred_old")], patterns: ["now"] },
+  { id: "wait.no-entry", title: "no sign-in started here: 64", args: deviceArgs("--wait") },
+  { id: "wait.ttl", title: "--ttl applies to --start", args: deviceArgs("--wait", "--ttl", "120"), files: pendingFile() },
+  { id: "wait.timeout-zero", title: "--timeout from 1", args: deviceArgs("--wait", "--timeout", "0"), files: pendingFile() },
+  { id: "wait.timeout-high", title: "--timeout to 600", args: deviceArgs("--wait", "--timeout", "601"), files: pendingFile() },
+  { id: "wait.refused", title: "a poll the server refuses (1): the entry kept", args: deviceArgs("--wait"), files: pendingFile(), server: [poll(400, err(400, "VALIDATION_FAILED"))], patterns: ["now"] },
+  { id: "wait.unavailable", title: "a server unavailable (69): the entry kept", args: deviceArgs("--wait"), files: pendingFile(), server: [poll(503, err(503, "MAINTENANCE"))], patterns: ["now"] },
+  { id: "wait.redirect", title: "a redirect is never followed: the entry kept", args: deviceArgs("--wait"), files: pendingFile(), server: [post("/v1/auth/device/token", 307, undefined, { location: "https://elsewhere.example/v1/auth/device/token" })], patterns: ["now"] },
+  { id: "wait.agent-run", title: "refused inside an agent-safe run; the entry untouched", args: deviceArgs("--wait"), env: { VARLATCH_AGENT_RUN: "run_1" }, files: pendingFile() },
+].map(device);
+
+const HANDOFF = "vlt_browser-handoff-canary";
+const ISSUED_CLI = { id: "cred_cli", token: "vlt_cli_browserISSUED", expiresAt: "2100-01-01T00:00:00.000Z" };
+const exchange = post("/v1/me/credentials/cli", 201, ISSUED_CLI);
+const BROWSER = { VARLATCH_NO_BROWSER: "1" };
+const CALLBACK = JSON.stringify({ token: HANDOFF, identityId: "idn_1" });
+const browser = (c: TranscriptCase): TranscriptCase => ({ patterns: ["now", "callback"], ...c, differences: [...(c.differences ?? []), ...ONLINE, "loopback-nonce"] });
+
+const browserLogin: TranscriptCase[] = [
+  { id: "browser", title: "VARLATCH_NO_BROWSER: the address in two lines; the page's callback is taken once, exchanged and stored", args: deviceArgs(), env: BROWSER, callback: { body: CALLBACK, times: 2 }, server: [exchange, ...LOGGED_IN] },
+  { id: "browser.no-opener", title: "without VARLATCH_NO_BROWSER and no opener on PATH: the address is printed all the same", args: deviceArgs(), env: { VARLATCH_NO_BROWSER: "0", PATH: "{{dir}}/no-opener" }, callback: { body: CALLBACK }, server: [exchange, ...LOGGED_IN] },
+  { id: "browser.ttl", title: "--ttl goes to the exchange", args: deviceArgs("--ttl", "3600"), env: BROWSER, callback: { body: CALLBACK }, server: [exchange, ...LOGGED_IN] },
+  { id: "browser.replaces", title: "a live stored credential is revoked once the new one is stored", args: deviceArgs(), env: BROWSER, files: storeAt({ "{{server}}": STORED_LIVE }), callback: { body: CALLBACK }, server: [exchange, ...LOGGED_IN, del("/v1/me/credentials/cred_old")] },
+  { id: "browser.no-token", title: "a callback without a token ends the sign-in", args: deviceArgs(), env: BROWSER, callback: { body: "{}" }, differences: ["uncaught"] },
+  { id: "browser.exchange-refused", title: "the exchange refused (77)", args: deviceArgs(), env: BROWSER, callback: { body: CALLBACK }, server: [post("/v1/me/credentials/cli", 401, err(401, "INVALID_CREDENTIAL"))] },
+].map(browser);
+
+const ID_TOKEN = "eyJhbGciOiJSUzI1NiJ9.canary-id-token";
+const ISSUED_OIDC = { id: "cred_oidc", token: "vlt_ci_oidcISSUED", expiresAt: "2100-01-01T00:00:00.000Z", identityId: "idn_ci" };
+const oidcExchange = post("/v1/oidc/token", 201, ISSUED_OIDC);
+const ACTIONS = { ACTIONS_ID_TOKEN_REQUEST_URL: "{{server}}/actions-token?api-version=2.0", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "actions-request-canary" };
+const oidc = (c: TranscriptCase): TranscriptCase => ({ patterns: ["now"], ...c, differences: [...(c.differences ?? []), ...ONLINE] });
+const oidcArgs = (...rest: string[]) => ["login", "--server", "{{server}}", "--oidc", "--org", "acme", ...rest];
+
+const oidcLogin: TranscriptCase[] = [
+  { id: "oidc.flag", title: "--oidc-token: exchanged and stored with its expiry", args: oidcArgs("--oidc-token", ID_TOKEN), server: [oidcExchange, ...LOGGED_IN] },
+  { id: "oidc.env", title: "VARLATCH_OIDC_TOKEN", args: oidcArgs(), env: { VARLATCH_OIDC_TOKEN: ID_TOKEN }, server: [oidcExchange, ...LOGGED_IN] },
+  { id: "oidc.flag-over-env", title: "--oidc-token before VARLATCH_OIDC_TOKEN", args: oidcArgs("--oidc-token", ID_TOKEN), env: { VARLATCH_OIDC_TOKEN: "env-token-not-used" }, server: [oidcExchange, ...LOGGED_IN] },
+  { id: "oidc.actions", title: "the GitHub Actions endpoint, with its request token", args: oidcArgs(), env: ACTIONS, server: [ok("/actions-token?api-version=2.0", { value: ID_TOKEN }), oidcExchange, ...LOGGED_IN] },
+  { id: "oidc.actions-audience", title: "--audience goes to the GitHub Actions endpoint", args: oidcArgs("--audience", "varlatch ci"), env: ACTIONS, server: [ok("/actions-token?api-version=2.0&audience=varlatch+ci", { value: ID_TOKEN }), oidcExchange, ...LOGGED_IN] },
+  { id: "oidc.env-over-actions", title: "VARLATCH_OIDC_TOKEN before the GitHub Actions endpoint", args: oidcArgs(), env: { ...ACTIONS, VARLATCH_OIDC_TOKEN: ID_TOKEN }, server: [oidcExchange, ...LOGGED_IN] },
+  { id: "oidc.actions-refused", title: "the GitHub Actions endpoint refuses: the permission it needs", args: oidcArgs(), env: ACTIONS, server: [{ ...ok("/actions-token?api-version=2.0", { message: "no" }), status: 403 }], differences: ["uncaught"] },
+  { id: "oidc.actions-no-value", title: "the GitHub Actions endpoint answers without a value", args: oidcArgs(), env: ACTIONS, server: [ok("/actions-token?api-version=2.0", {})], differences: ["uncaught"] },
+  { id: "oidc.none", title: "no token source: the sources named", args: oidcArgs(), differences: ["uncaught"] },
+  { id: "oidc.no-org", title: "--oidc needs --org", args: ["login", "--server", "{{server}}", "--oidc", "--oidc-token", ID_TOKEN] },
+  { id: "oidc.ttl", title: "--ttl goes to the exchange", args: oidcArgs("--oidc-token", ID_TOKEN, "--ttl", "900"), server: [oidcExchange, ...LOGGED_IN] },
+  { id: "oidc.refused", title: "the exchange refused (77)", args: oidcArgs("--oidc-token", ID_TOKEN), server: [post("/v1/oidc/token", 401, err(401, "INVALID_CREDENTIAL"))] },
+].map(oidc);
+
+const APPROVAL = {
+  id: "apr_1",
+  state: "pending",
+  interval: 1,
+  expiresAt: "2100-01-01T00:00:00.000Z",
+  url: "{{server}}/approvals/apr_1",
+  summary: { title: "Show who you are", changes: [{ field: "policy", from: "observe", to: "enforce", loosens: false }] },
+};
+const stepUp = (approval: Record<string, unknown> = APPROVAL): Exchange => ({ ...ok("/v1/me", err(403, "STEP_UP_REQUIRED", { approval })), status: 403 });
+const approvalPoll = (answer: Record<string, unknown>, status = 200): Exchange => ({ ...ok("/v1/me/approvals/apr_1", status === 200 ? answer : err(status, String(answer.code))), status });
+const STORE_APPROVAL = storeAt({ "{{server}}": { token: "vlt_cli_fakeAPPR", issuedAt: "2026-11-01T10:00:00.000Z", expiresAt: "2100-01-01T00:00:00.000Z", credentialId: "cred_a" } });
+const WHOAMI = ["whoami", "--server", "{{server}}"];
+const approval = (c: TranscriptCase): TranscriptCase => ({ files: STORE_APPROVAL, ...c, differences: [...(c.differences ?? []), ...ONLINE] });
+
+const approvals: TranscriptCase[] = [
+  { id: "approval.waits", title: "waits at the approval's interval, then repeats the request with the approval", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp(), approvalPoll({ ...APPROVAL, state: "pending" }), approvalPoll({ ...APPROVAL, state: "approved" }), ok("/v1/me", ME_FULL)] },
+  { id: "approval.slow-down", title: "SLOW_DOWN while waiting: the interval grows, the wait goes on", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp(), approvalPoll({ code: "SLOW_DOWN" }, 429), approvalPoll({ ...APPROVAL, state: "approved" }), ok("/v1/me", ME_FULL)] },
+  { id: "approval.assisted", title: "assisted mode: stops at once with the command to run again (75)", args: ["--assisted", ...WHOAMI], server: [ok("/v1/meta", LOGIN_META), stepUp()] },
+  { id: "approval.no-url", title: "a server without a public URL: the dashboard and the request's id", args: ["--assisted", ...WHOAMI], server: [ok("/v1/meta", LOGIN_META), stepUp({ ...APPROVAL, url: null })] },
+  { id: "approval.expired", title: "expired before anyone approved it (75)", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp({ ...APPROVAL, expiresAt: "2020-01-01T00:00:00.000Z" })] },
+  { id: "approval.cancelled", title: "cancelled while waiting (77)", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp(), approvalPoll({ ...APPROVAL, state: "closed", closeReason: "cancelled" })] },
+  { id: "approval.reset", title: "closed by the host operator's reset (77)", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp(), approvalPoll({ ...APPROVAL, state: "closed", closeReason: "reset" })] },
+  { id: "approval.organization-deleted", title: "closed by its organization's deletion (77)", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp(), approvalPoll({ ...APPROVAL, state: "closed", closeReason: "organization-deleted" })] },
+  { id: "approval.closed", title: "closed for another reason (77)", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp(), approvalPoll({ ...APPROVAL, state: "closed", closeReason: "superseded" })] },
+  { id: "approval.used", title: "used already (77)", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp(), approvalPoll({ ...APPROVAL, state: "consumed" })] },
+  { id: "approval.not-yours", title: "not this person's (77)", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp(), approvalPoll({ code: "RESOURCE_NOT_FOUND" }, 404)] },
+  { id: "approval.ctrl-c", title: "Ctrl-C while waiting: the approval cancelled, 130", args: WHOAMI, server: [ok("/v1/meta", LOGIN_META), stepUp({ ...APPROVAL, interval: 30 }), post("/v1/me/approvals/apr_1/cancel", 200, { ...APPROVAL, state: "closed", closeReason: "cancelled" })], signal: { after: "Waiting for your approval" } },
+  { id: "approval.resume-reads", title: "--approval: reads go out at once, without the approval", args: ["--approval", "apr_1", ...WHOAMI], server: [ok("/v1/meta", LOGIN_META), ok("/v1/me", ME_FULL)] },
+  { id: "approval.option-missing", title: "--approval without an id", args: ["--approval", "--", "whoami"] },
+  { id: "approval.option-twice", title: "--approval given twice", args: ["--approval", "apr_1", "--approval", "apr_2", "whoami"] },
+].map(approval);
+
+const signIn52: TranscriptCase[] = [...deviceStart, ...deviceWait, ...browserLogin, ...oidcLogin, ...approvals];
+
 // ---- 5.3a: values and import ------------------------------------------------
 //
 // A repository at repo/ on the fake server, signed in with a fake token.
@@ -1040,6 +1190,7 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1c-api-client": apiClient51c,
   "5.1d-agent-files": agentFiles51d,
   "5.1e-session": session51e,
+  "5.2-sign-in": signIn52,
   "5.3a-values": values53a,
   "5.3b-contracts": contracts53b,
 };
