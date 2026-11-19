@@ -38,3 +38,22 @@ func TestLookCommandAsLibuv(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+// TestLookCommandAsksTheSystem: a file earlier on PATH that this process
+// may not execute (only its group may, here) is skipped for a later one it
+// may, as execve would; the mode bits alone would take the first.
+func TestLookCommandAsksTheSystem(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may execute any file with an execute bit")
+	}
+	first, second := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(first, "tool"), []byte("#!/bin/sh\n"), 0o070); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(second, "tool"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := lookCommand("tool", first+string(os.PathListSeparator)+second); err != nil || got != filepath.Join(second, "tool") {
+		t.Errorf("tool: %q, %v", got, err)
+	}
+}

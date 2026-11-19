@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // forwardedSignals are inject.ts's FORWARDED_SIGNALS. Job-control and
@@ -59,8 +61,8 @@ func envNameEqual(a, b string) bool { return a == b }
 
 // lookCommand finds the command as libuv's execvp does: a name with a
 // slash as it is; otherwise each directory of the command's own PATH in
-// order (an empty entry is the working directory), the first regular,
-// executable file.
+// order (an empty entry is the working directory), the first regular file
+// this process may execute.
 func lookCommand(name, path string) (string, error) {
 	if strings.Contains(name, "/") {
 		return name, nil
@@ -73,7 +75,10 @@ func lookCommand(name, path string) (string, error) {
 			dir = "."
 		}
 		candidate := filepath.Join(dir, name)
-		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+		// Executable for this process, as execve would judge it (access(2)
+		// with X_OK), not by the mode bits: a file only its owner may run
+		// is skipped by anyone else.
+		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && unix.Access(candidate, unix.X_OK) == nil {
 			if dir == "." {
 				return "./" + name, nil
 			}

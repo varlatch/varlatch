@@ -44,7 +44,7 @@ func assistedRedactionSet(delivered []matcher.SecretEntry, child *orderedEnv, pa
 			continue
 		}
 		seen[name] = true
-		inherited := parent[name]
+		inherited, _ := lookupEnv(parent, name)
 		if v, ok := child.Get(name); inherited == "" || !ok || v != inherited {
 			continue
 		}
@@ -185,7 +185,7 @@ func (r *Run) assistedGate(plan assistedPlan, how remedyContext) bool {
 func (r *Run) knownSecretNames(ctx *clientctx.Context, c *apiclient.Client, effective any) ([]string, error) {
 	names := map[string]bool{}
 	for _, item := range listOf(effective, "items") {
-		if name, ok := stringField(item, "name"); ok && jsval.StrictEqual(fieldOf(item, "sensitive"), true) {
+		if name, ok := stringField(item, "name"); ok && jsjson.Truthy(fieldOf(item, "sensitive")) {
 			names[name] = true
 		}
 	}

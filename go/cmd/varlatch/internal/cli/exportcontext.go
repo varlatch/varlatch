@@ -96,7 +96,7 @@ func exportedRunContext(revision, environment, contractDoc, delivered any, paren
 			server = "withheld"
 		}
 		delivery := "absent"
-		_, inherited := parent[name]
+		_, inherited := lookupEnv(parent, name)
 		switch {
 		case left:
 		case server == "delivered":
@@ -170,4 +170,18 @@ func (r *Run) prepareExportedContext(c *apiclient.Client, org, project string, e
 		}
 		return encoded, nil
 	}, nil
+}
+
+// lookupEnv is parent[name] as process.env reads it: by exact name, or on
+// Windows without case.
+func lookupEnv(parent map[string]string, name string) (string, bool) {
+	if v, ok := parent[name]; ok {
+		return v, true
+	}
+	for k, v := range parent {
+		if envNameEqual(k, name) {
+			return v, true
+		}
+	}
+	return "", false
 }

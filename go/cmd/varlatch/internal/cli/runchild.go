@@ -41,7 +41,7 @@ func (r *Run) runChild(command string, args []string, env []string, redaction *m
 	}
 	path, err := lookCommand(command, envValue(env, "PATH"))
 	if err != nil {
-		return 0, err
+		return 0, spawnError(command, err)
 	}
 	cmd := &exec.Cmd{Path: path, Args: append([]string{command}, args...), Env: env, Stdin: r.Stdin}
 	var pairs []matcher.Pair
