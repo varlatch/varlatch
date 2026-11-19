@@ -71,7 +71,7 @@ import { evaluate, TARGET_SPECIFIC, validateInventory } from "./lib/inventory.mj
 import { clientLackingChecks, loadClientLacks, validateClientLacks, withoutLacking } from "./lib/client-lacks.mjs";
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
-import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
+import { assess, BUDGET, declared429, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
 import { endProblem, parseSuiteOutput, resultLine } from "./lib/results.mjs";
 import { NOT_BUILT } from "./suite-kit.mjs";
 import { PLAN } from "./plan.mjs";
@@ -296,6 +296,8 @@ async function main() {
   const reports = [];
   const errors = [];
   const windows = {};
+  /** The 429s suites declared they caused on purpose (lib/request-log.mjs, declared429). */
+  const declared = [];
   let state = null;
   let stopped = null;
 
@@ -461,6 +463,10 @@ async function main() {
       const out = await runSuite(join(REPO_ROOT, suite.script), args, { ...suiteEnv, CONFORMANCE_SUITE: entry.suite, CONFORMANCE_LACKING: JSON.stringify([...lacked].sort()), CONFORMANCE_CLIENT_LACKING: JSON.stringify([...clientLacked].sort()) }, scratch);
       const end = Date.now();
       (windows[entry.suite] ??= []).push({ start, end });
+      // The 429s the suite caused on purpose, one request each.
+      const own429 = declared429(entry.suite, out.stdout);
+      declared.push(...own429.declarations);
+      for (const message of own429.errors) errors.push({ suite: entry.suite, message });
       if (around) await around.finish();
       const parsed = parseSuiteOutput(`${out.stdout}\n${out.stderr}`);
       // A check whose step the Go CLI refused as not built yet (suite-kit's
@@ -599,7 +605,7 @@ async function main() {
     const id = "request-budget.no-unexpected-429";
     console.log(`--- ${inventory.suites["request-budget"].title}`);
     const records = await target.requestLog(state);
-    const { refusals, busiest } = assess(records, { windows });
+    const { refusals, busiest } = assess(records, { windows, declared });
     console.log(
       `--- request budget: ${records.length} requests answered by the server; it refused ${refusals.length} unexpectedly (429). ` +
         `Context only: at most ${busiest.count} logged in one window` +

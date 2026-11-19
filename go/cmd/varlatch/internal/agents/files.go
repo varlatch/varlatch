@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode/utf8"
 
@@ -194,11 +195,32 @@ func isInside(root, path string) bool {
 
 // filesUnder is every entry under dir that is not a directory (a link to
 // a directory included), in readdir's order, recursively.
+// readDir is a directory's entries in the order readdirSync gives them:
+// libuv sorts the names (strcmp) on Linux and macOS, and gives the file
+// system's own order on Windows (NTFS keeps names in its case-insensitive
+// order, so references/ comes before SKILL.md there). os.ReadDir always
+// sorts by bytes; on Windows the entries are read as the system lists them
+// instead. It walks the skill directories (their changes, and which files a
+// removal reaches before a link stops it) and prunes empty directories as
+// the TypeScript CLI does (go/README.md, `skill-order`); the guardrail
+// hook's reads, whose answers do not depend on order, stay sorted.
+func readDir(dir string) ([]os.DirEntry, error) {
+	if runtime.GOOS != "windows" {
+		return os.ReadDir(dir)
+	}
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadDir(-1)
+}
+
 func filesUnder(dir string) ([]string, error) {
 	if !exists(dir) {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := readDir(dir)
 	if err != nil {
 		return nil, err
 	}

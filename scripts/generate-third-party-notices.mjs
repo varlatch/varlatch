@@ -13,7 +13,11 @@
  *     convex-deploy image (`npm ci` from convex/package-lock.json);
  *   - third-party code ported or vendored into Varlatch's own files
  *     (scripts/third-party-code.json), with the license text kept next to
- *     it (scripts/check-licenses.mjs checks those files' headers).
+ *     it (scripts/check-licenses.mjs checks those files' headers);
+ *   - the Go modules linked into `varlatch` and `varlatchd` for the
+ *     platforms a release builds them for, and the Go standard library and
+ *     runtime (scripts/go-module-notices.mjs; each module's license is
+ *     recorded by hand in scripts/go-module-licenses.json).
  *
  * License texts are copied from each pnpm-installed package's own license
  * file, because bundling (the CLI and dashboard) strips those files.
@@ -21,8 +25,12 @@
  * Usage:
  *   generate-third-party-notices.mjs            write THIRD-PARTY-NOTICES.md
  *   generate-third-party-notices.mjs --check    fail if it is out of date
+ *   generate-third-party-notices.mjs --go-hashes
+ *                                               print each linked Go module's
+ *                                               license-text hash, to record
+ *                                               after reading its texts
  *
- * Requires `pnpm install`. Platform-specific packages (`os`/`cpu` in their
+ * Requires `pnpm install` and the Go toolchain (`go` on PATH). Platform-specific packages (`os`/`cpu` in their
  * package.json) are native build tooling that no bundle contains; they are
  * skipped so the output is identical on every development platform.
  */
@@ -31,10 +39,17 @@ import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GO_RELEASE_PLATFORMS, goModuleNotices } from "./go-module-notices.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT = join(repoRoot, "THIRD-PARTY-NOTICES.md");
 const check = process.argv.includes("--check");
+
+if (process.argv.includes("--go-hashes")) {
+  const { modules } = goModuleNotices(resolve(dirname(fileURLToPath(import.meta.url)), ".."), { hashesOnly: true });
+  for (const m of modules) console.log(`${m.path}\t${m.version}\t${m.sha256}\t${[...m.linkedInto].sort().join(",")}`);
+  process.exit(0);
+}
 
 function fail(message) {
   console.error(message);
@@ -237,6 +252,15 @@ const ported = JSON.parse(readFileSync(join(repoRoot, "scripts/third-party-code.
   return { ...entry, text };
 });
 
+// ---- Go modules ------------------------------------------------------------
+
+let goNotices;
+try {
+  goNotices = goModuleNotices(repoRoot);
+} catch (err) {
+  fail(err.message);
+}
+
 // ---- output --------------------------------------------------------------
 
 const ORDER = ["varlatchd", "CLI", "dashboard", "convex-deploy"];
@@ -294,6 +318,20 @@ out("| Package | Version | License | Shipped in |");
 out("| --- | --- | --- | --- |");
 for (const pkg of sorted) out(`| ${cell(pkg.name)} | ${pkg.version} | ${cell(pkg.license)} | ${shipped(pkg)} |`);
 out("");
+out("## Go modules");
+out("");
+out("The Go binaries (ADR-0059) are statically linked: each contains the Go");
+out("standard library and runtime, and the modules below. \"Linked into\"");
+out("names the binary, for the platforms a release builds it for (`varlatch`:");
+out(`${GO_RELEASE_PLATFORMS.varlatch.join(", ")}; \`varlatchd\`: ${GO_RELEASE_PLATFORMS.varlatchd.join(", ")}).`);
+out("");
+out("| Module | Version | License | Linked into |");
+out("| --- | --- | --- | --- |");
+out("| Go standard library and runtime | the release's Go toolchain | BSD-3-Clause | varlatch, varlatchd |");
+for (const m of goNotices.modules) {
+  out(`| ${cell(m.path)} | ${m.version} | ${cell(m.license)} | ${[...m.linkedInto].sort().join(", ")} |`);
+}
+out("");
 out("## Code ported into Varlatch");
 out("");
 out("Third-party code adapted into Varlatch's own source files. Each file");
@@ -333,6 +371,22 @@ for (const entry of ported) {
   out("````");
   out("");
 }
+out("### Go standard library and runtime");
+out("");
+out("````text");
+out(goNotices.stdlib);
+out("````");
+out("");
+const goGroups = new Map(); // text -> [ids]
+for (const m of goNotices.modules) goGroups.set(m.text, [...(goGroups.get(m.text) ?? []), `${m.path}@${m.version}`]);
+for (const [text, ids] of [...goGroups.entries()].sort((a, b) => (a[1][0] < b[1][0] ? -1 : 1))) {
+  out(`### ${ids.join(", ")} (Go)`);
+  out("");
+  out("````text");
+  out(text);
+  out("````");
+  out("");
+}
 if (withoutFile.length > 0) {
   out("### Packages that ship no license file");
   out("");
@@ -348,8 +402,8 @@ if (check) {
   if (current !== generated) {
     fail("THIRD-PARTY-NOTICES.md is out of date: run `pnpm notices:generate` and commit the result");
   }
-  console.log(`THIRD-PARTY-NOTICES.md is current (${sorted.length} npm packages)`);
+  console.log(`THIRD-PARTY-NOTICES.md is current (${sorted.length} npm packages, ${goNotices.modules.length} Go modules)`);
 } else {
   writeFileSync(OUTPUT, generated);
-  console.log(`Wrote THIRD-PARTY-NOTICES.md (${sorted.length} npm packages, ${groups.length} license texts)`);
+  console.log(`Wrote THIRD-PARTY-NOTICES.md (${sorted.length} npm packages, ${goNotices.modules.length} Go modules, ${groups.length + goGroups.size + 1} license texts)`);
 }

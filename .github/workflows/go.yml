@@ -1061,8 +1061,9 @@ jobs:
   # merge group runs them when it touches the CLI's code or a file its tests
   # read (the changes job's CLI_PATTERNS); the nightly run always does. On
   # Windows the recorded cases that name a path below their directory are
-  # skipped until step 5.9 records Windows outcomes; the step lists every
-  # skipped test, and the job summary counts them.
+  # compared with the TypeScript CLI's Windows recordings (testdata/*/windows,
+  # the windows-expectations workflow); the step lists every skipped test,
+  # and the job summary counts them.
   go-cli-platforms:
     needs: changes
     if: needs.changes.outputs.cli == 'true'
@@ -1115,9 +1116,10 @@ jobs:
           printf "The CLI's libraries:\n%s\n" "$libs"
           # shellcheck disable=SC2086 # one argument per package
           go vet ./cmd/varlatch/... $libs
-          # Verbose, so every skipped test is listed with its reason (on
-          # Windows: the recorded cases that name a path, until step 5.9);
-          # the log leaves out the lines of tests that ran and passed.
+          # Verbose, so every skipped test is listed with its reason (cases a
+          # platform cannot hold: POSIX modes and signals, names Windows does
+          # not allow); the log leaves out the lines of tests that ran and
+          # passed.
           # shellcheck disable=SC2086 # one argument per package
           go test -count=1 -v ./cmd/varlatch/... $libs 2>&1 | tee "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
 
