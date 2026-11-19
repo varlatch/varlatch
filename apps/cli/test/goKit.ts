@@ -70,7 +70,9 @@ export interface TranscriptCase {
    * Named patterns for values that depend on when the case ran, matched in
    * the recording and the replay alike (never ignored wholesale). "now": an
    * ISO 8601 timestamp with milliseconds (Date.prototype.toISOString's
-   * form) between the start and the end of the run, written as {{now}}.
+   * form) between the start and the end of the run, written as {{now}};
+   * "generated": the value `--generate` made, in each request body,
+   * written as `{{generated <spec>}}` (generatedPattern).
    */
   patterns?: string[];
 }
@@ -193,6 +195,46 @@ export function nowPattern(text: string, start: number, end: number): string {
   });
 }
 
+/**
+ * The "generated" pattern: a value `--generate` made is random, so each
+ * request body's `value` is recorded by its generator, `{{generated
+ * <spec>}}` (the spec the case's arguments give), when it has exactly the
+ * alphabet and length the spec gives and appears nowhere in the output;
+ * otherwise as a value-free note of what is wrong with it, so neither the
+ * recording nor a failing comparison ever holds the value. The Go replay
+ * applies the same (transcript.GeneratedPattern).
+ */
+export function generatedPattern(args: string[], requests: RecordedRequest[], output: string): RecordedRequest[] {
+  const spec = args[args.indexOf("--generate") + 1] ?? "";
+  return requests.map((r) => {
+    const body = r.body as Record<string, unknown> | null;
+    if (body === null || typeof body !== "object" || typeof body.value !== "string") return r;
+    const value = body.value;
+    const note = !generatedBy(spec, value)
+      ? "{{generated value of another shape}}"
+      : output.includes(value)
+        ? "{{generated value shown in the output}}"
+        : `{{generated ${spec}}}`;
+    return { ...r, body: { ...body, value: note } };
+  });
+}
+
+/** Whether value has the alphabet and length the generator spec gives. */
+function generatedBy(spec: string, value: string): boolean {
+  const m = /^(hex|base64|base64url|alnum):([0-9]+)$/.exec(spec);
+  if (!m) return false;
+  const n = Number(m[2]);
+  const shape =
+    m[1] === "hex"
+      ? `^[0-9a-f]{${2 * n}}$`
+      : m[1] === "base64"
+        ? `^[A-Za-z0-9+/]{${Math.floor((4 * n + 2) / 3)}}={${(3 - (n % 3)) % 3}}$`
+        : m[1] === "base64url"
+          ? `^[A-Za-z0-9_-]{${Math.floor((4 * n + 2) / 3)}}$`
+          : `^[A-Za-z0-9]{${n}}$`;
+  return new RegExp(shape).test(value);
+}
+
 /** Runs one case against the bundle and records it. */
 export async function recordCase(bundle: string, c: TranscriptCase): Promise<RecordedCase> {
   if (process.platform !== "win32") process.umask(TRANSCRIPT_UMASK);
@@ -260,7 +302,8 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
     });
     const end = Date.now();
     const now = c.patterns?.includes("now") ? (t: string) => nowPattern(t, start, end) : (t: string) => t;
-    for (const name of c.patterns ?? []) if (name !== "now") throw new Error(`case ${c.id}: no pattern ${name}`);
+    for (const name of c.patterns ?? []) if (name !== "now" && name !== "generated") throw new Error(`case ${c.id}: no pattern ${name}`);
+    const generated = (r: RecordedRequest[]) => (c.patterns?.includes("generated") ? generatedPattern(c.args, r, result.stdout + result.stderr) : r);
     const files = listTree(dir, (t) => now(unfill(t, origin, dir)));
     return {
       ...c,
@@ -268,7 +311,7 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
         status: result.status,
         stdout: now(unfill(result.stdout, origin, dir)),
         stderr: now(unfill(result.status === 1 && UNCAUGHT.test(result.stderr) ? uncaught(result.stderr) : result.stderr, origin, dir)),
-        requests: JSON.parse(now(JSON.stringify(unfillDeep(requests, origin, dir)))) as RecordedRequest[],
+        requests: generated(JSON.parse(now(JSON.stringify(unfillDeep(requests, origin, dir)))) as RecordedRequest[]),
         files,
       },
     };

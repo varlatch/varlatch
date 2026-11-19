@@ -11,9 +11,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/secretinput"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/transcript"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -24,8 +26,22 @@ import (
 // process without a second build.
 const asCLI = "VARLATCH_TEST_AS_CLI"
 
+// promptPause names the hidden prompt's stage at which the CLI under test
+// pauses (secretinput.Hook).
+const promptPause = "VARLATCH_TEST_PROMPT_PAUSE"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(asCLI) == "1" {
+		// The pseudo-terminal tests stop the hidden prompt at a stage before
+		// its question, to send a signal in that window.
+		if stage := os.Getenv(promptPause); stage != "" {
+			secretinput.Hook = func(at string) {
+				if at == stage {
+					fmt.Fprintf(os.Stderr, "PAUSED %s\n", at)
+					time.Sleep(5 * time.Second)
+				}
+			}
+		}
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	setTranscriptUmask()
@@ -183,6 +199,72 @@ var differences = map[string]transcript.Difference{
 			o.Stdout, o.Stderr = got.Stdout, got.Stderr
 		}
 	},
+	// `values set` and `values rotate` never repeat an argument they
+	// refuse, whatever its spelling: it may be the value or part of it
+	// (go/README.md, "No message holds a value"). The message names its
+	// place among the command's arguments instead. Accepted only where Go's
+	// first line of stderr is the refusal's own words for the same command
+	// and holds no part of the refused argument, and every other line,
+	// the status and stdout are as recorded.
+	"value-free-usage": func(o *transcript.Outcome, got transcript.Outcome) {
+		wantFirst, wantRest, _ := strings.Cut(o.Stderr, "\n")
+		gotFirst, gotRest, _ := strings.Cut(got.Stderr, "\n")
+		if wantRest != gotRest {
+			return
+		}
+		for _, form := range valueFreeForms {
+			m := form.ts.FindStringSubmatch(wantFirst)
+			if m == nil {
+				continue
+			}
+			argument := ""
+			for _, part := range m[2:] {
+				if part != "" {
+					argument = part
+				}
+			}
+			g := form.goWords.FindStringSubmatch(gotFirst)
+			if g != nil && g[1] == m[1] && argument != "" && !strings.Contains(got.Stderr, argument) {
+				o.Stderr = got.Stderr
+			}
+			return
+		}
+	},
+	// A server's identifier that does not have the server's shape (a
+	// prefix and 26 characters of lower-case base32) is shown as "an
+	// unrecognized id" (go/README.md, "No message holds a value").
+	"unrecognized-id": func(o *transcript.Outcome, got transcript.Outcome) {
+		if m := recordedVersion.FindStringSubmatchIndex(o.Stdout); m != nil {
+			if accepted := o.Stdout[:m[2]] + cli.UnrecognizedID + o.Stdout[m[3]:]; accepted == got.Stdout {
+				o.Stdout = accepted
+			}
+		}
+	},
+}
+
+// recordedVersion is the version a recorded `values set` names.
+var recordedVersion = regexp.MustCompile(` set \(version (.*)\)\.\n$`)
+
+// valueFreeForms are the refusals `values set` and `values rotate` word
+// without the argument: the TypeScript words (the command, the argument)
+// and the Go words (the command).
+var valueFreeForms = []struct{ ts, goWords *regexp.Regexp }{
+	{
+		regexp.MustCompile(`^varlatch (values set|values rotate): (?:unknown option (\S+)(?: \(a value that begins with "-" goes after --\))?|(\S+): unknown option.*)$`),
+		regexp.MustCompile(`^varlatch (values set|values rotate): unknown option at argument [0-9]+, not shown since it may be a value \(a value that begins with "-" goes after --\)$`),
+	},
+	{
+		regexp.MustCompile(`^varlatch (values set|values rotate): (?:unexpected argument (\S+)|(\S+): unexpected argument)$`),
+		regexp.MustCompile(`^varlatch (values set|values rotate): unexpected argument [0-9]+, not shown since it may be part of a value \(a value with spaces goes in quotes\)$`),
+	},
+	{
+		regexp.MustCompile(`^varlatch (values set|values rotate): --replace names (\S+), but this command (?:sets|rotates) \S+; approval for one item never covers another\.$`),
+		regexp.MustCompile(`^varlatch (values set|values rotate): --replace names another item, but this command (?:sets|rotates) \S+; approval for one item never covers another\.$`),
+	},
+	{
+		regexp.MustCompile(`^varlatch (values rotate): --grace needs a whole number of seconds, not (.+)$`),
+		regexp.MustCompile(`^varlatch (values rotate): --grace needs a whole number of seconds$`),
+	},
 }
 
 // withoutNonScalars is v without the named members whose value is an
@@ -330,5 +412,24 @@ func TestServerDisplayDifferenceIsExact(t *testing.T) {
 	differences["server-display"](&want, transcript.Outcome{Stderr: "varlatch server use: not a URL: b.example\n", Stdout: "x"})
 	if want.Stdout == "x" {
 		t.Error("accepted a stdout the recording does not have")
+	}
+}
+
+// TestValueFreeUsageIsExact: value-free-usage accepts only Go's own words
+// for the same refusal, never a message that holds the argument.
+func TestValueFreeUsageIsExact(t *testing.T) {
+	const usage = "\nUsage: varlatch values set <ITEM>\n"
+	recorded := `varlatch values set: unknown option -s3cr3t (a value that begins with "-" goes after --)` + usage
+	for got, accepted := range map[string]bool{
+		`varlatch values set: unknown option at argument 2, not shown since it may be a value (a value that begins with "-" goes after --)` + usage:    true,
+		`varlatch values rotate: unknown option at argument 2, not shown since it may be a value (a value that begins with "-" goes after --)` + usage: false,
+		`varlatch values set: unknown option at argument 2, not shown since it may be a value -s3cr3t` + usage:                                         false,
+		`varlatch values set: unknown option at argument 2, not shown since it may be a value (a value that begins with "-" goes after --)` + "\n":     false,
+	} {
+		want := transcript.Outcome{Stderr: recorded}
+		differences["value-free-usage"](&want, transcript.Outcome{Stderr: got})
+		if (want.Stderr == got) != accepted {
+			t.Errorf("%q: accepted %v, want %v", got, want.Stderr == got, accepted)
+		}
 	}
 }

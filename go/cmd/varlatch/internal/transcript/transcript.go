@@ -213,7 +213,7 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	for _, name := range c.Patterns {
-		if name != "now" {
+		if name != "now" && name != "generated" {
 			return Outcome{}, nil, fmt.Errorf("case %s: no pattern %q", c.ID, name)
 		}
 	}
@@ -249,6 +249,9 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		r.Body = json.RawMessage(unfill(string(r.Body)))
 		got.Requests = append(got.Requests, r)
 	}
+	if slices.Contains(c.Patterns, "generated") {
+		got.Requests = GeneratedPattern(c.Args, got.Requests, stdout.String()+stderr.String())
+	}
 	if got.Files, err = Tree(dir, unfill); err != nil {
 		return got, nil, err
 	}
@@ -263,6 +266,73 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	}
 	return got, Compare(want, got), nil
 }
+
+// GeneratedPattern is goKit.ts's generatedPattern, the "generated" pattern:
+// a value `--generate` made is random, so each request body's string
+// "value" becomes `{{generated <spec>}}` (the spec args give) when it has
+// exactly the alphabet and length the spec gives and appears nowhere in
+// output, and a value-free note of what is wrong with it otherwise: no
+// recording, comparison or failure ever holds the value.
+func GeneratedPattern(args []string, requests []Request, output string) []Request {
+	spec := ""
+	if i := slices.Index(args, "--generate"); i >= 0 && i+1 < len(args) {
+		spec = args[i+1]
+	}
+	out := make([]Request, len(requests))
+	for i, r := range requests {
+		out[i] = r
+		body, err := jsjson.Parse(r.Body)
+		if err != nil {
+			continue
+		}
+		o, ok := body.(jsjson.Object)
+		if !ok {
+			continue
+		}
+		value, ok := o.Value("value").(string)
+		if !ok {
+			continue
+		}
+		note := "{{generated " + spec + "}}"
+		switch {
+		case !GeneratedBy(spec, value):
+			note = "{{generated value of another shape}}"
+		case strings.Contains(output, value):
+			note = "{{generated value shown in the output}}"
+		}
+		o = append(jsjson.Object(nil), o...).Set("value", note)
+		out[i].Body = json.RawMessage(jsjson.Stringify(o))
+	}
+	return out
+}
+
+// GeneratedBy is whether value has the alphabet and length the generator
+// spec (secretInput.ts's --generate) gives: hex of 2n digits, base64 with
+// its padding, base64url without, alnum of n characters.
+func GeneratedBy(spec, value string) bool {
+	m := generatorSpec.FindStringSubmatch(spec)
+	if m == nil {
+		return false
+	}
+	n, err := strconv.Atoi(m[2])
+	if err != nil {
+		return false
+	}
+	var pattern string
+	switch m[1] {
+	case "hex":
+		pattern = fmt.Sprintf(`^[0-9a-f]{%d}$`, 2*n)
+	case "base64":
+		pattern = fmt.Sprintf(`^[A-Za-z0-9+/]{%d}={%d}$`, (4*n+2)/3, (3-n%3)%3)
+	case "base64url":
+		pattern = fmt.Sprintf(`^[A-Za-z0-9_-]{%d}$`, (4*n+2)/3)
+	default:
+		pattern = fmt.Sprintf(`^[A-Za-z0-9]{%d}$`, n)
+	}
+	return regexp.MustCompile(pattern).MatchString(value)
+}
+
+var generatorSpec = regexp.MustCompile(`^(hex|base64|base64url|alnum):([0-9]+)$`)
 
 // isoTimestamp is Date.prototype.toISOString's form.
 var isoTimestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z`)
