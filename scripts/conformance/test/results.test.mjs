@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseSuiteOutput, resultLine } from "../lib/results.mjs";
+import { endProblem, parseSuiteOutput, resultLine } from "../lib/results.mjs";
 
 test("reads one result per line, with its status, ID and text", () => {
   const { results, errors } = parseSuiteOutput(
@@ -46,4 +46,20 @@ test("resultLine writes what parseSuiteOutput reads, and only known statuses", (
   const line = resultLine("PASS", "request-budget.no-unexpected-429", "no 429");
   assert.deepEqual(parseSuiteOutput(line).results, [{ status: "PASS", id: "request-budget.no-unexpected-429", text: "no 429" }]);
   assert.throws(() => resultLine("SKIP", "a.b", "x"));
+});
+
+test("a suite ends only with one marker on its channel, its name and nonce, and the exit code it names", () => {
+  const nonce = "0123456789abcdef0123456789abcdef";
+  const ok = { suite: "a", nonce, code: 0, signal: null };
+  assert.equal(endProblem(`END a ${nonce} 0\n`, ok), null);
+  assert.equal(endProblem(`END a ${nonce} 1\n`, { ...ok, code: 1 }), null);
+  assert.match(endProblem("", ok), /never called finish\(\)/);
+  assert.match(endProblem(`END a ${nonce} 0\nEND a ${nonce} 0\n`, ok), /carried 2 lines/);
+  assert.match(endProblem(`END b ${nonce} 0\n`, ok), /names b, not a/);
+  assert.match(endProblem(`END a ${"f".repeat(32)} 0\n`, ok), /another nonce/);
+  assert.match(endProblem(`END a ${nonce} 0\n`, { ...ok, code: 1 }), /exited 1, but its end-of-suite marker says 0/);
+  assert.match(endProblem(`END a ${nonce} 0\n`, { ...ok, code: null, signal: "SIGKILL" }), /killed by SIGKILL/);
+  assert.match(endProblem("END  [a]\n", ok), /not a marker/);
+  // Output on stdout or stderr is never the channel.
+  assert.deepEqual(parseSuiteOutput(`END a ${nonce} 0\nEND  [a]\n`), { results: [], errors: [] });
 });

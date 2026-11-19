@@ -6,6 +6,11 @@
  *   FAIL  [<check id>] ...
  *   N/A  [<check id>] ...            the check does not apply to this target
  *   PREDATES-CLI  [<check id>] ...   the CLI under test is older than the feature
+ *   NOT-BUILT  [<check id>] <line>   the Go CLI refused a step the check depends
+ *                                    on as not built yet (suite-kit's NOT_BUILT);
+ *                                    the runner turns it into client-lacks for
+ *                                    --cli go, and fails the run for any other
+ *                                    CLI, so it never reaches a verdict
  *   ERROR  <message>                 a problem outside any one check
  *
  * Any other line is the suite's own output. A line that starts with FAIL but
@@ -21,7 +26,7 @@ export const STATUSES = ["PASS", "FAIL", "N/A", "PREDATES-CLI"];
 /** The results only the runner reports. */
 export const RUNNER_STATUSES = ["TARGET-LACKS", "CLIENT-LACKS"];
 const RUNNER_ONLY = /^(?:TARGET|CLIENT)-LACKS\b/;
-const RESULT = /^(PASS|FAIL|N\/A|PREDATES-CLI) {2}\[([^\]\s]+)\](?: (.*))?$/;
+const RESULT = /^(PASS|FAIL|N\/A|PREDATES-CLI|NOT-BUILT) {2}\[([^\]\s]+)\](?: (.*))?$/;
 const ERROR = /^ERROR {2}(.*)$/;
 const UNNAMED_FAILURE = /^FAIL\b/;
 
@@ -42,6 +47,29 @@ export function parseSuiteOutput(text) {
     else if (UNNAMED_FAILURE.test(line)) errors.push(`a failure that names no check: ${line.slice(0, 300)}`);
   }
   return { results, errors };
+}
+
+const END_MARKER = /^END ([a-z0-9][a-z0-9-]*) ([0-9a-f]{32}) ([0-9]{1,3})$/;
+
+/**
+ * Whether a suite ended as finished: its end-of-suite channel (fd 3,
+ * suite-kit's finish()) carried exactly one well-formed marker naming this
+ * suite and the runner's nonce for it, and the process then exited
+ * normally (no signal) with the code the marker names. Returns null when
+ * it did, else why not. Nothing a suite or its children print on stdout or
+ * stderr counts.
+ */
+export function endProblem(channel, { suite, nonce, code, signal }) {
+  const lines = String(channel ?? "").split("\n").filter((l) => l !== "");
+  if (lines.length === 0) return "it never called finish(): no end-of-suite marker on its channel (it crashed, stalled, or exited before its end)";
+  if (lines.length > 1) return `its end-of-suite channel carried ${lines.length} lines, not one marker`;
+  const m = END_MARKER.exec(lines[0]);
+  if (!m) return `its end-of-suite channel carried ${JSON.stringify(lines[0].slice(0, 120))}, not a marker`;
+  if (m[1] !== suite) return `its end-of-suite marker names ${m[1]}, not ${suite}`;
+  if (m[2] !== nonce) return "its end-of-suite marker carries another nonce than the runner's";
+  if (signal) return `it was killed by ${signal} after its end-of-suite marker`;
+  if (code !== Number(m[3])) return `it exited ${code}, but its end-of-suite marker says ${m[3]}`;
+  return null;
 }
 
 /** A result line, as a suite prints it; the runner uses it for the checks it reports itself. */
