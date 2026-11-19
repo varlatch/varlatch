@@ -302,7 +302,6 @@ const REPORTS: Array<[string, unknown]> = [
   ["dev", { valid: false }],
   ["dev", { valid: true, complete: false, notEvaluated: [{ name: "API_KEY", requires: "secret.reveal", reason: "permission" }] }],
   ["dev", { valid: true, notEvaluated: [{ name: "A", requires: "secret.reveal", reason: "permission" }] }],
-  ["dev", { valid: true, complete: null, notEvaluated: [] }],
   ["production", { ...BASE, missing: ["DATABASE_URL", "API_KEY"], invalid: [{ name: "PORT", reason: "expected a number" }] }],
   ["production", { ...BASE, complete: false, missing: ["X"], notEvaluated: [{ name: "S", requires: "secret.reveal", reason: "permission" }] }],
   ["production", { ...BASE, complete: false, notEvaluated: [

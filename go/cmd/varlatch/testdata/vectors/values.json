@@ -15594,31 +15594,6 @@
       }
     },
     {
-      "environment": "dev",
-      "report": {
-        "valid": true,
-        "complete": null,
-        "notEvaluated": []
-      },
-      "outcome": {
-        "stdout": [
-          "dev: valid"
-        ],
-        "stderr": [],
-        "exitCode": 0
-      },
-      "document": {
-        "environment": "dev",
-        "result": "valid",
-        "complete": true,
-        "missing": [],
-        "invalid": [],
-        "unresolved": [],
-        "notEvaluated": [],
-        "exitCode": 0
-      }
-    },
-    {
       "environment": "production",
       "report": {
         "valid": false,

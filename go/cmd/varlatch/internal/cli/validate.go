@@ -105,8 +105,8 @@ var reportLists = []struct {
 // checkReport is whether the report has the protocol's shape
 // (ValidationReport in packages/protocol/openapi.yaml), checked before
 // anything is judged or printed: an object; valid a boolean; complete a
-// boolean, or absent (servers before it); each list absent, null (servers
-// before it), or an array of strings (missing) or of objects whose
+// boolean, or omitted (servers before it); each list omitted (servers
+// before it) or an array of strings (missing) or of objects whose
 // documented members are strings. Anything else is refused as an answer
 // the CLI cannot read, naming only where (never what it holds), so a
 // server can never pass a value through, nor turn a report it did not
@@ -122,12 +122,14 @@ func checkReport(report any) error {
 	if v, ok := o.Get("valid"); !ok || !isBool(v) {
 		return refuse("valid")
 	}
-	if v, ok := o.Get("complete"); ok && v != nil && !isBool(v) {
+	// An omitted complete or list (a server before it) keeps its fallback; a
+	// present null is not the protocol's shape.
+	if v, ok := o.Get("complete"); ok && !isBool(v) {
 		return refuse("complete")
 	}
 	for _, l := range reportLists {
 		v, ok := o.Get(l.key)
-		if !ok || v == nil {
+		if !ok {
 			continue
 		}
 		list, isList := v.([]any)

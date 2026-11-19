@@ -317,6 +317,13 @@ func TestValidateRefusesAReportOfAnotherShape(t *testing.T) {
 		"valid not a boolean":     `{"valid": "` + canary + `", "complete": true}`,
 		"complete not a boolean":  `{"valid": true, "complete": {"value": "` + canary + `"}}`,
 		"the answer not a report": `["` + canary + `"]`,
+		// A present null is not an omitted field (servers before it omit it).
+		"valid null":        `{"valid": null, "complete": true, "missing": ["` + canary + `"]}`,
+		"complete null":     `{"valid": true, "complete": null, "missing": [], "invalid": []}`,
+		"missing null":      `{"valid": true, "complete": true, "missing": null}`,
+		"invalid null":      `{"valid": true, "complete": true, "invalid": null}`,
+		"unresolved null":   `{"valid": true, "complete": true, "unresolved": null}`,
+		"notEvaluated null": `{"valid": true, "complete": true, "notEvaluated": null}`,
 	}
 	for name, report := range reports {
 		for _, args := range [][]string{{"validate"}, {"validate", "--json"}} {
