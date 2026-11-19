@@ -258,12 +258,14 @@ weight, and every container has the same weight unless it sets one.
 This matters most on a small host that also runs Coolify. Coolify's
 scheduler does its periodic work at the start of every minute.
 - **What was measured:** a 2-core host on 2026-11-19, with a Varlatch
-  server under a benchmark load of 50 requests a second plus extra writes.
-- **Coolify:** its container used about 0.7 of a core for the first 7 to
-  9 seconds of each minute, and the host's two cores were over 90 % busy.
-- **The Varlatch server** got less CPU in those seconds and its requests
-  waited: p95 latency over 0.8 s in them, against under 30 ms in the rest
-  of the minute.
+  server under a benchmark load of 50 requests a second, first with extra
+  writes (1.7 times the profile's), then without.
+- **Coolify:** over the first ten seconds of each minute (:00 to :09), its
+  container used on average 0.65 to 0.70 of a core, and the host's two
+  cores were 88 to 94 % busy from :01 to :06.
+- **The Varlatch server** got less CPU in those seconds, and its requests
+  waited. Its p95 latency was up to 858 ms in them (132 ms without the
+  extra writes), against 22 to 28 ms in the rest of the minute.
 
 To give Varlatch priority, give its services a higher CPU weight than the
 other containers, in `docker-compose.override.yml`
@@ -273,29 +275,47 @@ that file applies):
 ```yaml
 services:
   varlatchd:
-    cpu_shares: 2048
+    cpu_shares: 4096
   postgres:
-    cpu_shares: 2048
+    cpu_shares: 4096
 ```
 
 Then run `varlatch setup` again with the public or tailnet ingress, or
 `docker compose up -d` with the external ingress.
+
+**Not measured yet:** how much this setting improves the latency above.
+It is the expected remedy; a measurement will follow, and this section will
+give its result.
 
 - **Raise `postgres` with `varlatchd`.** Every request varlatchd answers
   reads or writes the database, and a weight on varlatchd alone can leave
   PostgreSQL waiting instead. Add `convex-backend` and `varlatch-web` too if
   the dashboard must stay responsive in those seconds.
 - **It changes nothing on an idle host.** The weight counts only while the
-  cores are busy.
-- **Check the weight you get.** Docker converts `cpu_shares` to the
-  kernel's CPU weight, and the conversion depends on the container runtime:
-  - with runc 1.5, 2048 gives 174, against 100 for a container that sets
-    nothing;
-  - with older runtimes, 1024 gave 39, below the default. So do not set
-    1024 expecting no change.
+  cores are busy. It also favours Varlatch's own heavy work over the other
+  containers, a backup capture for instance.
+- **Use 4096, not 1024 or 2048.** On cgroup v2, Docker converts `cpu_shares`
+  to the kernel's CPU weight, where a container that sets nothing gets 100.
+  The conversion depends on the container runtime:
 
-  Read the result with
-  `docker exec <the varlatchd container> cat /sys/fs/cgroup/cpu.weight`.
+  | `cpu_shares` | Weight, older runtimes (linear) | Weight, runc 1.5 |
+  |---|---|---|
+  | 1024 | 39 | 100 |
+  | 2048 | 79 | 174 |
+  | 4096 | 157 | 303 |
+
+  Only 4096 is above 100 under both. 2048 would lower Varlatch's priority
+  on an older runtime.
+- **Check the weight you get.** Read it from the host, which works whatever
+  the image contains (the path is for Docker's systemd cgroup driver, the
+  usual one):
+
+  ```sh
+  cat /sys/fs/cgroup/system.slice/docker-$(docker inspect -f '{{.Id}}' <the varlatchd container>).scope/cpu.weight
+  ```
+- **cgroup v2 only.** Current distributions use cgroup v2. On a cgroup v1
+  host there is no `cpu.weight`, and `cpu_shares` applies as `cpu.shares`
+  (1024 for a container that sets nothing).
 - **A dedicated core** (`cpuset`) keeps varlatchd and PostgreSQL on that
   core, but other containers still run there unless they are pinned to the
   other cores. On a 2-core host, a weight is the simpler choice.
@@ -305,8 +325,8 @@ The shipped Compose files set no CPU weight. There are two reasons:
   the operator's choice;
 - the effect of a given number depends on the runtime, as above.
 
-A Varlatch stack deployed as a Coolify resource runs the repository's
-Compose file, so an override file does not apply there: see
+A Varlatch stack deployed as a Coolify resource runs the Compose file the
+resource points at, so an override file does not apply there: see
 [Deploying on Coolify](../../infra/coolify/README.md#sharing-the-host).
 
 ### Disk
