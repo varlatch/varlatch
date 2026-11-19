@@ -612,12 +612,51 @@ comes. `verify-release`, which the installers run, is Go's own.
   prompt's keys) and 2,022 texts split into grapheme clusters, `validate`'s
   outcome and `--json` document for 17 reports, and import's type
   inference (every semantics version), name checks and strict decoding.
+- Scan (slice 5.4d; ADR-0038 Decision 14): `scan (--staged | <path>...)
+  [-e <env>] [--json] [--baseline <file>] [--write-baseline]
+  [--max-file-size <size>] [--max-total-size <size>]` and `scan
+  --install-hook [-e <env>]` are `internal/scan` (`engine.go`,
+  `baseline.go`, `sources.go`: scan.ts and scanSources.ts) and
+  `internal/cli`'s `scancmd.go` (scanCommand.ts and main.ts's case, with
+  `--find-files`). Listing comes first and reads no content: `--staged`
+  takes the blobs the index records for every path the next commit adds or
+  changes (`git diff --cached --raw -z`, sizes from `git cat-file
+  --batch-check`, content from one `git cat-file --batch`, never the
+  working tree; inside a hook, Git's own environment as it is), and paths
+  are walked without following a symbolic link, in byte order of their
+  names. A file over `--max-file-size` (64 MiB) or past `--max-total-size`
+  (1 GiB) is refused by its listed size before it is opened, and every file
+  is read in chunks of 64 KiB, so memory stays bounded. Only when a file
+  will be read is there one disclosure, `scope: "all-authorized-secrets"`
+  with `purpose: "scan"` (a server without `secrets.disclosure-purpose` is
+  named), and the values (current and retiring) go to `internal/matcher`'s
+  `StreamScanner`, binary files as bytes; each value long enough to mask
+  is a value in flight, so no output or diagnostic shows one. A finding
+  names the path, line, byte column, item, version and form, never the
+  value or the line; a file ending with a value's start is counted, never
+  a finding; `varlatch:allow NAME` on a line the occurrence touches and a
+  baseline entry (path, item, version: nothing else is accepted) allow
+  one; past 1,000 findings a file's occurrences are counted by item and
+  version. `--install-hook` writes `.git/hooks/pre-commit` (Git's
+  `--git-path`) to run `varlatch scan --staged` from the project directory,
+  and never replaces a hook it did not write (it names the line to add
+  instead). Statuses: 1 for findings, 2 when nothing is found but a file
+  was not scanned, 0 otherwise, and 1 for every failure (usage, a refused
+  credential, a server that cannot be reached).
+  `testdata/vectors/scan.json` (`apps/cli/test/go-vectors-scan.test.ts`)
+  holds 33 engine cases (locations, forms, markers, bounds, baselines,
+  listing limits, incomplete starts; `internal/scan`'s `TestEngineVectors`
+  also feeds each in every chunk size up to 97 bytes), 26 trees scanned as
+  `--staged` or paths with real Git (`TestSourceVectors`), and
+  `parseSize`, `formatBytes`, the baseline's reading and writing, the
+  option parser and the hook's text; the transcripts (`5.4d-scan`, 38
+  cases) hold the command end to end against the fake server, a transcript
+  per failure class included. `scan-cli.test.ts` runs against Go (the
+  hook blocks real commits), and `TestScanIsLinear` holds every
+  adversarial shape to the shared growth rule.
 - Find files (slice 5.4e): `scan --find-files [<dir>] [--json]` is
-  `internal/findfiles`, run from `internal/cli`'s `findfilescmd.go`; the
-  rest of `scan` is slice 5.4d, so `scan` answers only the command lines
-  that name `--find-files` before `--` (read by `scan`'s whole option
-  parser, so its usage errors are scan's) and says the others are not
-  built. It lists the files whose names look like copies of secrets
+  `internal/findfiles`, run from `internal/cli`'s `scancmd.go`. It lists
+  the files whose names look like copies of secrets
   (`.env`, `.env.*` but the two templates, `*.pem`, `*.key`) by names and
   `lstat` alone: it never reads a candidate, never follows a symbolic link
   (one is listed by its own name), skips `.git`, `.hg`, `.svn` and
@@ -709,6 +748,10 @@ it to the recording.
 | `pending-sign-ins.json` and runs at the same time | not compared | not locked across processes, as in TypeScript: each run reads the file, changes its entry and replaces the file atomically, so of two runs that change it at once the later write wins (a `--start` replacing an entry another run's `--wait` is keeping, for example) | Parity: both CLIs share the file (decision 11), and a lock one of them does not take would not hold. A lost update costs at most a sign-in to start again |
 | Secrets in flight never show | not compared | a credential given or issued, a device code, a sign-in hand-off bearer, an OIDC ID token and the GitHub Actions request token are held for the run (`Run.holdValue`): every exact occurrence, and its escaped form, is `[redacted]` on stdout, in every `--json` document and on stderr, whatever their length or format, as well as in a server's free text | A server's answer or an error could echo one, and only Varlatch's own token formats are caught by shape. Pinned by `internal/cli`'s `TestInFlightSecretsNeverShow` and every 5.2 transcript, whose canaries appear in no output |
 | `now` (how transcripts compare, not a behaviour) | `login` and `env use` write the time of the run (`issuedAt`, `tierCachedAt`) | the same, at another time | A case that lists the `now` pattern has each ISO 8601 timestamp between its run's start and end written `{{now}}`, in the recording and the replay alike (`goKit.ts` `nowPattern`, `transcript.NowPattern`); a timestamp outside the run is compared as it is |
+| `scan-staged-total`: `--max-total-size` with `--staged` | not compared | each staged file is admitted with the sizes of the files admitted before it counted, as a path scan admits each file just before it reads it, so the staged content read in all stays within the bound; a file past it is named `over the total size bound of <size>` and not read | The bound limits how much one scan reads; the scan vectors' `staged.total-bound` case is compared through this difference (`internal/scan`'s `TestSourceVectors`, `TestStagedTotalBound`) |
+| `scan-values-in-flight`: a value `scan` holds | not compared | each disclosed value long enough to mask (8 characters or more) is a value in flight: a path, an item name or any other text that holds one is shown with it `[redacted]`, on stdout and stderr alike; the baseline file keeps paths as they are, since it must match them again (`TestScanNeverShowsAValue`) | A scan never puts a value on the terminal, whatever a file is named |
+| `scan-disclosure-shape`: a disclosure answer of another shape | not compared | an item whose `name`, `versionId` or `value` (or its retiring version's) is not a string, an item that is not an object, or `items` that cannot be iterated ends the scan with 1 before any file is read, the reason in Go's words and nothing of the answer shown (`TestScanRefusesADisclosureOfAnotherShape`) | A scan looks only for values it can name |
+| `baseline-json-syntax`: a baseline that is not JSON | `invalid baseline <path>: not valid JSON (<V8's message>)` | `invalid baseline <path>: not valid JSON (Unexpected end of JSON input)` for an empty file, `(Unexpected token in JSON)` otherwise | V8's wording quotes the text it stopped at; the scan vectors compare such a baseline by the start of the message |
 
 ## varlatchd
 

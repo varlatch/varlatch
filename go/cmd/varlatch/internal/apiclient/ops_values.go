@@ -55,6 +55,12 @@ func (c *Client) EffectiveConfiguration(ctx context.Context, org, project, envir
 	return c.Request(ctx, "GET", environmentPath(org, project, environment)+"/effective-configuration"+query, NoBody, nil)
 }
 
+// DiscloseSecrets is POST .../disclosures: the Secrets' values, with
+// {items: [...]} or {scope: "all-authorized-secrets"}.
+func (c *Client) DiscloseSecrets(ctx context.Context, org, project, environment string, body jsjson.Object) (any, error) {
+	return c.Request(ctx, "POST", environmentPath(org, project, environment)+"/disclosures", body, nil)
+}
+
 // ValidateEnvironment is POST .../validate with {}.
 func (c *Client) ValidateEnvironment(ctx context.Context, org, project, environment string) (any, error) {
 	return c.Request(ctx, "POST", environmentPath(org, project, environment)+"/validate", jsjson.Object{}, nil)

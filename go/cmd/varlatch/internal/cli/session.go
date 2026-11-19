@@ -291,13 +291,7 @@ func (r *Run) readTokenStdin() (string, error) {
 
 // isJSWhitespace is a character JavaScript's \s matches: the white space
 // and line terminators of ECMA-262.
-func isJSWhitespace(c rune) bool {
-	switch c {
-	case '\t', '\n', '\v', '\f', '\r', ' ', 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff:
-		return true
-	}
-	return c >= 0x2000 && c <= 0x200a
-}
+func isJSWhitespace(c rune) bool { return jsval.IsWhitespace(c) }
 
 // loginWithToken verifies the credential (GET /v1/meta, then GET
 // /v1/organizations), stores it with the time of the sign-in, says so, makes
