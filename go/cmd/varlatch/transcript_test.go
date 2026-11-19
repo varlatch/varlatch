@@ -153,7 +153,17 @@ var recordedUserAgent = regexp.MustCompile(`^varlatch-cli/[0-9A-Za-z.+-]+ \([a-z
 // goFailure is one line of the Go CLI's own failure.
 var goFailure = regexp.MustCompile(`^varlatch: [^\n]+\n$`)
 
-// TestTranscripts replays every recorded case (testdata/transcripts).
+// transcriptParallelism bounds how many cases replay at once: each case
+// runs the CLI as a process (this test binary, race-instrumented under
+// -race), so the bound keeps memory sane on a hosted runner while the cases
+// no longer run one after another.
+const transcriptParallelism = 4
+
+// TestTranscripts replays every recorded case (testdata/transcripts). The
+// cases run in parallel, at most transcriptParallelism at once: each has
+// its own directory, fake server and environment (transcript.Replay gives
+// the child its environment explicitly), and nothing here is shared but
+// read-only tables, so no case can see another.
 func TestTranscripts(t *testing.T) {
 	files, err := filepath.Glob("testdata/transcripts/*.json")
 	if err != nil || len(files) == 0 {
@@ -164,6 +174,7 @@ func TestTranscripts(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := func(args []string) *exec.Cmd { return exec.Command(exe, args...) }
+	slots := make(chan struct{}, transcriptParallelism)
 	for _, path := range files {
 		f, err := transcript.Load(path)
 		if err != nil {
@@ -171,6 +182,9 @@ func TestTranscripts(t *testing.T) {
 		}
 		for _, c := range f.Cases {
 			t.Run(f.Area+"/"+c.ID, func(t *testing.T) {
+				t.Parallel()
+				slots <- struct{}{}
+				defer func() { <-slots }()
 				c.Env = withMarker(c.Env)
 				if slices.Contains(c.Differences, "skill-version") {
 					files := map[string]string{}
