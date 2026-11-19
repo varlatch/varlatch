@@ -150,8 +150,11 @@ func growth(t *testing.T, name string, floor time.Duration, startLarge, limitLar
 		n = next
 	}
 	note := ""
-	if capped && small < floor {
-		note = " (at its size limit)"
+	if capped {
+		note = fmt.Sprintf(" (the larger run at its size limit, %d)", limitLarge)
+		if small < floor {
+			note += fmt.Sprintf(", the smaller under %v", floor)
+		}
 	}
 	if ops == nil {
 		ops = func(n int) float64 { return float64(n) }
@@ -253,6 +256,14 @@ func TestHookLinearTime(t *testing.T) {
 		return `{"cwd":` + quote(dir) + `,"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":` + quote("grep -r "+options+" KEY .") + `}}`
 	}
 	a := func(n int) string { return strings.Repeat("a", n) }
+	// The keys and walk shapes are linear (profiled: per key or per byte
+	// the work stays flat past their sizes here) but allocate heavily, so
+	// at millions of keys or tens of megabytes of pattern a CI runner's GC
+	// and caches, not the hook, set the time: keys grew 24.4x there for 8x
+	// the input (279 then 854 ns per key). Their larger run stops at a size
+	// no agent's event reaches (keysLimit, walkLimit); the rule and the
+	// quadratic control are unchanged.
+	const keysLimit, walkLimit = 1 << 20, 4 << 20
 	cases := []struct {
 		name       string
 		event      func(n int) string // an event whose size grows with n
@@ -266,14 +277,14 @@ func TestHookLinearTime(t *testing.T) {
 		{"option cluster", func(n int) string { return event("grep -"+a(n)+" x .env", "") }, 1600 * 1024, 32 << 20},
 		{"glob", func(n int) string { return event("cat "+a(n)+"* .env", "") }, 1600 * 1024, 32 << 20},
 		{"dot-leading glob", func(n int) string { return event("cat ."+a(n)+"* .env", "") }, 1600 * 1024, 32 << 20},
-		{"keys", func(n int) string { return event("cat .env", keys(n)) }, 200_000, 4 << 20},
-		{"keys at the top", func(n int) string { return `{` + keys(n) + event("cat .env", "")[1:] }, 200_000, 4 << 20},
+		{"keys", func(n int) string { return event("cat .env", keys(n)) }, 200_000, keysLimit},
+		{"keys at the top", func(n int) string { return `{` + keys(n) + event("cat .env", "")[1:] }, 200_000, keysLimit},
 		{"nesting", func(n int) string {
 			return event("cat .env", `"p":`+strings.Repeat("[", n)+strings.Repeat("]", n)+`,`)
 		}, 100_000, 4 << 20},
-		{"walk, long --exclude-dir", func(n int) string { return walk("--exclude-dir=." + a(n) + "*") }, 1600 * 1024, 32 << 20},
-		{"walk, long --exclude", func(n int) string { return walk("--exclude=." + a(n) + "*") }, 1600 * 1024, 32 << 20},
-		{"walk, long --include", func(n int) string { return walk("--include=." + a(n) + "* --include=.env*") }, 1600 * 1024, 32 << 20},
+		{"walk, long --exclude-dir", func(n int) string { return walk("--exclude-dir=." + a(n) + "*") }, 1600 * 1024, walkLimit},
+		{"walk, long --exclude", func(n int) string { return walk("--exclude=." + a(n) + "*") }, 1600 * 1024, walkLimit},
+		{"walk, long --include", func(n int) string { return walk("--include=." + a(n) + "* --include=.env*") }, 1600 * 1024, walkLimit},
 	}
 	for _, c := range cases {
 		run := func(n int) func() {
