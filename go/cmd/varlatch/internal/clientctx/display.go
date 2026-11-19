@@ -29,7 +29,8 @@ const (
 
 // DisplayServer is a server URL as the CLI shows it: its scheme and its
 // host and port, its path when the path is made only of allow-listed
-// characters (otherwise "/[redacted]"), and nothing else. A user name and
+// characters (otherwise its allow-listed leading segments, then
+// "/[redacted]"), and nothing else. A user name and
 // password are left out; a query or a fragment is left out with a marker
 // ("?[redacted]", "#[redacted]"). Every part shown keeps its bytes, so an
 // ordinary URL (https://h.example, http://127.0.0.1:1234/) is shown as it
@@ -107,9 +108,7 @@ func DisplayServer(raw string) string {
 	if i := strings.IndexByte(path, '?'); i >= 0 {
 		path, query, hasQuery = path[:i], path[i+1:], true
 	}
-	if !allowedPath(path) {
-		path = hiddenPath
-	}
+	path = shownPath(path)
 	out := prefix + hostPort + path
 	if hasQuery {
 		out += marker("?", query, hiddenQuery)
@@ -156,17 +155,21 @@ func allowedHostPort(s string) bool {
 	return true
 }
 
-// allowedPath: ASCII letters and digits, "/", and "-._~!$&'()*+,;=:". No
-// "%", no "@", no backslash, so no user name and password can be read out
-// of a path that is shown, escaped or not.
-func allowedPath(s string) bool {
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !isAlpha(c) && !(c >= '0' && c <= '9') && !strings.ContainsRune("/-._~!$&'()*+,;=:", rune(c)) {
-			return false
+// shownPath is a path as DisplayServer shows it: as it is when it holds
+// only RFC 3986's unreserved characters (ASCII letters and digits,
+// "-._~") and "/"; otherwise its segments up to the first one holding
+// any other character, then "/[redacted]". No "%", ";", "=", ":", "@" or
+// backslash is ever shown, so neither an escaped user name and password
+// nor a matrix parameter (";jsessionid=...") can be read out of it.
+func shownPath(path string) string {
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		if isAlpha(c) || c >= '0' && c <= '9' || strings.IndexByte("/-._~", c) >= 0 {
+			continue
 		}
+		return path[:max(strings.LastIndexByte(path[:i], '/'), 0)] + hiddenPath
 	}
-	return true
+	return path
 }
 
 // DisplayServers is each of servers through DisplayServer.

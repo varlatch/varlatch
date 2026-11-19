@@ -225,3 +225,60 @@ func nestedCredentials(t *testing.T, server, shown string, secrets []string) {
 		}
 	}
 }
+
+// TestMatrixParametersNeverShow: a server whose path holds a matrix
+// parameter (Sol, #278 round 7), given as VARLATCH_SERVER or stored, is
+// shown with its path from the parameter's segment on as "/[redacted]",
+// by server --json, context, and status --probe --json (the repository's
+// server, a stored one and its probe detail).
+func TestMatrixParametersNeverShow(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config")
+	repo := filepath.Join(dir, "repo")
+	for _, d := range []string{config, repo} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Port 1 is never connected to: the probe fails before anything is sent.
+	data, _ := json.Marshal(map[string]any{"servers": map[string]map[string]string{
+		"http://127.0.0.1:1/varlatch;jsessionid=RoundSevenStored": {"token": "vlt_cli_x"},
+	}})
+	if err := os.WriteFile(filepath.Join(config, "credentials.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "varlatch.toml"), []byte("organization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		args  []string
+		shows []string
+	}{
+		{[]string{"server", "--json"}, []string{`"server": "https://gateway.example/[redacted]"`, `"http://127.0.0.1:1/[redacted]"`}},
+		{[]string{"context"}, []string{"Server        https://gateway.example/[redacted]"}},
+		{[]string{"status", "--probe", "--json"}, []string{`"server": "https://gateway.example/[redacted]"`, `"server": "http://127.0.0.1:1/[redacted]"`}},
+	} {
+		cmd := exec.Command(exe, c.args...)
+		cmd.Dir = repo
+		cmd.Env = []string{asCLI + "=1", "HOME=" + dir, "VARLATCH_CONFIG_DIR=" + config, "PATH=" + os.Getenv("PATH"),
+			"VARLATCH_SERVER=https://gateway.example/varlatch;jsessionid=RoundSevenCanary"}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%v: %v\n%s", c.args, err, stderr.String())
+		}
+		out := stdout.String() + stderr.String()
+		if strings.Contains(out, "RoundSeven") || strings.Contains(out, "jsessionid") {
+			t.Errorf("%v shows the session id:\n%s", c.args, out)
+		}
+		for _, want := range c.shows {
+			if !strings.Contains(out, want) {
+				t.Errorf("%v does not show %s:\n%s", c.args, want, out)
+			}
+		}
+	}
+}
