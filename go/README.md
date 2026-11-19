@@ -408,7 +408,17 @@ comes. `verify-release`, which the installers run, is Go's own.
   clean environment (`unset`, to reach the default configuration
   directory). Regenerate after changing the cases with
   `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/cli exec vitest run
-  test/go-transcripts.test.ts`.
+  test/go-transcripts.test.ts`. A case whose outcome names a path below its
+  directory (`{{dir}}/...`) also has a Windows expectation, recorded by the
+  TypeScript recorder on Windows (`apps/cli/test/goWindows.ts`) into
+  `testdata/transcripts/windows/`, which Windows replays it against; so do
+  the agents install and find-files vectors (`testdata/vectors/windows/`).
+  The directory inside a JSON string is mapped back to `{{dir}}` in its
+  escaped form too (`transcript.UnfillDir`), so such a case needs no
+  Windows expectation. `TestWindowsExpectationsComplete` fails on every
+  platform when a case needs one and has none: label the pull request
+  `record-windows` (the windows-expectations workflow) and put its
+  artifact in with `scripts/go-windows-expectations.sh <run id>`.
 - `testdata/vectors/framework.json`: what the TypeScript code answers for
   the option parser, help, safe text, assisted mode, the global options,
   the User-Agents and the exit status of an API error
