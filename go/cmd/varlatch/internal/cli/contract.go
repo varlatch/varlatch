@@ -24,7 +24,11 @@ import (
 // docs/design/go-cli.md): main.ts's "contract" case and contractPush.ts, on
 // lib/contract and internal/envschema (the .env.schema parser, decision 8).
 
-const contractPushUsage = "Usage: varlatch contract push --schema <.env.schema> | --file <contract.json> [--semantics <version|latest>]"
+const (
+	contractPushUsage     = "Usage: varlatch contract push --schema <.env.schema> | --file <contract.json> [--semantics <version|latest>]"
+	contractActivateUsage = "Usage: varlatch contract activate <revision-id>"
+	contractUsage         = "Usage: varlatch contract <push|activate|show>"
+)
 
 func contractCommand(r *Run) error {
 	sub := ""
@@ -45,7 +49,7 @@ func contractCommand(r *Run) error {
 		return r.contractPush(ctx, api)
 	case len(r.Args) > 0 && sub == "activate":
 		if len(r.Args) < 2 {
-			return UsageError("Usage: varlatch contract activate <revision-id>")
+			return UsageOnly(contractActivateUsage)
 		}
 		revision := r.Args[1]
 		c, err := api.get()
@@ -80,7 +84,7 @@ func contractCommand(r *Run) error {
 		r.holdSensitiveDefaults(contractDoc)
 		return r.printValue(r.maskShown(withoutSensitiveDefaults(active)))
 	}
-	return UsageError("Usage: varlatch contract <push|activate|show>")
+	return UsageOnly(contractUsage)
 }
 
 // contractPush is `varlatch contract push`.
@@ -146,7 +150,7 @@ func (r *Run) contractPush(ctx *clientctx.Context, api *lazyClient) error {
 			return Fail("varlatch: "+jsonFile+" is not valid JSON; nothing was pushed", ExitFailure)
 		}
 	default:
-		return UsageError(contractPushUsage)
+		return UsageOnly(contractPushUsage)
 	}
 	// A sensitive item's default is a value: no output or diagnostic shows
 	// it, a server's echo of it included.

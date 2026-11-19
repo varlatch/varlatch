@@ -5,6 +5,8 @@ package envschema
 import (
 	"strings"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 )
 
 // TestErrorsNeverQuoteTheFile: a file given as --schema by mistake may be a
@@ -33,5 +35,25 @@ func TestErrorsNeverQuoteTheFile(t *testing.T) {
 		if strings.Contains(err.Error(), canary) || strings.Contains(err.Error(), "s3cr3t") {
 			t.Errorf("%q: %q quotes the file", source, err)
 		}
+	}
+}
+
+// TestErrorsReadAfterTheFailSafe: no parse error the vectors hold is
+// changed by the CLI's fail-safe (a colon before a decorator's at-sign
+// would read as a URL's user name and password), so each prints as worded.
+func TestErrorsReadAfterTheFailSafe(t *testing.T) {
+	_, schemas, _ := loadVectors(t)
+	n := 0
+	for _, v := range schemas {
+		if v.Error == nil {
+			continue
+		}
+		n++
+		if m := goMessage(*v.Error); clientctx.MaskUserinfoInText(m) != m {
+			t.Errorf("%q: the fail-safe rewrites %q", v.Source, m)
+		}
+	}
+	if n < 40 {
+		t.Fatalf("only %d errors", n)
 	}
 }

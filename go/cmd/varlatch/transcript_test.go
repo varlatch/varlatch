@@ -15,6 +15,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/envschema"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/secretinput"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/transcript"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
@@ -233,18 +234,22 @@ var differences = map[string]transcript.Difference{
 	// The .env.schema parser never quotes the file in an error (a file given
 	// as --schema by mistake may be a .env holding values; go/README.md, "No
 	// message holds a value"): the package repeats part of the line it cannot
-	// read. Accepted only where Go's stderr is the recording with the quoted
-	// fragment replaced by the parser's own words, and holds no part of it.
+	// read. And a reason holding a decorator ("@rotationGrace") is put
+	// before the line's place, so the fail-safe never reads the colon and the
+	// at-sign as a password. Accepted only where Go's stderr is the
+	// recording as envschema.GoWording words it, and holds no part of a
+	// quoted fragment.
 	"env-schema-value-free": func(o *transcript.Outcome, got transcript.Outcome) {
-		m := schemaFragment.FindStringSubmatch(o.Stderr)
-		if m == nil {
-			return
+		first, rest, _ := strings.Cut(o.Stderr, "\n")
+		accepted := envschema.GoWording(first) + "\n" + rest
+		if q := schemaFragment.FindStringSubmatch(o.Stderr); q != nil && strings.Contains(got.Stderr, strings.TrimSpace(q[2])) {
+			return // the quoted fragment must be gone
 		}
-		accepted := m[1] + " (not shown, since it may hold a value)\n"
-		if got.Stderr == accepted && !strings.Contains(got.Stderr, strings.TrimSpace(m[2])) {
+		if got.Stderr == accepted {
 			o.Stderr = accepted
 		}
 	},
+
 	// A server's identifier that does not have the server's shape (a
 	// prefix and 26 characters of lower-case base32) is shown as "an
 	// unrecognized id" (go/README.md, "No message holds a value").

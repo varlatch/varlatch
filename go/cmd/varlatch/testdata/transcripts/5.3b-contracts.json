@@ -4922,7 +4922,8 @@
         ".env.schema"
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "env-schema-value-free"
       ],
       "expect": {
         "status": 1,

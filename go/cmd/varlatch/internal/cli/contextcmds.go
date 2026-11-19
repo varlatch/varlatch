@@ -67,7 +67,7 @@ func (r *Run) resolveArgs(cwd string, args []string) (*clientctx.Context, error)
 // then straight to stdout (outJSON): keys are left alone, never redacted
 // or made the same. Every --json document goes through it;
 // TestEveryWriteGoesThroughTheFailSafe fails on any other way to stdout.
-func (r *Run) printJSON(doc jsjson.Object) error {
+func (r *Run) printJSON(doc any) error {
 	return r.outJSON(redactJSON(doc, r.inFlight...))
 }
 
@@ -78,7 +78,7 @@ func (r *Run) printValue(v any) error {
 	if v == apiclient.Undefined {
 		return r.println("undefined")
 	}
-	return r.document(string(jsjson.StringifyIndent(RedactValue(v, r.inFlight...), 2)))
+	return r.printJSON(v)
 }
 
 // statusSchemaVersion is status.ts's STATUS_SCHEMA_VERSION, the version of

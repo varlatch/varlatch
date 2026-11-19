@@ -39,6 +39,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/lib/contract"
 )
 
@@ -80,8 +81,60 @@ type ParseError struct {
 	Message string
 }
 
-func (e *ParseError) Error() string {
-	return ".env.schema line " + strconv.Itoa(e.Line) + ": " + e.Message
+func (e *ParseError) Error() string { return formatMessage(e.Line, e.Message) }
+
+// formatMessage is the package's ".env.schema line <n>: <reason>", or,
+// when the CLI's fail-safe would read the line's colon and an at-sign
+// after it as a URL's user name and password (a decorator such as
+// "@rotationGrace" in the reason), "<reason> (.env.schema line <n>)": the
+// Go CLI's failures put what holds an at-sign first and the explanation
+// after it (go/README.md, "Diagnostics never print credential values").
+func formatMessage(line int, reason string) string {
+	m := ".env.schema line " + strconv.Itoa(line) + ": " + reason
+	if clientctx.MaskUserinfoInText(m) != m {
+		return reason + " (.env.schema line " + strconv.Itoa(line) + ")"
+	}
+	return m
+}
+
+// packageMessage is a packages/env-schema message, ".env.schema line <n>:
+// <reason>".
+var packageMessage = regexp.MustCompile(`(?s)^\.env\.schema line ([0-9]+): (.*)$`)
+
+// valueFreeReasons are the package's reasons that quote part of the file,
+// and the Go parser's words for them.
+var valueFreeReasons = []struct {
+	pattern *regexp.Regexp
+	words   string
+}{
+	{regexp.MustCompile(`(?s)^Unrecognized line: .*$`), "Unrecognized line (not shown, since it may hold a value)"},
+	{regexp.MustCompile(`(?s)^Unexpected text after the value: .*$`), "Unexpected text after the value (not shown, since it may hold a value)"},
+	{regexp.MustCompile(`(?s)^Malformed decorator: .*$`), "Malformed decorator (not shown, since it may hold a value)"},
+	{regexp.MustCompile(`(?s)^Unsupported @required form: .*$`), "Unsupported @required form (not shown, since it may hold a value)"},
+	{regexp.MustCompile(`(?s)^Unsupported @sensitive form: .*$`), "Unsupported @sensitive form (not shown, since it may hold a value)"},
+	{regexp.MustCompile(`(?s)^Unsupported @type: .*$`), "Unsupported @type (not shown, since it may hold a value)"},
+}
+
+// GoWording is a packages/env-schema message as the Go parser words it: a
+// reason that quotes the file without the quotation, the two reasons whose
+// colon precedes a decorator reworded ("as in"), and the order
+// formatMessage gives. The vectors and the transcripts compare through it.
+func GoWording(message string) string {
+	m := packageMessage.FindStringSubmatch(message)
+	if m == nil {
+		return message
+	}
+	line, _ := strconv.Atoi(m[1])
+	reason := m[2]
+	for _, v := range valueFreeReasons {
+		if v.pattern.MatchString(reason) {
+			reason = v.words
+			break
+		}
+	}
+	reason = strings.Replace(reason, rotationHintNeedsValuePackage, rotationHintNeedsValue, 1)
+	reason = strings.Replace(reason, forEnvRemovedPackage, forEnvRemoved, 1)
+	return formatMessage(line, reason)
 }
 
 func fail(line int, message string) error { return &ParseError{Line: line, Message: message} }
@@ -132,8 +185,14 @@ func stripQuotes(v string) string {
 	return t
 }
 
-const forEnvRemoved = "forEnv(...) is not supported. Name this project's Varlatch environments instead, " +
-	"for example @required=env(production, staging), or name a tier: @required=tier(production)"
+const (
+	forEnvRemoved = "forEnv(...) is not supported. Name this project's Varlatch environments instead, " +
+		"for example @required=env(production, staging), or name a tier, as in @required=tier(production)"
+	forEnvRemovedPackage = "forEnv(...) is not supported. Name this project's Varlatch environments instead, " +
+		"for example @required=env(production, staging), or name a tier: @required=tier(production)"
+	rotationHintNeedsValue        = "@rotationHint needs a value, as in @rotationHint=How to rotate it"
+	rotationHintNeedsValuePackage = "@rotationHint needs a value: @rotationHint=How to rotate it"
+)
 
 // valueOf is the package's valueOf: an item's right-hand side without its
 // trailing comment (a "#" after whitespace, outside quotes). A trailing
@@ -394,7 +453,7 @@ func buildItem(name, value string, decorators []pending, description []string, n
 			// value, and one pair of quotes, go (ADR-0053).
 			at := strings.Index(d.raw, "@rotationHint=")
 			if !d.hasValue || at < 0 {
-				return item, fail(d.line, "@rotationHint needs a value: @rotationHint=How to rotate it")
+				return item, fail(d.line, rotationHintNeedsValue)
 			}
 			payload := strings.Trim(d.raw[at+len("@rotationHint="):], " ")
 			hint := payload

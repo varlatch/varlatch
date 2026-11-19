@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
-	"regexp"
 	"testing"
 
 	"github.com/varlatch/varlatch/go/lib/contract"
@@ -30,29 +29,8 @@ type schemaVector struct {
 	}
 }
 
-// valueFree are the package's messages that repeat part of the file, and
-// the Go wording that does not (the package says, then the fragment).
-var valueFree = []struct {
-	ts  *regexp.Regexp
-	go_ string
-}{
-	{regexp.MustCompile(`(?s)^(\.env\.schema line \d+: )Unrecognized line: .*$`), "${1}Unrecognized line (not shown, since it may hold a value)"},
-	{regexp.MustCompile(`(?s)^(\.env\.schema line \d+: )Unexpected text after the value: .*$`), "${1}Unexpected text after the value (not shown, since it may hold a value)"},
-	{regexp.MustCompile(`(?s)^(\.env\.schema line \d+: )Malformed decorator: .*$`), "${1}Malformed decorator (not shown, since it may hold a value)"},
-	{regexp.MustCompile(`(?s)^(\.env\.schema line \d+: )Unsupported @required form: .*$`), "${1}Unsupported @required form (not shown, since it may hold a value)"},
-	{regexp.MustCompile(`(?s)^(\.env\.schema line \d+: )Unsupported @sensitive form: .*$`), "${1}Unsupported @sensitive form (not shown, since it may hold a value)"},
-	{regexp.MustCompile(`(?s)^(\.env\.schema line \d+: )Unsupported @type: .*$`), "${1}Unsupported @type (not shown, since it may hold a value)"},
-}
-
 // goMessage is the TypeScript message as the Go parser words it.
-func goMessage(ts string) string {
-	for _, v := range valueFree {
-		if v.ts.MatchString(ts) {
-			return v.ts.ReplaceAllString(ts, v.go_)
-		}
-	}
-	return ts
-}
+func goMessage(ts string) string { return GoWording(ts) }
 
 func loadVectors(t *testing.T) (envs []Environment, schemas []schemaVector, push []struct {
 	Name             string
