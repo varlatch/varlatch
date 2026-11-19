@@ -48,6 +48,9 @@ func TestHookVectors(t *testing.T) {
 			env[m.Key] = jsjson.String(m.Value)
 		}
 		stdin, cwd := jsjson.String(c.Value("stdin")), jsjson.String(c.Value("cwd"))
+		if nest, ok := c.Value("nest").(float64); ok {
+			stdin = strings.ReplaceAll(stdin, `"{{nest}}"`, strings.Repeat("[", int(nest))+strings.Repeat("]", int(nest)))
+		}
 		dir := ""
 		if cwd == "{{dir}}" {
 			dir = project(t, c)

@@ -10,14 +10,18 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
 // `varlatch agents hook --format <agent>` (ADR-0043 Decision 8), ported
-// from apps/cli/src/agents/hook.ts at v0.22.0: the one handler every
+// from apps/cli/src/agents/hook.ts in this tree (v0.22.0's, with the home
+// directory from @varlatch/context since 091f1c08; the hook vectors are
+// recorded from this tree's hook.ts, not a release): the one handler every
 // guardrail hook calls. It reads a coding agent's pre-tool-use event and
 // denies three kinds of tool call:
 //
@@ -60,14 +64,42 @@ func nameOf(path string) string {
 
 func isGlob(name string) bool { return strings.ContainsAny(name, "*?[") }
 
+// globCache holds the globs compiled in this run: a search tries its
+// filters on every entry it walks, and compiling a long glob each time
+// would be slow where V8, which caches compiled regular expressions, is
+// not.
+var globCache = struct {
+	sync.Mutex
+	m map[string]*regexp.Regexp
+}{m: map[string]*regexp.Regexp{}}
+
 // globRegex is a shell glob as a regular expression for one name, or nil
 // for a glob with an unclosed class (or one that is no regular expression).
+// The regular expression is RE2's (Go's regexp), not JavaScript's.
 func globRegex(glob string) *regexp.Regexp {
+	globCache.Lock()
+	defer globCache.Unlock()
+	if re, ok := globCache.m[glob]; ok {
+		return re
+	}
+	if len(globCache.m) >= 256 {
+		clear(globCache.m)
+	}
+	re := compileGlob(glob)
+	globCache.m[glob] = re
+	return re
+}
+
+func compileGlob(glob string) *regexp.Regexp {
 	var out strings.Builder
 	for i := 0; i < len(glob); i++ {
 		c := glob[i]
 		switch c {
 		case '*':
+			// A run of stars matches what one does.
+			for i+1 < len(glob) && glob[i+1] == '*' {
+				i++
+			}
 			out.WriteString(".*")
 		case '?':
 			out.WriteString(".")
@@ -373,7 +405,10 @@ var allDigits = regexp.MustCompile(`^\d+$`)
 func lexShell(text string) lexed {
 	var out lexed
 	seg := segment{}
-	var word *string
+	// The word being read. Its bytes are appended whole, so a UTF-8 name
+	// stays as written, and a long word takes linear time.
+	var word strings.Builder
+	inWord := false
 	redirect := ""
 	type heredoc struct {
 		delimiter string
@@ -382,29 +417,32 @@ func lexShell(text string) lexed {
 	var heredocs []heredoc
 	pending := -1 // -1 none; 0 a plain heredoc; 1 one with <<-
 	add := func(s string) {
-		if word == nil {
-			w := ""
-			word = &w
-		}
-		*word += s
+		inWord = true
+		word.WriteString(s)
+	}
+	addByte := func(b byte) {
+		inWord = true
+		word.WriteByte(b)
 	}
 	endWord := func() {
-		if word == nil {
+		if !inWord {
 			return
 		}
+		w := word.String()
 		switch {
 		case pending >= 0:
-			heredocs = append(heredocs, heredoc{*word, pending == 1})
+			heredocs = append(heredocs, heredoc{w, pending == 1})
 			pending = -1
 		case redirect == "in":
-			seg.inputs = append(seg.inputs, *word)
+			seg.inputs = append(seg.inputs, w)
 		case redirect == "out":
-			seg.outputs = append(seg.outputs, *word)
+			seg.outputs = append(seg.outputs, w)
 		case redirect == "":
-			seg.words = append(seg.words, *word)
+			seg.words = append(seg.words, w)
 		}
 		redirect = ""
-		word = nil
+		word = strings.Builder{}
+		inWord = false
 	}
 	endSegment := func() {
 		endWord()
@@ -429,7 +467,7 @@ func lexShell(text string) lexed {
 				i += 2
 			} else {
 				if i+1 < len(text) {
-					add(string(next))
+					addByte(next)
 				} else {
 					add("")
 				}
@@ -448,7 +486,7 @@ func lexShell(text string) lexed {
 			continue
 		case c == '"':
 			i++
-			part := ""
+			inWord = true // "" is a word
 			for i < len(text) && text[i] != '"' {
 				switch {
 				case text[i] == '\\' && i+1 < len(text):
@@ -456,9 +494,10 @@ func lexShell(text string) lexed {
 					escaped := text[i+1]
 					if escaped != '\n' {
 						if strings.IndexByte("$`\"\\", escaped) >= 0 {
-							part += string(escaped)
+							addByte(escaped)
 						} else {
-							part += `\` + string(escaped)
+							addByte('\\')
+							addByte(escaped)
 						}
 					}
 					i += 2
@@ -476,11 +515,10 @@ func lexShell(text string) lexed {
 						i = close + 1
 					}
 				default:
-					part += string(text[i])
+					addByte(text[i])
 					i++
 				}
 			}
-			add(part)
 			i++
 			continue
 		case c == '$' && next == '(':
@@ -506,7 +544,7 @@ func lexShell(text string) lexed {
 			out.nested = append(out.nested, inner)
 			i = end
 			continue
-		case c == '#' && word == nil:
+		case c == '#' && !inWord:
 			if eol := indexFrom(text, '\n', i); eol < 0 {
 				i = len(text)
 			} else {
@@ -558,8 +596,9 @@ func lexShell(text string) lexed {
 			continue
 		case c == '<' || c == '>':
 			// A number right before a redirection is a file descriptor, not a word.
-			if word != nil && allDigits.MatchString(*word) {
-				word = nil
+			if inWord && allDigits.MatchString(word.String()) {
+				word = strings.Builder{}
+				inWord = false
 			}
 			endWord()
 			if c == '<' && next == '<' {
@@ -588,7 +627,7 @@ func lexShell(text string) lexed {
 			}
 			continue
 		}
-		add(string(c))
+		addByte(c)
 		i++
 	}
 	endSegment()
@@ -842,11 +881,14 @@ func parseArgs(args []string, valued map[string]bool) ([]option, []string) {
 				options = append(options, option{w, nil})
 			}
 		} else if strings.HasPrefix(w, "-") && len(w) > 1 {
-			for j := 1; j < len(w); j++ {
-				opt := "-" + string(w[j])
+			for j := 1; j < len(w); {
+				// One option per character, its UTF-8 bytes kept whole.
+				_, size := utf8.DecodeRuneInString(w[j:])
+				opt := "-" + w[j:j+size]
+				j += size
 				if valued[opt] {
-					if j+1 < len(w) {
-						v := w[j+1:]
+					if j < len(w) {
+						v := w[j:]
 						options = append(options, option{opt, &v})
 					} else {
 						options = append(options, option{opt, value(&i)})
@@ -1458,7 +1500,9 @@ func RunHook(format, stdin string, env clientctx.Env, processCwd string) (string
 	if strings.HasPrefix(stdin, "\uFEFF") {
 		return "", nil
 	}
-	parsed, err := jsjson.Parse([]byte(stdin))
+	// JSON.parse has no nesting limit short of memory, so neither does this:
+	// a deeply nested event still gets its decision.
+	parsed, err := jsjson.ParseDeep([]byte(stdin))
 	if err != nil {
 		return "", nil
 	}

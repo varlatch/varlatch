@@ -38,6 +38,8 @@ interface HookCase {
   /** Files `git add -f` tracks. */
   gitAdd?: string[];
   stdin: string;
+  /** stdin's "{{nest}}" is this many nested arrays (kept out of the file). */
+  nest?: number;
   expect?: string;
 }
 
@@ -247,6 +249,33 @@ for (const input of [
 inProject("grep-tool", { ...PROJECT, ".gitignore": ".env\n" }, "Grep", { pattern: "KEY", output_mode: "content" }, { git: true });
 inProject("grep-tool-array", PROJECT, "Grep", ["KEY"]);
 
+// Names that are not ASCII: a directory with an accented or CJK name, quoted and not.
+const CAFE = { "café/.env.local": "A=1\n", "café/app.ts": "x\n", "日本/.env.local": "A=1\n", "日本/app.ts": "x\n" };
+for (const dir of ["café", "日本"]) {
+  for (const word of [dir, `"${dir}"`, `'${dir}'`, `./${dir}/`]) {
+    for (const command of [`grep -r KEY ${word}`, `grep -rn KEY ${word}`, `rg --hidden KEY ${word}`, `rg -uu KEY ${word}`, `ag --hidden KEY ${word}`, `rg KEY ${word}`]) {
+      inProject("non-ascii", CAFE, "Bash", { command });
+    }
+  }
+  inProject("non-ascii", CAFE, "Grep", { pattern: "KEY", path: dir, output_mode: "content" });
+  inProject("non-ascii", { [`${dir}/app.ts`]: "x\n" }, "Bash", { command: `grep -r KEY ${dir}` });
+}
+for (const command of [
+  "cat café/.env-old", `cat "café/.env-old"`, "cat 'café'/.env-old", "cat caf\\é/.env-old", "head -n1 日本/.env-old", `cat "日本"/.env-old`,
+  "cat .envé", `cat ".envé"`, "cat .env日本", "cat café/notes.md", "cat café/.e*", `cat "日本"/.e*`,
+]) {
+  inProject("non-ascii-file", { "café/.env-old": "A=1\n", "café/notes.md": "x\n", "日本/.env-old": "A=1\n", ".envé": "A=1\n", ".env日本": "A=1\n" }, "Bash", { command });
+}
+inProject("non-ascii-file", { "café/notes.md": "x\n" }, "Bash", { command: "cat café/.env-old" });
+
+// Deep nesting: JSON.parse reads any depth, so a padded event still gets its decision.
+for (const nest of [10_001, 100_000]) {
+  for (const command of ["cat .env", "npm test"]) {
+    cases.push({ id: `${n++}.nest`, format: "claude", env: ENV, cwd: CWD, nest, stdin: event("Bash", { pad: "{{nest}}", command }, CWD) });
+    cases.push({ id: `${n++}.nest`, format: "claude", env: ENV, cwd: CWD, nest, stdin: event("Bash", { command }, CWD, { pad: "{{nest}}" }) });
+  }
+}
+
 // ---- agents-guardrails.test.ts: the events the CLI is given -----------------------
 
 for (const format of ["claude", "codex"] as const) {
@@ -260,7 +289,10 @@ cases.push({ id: `${n++}.cli`, format: "claude", env: ENV, cwd: "{{dir}}", files
 
 const inventory = JSON.parse(readFileSync(INVENTORY, "utf8")) as { options: Record<string, { of: string; slice?: string }> };
 const hookOptions = Object.entries(inventory.options).filter(([, o]) => o.of === "another program" && o.slice === "5.6a").map(([name]) => name).sort();
-for (const option of hookOptions) {
+// Options hook.ts reads that the inventory files under another program
+// (a varlatch or host option spelled the same way).
+const sharedOptions = ["--after", "--from-file", "--replace", "-T", "-U", "-q"];
+for (const option of [...hookOptions, ...sharedOptions]) {
   for (const command of [
     `grep ${option} v KEY .env`,
     `grep ${option} .env KEY notes.md`,
@@ -285,7 +317,8 @@ afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 /** Runs one case through runHook, in a project of its own when it has one. */
 function record(c: HookCase): string {
-  if (c.cwd !== "{{dir}}") return runHook(c.format, c.stdin, c.env, c.cwd);
+  const stdin = c.nest === undefined ? c.stdin : c.stdin.split(JSON.stringify("{{nest}}")).join("[".repeat(c.nest) + "]".repeat(c.nest));
+  if (c.cwd !== "{{dir}}") return runHook(c.format, stdin, c.env, c.cwd);
   const dir = mkdtempSync(join(scratch, "p-"));
   for (const d of c.dirs ?? []) mkdirSync(join(dir, d), { recursive: true });
   for (const [path, content] of Object.entries(c.files ?? {})) {
@@ -296,7 +329,7 @@ function record(c: HookCase): string {
     spawnSync("git", ["init", "-q"], { cwd: dir });
     for (const f of c.gitAdd ?? []) spawnSync("git", ["add", "-f", f], { cwd: dir });
   }
-  const out = runHook(c.format, c.stdin.split("{{dir}}").join(dir), c.env, dir);
+  const out = runHook(c.format, stdin.split("{{dir}}").join(dir), c.env, dir);
   return out.split(dir).join("{{dir}}");
 }
 
@@ -311,5 +344,12 @@ describe("Go CLI hook vectors", () => {
       expect(recorded.some((c) => c.expect.includes(reason)), reason).toBe(true);
     }
     expect(recorded.filter((c) => c.expect === "").length).toBeGreaterThan(50);
+    // A padded event and a search of a directory whose name is not ASCII are decided.
+    const nested = recorded.filter((c) => c.nest !== undefined && c.stdin.includes('"cat .env"'));
+    expect(nested.length).toBe(4);
+    for (const c of nested) expect(c.expect, c.id).toContain(".env files are off limits");
+    const searches = recorded.filter((c) => c.id.endsWith(".non-ascii") && c.files?.["café/.env.local"] && /grep -r|--hidden|-uu/.test(c.stdin));
+    expect(searches.length).toBeGreaterThan(30);
+    for (const c of searches) expect(c.expect, c.id).not.toBe("");
   }, 300_000);
 });

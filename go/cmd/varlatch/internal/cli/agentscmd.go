@@ -51,7 +51,7 @@ func (r *Run) agentsHook(args []string) error {
 	if err != nil {
 		return err
 	}
-	answer, err := agents.RunHook(format, jsval.DecodeUTF8(data), r.Env, cwd)
+	answer, err := runHookSafely(format, jsval.DecodeUTF8(data), r.Env, cwd)
 	if err != nil {
 		_ = r.warn("varlatch agents hook: " + err.Error() + "; no decision")
 		return nil
@@ -61,6 +61,21 @@ func (r *Run) agentsHook(args []string) error {
 	}
 	return r.out(answer)
 }
+
+// runHookSafely is agents.RunHook with a panic turned into an error: as
+// hook.ts's caller does with a throw, the hook then gives no decision
+// and exits 0, so the tool call goes ahead.
+func runHookSafely(format, stdin string, env clientctx.Env, cwd string) (answer string, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			answer, err = "", fmt.Errorf("%v", p)
+		}
+	}()
+	return hookRunner(format, stdin, env, cwd)
+}
+
+// hookRunner is agents.RunHook; a test swaps it for one that panics.
+var hookRunner = agents.RunHook
 
 // agentsCommand is `varlatch agents` (ADR-0043 Decision 7): the
 // agent-neutral skill, printed or installed.
