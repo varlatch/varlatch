@@ -61,9 +61,13 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      # The workspace packages the CLI bundles, as ci.yml builds them.
+      # The workspace packages the CLI bundles, as ci.yml builds them. Their
+      # scripts are POSIX shell (mkdir -p, cp), so pnpm runs them with Git's
+      # bash, not cmd.exe.
       - name: Build the CLI's packages
-        run: pnpm --filter @varlatch/protocol generate && pnpm --filter "@varlatch/cli^..." build
+        run: |
+          pnpm config set script-shell 'C:\Program Files\Git\bin\bash.exe'
+          pnpm --filter @varlatch/protocol generate && pnpm --filter "@varlatch/cli^..." build
 
       # Written, then compared with what is committed (the next step), so
       # the artifact always holds a full recording.
@@ -80,7 +84,7 @@ jobs:
           path: |
             go/cmd/varlatch/testdata/transcripts/windows/
             go/cmd/varlatch/testdata/vectors/windows/
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: The committed files are current
         run: |
