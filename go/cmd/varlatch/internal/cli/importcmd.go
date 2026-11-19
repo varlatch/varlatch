@@ -687,7 +687,9 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 			row.sensitive = nil
 		case isContracted:
 			v, _ := jsval.Get(item, "sensitive")
-			row.sensitive = jsjson.Truthy(v) // a boolean, whatever the Contract's answer holds
+			// Plain only on the active Contract's explicit false; a missing or
+			// malformed field counts as a Secret, the safe classification.
+			row.sensitive = v != false
 		case opts.contract:
 			row.sensitive = !slices.Contains(plain, e.Name)
 		default:
@@ -710,8 +712,11 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 	}
 	// The Secrets, and the values of unknown sensitivity, are in flight from
 	// here on: no output or diagnostic shows one, whatever its length.
+	// Only an item the active Contract marks plain (an explicit false) is
+	// not held: an item --contract --plain only proposes as plain is held
+	// until a Contract says so.
 	for _, row := range rows {
-		if row.sensitive != false {
+		if !row.contracted || row.sensitive != false {
 			r.holdValue(row.entry.Value)
 		}
 	}

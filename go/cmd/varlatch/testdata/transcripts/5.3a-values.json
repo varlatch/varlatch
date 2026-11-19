@@ -1988,7 +1988,8 @@
         "--stdin"
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "value-free-usage"
       ],
       "expect": {
         "status": 64,

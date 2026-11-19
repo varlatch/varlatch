@@ -203,6 +203,10 @@ var valueFreeForms = []struct{ ts, goWords *regexp.Regexp }{
 		regexp.MustCompile(`^varlatch (values set|values rotate): unexpected argument [0-9]+, not shown since it may be part of a value \(a value with spaces goes in quotes\)$`),
 	},
 	{
+		regexp.MustCompile(`^varlatch (values set|values rotate): --replace names (\S+), but this command (?:sets|rotates) \S+; approval for one item never covers another\.$`),
+		regexp.MustCompile(`^varlatch (values set|values rotate): --replace names another item, but this command (?:sets|rotates) \S+; approval for one item never covers another\.$`),
+	},
+	{
 		regexp.MustCompile(`^varlatch (values rotate): --grace needs a whole number of seconds, not (.+)$`),
 		regexp.MustCompile(`^varlatch (values rotate): --grace needs a whole number of seconds$`),
 	},

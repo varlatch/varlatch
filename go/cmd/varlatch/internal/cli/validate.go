@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"slices"
+	"strconv"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -89,99 +90,139 @@ var (
 	requirements        = []string{"config.metadata.read", "config.value.read", "secret.reveal"}
 )
 
-// ProjectReport is the validation report as the CLI reads and shows it:
-// the documented fields only (ValidationReport in
-// packages/protocol/openapi.yaml), a field of an enumeration in it when
-// the protocol defines it and a placeholder otherwise, so a server never
-// puts anything else (an extra field, a value) into what validate prints,
-// in --json or not. Names and an invalid item's reason (free text, which
-// the protocol says never holds the value) are kept, as text. A report
-// that is not an object, or a list that cannot be read, stays as it is,
-// for the TypeError TypeScript throws.
-func ProjectReport(report any) (any, error) {
-	if _, ok := report.(jsjson.Object); !ok {
-		return report, nil
+// reportLists are the report's lists and, for each, the string members an
+// item must have (nil: the items are strings, the names of missing items).
+var reportLists = []struct {
+	key    string
+	fields []string
+}{
+	{"missing", nil},
+	{"invalid", []string{"name", "reason"}},
+	{"unresolved", []string{"name", "reason"}},
+	{"notEvaluated", []string{"name", "reason", "requires"}},
+}
+
+// checkReport is whether the report has the protocol's shape
+// (ValidationReport in packages/protocol/openapi.yaml), checked before
+// anything is judged or printed: an object; valid a boolean; complete a
+// boolean, or absent (servers before it); each list absent, null (servers
+// before it), or an array of strings (missing) or of objects whose
+// documented members are strings. Anything else is refused as an answer
+// the CLI cannot read, naming only where (never what it holds), so a
+// server can never pass a value through, nor turn a report it did not
+// send into "valid".
+func checkReport(report any) error {
+	refuse := func(where string) error {
+		return Fail("varlatch validate: the server's answer is not a validation report ("+where+" has an unexpected shape); nothing was judged.", ExitFailure)
 	}
-	out := jsjson.Object{}
-	for _, key := range []string{"valid", "complete"} {
-		if v, ok := jsval.Get(report, key); ok {
-			if v != nil {
-				v = jsjson.Truthy(v)
-			}
-			out = append(out, jsjson.Member{Key: key, Value: v})
-		}
+	o, ok := report.(jsjson.Object)
+	if !ok {
+		return refuse("the answer")
 	}
-	text := func(v any) any {
-		if s, ok := v.(string); ok {
-			return s
-		}
-		return jsjson.String(v)
+	if v, ok := o.Get("valid"); !ok || !isBool(v) {
+		return refuse("valid")
 	}
-	enum := func(v any, allowed []string, placeholder string) any {
-		if s, ok := v.(string); ok && slices.Contains(allowed, s) {
-			return s
-		}
-		return placeholder
+	if v, ok := o.Get("complete"); ok && v != nil && !isBool(v) {
+		return refuse("complete")
 	}
-	project := func(key string, fields func(item any) jsjson.Object) {
-		v, ok := jsval.Get(report, key)
-		if !ok {
-			return
+	for _, l := range reportLists {
+		v, ok := o.Get(l.key)
+		if !ok || v == nil {
+			continue
 		}
 		list, isList := v.([]any)
 		if !isList {
-			if s, isString := v.(string); isString {
-				chars, _ := iterate(s, key)
-				list = chars
-			} else {
-				out = append(out, jsjson.Member{Key: key, Value: v})
-				return
-			}
+			return refuse(l.key)
 		}
-		items := make([]any, len(list))
 		for i, item := range list {
-			if fields == nil || item == nil {
-				items[i] = item
-				if fields == nil && item != nil {
-					items[i] = text(item)
+			at := l.key + "[" + strconv.Itoa(i) + "]"
+			if l.fields == nil {
+				if _, isString := item.(string); !isString {
+					return refuse(at)
 				}
 				continue
 			}
-			items[i] = fields(item)
-		}
-		out = append(out, jsjson.Member{Key: key, Value: items})
-	}
-	// fields keeps an item's documented members, in the item's own order,
-	// each as shown gives it; an item that is not an object has none.
-	fields := func(shown map[string]func(any) any) func(item any) jsjson.Object {
-		return func(item any) jsjson.Object {
-			o, ok := item.(jsjson.Object)
-			if !ok {
-				return jsjson.Object{}
+			fields, isObject := item.(jsjson.Object)
+			if !isObject {
+				return refuse(at)
 			}
-			kept := jsjson.Object{}
-			for _, m := range o {
-				if f, known := shown[m.Key]; known {
-					kept = append(kept, jsjson.Member{Key: m.Key, Value: f(m.Value)})
+			for _, f := range l.fields {
+				if v, ok := fields.Get(f); !ok {
+					return refuse(at + "." + f)
+				} else if _, isString := v.(string); !isString {
+					return refuse(at + "." + f)
 				}
 			}
-			return kept
 		}
 	}
-	reason := func(allowed []string) func(any) any {
-		return func(v any) any { return enum(v, allowed, UnrecognizedReason) }
+	return nil
+}
+
+func isBool(v any) bool {
+	_, ok := v.(bool)
+	return ok
+}
+
+// ProjectReport is a report checkReport accepted as the CLI shows it: the
+// documented members only, in the report's own order, a member of an
+// enumeration in it when the protocol defines it and a placeholder
+// otherwise, so a server never puts anything else (an extra member, a
+// value) into what validate prints, in --json or not. Names and an invalid
+// item's reason (free text, which the protocol says never holds the value)
+// are kept.
+func ProjectReport(report any) (any, error) {
+	if err := checkReport(report); err != nil {
+		return nil, err
 	}
-	project("missing", nil)
-	project("invalid", fields(map[string]func(any) any{"name": text, "reason": text}))
-	project("unresolved", fields(map[string]func(any) any{"name": text, "reason": reason(unresolvedReasons)}))
-	project("notEvaluated", fields(map[string]func(any) any{
-		"name": text, "reason": reason(notEvaluatedReasons),
+	o := report.(jsjson.Object)
+	shown := map[string]func(any) any{
+		"name":     func(v any) any { return v },
 		"requires": func(v any) any { return enum(v, requirements, UnrecognizedRequirement) },
-	}))
-	if out == nil {
-		out = jsjson.Object{}
+	}
+	reasons := map[string][]string{"unresolved": unresolvedReasons, "notEvaluated": notEvaluatedReasons}
+	out := jsjson.Object{}
+	for _, m := range o {
+		switch m.Key {
+		case "valid", "complete":
+			out = append(out, m)
+		case "missing", "invalid", "unresolved", "notEvaluated":
+			list, _ := m.Value.([]any)
+			if m.Value == nil {
+				out = append(out, m)
+				continue
+			}
+			items := make([]any, len(list))
+			for i, item := range list {
+				fields, isObject := item.(jsjson.Object)
+				if !isObject {
+					items[i] = item // a missing item's name
+					continue
+				}
+				kept := jsjson.Object{}
+				for _, f := range fields {
+					switch {
+					case f.Key == "reason" && reasons[m.Key] != nil:
+						kept = append(kept, jsjson.Member{Key: f.Key, Value: enum(f.Value, reasons[m.Key], UnrecognizedReason)})
+					case f.Key == "reason":
+						kept = append(kept, f)
+					case shown[f.Key] != nil && (f.Key != "requires" || m.Key == "notEvaluated"):
+						kept = append(kept, jsjson.Member{Key: f.Key, Value: shown[f.Key](f.Value)})
+					}
+				}
+				items[i] = kept
+			}
+			out = append(out, jsjson.Member{Key: m.Key, Value: items})
+		}
 	}
 	return out, nil
+}
+
+// enum is v when it is one of allowed, placeholder otherwise.
+func enum(v any, allowed []string, placeholder string) any {
+	if s, ok := v.(string); ok && slices.Contains(allowed, s) {
+		return s
+	}
+	return placeholder
 }
 
 // ValidationOutcomeOf is validation.ts's validationOutcome for a report

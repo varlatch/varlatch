@@ -34,32 +34,42 @@ import (
 //   - otherwise after the first "//" (tabs and newlines between its
 //     slashes allowed, as WHATWG parsing drops them), or at the start.
 func MaskUserinfo(text string) string {
-	if u, ok := whatwg.ParseURL(text); ok {
+	if start, end, ok := UserinfoSpan(text); ok {
+		return text[:start] + "[redacted]" + text[end:]
+	}
+	return text
+}
+
+// UserinfoSpan is the part of text MaskUserinfo replaces by [redacted]:
+// from start to end (the at-sign that follows it is kept), and whether
+// there is one.
+func UserinfoSpan(text string) (start, end int, ok bool) {
+	if u, parsed := whatwg.ParseURL(text); parsed {
 		if u.Username == "" && u.Password == "" {
-			return text
+			return 0, 0, false
 		}
 		start, special := authorityStart(text)
 		delims := "/?#"
 		if special {
 			delims = "/\\?#"
 		}
-		return maskTo(text, start, delims)
+		return spanTo(text, start, delims)
 	}
-	start, _ := authorityStart(text)
-	return maskTo(text, start, "?#") // a password may hold "/"
+	start, _ = authorityStart(text)
+	return spanTo(text, start, "?#") // a password may hold "/"
 }
 
-// maskTo masks text from start to the last "@" before the first of delims.
-func maskTo(text string, start int, delims string) string {
+// spanTo is the span from start to the last "@" before the first of delims.
+func spanTo(text string, start int, delims string) (int, int, bool) {
 	end := len(text)
 	if i := strings.IndexAny(text[start:], delims); i >= 0 {
 		end = start + i
 	}
 	at := strings.LastIndexByte(text[start:end], '@')
 	if at <= 0 {
-		return text
+		return 0, 0, false
 	}
-	return text[:start] + "[redacted]" + text[start+at:]
+	return start, start + at, true
 }
 
 var specialSchemes = map[string]bool{"http": true, "https": true, "ws": true, "wss": true, "ftp": true, "file": true}
@@ -156,9 +166,20 @@ func MaskServer(v any) any {
 // accepted for failure text, where never leaking comes before byte parity;
 // ordinary output keeps the precise layer's exact bytes.
 func MaskUserinfoInText(text string) string {
+	if userinfo, atSign, ok := UserinfoSpansInText(text); ok {
+		return text[:userinfo[0]] + "[redacted]@" + text[atSign[1]:]
+	}
+	return text
+}
+
+// UserinfoSpansInText are the parts of text MaskUserinfoInText replaces:
+// the user name and password (by [redacted]) and the at-sign that ends
+// them, in whatever form it was written (by "@"), and whether there are
+// any.
+func UserinfoSpansInText(text string) (userinfo, atSign [2]int, ok bool) {
 	kept, at := forAtSigns(text)
 	if kept == nil {
-		return text // no at-sign of any form
+		return userinfo, atSign, false // no at-sign of any form
 	}
 	colon := -1
 	for i := 1; i < len(kept); i++ {
@@ -168,16 +189,16 @@ func MaskUserinfoInText(text string) string {
 		}
 	}
 	if colon < 0 {
-		return text
+		return userinfo, atSign, false
 	}
 	last, size := -1, 0
 	for i, n := nextAtSign(kept, colon+1); i >= 0; i, n = nextAtSign(kept, i+n) {
 		last, size = i, n
 	}
 	if last < 0 {
-		return text
+		return userinfo, atSign, false
 	}
-	return text[:at[colon]+1] + "[redacted]@" + text[at[last+size-1]+1:]
+	return [2]int{at[colon] + 1, at[last]}, [2]int{at[last], at[last+size-1] + 1}, true
 }
 
 // HasAtSign is whether s holds an at-sign as the fail-safe sees one, by
@@ -247,11 +268,20 @@ func atSignAt(s []byte, i int) int {
 // authority (a special scheme, or "//"); any other value as it is, an email
 // included (the fail-safe sees the whole message).
 func MaskURLInValue(v string) string {
-	if _, ok := whatwg.ParseURL(v); ok {
-		return MaskUserinfo(v)
-	}
-	if start, special := authorityStart(v); special || start > 0 {
-		return MaskUserinfo(v)
+	if start, end, ok := URLValueUserinfoSpan(v); ok {
+		return v[:start] + "[redacted]" + v[end:]
 	}
 	return v
+}
+
+// URLValueUserinfoSpan is the part of v MaskURLInValue replaces by
+// [redacted], and whether there is one.
+func URLValueUserinfoSpan(v string) (start, end int, ok bool) {
+	if _, parsed := whatwg.ParseURL(v); parsed {
+		return UserinfoSpan(v)
+	}
+	if start, special := authorityStart(v); special || start > 0 {
+		return UserinfoSpan(v)
+	}
+	return 0, 0, false
 }

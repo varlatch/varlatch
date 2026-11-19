@@ -301,3 +301,68 @@ func TestServerFieldsNeverPassThrough(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateRefusesAReportOfAnotherShape: a report whose lists are not
+// the protocol's shape is refused before anything is judged or printed,
+// value-free, with status 1: never printed verbatim, never "valid" (#277
+// round 2: valid and complete, with an invalid object holding a secret).
+func TestValidateRefusesAReportOfAnotherShape(t *testing.T) {
+	reports := map[string]string{
+		"invalid an object":       `{"valid": true, "complete": true, "missing": [], "invalid": {"value": "` + canary + `"}, "unresolved": [], "notEvaluated": []}`,
+		"invalid item nested":     `{"valid": true, "complete": true, "missing": [], "invalid": [{"name": "A", "reason": {"value": "` + canary + `"}}]}`,
+		"missing item an object":  `{"valid": false, "missing": [{"value": "` + canary + `"}], "invalid": []}`,
+		"missing a string":        `{"valid": false, "missing": "` + canary + `", "invalid": []}`,
+		"notEvaluated no reason":  `{"valid": true, "notEvaluated": [{"name": "K", "requires": "secret.reveal", "value": "` + canary + `"}]}`,
+		"unresolved name nested":  `{"valid": false, "unresolved": [{"name": ["` + canary + `"], "reason": "reference"}]}`,
+		"valid not a boolean":     `{"valid": "` + canary + `", "complete": true}`,
+		"complete not a boolean":  `{"valid": true, "complete": {"value": "` + canary + `"}}`,
+		"the answer not a report": `["` + canary + `"]`,
+	}
+	for name, report := range reports {
+		for _, args := range [][]string{{"validate"}, {"validate", "--json"}} {
+			t.Run(name+"/"+strings.Join(args, " "), func(t *testing.T) {
+				s := newValuesServer(t)
+				s.answer("POST", envPath+"/validate", 200, report)
+				code, stdout, stderr := runIn(t, s, "", nil, nil, args...)
+				noneShown(t, stdout, stderr, canary)
+				if code != 1 || stdout != "" || !strings.Contains(stderr, "is not a validation report") {
+					t.Errorf("status %d, stdout %q, stderr %q", code, stdout, stderr)
+				}
+			})
+		}
+	}
+}
+
+// TestPlainOnlyOnTheContractsExplicitFalse: a value is exempt from the
+// fail-safe only when the active Contract marks its item sensitive: false
+// (a boolean); a missing field, null, 0, "false", or an item --contract
+// --plain only proposes as plain, keeps it held; and assisted mode takes a
+// value from the command line only for such an item.
+func TestPlainOnlyOnTheContractsExplicitFalse(t *testing.T) {
+	const value = "q7"
+	for name, sensitive := range map[string]string{"missing": ``, "null": `, "sensitive": null`, "0": `, "sensitive": 0`, "a string": `, "sensitive": "false"`} {
+		t.Run("import, "+name, func(t *testing.T) {
+			s := newValuesServer(t)
+			s.answer("GET", "/v1/organizations/acme/projects/web/contract", 200, `{"contract": {"schemaVersion": 1, "items": [{"name": "A", "required": {"kind": "never"}, "type": "string"`+sensitive+`}]}}`)
+			s.answer("PUT", envPath+"/values/A", 400, `{"error": {"code": "VALIDATION_FAILED", "message": "x {{value}} y"}}`)
+			_, stdout, stderr := runIn(t, s, "", map[string]string{".env": "A=" + value + "\n"}, nil, "import", ".env")
+			noneShown(t, stdout, stderr, value)
+		})
+		t.Run("assisted set, "+name, func(t *testing.T) {
+			s := newValuesServer(t)
+			s.answer("GET", "/v1/organizations/acme/projects/web/contract", 200, `{"contract": {"schemaVersion": 1, "items": [{"name": "A", "required": {"kind": "never"}, "type": "string"`+sensitive+`}]}}`)
+			code, stdout, stderr := runIn(t, s, "", nil, nil, "--assisted", "values", "set", "A", value)
+			noneShown(t, stdout, stderr, value)
+			if code != 64 || !strings.Contains(stderr, "is a Secret") {
+				t.Errorf("status %d, %q", code, stderr)
+			}
+		})
+	}
+	t.Run("import --contract --plain proposes, the value is still held", func(t *testing.T) {
+		s := newValuesServer(t)
+		s.answer("GET", "/v1/organizations/acme/projects/web/contract", 404, `{"error": {"code": "NOT_FOUND", "message": "none"}}`)
+		s.answer("PUT", envPath+"/values/A", 400, `{"error": {"code": "VALIDATION_FAILED", "message": "x {{value}} y"}}`)
+		_, stdout, stderr := runIn(t, s, "", map[string]string{".env": "A=" + value + "\n"}, nil, "import", ".env", "--contract", "--plain", "A")
+		noneShown(t, stdout, stderr, value)
+	})
+}

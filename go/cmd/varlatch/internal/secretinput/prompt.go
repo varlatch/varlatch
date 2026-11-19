@@ -54,6 +54,8 @@ func PromptHidden(input *os.File, say func(text string), question string) (value
 		mu    sync.Mutex
 		state *term.State
 		done  bool
+		// ending: a signal is ending the process; the terminal is never made raw after it.
+		ending bool
 	)
 	restore := func() {
 		mu.Lock()
@@ -80,13 +82,27 @@ func PromptHidden(input *os.File, say func(text string), question string) (value
 	}()
 	go func() {
 		if sig, ok := <-signals; ok {
-			restore()
+			// The termination is recorded under the same lock that makes the
+			// terminal raw, so it either restores a raw terminal or keeps one
+			// from being made raw.
+			mu.Lock()
+			ending = true
+			if state != nil && !done {
+				done = true
+				_ = term.Restore(fd, state)
+			}
+			mu.Unlock()
 			reraise(sig)
 		}
 	}()
 	hook("signals")
-	// Under the lock, so a signal handled meanwhile waits for the state it restores.
+	// Under the lock, so a signal handled meanwhile waits for the state it
+	// restores; once a signal is ending the process, never raw at all.
 	mu.Lock()
+	if ending {
+		mu.Unlock()
+		select {} // the signal ends the process
+	}
 	state, err = term.MakeRaw(fd)
 	mu.Unlock()
 	if err != nil {

@@ -15563,7 +15563,8 @@
         "notEvaluated": [
           {
             "name": "A",
-            "requires": "secret.reveal"
+            "requires": "secret.reveal",
+            "reason": "permission"
           }
         ]
       },
@@ -15585,7 +15586,8 @@
         "notEvaluated": [
           {
             "name": "A",
-            "requires": "secret.reveal"
+            "requires": "secret.reveal",
+            "reason": "permission"
           }
         ],
         "exitCode": 2
@@ -15860,7 +15862,8 @@
         "notEvaluated": [
           {
             "name": "K",
-            "requires": "secret.reveal"
+            "requires": "secret.reveal",
+            "reason": "permission"
           }
         ]
       },
@@ -15888,7 +15891,8 @@
         "notEvaluated": [
           {
             "name": "K",
-            "requires": "secret.reveal"
+            "requires": "secret.reveal",
+            "reason": "permission"
           }
         ],
         "exitCode": 2
@@ -15943,7 +15947,8 @@
         "missing": [],
         "invalid": [
           {
-            "name": "X"
+            "name": "X",
+            "reason": "r"
           }
         ],
         "unresolved": [],
@@ -15955,7 +15960,7 @@
         "stdout": [],
         "stderr": [
           "dev: INVALID",
-          "  invalid: X — undefined"
+          "  invalid: X — r"
         ],
         "exitCode": 1
       },
@@ -15966,7 +15971,8 @@
         "missing": [],
         "invalid": [
           {
-            "name": "X"
+            "name": "X",
+            "reason": "r"
           }
         ],
         "unresolved": [],

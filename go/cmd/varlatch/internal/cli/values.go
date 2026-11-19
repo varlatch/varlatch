@@ -179,7 +179,8 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 		if sub == "rotate" {
 			verb = "rotates"
 		}
-		return UsageError("varlatch values " + sub + ": --replace names " + replace + ", but this command " + verb + " " + item + "; approval for one item never covers another.\n" + usage)
+		// The name given is not repeated: a refused argument may be a Secret.
+		return UsageError("varlatch values " + sub + ": --replace names another item, but this command " + verb + " " + item + "; approval for one item never covers another.\n" + usage)
 	}
 	// The value source and the generator are part of the command line: checked before any request.
 	options := secretinput.Options{Stdin: parsed.Has("--stdin")}
@@ -595,11 +596,10 @@ func sensitiveItem(api *lazyClient, ctx *clientctx.Context, item string) (bool, 
 	if found == nil {
 		return true, nil
 	}
-	sensitive, ok := jsval.Get(found, "sensitive")
-	if !ok || sensitive == nil {
-		return true, nil // `?? true`
-	}
-	return jsjson.Truthy(sensitive), nil
+	// Plain only on the Contract's explicit false: a missing field, null, or
+	// any other value (0, "", "no") leaves the item a Secret.
+	sensitive, _ := jsval.Get(found, "sensitive")
+	return sensitive != false, nil
 }
 
 func (r *Run) valuesDelete() error {

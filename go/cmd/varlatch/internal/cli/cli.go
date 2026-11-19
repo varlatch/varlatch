@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -231,14 +230,21 @@ func (r *Run) finish(err error) int {
 }
 
 // RedactDiagnostic is the fail-safe every diagnostic goes through before it
-// is written, failures (Run.finish) and warnings (Run.warn) alike: each
+// is written, failures (Run.finish) and warnings (Run.warn) alike. Every
+// sensitive span is found in the original text first: a URL's user name
+// and password (clientctx.UserinfoSpansInText, from the first scheme colon
+// to the last at-sign), every text in Varlatch's token format, and each
 // exact occurrence of a secret value in flight (values), whatever its
-// length; then a URL's user name and password (clientctx.MaskUserinfoInText,
-// from the first scheme colon to the last at-sign); then every text in
-// Varlatch's token format; each as [redacted]. Text with none keeps its
-// bytes.
+// length; overlapping spans are merged, and each is replaced once, by
+// [redacted] (a URL's at-sign by "@" when nothing else covers it). So no
+// detection depends on another's replacement: a value "@" never hides the
+// at-sign that marks a password. Text with none keeps its bytes.
 func RedactDiagnostic(text string, values ...string) string {
-	return varlatchToken.ReplaceAllLiteralString(clientctx.MaskUserinfoInText(redactValues(text, values)), Redacted)
+	var spans []span
+	if userinfo, atSign, ok := clientctx.UserinfoSpansInText(text); ok {
+		spans = append(spans, span{userinfo[0], userinfo[1], Redacted}, span{atSign[0], atSign[1], "@"})
+	}
+	return redactSpans(text, append(append(spans, tokenSpans(text)...), valueSpans(text, values)...))
 }
 
 // warn writes one diagnostic line on stderr through the fail-safe
@@ -258,26 +264,32 @@ func (r *Run) ask(text string) error {
 }
 
 // RedactOutput is the fail-safe on everything the CLI writes on stdout:
-// each exact occurrence of a secret value in flight (values), whatever its
-// length, then every text in Varlatch's token format, as [redacted]. The
-// values that hold a URL are masked where they are shown (and, in a --json
-// document, by RedactValue), so ordinary output keeps its bytes.
+// every text in Varlatch's token format and each exact occurrence of a
+// secret value in flight (values), whatever its length, found in the
+// original text and replaced once, as [redacted]. The values that hold a
+// URL are masked where they are shown (and, in a --json document, by
+// RedactValue), so ordinary output keeps its bytes.
 func RedactOutput(text string, values ...string) string {
-	return varlatchToken.ReplaceAllLiteralString(redactValues(text, values), Redacted)
+	return redactSpans(text, append(tokenSpans(text), valueSpans(text, values)...))
 }
 
 // RedactValue is a JSON value with the fail-safe applied to every string
-// in it, keys untouched: each exact occurrence of a secret value in flight
-// (values), a URL's user name and password masked (precisely,
-// clientctx.MaskURLInValue, so a value without them keeps its bytes), and
-// every text in Varlatch's token format, as [redacted]. printJSON applies it
+// in it, keys untouched: a URL's user name and password (precisely,
+// clientctx.URLValueUserinfoSpan, so a value without them keeps its
+// bytes), every text in Varlatch's token format, and each exact
+// occurrence of a secret value in flight (values), all found in the
+// original string and replaced once, as [redacted]. printJSON applies it
 // to every --json document, so a value is matched in the string that holds
 // it, never in the serialised text (a short value never touches a number or
 // an escape).
 func RedactValue(v any, values ...string) any {
 	switch x := v.(type) {
 	case string:
-		return RedactOutput(clientctx.MaskURLInValue(redactValues(x, values)))
+		var spans []span
+		if start, end, ok := clientctx.URLValueUserinfoSpan(x); ok {
+			spans = append(spans, span{start, end, Redacted})
+		}
+		return redactSpans(x, append(append(spans, tokenSpans(x)...), valueSpans(x, values)...))
 	case jsjson.Object:
 		out := make(jsjson.Object, len(x))
 		for i, m := range x {
@@ -294,27 +306,79 @@ func RedactValue(v any, values ...string) any {
 	return v
 }
 
-// redactValues replaces each exact occurrence of the values in text, and
-// of each as Printable shows it, by Redacted, in one pass that takes the
-// longest match first, so [redacted] itself is never rescanned.
-func redactValues(text string, values []string) string {
-	if len(values) == 0 || text == "" {
-		return text
+// span is a part of a text, [a, b), to be replaced by with.
+type span struct {
+	a, b int
+	with string
+}
+
+// tokenSpans are the texts in Varlatch's token format.
+func tokenSpans(text string) []span {
+	var out []span
+	for _, m := range varlatchToken.FindAllStringIndex(text, -1) {
+		out = append(out, span{m[0], m[1], Redacted})
 	}
-	var forms []string
+	return out
+}
+
+// valueSpans are every occurrence, overlapping ones included, of each
+// value and of each as Printable shows it.
+func valueSpans(text string, values []string) []span {
+	var out []span
 	for _, v := range values {
-		for _, form := range []string{v, Printable(v)} {
-			if form != "" && !slices.Contains(forms, form) {
-				forms = append(forms, form)
+		forms := []string{v}
+		if p := Printable(v); p != v {
+			forms = append(forms, p)
+		}
+		for _, form := range forms {
+			if form == "" {
+				continue
+			}
+			for from := 0; from < len(text); {
+				i := strings.Index(text[from:], form)
+				if i < 0 {
+					break
+				}
+				out = append(out, span{from + i, from + i + len(form), Redacted})
+				from += i + 1
 			}
 		}
 	}
-	slices.SortStableFunc(forms, func(a, b string) int { return len(b) - len(a) })
-	quoted := make([]string, len(forms))
-	for i, f := range forms {
-		quoted[i] = regexp.QuoteMeta(f)
+	return out
+}
+
+// redactSpans replaces the spans of text, in one pass over the original:
+// spans that overlap are merged into one [redacted] (a span replaced by
+// something else, a URL's at-sign, keeps that only alone).
+func redactSpans(text string, spans []span) string {
+	if len(spans) == 0 {
+		return text
 	}
-	return regexp.MustCompile(strings.Join(quoted, "|")).ReplaceAllLiteralString(text, Redacted)
+	slices.SortStableFunc(spans, func(x, y span) int {
+		if x.a != y.a {
+			return x.a - y.a
+		}
+		return y.b - x.b
+	})
+	var merged []span
+	for _, s := range spans {
+		if n := len(merged); n > 0 && s.a < merged[n-1].b {
+			last := &merged[n-1]
+			last.b = max(last.b, s.b)
+			last.with = Redacted
+			continue
+		}
+		merged = append(merged, s)
+	}
+	var b strings.Builder
+	at := 0
+	for _, s := range merged {
+		b.WriteString(text[at:s.a])
+		b.WriteString(s.with)
+		at = s.b
+	}
+	b.WriteString(text[at:])
+	return b.String()
 }
 
 // holdValue registers a secret value this run handles, so no output or

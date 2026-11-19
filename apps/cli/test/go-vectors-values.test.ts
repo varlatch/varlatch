@@ -301,7 +301,7 @@ const REPORTS: Array<[string, unknown]> = [
   ["dev", { valid: true, missing: [], invalid: [], unresolved: [] }],
   ["dev", { valid: false }],
   ["dev", { valid: true, complete: false, notEvaluated: [{ name: "API_KEY", requires: "secret.reveal", reason: "permission" }] }],
-  ["dev", { valid: true, notEvaluated: [{ name: "A", requires: "secret.reveal" }] }],
+  ["dev", { valid: true, notEvaluated: [{ name: "A", requires: "secret.reveal", reason: "permission" }] }],
   ["dev", { valid: true, complete: null, notEvaluated: [] }],
   ["production", { ...BASE, missing: ["DATABASE_URL", "API_KEY"], invalid: [{ name: "PORT", reason: "expected a number" }] }],
   ["production", { ...BASE, complete: false, missing: ["X"], notEvaluated: [{ name: "S", requires: "secret.reveal", reason: "permission" }] }],
@@ -312,9 +312,9 @@ const REPORTS: Array<[string, unknown]> = [
   ] }],
   ["production", { ...BASE, unresolved: [{ name: "URL", reason: "reference" }] }],
   ["production", { ...BASE, unresolved: [{ name: "URL", reason: "authority" }] }],
-  ["production", { ...BASE, complete: false, unresolved: [{ name: "URL", reason: "authority" }], notEvaluated: [{ name: "K", requires: "secret.reveal" }] }],
+  ["production", { ...BASE, complete: false, unresolved: [{ name: "URL", reason: "authority" }], notEvaluated: [{ name: "K", requires: "secret.reveal", reason: "permission" }] }],
   ["production", { ...BASE, invalid: [{ name: "N\u001b[31m", reason: "bad\u202e" }], missing: ["M\u0007"] }],
-  ["dev", { ...BASE, invalid: [{ name: "X" }], extra: { kept: false } }],
+  ["dev", { ...BASE, invalid: [{ name: "X", reason: "r" }], extra: { kept: false } }],
 ];
 
 // ---- import helpers -----------------------------------------------------------

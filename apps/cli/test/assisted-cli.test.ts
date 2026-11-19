@@ -1076,7 +1076,8 @@ describe("values set and values rotate in assisted mode: replacing an existing v
     requests = [];
     const other = await cli(["--assisted", "values", "set", "API_TOKEN", "--replace", "PORT", "--generate", "hex:32"]);
     expect(other.code).toBe(64);
-    expect(other.stderr).toMatch(/--replace names PORT, but this command sets API_TOKEN; approval for one item never covers another\./);
+    // The Go CLI does not repeat the name given (go/README.md, "No message holds a value").
+    expect(other.stderr).toMatch(/--replace names (PORT|another item), but this command sets API_TOKEN; approval for one item never covers another\./);
     expect(requests).toEqual([]);
     const fresh = await cli(["--assisted", "values", "set", "BRAND_NEW_ITEM", "--generate", "hex:32"]);
     expect(fresh.code, fresh.stderr).toBe(0);

@@ -158,7 +158,7 @@ func TestCheckEntriesVectors(t *testing.T) {
 // shown as an unrecognized requirement (step 5 defect 23: TypeScript's
 // lookup reads the prototype and prints a function's source).
 func TestValidationRequiresHintReadsOwnNames(t *testing.T) {
-	report, err := jsjson.Parse([]byte(`{"valid": false, "notEvaluated": [{"name": "A", "requires": "constructor", "reason": "permission"}, {"name": "B", "requires": "toString", "reason": "requirement"}, {"name": "C", "requires": "secret.reveal"}]}`))
+	report, err := jsjson.Parse([]byte(`{"valid": false, "notEvaluated": [{"name": "A", "requires": "constructor", "reason": "permission"}, {"name": "B", "requires": "toString", "reason": "requirement"}, {"name": "C", "requires": "secret.reveal", "reason": "permission"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}

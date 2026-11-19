@@ -839,7 +839,7 @@ const values53a: TranscriptCase[] = [
   v({ id: "set.assisted.unknown", title: "when the server cannot say, the item counts as existing", args: ["--assisted", "values", "set", "API_KEY", "--stdin"], stdin: "s3cr3t-x\n", server: [denied(`${ENV}/effective-configuration`)] }),
   v({ id: "set.assisted.replace", title: "--replace naming the item: no existence check, the value is stored", args: ["--assisted", "values", "set", "API_KEY", "--from-file", "key", "--replace", "API_KEY"], files: { ...SIGNED_IN, "repo/key": "s3cr3t-file-value\n" }, server: [put("API_KEY")] }),
   // the command line, strictly
-  v({ id: "set.replace-other", title: "--replace naming another item is a usage error", args: ["values", "set", "API_KEY", "--replace", "OTHER", "--stdin"] }),
+  v({ id: "set.replace-other", title: "--replace naming another item is a usage error", args: ["values", "set", "API_KEY", "--replace", "OTHER", "--stdin"] , differences: VALUE_FREE}),
   v({ id: "set.no-item", title: "no item: the usage", args: ["values", "set"] }),
   v({ id: "set.dash-item", title: "an item that begins with \"-\": the usage", args: ["values", "set", "--", "-X"] }),
   v({ id: "set.unknown-option", title: "a mistyped option is refused before anything is read", args: ["values", "set", "PORT", "--env", "prod"] , differences: VALUE_FREE}),
