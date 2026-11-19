@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -198,10 +199,18 @@ func (r *tailnetRunner) stop(ctx context.Context) {
 }
 
 // tailnetUsage is `admin tailnet`'s usage.
-const tailnetUsage = "Usage: varlatchd admin tailnet repin [--yes [--adopt]] [--json]"
+const tailnetUsage = "Usage: varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json]"
 
 // repinArgs are `admin tailnet repin`'s flags.
-type repinArgs struct{ yes, adopt, asJSON bool }
+type repinArgs struct {
+	yes, adopt, asJSON bool
+	// offer is the offer the confirmation was given for (--offer), "" for
+	// none: --yes then acts on the observation at that moment.
+	offer string
+}
+
+// offerToken is an offer as RepinView.OfferToken writes it.
+var offerToken = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // tailnetArgs checks `admin tailnet` arguments; a non-empty message is a
 // usage error.
@@ -210,19 +219,26 @@ func tailnetArgs(rest []string) (repinArgs, string) {
 	if len(rest) == 0 || rest[0] != "repin" {
 		return a, tailnetUsage
 	}
-	for _, arg := range rest[1:] {
-		switch arg {
+	args := rest[1:]
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--yes":
 			a.yes = true
 		case "--adopt":
 			a.adopt = true
 		case "--json":
 			a.asJSON = true
+		case "--offer":
+			if i+1 >= len(args) || !offerToken.MatchString(args[i+1]) || a.offer != "" {
+				return repinArgs{}, tailnetUsage
+			}
+			a.offer = args[i+1]
+			i++
 		default:
 			return repinArgs{}, tailnetUsage
 		}
 	}
-	if a.adopt && !a.yes {
+	if (a.adopt || a.offer != "") && !a.yes {
 		return repinArgs{}, tailnetUsage
 	}
 	return a, ""
@@ -280,8 +296,8 @@ type repinResult struct {
 	PinnedText   string `json:"pinnedText"`
 	ObservedText string `json:"observedText"`
 	// Outcome is one of: nothing-observed, adoption-needed, enrolling,
-	// holds, not-repinnable, suffix-changed, reopen-offered (these change
-	// nothing), repinned, reopened, adopted, failed.
+	// holds, not-repinnable, suffix-changed, reopen-offered, offer-changed
+	// (these change nothing), repinned, reopened, adopted, failed.
 	Outcome string `json:"outcome"`
 	// Message is the text's last line (on stderr when the status is not 0).
 	Message string `json:"message"`
@@ -290,9 +306,8 @@ type repinResult struct {
 	code int
 }
 
-// repin decides, and with --yes does, the re-pin.
-func repin(ctx context.Context, env *hostEnv, a repinArgs) repinResult {
-	v := env.tailnet.RepinView(ctx)
+// resultFor is a result showing v.
+func resultFor(v tailnet.RepinView) repinResult {
 	res := repinResult{RepinView: v, PinnedText: "none", ObservedText: "unknown"}
 	if v.Pinned != nil && !v.Pinned.Enrolling {
 		res.PinnedText = describePin(v.Pinned.ControlURL, v.Pinned.TailnetID, v.Pinned.Suffix)
@@ -300,6 +315,13 @@ func repin(ctx context.Context, env *hostEnv, a repinArgs) repinResult {
 	if v.Observed != nil {
 		res.ObservedText = describePin(v.Observed.ControlURL, v.Observed.TailnetID, v.Observed.Suffix)
 	}
+	return res
+}
+
+// repin decides, and with --yes does, the re-pin.
+func repin(ctx context.Context, env *hostEnv, a repinArgs) repinResult {
+	v := env.tailnet.RepinView(ctx)
+	res := resultFor(v)
 	done := func(outcome, message string, code int) repinResult {
 		res.Outcome, res.Message, res.code = outcome, message, code
 		return res
@@ -321,14 +343,20 @@ func repin(ctx context.Context, env *hostEnv, a repinArgs) repinResult {
 		return done("reopen-offered", fmt.Sprintf("The tailnet matches its pin again, but access stays closed since it changed (%s). Run again with --yes to reopen tailnet access.", v.Closed), ExitOK)
 	}
 	w := &write.Writer{Store: env.store, Gates: env.gates}
-	record := func(old, next *tailnet.Pin) error {
+	record := func(old, next *tailnet.Pin, reason string) error {
 		return w.Job(ctx, nil, func(ctx context.Context, tx *storage.Tx) error {
-			_, err := audit.Record(ctx, tx, repinEvent(old, next, v))
+			_, err := audit.Record(ctx, tx, repinEvent(old, next, reason))
 			return err
 		})
 	}
-	old, next, err := env.tailnet.Repin(ctx, a.adopt, record)
+	old, next, err := env.tailnet.Repin(ctx, a.adopt, a.offer, record)
+	var changed *tailnet.ErrOfferChanged
 	switch {
+	case errors.As(err, &changed):
+		// The confirmation was for another offer: nothing changed; the
+		// fresh view, to show and confirm again.
+		res = resultFor(changed.View)
+		return done("offer-changed", "The tailnet changed since the re-pin was offered: nothing was re-pinned. Look at the pinned and the observed tailnet again, and confirm again.", ExitFailure)
 	case err != nil:
 		return done("failed", err.Error(), ExitFailure)
 	case next == nil:
@@ -350,7 +378,7 @@ func repin(ctx context.Context, env *hostEnv, a repinArgs) repinResult {
 // directory's owner or root), with what changed and why, and no value:
 // suffixes, the tailnet's StableID and the closure's reason, never the
 // control server's URL.
-func repinEvent(old, next *tailnet.Pin, v tailnet.RepinView) audit.Event {
+func repinEvent(old, next *tailnet.Pin, why string) audit.Event {
 	action := "adopted"
 	var from any
 	if old != nil {
@@ -360,11 +388,10 @@ func repinEvent(old, next *tailnet.Pin, v tailnet.RepinView) audit.Event {
 			action = "repinned"
 		}
 	}
+	// The reason the re-pin's own check found, not an earlier look's.
 	var reason any
-	if v.Reason != "" {
-		reason = v.Reason
-	} else if v.Closed != "" {
-		reason = v.Closed
+	if why != "" {
+		reason = why
 	}
 	return audit.Event{
 		Type: "tailnet.repinned", Decision: audit.Info,

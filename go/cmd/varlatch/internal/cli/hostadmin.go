@@ -312,11 +312,6 @@ func (r *Run) runVarlatchd(form adminForm, args []string, config string) error {
 	if err := r.warnLines(said); err != nil {
 		return err
 	}
-	if code == ExitConfig && runtime.GOOS != "windows" && os.Geteuid() != 0 {
-		if err := r.warn("varlatch admin: the installation's configuration, data directory and control socket are its service's; run this as root (sudo varlatch admin ...)"); err != nil {
-			return err
-		}
-	}
 	if code != 0 {
 		return ExitWith(code)
 	}

@@ -204,6 +204,39 @@ func TestTailnetListener(t *testing.T) {
 	if code != ExitOK || !strings.Contains(out, "pinned:   suffix old.ts.net") || !strings.Contains(out, "observed: suffix corp.ts.net") || !strings.Contains(out, "Run again with --yes") {
 		t.Fatalf("repin without --yes: %d %q %q", code, out, errOut)
 	}
+	// #319 review P2: a confirmation is bound to the offer it was given
+	// for. The view carries a value-free token; --yes with another token
+	// (the tailnet changed since it was shown) changes nothing, records
+	// nothing, and answers offer-changed with the fresh view.
+	var offered struct {
+		Offer string `json:"offer"`
+	}
+	_, out, _ = runAdmin(t, "tailnet", "repin", "--json", "--config", in.conf)
+	if err := json.Unmarshal([]byte(out), &offered); err != nil || len(offered.Offer) != 32 || strings.Contains(out, `"offer":"`+"corp") {
+		t.Fatalf("the offer: %q %v", out, err)
+	}
+	stale := strings.Repeat("0", 32)
+	code, out, errOut = runAdmin(t, "tailnet", "repin", "--yes", "--offer", stale, "--json", "--config", in.conf)
+	var changed struct {
+		Outcome string       `json:"outcome"`
+		Offer   string       `json:"offer"`
+		Pin     *tailnet.Pin `json:"pin"`
+	}
+	if err := json.Unmarshal([]byte(out), &changed); code != ExitFailure || err != nil || changed.Outcome != "offer-changed" || changed.Offer != offered.Offer || changed.Pin != nil {
+		t.Fatalf("repin --yes with a stale offer: %d %q %q", code, out, errOut)
+	}
+	if pin, err := tailnet.LoadPin(filepath.Join(in.data, tailnet.PinFile)); err != nil || pin.Suffix != "old.ts.net" || len(pin.History) != 0 {
+		t.Fatalf("a stale offer changed the pin: %+v %v", pin, err)
+	}
+	if n := repinnedEvents(t, in); n != 0 {
+		t.Fatalf("a stale offer recorded %d tailnet.repinned events", n)
+	}
+	for _, args := range [][]string{{"--offer", offered.Offer}, {"--yes", "--offer", "short"}, {"--yes", "--offer"}} {
+		if code, _, errOut := runAdmin(t, append(append([]string{"tailnet", "repin"}, args...), "--config", in.conf)...); code != 64 || !strings.Contains(errOut, "Usage: varlatchd admin tailnet repin") {
+			t.Errorf("%q: %d %q", args, code, errOut)
+		}
+	}
+	// Scripted use: --yes alone acts on the observation at that moment.
 	code, out, errOut = runAdmin(t, "tailnet", "repin", "--yes", "--config", in.conf)
 	if code != ExitOK || !strings.Contains(out, "Re-pinned the tailnet from old.ts.net to corp.ts.net; tailnet access is open.") {
 		t.Fatalf("repin --yes: %d %q %q", code, out, errOut)
@@ -234,8 +267,13 @@ func TestTailnetListener(t *testing.T) {
 	if code, _, errOut := runAdmin(t, "tailnet", "repin", "--yes", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "run again with --yes --adopt") {
 		t.Fatalf("repin --yes of a missing pin: %d %q", code, errOut)
 	}
-	// --json with --yes: the outcome and the pin after it (step 6.2b).
-	code, out, errOut = runAdmin(t, "tailnet", "repin", "--yes", "--adopt", "--json", "--config", in.conf)
+	// --json with --yes: the outcome and the pin after it (step 6.2b),
+	// bound to the offer shown (the CLI's way).
+	_, out, _ = runAdmin(t, "tailnet", "repin", "--json", "--config", in.conf)
+	if err := json.Unmarshal([]byte(out), &offered); err != nil || len(offered.Offer) != 32 {
+		t.Fatalf("the adoption's offer: %q %v", out, err)
+	}
+	code, out, errOut = runAdmin(t, "tailnet", "repin", "--yes", "--adopt", "--offer", offered.Offer, "--json", "--config", in.conf)
 	var adopted struct {
 		Outcome string       `json:"outcome"`
 		Message string       `json:"message"`
@@ -432,4 +470,19 @@ func TestBrowserEndpoint(t *testing.T) {
 	if res.StatusCode != 403 || !strings.Contains(body, `"code":"TAILNET_CONTEXT_UNAVAILABLE"`) {
 		t.Fatalf("the browser endpoint with tailnet access closed: %d %s", res.StatusCode, body)
 	}
+}
+
+// repinnedEvents counts the tailnet.repinned events in in's database.
+func repinnedEvents(t *testing.T, in install) int {
+	t.Helper()
+	conn, err := sql.Open("sqlite", "file:"+filepath.Join(in.data, "varlatch.db")+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var n int
+	if err := conn.QueryRow("SELECT count(*) FROM audit_events WHERE event_type = 'tailnet.repinned'").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

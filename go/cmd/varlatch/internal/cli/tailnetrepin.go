@@ -5,7 +5,9 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
 	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -59,41 +61,13 @@ func tailnetRepin(r *Run) (bool, error) {
 			return true, UsageErrorWithUsage("varlatch tailnet repin: unexpected argument "+shownArgument(a), "\n"+repinUsage)
 		}
 	}
-	doc, code, err := r.repinOnce(yes, adopt, config)
+	doc, code, err := r.repinOnce(yes, adopt, "", config)
 	if err != nil {
 		return true, err
 	}
 	if !yes && !asJSON && repinTerminal(r) {
-		outcome, _ := doc.Value("outcome").(string)
-		question := ""
-		switch {
-		case outcome == "suffix-changed" || outcome == "reopen-offered":
-			question = "Re-pin the tailnet now and reopen tailnet access?"
-		case outcome == "adoption-needed" && adopt:
-			question = "Adopt the observed tailnet as the pin and open tailnet access?"
-		}
-		if question != "" {
-			// The pinned and the observed tailnet, and what varlatchd offers;
-			// an adoption's refusal is the question instead.
-			if err := r.showRepinLines(doc); err != nil {
-				return true, err
-			}
-			if msg, _ := doc.Value("message").(string); code == 0 && msg != "" {
-				if err := r.out(msg + "\n"); err != nil {
-					return true, err
-				}
-			}
-			ok, err := newTerminalPrompter(r).confirm(question, false)
-			if err != nil {
-				return true, err
-			}
-			if !ok {
-				return true, r.out("Nothing was re-pinned.\n")
-			}
-			if doc, code, err = r.repinOnce(true, adopt, config); err != nil {
-				return true, err
-			}
-			return true, r.showRepin(doc, code, true)
+		if handled, err := r.confirmRepin(doc, code, adopt, config); handled {
+			return true, err
 		}
 	}
 	if asJSON {
@@ -108,15 +82,101 @@ func tailnetRepin(r *Run) (bool, error) {
 	return true, r.showRepin(doc, code, false)
 }
 
-// repinOnce runs `varlatchd admin tailnet repin --json [--yes [--adopt]]`
-// and returns its answer and status. --adopt reaches varlatchd only with
-// --yes: without it, varlatchd shows whether an adoption is offered.
-func (r *Run) repinOnce(yes, adopt bool, config string) (jsjson.Object, int, error) {
+// repinQuestion is the question for an offer in doc, "" when it offers
+// nothing to ask about (an adoption is asked about only with --adopt).
+func repinQuestion(doc jsjson.Object, adopt bool) string {
+	offer, _ := doc.Value("offer").(string)
+	if offer == "" {
+		return ""
+	}
+	missing, _ := doc.Value("missing").(bool)
+	switch {
+	case !missing:
+		return "Re-pin the tailnet now and reopen tailnet access?"
+	case adopt:
+		return "Adopt the observed tailnet as the pin and open tailnet access?"
+	}
+	return ""
+}
+
+// confirmRepin asks about the offer varlatchd showed and, when confirmed,
+// runs the re-pin bound to that offer (--offer): varlatchd acts only while
+// the pin and the observed tailnet are what was shown. When they changed
+// in between (offer-changed), the new ones are shown and asked about once
+// more; a second change stops. false when there is nothing to ask.
+func (r *Run) confirmRepin(doc jsjson.Object, code int, adopt bool, config string) (bool, error) {
+	question := repinQuestion(doc, adopt)
+	if question == "" {
+		return false, nil
+	}
+	prompter := newTerminalPrompter(r)
+	for asked := 0; ; asked++ {
+		// The pinned and the observed tailnet, and what varlatchd offers;
+		// an adoption's refusal is the question instead.
+		if err := r.showRepinLines(doc); err != nil {
+			return true, err
+		}
+		if msg, _ := doc.Value("message").(string); code == 0 && msg != "" {
+			if err := r.out(msg + "\n"); err != nil {
+				return true, err
+			}
+		}
+		ok, err := prompter.confirm(question, false)
+		if err != nil {
+			return true, err
+		}
+		if !ok {
+			return true, r.out("Nothing was re-pinned.\n")
+		}
+		offer, _ := doc.Value("offer").(string)
+		if doc, code, err = r.repinOnce(true, adopt, offer, config); err != nil {
+			return true, err
+		}
+		if outcome, _ := doc.Value("outcome").(string); outcome != "offer-changed" {
+			return true, r.showRepin(doc, code, true)
+		}
+		if msg, _ := doc.Value("message").(string); msg != "" {
+			if err := r.warn("varlatch tailnet repin: " + msg); err != nil {
+				return true, err
+			}
+		}
+		if question = repinQuestion(doc, adopt); question == "" || asked >= 1 {
+			// Nothing to offer now, or a second change: what it is now.
+			if err := r.showRepinLines(doc); err != nil {
+				return true, err
+			}
+			return true, Fail("varlatch tailnet repin: nothing was re-pinned; run it again to see the tailnet as it is then", code)
+		}
+		code, doc = 0, withoutMessage(doc)
+	}
+}
+
+// withoutMessage is doc without its message: after offer-changed, the
+// lines are shown again with the question, not the refusal twice.
+func withoutMessage(doc jsjson.Object) jsjson.Object {
+	out := make(jsjson.Object, 0, len(doc))
+	for _, m := range doc {
+		if m.Key != "message" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// repinOnce runs `varlatchd admin tailnet repin --json [--yes [--adopt]
+// [--offer <token>]]` and returns its answer and status. --adopt reaches
+// varlatchd only with --yes: without it, varlatchd shows whether an
+// adoption is offered. Without an offer, --yes acts on the observation at
+// that moment (scripted use).
+func (r *Run) repinOnce(yes, adopt bool, offer, config string) (jsjson.Object, int, error) {
 	args := []string{"admin", "tailnet", "repin", "--json"}
 	if yes {
 		args = append(args, "--yes")
 		if adopt {
 			args = append(args, "--adopt")
+		}
+		if offer != "" {
+			args = append(args, "--offer", offer)
 		}
 	}
 	answer, said, code, err := r.varlatchd("varlatch tailnet repin", args, config)
@@ -200,6 +260,12 @@ func (r *Run) varlatchd(prefix string, args []string, config string) (answer, sa
 		if code = exit.ExitCode(); code < 0 {
 			code = ExitFailure
 		}
+	}
+	// varlatchd's 78 for a person who is not root: the configuration, the
+	// data directory and the control socket are its service's. Last, after
+	// what varlatchd said.
+	if code == ExitConfig && runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		said = append(bytes.TrimRight(said, "\n"), []byte("\n"+prefix+": the installation's configuration, data directory and control socket are its service's; run this as root (sudo "+prefix+" ...)\n")...)
 	}
 	return answer, said, code, nil
 }

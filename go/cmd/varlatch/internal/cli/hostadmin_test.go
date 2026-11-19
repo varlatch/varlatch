@@ -42,9 +42,16 @@ func TestMain(m *testing.M) {
 			_, _ = f.Write(append(args, '\n'))
 			_ = f.Close()
 		}
-		// With --yes, the answer of the "-yes" files when there are any.
+		// The n-th call's answer when there are "-<n>" files (n from 1);
+		// else, with --yes, the "-yes" files' when there are any.
 		suffix := ""
-		if slices.Contains(os.Args[1:], "--yes") {
+		if calls, err := os.ReadFile(filepath.Join(dir, "calls.jsonl")); err == nil {
+			n := "-" + strconv.Itoa(bytes.Count(calls, []byte("\n")))
+			if _, err := os.Stat(filepath.Join(dir, "status"+n)); err == nil {
+				suffix = n
+			}
+		}
+		if suffix == "" && slices.Contains(os.Args[1:], "--yes") {
 			if _, err := os.Stat(filepath.Join(dir, "status-yes")); err == nil {
 				suffix = "-yes"
 			}
@@ -522,12 +529,58 @@ func TestHelpAdminIsTheGoUsage(t *testing.T) {
 	}
 }
 
-// repinView is a varlatchd answer to `admin tailnet repin --json`.
+// offerA and offerB are offers as varlatchd's tokens look.
+var offerA, offerB = strings.Repeat("a", 32), strings.Repeat("b", 32)
+
+// repinView is a varlatchd answer to `admin tailnet repin --json`: the
+// observed suffix corp.ts.net, offered (offerA) when the outcome offers
+// something, an adoption's pin missing.
 func repinView(outcome, message string, pin string) string {
-	return `{"pinned":{"controlUrl":"","tailnetId":"T1","suffix":"old.ts.net","pinnedAt":"2026-11-01T00:00:00Z"},"observed":{"controlUrl":"","tailnetId":"T1","suffix":"corp.ts.net"},` +
-		`"reason":"suffix-changed","closed":"suffix-changed","missing":false,"offered":true,` +
-		`"pinnedText":"suffix old.ts.net, tailnet T1, control https://controlplane.tailscale.com","observedText":"suffix corp.ts.net, tailnet T1, control https://controlplane.tailscale.com",` +
+	offer := ""
+	switch outcome {
+	case "suffix-changed", "reopen-offered", "adoption-needed":
+		offer = offerA
+	}
+	return repinViewOf("corp.ts.net", outcome, message, pin, offer)
+}
+
+// repinViewOf is repinView with the observed suffix and the offer given.
+func repinViewOf(observed, outcome, message, pin, offer string) string {
+	missing := "false"
+	if outcome == "adoption-needed" {
+		missing = "true"
+	}
+	return `{"pinned":{"controlUrl":"","tailnetId":"T1","suffix":"old.ts.net","pinnedAt":"2026-11-01T00:00:00Z"},"observed":{"controlUrl":"","tailnetId":"T1","suffix":"` + observed + `"},` +
+		`"reason":"suffix-changed","closed":"suffix-changed","missing":` + missing + `,"offered":true,"offer":"` + offer + `",` +
+		`"pinnedText":"suffix old.ts.net, tailnet T1, control https://controlplane.tailscale.com","observedText":"suffix ` + observed + `, tailnet T1, control https://controlplane.tailscale.com",` +
 		`"outcome":"` + outcome + `","message":"` + message + `","pin":` + pin + `}` + "\n"
+}
+
+// answerNth sets what the fake varlatchd in dir answers on its n-th call.
+func answerNth(t *testing.T, dir string, n int, stdout, stderr string, status int) {
+	t.Helper()
+	for name, content := range map[string]string{"stdout": stdout, "stderr": stderr, "status": strconv.Itoa(status)} {
+		if err := os.WriteFile(filepath.Join(dir, name+"-"+strconv.Itoa(n)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, name := range []string{"stdout", "stderr", "status"} {
+			_ = os.Remove(filepath.Join(dir, name+"-"+strconv.Itoa(n)))
+		}
+	})
+}
+
+// resetCalls forgets the calls the fake varlatchd in dir was run with.
+func resetCalls(dir string) { _ = os.Remove(filepath.Join(dir, "calls.jsonl")) }
+
+// clearNth removes every n-th call's answer.
+func clearNth(dir string) {
+	for n := 1; n <= 9; n++ {
+		for _, name := range []string{"stdout", "stderr", "status"} {
+			_ = os.Remove(filepath.Join(dir, name+"-"+strconv.Itoa(n)))
+		}
+	}
 }
 
 // TestTailnetRepinFront: `varlatch tailnet repin` asks varlatchd for its
@@ -587,7 +640,7 @@ func TestTailnetRepinFront(t *testing.T) {
 	if code, out, _ := run("y\n"); code != 0 || out != shown+offered+"\nRe-pin the tailnet now and reopen tailnet access? [y/N] "+repinned+"\n" {
 		t.Fatalf("confirmed: %d %q", code, out)
 	}
-	if got := calls(t, dir); len(got) != 2 || !slices.Contains(got[1], "--yes") || slices.Contains(got[1], "--adopt") {
+	if got := calls(t, dir); len(got) != 2 || !slices.Equal(got[1], []string{"admin", "tailnet", "repin", "--json", "--yes", "--offer", offerA}) {
 		t.Fatalf("confirmed ran %q", got)
 	}
 	// Declined: nothing re-pinned, varlatchd run once.
@@ -606,7 +659,7 @@ func TestTailnetRepinFront(t *testing.T) {
 	if code, out, _ := run("yes\n", "--adopt"); code != 0 || !strings.Contains(out, "Adopt the observed tailnet as the pin and open tailnet access? [y/N] Adopted corp.ts.net") {
 		t.Fatalf("adopt: %d %q", code, out)
 	}
-	if got := calls(t, dir); len(got) != 2 || !slices.Equal(got[0], []string{"admin", "tailnet", "repin", "--json"}) || !slices.Equal(got[1], []string{"admin", "tailnet", "repin", "--json", "--yes", "--adopt"}) {
+	if got := calls(t, dir); len(got) != 2 || !slices.Equal(got[0], []string{"admin", "tailnet", "repin", "--json"}) || !slices.Equal(got[1], []string{"admin", "tailnet", "repin", "--json", "--yes", "--adopt", "--offer", offerA}) {
 		t.Fatalf("adopt ran %q", got)
 	}
 	// Without --adopt, an adoption is never offered: varlatchd's refusal.
@@ -616,6 +669,56 @@ func TestTailnetRepinFront(t *testing.T) {
 	}
 	if got := calls(t, dir); len(got) != 1 {
 		t.Fatalf("adoption not asked ran %q", got)
+	}
+
+	// #319 review P2: the observation changed between the question and
+	// the re-pin (offer-changed): the new tailnet is shown and asked about
+	// again, and the re-pin is bound to the new offer.
+	shown2 := strings.ReplaceAll(shown, "corp.ts.net", "corp2.ts.net")
+	changedMsg := "The tailnet changed since the re-pin was offered: nothing was re-pinned. Look at the pinned and the observed tailnet again, and confirm again."
+	changed := repinViewOf("corp2.ts.net", "offer-changed", changedMsg, "null", offerB)
+	question := "Re-pin the tailnet now and reopen tailnet access? [y/N] "
+	answerNth(t, dir, 1, repinView("suffix-changed", offered, "null"), "", 0)
+	answerNth(t, dir, 2, changed, "", 1)
+	answerNth(t, dir, 3, repinViewOf("corp2.ts.net", "repinned", "Re-pinned the tailnet from old.ts.net to corp2.ts.net; tailnet access is open.", newPin, ""), "", 0)
+	resetCalls(dir)
+	code, out, errText := run("y\ny\n")
+	if code != 0 || out != shown+offered+"\n"+question+shown2+question+"Re-pinned the tailnet from old.ts.net to corp2.ts.net; tailnet access is open.\n" ||
+		errText != "varlatch tailnet repin: "+changedMsg+"\n" {
+		t.Fatalf("offer changed, confirmed again: %d %q %q", code, out, errText)
+	}
+	if got := calls(t, dir); len(got) != 3 || !slices.Equal(got[1][4:], []string{"--yes", "--offer", offerA}) || !slices.Equal(got[2][4:], []string{"--yes", "--offer", offerB}) {
+		t.Fatalf("offer changed ran %q", got)
+	}
+	// Declined the second time: nothing re-pinned, no third run.
+	resetCalls(dir)
+	code, out, _ = run("y\nn\n")
+	if code != 0 || !strings.HasSuffix(out, shown2+question+"Nothing was re-pinned.\n") {
+		t.Fatalf("offer changed, declined: %d %q", code, out)
+	}
+	if got := calls(t, dir); len(got) != 2 {
+		t.Fatalf("offer changed, declined, ran %q", got)
+	}
+	// Changed again after the second confirmation: it stops, showing what
+	// is there now, with nothing re-pinned.
+	answerNth(t, dir, 3, changed, "", 1)
+	resetCalls(dir)
+	code, out, errText = run("y\ny\n")
+	if code != 1 || !strings.HasSuffix(out, question+shown2) || !strings.HasSuffix(errText, "varlatch tailnet repin: nothing was re-pinned; run it again to see the tailnet as it is then\n") {
+		t.Fatalf("offer changed twice: %d %q %q", code, out, errText)
+	}
+	if got := calls(t, dir); len(got) != 3 {
+		t.Fatalf("offer changed twice ran %q", got)
+	}
+	clearNth(dir)
+
+	// #319 review P3: varlatchd's 78 (its configuration, data directory
+	// and socket are root's) says to run the command as root, as admin's.
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		answer(t, dir, "", "varlatchd: the configuration file is not readable\n", 78)
+		if code, _, errText := run(""); code != 78 || !strings.HasSuffix(errText, "varlatch tailnet repin: the installation's configuration, data directory and control socket are its service's; run this as root (sudo varlatch tailnet repin ...)\n") {
+			t.Errorf("78: %d %q", code, errText)
+		}
 	}
 
 	// Refused before anything runs.
