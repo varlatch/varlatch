@@ -4,7 +4,6 @@ package apiclient
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
@@ -28,11 +27,6 @@ func memberPath(org, member string) string {
 // CreateOrganization is POST /v1/organizations with {slug, name}.
 func (c *Client) CreateOrganization(ctx context.Context, slug, name string) (any, error) {
 	return c.Request(ctx, "POST", "/v1/organizations", jsjson.Object{{Key: "slug", Value: slug}, {Key: "name", Value: name}}, nil)
-}
-
-// ListProjects is GET /v1/organizations/<org>/projects.
-func (c *Client) ListProjects(ctx context.Context, org string) (any, error) {
-	return c.Request(ctx, "GET", orgPath(org)+"/projects", NoBody, nil)
 }
 
 // CreateProject is POST /v1/organizations/<org>/projects with {slug, name,
@@ -134,9 +128,4 @@ func (c *Client) ListRequirements(ctx context.Context, org string) (any, error) 
 // DeleteRequirement is DELETE .../requirements/<id>.
 func (c *Client) DeleteRequirement(ctx context.Context, org, requirementID string) (any, error) {
 	return c.Request(ctx, "DELETE", orgPath(org)+"/requirements/"+EncodeURIComponent(requirementID), NoBody, nil)
-}
-
-// ListAuditEvents is GET .../audit-events?limit=<limit> (the CLI asks for 50).
-func (c *Client) ListAuditEvents(ctx context.Context, org string, limit int) (any, error) {
-	return c.Request(ctx, "GET", orgPath(org)+"/audit-events?limit="+strconv.Itoa(limit), NoBody, nil)
 }

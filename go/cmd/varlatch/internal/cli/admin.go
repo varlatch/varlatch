@@ -285,8 +285,7 @@ func (r *Run) serverClient(server string) (*apiclient.Client, error) {
 	if err := r.warnIfExpiring(server); err != nil {
 		return nil, err
 	}
-	r.Secrets.Remember(token)
-	return apiclient.New(apiclient.Options{
+	return r.newClient(apiclient.Options{
 		Server:              server,
 		Token:               token,
 		UserAgent:           r.UserAgent(),
@@ -559,7 +558,7 @@ func auditCommand(r *Run) error {
 	if err != nil {
 		return err
 	}
-	page, err := api.ListAuditEvents(bg, ctx.Organization, 50)
+	page, err := api.ListAuditEvents(bg, ctx.Organization, 50, "")
 	if err != nil {
 		return err
 	}
