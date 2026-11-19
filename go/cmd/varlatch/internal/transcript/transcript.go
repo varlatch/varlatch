@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -142,6 +143,62 @@ func Load(path string) (*File, error) {
 // directory, environment and streams.
 type Command func(args []string) *exec.Cmd
 
+// caseDirLetters are the letters a case directory's name is drawn from:
+// consonants only, so a name holds no digit and spells no word.
+const caseDirLetters = "bcdfghjklmnpqrstvwxz"
+
+// CaseValues are the texts a case gives the CLI that it may treat as
+// values (its variables, its stdin, its arguments): the case directory's
+// path must hold none of them, or masking a value would rewrite the path
+// (a PORT=8080 case once ran in a directory whose random name held 8080).
+func CaseValues(c Case) []string {
+	var values []string
+	add := func(v string) {
+		if len(v) >= 2 && !strings.Contains(v, "{{") {
+			values = append(values, v)
+		}
+	}
+	for _, v := range c.Env {
+		add(v)
+	}
+	add(c.Stdin)
+	for _, a := range c.Args {
+		add(a)
+	}
+	return values
+}
+
+// CaseDir makes a new directory in base for one case, named
+// varlatch-transcript- and sixteen random consonants, and gives its real
+// path (macOS's temporary directory is behind a symbolic link). A path that
+// holds any of values is discarded and another name drawn; a base that
+// holds one fails, never flakes.
+func CaseDir(base string, values []string) (string, error) {
+	for range 100 {
+		name := make([]byte, 16)
+		for i := range name {
+			name[i] = caseDirLetters[rand.IntN(len(caseDirLetters))]
+		}
+		dir := filepath.Join(base, "varlatch-transcript-"+string(name))
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return "", err
+		}
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			_ = os.RemoveAll(dir)
+			return "", err
+		}
+		if !slices.ContainsFunc(values, func(v string) bool { return strings.Contains(real, v) }) {
+			return real, nil
+		}
+		_ = os.RemoveAll(dir)
+	}
+	return "", fmt.Errorf("no directory in %s whose path holds none of the case's values", base)
+}
+
 // Difference rewrites a recording's expectation where the Go CLI differs on
 // purpose (go/README.md, the Go CLI's accepted differences), given what the
 // Go CLI did.
@@ -150,15 +207,11 @@ type Difference func(want *Outcome, got Outcome)
 // Replay runs c against the CLI and returns what it did and every way that
 // differs from the recording.
 func Replay(c Case, start Command, differences map[string]Difference) (Outcome, []string, error) {
-	dir, err := os.MkdirTemp("", "varlatch-transcript-")
+	dir, err := CaseDir(os.TempDir(), CaseValues(c))
 	if err != nil {
 		return Outcome{}, nil, err
 	}
 	defer os.RemoveAll(dir)
-	dir, err = filepath.EvalSymlinks(dir)
-	if err != nil {
-		return Outcome{}, nil, err
-	}
 	srv, err := newServer(c.Server, dir)
 	if err != nil {
 		return Outcome{}, nil, err

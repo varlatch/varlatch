@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -252,11 +253,46 @@ function generatedBy(spec: string, value: string): boolean {
   return new RegExp(shape).test(value);
 }
 
+/**
+ * The texts a case gives the CLI that it may treat as values (its
+ * variables, its stdin, its arguments): the case directory's path must hold
+ * none of them, or masking a value would rewrite the path (a PORT=8080 case
+ * once ran in a directory whose random name held 8080). The Go replay's
+ * transcript.CaseValues is the same.
+ */
+export function caseValues(c: TranscriptCase): string[] {
+  return [...Object.values(c.env ?? {}), c.stdin ?? "", ...c.args].filter((v) => v.length >= 2 && !v.includes("{{"));
+}
+
+/**
+ * A new directory for one case, varlatch-transcript- and sixteen random
+ * consonants (no digit, no word), as its real path (macOS's temporary
+ * directory is behind a symbolic link). A path that holds any of `values`
+ * is discarded and another name drawn; a base that holds one fails, never
+ * flakes. The Go replay's transcript.CaseDir is the same.
+ */
+export function caseDir(values: string[]): string {
+  const letters = "bcdfghjklmnpqrstvwxz";
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const name = Array.from(randomBytes(16), (b) => letters[b % letters.length]).join("");
+    const dir = join(tmpdir(), `varlatch-transcript-${name}`);
+    try {
+      mkdirSync(dir, { mode: 0o700 });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw err;
+    }
+    const real = realpathSync(dir);
+    if (!values.some((v) => real.includes(v))) return real;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  throw new Error(`no directory in ${tmpdir()} whose path holds none of the case's values`);
+}
+
 /** Runs one case against the bundle and records it. */
 export async function recordCase(bundle: string, c: TranscriptCase): Promise<RecordedCase> {
   if (process.platform !== "win32") process.umask(TRANSCRIPT_UMASK);
-  // The real path, as process.cwd() reports it (macOS's temporary directory is behind a symbolic link).
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "varlatch-transcript-")));
+  const dir = caseDir(caseValues(c));
   const script = [...(c.server ?? [])];
   const requests: RecordedRequest[] = [];
   const server = http.createServer((req, res) => {
