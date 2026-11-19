@@ -255,6 +255,8 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
           if (written >= 0) console.error(`the end-of-suite marker was cut short: ${written} of ${marker.length} bytes written`);
           process.exit(code || 1);
         }
+      } else {
+        console.error("no end-of-suite nonce: not started by the conformance runner");
       }
       process.exit(code);
     },
