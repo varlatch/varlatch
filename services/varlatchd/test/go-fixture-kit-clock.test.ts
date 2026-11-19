@@ -65,7 +65,10 @@ describe("onHourClock", () => {
       await db.query("INSERT INTO clock_rows VALUES ('seed', clock_timestamp())");
       await onHourClock(async () => {
         const row = (await db.query("SELECT extract(epoch FROM date_trunc('hour', clock_timestamp(), 'UTC')) * 1000 AS hour")).rows[0] as { hour: string | number };
-        expect(Number(row.hour)).toBe(Date.now() - (Date.now() % HOUR_MS));
+        // One reading of the clock: two could straddle a millisecond and give an
+        // expected value that is not on the hour.
+        const now = Date.now();
+        expect(Number(row.hour)).toBe(now - (now % HOUR_MS));
         await db.query("INSERT INTO clock_rows VALUES ('replayed', clock_timestamp())");
       }, HOUR_MS);
       // A list ordered by time keeps what was written first first.
