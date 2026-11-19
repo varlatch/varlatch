@@ -1,0 +1,133 @@
+{
+  "schema": 2,
+  "comment": "Recorded from the TypeScript CLI by apps/cli/test/go-transcripts.test.ts; do not edit. Regenerate with VARLATCH_WRITE_GO_VECTORS=1.",
+  "area": "5.8a-guided-init",
+  "cases": [
+    {
+      "id": "init.no-flags",
+      "title": "off a terminal, init without --org and --project is a usage error; nothing is asked or written",
+      "args": [
+        "init"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "Usage: varlatch init --org <slug> --project <slug> [--server <url>] [--default-environment <name>] [--no-agent-files]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "init.no-project",
+      "title": "--org alone: --project is needed",
+      "args": [
+        "init",
+        "--org",
+        "acme"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "Provide --project\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "init.no-org",
+      "title": "--project alone: the usage",
+      "args": [
+        "init",
+        "--project",
+        "web"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "Usage: varlatch init --org <slug> --project <slug> [--server <url>] [--default-environment <name>] [--no-agent-files]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "init.server-only",
+      "title": "--server alone: the usage",
+      "args": [
+        "init",
+        "--server",
+        "https://varlatch.example.com"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "Usage: varlatch init --org <slug> --project <slug> [--server <url>] [--default-environment <name>] [--no-agent-files]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "init.assisted",
+      "title": "assisted mode: the same, a terminal or not",
+      "args": [
+        "--assisted",
+        "init"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "Usage: varlatch init --org <slug> --project <slug> [--server <url>] [--default-environment <name>] [--no-agent-files]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "init.marker",
+      "title": "a coding agent's marker: the same",
+      "args": [
+        "init",
+        "--org",
+        "acme"
+      ],
+      "env": {
+        "CLAUDECODE": "1"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "Provide --project\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    }
+  ]
+}
