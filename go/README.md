@@ -2732,12 +2732,12 @@ blocked`, but that error reaches its generic handler, which prints
   `varlatchd.service`, all in `SHA256SUMS`; `install.sh` attached with
   `@VARLATCH_VERSION@` replaced by the version; varlatch.com serving the
   latest one with a `Content-Length`.
-- List the Go module's dependencies (`go list -m all`, modernc.org/sqlite
-  and its own) in THIRD-PARTY-NOTICES.md and its generator: the generator
-  (`scripts/generate-third-party-notices.mjs`, `pnpm notices:check`)
-  covers npm packages only, so no Go binary ships before it lists the
-  modules each binary links, go-webauthn and its dependencies
-  (fxamacker/cbor, go-webauthn/x, golang-jwt/jwt, google/go-tpm,
-  tinylib/msgp, philhofer/fwd, x448/float16) and tailscale.com and its
-  dependencies (step 4.13b: BSD-3-Clause, BSD-2-Clause, Apache-2.0, MIT
-  and ISC; see its PR) included.
+- Done: THIRD-PARTY-NOTICES.md lists every Go module linked into
+  `varlatch` and `varlatchd` for the release platforms (125, go-webauthn,
+  modernc.org/sqlite and tailscale.com with their dependencies included),
+  with their license texts and the Go standard library's
+  (`scripts/go-module-notices.mjs`). Each module's license is recorded by
+  hand in `scripts/go-module-licenses.json` after reading its texts, with
+  their hash; `pnpm notices:check` (ci.yml) fails on a module that is not
+  recorded, changed texts, a license outside the permissive list, or a
+  stale file.
