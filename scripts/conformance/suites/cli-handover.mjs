@@ -20,7 +20,12 @@ import "../../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in out
  *
  * Token sign-in both ways (slice 5.1e): signed in by one CLI, the other
  * finds the credential and the default server; both write the store alike;
- * a logout by one is seen by the other.
+ * a logout by one is seen by the other. The shared store (slice 5.9a): a
+ * store holding both CLIs' entries after interleaved logins, read alike by
+ * both; a default server set by one is the other's; a corrupt store is
+ * empty to both, and a login by either replaces it with one the other
+ * reads. And `run` with the other's sign-in (until the Go CLI has `run`,
+ * client-lacks).
  *
  * Device sign-in both ways (slice 5.2): a `login --start` by one CLI is
  * waited for by the other, which reaches its deadline (75) with the entry
@@ -28,21 +33,25 @@ import "../../redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in out
  * due); approved in the browser, the other collects and stores it and the
  * entry goes; a denial seen by the other removes the entry; the file's and
  * its directory's modes after each step; and both refuse to start one
- * inside an agent-safe run.
+ * inside an agent-safe run. Slice 5.9a adds, both ways: an expired sign-in
+ * (the target's expire-pending-device-sign-ins probe) ends for the other
+ * with the entry removed; a slow_down one CLI was answered is kept by the
+ * other (no poll before the longer interval); and a credential one CLI
+ * collected but could not store is named for revocation by the other.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cliCommand, handoverCliCommand, reporter } from "../suite-kit.mjs";
+import { cliCommand, handoverCliCommand, reporter, targetOp } from "../suite-kit.mjs";
 
 const [origin, tokenA, tokenB, enrollUrl] = process.argv.slice(2);
 if (!origin || !tokenA || !tokenB || !enrollUrl?.includes("#")) {
   console.error("Usage: cli-handover.mjs <origin> <credential A> <credential B> <enrollment URL>");
   process.exit(64);
 }
-const { check, error, finish } = reporter({ detailOnFailure: true });
+const { check, error, finish, supports } = reporter({ detailOnFailure: true });
 const scratch = mkdtempSync(join(tmpdir(), "cli-handover-"));
 
 /** The two CLIs, by the name the checks use. */
@@ -114,7 +123,154 @@ async function signInThenRead(signer, reader, token) {
     lines.includes("development  (development, shared, selected)") &&
     lines.includes("production  (production, shared)") &&
     holdsNoCredential(login.out + who.out + listed.out);
-  return { config, ok, detail: `login ${tail(login)}; whoami ${tail(who)}; env list ${tail(listed)}` };
+  return { config, repo, ok, detail: `login ${tail(login)}; whoami ${tail(who)}; env list ${tail(listed)}` };
+}
+
+/**
+ * The same server under another address: the loopback origin with
+ * 127.0.0.1 and localhost swapped. The store keys entries by the address,
+ * so two logins to the two hold two entries.
+ */
+function otherAddress(url) {
+  const u = new URL(url);
+  if (u.hostname === "127.0.0.1") u.hostname = "localhost";
+  else if (u.hostname === "localhost") u.hostname = "127.0.0.1";
+  else throw new Error(`cli-handover needs a loopback origin to give the server a second address (${url})`);
+  return u.origin;
+}
+
+/** whoami --json's server, identity and credential ids, or null. */
+function whoamiOf(r) {
+  try {
+    const d = JSON.parse(r.stdout);
+    return { server: d.server, identity: d.identity?.id, credential: d.credential?.id };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The shared store (slice 5.9a): interleaved logins to two addresses of the
+ * server, a default server set by one CLI and used by the other, and a
+ * corrupt store. None logs out, so neither credential is revoked.
+ */
+async function sharedStore() {
+  const outside = mkdtempSync(join(scratch, "outside-"));
+  const alias = otherAddress(origin);
+  const [meA, meB] = [await me(tokenA), await me(tokenB)];
+
+  // Interleaved: TypeScript to the origin, Go to the other address; each
+  // keeps the other's entry, and both read both.
+  const config = mkdtempSync(join(scratch, "both-entries-"));
+  const tsLogin = run("ts", ["login", "--server", origin, "--token-stdin"], { config, cwd: outside, input: `${tokenA}\n` });
+  const tsEntry = JSON.stringify(JSON.parse(file(config, "credentials.json")?.text ?? "{}").servers?.[origin]);
+  const goLogin = run("go", ["login", "--server", alias, "--token-stdin"], { config, cwd: outside, input: `${tokenB}\n` });
+  const both = JSON.parse(file(config, "credentials.json")?.text ?? "{}").servers ?? {};
+  const statuses = ["ts", "go"].map((which) => run(which, ["status", "--json"], { config, cwd: outside }));
+  const reads = ["ts", "go"].flatMap((which) =>
+    [
+      [origin, meA],
+      [alias, meB],
+    ].map(([server, expected]) => {
+      const r = run(which, ["whoami", "--json", "--server", server], { config, cwd: outside });
+      const got = whoamiOf(r);
+      return { ok: r.code === 0 && got?.credential === expected?.credential?.id && got?.identity === expected?.identity?.id, detail: `${which} whoami ${server} ${tail(r)}` };
+    }),
+  );
+  check(
+    "cli-handover.store-holds-both",
+    "after interleaved logins (the TypeScript CLI to one address of the server, the Go CLI to another), the store holds both entries, the first byte for byte, and both CLIs read both: status --json alike, whoami of each",
+    tsLogin.code === 0 &&
+      goLogin.code === 0 &&
+      Object.keys(both).length === 2 &&
+      JSON.stringify(both[origin]) === tsEntry &&
+      both[alias]?.token === tokenB &&
+      statuses.every((r) => r.code === 0) &&
+      statuses[0].stdout === statuses[1].stdout &&
+      reads.every((r) => r.ok) &&
+      holdsNoCredential([tsLogin, goLogin, ...statuses].map((r) => r.out).join("")),
+    `ts login ${tail(tsLogin)}; go login ${tail(goLogin)}; entries ${Object.keys(both).length}; status alike ${statuses[0].stdout === statuses[1].stdout}; ${reads.map((r) => r.detail).join("; ")}`,
+  );
+
+  // A default server set by one is the other's, both ways; settings.json
+  // written alike.
+  const sets = [
+    ["ts", "go", alias, meB],
+    ["go", "ts", origin, meA],
+  ].map(([setter, reader, server, expected]) => {
+    const set = run(setter, ["server", "use", server], { config, cwd: outside });
+    const settings = file(config, "settings.json");
+    const who = run(reader, ["whoami", "--json"], { config, cwd: outside });
+    const got = whoamiOf(who);
+    return {
+      ok: set.code === 0 && who.code === 0 && got?.server === server && got?.credential === expected?.credential?.id,
+      settings: settings?.text,
+      detail: `${setter} server use ${tail(set)}; ${reader} whoami ${tail(who)}`,
+    };
+  });
+  const tsSettings = (run("ts", ["server", "use", origin], { config, cwd: outside }), file(config, "settings.json")?.text);
+  check(
+    "cli-handover.default-server-both-ways",
+    "a default server set with `server use` by one CLI is the one the other uses (whoami outside a repository), both ways, and both write settings.json alike",
+    sets.every((r) => r.ok) && typeof tsSettings === "string" && tsSettings === sets[1].settings,
+    `${sets.map((r) => r.detail).join("; ")}; settings alike ${tsSettings === sets[1].settings}`,
+  );
+
+  // A corrupt store: empty to both (status --json and whoami alike), and a
+  // login by either replaces it with one the other reads.
+  const corrupt = (name) => {
+    const dir = mkdtempSync(join(scratch, name));
+    writeFileSync(join(dir, "credentials.json"), '{"servers": {"broken"\n', { mode: 0o600 });
+    writeFileSync(join(dir, "settings.json"), "[not settings\n", { mode: 0o600 });
+    return dir;
+  };
+  const read = corrupt("corrupt-read-");
+  const views = ["ts", "go"].map((which) => ({
+    status: run(which, ["status", "--json"], { config: read, cwd: outside }),
+    who: run(which, ["whoami", "--server", origin], { config: read, cwd: outside }),
+  }));
+  const alike =
+    views[0].status.code === views[1].status.code &&
+    views[0].status.stdout === views[1].status.stdout &&
+    views[0].who.code === views[1].who.code &&
+    views[0].who.stderr === views[1].who.stderr;
+  let servers = null;
+  try {
+    servers = JSON.parse(views[1].status.stdout).servers;
+  } catch {
+    // judged below
+  }
+  const replaced = [
+    ["ts", "go", tokenA, meA],
+    ["go", "ts", tokenB, meB],
+  ].map(([signer, reader, token, expected]) => {
+    const dir = corrupt(`corrupt-${signer}-`);
+    const login = run(signer, ["login", "--server", origin, "--token-stdin"], { config: dir, cwd: outside, input: `${token}\n` });
+    const who = run(reader, ["whoami", "--json", "--server", origin], { config: dir, cwd: outside });
+    return { ok: login.code === 0 && who.code === 0 && whoamiOf(who)?.credential === expected?.credential?.id, detail: `${signer} login ${tail(login)}; ${reader} whoami ${tail(who)}` };
+  });
+  check(
+    "cli-handover.corrupt-store-both",
+    "a corrupt credentials.json and settings.json are an empty store to both CLIs (status --json and whoami alike: no server, not authenticated), and a login by either replaces them with a store the other reads",
+    alike && views[0].status.code === 0 && Array.isArray(servers) && servers.length === 0 && views[0].who.code === 77 && replaced.every((r) => r.ok),
+    `status ${views.map((v) => tail(v.status)).join(" / ")}; whoami ${views.map((v) => tail(v.who)).join(" / ")}; ${replaced.map((r) => r.detail).join("; ")}`,
+  );
+}
+
+/**
+ * `run` with the other CLI's sign-in: the TypeScript CLI signs in, the Go
+ * CLI runs a command with the development environment's values. The child
+ * says only whether DATABASE_URL (the seeded value) reached it.
+ */
+function runWithOthersSignIn(fromTs) {
+  if (!supports("run")) return;
+  const r = run("go", ["run", "-e", "development", "--", process.execPath, "-e", "process.exit(process.env.DATABASE_URL ? 0 : 3)"], { config: fromTs.config, cwd: fromTs.repo });
+  check(
+    "cli-handover.ts-login-go-runs",
+    "signed in with the TypeScript CLI, the Go CLI runs a command with the development environment's values (varlatch run)",
+    r.code === 0 && holdsNoCredential(r.out),
+    tail(r),
+  );
 }
 
 try {
@@ -151,6 +307,9 @@ try {
     differences.length === 0,
     differences.join("; "),
   );
+
+  runWithOthersSignIn(fromTs);
+  await sharedStore();
 
   // A logout by one is seen by the other.
   const outside = mkdtempSync(join(scratch, "outside-"));
@@ -232,8 +391,29 @@ async function deviceHandover() {
 
     // The check IDs, spelled out (the inventory test reads them from this file).
     const IDS = {
-      ts: { waits: "cli-handover.device-ts-start-go-waits", collects: "cli-handover.device-ts-start-go-collects", denied: "cli-handover.device-ts-start-go-denied" },
-      go: { waits: "cli-handover.device-go-start-ts-waits", collects: "cli-handover.device-go-start-ts-collects", denied: "cli-handover.device-go-start-ts-denied" },
+      ts: {
+        waits: "cli-handover.device-ts-start-go-waits",
+        collects: "cli-handover.device-ts-start-go-collects",
+        denied: "cli-handover.device-ts-start-go-denied",
+        expired: "cli-handover.device-ts-start-go-expired",
+        slowDown: "cli-handover.device-ts-slow-down-go-keeps",
+        recovers: "cli-handover.device-ts-collects-go-recovers",
+      },
+      go: {
+        waits: "cli-handover.device-go-start-ts-waits",
+        collects: "cli-handover.device-go-start-ts-collects",
+        denied: "cli-handover.device-go-start-ts-denied",
+        expired: "cli-handover.device-go-start-ts-expired",
+        slowDown: "cli-handover.device-go-slow-down-ts-keeps",
+        recovers: "cli-handover.device-go-collects-ts-recovers",
+      },
+    };
+    const userCodeOf = (r) => {
+      try {
+        return JSON.parse(r.stdout).userCode ?? "";
+      } catch {
+        return "";
+      }
     };
     for (const [starter, waiter] of [["ts", "go"], ["go", "ts"]]) {
       // Started by one; the other waits to its deadline, the entry kept; the first continues within the interval.
@@ -302,6 +482,77 @@ async function deviceHandover() {
         `denied in the browser, a device sign-in started with the ${starter === "ts" ? "TypeScript" : "Go"} CLI ends for the other with 77, the entry removed and the stored credential kept`,
         second.code === 0 && denial === "denied" && denied.code === 77 && /denied/.test(denied.stderr) && pending(config) === null && stored(config)?.token === credential?.token,
         `start ${tail(second)}; decision ${denial}; ${waiter} wait ${tail(denied)}`,
+      );
+
+      // Expired before it was approved (the target's probe): 77 for the
+      // other, the entry removed, the stored credential kept.
+      const third = run(starter, ["login", "--server", origin, "--start", "--json"], { config, cwd: outside });
+      targetOp("probe", ["expire-pending-device-sign-ins"]);
+      const expired = run(waiter, ["login", "--server", origin, "--wait"], { config, cwd: outside });
+      check(
+        IDS[starter].expired,
+        `expired before approval, a device sign-in started with the ${starter === "ts" ? "TypeScript" : "Go"} CLI ends for the other with 77, the entry removed and the stored credential kept`,
+        third.code === 0 && expired.code === 77 && /expired/.test(expired.stderr) && pending(config) === null && stored(config)?.token === credential?.token,
+        `start ${tail(third)}; ${waiter} wait ${tail(expired)}`,
+      );
+
+      // slow_down: the starter polls too early (from a copy of the entry made
+      // before the waiter's poll), the server answers slow_down with a longer
+      // interval, and the waiter keeps it: no poll before it is due.
+      const slow = mkdtempSync(join(scratch, `${starter}-slow-down-`));
+      const fourth = run(starter, ["login", "--server", origin, "--start", "--json"], { config: slow, cwd: outside });
+      const before = readFileSync(join(slow, "pending-sign-ins.json"), "utf8");
+      const firstPoll = run(waiter, ["login", "--server", origin, "--wait", "--timeout", "3"], { config: slow, cwd: outside });
+      const copy = mkdtempSync(join(scratch, `${starter}-early-`));
+      writeFileSync(join(copy, "pending-sign-ins.json"), before, { mode: 0o600 });
+      const tooEarly = run(starter, ["login", "--server", origin, "--wait", "--timeout", "3"], { config: copy, cwd: outside });
+      const slowed = pending(copy);
+      const slowBegan = Date.now();
+      const slowKept = run(waiter, ["login", "--server", origin, "--wait", "--timeout", "3"], { config: copy, cwd: outside });
+      const afterSlow = pending(copy);
+      const startInterval = JSON.parse(before).servers ? Object.values(JSON.parse(before).servers)[0]?.interval : undefined;
+      check(
+        IDS[starter].slowDown,
+        `a slow_down the ${starter === "ts" ? "TypeScript" : "Go"} CLI was answered (a longer interval) is kept by the other: its --wait reaches its deadline (75) without polling, the entry as it was; the file 0600 in a 0700 directory`,
+        fourth.code === 0 &&
+          firstPoll.code === 75 &&
+          tooEarly.code === 75 &&
+          typeof slowed?.entry?.interval === "number" &&
+          typeof startInterval === "number" &&
+          slowed.entry.interval > startInterval &&
+          typeof slowed.entry.lastPolledAt === "string" &&
+          slowKept.code === 75 &&
+          Date.now() - slowBegan < 5000 &&
+          afterSlow?.entry?.lastPolledAt === slowed.entry.lastPolledAt &&
+          afterSlow?.entry?.interval === slowed.entry.interval &&
+          [slowed, afterSlow].every(privateModes),
+        `start ${tail(fourth)}; ${waiter} wait ${tail(firstPoll)}; ${starter} early wait ${tail(tooEarly)}; ${waiter} wait ${tail(slowKept)}; intervals ${startInterval} -> ${slowed?.entry?.interval} -> ${afterSlow?.entry?.interval}`,
+      );
+
+      // Collected but not stored: approved, the starter collects the
+      // credential and cannot store it (credentials.json is a directory);
+      // the other's --wait names it for revocation and removes the entry.
+      const lost = mkdtempSync(join(scratch, `${starter}-collects-`));
+      const fifth = run(starter, ["login", "--server", origin, "--start", "--json"], { config: lost, cwd: outside });
+      const approval = await decide(userCodeOf(fifth), "approve");
+      mkdirSync(join(lost, "credentials.json"));
+      const collected = run(starter, ["login", "--server", origin, "--wait"], { config: lost, cwd: outside });
+      const named = pending(lost)?.entry?.collectedCredentialId;
+      rmdirSync(join(lost, "credentials.json"));
+      const recovered = run(waiter, ["login", "--server", origin, "--wait"], { config: lost, cwd: outside });
+      check(
+        IDS[starter].recovers,
+        `a credential the ${starter === "ts" ? "TypeScript" : "Go"} CLI collected but could not store is named for revocation by the other: --wait ends with 77 naming it, the entry removed, nothing stored`,
+        fifth.code === 0 &&
+          approval === "approved" &&
+          collected.code !== 0 &&
+          typeof named === "string" &&
+          recovered.code === 77 &&
+          recovered.stderr.includes(`Revoke credential ${named}`) &&
+          pending(lost) === null &&
+          stored(lost) === null &&
+          holdsNoCredential(collected.out + recovered.out),
+        `start ${tail(fifth)}; decision ${approval}; ${starter} wait ${tail(collected)}; collected ${named ?? "none"}; ${waiter} wait ${tail(recovered)}`,
       );
     }
 
