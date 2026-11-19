@@ -146,7 +146,13 @@ func TestEffectResourceGateSerializes(t *testing.T) {
 	<-fake.started
 	time.Sleep(30 * time.Millisecond)
 	close(fake.release)
+	// Either may report first: the first effect releases the gate before
+	// it hands back its result, so the second can refuse and report before
+	// the first has.
 	first, second := <-errs, <-errs
+	if first != nil {
+		first, second = second, first
+	}
 	if first != nil || code(second) != "CONSUMED" || fake.calls.Load() != 1 || outcomes(t, w) != 1 {
 		t.Errorf("%v, %v, %d calls", first, second, fake.calls.Load())
 	}
