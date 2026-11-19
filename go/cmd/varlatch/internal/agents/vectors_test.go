@@ -79,9 +79,10 @@ func TestWindowsAgentVectorsComplete(t *testing.T) {
 	if v, _ := jsjson.Parse(must(os.ReadFile(windowsAgentVectors))); v.(jsjson.Object).Value("version") != loadAgentVectors(t).Value("version") {
 		t.Error("windows/agents.json was recorded from another version: record it again (apps/cli/test/goWindows.ts)")
 	}
-	needed := 0
+	seen := map[string]bool{}
 	for _, s := range linux {
 		name := s.Value("name").(string)
+		seen[name] = true
 		w, ok := windows[name]
 		switch {
 		case !pathBelowDir.MatchString(js(s.Value("steps"))):
@@ -100,10 +101,11 @@ func TestWindowsAgentVectorsComplete(t *testing.T) {
 				}
 			}
 		}
-		needed++
 	}
-	if len(windows) > needed {
-		t.Errorf("windows/agents.json holds %d scenarios, %d are needed", len(windows), needed)
+	for name := range windows {
+		if !seen[name] {
+			t.Errorf("windows/agents.json holds %s, a scenario the recording does not have: record again", name)
+		}
 	}
 }
 
@@ -281,6 +283,11 @@ func TestInstallVectors(t *testing.T) {
 						got = want
 					}
 				}
+				if runtime.GOOS == "windows" {
+					// go/README.md, `skill-order`: the skill's files as a
+					// multiset in each run.
+					got, want = skillOrderFree(got), skillOrderFree(want)
+				}
 				if js(got) != js(want) {
 					t.Fatalf("step %d %s:\n got %s\nwant %s", n, js(step.Value("step")), js(got), js(step.Value("outcome")))
 				}
@@ -433,4 +440,51 @@ func treeOf(t *testing.T, dir, version string) jsjson.Object {
 	}
 	walk("")
 	return out
+}
+
+// skillOrderFree is a step's outcome with the skill's files in sorted runs,
+// for Windows (go/README.md, `skill-order`): its result's changes, by path,
+// and its lines (transcript.SkillOrderFree's rule).
+func skillOrderFree(v any) any {
+	o, ok := v.(jsjson.Object)
+	if !ok {
+		return v
+	}
+	out := make(jsjson.Object, len(o))
+	for i, m := range o {
+		value := m.Value
+		switch m.Key {
+		case "result":
+			if r, ok := value.(jsjson.Object); ok {
+				result := make(jsjson.Object, len(r))
+				for j, rm := range r {
+					if list, ok := rm.Value.([]any); ok && rm.Key == "changes" {
+						rm.Value = transcript.SortSkillChanges(list)
+					}
+					result[j] = rm
+				}
+				value = result
+			}
+		case "lines":
+			if list, ok := value.([]any); ok {
+				line := func(e any) string { s, _ := e.(string); return s }
+				value = transcript.SortSkillRuns(list, func(e any) bool { return transcript.NamesSkillFile(line(e)) }, line)
+			}
+		}
+		out[i] = jsjson.Member{Key: m.Key, Value: value}
+	}
+	return out
+}
+
+// TestWindowsAgentVectorsKeepSkillFilesSorted: the Windows recording holds
+// each run of the skill's files sorted, as skillOrderFree leaves it.
+func TestWindowsAgentVectorsKeepSkillFilesSorted(t *testing.T) {
+	for name, s := range windowsScenarios(t) {
+		for i, raw := range asList(s.Value("steps")) {
+			outcome := raw.(jsjson.Object).Value("outcome")
+			if js(skillOrderFree(outcome)) != js(outcome) {
+				t.Errorf("%s step %d: the skill's files are not in sorted runs", name, i)
+			}
+		}
+	}
 }

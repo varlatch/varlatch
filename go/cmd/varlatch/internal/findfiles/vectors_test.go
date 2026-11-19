@@ -189,10 +189,11 @@ func TestWindowsExpectationsComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	windows := windowsExpectations(t)
-	needed := 0
+	seen := map[string]bool{}
 	for _, raw := range parsed.(jsjson.Object).Value("cases").([]any) {
 		c := raw.(jsjson.Object)
 		id := c.Value("id").(string)
+		seen[id] = true
 		_, ok := windows[id]
 		if !runsOnWindows(c) || !namesPath(c) {
 			if ok {
@@ -200,13 +201,14 @@ func TestWindowsExpectationsComplete(t *testing.T) {
 			}
 			continue
 		}
-		needed++
 		if !ok {
 			t.Errorf("%s: names a path and has no Windows expectation: record one (apps/cli/test/goWindows.ts)", id)
 		}
 	}
-	if len(windows) > needed {
-		t.Errorf("windows/findfiles.json holds %d cases, %d are needed", len(windows), needed)
+	for id := range windows {
+		if !seen[id] {
+			t.Errorf("windows/findfiles.json holds %s, a case the recording does not have: record again", id)
+		}
 	}
 }
 

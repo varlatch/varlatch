@@ -23,7 +23,7 @@ import {
 import { GuideTopicError, guide, skillFiles } from "../src/agents/skill.js";
 import { withTomlPart, withoutTomlPart } from "../src/agents/toml.js";
 import { unfillDir, writeOrCompare } from "./goKit.js";
-import { PATH_BELOW_DIR, RECORD_WINDOWS, WINDOWS_COMMENT, readRecording, windowsFile } from "./goWindows.js";
+import { PATH_BELOW_DIR, RECORD_WINDOWS, WINDOWS_COMMENT, namesSkillFile, readRecording, sortSkillChanges, sortSkillRuns, windowsFile } from "./goWindows.js";
 
 /**
  * Vectors for the Go CLI's agent files (internal docs/design/go-cli.md,
@@ -555,10 +555,26 @@ describe("Go vectors for the agent files", () => {
     const needed = new Set(linux.install.filter((s) => PATH_BELOW_DIR.test(JSON.stringify(s.steps))).map((s) => s.name));
     const install = [...matrix(), ...special()]
       .filter((s) => needed.has(s.name))
-      .map((s) => JSON.stringify(record(s)))
+      .map((s) => JSON.stringify(skillOrderFreeScenario(record(s))))
       .join(",\n");
     const head = JSON.stringify({ comment: WINDOWS_COMMENT, platform: "windows", version: VERSION }, null, 2);
     const result = writeOrCompare(windowsFile(VECTORS), `${head.slice(0, -2)},\n  "install": [\n${install}\n]\n}\n`);
     expect(result.current, "windows/agents.json is stale: record it again (goWindows.ts)").toBe(true);
   }, 300_000);
 });
+
+/**
+ * A recorded scenario with the skill's files in sorted runs in each step's
+ * result changes and lines: their order varies between runs on Windows
+ * (goWindows.ts, `skill-order`).
+ */
+function skillOrderFreeScenario(recorded: Record<string, unknown>): Record<string, unknown> {
+  const steps = (recorded.steps as Array<{ outcome: unknown }>).map((step) => {
+    const outcome = step.outcome as { result?: { changes?: unknown[] }; lines?: string[] } | null;
+    if (!outcome || typeof outcome !== "object") return step;
+    const result = outcome.result && Array.isArray(outcome.result.changes) ? { ...outcome.result, changes: sortSkillChanges(outcome.result.changes) } : outcome.result;
+    const lines = Array.isArray(outcome.lines) ? sortSkillRuns(outcome.lines, namesSkillFile, (l) => l) : outcome.lines;
+    return { ...step, outcome: { ...outcome, ...(result !== undefined ? { result } : {}), ...(lines !== undefined ? { lines } : {}) } };
+  });
+  return { ...recorded, steps };
+}
