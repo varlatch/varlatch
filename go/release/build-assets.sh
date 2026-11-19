@@ -43,9 +43,14 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$version" ] || stop "--version is required"
 [ -n "$out" ] || stop "--out is required"
-# A release version, as the tag names it without its v: 1.2.3 or 1.2.3-rc.1.
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] \
+# A release version, as the tag names it without its v (1.2.3, 1.2.3-rc.1):
+# go/lib/release's versionPattern exactly, so no number has a leading zero.
+[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] \
   || stop "not a release version: $version"
+
+# The toolchain on PATH builds the release, never one go.mod would download.
+export GOTOOLCHAIN=local
+printf 'toolchain: %s\n' "$(go version)"
 
 here=$(cd "$(dirname "$0")" && pwd)
 gomod=$(cd "$here/.." && pwd)
@@ -86,7 +91,7 @@ done
 # The installers carry the version they install (@VARLATCH_VERSION@,
 # exactly once in each).
 stamp() { # stamp <file>
-  [ "$(grep -c '@VARLATCH_VERSION@' "$install_dir/$1")" = 1 ] \
+  [ "$(grep -o '@VARLATCH_VERSION@' "$install_dir/$1" | wc -l)" -eq 1 ] \
     || stop "$1 does not hold @VARLATCH_VERSION@ exactly once"
   sed "s/@VARLATCH_VERSION@/$version/" "$install_dir/$1" > "$out/$1"
   printf 'stamped %s\n' "$1"

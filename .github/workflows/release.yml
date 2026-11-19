@@ -98,13 +98,14 @@ jobs:
         shell: bash
         run: |
           version=${GITHUB_REF_NAME#v}
-          if ! [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+          # go/lib/release's versionPattern exactly: no number with a leading zero.
+          if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
             echo "not a release tag: $GITHUB_REF_NAME" >&2
             exit 1
           fi
           if [ "${BASH_REMATCH[1]}" -gt 0 ] || [ "${BASH_REMATCH[2]}" -ge 50 ]; then line=go; else line=ts; fi
           prerelease=false
-          [ -z "${BASH_REMATCH[3]}" ] || prerelease=true
+          [ -z "${BASH_REMATCH[4]}" ] || prerelease=true
           printf 'line=%s\nversion=%s\nprerelease=%s\n' "$line" "$version" "$prerelease" >> "$GITHUB_OUTPUT"
           echo "$GITHUB_REF_NAME releases the $line line (prerelease: $prerelease)" | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -480,6 +481,10 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      # The SHA-256 of SHA256SUMS, which lists every asset with its hash:
+      # go-release checks the downloaded bytes against it before running any.
+      sums: ${{ steps.build.outputs.sums }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -501,12 +506,14 @@ jobs:
         working-directory: go
         run: go generate ./server/web
       - name: Build and check the Go assets
+        id: build
         env:
           CGO_ENABLED: "0"
           VERSION: ${{ needs.line.outputs.version }}
         run: |
           go/release/build-assets.sh --version "$VERSION" --out "$RUNNER_TEMP/go-assets"
           go/release/check-assets.sh "$RUNNER_TEMP/go-assets" "$VERSION"
+          echo "sums=$(sha256sum "$RUNNER_TEMP/go-assets/SHA256SUMS" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: go-assets
@@ -531,6 +538,21 @@ jobs:
         with:
           name: go-assets
           path: go-assets
+      # First, before any downloaded byte is made executable or run (this
+      # job holds the signing credential): the artifact must be exactly what
+      # go-assets built. SHA256SUMS must have the hash go-assets reported,
+      # every file must match its line, and nothing else may be there.
+      - name: The downloaded assets are the ones built
+        working-directory: go-assets
+        env:
+          SUMS: ${{ needs.go-assets.outputs.sums }}
+        run: |
+          [[ "$SUMS" =~ ^[0-9a-f]{64}$ ]] || { echo "go-assets reported no SHA256SUMS hash" >&2; exit 1; }
+          [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ] || { echo "SHA256SUMS is not the one go-assets built" >&2; exit 1; }
+          sha256sum --check --strict --quiet SHA256SUMS
+          listed=$( (cut -d' ' -f3 SHA256SUMS; echo SHA256SUMS) | LC_ALL=C sort)
+          present=$(find . -mindepth 1 -printf '%P\n' | LC_ALL=C sort)
+          [ "$listed" = "$present" ] || { echo "the artifact holds other files than SHA256SUMS lists" >&2; exit 1; }
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
       - name: Check the assets again
         env:
