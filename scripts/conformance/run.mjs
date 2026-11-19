@@ -59,6 +59,7 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  * passed); 1 otherwise; 64 on a usage error.
  */
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -71,7 +72,7 @@ import { clientLackingChecks, loadClientLacks, validateClientLacks, withoutLacki
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
-import { parseSuiteOutput, resultLine } from "./lib/results.mjs";
+import { endProblem, parseSuiteOutput, resultLine } from "./lib/results.mjs";
 import { NOT_BUILT } from "./suite-kit.mjs";
 import { PLAN } from "./plan.mjs";
 import { loadWeights, parseShard, shardSuites } from "./shard.mjs";
@@ -143,9 +144,21 @@ function loadExpectations(targetName, inventory, openapi) {
 /** Runs one suite as its own process group; streams its output and returns it. */
 function runSuite(script, args, env, cwd) {
   return new Promise((resolvePromise) => {
-    const child = spawn(process.execPath, [script, ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    // The end-of-suite channel: fd 3, a pipe of this suite's alone, and a
+    // nonce made for this suite (suite-kit's finish() writes both).
+    const nonce = randomBytes(16).toString("hex");
+    const child = spawn(process.execPath, [script, ...args], {
+      cwd,
+      env: { ...env, CONFORMANCE_END_NONCE: nonce },
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
+      detached: true,
+    });
     let stdout = "";
     let stderr = "";
+    let endChannel = "";
+    child.stdio[3].on("data", (d) => {
+      endChannel += d;
+    });
     child.stdout.on("data", (d) => {
       stdout += d;
       process.stdout.write(d);
@@ -165,7 +178,7 @@ function runSuite(script, args, env, cwd) {
       running.delete(child.pid);
       // Browsers and CLIs a suite started go with it.
       killGroup(child.pid);
-      resolvePromise({ code, signal, timedOut, stdout, stderr });
+      resolvePromise({ code, signal, timedOut, stdout, stderr, endChannel, nonce });
     });
     child.on("error", (err) => {
       stderr += String(err);
@@ -499,18 +512,16 @@ async function main() {
         }
         reports.push({ suite: entry.suite, ...r });
       }
-      // The suite ended only when it printed its own end-of-suite marker
-      // (suite-kit's reporter does). Without it, it crashed or exited
-      // before its end, whatever it reported before: the run fails, and
-      // the lacking checks it did not report are not counted as lacking.
-      const ended = parsed.ended === entry.suite;
+      // The suite finished only when its own end-of-suite channel (fd 3)
+      // carried one marker with its name and this run's nonce, and it then
+      // exited normally with the code the marker names (suite-kit's
+      // finish()). Anything else, whatever it reported before: the run
+      // fails, and the lacking checks it did not report are not counted as
+      // lacking.
+      const unfinished = out.timedOut ? "timed out" : endProblem(out.endChannel, { suite: entry.suite, nonce: out.nonce, code: out.code, signal: out.signal });
+      const ended = unfinished === null;
       if (!ended && !out.timedOut) {
-        errors.push({
-          suite: entry.suite,
-          message: parsed.ended
-            ? `ended with the marker of another suite (${parsed.ended})`
-            : `did not finish: no end-of-suite marker (it crashed, or exited before its end); the checks it did not report fail`,
-        });
+        errors.push({ suite: entry.suite, message: `did not finish: ${unfinished}; the checks it did not report fail` });
       }
       const reportedIds = new Set(parsed.results.map((r) => r.id));
       const unreported = ended ? new Set() : new Set([...clientLacked].filter((id) => !reportedIds.has(id) && !observedNotBuilt.has(id)));

@@ -75,7 +75,9 @@ before(() => {
   writeFileSync(join(dst, "stub-handover.mjs"), `
 const ok = Boolean(process.env.VARLATCH_HANDOVER_CLI) && process.env.VARLATCH_CLI_NATIVE === "1";
 console.log(\`\${process.env.STUB_MODE === "handover-na" ? "N/A" : ok ? "PASS" : "FAIL"}  [handover.both] handover.both\`);
-console.log("END  [handover]");
+// The end, as every suite ends: suite-kit's finish().
+const { reporter } = await import("./suite-kit.mjs");
+reporter().finish();
 `);
 
   // The suite: what it prints and how it ends, by STUB_MODE.
@@ -85,14 +87,46 @@ const line = (status, id) => console.log(\`\${status}  [\${id}] \${id}\`);
 // A CLI step and the checks that depend on it, judged through suite-kit.
 // A refused agent-safe run, as in the broker suite: the claim "the refused
 // run issued nothing" holds only once the refusal itself was observed.
-const kitMode = mode.startsWith("step-") || mode.startsWith("raw-");
-if (mode === "step-kit-natural") {
-  // Every check but the lacking one, and no finish(): the script's natural
-  // end prints the marker (beforeExit).
+const kitMode = mode.startsWith("step-") || mode.startsWith("raw-") || mode.startsWith("end-");
+if (mode.startsWith("end-")) {
+  // The end-of-suite channel's cases: every check but the lacking one
+  // reported, then each mode ends its own way.
+  const earlyNonce = process.env.CONFORMANCE_END_NONCE;
   const { reporter } = await import("./suite-kit.mjs");
+  const { spawnSync } = await import("node:child_process");
+  const { writeSync } = await import("node:fs");
   const kit = reporter();
   for (const id of ${JSON.stringify(coreChecks)}) kit.check(id, id, true);
   kit.check("stub.base", "stub.base", true);
+  if (mode === "end-finish") {
+    kit.finish();
+  } else if (mode === "end-natural") {
+    // No finish(): the script runs to its natural end.
+  } else if (mode === "end-stalled") {
+    // A stalled top-level await, with a beforeExit that prints a marker-looking line.
+    process.once("beforeExit", () => console.log("END  [stub]"));
+    await new Promise(() => {});
+  } else if (mode === "end-fake-marker") {
+    // A child prints marker-looking lines on stdout and stderr; the suite never finishes.
+    spawnSync("sh", ["-c", 'echo "END stub $CONFORMANCE_END_NONCE 0"; echo "END  [stub]"; echo "END stub $CONFORMANCE_END_NONCE 0" >&2'], { stdio: ["ignore", "inherit", "inherit"] });
+    process.exit(0);
+  } else if (mode === "end-leaked-fd3") {
+    // A child given fd 3 on purpose writes a marker there; then the suite finishes.
+    spawnSync("sh", ["-c", 'echo "END stub \${CONFORMANCE_END_NONCE:-} 0" >&3'], { stdio: ["ignore", "inherit", "inherit", "inherit"] });
+    kit.finish();
+  } else if (mode === "end-default-child") {
+    // A child started as the kit's helpers start them (default stdio) gets neither fd 3 nor the nonce.
+    spawnSync("sh", ["-c", '{ echo "END stub x 0" >&3; } 2>/dev/null && echo fd3-leaked || echo fd3-not-inherited; echo "nonce=\${CONFORMANCE_END_NONCE:-absent}"'], { stdio: ["ignore", "inherit", "inherit"] });
+    kit.finish();
+  } else if (mode === "end-exit-mismatch") {
+    // A well-formed marker saying 0, then exit 1.
+    writeSync(3, \`END stub \${earlyNonce} 0\\n\`);
+    process.exit(1);
+  } else if (mode === "end-signal") {
+    // A well-formed marker, then killed.
+    writeSync(3, \`END stub \${earlyNonce} 0\\n\`);
+    process.kill(process.pid, "SIGKILL");
+  }
 } else if (kitMode) {
   const { reporter, cliCommand } = await import("./suite-kit.mjs");
   const { spawnSync } = await import("node:child_process");
@@ -147,7 +181,12 @@ if (!kitMode) {
   if (mode === "pass-skipped") { line("PASS", "stub.plain"); }
   // The end-of-suite marker, as suite-kit's reporter prints it; never in the
   // modes that end without it.
-  if (!mode.endsWith("no-end")) console.log("END  [stub]");
+  // The end, as every suite ends: suite-kit's finish(), never in the modes
+  // that end without it.
+  if (!mode.endsWith("no-end")) {
+    const { reporter } = await import("./suite-kit.mjs");
+    reporter().finish();
+  }
 }
 `);
 
@@ -424,35 +463,64 @@ test("the runner: a TypeScript CLI never takes the not-built path, whatever it p
   assert.match(raw.out, /stub\.base reported NOT-BUILT, which only the Go CLI's refusal gives; the CLI under test is source/);
 });
 
-// The end-of-suite marker (suite-kit's reporter prints END  [<suite>]): a
-// suite that did not end never counts its unreported checks as lacking.
+// The end of a suite: only suite-kit's finish(), on fd 3 with the runner's
+// nonce, then an exit with the code it names. A suite that did not end so
+// never counts its unreported checks as lacking.
 
 test("the runner: a crash after an expected FAIL fails the run, and the unreported lacking check is no client-lacks", () => {
   for (const mode of ["fail-then-crash", "step-kit-fail-then-crash"]) {
     const r = run(mode, "", "go:/stub/varlatch");
     assert.equal(r.status, 1, `${mode}: ${r.out}`);
-    assert.match(r.out, /stub: did not finish: no end-of-suite marker/, mode);
-    assert.notEqual(outcomeOf(r.report, "stub.scanned"), "client-lacks", mode);
+    assert.match(r.out, /stub: did not finish: it never called finish\(\)/, mode);
     assert.equal(outcomeOf(r.report, "stub.scanned"), "fail", mode);
   }
 });
 
-test("the runner: a suite that ends normally gets client-lacks for its unreported lacking checks", () => {
-  for (const mode of ["scan-silent", "step-kit-natural"]) {
+test("the runner: a suite that finishes gets client-lacks for its unreported lacking checks, and passes without any", () => {
+  for (const mode of ["scan-silent", "end-finish"]) {
     const r = run(mode, "", "go:/stub/varlatch");
     assert.equal(r.status, 0, `${mode}: ${r.out}`);
     assert.equal(outcomeOf(r.report, "stub.scanned"), "client-lacks", mode);
     assert.equal(outcomeOf(r.report, "stub.base"), "pass", mode);
   }
+  const ts = run("plain");
+  assert.equal(ts.status, 0, ts.out);
 });
 
-test("the runner: a suite without its end-of-suite marker fails the run, even with no crash and no failure", () => {
-  // Every check reported and passed, the exit is 0: still no marker, no pass.
-  const ts = run("plain-no-end");
-  assert.equal(ts.status, 1, ts.out);
-  assert.match(ts.out, /stub: did not finish: no end-of-suite marker/);
-  // The Go CLI: the lacking check it did not report is not client-lacks.
-  const go = run("scan-silent-no-end", "", "go:/stub/varlatch");
-  assert.equal(go.status, 1, go.out);
-  assert.equal(outcomeOf(go.report, "stub.scanned"), "fail");
+test("the runner: a suite that never calls finish() fails the run: no crash, a natural end, or a stalled await", () => {
+  for (const [mode, cli] of [["plain-no-end", "source"], ["scan-silent-no-end", "go:/stub/varlatch"], ["end-natural", "go:/stub/varlatch"], ["end-stalled", "go:/stub/varlatch"]]) {
+    const r = run(mode, "", cli);
+    assert.equal(r.status, 1, `${mode}: ${r.out}`);
+    assert.match(r.out, /stub: did not finish: it never called finish\(\)/, mode);
+    if (cli !== "source") assert.equal(outcomeOf(r.report, "stub.scanned"), "fail", mode);
+  }
+});
+
+test("the runner: marker-looking output on stdout or stderr is no end", () => {
+  const r = run("end-fake-marker", "", "go:/stub/varlatch");
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /END {2}\[stub\]/, "the child's lines reached the output");
+  assert.match(r.out, /stub: did not finish: it never called finish\(\)/);
+  assert.equal(outcomeOf(r.report, "stub.scanned"), "fail");
+});
+
+test("the runner: fd 3 and the nonce reach no child the kit's way; a child given fd 3 on purpose spoils the end", () => {
+  const plain = run("end-default-child", "", "go:/stub/varlatch");
+  assert.equal(plain.status, 0, plain.out);
+  assert.match(plain.out, /fd3-not-inherited/);
+  assert.match(plain.out, /nonce=absent/);
+  const leaked = run("end-leaked-fd3", "", "go:/stub/varlatch");
+  assert.equal(leaked.status, 1, leaked.out);
+  assert.match(leaked.out, /stub: did not finish: its end-of-suite channel carried 2 lines, not one marker/);
+  assert.equal(outcomeOf(leaked.report, "stub.scanned"), "fail");
+});
+
+test("the runner: an exit that does not match the marker fails the run: another code, or a signal", () => {
+  const code = run("end-exit-mismatch", "", "go:/stub/varlatch");
+  assert.equal(code.status, 1, code.out);
+  assert.match(code.out, /stub: did not finish: it exited 1, but its end-of-suite marker says 0/);
+  assert.equal(outcomeOf(code.report, "stub.scanned"), "fail");
+  const signal = run("end-signal", "", "go:/stub/varlatch");
+  assert.equal(signal.status, 1, signal.out);
+  assert.match(signal.out, /stub: did not finish: it was killed by SIGKILL after its end-of-suite marker/);
 });

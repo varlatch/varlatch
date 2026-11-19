@@ -36,19 +36,31 @@
  * judge, so it can skip their work: each check's NOT-BUILT comes from its
  * own step. A TypeScript CLI never takes this path, whatever it prints.
  *
- * A suite that ends prints `END  [<suite>]` after its last result: the
- * reporter does it in `finish()`, and when the script runs to its natural
- * end without calling it. A crash (an uncaught exception or rejection) or a
- * `process.exit` elsewhere prints none, and the runner fails the run: what
- * the suite did not report then never counts as lacking.
+ * A suite ends only through the reporter's `finish()`. It writes
+ * `END <suite> <nonce> <exit code>` to fd 3, a pipe the runner opens for the
+ * suite alone (never stdout or stderr, so no output of the suite or of a
+ * process it starts can stand for it), with the nonce the runner made for
+ * this suite (CONFORMANCE_END_NONCE), and exits with that code. A suite that
+ * never calls finish() (a crash, a stalled await, a process.exit elsewhere)
+ * writes nothing there, and the runner fails the run: what the suite did not
+ * report then never counts as lacking. The nonce leaves this process's
+ * environment when the kit loads, so no process a suite starts receives it,
+ * and a process started with the default stdio never receives fd 3.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DEADLINE_ENV, GRACE_MS } from "./lib/deadline.mjs";
 import { predates } from "./lib/inventory.mjs";
 
 const TARGET_OP = fileURLToPath(new URL("./target-op.mjs", import.meta.url));
+
+// The end-of-suite nonce, kept here and out of the environment every
+// process this suite starts inherits.
+const END_NONCE = process.env.CONFORMANCE_END_NONCE ?? "";
+delete process.env.CONFORMANCE_END_NONCE;
+/** The fd of the runner's end-of-suite channel. */
+export const END_FD = 3;
 const ID = /^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9.-]*$/;
 let inventoryCache = null;
 const inventory = () => (inventoryCache ??= JSON.parse(readFileSync(new URL("./inventory.json", import.meta.url), "utf8")));
@@ -104,16 +116,6 @@ export function notBuiltRefusal(result) {
 
 export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
   let failures = 0;
-  // The end-of-suite marker, once: from finish(), or when the event loop
-  // empties at the script's natural end (beforeExit, which neither a crash
-  // nor process.exit emits).
-  let ended = false;
-  const end = () => {
-    if (ended) return;
-    ended = true;
-    console.log(`END  [${process.env.CONFORMANCE_SUITE || "suite"}]`);
-  };
-  process.once("beforeExit", end);
   const skipped = new Set();
   const skippedGroups = new Set();
   const reported = new Set();
@@ -232,13 +234,22 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
     get failures() {
       return failures;
     },
+    /**
+     * Ends the suite: the end-of-suite marker on the runner's channel (fd 3),
+     * then exit with the code it names, 1 when a check failed, else 0. The
+     * only way a suite ends as finished.
+     */
     finish(summary) {
-      end();
-      if (failures > 0) {
-        if (summary) console.error(`${failures} ${summary} failed`);
-        process.exit(1);
+      const code = failures > 0 ? 1 : 0;
+      if (failures > 0 && summary) console.error(`${failures} ${summary} failed`);
+      if (END_NONCE) {
+        try {
+          writeSync(END_FD, `END ${process.env.CONFORMANCE_SUITE || ""} ${END_NONCE} ${code}\n`);
+        } catch (err) {
+          console.error(`the end-of-suite channel (fd ${END_FD}) is not open: ${err.message}`);
+        }
       }
-      process.exit(0);
+      process.exit(code);
     },
   };
 }
