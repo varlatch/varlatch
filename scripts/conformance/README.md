@@ -605,8 +605,8 @@ suite's setup and `types` did: no run or scan has disclosed anything yet,
 so they prove the server side only until those slices land.
 
 `go/cmd/varlatch`'s `TestClientLacksNotStale` also fails while an entry
-names a slice the Go CLI's inventory says is built. `cliNeeds` is recorded
-conservatively for the checks without a feature (every feature of their
+names a slice the Go CLI marks built (`go/cmd/varlatch/testdata/built/`).
+`cliNeeds` is recorded conservatively for the checks without a feature (every feature of their
 suite); a slice that finds a check needing less narrows it. The setup's
 `init --org --project --server` (slice 5.1d) and token sign-in (slice
 5.1e) are built, so every suite's setup runs on the Go CLI.

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -22,7 +23,7 @@ import (
 // is covered by a recorded case or a vector. Missing coverage fails.
 
 type inventory struct {
-	Built    []string `json:"built"`
+	Built    []string `json:"-"` // from testdata/built (builtSlices)
 	Commands map[string]struct {
 		Slice string `json:"slice"`
 	} `json:"commands"`
@@ -57,8 +58,34 @@ func loadInventory(t *testing.T) *inventory {
 	if err := json.Unmarshal(data, &inv); err != nil {
 		t.Fatal(err)
 	}
+	inv.Built = builtSlices(t)
 	return &inv
 }
+
+// builtSlices reads testdata/built/: one empty file per built slice, named
+// for it ("5.2"), so pull requests that build different slices never edit
+// the same line. A file that is not empty or not a slice's name fails.
+func builtSlices(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir("testdata/built")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var built []string
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() || info.Size() != 0 || !builtName.MatchString(e.Name()) {
+			t.Fatalf("testdata/built/%s: want an empty file named for a slice (as 5.2 or 5.4a)", e.Name())
+		}
+		built = append(built, e.Name())
+	}
+	return built
+}
+
+var builtName = regexp.MustCompile(`^5\.[0-9]+[a-z]?$`)
 
 // recorded is one transcript case, with the command it runs after the
 // global options.
