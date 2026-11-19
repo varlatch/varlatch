@@ -1,0 +1,1065 @@
+{
+  "schema": 2,
+  "comment": "Windows expectations, recorded from the TypeScript CLI on Windows by the windows-expectations workflow (apps/cli/test/goWindows.ts); do not edit. Only the cases whose Linux recording names a path below their directory are here.",
+  "area": "5.1b-context",
+  "platform": "windows",
+  "cases": [
+    {
+      "id": "status.repo",
+      "expect": {
+        "status": 0,
+        "stdout": "https://a.example  (expires 2100-01-01T00:00:00.000Z, laptop)\n\nRepo          {{dir}}\\repo\nProject       acme/web\nEnvironment   dev (committed-default)\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0666",
+            "content": "{\n  \"servers\": {\n    \"https://a.example\": {\n      \"token\": \"vlt_cli_fakeAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status.repo.json",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [],\n  \"repo\": {\n    \"server\": \"https://repo.example\",\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev\",\n    \"environmentSource\": \"committed-default\",\n    \"repoRoot\": \"{{dir}}\\\\repo\",\n    \"tier\": null,\n    \"tierCachedAt\": null,\n    \"serverSource\": \"repository\"\n  }\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status.repo.tier",
+      "expect": {
+        "status": 0,
+        "stdout": "No stored credentials. Run: varlatch login --server <url>\n\nRepo          {{dir}}\\repo\nProject       acme/web\nEnvironment   dev/jeremy (local-selection, tier production)\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev/jeremy\",\n  \"selectedTier\": \"production\",\n  \"tierCachedAt\": \"2026-11-17T10:00:00.000Z\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status.repo.tier.json",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [],\n  \"repo\": {\n    \"server\": \"https://repo.example\",\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev/jeremy\",\n    \"environmentSource\": \"local-selection\",\n    \"repoRoot\": \"{{dir}}\\\\repo\",\n    \"tier\": \"production\",\n    \"tierCachedAt\": \"2026-11-17T10:00:00.000Z\",\n    \"serverSource\": \"repository\"\n  }\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev/jeremy\",\n  \"selectedTier\": \"production\",\n  \"tierCachedAt\": \"2026-11-17T10:00:00.000Z\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status.repo.flag-env",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [],\n  \"repo\": {\n    \"server\": \"https://repo.example\",\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"prod\",\n    \"environmentSource\": \"flag\",\n    \"repoRoot\": \"{{dir}}\\\\repo\",\n    \"tier\": null,\n    \"tierCachedAt\": null,\n    \"serverSource\": \"repository\"\n  }\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev/jeremy\",\n  \"selectedTier\": \"production\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status.repo.environment-server",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [],\n  \"repo\": {\n    \"server\": \"https://flag.example\",\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"staging\",\n    \"environmentSource\": \"flag\",\n    \"repoRoot\": \"{{dir}}\\\\repo\",\n    \"tier\": null,\n    \"tierCachedAt\": null,\n    \"serverSource\": \"flag\"\n  }\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status.repo.env-var",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [],\n  \"repo\": {\n    \"server\": \"https://env.example\",\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"qa\",\n    \"environmentSource\": \"env-var\",\n    \"repoRoot\": \"{{dir}}\\\\repo\",\n    \"tier\": null,\n    \"tierCachedAt\": null,\n    \"serverSource\": \"env-var\"\n  }\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status.repo.null-tier",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [],\n  \"repo\": {\n    \"server\": \"https://repo.example\",\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev\",\n    \"environmentSource\": \"local-selection\",\n    \"repoRoot\": \"{{dir}}\\\\repo\",\n    \"tier\": null,\n    \"tierCachedAt\": \"then\",\n    \"serverSource\": \"repository\"\n  }\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev\",\n  \"selectedTier\": null,\n  \"tierCachedAt\": \"then\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status.repo.tier-control",
+      "expect": {
+        "status": 0,
+        "stdout": "No stored credentials. Run: varlatch login --server <url>\n\nRepo          {{dir}}\\repo\nProject       acme/web\nEnvironment   dev (local-selection, tier pro\\u0007d)\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev\",\n  \"selectedTier\": \"pro\\u0007d\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status.repo.nested",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [],\n  \"repo\": {\n    \"server\": \"https://repo.example\",\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev\",\n    \"environmentSource\": \"committed-default\",\n    \"repoRoot\": \"{{dir}}\\\\repo\",\n    \"tier\": null,\n    \"tierCachedAt\": null,\n    \"serverSource\": \"repository\"\n  }\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/src/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/src/app/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.committed-default",
+      "expect": {
+        "status": 0,
+        "stdout": "Server        https://repo.example\nOrganization  acme\nProject       web\nEnvironment   dev\nSource        committed-default\nRepo root     {{dir}}\\repo\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.committed-default.json",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.local-selection",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev/jeremy\",\n  \"environmentSource\": \"local-selection\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev/jeremy\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.env-var",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"qa\",\n  \"environmentSource\": \"env-var\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev/jeremy\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.flag",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"prod\",\n  \"environmentSource\": \"flag\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev/jeremy\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.short-flag",
+      "expect": {
+        "status": 0,
+        "stdout": "Server        https://repo.example\nOrganization  acme\nProject       web\nEnvironment   prod\nSource        flag\nRepo root     {{dir}}\\repo\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.both-flags",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"long\",\n  \"environmentSource\": \"flag\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.empty-flag",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.flag-last",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"short\",\n  \"environmentSource\": \"flag\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.server-flag",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://flag.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"flag\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"serverOverride\": \"https://local.example\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.server-env-var",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://env.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"env-var\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"serverOverride\": \"https://local.example\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.server-local-override",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://local.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"local-override\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"serverOverride\": \"https://local.example\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.server-repository",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.tier",
+      "expect": {
+        "status": 0,
+        "stdout": "Server        https://repo.example\nOrganization  acme\nProject       web\nEnvironment   dev\nSource        local-selection\nTier          pro\\u001bd (cached 2026-11-17T10:00:00.000Z)\nRepo root     {{dir}}\\repo\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev\",\n  \"selectedTier\": \"pro\\u001bd\",\n  \"tierCachedAt\": \"2026-11-17T10:00:00.000Z\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.tier-no-time",
+      "expect": {
+        "status": 0,
+        "stdout": "Server        https://repo.example\nOrganization  acme\nProject       web\nEnvironment   dev\nSource        local-selection\nTier          production (cached null)\nRepo root     {{dir}}\\repo\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": \"dev\",\n  \"selectedTier\": \"production\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.odd-local.json",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": [\n    \"a\",\n    \"b\"\n  ],\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": 5,\n  \"environmentSource\": \"local-selection\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": \"x\",\n  \"tierCachedAt\": null,\n  \"serverSource\": \"local-override\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": 5,\n  \"serverOverride\": [\n    \"a\",\n    \"b\"\n  ],\n  \"selectedTier\": \"x\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.odd-local",
+      "expect": {
+        "status": 0,
+        "stdout": "Server        a,b\nOrganization  acme\nProject       web\nEnvironment   5\nSource        local-selection\nRepo root     {{dir}}\\repo\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": 5,\n  \"serverOverride\": [\n    \"a\",\n    \"b\"\n  ]\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.object-selection.json",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": {\n    \"a\": 1\n  },\n  \"environmentSource\": \"local-selection\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{\n  \"selectedEnvironment\": {\n    \"a\": 1\n  },\n  \"selectedTier\": \"x\"\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.corrupt-local",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.varlatch/local.json": {
+            "mode": "0666",
+            "content": "{"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.nested",
+      "expect": {
+        "status": 0,
+        "stdout": "Server        https://repo.example\nOrganization  acme\nProject       web\nEnvironment   dev\nSource        committed-default\nRepo root     {{dir}}\\repo\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/src/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/src/app/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.lenient-options",
+      "expect": {
+        "status": 0,
+        "stdout": "Server        https://repo.example\nOrganization  acme\nProject       web\nEnvironment   dev\nSource        committed-default\nRepo root     {{dir}}\\repo\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.agent-run",
+      "expect": {
+        "status": 0,
+        "stdout": "Server        https://repo.example\nOrganization  acme\nProject       web\nEnvironment   dev\nSource        committed-default\nRepo root     {{dir}}\\repo\nAgent run     run_7 (Placeholders: API_KEY, B_TOKEN)\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.agent-run.json",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\",\n  \"agentRun\": {\n    \"id\": \"run_7\",\n    \"placeholders\": [\n      \"API_KEY\"\n    ]\n  }\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.agent-run-none",
+      "expect": {
+        "status": 0,
+        "stdout": "Server        https://repo.example\nOrganization  acme\nProject       web\nEnvironment   dev\nSource        committed-default\nRepo root     {{dir}}\\repo\nAgent run     run_7 (Placeholders: none)\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"https://repo.example\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.toml.crlf-multiline",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "organization = 'acme'\r\nproject = \"\"\"\r\nweb\"\"\"\r\ndefault_environment = \"dev\"\r\nserver = \"https://repo.example\"\r\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.toml.unicode-escapes",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"w😀b\",\n  \"environment\": \"d\\tev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "organization = \"\\u0061cme\"\nproject = \"w\\U0001F600b\"\ndefault_environment = \"d\\tev\"\nserver = \"https://repo.example\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.toml.bom-and-comments",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "﻿# context\norganization = \"acme\" # the org\nproject = \"web\"\nserver = \"https://repo.example\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.toml.inline-table",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": \"dev\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "organization = \"acme\"\nproject = \"web\"\nserver = \"https://repo.example\"\ndefault_environment = \"dev\"\npoint = { x = 1, y.z = 2 }\n[[items]]\nname = \"a\"\n[[items]]\nname = \"b\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "context.toml.non-ascii",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"server\": \"https://repo.example\",\n  \"organization\": \"acmé\",\n  \"project\": \"wëb 😀\",\n  \"environment\": \"dév\",\n  \"environmentSource\": \"committed-default\",\n  \"repoRoot\": \"{{dir}}\\\\repo\",\n  \"tier\": null,\n  \"tierCachedAt\": null,\n  \"serverSource\": \"repository\"\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "organization = \"acmé\"\nproject = \"wëb 😀\"\n\"server\" = \"https://repo.example\"\ndefault_environment = \"dév\"\n"
+          }
+        }
+      }
+    }
+  ]
+}
