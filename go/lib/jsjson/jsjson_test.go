@@ -102,9 +102,15 @@ func growsLinearly(small, large time.Duration) bool {
 	return large <= 24*small+20*time.Millisecond
 }
 
-// minSmall is how long the smaller size must take before growth is
-// judged, so that the 20 ms of slack never decides.
+// minSmall is how long a real shape's smaller run must take before its
+// growth is judged, so that the 20 ms of slack never decides.
 const minSmall = 50 * time.Millisecond
+
+// minControl is the same for the quadratic control: its larger run takes
+// about 64 times its smaller (38 on a blurring CI runner), far past
+// 24 times plus the slack even from a few milliseconds, and a short
+// smaller run keeps the larger one to a fraction of a second.
+const minControl = 7 * time.Millisecond
 
 // timed is one run of f, after a garbage collection.
 func timed(f func()) time.Duration {
@@ -137,14 +143,14 @@ func interleaved(small, large func()) (time.Duration, time.Duration) {
 
 // growth sizes n and times run(n) and run(8n) by interleaved. n starts at
 // an eighth of startLarge and grows by half again until run(n) takes at
-// least minSmall, measured, or 8n would pass limitLarge (which the log
+// least floor, measured, or 8n would pass limitLarge (which the log
 // says): small
 // steps keep the larger run, which for quadratic work is 64 times the
 // smaller, from overshooting. The log gives the n chosen, each time, and
 // the time per operation (ops(n) of them; n when ops is nil) for each
 // size: equal for linear work, so a size measured slower per operation
 // shows a bias in the measurement.
-func growth(t *testing.T, name string, startLarge, limitLarge int, ops func(n int) float64, run func(n int) func()) (small, large time.Duration) {
+func growth(t *testing.T, name string, floor time.Duration, startLarge, limitLarge int, ops func(n int) float64, run func(n int) func()) (small, large time.Duration) {
 	t.Helper()
 	n := max(startLarge/8, 1)
 	capped := false
@@ -154,7 +160,7 @@ func growth(t *testing.T, name string, startLarge, limitLarge int, ops func(n in
 		if !capped {
 			f := run(n)
 			f() // warm up
-			if timed(f) < minSmall {
+			if timed(f) < floor {
 				n = next
 				continue
 			}
@@ -162,13 +168,13 @@ func growth(t *testing.T, name string, startLarge, limitLarge int, ops func(n in
 		small, large = interleaved(run(n), run(8*n))
 		// The measured smaller run decides: a single run before it can be
 		// slower than the work (a cold CPU).
-		if small >= minSmall || capped {
+		if small >= floor || capped {
 			break
 		}
 		n = next
 	}
 	note := ""
-	if capped && small < minSmall {
+	if capped && small < floor {
 		note = " (at its size limit)"
 	}
 	if ops == nil {
@@ -217,7 +223,7 @@ func TestManyKeys(t *testing.T) {
 			}
 		}
 	}
-	fast, slow := growth(t, "keys (two per n)", 200_000, 4<<20, nil, parse)
+	fast, slow := growth(t, "keys (two per n)", minSmall, 200_000, 4<<20, nil, parse)
 	if !growsLinearly(fast, slow) {
 		t.Errorf("keys: %v, then %v at eight times as many: not linear", fast, slow)
 	}
@@ -238,7 +244,7 @@ func TestManyKeys(t *testing.T) {
 			}
 		}
 	}
-	qSmall, qLarge := growth(t, "a quadratic merge", 40_000, 320_000, func(n int) float64 { return float64(n) * float64(n-1) / 2 }, quadratic)
+	qSmall, qLarge := growth(t, "a quadratic merge", minControl, 8_000, 320_000, func(n int) float64 { return float64(n) * float64(n-1) / 2 }, quadratic)
 	if growsLinearly(qSmall, qLarge) {
 		t.Errorf("a quadratic merge (%v then %v) was judged linear", qSmall, qLarge)
 	}

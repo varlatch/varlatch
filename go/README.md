@@ -478,12 +478,17 @@ comes. `verify-release`, which the installers run, is Go's own.
   10,000 for every other caller), keeps a word's UTF-8 bytes whole, reads
   in linear time, and turns a panic into no decision. Its globs are
   matched as RE2 regular expressions (Go's `regexp`), compiled once per
-  run. On Windows it resolves and compares paths as Node.js's `path.win32`
-  does (`win32path.go`, held to Node.js's answers by `TestWin32Paths`): a
-  path rooted without a drive (`/home/dev/...`) is absolute, so a path
-  naming the credential store meets the store's directories, and
-  `TestHookDeniesWithThisPlatformsPaths` holds a `.env` read, a search
-  and the store to a denial with the platform's own paths. `internal/cli`'s
+  run. On Windows it resolves paths as Node.js's `path.win32` does
+  (`win32path.go`, held to Node.js's answers by `TestWin32Paths`): a path
+  rooted without a drive (`/home/dev/...`) is absolute, and a UNC path's
+  share follows any run of separators after the server. It compares a
+  path with the credential store's directories, and with its
+  `.config/varlatch` backstop, without regard to case and without a
+  `\\?\` or `\\.\` prefix, as Windows names files
+  (`TestHookStoreWindowsForms`); elsewhere byte for byte
+  (`TestHookStoreCaseOffWindows`). `TestHookDeniesWithThisPlatformsPaths`
+  holds a `.env` read, a search and the store to a denial with the
+  platform's own paths. `internal/cli`'s
   `agentscmd.go` is the commands and `init` with its flags (`--org`,
   `--project`, `--server`, `--default-environment`, `--no-agent-files`);
   `init` on a terminal without them (guided) is slice 5.8a.
@@ -497,20 +502,24 @@ comes. `verify-release`, which the installers run, is Go's own.
   result or error, its lines, and the whole tree afterwards
   (`internal/agents`' `TestInstallVectors`).
 - `testdata/vectors/hook.json` (`apps/cli/test/go-vectors-hook.test.ts`):
-  1,433 pre-tool-use events through `hook.ts`'s `runHook`, each with its
+  1,436 pre-tool-use events through `hook.ts`'s `runHook`, each with its
   answer's exact bytes: every event of `agents-hook.test.ts` and
   `agents-guardrails.test.ts`, projects (files, a directory called
   `.env`, git repositories with ignored and tracked files, directories
   named `café` and `日本`, quoted and not) for the globs and recursive
   searches, events padded with arrays nested 10,001 and 100,000 deep
   (inside `tool_input` and at the top level; the case's `nest` keeps the
-  padding out of the file), and a command for each option of another
-  program the inventory lists for the hook, and for the six options
+  padding out of the file), UNC-shaped store paths (only names on POSIX;
+  skipped on Windows, which reads them as UNC paths), and a command for
+  each option of another program the inventory lists for the hook, and for the six options
   `hook.ts` reads that the inventory files under another kind
   (`internal/agents`' `TestHookVectors`; `TestInventoryCoverage` checks
-  that a vector uses each). `TestHookLinearTime` holds a 1.6 MB word in
-  every shape, 200,000 keys and a long filter in a walked search to well
-  under a second each.
+  that a vector uses each). `TestHookLinearTime` holds a long word in
+  every shape, many keys, deep nesting and a long filter in a walked
+  search to linear growth: eight times the input in at most 24 times the
+  time (plus 20 ms), each size timed interleaved with the other after a
+  warm-up, never against a clock; `TestTheLinearityCriterion` checks that
+  a quadratic merge fails it.
 - Values and import (slice 5.3a): `internal/cli`'s `values.go` (`values
   set`, `list`, `delete`, `rotate`, `rotate-complete`, with assisted mode's
   `--replace` and `--confirm`), `validate.go` (`validate [--json]`, 0

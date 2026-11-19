@@ -268,6 +268,13 @@ for (const command of [
 }
 inProject("non-ascii-file", { "café/notes.md": "x\n" }, "Bash", { command: "cat café/.env-old" });
 
+// A UNC-shaped store and paths: on POSIX, as recorded here, only names; Windows reads them as
+// UNC paths (internal/agents' TestHookStoreWindowsForms), so TestHookVectors skips these there.
+const UNC_ENV = { ...ENV, XDG_CONFIG_HOME: "\\\\srv\\share\\cfg" };
+for (const path of ["\\\\srv\\share\\cfg\\varlatch\\credentials.json", "\\\\srv\\\\share\\cfg\\varlatch\\credentials.json", "//srv//share/cfg/varlatch/credentials.json"]) {
+  call("unc", "Read", { file_path: path }, UNC_ENV);
+}
+
 // Deep nesting: JSON.parse reads any depth, so a padded event still gets its decision.
 for (const nest of [10_001, 100_000]) {
   for (const command of ["cat .env", "npm test"]) {

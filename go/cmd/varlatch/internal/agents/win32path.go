@@ -14,7 +14,9 @@ import "strings"
 
 func isSep(c byte) bool { return c == '/' || c == '\\' }
 
-// win32Device is a path's device, "C:" or `\\server\share`, and the rest.
+// win32Device is a path's device, "C:" or `\\server\share`, and the rest,
+// as Node.js reads them: after the server any run of separators, then the
+// share (`//srv//share/x` is `\\srv\share` and `/x`).
 func win32Device(p string) (device, rest string) {
 	if len(p) >= 2 && isSep(p[0]) && isSep(p[1]) {
 		// A UNC root: \\server\share.
@@ -24,11 +26,15 @@ func win32Device(p string) (device, rest string) {
 		}
 		if i > 2 && i < len(p) {
 			j := i + 1
-			for j < len(p) && !isSep(p[j]) {
+			for j < len(p) && isSep(p[j]) {
 				j++
 			}
-			if j > i+1 {
-				return `\\` + p[2:i] + `\` + p[i+1:j], p[j:]
+			if j < len(p) {
+				k := j
+				for k < len(p) && !isSep(p[k]) {
+					k++
+				}
+				return `\\` + p[2:i] + `\` + p[j:k], p[k:]
 			}
 		}
 		return "", p
@@ -74,8 +80,8 @@ func win32Normalize(p string) string {
 	switch {
 	case rooted:
 		return device + `\` + tail
-	case tail == "" && device == "":
-		return "."
+	case tail == "":
+		return device + "." // "C:" is "C:.", "" is "."
 	}
 	return device + tail
 }
@@ -83,12 +89,19 @@ func win32Normalize(p string) string {
 // win32Resolve is path.win32.resolve(cwd, p) in a process whose working
 // directory is wd: the paths from right to left until one is absolute
 // with a device; a device-less rooted path takes the device of the path
-// left of it, else the working directory's.
+// left of it, else the working directory's. A drive-relative path on
+// another drive than wd's resolves against that drive's root (`D:rel` from
+// `E:\wd` is `D:\rel`), as Node.js does without a `=D:` variable.
 func win32Resolve(wd, cwd, p string) string {
 	resolvedDevice, resolvedTail, resolvedAbsolute := "", "", false
-	for _, path := range []string{p, cwd, wd} {
+	for i, path := range []string{p, cwd, wd} {
 		if path == "" {
 			continue
+		}
+		if i == 2 && resolvedDevice != "" {
+			if device, rest := win32Device(path); !strings.EqualFold(device, resolvedDevice) && rest != "" && rest[0] == '\\' {
+				path = resolvedDevice + `\`
+			}
 		}
 		device, rest := win32Device(path)
 		absolute := strings.HasPrefix(device, `\\`) || rest != "" && isSep(rest[0])

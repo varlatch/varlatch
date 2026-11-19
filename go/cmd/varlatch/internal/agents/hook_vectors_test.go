@@ -43,6 +43,11 @@ func TestHookVectors(t *testing.T) {
 	for _, raw := range cases {
 		c := raw.(jsjson.Object)
 		id := jsjson.String(c.Value("id"))
+		if onWindows && strings.HasSuffix(id, ".unc") {
+			// Recorded on POSIX, where these are only names; Windows reads
+			// them as UNC paths (TestHookStoreWindowsForms holds that).
+			continue
+		}
 		env := envMap{}
 		for _, m := range c.Value("env").(jsjson.Object) {
 			env[m.Key] = jsjson.String(m.Value)

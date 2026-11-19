@@ -307,11 +307,53 @@ func expandPath(word string, ctx hookContext) string {
 	})
 }
 
-var configVarlatch = regexp.MustCompile(`/\.config/varlatch(/|$)`)
+var (
+	configVarlatch = regexp.MustCompile(`/\.config/varlatch(/|$)`)
+	// configVarlatchFold is the same on Windows, whose file names are
+	// compared without regard to case.
+	configVarlatchFold = regexp.MustCompile(`(?i)/\.config/varlatch(/|$)`)
+)
+
+// windowsLocal is a Windows path without a `\\?\` or `\\.\` prefix, which
+// names the same file (`\\?\UNC\srv\share` is `\\srv\share`).
+func windowsLocal(p string) string {
+	for _, prefix := range []string{`\\?\UNC\`, `\\.\UNC\`} {
+		if len(p) >= len(prefix) && strings.EqualFold(p[:len(prefix)], prefix) {
+			return `\\` + p[len(prefix):]
+		}
+	}
+	for _, prefix := range []string{`\\?\`, `\\.\`} {
+		if strings.HasPrefix(p, prefix) {
+			return p[len(prefix):]
+		}
+	}
+	return p
+}
+
+// inDir is whether path is dir or below it. On Windows names are compared
+// without regard to case, and a `\\?\` or `\\.\` prefix is left out, so that
+// `c:\Cfg\Varlatch\credentials.json` and `\\?\C:\cfg\varlatch\...` are in
+// `C:\cfg\varlatch`; elsewhere byte for byte.
+func inDir(path, dir string) bool {
+	sep := pathSeparator()
+	prefix := dir
+	if !strings.HasSuffix(prefix, sep) {
+		prefix += sep
+	}
+	if !onWindows {
+		return path == dir || strings.HasPrefix(path, prefix)
+	}
+	path, dir, prefix = windowsLocal(path), windowsLocal(dir), windowsLocal(prefix)
+	return strings.EqualFold(path, dir) || len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+}
 
 // isInStore is whether a path is in the credential store.
 func isInStore(path string, ctx hookContext) (bool, error) {
-	if configVarlatch.MatchString(strings.ReplaceAll(path, `\`, "/")) {
+	backstop := configVarlatch
+	if onWindows {
+		backstop = configVarlatchFold
+	}
+	if backstop.MatchString(strings.ReplaceAll(path, `\`, "/")) {
 		return true, nil
 	}
 	expanded := expandPath(path, ctx)
@@ -334,11 +376,7 @@ func isInStore(path string, ctx hookContext) (bool, error) {
 		return false, err
 	}
 	for _, dir := range dirs {
-		prefix := dir
-		if sep := pathSeparator(); !strings.HasSuffix(prefix, sep) {
-			prefix += sep
-		}
-		if abs == dir || strings.HasPrefix(abs, prefix) {
+		if inDir(abs, dir) {
 			return true, nil
 		}
 	}
