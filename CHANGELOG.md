@@ -55,7 +55,13 @@ fixes.
   give varlatchd and PostgreSQL a higher CPU weight in
   `docker-compose.override.yml` (`cpu_shares: 4096`, the value that raises
   the weight under every runtime's conversion), and why the shipped Compose
-  files set none. The weight's effect has not been measured yet.
+  files set none. It now gives one measurement of the weight's effect.
+  [Deploying on Coolify](infra/coolify/README.md#sharing-the-host) explains
+  that Coolify sets the CPU weight of an application it builds itself from
+  the application's CPU shares setting (1024 by default, which gives weight
+  39 on runtimes with the older conversion; set 4096), that a
+  `--cpu-shares` in its custom run options is overridden, and that a
+  Compose resource needs `cpu_shares` in its Compose file.
 
 ## 0.22.0 (2026-11-13)
 

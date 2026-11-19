@@ -283,9 +283,24 @@ services:
 Then run `varlatch setup` again with the public or tailnet ingress, or
 `docker compose up -d` with the external ingress.
 
-**Not measured yet:** how much this setting improves the latency above.
-It is the expected remedy; a measurement will follow, and this section will
-give its result.
+**Measured once (2026-11-19).** The same host and load, with the extra
+writes. The Varlatch server ran in one container that Coolify deployed, so
+its CPU weight came from Coolify's setting
+([Deploying on Coolify](../../infra/coolify/README.md#sharing-the-host)).
+The server's p95 latency at the 50 requests a second:
+
+| CPU weight | Runs | :00 to :09 | :10 to :59 |
+|---|---|---|---|
+| 39 (Coolify's default on that host) | 2 | 1,329 and 1,549 ms | 33 and 31 ms |
+| 157 (`cpu_shares` 4096 on that host) | 1 | 55 ms | 25 ms |
+
+- Coolify's container used the same CPU in those seconds in all three runs.
+- In the runs at weight 39, some requests could not be sent on time, so
+  their figures are the requests' own response times. The run at 157 is
+  measured from each request's scheduled start.
+- The comparison is not fully controlled. In the two runs at 39, the
+  server's Sync Target runs overlapped the first seconds of every minute;
+  in the run at 157 they did not.
 
 - **Raise `postgres` with `varlatchd`.** Every request varlatchd answers
   reads or writes the database, and a weight on varlatchd alone can leave
@@ -305,7 +320,8 @@ give its result.
   | 4096 | 157 | 303 |
 
   Only 4096 is above 100 under both. 2048 would lower Varlatch's priority
-  on an older runtime.
+  on an older runtime. On such a runtime, Coolify's default of 1024 for
+  the containers it deploys gives them weight 39.
 - **Check the weight you get.** Read it from the host, which works whatever
   the image contains (the path is for Docker's systemd cgroup driver, the
   usual one):
