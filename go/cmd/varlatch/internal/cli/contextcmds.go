@@ -244,7 +244,9 @@ func formatStatusHuman(servers []any, repo any) string {
 		}
 		if p, ok := s.Value("probe").(jsjson.Object); ok {
 			bit := "probe: " + jsjson.String(p.Value("state"))
-			if detail := p.Value("detail"); jsjson.Truthy(detail) {
+			if d, sanitized := p.Value("detail").(clientctx.Sanitized); sanitized && d != "" {
+				bit += " (" + string(d) + ")" // a masker made it (RedactOutput still redacts tokens)
+			} else if detail := p.Value("detail"); jsjson.Truthy(detail) {
 				bit += " (" + shownValue(jsjson.String(detail)) + ")"
 			}
 			bits = append(bits, bit)

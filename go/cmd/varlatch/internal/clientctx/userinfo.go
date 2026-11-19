@@ -246,25 +246,30 @@ func atSignAt(s []byte, i int) int {
 // MaskURLInValue is the layer for one value: an argument, a command, a
 // topic or an approval id a failure echoes, or a string a server's answer,
 // the tier cache or stored metadata gives output. A value that is exactly
-// one URL (it starts with a scheme followed by "//", a special scheme, or
-// "//", and holds no space) is masked precisely with MaskUserinfo, so it
-// keeps its bytes when it has no user name or password (the backslash-path
-// values). Any other value holding an at-sign in any form (other than one
-// right after a [redacted] already there) goes through the whole-text
-// fail-safe, MaskUserinfoInText: free text may be over-masked,
-// never under-masked. Any other value is kept as it is.
+// one URL is masked precisely with MaskUserinfo: it has a URL's shape (it
+// starts with a scheme followed by "//", a special scheme, or "//", and
+// holds no space), it parses as a URL, and nothing after its authority
+// holds an at-sign in any form. Any other value holding an at-sign goes
+// through the whole-text fail-safe, MaskUserinfoInText: free text may be
+// over-masked, never under-masked. The value's content never exempts it;
+// text a masker already made is marked by its type (Sanitized) instead,
+// where the caller knows it. Any other value is kept as it is.
 func MaskURLInValue(v string) string {
 	if isOneURL(v) {
 		return MaskUserinfo(v)
 	}
-	// Text whose every at-sign follows a [redacted] this masker wrote (a
-	// refusal that names a masked URL) is already masked: kept, not masked
-	// again.
-	if HasAtSign(strings.ReplaceAll(v, "[redacted]@", "")) {
+	if HasAtSign(v) {
 		return MaskUserinfoInText(v)
 	}
 	return v
 }
+
+// Sanitized is text a masker made, every URL in it already shown without
+// its user name and password (an API client's refusal, built with
+// MaskUserinfo). The output fail-safes pass it as it is, masking it again
+// only for tokens, so it is never masked twice; nothing else is ever
+// trusted for what it contains.
+type Sanitized string
 
 // leadingScheme matches a URL scheme and its colon at the start of a value.
 var leadingScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
@@ -276,16 +281,31 @@ func isOneURL(v string) bool {
 	if strings.ContainsRune(v, ' ') {
 		return false
 	}
-	if strings.HasPrefix(v, "//") {
-		return true
-	}
-	loc := leadingScheme.FindStringIndex(v)
-	if loc == nil {
+	if _, ok := whatwg.ParseURL(v); !ok && !strings.HasPrefix(v, "//") {
 		return false
 	}
-	if specialSchemes[strings.ToLower(v[:loc[1]-1])] {
-		return true
+	special := false
+	if !strings.HasPrefix(v, "//") {
+		loc := leadingScheme.FindStringIndex(v)
+		if loc == nil {
+			return false
+		}
+		special = specialSchemes[strings.ToLower(v[:loc[1]-1])]
+		rest := strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(v[loc[1]:min(len(v), loc[1]+16)])
+		if !special && !strings.HasPrefix(rest, "//") {
+			return false
+		}
 	}
-	rest := strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(v[loc[1]:min(len(v), loc[1]+16)])
-	return strings.HasPrefix(rest, "//")
+	// Nothing after the authority may hold an at-sign: a query or path
+	// naming a second, credentialed URL takes the fail-safe.
+	start, _ := authorityStart(v)
+	delims := "/?#"
+	if special {
+		delims = "/\\?#"
+	}
+	end := len(v)
+	if i := strings.IndexAny(v[start:], delims); i >= 0 {
+		end = start + i
+	}
+	return !HasAtSign(v[end:])
 }

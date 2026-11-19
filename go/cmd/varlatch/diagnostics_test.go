@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -45,8 +46,11 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 		"http://127.0.0.1:2":            "the credential contains a character that is not allowed in an HTTP header",
 		"http://127.0.0.1:3":            "the credential contains a character that is not allowed in an HTTP header",
 		"http://[redacted]@127.0.0.1:2": "http://[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
-		"http://[redacted]@[::1":        "http://[redacted]@[::1/v1/meta: can't be parsed as a URL",
-		"http:/[redacted]@[::1":         "http:/[redacted]@[::1/v1/meta: can't be parsed as a URL",
+		// A server that does not parse is not one URL: the JSON document's
+		// fail-safe masks it as text, so both read the same. Each refusal is
+		// the client's own, already masked (clientctx.Sanitized), and kept as
+		// it is.
+		"http:[redacted]@[::1": "http://[redacted]@[::1/v1/meta: can't be parsed as a URL\nhttp:/[redacted]@[::1/v1/meta: can't be parsed as a URL",
 	}
 	// Nothing printed may hold a token or a URL's password.
 	leaks := func(text string) bool {
@@ -73,11 +77,11 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Servers) != len(want) || stderr != "" {
+	if len(doc.Servers) != len(store["servers"].(map[string]map[string]string)) || stderr != "" {
 		t.Fatalf("%d servers, stderr %q", len(doc.Servers), stderr)
 	}
 	for _, s := range doc.Servers {
-		if s.Probe.State != "unreachable" || s.Probe.Detail != want[s.Server] {
+		if s.Probe.State != "unreachable" || !slices.Contains(strings.Split(want[s.Server], "\n"), s.Probe.Detail) {
 			t.Errorf("%s: %s (%s), want unreachable (%s)", s.Server, s.Probe.State, s.Probe.Detail, want[s.Server])
 		}
 	}
@@ -88,9 +92,18 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	if leaks(human) || stderr != "" {
 		t.Errorf("status --probe shows a credential:\n%s%s", human, stderr)
 	}
-	for server := range want {
+	// The human format names each server precisely and keeps each refusal
+	// as the client wrote it.
+	for _, server := range []string{"http://127.0.0.1:2", "http://127.0.0.1:3", "http://[redacted]@127.0.0.1:2", "http://[redacted]@[::1", "http:/[redacted]@[::1"} {
 		if !strings.Contains(human, server+"  (") {
 			t.Errorf("the human format has no line for %s:\n%s", server, human)
+		}
+	}
+	for _, details := range want {
+		for _, detail := range strings.Split(details, "\n") {
+			if !strings.Contains(human, "probe: unreachable ("+detail+")") {
+				t.Errorf("the human format does not keep the refusal %q:\n%s", detail, human)
+			}
 		}
 	}
 }

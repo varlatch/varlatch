@@ -352,7 +352,7 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 			_, _ = w.Write([]byte(`{"serverVersion":"0.22.0","apiMajor":1,"capabilities":["identity.whoami"]}`))
 		case "/v1/me":
 			_, _ = w.Write([]byte(`{"identity":{"id":"idn_1","name":"see vlt_svc_nestedCANARY here","kind":"human","email":null},"organization":null,` +
-				`"credential":{"id":"cred_1","name":"vlt_cli_bearerCANARY","kind":"cli","expiresAt":null},"listener":"ordinary",` +
+				`"credential":{"id":"cred_1","name":"vlt_cli_bearerCANARY","kind":"https://u:hunter2pass[redacted]@k.example","expiresAt":null},"listener":"ordinary",` +
 				`"tailnet":{"recognized":true,"tailnet":"t.ts.net","nodeId":"n1","tags":["tag:vlt_cli_tagCANARY"]}}`))
 		case "/v1/organizations/acme/projects/web/environments":
 			_, _ = w.Write([]byte(`{"items":[{"name":"vlt_cli_nameCANARY","tier":"https://u:hunter2pass@h.example","kind":"vlt_svc_kindCANARY"},{"name":"dev","tier":"development","kind":"shared"}]}`))
@@ -374,8 +374,9 @@ func TestOutputNeverShowsAToken(t *testing.T) {
 		args []string
 		want []string // what stdout must hold
 	}{
-		{nil, []string{"whoami", "--json"}, []string{`"name": "[redacted]"`, `"name": "see [redacted] here"`, `"tag:[redacted]"`}},
-		{nil, []string{"whoami"}, []string{"Identity      see [redacted] here (human, idn_1)", "Credential    [redacted] (cli, cred_1)", "tags tag:[redacted]"}},
+		// A password ending in the literal "[redacted]" is masked like any other.
+		{nil, []string{"whoami", "--json"}, []string{`"name": "[redacted]"`, `"name": "see [redacted] here"`, `"tag:[redacted]"`, `"kind": "https://[redacted]@k.example"`}},
+		{nil, []string{"whoami"}, []string{"Identity      see [redacted] here (human, idn_1)", "Credential    [redacted] (https://[redacted]@k.example, cred_1)", "tags tag:[redacted]"}},
 		{nil, []string{"env", "list", "--json"}, []string{`"name": "[redacted]"`, `"tier": "https://[redacted]@h.example"`, `"kind": "[redacted]"`}},
 		{nil, []string{"env", "list"}, []string{"[redacted]  (https://[redacted]@h.example, [redacted])", "dev  (development, shared, selected)"}},
 		{nil, []string{"status", "--json"}, []string{`"name": "[redacted]"`}},
