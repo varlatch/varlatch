@@ -789,13 +789,14 @@ func (r *Run) runMediated(run mediatedRun) error {
 		placeholdersByItem[name] = token
 		placeholders[token] = name
 	}
+	// One client for every exercise, as runMediated's exerciseApi: the
+	// Broker exercises concurrently, and the client's one maintenance
+	// budget is shared by the requests in flight together.
 	retry := exerciseMaintenance
+	exerciseAPI := apiclient.New(apiclient.Options{Server: run.server, Token: run.token, UserAgent: r.UserAgent(), MaintenanceRetry: &retry, Env: r.Env})
 	capabilityID := jsjson.String(run.cap.id)
 	diagnostics := r.newBrokerDiagnostics()
 	exercise := func(_ context.Context, host string, port int, placements []broker.Placement) (broker.Exercised, error) {
-		// A client per exercise: the Broker exercises concurrently, and each
-		// rides out maintenance for at most exerciseMaintenance.
-		exerciseAPI := apiclient.New(apiclient.Options{Server: run.server, Token: run.token, UserAgent: r.UserAgent(), MaintenanceRetry: &retry, Env: r.Env})
 		list := make([]any, len(placements))
 		for i, p := range placements {
 			list[i] = jsjson.Object{{Key: "item", Value: p.Item}, {Key: "target", Value: p.Target}}
