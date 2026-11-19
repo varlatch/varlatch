@@ -618,9 +618,19 @@ comes. `verify-release`, which the installers run, is Go's own.
   - **Finding the command.** As libuv does: in the command's own `PATH` on
     POSIX; on Windows, `.com` or `.exe` only, a `.bat` or `.cmd` file
     refused (decision 4, `TestLookCommandAsLibuv`).
-  - **Not built yet.** `--strict` (5.4f), `--redact` outside assisted mode
-    (5.4c), `--agent-safe` and a run inside an agent-safe run (5.5b) refuse
-    with the CLI's not-built message (64).
+  - **`--strict` (slice 5.4f, `strictRun.ts`).** One strict retrieval
+    (`POST .../retrievals`, retried once after a server failure or a lost
+    connection) gives the values, the manifest and the Contract Revision.
+    The environment the command would receive is resolved and validated
+    against that revision (`lib/contract`'s semantics); `--allow-inherited`
+    accepts a parent's value, validated, and must name Contract items;
+    `--omit` of a required item is a violation. Every violation is printed
+    at once, names, classes and reasons, never a value, and the run ends
+    with 78 before the command starts (`5.4f-strict.json`, one case per
+    kind). A server without strict retrieval gets 78, never a default run.
+  - **Not built yet.** `--redact` outside assisted mode (5.4c),
+    `--agent-safe` (with `--strict` too) and a run inside an agent-safe run
+    (5.5b) refuse with the CLI's not-built message (64).
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden

@@ -22,7 +22,8 @@ import (
 // VARLATCH_RUN_CONTEXT; --omit leaves named items out; in assisted mode the
 // output is masked by internal/matcher and a Secret too short to mask stops
 // the run (78) unless the human allowed it (--allow-unmasked, outside
-// assisted mode). --strict (5.4f), --redact outside assisted mode (5.4c),
+// assisted mode); --strict (5.4f, strictrun.go) validates the whole
+// environment against the Contract first. --redact outside assisted mode (5.4c),
 // --agent-safe and a run inside an agent-safe run (5.5b) say they are not
 // built yet.
 
@@ -237,9 +238,6 @@ func runCommand(r *Run) error {
 	if redact && !r.Assisted.On && !agentSafe {
 		return runNotBuilt("--redact outside assisted mode", "5.4c")
 	}
-	if hasArg(pre, "--strict") {
-		return runNotBuilt("--strict", "5.4f")
-	}
 	if agentSafe {
 		return runNotBuilt("--agent-safe", "5.5b")
 	}
@@ -254,6 +252,9 @@ func runCommand(r *Run) error {
 	c, err := api.get()
 	if err != nil {
 		return err
+	}
+	if hasArg(pre, "--strict") {
+		return r.strictRun(ctx, c, pre, command, commandArgs, omit, allowUnmasked, assistedRedaction, redact)
 	}
 	return r.defaultRun(ctx, c, cwd, pre, command, commandArgs, omit, allowUnmasked, assistedRedaction, redact)
 }
