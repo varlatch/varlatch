@@ -68,7 +68,11 @@ func (r *Run) resolveArgs(cwd string, args []string) (*clientctx.Context, error)
 // or made the same. Every --json document goes through it;
 // TestEveryWriteGoesThroughTheFailSafe fails on any other way to stdout.
 func (r *Run) printJSON(doc any) error {
-	return r.outJSON(redactJSON(doc, r.inFlight...))
+	redacted, err := redactJSON(doc, r.inFlight...)
+	if err != nil {
+		return err
+	}
+	return r.outJSON(redacted)
 }
 
 // printValue writes JSON.stringify(v, null, 2) of any value a server sent

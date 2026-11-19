@@ -307,7 +307,7 @@ function expectedContext(items) {
 const delivered = { server: "delivered", delivery: "varlatch" };
 const noValueIn = (text) => [SECRET, PARENT_COPY, INHERITED, PLAIN].every((v) => !text.includes(v));
 
-{
+if (kit.supports("run-export-context")) {
   const r = await record(admin, ["--export-context"], {
     RT_SECRET: PARENT_COPY,
     RT_UNSTORED: INHERITED,
@@ -333,9 +333,9 @@ const noValueIn = (text) => [SECRET, PARENT_COPY, INHERITED, PLAIN].every((v) =>
     canonical(context) === canonical(expected),
     `${r.received?.context} expected ${canonical(expected)}`,
   );
-  check("client-runtime.export-context-context-holds-no-value", "--export-context: the context holds no value", r.received?.context !== null && noValueIn(r.received.context));
+  check("client-runtime.export-context-context-holds-no-value", "--export-context: the context holds no value", typeof r.received?.context === "string" && noValueIn(r.received.context));
 }
-if (identities) {
+if (identities && kit.supports("run-export-context")) {
   const r = await record(readerWs, ["--export-context"], { RT_SECRET: PARENT_COPY });
   check("client-runtime.export-context-identity-without-secret-reveal", "--export-context: an identity without secret.reveal still starts the child", r.code === 0 && r.received !== null, r.out);
   check("client-runtime.export-context-withheld-secret-left-parent", "--export-context: a withheld Secret is left to the parent's copy", r.received?.RT_SECRET === PARENT_COPY);
@@ -355,9 +355,9 @@ if (identities) {
     canonical(context) === canonical(expected),
     `${r.received?.context} expected ${canonical(expected)}`,
   );
-  check("client-runtime.export-context-withheld-run-context-holds-no", "--export-context: the withheld run's context holds no value", r.received?.context !== null && noValueIn(r.received.context));
+  check("client-runtime.export-context-withheld-run-context-holds-no", "--export-context: the withheld run's context holds no value", typeof r.received?.context === "string" && noValueIn(r.received.context));
 }
-if (identities) {
+if (identities && kit.supports("run-export-context")) {
   // The disclosure check also reads the audit export.
   const audited = kit.runs("client-runtime.export-context-run-cannot-export-context");
   let before = [];
@@ -484,19 +484,21 @@ async function startApp(ws) {
   const compiled = await compile();
   check("client-runtime.types-module-application-using-compile-under", "types: the module and an application using it compile under strict settings", compiled.code === 0 && compiled.out === "", compiled.out);
   const r = await startApp(admin);
-  check("client-runtime.types-application-starts-under-export-context", "types: the application starts under --export-context", r.code === 0 && r.report?.ok === true, r.out);
+  check("client-runtime.types-application-starts-under-export-context", "types: the application starts under --export-context", r.code === 0 && r.report?.ok === true, r.out, { after: r });
   check(
     "client-runtime.types-accessor-returns-typed-values-number", "types: the accessor returns typed values (number, boolean, enum)",
     canonical(r.report?.values) === canonical({ PORT: 8080, DEBUG: true, LEVEL: "warn" }) &&
       canonical(r.report?.types) === canonical({ PORT: "number", DEBUG: "boolean", LEVEL: "string", RT_SECRET: "string" }),
     JSON.stringify(r.report),
+    { after: r },
   );
   check(
     "client-runtime.types-accessor-reads-exported-context-same", "types: the accessor reads the exported context of the same revision, without warnings",
     r.report?.context === "exported" && r.report?.warnings?.length === 0 && r.report?.generatedFrom?.revisionId === active.id,
     JSON.stringify(r.report),
+    { after: r },
   );
-  check("client-runtime.types-application-output-holds-no-secret", "types: the application's output holds no Secret", !r.out.includes(SECRET));
+  check("client-runtime.types-application-output-holds-no-secret", "types: the application's output holds no Secret", r.report !== null && !r.out.includes(SECRET), r.out, { after: r });
 }
 
 // --- varlatch types for Python, and the module it writes -------------------------------
@@ -557,8 +559,9 @@ print(json.dumps({
       canonical(report?.values) === canonical({ PORT: 8080, DEBUG: true, LEVEL: "warn" }) &&
       canonical(report?.types) === canonical({ PORT: "int", DEBUG: "bool", LEVEL: "str", RT_SECRET: "str" }),
     r.out,
+    { after: r },
   );
-  check("client-runtime.types-python-output-holds-no-secret", "types (Python): the application's output holds no Secret", r.stdout.length > 0 && !r.out.includes(SECRET));
+  check("client-runtime.types-python-output-holds-no-secret", "types (Python): the application's output holds no Secret", r.stdout.length > 0 && !r.out.includes(SECRET), r.out, { after: r });
 }
 
 // A changed Contract: --check fails, and the old module reports stale types at runtime.
@@ -571,6 +574,7 @@ active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Adde
     "client-runtime.types-old-module-warns-types-stale", "types: the old module warns that its types are stale for this run",
     r.code === 0 && r.report?.ok === true && r.report?.warnings?.length === 1 && /types are stale/.test(r.report.warnings[0]),
     r.out,
+    { after: r },
   );
   const wrote = await admin.cli(["types", "--out", OUT]);
   const current = await admin.cli(["types", "--out", OUT, "--check"]);
@@ -586,6 +590,7 @@ active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Adde
       fresh.report?.warnings?.length === 0 &&
       fresh.report?.generatedFrom?.revisionId === active.id,
     fresh.out,
+    { after: fresh },
   );
 }
 
@@ -597,6 +602,7 @@ if (identities) {
     "client-runtime.types-required-secret-withheld-server-one", "types: a required Secret withheld by the server is one ConfigError issue",
     r.code === 3 && r.report?.ok === false && issues.length === 1 && issues[0]?.name === "RT_SECRET" && /withheld/.test(issues[0]?.reason ?? ""),
     r.out,
+    { after: r },
   );
 }
 
@@ -611,6 +617,7 @@ await setValue("LEVEL", BAD.LEVEL);
     "client-runtime.types-invalid-values-throw-one-configerror", "types: invalid values throw one ConfigError listing every item",
     r.code === 3 && r.report?.ok === false && r.report?.name === "ConfigError" && canonical(names) === canonical(["DEBUG", "LEVEL", "PORT"]),
     r.out,
+    { after: r },
   );
   check(
     "client-runtime.types-error-names-items-reasons-never", "types: the error names items and reasons, never a value",
@@ -618,6 +625,7 @@ await setValue("LEVEL", BAD.LEVEL);
       Object.values(BAD).every((v) => !r.out.includes(v)) &&
       !r.out.includes(SECRET),
     r.out,
+    { after: r },
   );
 }
 await setValue("PORT", "8080");
@@ -700,7 +708,9 @@ if (kit.supports("scan")) {
   if (kit.group("audit-export")) {
     const { ndjson, events } = await auditEvents();
     const runDisclosures = events.filter((e) => e.eventType === "secret.disclosed" && e.resource?.projectId === projectId && e.metadata?.purpose === undefined);
-    check("client-runtime.run-disclosures-audited-without-purpose", "run disclosures are audited without a purpose", runDisclosures.length > 0);
+    // The runs disclosed nothing when the CLI has no run (the Go CLI before
+    // slice 5.4b): no verdict then, so the runner reports client-lacks.
+    if (kit.supports("run")) check("client-runtime.run-disclosures-audited-without-purpose", "run disclosures are audited without a purpose", runDisclosures.length > 0);
     check("client-runtime.audit-export-holds-no-value", "the audit export holds no value", noValueIn(ndjson) && Object.values(BAD).every((v) => !ndjson.includes(v)));
   }
   // The target's `logs` operation: the server's own logs, whatever runs it.
