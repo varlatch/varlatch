@@ -2,6 +2,7 @@
 import http from "node:http";
 import https from "node:https";
 import net, { type AddressInfo } from "node:net";
+import { TLSSocket } from "node:tls";
 import zlib from "node:zlib";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -423,6 +424,58 @@ describe("limits at their boundaries (tests 25 and 26)", () => {
     const r2 = await agent((await broker(reset.port)).broker, `https://127.0.0.1:${reset.port}/`);
     expect(r2.complete).toBe(false);
     expect(r2.body.toString()).toBe("data ");
+  });
+});
+
+describe("a destination's reset after a body without a declared length", () => {
+  // Node.js's server always frames what it writes, so the destination here
+  // writes raw bytes over TLS: a body ended by the connection's close, then
+  // a TCP reset instead of that close.
+  async function resetting(head: string, then: (raw: net.Socket) => void) {
+    const server = net.createServer((raw) => {
+      raw.on("error", () => {});
+      const socket = new TLSSocket(raw, { isServer: true, key: tls.key, cert: tls.cert });
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.write(head);
+        setTimeout(() => then(raw), 100);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanups.push(() => server.close());
+    return (server.address() as AddressInfo).port;
+  }
+
+  it("is an abort: no terminating chunk, nothing held released, reported as aborted", async () => {
+    const prefix = SECRET.slice(0, 12);
+    const port = await resetting(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\ndata ${prefix}`, (raw) => raw.resetAndDestroy());
+    const { broker: b, events } = await broker(port);
+    const r = await agent(b, `https://127.0.0.1:${port}/`);
+    expect(r.status).toBe(200);
+    expect(r.complete).toBe(false);
+    expect(r.raw.includes(Buffer.from(prefix))).toBe(false);
+    expect(events).toContainEqual({ kind: "aborted", reason: "the destination's response failed mid-stream" });
+    expect(events.some((e) => e.kind === "incomplete-prefix")).toBe(false);
+    expect(b.heldValues()).toBe(0);
+  });
+
+  it("an abort after the headers is reported once", async () => {
+    const port = await resetting(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nstart`, () => {});
+    const { broker: b, events } = await broker(port, { limits: { idleMs: 300 } });
+    const r = await agent(b, `https://127.0.0.1:${port}/`);
+    expect(r.complete).toBe(false);
+    expect(events.filter((e) => e.kind === "aborted")).toEqual([{ kind: "aborted", reason: "no data from the destination for 0.3 seconds" }]);
+  });
+
+  it("negative control, same body: a clean close ends it, the held prefix released as the clean end it is", async () => {
+    const prefix = SECRET.slice(0, 12);
+    const port = await resetting(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\ndata ${prefix}`, (raw) => raw.end());
+    const { broker: b, events } = await broker(port);
+    const r = await agent(b, `https://127.0.0.1:${port}/`);
+    expect(r.complete).toBe(true);
+    expect(r.body.toString()).toBe(`data ${prefix}`);
+    expect(events).toContainEqual({ kind: "incomplete-prefix", item: "API_KEY", length: prefix.length });
+    expect(events.some((e) => e.kind === "aborted")).toBe(false);
   });
 });
 
