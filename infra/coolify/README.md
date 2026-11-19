@@ -185,7 +185,22 @@ for CPU in those seconds.
 [Sharing the host with other workloads](../../docs/self-hosting/requirements.md#sharing-the-host-with-other-workloads)
 has the measurements and the CPU weight to set.
 
-A Coolify resource deploys the Compose file it points at (its Docker
+**An application Coolify builds itself** (from a Dockerfile, an image or
+Nixpacks, one container): Coolify sets the container's CPU weight from the
+application's CPU shares setting (Resource Limits in the dashboard,
+`limits_cpu_shares` in the API), 1024 by default.
+- To give such a container priority, set its CPU shares to **4096**.
+- A `--cpu-shares` in the application's custom Docker run options does not
+  take effect: Coolify's own setting overrides it.
+- On runtimes with the older linear conversion (the table on the
+  requirements page), Coolify's default of 1024 gives weight **39**, below
+  the 100 that a container that sets nothing gets. Every such application
+  runs at that weight unless its setting is changed.
+- Check the weight you get from the host, as the requirements page shows.
+
+**A Compose resource**, the way this guide deploys Varlatch: Coolify does
+not apply its resource limits, CPU shares included, to an application
+deployed from a Compose file. It deploys the file it points at (its Docker
 Compose Location), and the repository's file sets no CPU weight. On a small
 host shared with Coolify, there are three choices:
 - point the resource at a Compose file of your own that adds `cpu_shares`
@@ -196,7 +211,8 @@ host shared with Coolify, there are three choices:
 - give the host enough cores that Coolify's minute work does not take
   Varlatch's.
 
-The weight's effect on latency has not been measured yet.
+The requirements page gives one measurement of the weight's effect on
+latency, at weights 39 and 157.
 
 ## Adopting an existing installation
 
