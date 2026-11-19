@@ -419,10 +419,13 @@ comes. `verify-release`, which the installers run, is Go's own.
   (held equal to the source both ways by `apps/cli/test/cli-inventory.test.ts`),
   each command's slice, the precedence chains and the command-specific exit
   statuses. `TestInventoryCoverage` checks that the command table agrees
-  with it and that everything of a built slice (`built`) has a recorded
+  with it and that everything of a built slice has a recorded
   case or a vector: a built command, each of its options, each variable,
   chain and exit status. Missing coverage fails. `TestClientLacksNotStale`
-  checks `scripts/conformance/client-go.json` against `built`.
+  checks `scripts/conformance/client-go.json` against the built slices.
+  Which slices are built is `testdata/built/`: one empty file per built
+  slice, named for it (`5.2`), so pull requests that build different slices
+  never edit the same line.
 - `internal/agents/`: `varlatch agents guide` and `agents install`
   (slice 5.1d), a port of `apps/cli/src/agents` (`install.ts`, `files.ts`,
   `toml.ts`, `mcpConfig.ts`, `skill.ts` and the files `guardrails.ts`

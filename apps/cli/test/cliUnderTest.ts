@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 /**
  * The CLI a process test runs (internal docs/design/go-cli.md, decision 3):
@@ -14,10 +14,16 @@ export function cliCommand(bundle: string, args: string[]): [string, string[]] {
   return go ? [go, args] : [process.execPath, [bundle, ...args]];
 }
 
-/** The Go CLI's inventory: which slices are built, and the slice that builds each command. */
-const inventory = JSON.parse(readFileSync(new URL("../../../go/cmd/varlatch/testdata/cli-inventory.json", import.meta.url), "utf8")) as {
-  built: string[];
-  commands: Record<string, { slice: string }>;
+/**
+ * The Go CLI's inventory: the slice that builds each command, and which
+ * slices are built (go/cmd/varlatch/testdata/built/, one empty file per built
+ * slice, so pull requests that build different slices never edit one line).
+ */
+const inventory = {
+  ...(JSON.parse(readFileSync(new URL("../../../go/cmd/varlatch/testdata/cli-inventory.json", import.meta.url), "utf8")) as {
+    commands: Record<string, { slice: string }>;
+  }),
+  built: readdirSync(new URL("../../../go/cmd/varlatch/testdata/built/", import.meta.url)),
 };
 
 /**
