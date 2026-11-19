@@ -27,9 +27,27 @@ import (
 // A Compose installation's host commands are the TypeScript CLI's
 // (decision 11): `--dir` names one, and is refused with the command to use.
 
-// adminUsage is the usage of the `admin` forms the Go CLI runs.
-const adminUsage = `Usage: varlatch admin backup run [--json] | varlatch admin backup status | varlatch admin backup test-bucket [--json] | varlatch admin backup restore --in <archive> [--backup-key-file <file>] | varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] | varlatch admin unfreeze --org <slug> --confirm <slug> [--json] | varlatch admin outbound check [--allow <value>] [--org <organization>] [--json] | varlatch admin maintenance begin --ttl <duration> | varlatch admin maintenance end <lease id> | varlatch admin maintenance status
-Each also takes --config <file>, the installation's varlatchd.conf (default /etc/varlatch/varlatchd.conf).`
+// adminUsage is the usage of the `admin` forms the Go CLI runs: what
+// `varlatch help admin` and `varlatch admin --help` print (an accepted
+// difference, go/README.md: the TypeScript usage is a Compose
+// installation's), and what a usage error adds.
+const adminUsage = `Usage:
+  varlatch admin backup run [--json]
+  varlatch admin backup status
+  varlatch admin backup test-bucket [--json]
+  varlatch admin backup restore --in <archive> [--backup-key-file <file>]
+  varlatch admin security reset --org <organization> (--control <name>... | --all) [--json]
+  varlatch admin unfreeze --org <slug> --confirm <slug> [--json]
+  varlatch admin outbound check [--allow <value>] [--org <organization>] [--json]
+  varlatch admin maintenance begin --ttl <duration>
+  varlatch admin maintenance end <lease id>
+  varlatch admin maintenance status
+               (a Go installation's host commands: each runs varlatchd admin with the same words on this host,
+                as root; each also takes --config <file>, the installation's varlatchd.conf, default
+                /etc/varlatch/varlatchd.conf. A Compose installation's are the TypeScript CLI's, varlatch-ts)`
+
+// AdminHelp is adminUsage, for the transcripts' accepted difference.
+const AdminHelp = adminUsage
 
 // adminForm is one `varlatch admin` form: its words, the options it takes
 // (with a value or not), and whether varlatchd always answers it in JSON.
@@ -145,17 +163,19 @@ func composeRefusal(r *Run) error {
 }
 
 // findVarlatchd is the varlatchd the host commands run: the one installed
-// beside this varlatch (install.sh --server puts both in one directory),
-// else the first on the run's PATH.
-func findVarlatchd(pathList string) (string, error) {
+// beside this varlatch (install.sh --server puts both in one directory;
+// self is this executable, a symbolic link to it followed), else the first
+// on pathList. As root (root), one found on pathList must be one only
+// root can change, else it is refused (*unsafeVarlatchd): a PATH entry an
+// unprivileged account can write must not get its program run as root.
+func findVarlatchd(self, pathList string, root bool) (string, error) {
 	name := "varlatchd"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	if self, err := os.Executable(); err == nil {
+	if self != "" {
 		if real, err := filepath.EvalSymlinks(self); err == nil {
-			beside := filepath.Join(filepath.Dir(real), name)
-			if info, err := os.Stat(beside); err == nil && info.Mode().IsRegular() {
+			if beside := filepath.Join(filepath.Dir(real), name); isExecutableFile(beside) {
 				return beside, nil
 			}
 		}
@@ -165,11 +185,112 @@ func findVarlatchd(pathList string) (string, error) {
 			continue // as exec.LookPath, never the working directory
 		}
 		candidate := filepath.Join(dir, name)
-		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode().Perm()&0o111 != 0) {
+		if !isExecutableFile(candidate) {
+			continue
+		}
+		if !root {
 			return candidate, nil
 		}
+		// The file, the directory it is in, and the PATH entry that led
+		// to it (which may hold a symbolic link to it): whoever can write
+		// any of them chooses what runs. The file run is the one checked.
+		real, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			return "", &unsafeVarlatchd{path: candidate, why: "it cannot be resolved"}
+		}
+		for _, p := range []string{real, filepath.Dir(real), dir} {
+			if why := onlyRootCanChange(p); why != "" {
+				return "", &unsafeVarlatchd{path: p, why: why}
+			}
+		}
+		return real, nil
 	}
 	return "", errors.New("varlatchd not found")
+}
+
+// unsafeVarlatchd is findVarlatchd's refusal of a varlatchd on PATH, as
+// root: path (the program or a directory on the way to it) and why.
+type unsafeVarlatchd struct{ path, why string }
+
+func (e *unsafeVarlatchd) Error() string { return e.path + " " + e.why }
+
+// isExecutableFile is a regular file this system would run: on Unix, with
+// an execute bit.
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode().Perm()&0o111 != 0)
+}
+
+// onlyRootCanChange is why root must not trust path ("" when it may): it
+// is writable by its group or by others, or it is not owned by root.
+func onlyRootCanChange(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "cannot be checked"
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return "is writable by its group or by others"
+	}
+	if uid, ok := fileOwner(info); ok && uid != 0 {
+		return "is not owned by root"
+	}
+	return ""
+}
+
+// asRoot is whether this process runs as root (never on Windows, where
+// os.Geteuid is -1); a variable so the tests can be root.
+var asRoot = func() bool { return os.Geteuid() == 0 }
+
+// locateVarlatchd is findVarlatchd for this run, with its refusals as the
+// command's: 69 when there is none, 78 when root may not run the one on
+// PATH. prefix names the command ("varlatch admin").
+func (r *Run) locateVarlatchd(prefix string) (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		self = ""
+	}
+	path, err := findVarlatchd(self, r.Getenv("PATH"), asRoot())
+	var unsafe *unsafeVarlatchd
+	switch {
+	case err == nil:
+		return path, nil
+	case errors.As(err, &unsafe):
+		return "", Fail(prefix+": not running the varlatchd on PATH as root: "+Printable(unsafe.path)+" "+unsafe.why+"; as root, the host commands run the varlatchd installed beside this varlatch, or one on PATH that only root can change", ExitConfig)
+	default:
+		return "", Fail(prefix+": no varlatchd beside this varlatch or on PATH; the host commands run a Go installation's varlatchd, so run this on the installation's host (install.sh --server installs both)", ExitUnavailable)
+	}
+}
+
+// varlatchdEnviron is the run's environment for varlatchd, without the
+// credentials a varlatch run may hold in VARLATCH_* variables: no fronted
+// form reads them, so varlatchd never gets them.
+func varlatchdEnviron(r *Run) []string {
+	var out []string
+	for _, kv := range environ(r) {
+		name, _, _ := strings.Cut(kv, "=")
+		if isCredentialVariable(name) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// isCredentialVariable is whether name is a VARLATCH_* variable that holds
+// a credential: VARLATCH_TOKEN, VARLATCH_OIDC_TOKEN,
+// VARLATCH_KEK_PASSPHRASE and any other named for a token, passphrase,
+// password, secret, credential or key (Windows names in any case).
+func isCredentialVariable(name string) bool {
+	upper := strings.ToUpper(name)
+	if !strings.HasPrefix(upper, "VARLATCH_") {
+		return false
+	}
+	for _, word := range []string{"TOKEN", "PASSPHRASE", "PASSWORD", "SECRET", "CREDENTIAL"} {
+		if strings.Contains(upper, word) {
+			return true
+		}
+	}
+	return strings.HasSuffix(upper, "_KEY")
 }
 
 // runVarlatchd runs `varlatchd args... [--config file]` and shows what it
@@ -177,15 +298,15 @@ func findVarlatchd(pathList string) (string, error) {
 // fail-safe (RedactValue), any other output and every line on stderr
 // through the fail-safe. Its exit status is the command's.
 func (r *Run) runVarlatchd(form adminForm, args []string, config string) error {
-	path, err := findVarlatchd(r.Getenv("PATH"))
+	path, err := r.locateVarlatchd("varlatch admin")
 	if err != nil {
-		return Fail("varlatch admin: no varlatchd beside this varlatch or on PATH; the host commands run a Go installation's varlatchd, so run this on the installation's host (install.sh --server installs both)", ExitUnavailable)
+		return err
 	}
 	if config != "" {
 		args = append(args, "--config", config)
 	}
 	cmd := exec.Command(path, args...)
-	cmd.Env = environ(r)
+	cmd.Env = varlatchdEnviron(r)
 	// What varlatchd prints is read whole, then shown through the
 	// fail-safe below: nothing of it reaches this process's streams as it
 	// is.

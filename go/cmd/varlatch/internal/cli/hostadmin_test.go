@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -27,6 +28,16 @@ func TestMain(m *testing.M) {
 		dir := filepath.Dir(os.Args[0])
 		args, _ := json.Marshal(os.Args[1:])
 		_ = os.WriteFile(filepath.Join(dir, "args.json"), args, 0o644)
+		// The names of the VARLATCH_* variables it was given, never a value.
+		var names []string
+		for _, kv := range os.Environ() {
+			if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(strings.ToUpper(name), "VARLATCH_") {
+				names = append(names, name)
+			}
+		}
+		slices.Sort(names)
+		envNames, _ := json.Marshal(names)
+		_ = os.WriteFile(filepath.Join(dir, "env.json"), envNames, 0o644)
 		out, _ := os.ReadFile(filepath.Join(dir, "stdout"))
 		errText, _ := os.ReadFile(filepath.Join(dir, "stderr"))
 		_, _ = os.Stdout.Write(out)
@@ -96,9 +107,19 @@ func called(t *testing.T, dir string) []string {
 
 func runAdmin(t *testing.T, path string, args ...string) (int, string, string) {
 	t.Helper()
+	return runAdminWith(t, MapEnv{"PATH": path}, args...)
+}
+
+// runAdminWith runs `varlatch admin args...` with env (PATH among it), a
+// HOME and a configuration directory of its own.
+func runAdminWith(t *testing.T, env MapEnv, args ...string) (int, string, string) {
+	t.Helper()
+	full := MapEnv{"HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": t.TempDir()}
+	for k, v := range env {
+		full[k] = v
+	}
 	var stdout, stderr bytes.Buffer
-	code := Main(append([]string{"admin"}, args...), MapEnv{"PATH": path, "HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": t.TempDir()},
-		IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+	code := Main(append([]string{"admin"}, args...), full, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
 	return code, stdout.String(), stderr.String()
 }
 
@@ -177,8 +198,8 @@ func TestAdminRefusals(t *testing.T) {
 		code int
 		has  string
 	}{
-		{nil, 64, "Usage: varlatch admin backup run [--json]"},
-		{[]string{"backup"}, 64, "Usage: varlatch admin backup run"},
+		{nil, 64, "Usage:\n  varlatch admin backup run [--json]\n"},
+		{[]string{"backup"}, 64, "  varlatch admin backup run [--json]\n"},
 		{[]string{"backup", "run", "--dir", "/srv/varlatch"}, 64, "--dir names a Compose installation"},
 		{[]string{"security", "reset", "--org", "acme", "--all", "--dir", "."}, 64, "varlatch-ts"},
 		{[]string{"backup", "create"}, 64, "`varlatch admin backup run`"},
@@ -264,5 +285,173 @@ func TestAdminWithTheRealVarlatchd(t *testing.T) {
 	}
 	if code, _, errText := runAdmin(t, bin, "maintenance", "status", "--config", bad); code != 78 || !strings.Contains(errText, "is not valid") {
 		t.Errorf("bad configuration: %d %q", code, errText)
+	}
+}
+
+// TestFindVarlatchdBesideFirst: the varlatchd beside this varlatch wins
+// over one on PATH, also when varlatch is reached through a symbolic link
+// (the link's target's directory counts, not the link's); one without an
+// execute bit is not run (Unix); without a self, PATH decides.
+func TestFindVarlatchdBesideFirst(t *testing.T) {
+	name := "varlatchd"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	install, links, decoy := t.TempDir(), t.TempDir(), t.TempDir()
+	self := filepath.Join(install, "varlatch")
+	for _, f := range []string{self, filepath.Join(install, name), filepath.Join(decoy, name)} {
+		if err := os.WriteFile(f, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	beside, onPath := filepath.Join(install, name), filepath.Join(decoy, name)
+	check := func(what, self, want string) {
+		t.Helper()
+		got, err := findVarlatchd(self, decoy, false)
+		if err != nil || got != want {
+			t.Errorf("%s: %q %v, want %q", what, got, err, want)
+		}
+	}
+	check("beside", self, beside)
+	check("no self", "", onPath)
+	link := filepath.Join(links, "varlatch")
+	if err := os.Symlink(self, link); err != nil {
+		if runtime.GOOS != "windows" {
+			t.Fatal(err)
+		}
+		t.Logf("no symbolic link on this system (%v); the link case is checked on Unix", err)
+	} else {
+		check("through a symbolic link", link, beside)
+		// A varlatchd beside the link, not the target, is not the one.
+		if err := os.WriteFile(filepath.Join(links, name), []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		check("beside the link only", link, beside)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(beside, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		check("beside without an execute bit", self, onPath)
+	}
+	if err := os.Remove(beside); err != nil {
+		t.Fatal(err)
+	}
+	check("nothing beside", self, onPath)
+	if _, err := findVarlatchd(self, t.TempDir(), false); err == nil {
+		t.Error("found a varlatchd where there is none")
+	}
+}
+
+// TestFindVarlatchdAsRoot: as root, a varlatchd on PATH is run only when
+// root alone can change it, the directory it is in and the PATH entry;
+// otherwise the run refuses it (78), naming the path, and runs nothing.
+// The beside one is not checked: it is the installation's own.
+func TestFindVarlatchdAsRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no root on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("the temporary files are root's own here")
+	}
+	dir := fakeVarlatchd(t)
+	path := filepath.Join(dir, "varlatchd")
+	if _, err := findVarlatchd("", dir, true); !isUnsafe(err, path, "is not owned by root") {
+		t.Errorf("not root's: %v", err)
+	}
+	if err := os.Chmod(path, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := findVarlatchd("", dir, true); !isUnsafe(err, path, "is writable by its group or by others") {
+		t.Errorf("group-writable: %v", err)
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The beside one is run as it is.
+	self := filepath.Join(t.TempDir(), "varlatch")
+	if err := os.WriteFile(self, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(self), "varlatchd"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := findVarlatchd(self, dir, true); err != nil || got != filepath.Join(filepath.Dir(self), "varlatchd") {
+		t.Errorf("beside, as root: %q %v", got, err)
+	}
+	// What root may run: a system program, root's, in root's directory.
+	for _, p := range []string{"/bin/sh", "/usr/bin/env"} {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if uid, ok := fileOwner(info); !ok || uid != 0 || info.Mode().Perm()&0o022 != 0 {
+			continue
+		}
+		if why := onlyRootCanChange(p); why != "" {
+			t.Errorf("%s: %s", p, why)
+		}
+	}
+
+	// Through the command: 78, the path named, varlatchd never run.
+	answer(t, dir, "", "", 0)
+	defer func(was func() bool) { asRoot = was }(asRoot)
+	asRoot = func() bool { return true }
+	code, out, errText := runAdmin(t, dir, "backup", "status")
+	if code != ExitConfig || out != "" || errText != "varlatch admin: not running the varlatchd on PATH as root: "+path+" is not owned by root; as root, the host commands run the varlatchd installed beside this varlatch, or one on PATH that only root can change\n" {
+		t.Errorf("as root: %d %q %q", code, out, errText)
+	}
+	if got := called(t, dir); got != nil {
+		t.Errorf("varlatchd ran: %q", got)
+	}
+}
+
+func isUnsafe(err error, path, why string) bool {
+	var u *unsafeVarlatchd
+	return errors.As(err, &u) && u.path == path && u.why == why
+}
+
+// TestAdminLeavesCredentialsOut: varlatchd gets the run's environment
+// without its credential VARLATCH_* variables (no fronted form reads
+// them); the others reach it.
+func TestAdminLeavesCredentialsOut(t *testing.T) {
+	dir := fakeVarlatchd(t)
+	answer(t, dir, "", "", 0)
+	env := MapEnv{"PATH": dir,
+		"VARLATCH_TOKEN": "vlt_cli_fakeAAAAAAAAAAAAAAAAAAAAAAAA", "VARLATCH_OIDC_TOKEN": "x.y.z", "VARLATCH_KEK_PASSPHRASE": "p",
+		"Varlatch_Api_Key": "k", "VARLATCH_SOME_SECRET": "s", "VARLATCH_OUTBOUND_ALLOW": "10.0.0.0/8", "VARLATCH_ASSISTED": "0"}
+	if code, _, errText := runAdminWith(t, env, "backup", "status"); code != 0 {
+		t.Fatalf("%d %q", code, errText)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "env.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	if err := json.Unmarshal(data, &names); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"VARLATCH_ASSISTED", "VARLATCH_CONFIG_DIR", "VARLATCH_OUTBOUND_ALLOW"}; !slices.Equal(names, want) {
+		t.Errorf("varlatchd got %q, want %q", names, want)
+	}
+	for name, want := range map[string]bool{"VARLATCH_TOKEN": true, "varlatch_token": true, "VARLATCH_BACKUP_KEY": true, "VARLATCH_PASSWORD": true,
+		"VARLATCH_CREDENTIALS_FILE": true, "VARLATCH_CONFIG_DIR": false, "VARLATCH_KEYRING_DIR": false, "TOKEN": false, "GITHUB_TOKEN": false} {
+		if isCredentialVariable(name) != want {
+			t.Errorf("isCredentialVariable(%q) = %v", name, !want)
+		}
+	}
+}
+
+// TestHelpAdminIsTheGoUsage: `help admin`, `admin --help` and `admin -h`
+// print the Go installation's admin usage (the accepted difference
+// admin-usage), on stdout, status 0.
+func TestHelpAdminIsTheGoUsage(t *testing.T) {
+	for _, args := range [][]string{{"help", "admin"}, {"admin", "--help"}, {"admin", "-h"}, {"admin", "backup", "run", "--help"}} {
+		var stdout, stderr bytes.Buffer
+		code := Main(args, MapEnv{"HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": t.TempDir(), "PATH": t.TempDir()},
+			IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+		if code != 0 || stdout.String() != adminUsage+"\n" || stderr.String() != "" {
+			t.Errorf("%v: %d %q %q", args, code, stdout.String(), stderr.String())
+		}
 	}
 }
