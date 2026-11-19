@@ -12,6 +12,7 @@ import type { ApprovalKeys, CredentialReview, SecurityControl, SecurityControlRe
 import { EXIT } from "../src/exitCodes.js";
 import { CHECKLIST, CONTROL_EXPLANATIONS, securityStatusLines, until, type SecurityStatus } from "../src/securityStatus.js";
 import { commandHelp } from "../src/usage.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch security status` end to end against a local server (ADR-0054
@@ -228,7 +229,7 @@ const why = (r: Result) => `${r.signal ? `killed by ${r.signal}; ` : ""}stderr: 
 
 function cli(args: string[], cwd = repo): Promise<Result> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd,
       // An explicit mode for this suite (assisted mode is on under a coding agent's session).
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", VARLATCH_ASSISTED: "0" },
