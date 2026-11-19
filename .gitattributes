@@ -1,0 +1,13 @@
+# Line ends are part of what the Go CLI prints and checks, so they must not
+# depend on the checkout (Git for Windows converts text to CRLF by default,
+# core.autocrlf). Without these, a Windows checkout embeds a CRLF help text,
+# generates CRLF skill files, and breaks the signatures over the release
+# fixtures.
+#
+# Sources the CLI embeds or generates from: LF everywhere.
+go/cmd/varlatch/internal/cli/usage.txt text eol=lf
+apps/cli/skill/** text eol=lf
+# Fixtures compared byte for byte (transcripts, vectors, the inventory,
+# signed release files): never converted.
+go/cmd/varlatch/testdata/** -text
+go/lib/**/testdata/** -text

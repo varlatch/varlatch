@@ -33,16 +33,21 @@ test("the lacking checks are those that need a lacking feature, and none without
   assert.equal(clientLackingChecks(inventory, new Map()).size, 0);
 });
 
-test("a lacking check's result is dropped, and a PASS among them is stale", () => {
+test("a lacking check's PASS is dropped as stale, and its FAIL is kept", () => {
   const lacking = new Map([["a.scan", ["scan"]]]);
   const results = [
     { id: "a.scan", status: "PASS" },
     { id: "a.plain", status: "FAIL" },
   ];
-  const { kept, stale } = withoutLacking(results, new Set(["a.scan"]), lacking);
+  const { kept, stale, failed } = withoutLacking(results, new Set(["a.scan"]), lacking);
   assert.deepEqual(kept, [{ id: "a.plain", status: "FAIL" }]);
   assert.deepEqual(stale, [{ id: "a.scan", features: ["scan"] }]);
-  assert.deepEqual(withoutLacking([{ id: "a.scan", status: "FAIL" }], new Set(["a.scan"]), lacking).stale, []);
+  assert.deepEqual([...failed], []);
+  // A FAIL is never excused by client-go.json: it stays, and the check reports no client-lacks.
+  const failing = withoutLacking([{ id: "a.scan", status: "FAIL" }], new Set(["a.scan"]), lacking);
+  assert.deepEqual(failing.kept, [{ id: "a.scan", status: "FAIL" }]);
+  assert.deepEqual(failing.stale, []);
+  assert.deepEqual([...failing.failed], ["a.scan"]);
 });
 
 test("client-lacks counts only from the runner, and only for a check that needs a lacking feature", () => {

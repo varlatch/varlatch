@@ -365,14 +365,22 @@ if (identities) {
     before = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
   }
   const r = await record(noContractWs, ["--export-context"]);
+  // The refusal both checks are about, observed: nothing started, and the
+  // run named contract.read.
+  const refusedForContract = r.code !== 0 && r.received === null && /contract\.read/.test(r.out);
   check(
     "client-runtime.export-context-without-contract-read-starts", "--export-context without contract.read starts nothing and says why",
-    r.code !== 0 && r.received === null && /contract\.read/.test(r.out),
+    refusedForContract,
     `exit ${r.code}: ${r.out}`,
+    { after: r },
   );
   if (audited) {
+    // No disclosure is evidence only after that refusal: a run that failed
+    // any other way disclosed nothing either, and proves nothing.
     const after = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
-    check("client-runtime.export-context-run-cannot-export-context", "--export-context: a run that cannot export its context discloses no Secret", before.length === 0 && after.length === 0, `${after.length} disclosure(s)`);
+    check("client-runtime.export-context-run-cannot-export-context", "--export-context: a run that cannot export its context discloses no Secret",
+      refusedForContract && before.length === 0 && after.length === 0,
+      `refused for contract.read: ${refusedForContract}, ${after.length} disclosure(s)`, { after: r });
   }
   const plain = await record(noContractWs, []);
   check("client-runtime.same-identity-default-run-without-flag", "the same identity's default run, without the flag, gets no context", plain.code === 0 && plain.received?.context === null, plain.out);
