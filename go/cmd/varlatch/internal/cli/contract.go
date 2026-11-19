@@ -368,22 +368,23 @@ func (r *Run) maskShown(v any) any {
 		// keys masking leaves alone keep their names (a key that is
 		// "[redacted]" in the answer included), so a masked key takes the
 		// first name no other key has, wherever that key comes.
-		masked := make([]string, len(x))
+		names := make([]string, len(x))
+		isMasked := make([]bool, len(x))
 		used := map[string]bool{}
 		for i, m := range x {
-			if k := RedactDiagnostic(r.Secrets.Mask(m.Key), r.inFlight...); k != m.Key {
-				masked[i] = k
-			} else {
+			names[i] = RedactDiagnostic(r.Secrets.Mask(m.Key), r.inFlight...)
+			isMasked[i] = names[i] != m.Key
+			if !isMasked[i] {
 				used[m.Key] = true
 			}
 		}
 		out := make(jsjson.Object, 0, len(x))
 		for i, m := range x {
 			key := m.Key
-			if masked[i] != "" {
-				key = masked[i]
+			if isMasked[i] {
+				key = names[i]
 				for n := 2; used[key]; n++ {
-					key = masked[i] + " (" + strconv.Itoa(n) + ")"
+					key = names[i] + " (" + strconv.Itoa(n) + ")"
 				}
 				used[key] = true
 			}

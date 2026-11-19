@@ -66,13 +66,13 @@ func TestTypesNeverWritesThroughALink(t *testing.T) {
 	}
 }
 
-// TestTypesKeepsTheFilesMode: a rewritten module keeps the old file's mode
-// (0600, and none at all), and no temporary file is left beside it.
+// TestTypesKeepsTheFilesMode: a rewritten module keeps the old file's mode,
+// and no temporary file is left beside it.
 func TestTypesKeepsTheFilesMode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX modes")
 	}
-	for _, mode := range []os.FileMode{0o600, 0o640, 0} {
+	for _, mode := range []os.FileMode{0o600, 0o640, 0o444} {
 		s := newValuesServer(t)
 		s.answer("GET", contractPath, 200, servedRevision(t, hostItem))
 		code, stdout, stderr := runInWith(t, s, map[string]string{"src/config.ts": "stale\n"}, func(repo string) {
@@ -87,7 +87,6 @@ func TestTypesKeepsTheFilesMode(t *testing.T) {
 		if err != nil || info.Mode().Perm() != mode {
 			t.Errorf("mode %o became %v (%v)", mode, info.Mode().Perm(), err)
 		}
-		_ = os.Chmod(filepath.Join("src", "config.ts"), 0o600)
 		b, _ := os.ReadFile(filepath.Join("src", "config.ts"))
 		if !strings.Contains(string(b), "readonly HOST?: string;") {
 			t.Errorf("not rewritten: %.200q", b)
@@ -95,6 +94,63 @@ func TestTypesKeepsTheFilesMode(t *testing.T) {
 		entries, _ := os.ReadDir("src")
 		if len(entries) != 1 {
 			t.Errorf("src holds %d entries, want the module only", len(entries))
+		}
+	}
+}
+
+// TestTypesRefusesAnUnreadableFile: a module the CLI cannot read (mode
+// 000) is neither checked nor replaced: the run fails and the file is as
+// it was. Root reads any file, so the case needs another user.
+func TestTypesRefusesAnUnreadableFile(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX modes and a user other than root")
+	}
+	for _, check := range []bool{false, true} {
+		s := newValuesServer(t)
+		s.answer("GET", contractPath, 200, servedRevision(t, hostItem))
+		args := []string{"types", "--out", "config.ts"}
+		if check {
+			args = append(args, "--check")
+		}
+		code, stdout, _ := runInWith(t, s, map[string]string{"config.ts": "stale\n"}, func(repo string) {
+			if err := os.Chmod(filepath.Join(repo, "config.ts"), 0); err != nil {
+				t.Fatal(err)
+			}
+		}, args...)
+		info, err := os.Stat("config.ts")
+		if code != ExitFailure || stdout != "" || err != nil || info.Mode().Perm() != 0 {
+			t.Errorf("--check %v: status %d, %q, mode %v (%v)", check, code, stdout, info.Mode().Perm(), err)
+		}
+		_ = os.Chmod("config.ts", 0o600)
+		if b, _ := os.ReadFile("config.ts"); string(b) != "stale\n" {
+			t.Errorf("--check %v: the file was replaced: %.80q", check, b)
+		}
+	}
+}
+
+// TestTypesShowsTheServersVersionSafely: a semantics version is shown only
+// as a whole number from 1 to 999, and a refusal that quotes the answer (a
+// Contract's unrecognized key) has its control characters escaped.
+func TestTypesShowsTheServersVersionSafely(t *testing.T) {
+	for _, c := range []struct {
+		version, contract string
+		want, never       string
+	}{
+		{`"2"`, "", "uses Contract Semantics version an unrecognized version, which", ""},
+		{`2.5`, "", "uses Contract Semantics version an unrecognized version, which", ""},
+		{`"\u001b]0;pwned\u0007"`, "", "uses Contract Semantics version an unrecognized version, which", "\x1b"},
+		{`9`, "", "uses Contract Semantics version 9, which", ""},
+		{`2`, `{"schemaVersion": 1, "semanticsVersion": 2, "items": [], "\u001b[31mred": 1}`, `\u001b[31mred`, "\x1b"},
+	} {
+		s := newValuesServer(t)
+		contractDoc := c.contract
+		if contractDoc == "" {
+			contractDoc = `{"schemaVersion": 1, "items": []}`
+		}
+		s.answer("GET", contractPath, 200, `{"id": "rev_`+strings.Repeat("q", 26)+`", "contentHash": "sha256:`+strings.Repeat("0", 64)+`", "semanticsVersion": `+c.version+`, "contract": `+contractDoc+`}`)
+		code, stdout, stderr := runIn(t, s, "", nil, nil, "types", "--out", "config.ts")
+		if code != ExitFailure || stdout != "" || !strings.Contains(stderr, c.want) || (c.never != "" && strings.Contains(stderr, "\x1b")) {
+			t.Errorf("version %s: status %d, %q %q", c.version, code, stdout, stderr)
 		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -64,9 +65,21 @@ func typesCommand(r *Run) error {
 }
 
 // typesFailure is a TypesError as runTypes reports it: status 1, nothing
-// written.
+// written. The message can quote the server's answer (a Contract's
+// unrecognized key, say), so its control characters and bidirectional
+// overrides are escaped (Printable).
 func typesFailure(message string) error {
-	return Fail("varlatch types: "+message+". Nothing was written.", ExitFailure)
+	return Fail(Printable("varlatch types: "+message+". Nothing was written."), ExitFailure)
+}
+
+// shownSemanticsVersion is a semantics version as messages show it: ""
+// (as it is) for a whole number from 1 to 999, else the placeholder, as
+// `contract push` shows its answer's.
+func shownSemanticsVersion(v any) string {
+	if f, ok := v.(float64); ok && f == math.Trunc(f) && f >= 1 && f < 1000 {
+		return ""
+	}
+	return UnrecognizedVersion
 }
 
 // shownRevision is a revision ID as messages show it: as it is when it has
@@ -103,6 +116,7 @@ func (r *Run) runTypes(ctx *clientctx.Context, api *lazyClient, cwd, out, revisi
 	if id, ok := input.ID.(string); ok {
 		input.Shown = shownRevision(id)
 	}
+	input.ShownVersion = shownSemanticsVersion(input.SemanticsVersion)
 	text, err := generate(input, buildinfo.Version)
 	var typesErr *typegen.Error
 	if errors.As(err, &typesErr) {
@@ -110,7 +124,8 @@ func (r *Run) runTypes(ctx *clientctx.Context, api *lazyClient, cwd, out, revisi
 	} else if err != nil {
 		return err
 	}
-	content := []byte(text)
+	// The bytes Node.js writes: a lone surrogate from the Contract as U+FFFD.
+	content := typegen.Encode(text)
 	// Generated, so the id, the hash and the version are of their shapes.
 	source := "Contract Revision " + input.Shown + " (" + input.ContentHash.(string) + ", Contract Semantics version " +
 		strconv.Itoa(int(input.SemanticsVersion.(float64))) + ")"
@@ -211,6 +226,11 @@ func readTypesOutput(path string) ([]byte, os.FileMode, error) {
 		return nil, 0, err
 	}
 	defer f.Close()
+	// What was opened is the regular file Lstat saw: nothing put in its
+	// place in between (where openNoFollow cannot refuse a link) is read.
+	if opened, err := f.Stat(); err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return nil, 0, &typegen.Error{Message: path + " changed while it was read"}
+	}
 	b, err := io.ReadAll(f)
 	if err != nil {
 		return nil, 0, err
@@ -234,7 +254,7 @@ func currentAs(current, content []byte, ours string, regenerate func(string) (st
 	}
 	// A version the generator cannot print is no release's output.
 	text, err := regenerate(theirs)
-	if err != nil || !bytes.Equal(current, []byte(text)) {
+	if err != nil || !bytes.Equal(current, typegen.Encode(text)) {
 		return "", false
 	}
 	return theirs, true

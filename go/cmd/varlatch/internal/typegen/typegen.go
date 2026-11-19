@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/contract"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
@@ -33,7 +34,17 @@ type Revision struct {
 	// Shown is the ID as a message shows it, when not the ID itself (the
 	// CLI shows only an ID of the server's shape). Never in the module.
 	Shown string
+	// ShownVersion is the semantics version as a message shows it, when
+	// not String(version) (the CLI shows only a whole number from 1 to
+	// 999).
+	ShownVersion string
 }
+
+// Encode is a module's text as the file holds it: UTF-8 as Node.js writes
+// a string (writeFileSync, Buffer.from(text, "utf8")), a lone surrogate
+// from the Contract's text as U+FFFD. Go's []byte(text) would keep the
+// surrogate's WTF-8 bytes, which are not UTF-8.
+func Encode(text string) []byte { return []byte(jsval.NodeText(text)) }
 
 // Absent is a field the server's answer did not have (JavaScript's
 // undefined).
@@ -97,7 +108,11 @@ func checkRevision(r Revision, implemented []int) (*checked, error) {
 	n, ok := r.SemanticsVersion.(float64)
 	known := ok && slices.ContainsFunc(contract.SemanticsVersions, func(v int) bool { return float64(v) == n })
 	if !known {
-		return nil, fail("Contract Revision " + shown + " uses Contract Semantics version " + jsString(r.SemanticsVersion) +
+		version := jsString(r.SemanticsVersion)
+		if r.ShownVersion != "" {
+			version = r.ShownVersion
+		}
+		return nil, fail("Contract Revision " + shown + " uses Contract Semantics version " + version +
 			", which this CLI does not implement (it generates types for version " + joinInts(implemented, ", ") +
 			"). Upgrade the CLI, or activate a revision at a version it implements")
 	}

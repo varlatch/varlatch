@@ -24,7 +24,10 @@ import { writeOrCompare } from "./goKit.js";
  *
  * A module embeds its runtime once; the vectors hold "{{runtime}}" there,
  * so the Go test puts in its embedded copy (which go.yml keeps equal to
- * the packages' build) and compares the whole file.
+ * the packages' build) and compares the whole file. A module is recorded as
+ * `varlatch types` writes it (Buffer.from(text, "utf8"): a lone surrogate
+ * from the Contract's text becomes U+FFFD), so the Go test compares the
+ * bytes the file holds, not the generated string.
  *
  * Regenerate and commit:
  *
@@ -46,7 +49,10 @@ interface Case {
   generatorVersion?: string;
 }
 
-/** A module with its one runtime replaced by the placeholder, or the TypesError's message. */
+/** The text a file holds once `text` is written as UTF-8 (writeFileSync). */
+const written = (text: string): string => Buffer.from(text, "utf8").toString("utf8");
+
+/** A module as written, with its one runtime replaced by the placeholder, or the TypesError's message. */
 function outcome(generate: () => string, runtime: string): { module: string } | { error: string } {
   let text: string;
   try {
@@ -57,7 +63,7 @@ function outcome(generate: () => string, runtime: string): { module: string } | 
   }
   const parts = text.split(runtime);
   expect(parts, "the runtime is embedded exactly once").toHaveLength(2);
-  return { module: parts.join(RUNTIME) };
+  return { module: written(parts.join(RUNTIME)) };
 }
 
 function vector(c: Case) {
@@ -117,6 +123,10 @@ function unitCases(): Case[] {
         defaultValue: `\u00ff\u0100\u{10FFFF}${c(0xdfff)}\u007f`,
       }),
       contractItem("V", { type: "enum", enumValues: ["\u{1F600}", `${c(0xd800)}x`, "\u00e9"], defaultValue: "\u00e9" }),
+    ]),
+    fromFixtures("fixtures.lone-surrogates", [
+      contractItem("LONE", { description: `high ${c(0xd800)} low ${c(0xdfff)} end`, example: `${c(0xdbff)}`, defaultValue: `x${c(0xdc00)}` }),
+      contractItem("ENUM", { type: "enum", enumValues: [`${c(0xd801)}`, "b"] }),
     ]),
     fromFixtures("fixtures.environments-selector", [
       contractItem("MULTI", { required: { kind: "selector", selector: { kind: "environments", environmentIds: ["env_b", "env_a", "env_c"] } }, defaultValue: "x" }),
@@ -223,6 +233,14 @@ describe("Go CLI vectors: types", () => {
     };
     const modules = vectors.vectors.filter((v) => "module" in v.typescript).length;
     expect(modules).toBeGreaterThan(50);
+    // The lone surrogates are in the files as U+FFFD (in comments and
+    // docstrings; literals escape them), never as their WTF-8 bytes.
+    const lone = vectors.vectors.find((v) => v.name === "fixtures.lone-surrogates");
+    for (const side of [lone?.typescript, lone?.python]) {
+      const text = side && "module" in side ? side.module : "";
+      expect(text).toContain("high \uFFFD low \uFFFD end");
+      expect(text).not.toMatch(/[\uD800-\uDFFF]/);
+    }
     const result = writeOrCompare(VECTORS, `${JSON.stringify(vectors, null, 2)}\n`);
     expect(result.current, "types.json is stale: regenerate it (see this file's comment)").toBe(true);
   });

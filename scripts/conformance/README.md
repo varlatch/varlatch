@@ -598,6 +598,12 @@ a feature, everything it needs:
 - gate mode refuses any client-lacks: G1 at 0.50.0 runs the Go CLI with
   nothing left out.
 
+`client-runtime`'s two whole-suite checks, "the audit export holds no
+value" and "varlatchd logs hold no value", need no CLI feature of their
+own. On the Go CLI before slices 5.4b and 5.4d they cover only what the
+suite's setup and `types` did: no run or scan has disclosed anything yet,
+so they prove the server side only until those slices land.
+
 `go/cmd/varlatch`'s `TestClientLacksNotStale` also fails while an entry
 names a slice the Go CLI's inventory says is built. `cliNeeds` is recorded
 conservatively for the checks without a feature (every feature of their

@@ -69,6 +69,8 @@ on:
       - "packages/accessor-python/src/**"
       - "packages/accessor-python/scripts/**"
       - "packages/accessor-python/package.json"
+      # The esbuild that bundles the accessor runtime is pinned here.
+      - "pnpm-lock.yaml"
   workflow_dispatch:
   # Nightly on main: every Go job, and the cache every pull request restores.
   schedule:
@@ -135,6 +137,7 @@ jobs:
             packages/accessor-python/src/*
             packages/accessor-python/scripts/*
             packages/accessor-python/package.json
+            pnpm-lock.yaml
         run: |
           if [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; then
             echo "go=true" >> "$GITHUB_OUTPUT"

@@ -19,9 +19,9 @@
  * reports every check of the group `PREDATES-CLI` and returns false, and the
  * suite skips the group. The runner confirms each such result against the
  * CLI's verified version; a suite cannot claim it on its own. It is false,
- * too, when the CLI lacks something every check of the group needs (the Go
- * CLI's client-go.json: the runner says which checks, in
- * CONFORMANCE_CLIENT_LACKING, and reports them client-lacks itself), so a
+ * too, when every check of the group lacks something, the CLI a feature
+ * (the Go CLI's client-go.json, CONFORMANCE_CLIENT_LACKING) or the target
+ * an operation (CONFORMANCE_LACKING), which the runner reports itself, so a
  * check that would pass with nothing run (a Secret that never appears) is
  * never run without the feature.
  *
@@ -101,8 +101,8 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
     if (!suite) throw new Error("CONFORMANCE_SUITE is not set: run the suite through scripts/conformance/run.mjs");
     const ids = Object.entries(inv.checks).filter(([, c]) => c.suite === suite && c.feature === feature).map(([id]) => id);
     if (!(feature in (inv.features ?? {})) || ids.length === 0) throw new Error(`${suite} has no checks of feature ${feature} in the inventory`);
-    // The runner reports these client-lacks itself.
-    if (ids.every((id) => clientLacking().has(id))) return false;
+    // The runner reports these itself (target-lacks or client-lacks).
+    if (ids.every((id) => lacking().has(id) || clientLacking().has(id))) return false;
     const version = cliVersion();
     if (!predates(inv, feature, version)) return true;
     if (!skipped.has(feature)) {

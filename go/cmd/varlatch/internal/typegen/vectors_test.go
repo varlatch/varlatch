@@ -3,6 +3,7 @@
 package typegen
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -58,11 +59,13 @@ func TestTypesVectors(t *testing.T) {
 			got, err := lang.generate(r, version)
 			if module, ok := want.(jsjson.Object).Get("module"); ok {
 				modules++
-				full := strings.Replace(module.(string), placeholder.(string), lang.runtime, 1)
+				// The bytes the file holds (the vectors keep what
+				// TypeScript writes, not the string it generated).
+				full := []byte(strings.Replace(module.(string), placeholder.(string), lang.runtime, 1))
 				if err != nil {
 					t.Errorf("%s (%s): %v, want a module", name, lang.key, err)
-				} else if got != full {
-					t.Errorf("%s (%s): the module differs at %s", name, lang.key, firstDifference(got, full))
+				} else if written := Encode(got); !bytes.Equal(written, full) {
+					t.Errorf("%s (%s): the module differs at %s", name, lang.key, firstDifference(string(written), string(full)))
 				}
 				continue
 			}

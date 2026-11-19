@@ -1057,6 +1057,12 @@ const t = (c: Omit<TranscriptCase, "differences" | "files" | "cwd"> & { files?: 
   v({ patterns: RELEASE, ...c });
 const withOutput = (path: string, content: string) => ({ ...SIGNED_IN, [`repo/${path}`]: content });
 const UNRECOGNIZED = ["unrecognized-id"];
+const PRINTABLE = ["types-printable"];
+const c = String.fromCharCode;
+/** Lone surrogates in a Contract's text: a written module holds U+FFFD there. */
+const LONE = typesRevision([contractItem("LONE", { description: `high ${c(0xd800)} low ${c(0xdfff)} end`, example: c(0xdbff), defaultValue: `x${c(0xdc00)}` })]);
+/** A file as `types` writes it: UTF-8, a lone surrogate as U+FFFD. */
+const asWritten = (text: string) => Buffer.from(text, "utf8").toString("utf8");
 
 const types53c: TranscriptCase[] = [
   // Writing: each extension, the directories made, an absolute path, any Environment.
@@ -1073,6 +1079,9 @@ const types53c: TranscriptCase[] = [
   t({ id: "write.stale-replaced", title: "a stale file is replaced", args: ["types", "--out", "config.ts"], files: withOutput("config.ts", moduleText(RETYPED)), server: [contractAnswer(SERVED)] }),
   t({ id: "write.over-other", title: "a file that is no module is replaced", args: ["types", "--out", "config.ts"], files: withOutput("config.ts", "export const x = 1;\n"), server: [contractAnswer(SERVED)] }),
   t({ id: "write.server-flag", title: "--server names the server", args: ["types", "--out", "config.ts", "--server", "{{server}}"], files: { ...repoFiles('organization = "acme"\nproject = "web"\n'), ...storeAt({ "{{server}}": { token: VTOKEN, ...OK } }) }, server: [contractAnswer(SERVED)] }),
+  t({ id: "write.lone-surrogate", title: "lone surrogates in the Contract's text are written as U+FFFD", args: ["types", "--out", "config.ts"], server: [contractAnswer(LONE)] }),
+  t({ id: "write.lone-surrogate.py", title: "lone surrogates (Python): U+FFFD, so the module stays UTF-8", args: ["types", "--out", "config.py"], server: [contractAnswer(LONE)] }),
+  t({ id: "current.lone-surrogate", title: "a module written with U+FFFD for lone surrogates is current", args: ["types", "--out", "config.py", "--check"], files: withOutput("config.py", asWritten(moduleText(LONE, "py"))), server: [contractAnswer(LONE)] }),
   // Current files: left alone, this release's or another's.
   t({ id: "current.unchanged", title: "an unchanged revision: left unchanged", args: ["types", "--out", "config.ts"], files: withOutput("config.ts", moduleText(SERVED)), server: [contractAnswer(SERVED)] }),
   t({ id: "current.unchanged.py", title: "an unchanged revision (Python): left unchanged", args: ["types", "--out", "config.py"], files: withOutput("config.py", moduleText(SERVED, "py")), server: [contractAnswer(SERVED)] }),
@@ -1105,6 +1114,9 @@ const types53c: TranscriptCase[] = [
   t({ id: "server.invalid-contract", title: "a Contract that is not valid", args: ["types", "--out", "config.ts"], server: [contractAnswer({ ...SERVED, contract: { schemaVersion: 1, semanticsVersion: 2, items: [{ name: "lower" }] } })] }),
   t({ id: "server.id-unprintable", title: "an id the CLI does not accept", args: ["types", "--out", "config.ts"], server: [contractAnswer({ ...SERVED, id: "crv_1\n*/ evil" })] }),
   t({ id: "server.hash-unprintable", title: "a content hash the CLI does not accept", args: ["types", "--out", "config.ts"], server: [contractAnswer({ ...SERVED, contentHash: "sha256:*/" })] }),
+  t({ id: "server.version-escape", title: "a semantics version holding a terminal escape: not shown (Go)", args: ["types", "--out", "config.ts"], server: [contractAnswer({ ...SERVED, semanticsVersion: `${c(0x1b)}]0;pwned${c(7)}` })], differences: PRINTABLE }),
+  t({ id: "server.version-fraction", title: "a semantics version that is not a whole number: not shown (Go)", args: ["types", "--out", "config.ts"], server: [contractAnswer({ ...SERVED, semanticsVersion: 2.5 })], differences: PRINTABLE }),
+  t({ id: "server.contract-key-escape", title: "a Contract key holding a terminal escape: escaped (Go)", args: ["types", "--out", "config.ts"], server: [contractAnswer({ ...SERVED, contract: { ...SERVED.contract, [`${c(0x1b)}[31mred`]: 1 } })], differences: PRINTABLE }),
   t({ id: "server.id-odd", title: "an id of no server shape: written, the id not repeated (Go)", args: ["types", "--out", "config.ts"], server: [contractAnswer(revision(ITEMS, { id: "crv_types1" }))], differences: UNRECOGNIZED }),
   // What --out may name
   t({ id: "out.js", title: "--out naming a .js file: refused before any request", args: ["types", "--out", "config.js"] }),
