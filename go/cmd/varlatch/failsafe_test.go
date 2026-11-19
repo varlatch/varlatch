@@ -27,6 +27,9 @@ import (
 //   - outJSON, which writes a document printJSON redacted, called by
 //     anything but printJSON, and a redactedJSON made anywhere but
 //     redactJSON;
+//   - outShowing, the one writer that lets a token through, reached
+//     (called or taken as a method value) anywhere but inviteCommand, and
+//     redactOutputShowing reached anywhere but outShowing;
 //   - os.NewFile (a stream by its descriptor) outside newFileSites,
 //     syscall.Write and unix.Write;
 //   - a stream's Write, WriteString, WriteByte or WriteRune, called or
@@ -154,6 +157,9 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 						}
 					}
 				case *ast.Ident:
+					if msg := showingMisuse(site, x.Name); msg != "" && !(fn == x.Name && site == "internal/cli/cli.go:"+fn) {
+						t.Errorf("%s: %s", fset.Position(x.Pos()), msg)
+					}
 					if (x.Name == "stdout" || x.Name == "stderr") && !allowed {
 						t.Errorf("%s: %s used outside the fail-safe's writers", fset.Position(x.Pos()), x.Name)
 					}
@@ -172,6 +178,26 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 }
 
 func isStream(name string) bool { return name == "Stdout" || name == "Stderr" }
+
+// showingSites: where the token-showing writer and its redactor may be
+// reached. outShowing prints invite's enrollment token; nothing else may
+// print a token through it.
+var showingSites = map[string]string{
+	"outShowing":          "internal/cli/admin.go:inviteCommand",
+	"redactOutputShowing": "internal/cli/cli.go:outShowing",
+}
+
+// showingMisuse is the guard's complaint about the identifier name reached
+// at site, or "". A selector's name is an identifier too, so a call, a
+// method value (`f := r.outShowing`) and a function value count alike; the
+// declarations themselves are exempt.
+func showingMisuse(site, name string) string {
+	allowed, ok := showingSites[name]
+	if !ok || site == allowed {
+		return ""
+	}
+	return name + " reached outside " + allowed[strings.LastIndex(allowed, ":")+1:]
+}
 
 // writesStream is whether a call takes a stream as an argument.
 func writesStream(call *ast.CallExpr) bool {
@@ -203,7 +229,7 @@ func redacts(call *ast.CallExpr) bool {
 				case *ast.SelectorExpr:
 					name = f.Sel.Name
 				}
-				if name == "RedactDiagnostic" || name == "RedactOutput" || name == "RedactOutputShowing" {
+				if name == "RedactDiagnostic" || name == "RedactOutput" || name == "redactOutputShowing" {
 					found = true
 				}
 			}

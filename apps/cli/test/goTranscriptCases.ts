@@ -1349,11 +1349,14 @@ const EXPOSURE_ME = {
 const NAMES = [ok(`${ORG}/projects`, { items: [{ slug: "web", name: "Web", contractAuthority: "git" }], nextCursor: null }), ENVS_WEB];
 const ISSUED = { id: sid("crd", "issued"), token: "vlt_svc_issuedTOKENcanary", name: "deploy", expiresAt: null, maxUses: null, kind: "service" };
 
+/** An invitation token in the servers' format: vlt_invite_ and 43 base64url characters. */
+const inviteToken = (tag: string) => `vlt_invite_${tag}${"0".repeat(43 - tag.length)}`;
+
 const admin57a: TranscriptCase[] = [
   // invite
-  a({ id: "invite.member", title: "invite: a one-time enrollment link for a member", args: ["invite", "Alice"], server: [exch("POST", `${ORG}/invitations`, 201, { id: "inv_1", token: "vlt_invite_canaryTOKEN", expiresAt: "2026-11-08T10:00:00.000Z" })] }),
-  a({ id: "invite.admin", title: "invite --role admin", args: ["invite", "Bob", "--role", "admin"], server: [exch("POST", `${ORG}/invitations`, 201, { token: "vlt_invite_canaryADMIN", expiresAt: "2026-11-08T10:00:00.000Z" })] }),
-  a({ id: "invite.role-last", title: "--role with no value: a member", args: ["invite", "Carol", "--role"], server: [exch("POST", `${ORG}/invitations`, 201, { token: "vlt_invite_canaryCAROL", expiresAt: "soon" })] }),
+  a({ id: "invite.member", title: "invite: a one-time enrollment link for a member", args: ["invite", "Alice"], server: [exch("POST", `${ORG}/invitations`, 201, { id: "inv_1", token: inviteToken("canaryTOKEN"), expiresAt: "2026-11-08T10:00:00.000Z" })] }),
+  a({ id: "invite.admin", title: "invite --role admin", args: ["invite", "Bob", "--role", "admin"], server: [exch("POST", `${ORG}/invitations`, 201, { token: inviteToken("canaryADMIN"), expiresAt: "2026-11-08T10:00:00.000Z" })] }),
+  a({ id: "invite.role-last", title: "--role with no value: a member", args: ["invite", "Carol", "--role"], server: [exch("POST", `${ORG}/invitations`, 201, { token: inviteToken("canaryCAROL"), expiresAt: "soon" })] }),
   a({ id: "invite.usage", title: "invite without a name", args: ["invite"] }),
   a({ id: "invite.refused", title: "invite refused by the server", args: ["invite", "Dan"], server: [exch("POST", `${ORG}/invitations`, 403, apiError(403, "PERMISSION_DENIED"))] }),
   a({ id: "invite.not-signed-in", title: "invite without a credential", args: ["invite", "Eve"], files: NOT_SIGNED_IN }),

@@ -204,6 +204,14 @@ var varlatchToken = regexp.MustCompile(`vlt_[a-z]+_[A-Za-z0-9_-]+`)
 // run knows replaced by Redacted, longest first, and anything in a
 // Varlatch token format too.
 func (s *Secrets) Mask(text string) string {
+	return varlatchToken.ReplaceAllLiteralString(s.maskHeld(text), Redacted)
+}
+
+// maskHeld is Mask without the token formats: every exact occurrence of a
+// secret the run knows (registered, VARLATCH_TOKEN, a stored credential)
+// replaced by Redacted, longest first. maskHeld(text) == text says text
+// holds none of them.
+func (s *Secrets) maskHeld(text string) string {
 	all := slices.Clone(s.known)
 	held := []string{}
 	if s.Token != "" {
@@ -223,7 +231,7 @@ func (s *Secrets) Mask(text string) string {
 	for _, secret := range secrets {
 		out = strings.ReplaceAll(out, secret, Redacted)
 	}
-	return varlatchToken.ReplaceAllLiteralString(out, Redacted)
+	return out
 }
 
 // ServerMessage is a server's free text as shown: secrets masked, then

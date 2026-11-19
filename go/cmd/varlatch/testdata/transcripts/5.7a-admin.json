@@ -22,7 +22,7 @@
           "status": 201,
           "answer": {
             "id": "inv_1",
-            "token": "vlt_invite_canaryTOKEN",
+            "token": "vlt_invite_canaryTOKEN00000000000000000000000000000000",
             "expiresAt": "2026-11-08T10:00:00.000Z"
           }
         }
@@ -32,7 +32,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "Hand this one-time enrollment link to Alice (member):\n  {{server}}/enroll#vlt_invite_canaryTOKEN\nExpires: 2026-11-08T10:00:00.000Z. They will create a passkey — no email involved.\n",
+        "stdout": "Hand this one-time enrollment link to Alice (member):\n  {{server}}/enroll#vlt_invite_canaryTOKEN00000000000000000000000000000000\nExpires: 2026-11-08T10:00:00.000Z. They will create a passkey — no email involved.\n",
         "stderr": "",
         "requests": [
           {
@@ -94,7 +94,7 @@
           "path": "/v1/organizations/acme/invitations",
           "status": 201,
           "answer": {
-            "token": "vlt_invite_canaryADMIN",
+            "token": "vlt_invite_canaryADMIN00000000000000000000000000000000",
             "expiresAt": "2026-11-08T10:00:00.000Z"
           }
         }
@@ -104,7 +104,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "Hand this one-time enrollment link to Bob (admin):\n  {{server}}/enroll#vlt_invite_canaryADMIN\nExpires: 2026-11-08T10:00:00.000Z. They will create a passkey — no email involved.\n",
+        "stdout": "Hand this one-time enrollment link to Bob (admin):\n  {{server}}/enroll#vlt_invite_canaryADMIN00000000000000000000000000000000\nExpires: 2026-11-08T10:00:00.000Z. They will create a passkey — no email involved.\n",
         "stderr": "",
         "requests": [
           {
@@ -165,7 +165,7 @@
           "path": "/v1/organizations/acme/invitations",
           "status": 201,
           "answer": {
-            "token": "vlt_invite_canaryCAROL",
+            "token": "vlt_invite_canaryCAROL00000000000000000000000000000000",
             "expiresAt": "soon"
           }
         }
@@ -175,7 +175,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "Hand this one-time enrollment link to Carol (member):\n  {{server}}/enroll#vlt_invite_canaryCAROL\nExpires: an unrecognized time. They will create a passkey — no email involved.\n",
+        "stdout": "Hand this one-time enrollment link to Carol (member):\n  {{server}}/enroll#vlt_invite_canaryCAROL00000000000000000000000000000000\nExpires: an unrecognized time. They will create a passkey — no email involved.\n",
         "stderr": "",
         "requests": [
           {

@@ -3675,22 +3675,22 @@
     "admin-cli.project-rename": {
       "suite": "admin-cli",
       "kind": "conformance",
-      "title": "project rename renames it"
+      "title": "project rename renames it (project list shows the new name)"
     },
     "admin-cli.env-create": {
       "suite": "admin-cli",
       "kind": "conformance",
-      "title": "env-create makes a root environment"
+      "title": "env-create makes a root environment (the environment list has it)"
     },
     "admin-cli.env-delete": {
       "suite": "admin-cli",
       "kind": "conformance",
-      "title": "env-delete deletes it"
+      "title": "env-delete deletes it (the environment list has it no more)"
     },
     "admin-cli.invite": {
       "suite": "admin-cli",
       "kind": "conformance",
-      "title": "invite prints a one-time enrollment link"
+      "title": "invite prints a one-time enrollment link with its invitation token"
     },
     "admin-cli.member-list-json": {
       "suite": "admin-cli",
@@ -3700,7 +3700,7 @@
     "admin-cli.member-role": {
       "suite": "admin-cli",
       "kind": "conformance",
-      "title": "member role to the role the caller has changes nothing"
+      "title": "member role to the role the caller has changes nothing (member list agrees)"
     },
     "admin-cli.member-exposure-json": {
       "suite": "admin-cli",
@@ -3725,7 +3725,7 @@
     "admin-cli.credential-issue-json": {
       "suite": "admin-cli",
       "kind": "conformance",
-      "title": "credential issue --json writes the token to a new 0600 file only"
+      "title": "credential issue --json writes the token to a new 0600 file only, and refuses an --out that exists"
     },
     "admin-cli.credential-list-json": {
       "suite": "admin-cli",
@@ -3740,12 +3740,12 @@
     "admin-cli.identity-retire": {
       "suite": "admin-cli",
       "kind": "conformance",
-      "title": "identity retire --confirm retires it"
+      "title": "identity retire --confirm retires it (identity list shows it retired)"
     },
     "admin-cli.identity-reactivate": {
       "suite": "admin-cli",
       "kind": "conformance",
-      "title": "identity reactivate reactivates it"
+      "title": "identity reactivate reactivates it (identity list shows it active)"
     },
     "admin-cli.tailnet-require": {
       "suite": "admin-cli",

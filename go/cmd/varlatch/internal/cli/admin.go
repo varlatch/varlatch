@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
@@ -300,6 +301,36 @@ func (r *Run) serverClient(server string) (*apiclient.Client, error) {
 
 const inviteUsage = "Usage: varlatch invite <name> [--role member|admin]"
 
+// inviteTokenFormat is an invitation token as both servers make it:
+// vlt_invite_ and 32 random bytes in base64url (go/server/auth's
+// InviteToken; the TypeScript server's issueInviteGrant).
+var inviteTokenFormat = regexp.MustCompile(`^vlt_invite_[A-Za-z0-9_-]{43}$`)
+
+// InviteNotShown is invite's message when the server's answer holds no
+// token it may print. It names nothing from the answer.
+const InviteNotShown = "varlatch invite: the server's answer holds no invitation token in Varlatch's format, or holds a credential or value this run knows, so no link is printed."
+
+// showableInvite says whether invite may print token, the one secret it
+// shows on purpose: only an invitation token in the servers' format that
+// holds no secret the run knows (its bearer, VARLATCH_TOKEN, a stored
+// credential, a value in flight). A server that answers with anything else
+// gets nothing printed (go/README.md, "invite shows only an invitation
+// token").
+func (r *Run) showableInvite(token string) bool {
+	if !inviteTokenFormat.MatchString(token) {
+		return false
+	}
+	if r.Secrets != nil && r.Secrets.maskHeld(token) != token {
+		return false
+	}
+	for _, v := range r.inFlight {
+		if v != "" && strings.Contains(token, v) {
+			return false
+		}
+	}
+	return true
+}
+
 // inviteCommand is `varlatch invite <name> [--role member|admin]`: a
 // one-time enrollment link, its token printed on purpose (outShowing).
 func inviteCommand(r *Run) error {
@@ -333,6 +364,9 @@ func inviteCommand(r *Run) error {
 	token, err := printableArg(tokenValue, tokenOK)
 	if err != nil {
 		return err
+	}
+	if raw, _ := tokenValue.(string); raw != token || !r.showableInvite(token) {
+		return Fail(InviteNotShown, ExitFailure)
 	}
 	if err := r.outShowing("  "+shownServer(lazy.server)+"/enroll#"+token+"\n", token); err != nil {
 		return err
