@@ -230,6 +230,21 @@ var differences = map[string]transcript.Difference{
 			return
 		}
 	},
+	// The .env.schema parser never quotes the file in an error (a file given
+	// as --schema by mistake may be a .env holding values; go/README.md, "No
+	// message holds a value"): the package repeats part of the line it cannot
+	// read. Accepted only where Go's stderr is the recording with the quoted
+	// fragment replaced by the parser's own words, and holds no part of it.
+	"env-schema-value-free": func(o *transcript.Outcome, got transcript.Outcome) {
+		m := schemaFragment.FindStringSubmatch(o.Stderr)
+		if m == nil {
+			return
+		}
+		accepted := m[1] + " (not shown, since it may hold a value)\n"
+		if got.Stderr == accepted && !strings.Contains(got.Stderr, strings.TrimSpace(m[2])) {
+			o.Stderr = accepted
+		}
+	},
 	// A server's identifier that does not have the server's shape (a
 	// prefix and 26 characters of lower-case base32) is shown as "an
 	// unrecognized id" (go/README.md, "No message holds a value").
@@ -241,6 +256,10 @@ var differences = map[string]transcript.Difference{
 		}
 	},
 }
+
+// schemaFragment is a packages/env-schema error that quotes the file: the
+// message and the quoted fragment.
+var schemaFragment = regexp.MustCompile(`(?s)^(\.env\.schema line [0-9]+: (?:Unrecognized line|Unexpected text after the value|Malformed decorator|Unsupported @required form|Unsupported @sensitive form|Unsupported @type)): (.*)\n$`)
 
 // recordedVersion is the version a recorded `values set` names.
 var recordedVersion = regexp.MustCompile(` set \(version (.*)\)\.\n$`)
