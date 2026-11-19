@@ -1078,6 +1078,9 @@ type signInParts struct {
 	// save stores the verified credential, as varlatch login does.
 	save func(credential jsjson.Object) error
 	out  func(string) error
+	// hold registers a bearer the sign-in obtains, from the moment it is
+	// read, whatever its length (Run.holdSecret), as login holds them.
+	hold func(string)
 }
 
 // guidedSignInAPI are the calls the guided sign-in makes with a bearer.
@@ -1094,6 +1097,7 @@ func guidedSignIn(server string, parts signInParts) (guidedSignInAPI, error) {
 	if err != nil {
 		return nil, err
 	}
+	parts.hold(handoff)
 	issued, err := parts.client(handoff).ExchangeCliCredential(context.Background(), jsjson.Object{})
 	if err != nil {
 		return nil, err
@@ -1102,7 +1106,9 @@ func guidedSignIn(server string, parts signInParts) (guidedSignInAPI, error) {
 	if err != nil {
 		return nil, err
 	}
-	api := parts.client(jsTemplate(token, tokenOK))
+	issuedToken := jsTemplate(token, tokenOK)
+	parts.hold(issuedToken)
+	api := parts.client(issuedToken)
 	// Verifies the credential before it is stored.
 	if _, err := api.ListOrganizations(context.Background()); err != nil {
 		return nil, err

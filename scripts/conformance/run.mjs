@@ -458,7 +458,7 @@ async function main() {
       const start = Date.now();
       // The suite skips each operation group all of whose checks lack an
       // operation (suite-kit's group()), so its setup never meets one.
-      const out = await runSuite(join(REPO_ROOT, suite.script), args, { ...suiteEnv, CONFORMANCE_SUITE: entry.suite, CONFORMANCE_LACKING: JSON.stringify([...lacked].sort()) }, scratch);
+      const out = await runSuite(join(REPO_ROOT, suite.script), args, { ...suiteEnv, CONFORMANCE_SUITE: entry.suite, CONFORMANCE_LACKING: JSON.stringify([...lacked].sort()), CONFORMANCE_CLIENT_LACKING: JSON.stringify([...clientLacked].sort()) }, scratch);
       const end = Date.now();
       (windows[entry.suite] ??= []).push({ start, end });
       if (around) await around.finish();

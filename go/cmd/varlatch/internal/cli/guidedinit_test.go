@@ -31,9 +31,10 @@ func (f signInFake) ListOrganizations(context.Context) (any, error) {
 // answers echo; it stores the issued credential.
 func TestGuidedSignInPrintsNothingAServerSent(t *testing.T) {
 	const handoff = "HANDOFF_CANARY_4410"
-	var out []string
+	var out, held []string
 	var saved []jsjson.Object
 	_, err := guidedSignIn("https://user:pw9secret@vault.example.com", signInParts{
+		hold:         func(v string) { held = append(held, v) },
 		browserLogin: func(string) (string, error) { return handoff, nil },
 		client:       func(token string) guidedSignInAPI { return signInFake{token} },
 		save:         func(c jsjson.Object) error { saved = append(saved, c); return nil },
@@ -53,6 +54,10 @@ func TestGuidedSignInPrintsNothingAServerSent(t *testing.T) {
 	}
 	if len(saved) != 1 || saved[0].Value("token") != "CLI_CANARY_9902" || saved[0].Value("credentialId") != "crd "+handoff {
 		t.Fatalf("saved %v", saved)
+	}
+	// Both bearers are held as they are read, before any request with them.
+	if strings.Join(held, ",") != handoff+",CLI_CANARY_9902" {
+		t.Fatalf("held %q", held)
 	}
 	keys := []string{}
 	for _, m := range saved[0] {

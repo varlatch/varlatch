@@ -359,6 +359,9 @@ func (r *Run) guidedClient(server string) (guidedAPI, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A bearer the run sends is held from the moment it is read, whatever
+	// its length: VARLATCH_TOKEN or the stored one.
+	r.holdSecret(existing)
 	if existing != "" {
 		api := r.plainClient(server, existing)
 		_, err := api.ListOrganizations(context.Background())
@@ -380,7 +383,8 @@ func (r *Run) guidedClient(server string) (guidedAPI, error) {
 			r.noteDefaultServer(server)
 			return nil
 		},
-		out: r.println,
+		out:  r.println,
+		hold: r.holdSecret,
 	})
 	if err != nil {
 		return nil, err
@@ -389,6 +393,7 @@ func (r *Run) guidedClient(server string) (guidedAPI, error) {
 	if err != nil {
 		return nil, err
 	}
+	r.holdSecret(token)
 	if token == "" {
 		return nil, Fail("Not authenticated to "+shownServer(server), ExitDenied)
 	}
