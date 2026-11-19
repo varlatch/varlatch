@@ -208,11 +208,12 @@ func TestTokenEchoedByTheServerIsMasked(t *testing.T) {
 	}
 }
 
-// A server URL with a user name and password is shown with [redacted] in
-// their place by every message the client's use prints.
+// A server URL with a user name and password is shown as its display form,
+// without them, by every message the client's use prints; a command to run
+// says "this server's URL", since one naming the display form would not work.
 func TestClientMessagesNeverShowUserinfo(t *testing.T) {
 	const server = "https://user:hunter2pass@v.example"
-	const shown = "https:[redacted]@v.example"
+	const shown = "https://v.example"
 	for _, env := range []MapEnv{
 		{"VARLATCH_CONFIG_DIR": t.TempDir()},
 		{"VARLATCH_CONFIG_DIR": t.TempDir(), "HOME": t.TempDir(), "VARLATCH_AGENT_RUN": "run_1"},
@@ -229,7 +230,7 @@ func TestClientMessagesNeverShowUserinfo(t *testing.T) {
 		EnvTokenExpiryWarning(server, "2026-01-01T00:00:00.000Z", now),
 		EnvTokenExpiryWarning(server, "2100-01-01T00:00:00.000Z", now),
 	} {
-		if strings.Contains(w, "hunter2pass") || !strings.HasPrefix(w, "varlatch: "+shown+" (VARLATCH_TOKEN): the credential ") {
+		if strings.Contains(w, "hunter2pass") || !strings.HasPrefix(w, "varlatch: credential for "+shown+" (VARLATCH_TOKEN) ") {
 			t.Errorf("%q", w)
 		}
 	}
@@ -242,16 +243,17 @@ func TestClientMessagesNeverShowUserinfo(t *testing.T) {
 	if _, err := r.connectClient(server); err != nil {
 		t.Fatal(err)
 	}
-	// Through the fail-safe (Run.warn): the server named once, before the explanation.
-	want := "varlatch:[redacted]@v.example: the credential expired 2020-01-02T00:00:00.000Z; run varlatch login --server and this server's URL\n"
+	// Through the fail-safe (Run.warn), which leaves the display form as it is.
+	want := "varlatch: https://v.example: the credential expired 2020-01-02T00:00:00.000Z; run varlatch login --server and this server's URL\n"
 	if stderr.String() != want {
 		t.Errorf("stderr %q, want %q", stderr.String(), want)
 	}
 }
 
 // TestNotAuthenticatedReadsAfterTheFailSafe: with a server URL holding a
-// user name and password, "Not authenticated" shows it once and its sign-in
-// instructions after it, so the fail-safe keeps them.
+// user name and password, "Not authenticated" shows its display form once
+// and sign-in instructions that name "this server's URL", and the
+// fail-safe leaves them as they are.
 func TestNotAuthenticatedReadsAfterTheFailSafe(t *testing.T) {
 	r, _ := testRun(MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()})
 	_, err := r.connectClient("https://user:hunter2pass@v.example")
@@ -259,7 +261,7 @@ func TestNotAuthenticatedReadsAfterTheFailSafe(t *testing.T) {
 	if !errors.As(err, &exit) {
 		t.Fatalf("%v", err)
 	}
-	want := "Not authenticated to [redacted]@v.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
+	want := "Not authenticated to https://v.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
 		"adding --start to approve in a browser on any device, or --token-stdin to pipe a credential"
 	if got := clientctx.MaskUserinfoInText(exit.message); got != want {
 		t.Errorf("%q, want %q", got, want)

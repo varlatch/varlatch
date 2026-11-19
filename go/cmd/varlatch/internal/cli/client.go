@@ -61,15 +61,16 @@ func templateTime(value any) string {
 // a stored credential, "" when there is nothing to say.
 func ExpiryWarning(server string, credential any, now float64) string {
 	state := ExpiryState(credential, now)
-	server = clientctx.MaskURLInValue(server) // diagnostics never print credential values
+	shown := clientctx.DisplayServer(server) // diagnostics never print credential values
 	var expiresAt any
 	if credential != nil {
 		expiresAt, _ = jsval.Get(credential, "expiresAt")
 	}
-	// A server holding an at-sign is named once, before the explanation:
-	// the fail-safe every warning goes through (Run.warn) keeps what
-	// follows the last at-sign.
-	if clientctx.HasAtSign(server) {
+	// A server shown with parts left out is named once, and the command to
+	// run says "this server's URL": a command naming what is shown would
+	// not work.
+	if shown != server {
+		server = shown
 		switch state {
 		case "expired":
 			return "varlatch: " + server + ": the credential expired " + templateTime(expiresAt) + "; run varlatch login --server and this server's URL"
@@ -95,17 +96,10 @@ func EnvTokenExpiryWarning(server, expiresAt string, now float64) string {
 	if !ok {
 		return ""
 	}
-	server = clientctx.MaskURLInValue(server) // diagnostics never print credential values
+	server = clientctx.DisplayServer(server) // diagnostics never print credential values
 	const remedy = "issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN"
 	// The header's text is the server's: only a timestamp is shown (issue #119).
 	shown := templateTime(expiresAt)
-	if clientctx.HasAtSign(server) {
-		// Named once, before the explanation (see ExpiryWarning).
-		if at <= now {
-			return "varlatch: " + server + " (VARLATCH_TOKEN): the credential expired " + shown + "; " + remedy
-		}
-		return "varlatch: " + server + " (VARLATCH_TOKEN): the credential expires " + shown + "; " + remedy + " before then"
-	}
 	if at <= now {
 		return "varlatch: credential for " + server + " (VARLATCH_TOKEN) expired " + shown + "; " + remedy
 	}
@@ -186,15 +180,16 @@ func (r *Run) connectClient(server string) (*apiclient.Client, error) {
 	agentRun := clientctx.AgentRunOf(r.Env)
 	// The server as these messages show it: diagnostics never print
 	// credential values, a URL's user name and password included.
-	shown := clientctx.MaskURLInValue(server)
+	shown := clientctx.DisplayServer(server)
 	if token == "" && agentRun != "" {
 		return nil, Fail("Not authenticated to "+shown+": this command runs inside agent-safe run "+agentRun+", which gives the "+
 			"Agent no Varlatch credential and never uses the operator's.\nFor read access to configuration metadata, "+
 			"the operator relaunches the run with --agent-metadata.", ExitDenied)
 	}
-	if token == "" && clientctx.HasAtSign(shown) {
-		// The URL once, the instructions after it: the fail-safe keeps what
-		// follows the last at-sign (the explanation follows the URL).
+	if token == "" && shown != server {
+		// Shown with parts left out: the URL once, and the instructions name
+		// "this server's URL", since a command naming what is shown would
+		// not work.
 		return nil, Fail("Not authenticated to "+shown+": sign in with varlatch login --server and this server's URL (in a browser on this machine), "+
 			"adding --start to approve in a browser on any device, or --token-stdin to pipe a credential", ExitDenied)
 	}

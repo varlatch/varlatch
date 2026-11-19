@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/transcript"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -158,24 +160,27 @@ var differences = map[string]transcript.Difference{
 			o.Stderr = got.Stderr
 		}
 	},
-	// TypeScript (0.22.2 on) masks a special scheme's URL from its authority
-	// to the last at-sign before "/", "?" or "#", reading through a
-	// backslash, so the fixture https://example.com\path@segment, which has
-	// no user name or password (the backslash starts the path), is shown as
-	// https://[redacted]@segment. Go shows that URL as it is where it shows
-	// it as a server (it reads the authority WHATWG parses), and in a --json
-	// document, where an at-sign after the authority takes the whole-text
-	// fail-safe, as https:[redacted]@segment or, masked once more where a
-	// shown server is redacted again, [redacted]@segment (go/README.md, "Diagnostics
-	// never print credential values"). Accepted only where Go's stdout, with
-	// the fixture URL (as JSON writes it) or its fail-safe form shown as
-	// TypeScript shows it, is the recording.
-	"backslash-path": func(o *transcript.Outcome, got transcript.Outcome) {
-		shown := strings.ReplaceAll(got.Stdout, backslashPathFixture, "https://[redacted]@segment")
-		shown = strings.ReplaceAll(shown, `"https:[redacted]@segment"`, `"https://[redacted]@segment"`)
-		shown = strings.ReplaceAll(shown, `"[redacted]@segment"`, `"https://[redacted]@segment"`)
-		if shown == o.Stdout {
-			o.Stdout = got.Stdout
+	// Every server URL the Go CLI shows goes through clientctx.DisplayServer
+	// (go/README.md, "server-display"): its scheme, host and port, and its
+	// path when allow-listed, with markers for what it leaves out, and
+	// "[unrecognised server URL]" for a value it cannot read as a URL.
+	// TypeScript shows the value with its user name and password masked.
+	// Accepted only where Go's stdout and stderr are the recording with each
+	// fixture server, where TypeScript shows it, shown through DisplayServer
+	// instead (serverDisplayFixtures).
+	"server-display": func(o *transcript.Outcome, got transcript.Outcome) {
+		stdout, stderr := o.Stdout, o.Stderr
+		for _, f := range serverDisplayFixtures {
+			shown := make([]any, len(f.raw))
+			for i, raw := range f.raw {
+				shown[i] = clientctx.DisplayServer(raw)
+			}
+			goText := fmt.Sprintf(f.goText, shown...)
+			stdout = strings.ReplaceAll(stdout, f.recorded, goText)
+			stderr = strings.ReplaceAll(stderr, f.recorded, goText)
+		}
+		if stdout == got.Stdout && stderr == got.Stderr {
+			o.Stdout, o.Stderr = got.Stdout, got.Stderr
 		}
 	},
 }
@@ -211,9 +216,27 @@ func withSkillVersion(path, content string) string {
 	return skillVersion.ReplaceAllString(content, "${1}"+buildinfo.Version)
 }
 
-// backslashPathFixture is the backslash-path cases' server, as a JSON
-// string holds it.
-const backslashPathFixture = `https://example.com\\path@segment`
+// serverDisplayFixtures are the servers of the server-display cases: the
+// text that shows them in the TypeScript recording, and the same text with
+// each server (raw, as the case stores or gives it) shown through
+// DisplayServer (goText, a format with one %[n]s per server).
+var serverDisplayFixtures = []struct {
+	recorded, goText string
+	raw              []string
+}{
+	{`"server": "0",`, `"server": "%[1]s",`, []string{"0"}},
+	{`"server": "1",`, `"server": "%[1]s",`, []string{"1"}},
+	{`"server": "https://a.example/\ud800",`, `"server": "%[1]s",`, []string{"https://a.example/\uFFFD"}},
+	{"https://a.example/\uFFFD  (", "%[1]s  (", []string{"https://a.example/\uFFFD"}},
+	{`"url": "x"`, `"url": "%[1]s"`, []string{"x"}},
+	{`"https://[redacted]@segment"`, `"%[1]s"`, []string{`https://example.com\path@segment`}},
+	{"not a URL: b.example\n", "not a URL: %[1]s\n", []string{"b.example"}},
+	{"\"a\",\n    \"b\"\n", "\"%[1]s\",\n    \"%[2]s\"\n", []string{"a", "b"}},
+	{"Server        a,b\n", "Server        %[1]s,%[2]s\n", []string{"a", "b"}},
+	{`"server": "not a url",`, `"server": "%[1]s",`, []string{"not a url"}},
+	{`"detail": "Failed to parse URL from not a url/v1/meta"`, `"detail": "Failed to parse URL from %[1]s"`, []string{"not a url/v1/meta"}},
+	{"for https://x.example/p q. Commit", "for %[1]s. Commit", []string{"https://x.example/p q"}},
+}
 
 // verbatimTOMLLine is a line init writes, `key = "<value as given>"`.
 var verbatimTOMLLine = regexp.MustCompile(`^([a-z_]+) = "(.*)"$`)
@@ -270,26 +293,28 @@ func withMarker(env map[string]string) map[string]string {
 	return out
 }
 
-// TestBackslashPathDifferenceIsExact: backslash-path accepts Go's stdout
-// only where it differs from the recording by the fixture URL alone; any
-// other host, path or output fails (Sol, #265 round 5).
-func TestBackslashPathDifferenceIsExact(t *testing.T) {
+// TestServerDisplayDifferenceIsExact: server-display accepts Go's output
+// only where it is the recording with the fixture server shown through
+// DisplayServer; the raw value, the TypeScript form, another server or any
+// other change fails.
+func TestServerDisplayDifferenceIsExact(t *testing.T) {
 	recorded := `{"server": "https://[redacted]@segment"}` + "\n"
 	for got, accepted := range map[string]bool{
-		`{"server": "https://example.com\\path@segment"}` + "\n":         true,
-		`{"server": "https:[redacted]@segment"}` + "\n":                  true,
-		`{"server": "[redacted]@segment"}` + "\n":                        true,
-		`{"server": "https:[redacted]@other"}` + "\n":                    false,
-		`{"server": "https://other.example\\path@segment"}` + "\n":       false,
-		`{"server": "https://example.com\\other@segment"}` + "\n":        false,
-		`{"server": "https://other.example\\other@segment"}` + "\n":      false,
-		`{"server": "https://example.com\\path@segment", "x": 1}` + "\n": false,
-		`{"server": "https://example.com/path@segment"}` + "\n":          false,
+		`{"server": "[unrecognised server URL]"}` + "\n":         true,
+		`{"server": "https://example.com\\path@segment"}` + "\n": false,
+		`{"server": "https://example.com/[redacted]"}` + "\n":    false,
+		`{"server": "[unrecognised server URL]", "x": 1}` + "\n": false,
 	} {
 		want := transcript.Outcome{Stdout: recorded}
-		differences["backslash-path"](&want, transcript.Outcome{Stdout: got})
+		differences["server-display"](&want, transcript.Outcome{Stdout: got})
 		if (want.Stdout == got) != accepted {
 			t.Errorf("%q: accepted %v, want %v", got, want.Stdout == got, accepted)
 		}
+	}
+	// On stderr too, and both streams must match.
+	want := transcript.Outcome{Stderr: "varlatch server use: not a URL: b.example\n"}
+	differences["server-display"](&want, transcript.Outcome{Stderr: "varlatch server use: not a URL: b.example\n", Stdout: "x"})
+	if want.Stdout == "x" {
+		t.Error("accepted a stdout the recording does not have")
 	}
 }

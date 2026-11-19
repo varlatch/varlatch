@@ -243,7 +243,7 @@ func ResolveContext(options ResolveOptions, env Env) (*Context, error) {
 		}
 		message := "No server configured. Pass --server, set VARLATCH_SERVER, or commit \"server\" in " + RepoConfigFile
 		if fallback != "" {
-			message += `, for example: server = "` + MaskURLInValue(fallback) + `"`
+			message += `, for example: server = "` + DisplayServer(fallback) + `"`
 		}
 		return nil, &ContextError{Message: message + "."}
 	}

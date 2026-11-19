@@ -323,18 +323,23 @@ func TestFailSafeAgreesWithWHATWG(t *testing.T) {
 	}
 }
 
-// FuzzMaskUserinfoInText: no text makes the maskers panic, and the
-// fail-safe changes nothing more on its own output.
+// FuzzMaskUserinfoInText: no text makes the maskers panic; a text without
+// an at-sign keeps its bytes through the free-text maskers; and a
+// credentialed URL with any text around it and any user name never shows
+// its secret through DisplayServer, MaskURLInValue or the fail-safe (the
+// scheme's colon comes before it, so the whole-text span covers it).
 func FuzzMaskUserinfoInText(f *testing.F) {
 	for _, c := range failSafeReproducers {
-		f.Add(c.text)
+		f.Add(c.text, "ci-bot")
 	}
 	for _, r := range maskRegressions {
-		f.Add(r)
+		f.Add(r, "")
 	}
-	f.Fuzz(func(t *testing.T, text string) {
+	// Built from parts, so no secret scanner takes the test's canary for a key.
+	secret := strings.Join([]string{"Zq7", "Fuzz", "Canary", "Kx9"}, "")
+	f.Fuzz(func(t *testing.T, text, user string) {
 		_ = MaskUserinfo(text)
-		_ = MaskRefusedURL(text)
+		_ = DisplayServer(text)
 		for _, masked := range []string{MaskUserinfoInText(text), MaskURLInValue(text)} {
 			// A text without an at-sign of any form keeps its bytes.
 			if !HasAtSign(text) && masked != text {
@@ -342,6 +347,20 @@ func FuzzMaskUserinfoInText(f *testing.F) {
 			}
 			// A second pass may mask more, never panic.
 			_ = MaskUserinfoInText(masked)
+		}
+		if strings.Contains(text+user, secret) {
+			return // the secret is outside the URL too
+		}
+		for _, sep := range []string{":", ""} { // user:secret, and the secret as the user name
+			in := text + "https://" + user + sep + secret + "@h.example" + text
+			if sep == "" {
+				in = text + "https://" + secret + "@h.example" + text
+			}
+			for name, got := range map[string]string{"DisplayServer": DisplayServer(in), "MaskURLInValue": MaskURLInValue(in), "MaskUserinfoInText": MaskUserinfoInText(in)} {
+				if strings.Contains(got, secret) {
+					t.Fatalf("%s(%q) = %q shows the secret", name, in, got)
+				}
+			}
 		}
 	})
 }
@@ -356,6 +375,8 @@ var maskRegressions = []string{
 	"u1:pass@h.example",
 	"é:pass@h.example",
 	"https://u:hunter2[redacted]@h.example",
+	"//gateway.example/?next=//ghp_RoundSixCanary@upstream.example",
+	"//gateway.example/?next=%2F%2Fci-bot%3ARoundSixPassword%40upstream.example",
 }
 
 // TestMaskingIsLinear: inputs that made the earlier scanners rescan (a tab
@@ -537,22 +558,46 @@ func TestMaskURLInValueUnionOfSpans(t *testing.T) {
 	}
 }
 
-// genUserinfo draws a user name or password of 1 to 20 characters from
-// RFC 3986's userinfo characters (unreserved, sub-delims and %-escapes;
-// a password may also hold ":"), digits and letters of other scripts.
-func genUserinfo(r *rand.Rand, password bool) string {
-	const ascii = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;="
-	unicodeLetters := []string{"é", "ü", "ж", "字", "ß", "ø", "Ω"}
-	n := 1 + r.IntN(20)
+// genSecret draws a password or token: two or three runs of 6 to 10
+// random ASCII letters and digits, joined by userinfo's other characters
+// (sub-delims, "-._~", %-escapes, letters of other scripts, and ":" when
+// colon is set). Every run is long enough to be unique, so the test
+// asserts each is absent without skipping a case; a mask that keeps part
+// of the secret shows a run.
+func genSecret(r *rand.Rand, colon bool) (string, []string) {
+	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	seps := []string{"-", ".", "_", "~", "!", "$", "&", "'", "(", ")", "*", "+", ",", ";", "=", "é", "ж", "字", "%2F", "%3A", "%25"}
+	if colon {
+		seps = append(seps, ":", ":")
+	}
 	var b strings.Builder
-	for range n {
-		switch k := r.IntN(10); {
-		case k == 0:
+	var runs []string
+	for i := range 2 + r.IntN(2) {
+		if i > 0 {
+			b.WriteString(seps[r.IntN(len(seps))])
+		}
+		run := make([]byte, 6+r.IntN(5))
+		for j := range run {
+			run[j] = alnum[r.IntN(len(alnum))]
+		}
+		runs = append(runs, string(run))
+		b.Write(run)
+	}
+	return b.String(), runs
+}
+
+// genUser draws a user name of 1 to 12 characters from userinfo's
+// characters without ":" (unreserved, sub-delims, %-escapes, letters of
+// other scripts).
+func genUser(r *rand.Rand) string {
+	const ascii = "abcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;="
+	var b strings.Builder
+	for range 1 + r.IntN(12) {
+		switch r.IntN(8) {
+		case 0:
 			fmt.Fprintf(&b, "%%%02X", r.IntN(256))
-		case k == 1:
-			b.WriteString(unicodeLetters[r.IntN(len(unicodeLetters))])
-		case k == 2 && password:
-			b.WriteByte(':')
+		case 1:
+			b.WriteString([]string{"é", "ü", "ж", "字"}[r.IntN(4)])
 		default:
 			b.WriteByte(ascii[r.IntN(len(ascii))])
 		}
@@ -560,56 +605,92 @@ func genUserinfo(r *rand.Rand, password bool) string {
 	return b.String()
 }
 
+// pctEncode is s with every character but ASCII letters and digits
+// percent-encoded, as a URL nested in a query is.
+func pctEncode(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if isAlpha(c) || c >= '0' && c <= '9' {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
+}
+
 // userinfoContexts are the places a credentialed URL appears, each a
-// function of the URL's scheme, user name, password and at-sign form.
-var userinfoContexts = []func(scheme, user, pass, at string) string{
-	func(s, u, p, at string) string { return s + "://" + u + ":" + p + at + "h.example/path" },
-	func(s, u, p, at string) string { return "//" + u + ":" + p + at + "h.example" },
-	func(s, u, p, at string) string {
-		return "https://a.example/?next=" + s + "://" + u + ":" + p + at + "h.example"
+// function of the scheme, the userinfo (with its secret) and the at-sign
+// form: top level, scheme-relative, nested in a query or a fragment,
+// behind outer credentials, percent-encoded in a query (top level and
+// nested), with spaces around, quoted, JSON-escaped and in prose.
+var userinfoContexts = []func(scheme, userinfo, at string) string{
+	func(s, ui, at string) string { return s + "://" + ui + at + "h.example/path" },
+	func(s, ui, at string) string { return "//" + ui + at + "h.example" },
+	func(s, ui, at string) string { return "https://a.example/?next=" + s + "://" + ui + at + "h.example" },
+	func(s, ui, at string) string { return "https://a.example/#" + s + "://" + ui + at + "h.example" },
+	func(s, ui, at string) string { return "  " + s + "://" + ui + at + "h.example  " },
+	func(s, ui, at string) string { return `"` + s + "://" + ui + at + `h.example"` },
+	func(s, ui, at string) string { return strconv.Quote(s + "://" + ui + at + "h.example") },
+	func(s, ui, at string) string { return "see " + s + "://" + ui + at + "h.example for details" },
+	func(s, ui, at string) string { return "//outer:outer-pw@gw.example/?next=//" + ui + at + "h.example" },
+	func(s, ui, at string) string { return " //" + ui + at + "upstream.example" },
+	func(s, ui, at string) string { return "//gateway.example/?next=//" + ui + at + "upstream.example" },
+	func(s, ui, at string) string {
+		return "//gateway.example/?next=" + pctEncode("//"+ui+"@upstream.example")
 	},
-	func(s, u, p, at string) string {
-		return "https://a.example/#" + s + "://" + u + ":" + p + at + "h.example"
+	func(s, ui, at string) string { return "https://gw.example/?next=" + pctEncode(s+"://"+ui+"@h.example") },
+	func(s, ui, at string) string {
+		return "https://gw.example/?next=" + pctEncode("https://a.example/?next="+pctEncode(s+"://"+ui+"@h.example"))
 	},
-	func(s, u, p, at string) string { return "  " + s + "://" + u + ":" + p + at + "h.example  " },
-	func(s, u, p, at string) string { return `"` + s + "://" + u + ":" + p + at + `h.example"` },
-	func(s, u, p, at string) string { return strconv.Quote(s + "://" + u + ":" + p + at + "h.example") },
-	func(s, u, p, at string) string {
-		return "see " + s + "://" + u + ":" + p + at + "h.example for details"
-	},
-	func(s, u, p, at string) string {
-		return "//outer:outer-pw@gw.example/?next=//" + u + ":" + p + at + "h.example"
-	},
-	func(s, u, p, at string) string { return " //" + u + ":" + p + at + "upstream.example" },
+	func(s, ui, at string) string { return "https://gw.example/p#" + pctEncode("//"+ui+"@h.example") },
+	func(s, ui, at string) string { return s + "://gw.example/next/" + s + "://" + ui + at + "h.example" },
 }
 
 // TestNoPasswordEverShows is a property test with a fixed seed: thousands
-// of generated user names and passwords, in every context and at-sign
-// form, through MaskURLInValue and the stderr fail-safe; the password
-// never shows (where the context itself does not hold it).
+// of generated secrets (a password after a user name, or a token as the
+// user name with no colon), in every context and at-sign form. Through
+// DisplayServer, which every server URL shown goes through, no part of the
+// secret ever shows. Through the free-text maskers (MaskURLInValue and the
+// stderr fail-safe) none shows when a colon comes before the secret and an
+// at-sign they know follows it, which is what they detect; a text without
+// (an email-like "//token@host", or an at-sign encoded twice, "%2540") is
+// DisplayServer's to show.
 func TestNoPasswordEverShows(t *testing.T) {
-	r := rand.New(rand.NewPCG(5, 278))
+	r := rand.New(rand.NewPCG(6, 278))
 	schemes := []string{"https", "http", "ftp", "postgres", "foo", "HTTPS"}
-	ats := []string{"@", "%40", `@`}
-	judged := 0
-	for i := 0; i < 6000; i++ {
-		user, pass := genUserinfo(r, false), genUserinfo(r, true)
+	ats := []string{"@", "%40", "\\u0040"}
+	freeText := 0
+	for range 8000 {
+		var userinfo string
+		secret, runs := genSecret(r, true)
+		switch r.IntN(3) {
+		case 0: // a token as the user name: no colon
+			secret, runs = genSecret(r, false)
+			userinfo = secret
+		case 1:
+			userinfo = genUser(r) + ":" + secret
+		default:
+			userinfo = ":" + secret
+		}
 		scheme := schemes[r.IntN(len(schemes))]
 		at := ats[r.IntN(len(ats))]
-		context := userinfoContexts[r.IntN(len(userinfoContexts))]
-		in := context(scheme, user, pass, at)
-		if strings.Contains(context(scheme, user, "", at), pass) {
-			continue // the password is also elsewhere in the text: nothing to judge
+		in := userinfoContexts[r.IntN(len(userinfoContexts))](scheme, userinfo, at)
+		got := map[string]string{"DisplayServer": DisplayServer(in)}
+		if start := strings.Index(in, runs[0]); start >= 0 && strings.Contains(in[:start], ":") && HasAtSign(in[start:]) {
+			freeText++
+			got["MaskURLInValue"], got["MaskUserinfoInText"] = MaskURLInValue(in), MaskUserinfoInText(in)
 		}
-		judged++
-		for name, got := range map[string]string{"MaskURLInValue": MaskURLInValue(in), "MaskUserinfoInText": MaskUserinfoInText(in), "MaskRefusedURL": MaskRefusedURL(in)} {
-			// The marker itself is not the password ("t" is in "[redacted]").
-			if strings.Contains(strings.ReplaceAll(got, "[redacted]", "\x00"), pass) {
-				t.Fatalf("%s(%q) = %q shows the password %q", name, in, got, pass)
+		for name, out := range got {
+			for _, run := range runs {
+				if strings.Contains(out, run) {
+					t.Fatalf("%s(%q) = %q shows %q of the secret %q", name, in, out, run, secret)
+				}
 			}
 		}
 	}
-	if judged < 5000 {
-		t.Fatalf("only %d of 6000 cases judged", judged)
+	if freeText < 4000 {
+		t.Fatalf("only %d of 8000 cases judged through the free-text maskers", freeText)
 	}
 }

@@ -99,54 +99,81 @@ func TestOutJSONTakesOnlyARedactedDocument(t *testing.T) {
 }
 
 // TestNoPasswordInOutput is the output side of clientctx's property test,
-// with a fixed seed: generated user names and passwords (RFC 3986 userinfo
-// characters, digits, letters of other scripts) in a URL, nested in
-// another's query, scheme-relative, quoted, in prose, with each at-sign
+// with a fixed seed: generated secrets (a password after a user name, or a
+// token as the user name with no colon; two or three runs of 6 to 10
+// random letters and digits joined by userinfo's other characters) in a
+// URL, nested in another's query or path, percent-encoded in a query,
+// scheme-relative behind a URL, quoted and in prose, with each at-sign
 // form, go through a --json document (redactJSON) and the stderr
-// fail-safe (RedactDiagnostic); the password never shows.
+// fail-safe (RedactDiagnostic). A colon comes before the secret in every
+// context, so no run of it ever shows; no case is skipped.
 func TestNoPasswordInOutput(t *testing.T) {
-	r := rand.New(rand.NewPCG(7, 278))
-	const ascii = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;="
-	letters := []string{"é", "ü", "ж", "字"}
-	gen := func(password bool) string {
+	r := rand.New(rand.NewPCG(8, 278))
+	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	seps := []string{"-", ".", "_", "~", "!", "$", "&", "(", ")", "*", "+", ",", ";", "=", "é", "字", "%2F", "%3A", ":"}
+	secret := func(colon bool) (string, []string) {
 		var b strings.Builder
-		for range 1 + r.IntN(20) {
-			switch k := r.IntN(10); {
-			case k == 0:
-				fmt.Fprintf(&b, "%%%02X", r.IntN(256))
-			case k == 1:
-				b.WriteString(letters[r.IntN(len(letters))])
-			case k == 2 && password:
-				b.WriteByte(':')
-			default:
-				b.WriteByte(ascii[r.IntN(len(ascii))])
+		var runs []string
+		for i := range 2 + r.IntN(2) {
+			if i > 0 {
+				sep := seps[r.IntN(len(seps))]
+				for !colon && sep == ":" {
+					sep = seps[r.IntN(len(seps))]
+				}
+				b.WriteString(sep)
+			}
+			run := make([]byte, 6+r.IntN(5))
+			for j := range run {
+				run[j] = alnum[r.IntN(len(alnum))]
+			}
+			runs = append(runs, string(run))
+			b.Write(run)
+		}
+		return b.String(), runs
+	}
+	pct := func(s string) string {
+		var b strings.Builder
+		for _, c := range []byte(s) {
+			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+				b.WriteByte(c)
+			} else {
+				fmt.Fprintf(&b, "%%%02X", c)
 			}
 		}
 		return b.String()
 	}
-	contexts := []string{"%s://%s:%s%sh.example/x", "//%[2]s:%[3]s%[4]sh.example", "https://a.example/?next=%s://%s:%s%sh.example",
-		"see %s://%s:%s%sh.example here", " //%[2]s:%[3]s%[4]sup.example", "//outer:o-pw@gw/?next=//%[2]s:%[3]s%[4]sh"}
-	judged := 0
+	contexts := []func(s, ui, at string) string{
+		func(s, ui, at string) string { return s + "://" + ui + at + "h.example/x" },
+		func(s, ui, at string) string { return "https://a.example/?next=" + s + "://" + ui + at + "h.example" },
+		func(s, ui, at string) string { return "see " + s + "://" + ui + at + "h.example here" },
+		func(s, ui, at string) string { return "https://gw.example/?next=//" + ui + at + "h.example" },
+		func(s, ui, at string) string { return "//outer:o-pw@gw/?next=//" + ui + at + "h" },
+		func(s, ui, at string) string { return "https://gw.example/?next=" + pct(s+"://"+ui+"@h.example") },
+		func(s, ui, at string) string { return `"` + s + "://" + ui + at + `h.example"` },
+		func(s, ui, at string) string { return s + "://gw.example/next/" + s + "://" + ui + at + "h.example" },
+	}
 	for range 4000 {
-		user, pass := gen(false), gen(true)
+		var userinfo string
+		pass, runs := secret(true)
+		switch r.IntN(3) {
+		case 0: // a token as the user name: no colon
+			pass, runs = secret(false)
+			userinfo = pass
+		case 1:
+			userinfo = "ci-bot_" + []string{"", "%40x", "é"}[r.IntN(3)] + ":" + pass
+		default:
+			userinfo = ":" + pass
+		}
 		scheme := []string{"https", "http", "postgres", "foo"}[r.IntN(4)]
 		at := []string{"@", "%40", `\u0040`}[r.IntN(3)]
-		format := contexts[r.IntN(len(contexts))]
-		in := fmt.Sprintf(format, scheme, user, pass, at)
-		// The fixed text around it (the context, the message, the JSON keys)
-		// must not hold the password, or there is nothing to judge.
-		if strings.Contains(fmt.Sprintf(format, scheme, user, "", at)+"varlatch: : refused value list {}[]\",\n", pass) {
-			continue
-		}
-		judged++
+		in := contexts[r.IntN(len(contexts))](scheme, userinfo, at)
 		doc := redactJSON(jsjson.Object{{Key: "value", Value: in}, {Key: "list", Value: []string{in}}}).document
 		for name, got := range map[string]string{"--json": doc, "stderr": RedactDiagnostic("varlatch: " + in + ": refused")} {
-			if strings.Contains(strings.ReplaceAll(got, "[redacted]", "\x00"), pass) {
-				t.Fatalf("%s of %q: %q shows the password %q", name, in, got, pass)
+			for _, run := range runs {
+				if strings.Contains(got, run) {
+					t.Fatalf("%s of %q: %q shows %q of the secret %q", name, in, got, run, pass)
+				}
 			}
 		}
-	}
-	if judged < 3000 {
-		t.Fatalf("only %d cases judged", judged)
 	}
 }

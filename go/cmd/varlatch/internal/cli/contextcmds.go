@@ -119,7 +119,7 @@ func serverStatus(server string, credential any, now float64) (jsjson.Object, er
 		expiring = state == "expiring"
 	}
 	return jsjson.Object{
-		{Key: "server", Value: clientctx.MaskURLInValue(server)},
+		{Key: "server", Value: clientctx.DisplayServer(server)},
 		{Key: "name", Value: field("name")},
 		{Key: "issuedAt", Value: field("issuedAt")},
 		{Key: "expiresAt", Value: field("expiresAt")},
@@ -148,7 +148,7 @@ func repoStatus(ctx *clientctx.Context, local any) (jsjson.Object, error) {
 		cachedAt, _, _ = clientctx.LocalField(local, "tierCachedAt")
 	}
 	return jsjson.Object{
-		{Key: "server", Value: clientctx.MaskServer(ctx.Server)},
+		{Key: "server", Value: clientctx.DisplayServerValue(ctx.Server)},
 		{Key: "organization", Value: ctx.Organization},
 		{Key: "project", Value: ctx.Project},
 		{Key: "environment", Value: ctx.Environment},
@@ -344,14 +344,14 @@ func (r *Run) showServer(asJSON bool) error {
 	if asJSON {
 		var server, source, def any
 		if resolved != nil {
-			server, source = clientctx.MaskServer(resolved.Server), resolved.Source
+			server, source = clientctx.DisplayServerValue(resolved.Server), resolved.Source
 		}
 		if remembered != "" {
-			def = clientctx.MaskURLInValue(remembered)
+			def = clientctx.DisplayServer(remembered)
 		}
 		list := make([]any, len(signedIn))
 		for i, s := range signedIn {
-			list[i] = clientctx.MaskURLInValue(s)
+			list[i] = clientctx.DisplayServer(s)
 		}
 		return r.printJSON(jsjson.Object{
 			{Key: "version", Value: 1},
@@ -363,17 +363,17 @@ func (r *Run) showServer(asJSON bool) error {
 	}
 	here := "Server here: none"
 	if resolved != nil {
-		here = "Server here: " + jsjson.String(clientctx.MaskServer(resolved.Server)) + " (" + serverSourceWords[resolved.Source] + ")"
+		here = "Server here: " + jsjson.String(clientctx.DisplayServerValue(resolved.Server)) + " (" + serverSourceWords[resolved.Source] + ")"
 	} else if problem != "" {
 		here += " (" + clientctx.MaskUserinfoInText(problem) + ")" // the net; a varlatch.toml parse error quotes no line of a file with an at-sign
 	}
-	def := clientctx.MaskURLInValue(remembered)
-	if def == "" {
-		def = "none"
+	def := "none"
+	if remembered != "" {
+		def = clientctx.DisplayServer(remembered)
 	}
 	in := "none"
 	if len(signedIn) > 0 {
-		in = strings.Join(maskAll(signedIn), ", ")
+		in = strings.Join(clientctx.DisplayServers(signedIn), ", ")
 	}
 	return r.println(here + "\nDefault server: " + def + "\nSigned in to: " + in)
 }
@@ -383,11 +383,7 @@ func (r *Run) showServer(asJSON bool) error {
 // (trailing slashes removed, path kept).
 func (r *Run) useServer(server string, asJSON bool) error {
 	if _, ok := whatwg.ParseURL(server); !ok {
-		shown := clientctx.MaskURLInValue(server)
-		if clientctx.HasAtSign(shown) {
-			return UsageError("varlatch server use: " + shown + ": not a URL") // the explanation follows the URL
-		}
-		return UsageError("varlatch server use: not a URL: " + shown)
+		return UsageError("varlatch server use: not a URL: " + clientctx.DisplayServer(server))
 	}
 	key := clientctx.StoredServerKey(server)
 	signedIn, err := clientctx.StoredServers(r.Env)
@@ -395,18 +391,13 @@ func (r *Run) useServer(server string, asJSON bool) error {
 		return err
 	}
 	if !slices.Contains(signedIn, key) {
-		shown := clientctx.MaskURLInValue(key)
-		list := strings.Join(maskAll(signedIn), ", ")
-		if clientctx.HasAtSign(shown) || clientctx.HasAtSign(list) {
-			// The explanation follows the URL, and the list comes first, so
-			// the fail-safe (which keeps what follows the last at-sign) keeps it.
-			message := ""
-			if len(signedIn) > 0 {
-				message = "varlatch server use: signed in to " + list + "\n"
-			}
-			return UsageError(message + "varlatch server use: " + shown + ": you are not signed in to this server; sign in first with varlatch login --server and its URL")
+		shown := clientctx.DisplayServer(key)
+		list := strings.Join(clientctx.DisplayServers(signedIn), ", ")
+		command := "varlatch login --server " + shown
+		if shown != key {
+			command = "varlatch login --server and its URL" // a command naming what is shown would not work
 		}
-		message := "varlatch server use: you are not signed in to " + shown + ". Sign in first: varlatch login --server " + shown
+		message := "varlatch server use: you are not signed in to " + shown + ". Sign in first: " + command
 		if len(signedIn) > 0 {
 			message += "\nSigned in to: " + list
 		}
@@ -416,18 +407,9 @@ func (r *Run) useServer(server string, asJSON bool) error {
 		return contextError(err)
 	}
 	if asJSON {
-		return r.printJSON(jsjson.Object{{Key: "version", Value: 1}, {Key: "defaultServer", Value: clientctx.MaskURLInValue(key)}})
+		return r.printJSON(jsjson.Object{{Key: "version", Value: 1}, {Key: "defaultServer", Value: clientctx.DisplayServer(key)}})
 	}
-	return r.println("Default server: " + clientctx.MaskURLInValue(key))
-}
-
-// maskAll is MaskUserinfo of each server.
-func maskAll(servers []string) []string {
-	out := make([]string, len(servers))
-	for i, s := range servers {
-		out[i] = clientctx.MaskURLInValue(s)
-	}
-	return out
+	return r.println("Default server: " + clientctx.DisplayServer(key))
 }
 
 // placeholderValue is agentRun.ts's PLACEHOLDER_VALUE.
@@ -478,7 +460,7 @@ func contextCommand(r *Run) error {
 		return r.printJSON(doc)
 	}
 	lines := []string{
-		"Server        " + jsjson.String(clientctx.MaskServer(ctx.Server)),
+		"Server        " + jsjson.String(clientctx.DisplayServerValue(ctx.Server)),
 		"Organization  " + shownValue(ctx.Organization),
 		"Project       " + shownValue(ctx.Project),
 		"Environment   " + shownValue(jsjson.String(ctx.Environment)),

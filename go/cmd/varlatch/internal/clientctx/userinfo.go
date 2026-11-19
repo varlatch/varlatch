@@ -14,10 +14,11 @@ import (
 )
 
 // The Go CLI never prints a URL's user name and password (go/README.md,
-// the accepted difference "Diagnostics never print credential values"): a
-// server URL is shown with [redacted] in their place, in human output,
-// --json documents and messages alike. A URL without them is shown as it
-// is.
+// the accepted difference "Diagnostics never print credential values"). A
+// server URL is shown through DisplayServer, an allow-list of its parts
+// (display.go, "server-display"); any other value that may hold a URL (an
+// echoed argument, a server's answer) through MaskURLInValue, with
+// [redacted] in their place. A value without them is shown as it is.
 
 // MaskUserinfo is a server value with its user name and password replaced
 // by [redacted].
@@ -118,23 +119,23 @@ func authorityStart(text string) (int, bool) {
 
 func isAlpha(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
-// MaskServer is a server value as the CLI shows it: a string with
-// MaskUserinfo, and any other JSON value (a hand-edited local override)
-// with every string in it masked the same way.
-func MaskServer(v any) any {
+// DisplayServerValue is a server value as the CLI shows it: a string through
+// DisplayServer, and any other JSON value (a hand-edited local override)
+// with every string in it shown the same way.
+func DisplayServerValue(v any) any {
 	switch x := v.(type) {
 	case string:
-		return MaskURLInValue(x)
+		return DisplayServer(x)
 	case []any:
 		out := make([]any, len(x))
 		for i, e := range x {
-			out[i] = MaskServer(e)
+			out[i] = DisplayServerValue(e)
 		}
 		return out
 	case jsjson.Object:
 		out := make(jsjson.Object, len(x))
 		for i, m := range x {
-			out[i] = jsjson.Member{Key: m.Key, Value: MaskServer(m.Value)}
+			out[i] = jsjson.Member{Key: m.Key, Value: DisplayServerValue(m.Value)}
 		}
 		return out
 	}
@@ -146,9 +147,9 @@ func MaskServer(v any) any {
 //
 //  1. Precise, per value, where its boundaries are known: every echo site
 //     masks the one value it prints (an argument, a command, a help topic,
-//     an approval id, a server, verify-release's --file value and path)
-//     with MaskUserinfo (a server) or MaskURLInValue (an echoed value)
-//     before formatting it into its message. A value without a user name
+//     an approval id, verify-release's --file value and path) with
+//     MaskURLInValue before formatting it into its message; a server is
+//     shown through DisplayServer instead, never masked. A value without a user name
 //     and password keeps its bytes. A varlatch.toml parse error quotes no
 //     line of a file that holds an at-sign (LoadRepoConfig).
 //  2. A dumb fail-safe on the final text of every failure (Run.finish,
@@ -352,16 +353,4 @@ func valueSpans(v string) [][2]int {
 		}
 	}
 	return spans
-}
-
-// MaskRefusedURL is a URL an API client refuses, as its refusal shows it:
-// MaskURLInValue's spans and the malformed-authority mask's (MaskUserinfo's
-// span, which reads a URL that does not parse conservatively), all on the
-// original text, their union replaced once.
-func MaskRefusedURL(raw string) string {
-	spans := valueSpans(raw)
-	if start, end, ok := userinfoSpan(raw); ok {
-		spans = append(spans, [2]int{start, end + 1})
-	}
-	return replaceSpans(raw, spans)
 }
