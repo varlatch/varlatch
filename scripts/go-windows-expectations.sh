@@ -8,9 +8,10 @@
 #
 # It downloads the run's `windows-expectations` artifact with gh and
 # replaces go/cmd/varlatch/testdata/transcripts/windows/ and
-# go/cmd/varlatch/testdata/vectors/windows/ with what it holds, then shows
-# what changed. Review and commit the result. The recordings hold only the
-# fake server's tokens and the kit's fixtures, as the Linux ones do.
+# go/cmd/varlatch/testdata/vectors/windows/ with what it holds, then prints
+# git diff --stat and the diff of those files. Review and commit the result.
+# The recordings hold only the fake server's tokens and the kit's fixtures,
+# as the Linux ones do.
 set -euo pipefail
 
 run=${1:?usage: scripts/go-windows-expectations.sh <run id>}
@@ -27,5 +28,9 @@ for kind in transcripts vectors; do
   mkdir -p "$testdata/$kind"
   cp -R "$tmp/$kind/windows" "$testdata/$kind/windows"
 done
+# What it wrote, for the person who commits it: new files are marked
+# intent-to-add so the diff shows them too.
 git add -N "$testdata/transcripts/windows" "$testdata/vectors/windows" 2>/dev/null || true
 git status --short -- "$testdata/transcripts/windows" "$testdata/vectors/windows"
+git --no-pager diff --stat -- "$testdata/transcripts/windows" "$testdata/vectors/windows"
+git --no-pager diff -- "$testdata/transcripts/windows" "$testdata/vectors/windows"

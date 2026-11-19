@@ -440,7 +440,7 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
     };
     // On Windows the home directory is USERPROFILE (os.homedir()), as the
     // Go replay sets it.
-    if (process.platform === "win32") env.USERPROFILE = env.HOME;
+    if (process.platform === "win32") env.USERPROFILE = join(dir, "home");
     for (const name of c.unset ?? []) delete env[name];
     for (const [k, v] of Object.entries(c.env ?? {})) env[k] = fill(v, origin, dir);
     const start = Date.now();
