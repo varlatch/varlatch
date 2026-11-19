@@ -3576,7 +3576,13 @@
         "refused inside an agent-safe run"
       ],
       "source": "packages/mcp-server/src/run.ts",
-      "cases": []
+      "cases": [
+        "transcripts/5.6b-mcp.json#tools.writes-flag",
+        "transcripts/5.6b-mcp.json#tools.writes-env",
+        "transcripts/5.6b-mcp.json#tools.writes-env-other",
+        "transcripts/5.6b-mcp.json#agent-run.writes",
+        "transcripts/5.6b-mcp.json#agent-run.writes-env"
+      ]
     }
   ],
   "exits": [
