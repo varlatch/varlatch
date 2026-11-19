@@ -397,9 +397,13 @@ async function main() {
       // A check needing a CLI feature the client lacks: client-lacks, from
       // the runner, unless the target already lacks what it needs.
       const clientLacked = new Set(ids.filter((id) => clientLacking.has(id) && !lacked.has(id) && !(missing.length > 0 && inventory.checks[id].kind in TARGET_SPECIFIC)));
-      const reportLacks = () => {
+      // A lacking check that ran and failed keeps its FAIL (`failed`): only
+      // a check that gave no verdict reports client-lacks.
+      const reportLacks = (failed = new Set()) => {
         for (const id of lacked) reports.push({ suite: entry.suite, id, status: "TARGET-LACKS", text: `the target lacks ${lacking.get(id).join(", ")}`, runner: true });
-        for (const id of clientLacked) reports.push({ suite: entry.suite, id, status: "CLIENT-LACKS", text: `the CLI lacks ${clientLacking.get(id).join(", ")}`, runner: true });
+        for (const id of clientLacked) {
+          if (!failed.has(id)) reports.push({ suite: entry.suite, id, status: "CLIENT-LACKS", text: `the CLI lacks ${clientLacking.get(id).join(", ")}`, runner: true });
+        }
       };
       if (missing.length > 0) {
         console.log(`--- ${suite.title}: not run, the target lacks ${missing.join(", ")}`);
@@ -459,10 +463,11 @@ async function main() {
         }
       }
       parsed.results = [...parsed.results.filter((r) => r.status !== "NOT-BUILT"), ...notBuiltRefused];
-      // A lacking check's result is replaced by the runner's client-lacks;
-      // one that passed shows a stale entry in client-go.json.
+      // A lacking check that gave no verdict reports the runner's
+      // client-lacks; one that passed shows a stale entry in client-go.json;
+      // one that failed stays a failure, whatever client-go.json lists.
       const anyFailed = parsed.results.some((r) => r.status === "FAIL");
-      const { kept, stale } = withoutLacking(parsed.results, clientLacked, clientLacking);
+      const { kept, stale, failed } = withoutLacking(parsed.results, clientLacked, clientLacking);
       parsed.results = kept;
       for (const { id, features } of stale) {
         report.clientLacks.stale.push({ id, features });
@@ -488,9 +493,9 @@ async function main() {
         }
         reports.push({ suite: entry.suite, ...r });
       }
-      reportLacks();
+      reportLacks(failed);
       for (const message of parsed.errors) errors.push({ suite: entry.suite, message });
-      // A FAIL replaced by client-lacks still explains a non-zero exit.
+      // A failed check explains a non-zero exit.
       const failedResults = anyFailed;
       if (out.timedOut) errors.push({ suite: entry.suite, message: `did not finish within ${SUITE_TIMEOUT_MS / 60_000} minutes` });
       else if (out.code !== 0 && !failedResults && parsed.errors.length === 0) {

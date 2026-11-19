@@ -31,10 +31,10 @@
  * step as not built yet (exit 64, NOT_BUILT's exact message), the check
  * reports `NOT-BUILT  [<id>] <the refusal>` instead of a verdict it could
  * not have observed, and the runner reports it client-lacks (never a pass,
- * so never a stale client-go.json entry). `notBuilt(feature, result)`
- * does the same for every check of a feature the suite has not reported
- * yet, so the suite can skip the rest of the feature's work. A TypeScript
- * CLI never takes this path, whatever it prints.
+ * so never a stale client-go.json entry). `notBuilt(ids, result)` does the
+ * same for the checks that depend on that step and that the suite will not
+ * judge, so it can skip their work: each check's NOT-BUILT comes from its
+ * own step. A TypeScript CLI never takes this path, whatever it prints.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -184,20 +184,23 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
     return !lacking().has(id);
   };
   /**
-   * When `result` is the Go CLI's not-built refusal: every check of this
-   * suite in `feature` not reported yet reports NOT-BUILT, and true is
-   * returned, so the suite skips the rest of the feature's work. False
-   * otherwise (always, for a TypeScript CLI).
+   * When `result` is the Go CLI's not-built refusal: each of `ids`, the
+   * checks of this suite that depend on that step, reports NOT-BUILT, and
+   * true is returned, so the suite skips their work. False otherwise
+   * (always, for a TypeScript CLI). A check reported already is an error:
+   * it gave its verdict, or depends on another step.
    */
-  const notBuilt = (feature, result) => {
+  const notBuilt = (ids, result) => {
     const refusal = notBuiltRefusal(result);
     if (!refusal) return false;
     const suite = process.env.CONFORMANCE_SUITE;
     if (!suite) throw new Error("CONFORMANCE_SUITE is not set: run the suite through scripts/conformance/run.mjs");
-    const ids = Object.entries(inventory().checks).filter(([, c]) => c.suite === suite && c.feature === feature).map(([id]) => id);
-    if (ids.length === 0) throw new Error(`${suite} has no checks of feature ${feature} in the inventory`);
     for (const id of ids) {
-      if (reported.has(id)) continue;
+      if (inventory().checks[id]?.suite !== suite) throw new Error(`${id} is not a check of ${suite} in the inventory`);
+      if (reported.has(id)) {
+        error(`${id} was reported already, so its step's not-built refusal cannot stand for it`);
+        continue;
+      }
       reported.add(id);
       console.log(`NOT-BUILT  [${id}] ${refusal}`);
     }

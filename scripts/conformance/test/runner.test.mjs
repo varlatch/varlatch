@@ -110,9 +110,13 @@ if (mode.startsWith("step-") || mode.startsWith("raw-")) {
   } else if (mode === "step-vacuous-after") {
     kit.check("stub.base", "stub.base", true);
     kit.check("stub.scanned", "the refused run issued nothing", issuedNothing, step.out, { after: step });
+  } else if (mode === "step-scanned-only") {
+    // One check of the lacking feature, depending on the step.
+    kit.check("stub.base", "stub.base", true);
+    kit.check("stub.scanned", "the run refused, naming the item", refused, step.out, { after: step });
   } else if (mode === "step-group") {
     // The rest of a feature's checks, after a step refused as not built.
-    if (!kit.notBuilt("scan", step)) kit.check("stub.scanned", "the run refused, naming the item", refused, step.out);
+    if (!kit.notBuilt(["stub.scanned"], step)) kit.check("stub.scanned", "the run refused, naming the item", refused, step.out);
     kit.check("stub.base", "stub.base", true);
   }
   kit.finish();
@@ -121,7 +125,7 @@ if (mode === "crash") throw new Error("the stub suite crashed");
 if (mode === "exit-early") process.exit(3);
 for (const id of ${JSON.stringify(coreChecks)}) line("PASS", id);
 line(mode === "base-fails" ? "FAIL" : "PASS", "stub.base");
-line(mode === "scan-fails" ? "FAIL" : "PASS", "stub.scanned");
+if (mode !== "scan-silent") line(mode === "scan-fails" ? "FAIL" : "PASS", "stub.scanned");
 if (mode === "predates") { line("PREDATES-CLI", "stub.featured"); }
 if (mode === "predates-plain") { line("PREDATES-CLI", "stub.plain"); }
 if (mode === "pass-skipped") { line("PASS", "stub.plain"); }
@@ -233,12 +237,19 @@ test("the runner: a suite that exits early, or crashes, fails the run", () => {
 
 // The Go CLI's gaps (lib/client-lacks.mjs): client-go.json says it lacks scan.
 
-test("the runner: a check of a feature the Go CLI lacks reports client-lacks, whatever the suite printed", () => {
-  const r = run("scan-fails", "", "go:/stub/varlatch");
+test("the runner: a check of a feature the Go CLI lacks that gave no verdict reports client-lacks", () => {
+  const r = run("scan-silent", "", "go:/stub/varlatch");
   assert.equal(r.status, 0, r.out);
   assert.equal(outcomeOf(r.report, "stub.scanned"), "client-lacks");
   assert.equal(outcomeOf(r.report, "stub.base"), "pass");
   assert.deepEqual(r.report.clientLacks.stale, []);
+});
+
+test("the runner: a FAIL of a feature the Go CLI lacks stays a failure, whatever client-go.json lists", () => {
+  const r = run("scan-fails", "", "go:/stub/varlatch");
+  assert.equal(r.status, 1, r.out);
+  assert.equal(outcomeOf(r.report, "stub.scanned"), "fail");
+  assert.equal(outcomeOf(r.report, "stub.base"), "pass");
 });
 
 test("the runner: a lacking check that passes is a stale entry, and fails the run", () => {
@@ -346,6 +357,21 @@ test("the runner: a check refused as not built that needs no listed feature fail
   assert.equal(outcomeOf(r.report, "stub.base"), "fail");
   assert.match(r.report.checks.find((c) => c.id === "stub.base").why, /^client-go\.json lists no feature this check needs, but the Go CLI refused a step it needs as not built: .*\(varlatch run: not in this build/);
   assert.equal(outcomeOf(r.report, "stub.scanned"), "client-lacks");
+});
+
+test("the runner: another Go CLI error on exit 64, on a lacking feature's step, fails the run", () => {
+  // Sol's case: the step fails for a reason that is not the not-built
+  // refusal; the check of a feature client-go.json lists fails, and the
+  // failure is never turned into client-lacks.
+  const r = run("step-scanned-only", "", "go:/stub/varlatch", undefined, { STUB_CLI_OUT: "varlatch run: could not load configuration", STUB_CLI_EXIT: "64" });
+  assert.equal(r.status, 1, r.out);
+  assert.equal(outcomeOf(r.report, "stub.scanned"), "fail");
+  assert.equal(outcomeOf(r.report, "stub.base"), "pass");
+  assert.deepEqual(r.report.clientLacks.notBuilt, []);
+  // The refusal itself, on the same step: client-lacks, and the run passes.
+  const refused = run("step-scanned-only", "", "go:/stub/varlatch", undefined, refusedAsNotBuilt);
+  assert.equal(refused.status, 0, refused.out);
+  assert.equal(outcomeOf(refused.report, "stub.scanned"), "client-lacks");
 });
 
 test("the runner: only the Go CLI's exact refusal, on a usage exit, counts as not built", () => {

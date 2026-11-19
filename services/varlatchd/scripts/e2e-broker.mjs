@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
-import { cliCommand, reporter } from "../../../scripts/conformance/suite-kit.mjs";
+import { cliCommand, notBuiltRefusal, reporter } from "../../../scripts/conformance/suite-kit.mjs";
 /**
  * Live E2E for the credential broker (ADR-0022): agent-safe run against the
  * clean-room stack with a real TLS upstream. Asserts the design-doc list:
@@ -111,11 +111,12 @@ const decoyPort = decoyUpstream.address().port;
 // and omits) and metadata mode. The exercise checks after it use the API.
 const CAPS = "/v1/organizations/acme/projects/api/environments/development/capabilities";
 const agentSafe = kit.supports("agent-safe-run");
-// Whether the group ran to its end. The Go CLI refuses a step it does not
-// build yet (kit.notBuilt): the group's remaining checks then report
-// NOT-BUILT, which the runner turns into client-lacks, and the API checks
-// below run as they do when the CLI predates the feature.
-const agentSafeRan = agentSafe && (await (async () => {
+// Each check of the group names the CLI step it depends on ({ after }):
+// when the Go CLI refuses that step as not built yet, the check reports
+// NOT-BUILT, which the runner turns into client-lacks. The API checks below
+// run either way, as they do when the CLI predates the feature. The group
+// returns its targeted run, which the issuance audit check depends on.
+const group = agentSafe ? await (async () => {
 
   const repoDir = mkdtempSync(join(tmpdir(), "broker-e2e-repo-"));
   const configDir = mkdtempSync(join(tmpdir(), "broker-e2e-cfg-"));
@@ -255,53 +256,58 @@ const agentSafeRan = agentSafe && (await (async () => {
   check("broker.refused-run-issued-no-capability", "the refused run issued no Capability",
     refusedForTarget && capsAfter === capsBefore,
     JSON.stringify({ refusedForTarget, capsBefore, capsAfter, exit: untargeted.code }), { after: untargeted });
-  if (kit.notBuilt("agent-safe-run", untargeted)) return false;
 
   const agentRun = await run([
     "run", "--agent-safe", "--agent", "e2e agent", "--allow-host", `localhost:${tlsPort}`, ...targetArgs,
     "--", "node", agentScript,
   ], { env: { ...cliEnv, DATABASE_URL: "shell-copy", E2E_OMITTED: "shell-copy" } });
-  if (kit.notBuilt("agent-safe-run", agentRun)) return false;
+  // Every check up to the metadata mode depends on this run. Refused as
+  // not built, it has no results, and each check reports NOT-BUILT.
+  const checkRun = (id, name, ok, detail = "") => check(id, name, ok, detail, { after: agentRun });
   const resultsLine = agentRun.out.split("\n").find((l) => l.startsWith("AGENT_RESULTS "));
-  if (!resultsLine) {
+  if (!resultsLine && !notBuiltRefusal(agentRun)) {
     error(`agent-safe run produced no results (exit ${agentRun.code}):\n${agentRun.out}`);
     kit.finish();
   }
-  const r = JSON.parse(resultsLine.slice("AGENT_RESULTS ".length));
-  check("broker.agent-env-contains-no-stored-secret", "agent env contains no stored Secret plaintext", r.noPlaintext);
-  check("broker.agent-holds-no-reusable-varlatch-credential", "agent holds no reusable Varlatch credential", r.noBearer);
-  check("broker.secret-injected-opaque-placeholder", "Secret injected as an opaque placeholder", r.placeholder);
-  check("broker.non-sensitive-value-injected-plaintext", "non-sensitive value injected as plaintext", r.plainValue);
-  check("broker.omitted-secret-shell-stale-copies-never", "an omitted Secret and the shell's stale copies never reach the Agent", r.omittedAbsent);
-  check("broker.run-names-inherited-secrets-removed", "the run names the inherited Secrets it removed", /removed Secrets inherited from this shell[^\n]*E2E_OMITTED/.test(agentRun.out), agentRun.out);
-  check("broker.node-fetch-pointed-broker-node-use", "Node's fetch is pointed at the Broker (NODE_USE_ENV_PROXY=1)", r.nodeProxy);
-  check("broker.reflected-credential-comes-back-placeholder-body", "a reflected credential comes back as the Placeholder (body and header)", r.echo);
-  check("broker.gzip-coded-reflection-decoded-scrubbed", "a gzip-coded reflection is decoded and scrubbed", r.echoGzip);
+  const r = resultsLine ? JSON.parse(resultsLine.slice("AGENT_RESULTS ".length)) : {};
+  checkRun("broker.agent-env-contains-no-stored-secret", "agent env contains no stored Secret plaintext", r.noPlaintext);
+  checkRun("broker.agent-holds-no-reusable-varlatch-credential", "agent holds no reusable Varlatch credential", r.noBearer);
+  checkRun("broker.secret-injected-opaque-placeholder", "Secret injected as an opaque placeholder", r.placeholder);
+  checkRun("broker.non-sensitive-value-injected-plaintext", "non-sensitive value injected as plaintext", r.plainValue);
+  checkRun("broker.omitted-secret-shell-stale-copies-never", "an omitted Secret and the shell's stale copies never reach the Agent", r.omittedAbsent);
+  checkRun("broker.run-names-inherited-secrets-removed", "the run names the inherited Secrets it removed", /removed Secrets inherited from this shell[^\n]*E2E_OMITTED/.test(agentRun.out), agentRun.out);
+  checkRun("broker.node-fetch-pointed-broker-node-use", "Node's fetch is pointed at the Broker (NODE_USE_ENV_PROXY=1)", r.nodeProxy);
+  checkRun("broker.reflected-credential-comes-back-placeholder-body", "a reflected credential comes back as the Placeholder (body and header)", r.echo);
+  checkRun("broker.gzip-coded-reflection-decoded-scrubbed", "a gzip-coded reflection is decoded and scrubbed", r.echoGzip);
   // Only responses the Agent received count: both reflections came back.
-  check("broker.no-response-agent-carries-secret", "no response to the Agent carries the Secret", r.echoSeen === true && r.echoLeak === false);
-  check("broker.destination-received-real-credential-asked-echo", "the destination still received the real credential when asked to echo it",
-    tlsRequests.filter((q) => q.url.startsWith("/echo")).every((q) => q.auth === `Bearer ${SECRET}`));
-  check("broker.run-reports-what-scrubbed-item-count", "the run reports what it scrubbed, by item and count", /replaced Secrets reflected in responses: DATABASE_URL \d+/.test(agentRun.out), agentRun.out);
-  check("broker.placeholder-outside-targets-blocks-diagnostic-naming", "a Placeholder outside its targets blocks with a diagnostic naming item and location",
-    r.outside.startsWith("403:") && r.outside.includes('DATABASE_URL: placeholder at header "x-debug", which is not a target'), r.outside);
+  checkRun("broker.no-response-agent-carries-secret", "no response to the Agent carries the Secret", r.echoSeen === true && r.echoLeak === false);
+  // Both reflections reached the destination; only then does "every one
+  // carried the real credential" say anything.
+  const echoed = tlsRequests.filter((q) => q.url.startsWith("/echo"));
+  checkRun("broker.destination-received-real-credential-asked-echo", "the destination still received the real credential when asked to echo it",
+    echoed.some((q) => q.url === "/echo") && echoed.some((q) => q.url === "/echo-gzip") && echoed.every((q) => q.auth === `Bearer ${SECRET}`),
+    JSON.stringify(echoed.map((q) => q.url)));
+  checkRun("broker.run-reports-what-scrubbed-item-count", "the run reports what it scrubbed, by item and count", /replaced Secrets reflected in responses: DATABASE_URL \d+/.test(agentRun.out), agentRun.out);
+  checkRun("broker.placeholder-outside-targets-blocks-diagnostic-naming", "a Placeholder outside its targets blocks with a diagnostic naming item and location",
+    String(r.outside ?? "").startsWith("403:") && String(r.outside ?? "").includes('DATABASE_URL: placeholder at header "x-debug", which is not a target'), r.outside);
   // The Agent made the request and the Broker blocked it; only then is its
   // absence at the destination evidence.
-  check("broker.blocked-request-never-reached-destination", "the blocked request never reached the destination",
+  checkRun("broker.blocked-request-never-reached-destination", "the blocked request never reached the destination",
     String(r.outside).startsWith("403:") && !tlsRequests.some((q) => q.url === "/outside"), r.outside);
-  check("broker.stray-placeholder-untargeted-surface-forwarded", "a stray Placeholder in an untargeted surface is forwarded unchanged",
+  checkRun("broker.stray-placeholder-untargeted-surface-forwarded", "a stray Placeholder in an untargeted surface is forwarded unchanged",
     r.strayStatus === 200 && tlsRequests.some((q) => q.url.startsWith("/stray?note=vlch_ph_v1_") && q.auth === `Bearer ${SECRET}`));
-  check("broker.allowed-inspectable-request-succeeded-through-broker", "allowed inspectable request succeeded through the broker", r.allowedStatus === 200, `status ${r.allowedStatus}`);
-  check("broker.proxy-requires-per-run-token", "proxy requires the per-run token", r.noAuthStatus === 407, `status ${r.noAuthStatus}`);
-  check("broker.redirect-relayed-agent-not-followed", "redirect relayed to the agent, not followed", r.redirectRelayed);
-  check("broker.connect-secret-using-destination-refused-diagnostic", "CONNECT to secret-using destination refused with diagnostic",
+  checkRun("broker.allowed-inspectable-request-succeeded-through-broker", "allowed inspectable request succeeded through the broker", r.allowedStatus === 200, `status ${r.allowedStatus}`);
+  checkRun("broker.proxy-requires-per-run-token", "proxy requires the per-run token", r.noAuthStatus === 407, `status ${r.noAuthStatus}`);
+  checkRun("broker.redirect-relayed-agent-not-followed", "redirect relayed to the agent, not followed", r.redirectRelayed);
+  checkRun("broker.connect-secret-using-destination-refused-diagnostic", "CONNECT to secret-using destination refused with diagnostic",
     String(r.connect).startsWith("502") && String(r.connect).includes("intentionally does not MITM"), r.connect);
 
   const charge = tlsRequests.find((q) => q.url === "/charge");
-  check("broker.upstream-received-real-credential-over-tls", "upstream received the real credential over TLS",
+  checkRun("broker.upstream-received-real-credential-over-tls", "upstream received the real credential over TLS",
     charge?.auth === `Bearer ${SECRET}` && JSON.parse(charge?.body ?? "{}").dsn === SECRET);
-  check("broker.redirect-request-itself-carried-real-credential", "redirect request itself carried the real credential to the allowed host",
+  checkRun("broker.redirect-request-itself-carried-real-credential", "redirect request itself carried the real credential to the allowed host",
     tlsRequests.find((q) => q.url === "/redirect")?.auth === `Bearer ${SECRET}`);
-  check("broker.unauthorized-host-received-only-placeholders-never", "unauthorized host received only placeholders, never the secret",
+  checkRun("broker.unauthorized-host-received-only-placeholders-never", "unauthorized host received only placeholders, never the secret",
     decoyRequests.length === 2 &&
       decoyRequests.every((q) => /^Bearer vlch_ph_v1_/.test(q.auth ?? "") && !q.body.includes(SECRET)));
 
@@ -336,27 +342,30 @@ const agentSafeRan = agentSafe && (await (async () => {
     "run", "--agent-safe", "--agent", "e2e agent", "--allow-host", `localhost:${tlsPort}`, ...targetArgs,
     "--agent-metadata", "--", "node", metaScript,
   ]);
-  if (kit.notBuilt("agent-safe-run", metaRun)) return false;
+  // The metadata checks depend on this run.
+  const checkMeta = (id, name, ok, detail = "") => check(id, name, ok, detail, { after: metaRun });
   const metaLine = metaRun.out.split("\n").find((l) => l.startsWith("META_RESULTS "));
-  if (!metaLine) {
+  if (!metaLine && !notBuiltRefusal(metaRun)) {
     error(`metadata-credential run produced no results (exit ${metaRun.code}):\n${metaRun.out}`);
     kit.finish();
   }
-  const m = JSON.parse(metaLine.slice("META_RESULTS ".length));
-  check("broker.metadata-mode-injects-short-lived-agent-run-bearer", "metadata mode injects a short-lived agent-run bearer", m.hasAgentToken);
-  check("broker.agent-reads-configuration-metadata-directly", "agent reads configuration metadata directly", m.metadataStatus === 200 && m.seesItems, `status ${m.metadataStatus}`);
-  check("broker.metadata-response-carries-no-secret-plaintext", "metadata response carries no Secret plaintext",
+  const m = metaLine ? JSON.parse(metaLine.slice("META_RESULTS ".length)) : {};
+  checkMeta("broker.metadata-mode-injects-short-lived-agent-run-bearer", "metadata mode injects a short-lived agent-run bearer", m.hasAgentToken);
+  checkMeta("broker.agent-reads-configuration-metadata-directly", "agent reads configuration metadata directly", m.metadataStatus === 200 && m.seesItems, `status ${m.metadataStatus}`);
+  checkMeta("broker.metadata-response-carries-no-secret-plaintext", "metadata response carries no Secret plaintext",
     m.metadataStatus === 200 && m.noPlaintextInMetadata, `status ${m.metadataStatus}`);
-  check("broker.agent-run-credential-read-only-http-layer", "agent-run credential is read-only at the HTTP layer", m.writeStatus === 403, `status ${m.writeStatus}`);
-  const afterRun = await fetch(
-    `${server}/v1/organizations/acme/projects/api/environments/development/effective-configuration`,
-    { headers: { Authorization: `Bearer ${m.token}` } },
-  );
+  checkMeta("broker.agent-run-credential-read-only-http-layer", "agent-run credential is read-only at the HTTP layer", m.writeStatus === 403, `status ${m.writeStatus}`);
+  const afterRun = m.token
+    ? await fetch(
+      `${server}/v1/organizations/acme/projects/api/environments/development/effective-configuration`,
+      { headers: { Authorization: `Bearer ${m.token}` } },
+    )
+    : { status: null };
   // A 401 proves a revocation only for a credential the run did hold.
-  check("broker.agent-run-credential-revoked-run-exits", "agent-run credential is revoked when the run exits",
+  checkMeta("broker.agent-run-credential-revoked-run-exits", "agent-run credential is revoked when the run exits",
     m.hasAgentToken && afterRun.status === 401, `token ${m.hasAgentToken ? "held" : "missing"}, status ${afterRun.status}`);
-  return true;
-})());
+  return { agentRun };
+})() : null;
 
 // --- exercise-time semantics via the API (broker credential) ----------------
 
@@ -474,12 +483,13 @@ check("broker.exercise-audit-identifies-agent-broker-destination", "exercise aud
     good.metadata?.destination === `localhost:${tlsPort}`);
 check("broker.denial-audit-records-internal-reason", "denial audit records the internal reason",
   events.some((e) => e.eventType === "capability.denied" && e.metadata?.reason === "authz-denied"));
-// The issuance with two targets is the agent-safe run's own: only after
-// the group ran (a group that stopped as not built reported this check).
-if (agentSafeRan) {
+// The issuance with two targets is the targeted agent-safe run's own, so
+// the check depends on that run.
+if (group) {
   check("broker.issuance-audit-records-targets-exercise-audit", "issuance audit records the targets, exercise audit the placements",
     events.some((e) => e.eventType === "capability.issued" && e.metadata?.targets === "DATABASE_URL=header:authorization;DATABASE_URL=json:/dsn") &&
-      exercised.some((e) => e.metadata?.placements === "DATABASE_URL=header:authorization;DATABASE_URL=json:/dsn"));
+      exercised.some((e) => e.metadata?.placements === "DATABASE_URL=header:authorization;DATABASE_URL=json:/dsn"),
+    "", { after: group.agentRun });
 }
 check("broker.bound-dependency-audited-reference-expansion-before", "a bound dependency is audited as a reference expansion before it is decrypted",
   events.some((e) => e.eventType === "secret.disclosed" && e.metadata?.mode === "reference-expansion" && String(e.metadata?.items).startsWith("API_KEY@ver_")));
