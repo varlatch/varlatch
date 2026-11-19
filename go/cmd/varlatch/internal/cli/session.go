@@ -410,6 +410,12 @@ func logoutCommand(r *Run) error {
 // whoamiUsage is main.ts's WHOAMI_USAGE.
 const whoamiUsage = "Usage: varlatch whoami [--server <url>] [--json]"
 
+// envUsage and envUseUsage are main.ts's env usage lines.
+const (
+	envUsage    = "Usage: varlatch env <use|list>"
+	envUseUsage = "Usage: varlatch env use <environment>"
+)
+
 // whoamiCommand is `varlatch whoami [--server <url>] [--json]` (capability
 // identity.whoami): which identity the credential this CLI would use
 // belongs to, with its organization and the credential's own name, as GET
@@ -713,7 +719,7 @@ func envCommand(r *Run) error {
 		return contextError(err)
 	}
 	if !hasSub || sub != "list" {
-		return UsageError("Usage: varlatch env <use|list>")
+		return UsageOnly(envUsage)
 	}
 	return r.envList(ctx)
 }
@@ -805,7 +811,7 @@ func (r *Run) envList(ctx *clientctx.Context) error {
 // `env list` runs in CI across tracked directories and never writes.
 func (r *Run) envUse() error {
 	if len(r.Args) < 2 {
-		return UsageError("Usage: varlatch env use <environment>")
+		return UsageOnly(envUseUsage)
 	}
 	name := r.Args[1]
 	cwd, err := Cwd()

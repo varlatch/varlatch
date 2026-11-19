@@ -213,8 +213,10 @@ func TestFailSafeRule(t *testing.T) {
 		"contact: ops@example.net": "contact:[redacted]@example.net",
 		"Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\\\[redacted]@127.0.0.1:3). Pass --server <url> or --all.": "Multiple servers stored (http:[redacted]@127.0.0.1:3). Pass --server <url> or --all.",
 		"https://u:p[redacted]@h": "https:[redacted]@h",
-		// Over-masking, accepted: a colon anywhere before an at-sign (here a
-		// usage line; the CLI appends usage text after the fail-safe).
+		// The raw fail-safe over-masks a usage line (a colon anywhere before
+		// an at-sign). The CLI never passes usage text through it: usage text
+		// is printed after the fail-safe, byte for byte (internal/cli's
+		// TestUsageTextIsNeverMasked and TestNoUsageTextThroughTheFailSafe).
 		"  varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]": "  varlatch request [-X <method>] [-H '<name>:[redacted]@-]",
 		// Kept: no colon before an at-sign, or no at-sign.
 		"me@example.com and then: more":      "me@example.com and then: more",

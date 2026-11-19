@@ -62,7 +62,7 @@ func agentsCommand(r *Run) error {
 	case "install":
 		return r.agentsInstall(rest)
 	}
-	return UsageError(agentsUsage)
+	return UsageOnly(agentsUsage)
 }
 
 func (r *Run) agentsInstall(args []string) error {
@@ -179,7 +179,7 @@ func initCommand(r *Run) error {
 		return UsageError("varlatch init: guided init on a terminal is not in this build of the Go CLI yet (slice 5.8a); pass --org and --project, or use the TypeScript CLI for it until then")
 	}
 	if !hasOrg {
-		return UsageError(initUsage)
+		return UsageOnly(initUsage)
 	}
 	if !hasProject {
 		return UsageError("Provide --project")

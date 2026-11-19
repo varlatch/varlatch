@@ -306,7 +306,7 @@ func serverCommand(r *Run) error {
 			return err
 		}
 		if len(parsed.Positionals) == 0 {
-			return UsageError(serverUsage)
+			return UsageOnly(serverUsage)
 		}
 		return r.useServer(parsed.Positionals[0], parsed.Has("--json"))
 	}

@@ -119,6 +119,11 @@ func UsageErrorWithUsage(message, usage string) error {
 	return &exitError{message: message, usage: usage, code: ExitUsage}
 }
 
+// UsageOnly is UsageError(usage), usage being one of this binary's usage
+// texts and the whole message: printed outside the fail-safe, byte for
+// byte as TypeScript prints it, never masked.
+func UsageOnly(usage string) error { return UsageErrorWithUsage("", usage) }
+
 // Main runs the CLI with args (the process's arguments without the program
 // name) and returns the exit status, as apps/cli/src/main.ts main() does.
 func Main(args []string, env Env, streams IO) int {
