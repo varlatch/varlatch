@@ -966,8 +966,8 @@ func (r *Run) envUse() error {
 		// again when it is printed.
 		if text, ok := tier.(string); ok {
 			tier = RedactOutput(text, r.inFlight...)
-		} else {
-			tier = RedactValue(tier, r.inFlight...)
+		} else if tier, err = RedactValue(tier, r.inFlight...); err != nil {
+			return err
 		}
 		state = state.Set("selectedTier", tier).Set("tierCachedAt", isoString(time.Now().UTC()))
 		note = " (tier " + Printable(shownValue(jsjson.String(tier))) + ")"

@@ -33,14 +33,6 @@
     "scan": {
       "reason": "varlatch scan: not ported to the Go CLI yet",
       "slice": "5.4d"
-    },
-    "types-python": {
-      "reason": "varlatch types: the Python module and its Typed Accessor: not ported to the Go CLI yet",
-      "slice": "5.3c"
-    },
-    "types-typescript": {
-      "reason": "varlatch types: the TypeScript module and its Typed Accessor: not ported to the Go CLI yet",
-      "slice": "5.3c"
     }
   }
 }

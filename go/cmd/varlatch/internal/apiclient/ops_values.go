@@ -65,6 +65,12 @@ func (c *Client) GetActiveContract(ctx context.Context, org, project string) (an
 	return c.Request(ctx, "GET", projectPath(org, project)+"/contract", NoBody, nil)
 }
 
+// GetContractRevision is GET .../contract/revisions/<id>: one stored
+// revision by ID, active or not (capability contracts.revision-by-id).
+func (c *Client) GetContractRevision(ctx context.Context, org, project, revisionID string) (any, error) {
+	return c.Request(ctx, "GET", projectPath(org, project)+"/contract/revisions/"+EncodeURIComponent(revisionID), NoBody, nil)
+}
+
 // PushContractRevision is POST .../contract/revisions with {contract, provenance}.
 func (c *Client) PushContractRevision(ctx context.Context, org, project string, body jsjson.Object) (any, error) {
 	return c.Request(ctx, "POST", projectPath(org, project)+"/contract/revisions", body, nil)

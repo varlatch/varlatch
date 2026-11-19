@@ -296,30 +296,50 @@ func RedactOutput(text string, values ...string) string {
 // --json document, so a value is matched in the string that holds it,
 // never in the serialised text (a short value never touches a number or an
 // escape).
-func RedactValue(v any, values ...string) any {
+func RedactValue(v any, values ...string) (any, error) {
 	switch x := v.(type) {
+	case nil, bool, float64, int:
+		return v, nil // nothing to redact
 	case string:
-		return redactString(x, values)
+		return redactString(x, values), nil
 	case jsjson.Object:
 		out := make(jsjson.Object, len(x))
 		for i, m := range x {
-			out[i] = jsjson.Member{Key: m.Key, Value: RedactValue(m.Value, values...)}
+			value, err := RedactValue(m.Value, values...)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = jsjson.Member{Key: m.Key, Value: value}
 		}
-		return out
+		return out, nil
 	case []any:
 		out := make([]any, len(x))
 		for i, e := range x {
-			out[i] = RedactValue(e, values...)
+			value, err := RedactValue(e, values...)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = value
 		}
-		return out
+		return out, nil
 	case []string:
 		out := make([]string, len(x))
 		for i, e := range x {
 			out[i] = redactString(e, values)
 		}
-		return out
+		return out, nil
 	}
-	return v // nil, bool, float64, int: nothing to redact
+	// Any other type would reach the serialiser unredacted: refused, so a
+	// --json document holds only what the fail-safe walks.
+	return nil, errNotRedactable{v}
+}
+
+// errNotRedactable is a value of a type RedactValue does not walk: an
+// error of the CLI's own, never printed with the value.
+type errNotRedactable struct{ v any }
+
+func (e errNotRedactable) Error() string {
+	return fmt.Sprintf("internal error: a JSON document holds a %T, which the fail-safe does not redact; nothing was printed", e.v)
 }
 
 // redactString is RedactValue for one string.
@@ -520,8 +540,12 @@ type redactedJSON struct{ document string }
 // applied, the values in flight included: keys are left alone (they come
 // from the API's schema and the CLI's own documents), so no two keys are
 // ever made the same.
-func redactJSON(doc any, values ...string) redactedJSON {
-	return redactedJSON{document: string(jsjson.StringifyIndent(RedactValue(doc, values...), 2))}
+func redactJSON(doc any, values ...string) (redactedJSON, error) {
+	redacted, err := RedactValue(doc, values...)
+	if err != nil {
+		return redactedJSON{}, err
+	}
+	return redactedJSON{document: string(jsjson.StringifyIndent(redacted, 2))}, nil
 }
 
 // outJSON writes a redacted --json document and a newline, as it is: the
