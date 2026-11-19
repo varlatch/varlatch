@@ -612,6 +612,36 @@ comes. `verify-release`, which the installers run, is Go's own.
   prompt's keys) and 2,022 texts split into grapheme clusters, `validate`'s
   outcome and `--json` document for 17 reports, and import's type
   inference (every semantics version), name checks and strict decoding.
+- Find files (slice 5.4e): `scan --find-files [<dir>] [--json]` is
+  `internal/findfiles`, run from `internal/cli`'s `findfilescmd.go`; the
+  rest of `scan` is slice 5.4d, so `scan` answers only the command lines
+  that name `--find-files` before `--` (read by `scan`'s whole option
+  parser, so its usage errors are scan's) and says the others are not
+  built. It lists the files whose names look like copies of secrets
+  (`.env`, `.env.*` but the two templates, `*.pem`, `*.key`) by names and
+  `lstat` alone: it never reads a candidate, never follows a symbolic link
+  (one is listed by its own name), skips `.git`, `.hg`, `.svn` and
+  `node_modules`, and stops at 200,000 entries or 20 directory levels,
+  naming what it did not search. Git's own ignore rules decide each
+  file's state: one `git check-ignore --no-index` per repository, with no
+  system or global configuration and none of the caller's `GIT_*`
+  variables, given the excludes file read here (the repository's
+  `core.excludesFile`, else the global one from `GIT_CONFIG_GLOBAL`, or
+  `$XDG_CONFIG_HOME/git/config` then `~/.gitconfig`, else
+  `$XDG_CONFIG_HOME/git/ignore`). Before Git runs, the repository is found
+  by name and looked at: a linked `.git`, a bare repository, an include,
+  `core.worktree`, an alternate object store, a `.gitignore` or excludes
+  file that is a link, a hard link or not a regular file, or one named
+  like a secret copy, makes the state unknown, with why. Names are bytes
+  (`internal/termtext` shows them as `scan` shows text); statuses 1 (a
+  file found), 2 (none found, the search incomplete), 0, and 1 for every
+  failure, as for all of `scan` (a status the command sets itself is
+  kept). `testdata/vectors/findfiles.json`
+  (`apps/cli/test/go-vectors-findfiles.test.ts`) holds 79 trees (names,
+  links, bounds, Git's rules, global and XDG configuration, repositories
+  and their unusual forms) to findFiles.ts's report, human and `--json`
+  (`internal/findfiles`' `TestVectors`); `TestNeverReadsACandidate` and
+  `TestFindIsLinear` (eight times the tree in at most 24 times the time).
 - The process tests of `apps/cli/test` run against a Go binary with
   `VARLATCH_TEST_CLI=<path>` (`cliUnderTest.ts`); `go-cli-files.json` lists
   the files that must pass.
