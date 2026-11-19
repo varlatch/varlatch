@@ -6,14 +6,19 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/scan"
 )
 
 const (
@@ -174,6 +179,109 @@ func TestScanRefusesADisclosureOfAnotherShape(t *testing.T) {
 		code, out, errText := runScan(t, "a.txt")
 		if code != 1 || out != "" || !strings.HasPrefix(errText, "varlatch: ") || strings.Contains(errText, scanAPIKey) {
 			t.Errorf("%s: status %d\n%q %q", items, code, out, errText)
+		}
+	}
+}
+
+// TestInstallHookRefusesALink: a pre-commit hook that is a symbolic link,
+// to a file outside the hooks directory or dangling, is refused (1) and
+// never written through: the file it points to is unchanged and a dangling
+// target is not created, and the message never names the target
+// (go/README.md, `scan-hook-link`). core.hooksPath is still honoured.
+func TestInstallHookRefusesALink(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("needs git")
+	}
+	_, server := newScanServer(t, scanItems)
+	outside := t.TempDir()
+	foreign := filepath.Join(outside, "foreign-hook")
+	if err := os.WriteFile(foreign, []byte("#!/bin/sh\necho foreign\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{foreign, filepath.Join(outside, "nowhere", "hook")} {
+		dir := scanRepo(t, server, map[string]string{})
+		gitInit(t, dir)
+		hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+		if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, hook); err != nil {
+			t.Skipf("no symbolic links here: %v", err)
+		}
+		code, out, errText := runScan(t, "--install-hook")
+		if code != 1 || out != "" || !strings.Contains(errText, "is a symbolic link; it was left unchanged") || strings.Contains(errText, outside) {
+			t.Fatalf("%s: status %d\n%q\n%q", target, code, out, errText)
+		}
+		if info, err := os.Lstat(hook); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s: the link was replaced", target)
+		}
+	}
+	if data, err := os.ReadFile(foreign); err != nil || string(data) != "#!/bin/sh\necho foreign\n" {
+		t.Fatalf("the linked hook was written: %q %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "nowhere")); !os.IsNotExist(err) {
+		t.Fatalf("the dangling link's target was created: %v", err)
+	}
+
+	// core.hooksPath: the hook goes where git runs it from.
+	dir := scanRepo(t, server, map[string]string{})
+	gitInit(t, dir, "config", "core.hooksPath", "githooks")
+	if code, out, errText := runScan(t, "--install-hook"); code != 0 || !strings.Contains(out, filepath.Join("githooks", "pre-commit")) {
+		t.Fatalf("core.hooksPath: status %d\n%s%s", code, out, errText)
+	}
+	info, err := os.Lstat(filepath.Join(dir, "githooks", "pre-commit"))
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("core.hooksPath: %v %v", info, err)
+	}
+}
+
+// TestWriteHookNeverFollowsALink: a link put in place after installHook's
+// check is refused by the write itself (O_NOFOLLOW, or the reparse point
+// opened and seen on Windows), and nothing is written through it.
+func TestWriteHookNeverFollowsALink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "pre-commit")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	err := writeHook(link, "#!/bin/sh\n")
+	var refused *scan.SourceError
+	if !errors.As(err, &refused) || !strings.Contains(refused.Message, "is a symbolic link") {
+		t.Fatalf("writeHook through a link: %v", err)
+	}
+	if data, _ := os.ReadFile(target); string(data) != "kept\n" {
+		t.Fatalf("written through the link: %q", data)
+	}
+	// A regular file is written, 0755.
+	plain := filepath.Join(dir, "plain")
+	if err := writeHook(plain, "#!/bin/sh\necho ok\n"); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(plain); string(data) != "#!/bin/sh\necho ok\n" {
+		t.Fatalf("plain hook %q", data)
+	}
+	if info, _ := os.Stat(plain); runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
+		t.Fatalf("mode %v", info.Mode())
+	}
+}
+
+// gitInit makes dir a Git repository with no configuration of the machine,
+// then runs git with extra, when given.
+func gitInit(t *testing.T, dir string, extra ...string) {
+	t.Helper()
+	for _, args := range [][]string{{"init", "-q"}, extra} {
+		if len(args) == 0 {
+			continue
+		}
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
 }

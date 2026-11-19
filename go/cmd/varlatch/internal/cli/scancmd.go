@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
@@ -577,7 +578,11 @@ func installHook(git scan.Git, cwd, projectRoot string, environment *string) (st
 	out, said, exit, err := git.Run(cwd, nil, "rev-parse", "--git-path", "hooks/pre-commit")
 	if err != nil {
 		// execFileSync's spawn error.
-		message := strings.Replace(err.(*scan.SourceError).Message, "could not run git: spawn ", "spawnSync ", 1)
+		var spawn *scan.SourceError
+		if !errors.As(err, &spawn) {
+			return "", err
+		}
+		message := strings.Replace(spawn.Message, "could not run git: spawn ", "spawnSync ", 1)
 		return "", &scan.SourceError{Message: "could not find the hooks directory: " + message}
 	}
 	if exit != nil {
@@ -601,6 +606,13 @@ func installHook(git scan.Git, cwd, projectRoot string, environment *string) (st
 		return "", &scanUsageError{projectRoot + " is outside the Git working tree " + top}
 	}
 	script := hookScript(projectDir, environment)
+	// A hook that is a symbolic link, dangling or not, is refused, never
+	// written through: it could point anywhere outside .git/hooks
+	// (go/README.md, `scan-hook-link`). core.hooksPath itself is honoured,
+	// as git does.
+	if info, err := os.Lstat(hookPath); err == nil && isLinkMode(info.Mode()) {
+		return "", hookLinkError(hookPath)
+	}
 	if exists(hookPath) {
 		existing, err := os.ReadFile(hookPath)
 		if err != nil {
@@ -618,11 +630,52 @@ func installHook(git scan.Git, cwd, projectRoot string, environment *string) (st
 	if err := os.MkdirAll(filepath.Dir(hookPath), 0o777); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(hookPath, []byte(script), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.Chmod(hookPath, 0o755); err != nil {
+	if err := writeHook(hookPath, script); err != nil {
 		return "", err
 	}
 	return hookPath, nil
+}
+
+// isLinkMode reports whether a file is a symbolic link or another reparse
+// point (Windows reports those as irregular).
+func isLinkMode(mode os.FileMode) bool {
+	return mode&(os.ModeSymlink|os.ModeIrregular) != 0
+}
+
+// hookLinkError is the refusal of a hook that is a symbolic link. It names
+// the hook's path, never where the link points.
+func hookLinkError(hookPath string) error {
+	return &scan.SourceError{Message: hookPath + " is a symbolic link; it was left unchanged, since varlatch does not write a hook through a link. " +
+		"Replace it with a file, or add \"varlatch scan --staged || exit 1\" to the hook it points to yourself."}
+}
+
+// writeHook writes the hook as writeFileSync and chmodSync do (mode 0755),
+// through a handle that never follows a symbolic link: one put in place
+// after the check above is refused too, and nothing is written.
+func writeHook(hookPath, script string) error {
+	f, err := openNoFollowWrite(hookPath, 0o755)
+	if errors.Is(err, syscall.ELOOP) {
+		return hookLinkError(hookPath)
+	}
+	if err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err == nil && (isLinkMode(info.Mode()) || !info.Mode().IsRegular()) {
+		_ = f.Close()
+		return hookLinkError(hookPath)
+	}
+	if err == nil {
+		err = f.Truncate(0)
+	}
+	if err == nil {
+		_, err = f.WriteString(script)
+	}
+	if err == nil {
+		err = f.Chmod(0o755)
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }

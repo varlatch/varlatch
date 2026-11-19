@@ -272,9 +272,10 @@ var differences = map[string]func(report jsjson.Object, c jsjson.Object, limits 
 	// --staged: Go admits each staged file with the sizes of the files
 	// admitted before it counted, so --max-total-size bounds the staged
 	// content as a whole; TypeScript checks each file against the bound
-	// alone (internal register, defect 34). The files TypeScript admitted
-	// and Go does not are taken out of the report (their findings, the
-	// files and bytes scanned) and named as over the total size bound, in
+	// alone (step 5 defect 34, not a security defect). The files
+	// TypeScript admitted and Go does not are taken out of the report
+	// (their findings, the files and bytes scanned) and named as over the
+	// total size bound, in
 	// the listing's order, where the admissions' entries stand. (A case
 	// names this difference only when no file it takes out ends with the
 	// start of a value, which the recording does not count per file.)
