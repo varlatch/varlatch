@@ -38,6 +38,51 @@ export const EXPECTED_429 = [
   { suite: "proxy-probe", method: "POST", path: "/v1/auth/device", forwardedFor: /^198\.18\.0\.\d+$/ },
 ];
 
+/**
+ * The requests a suite may declare it gets a 429 for on purpose, one
+ * request at a time: the hand-over polls a device sign-in too early, once
+ * each way, to be answered slow_down (a 429), and its checks verify the
+ * longer interval that answer gave. Any other suite, or another request,
+ * cannot be declared.
+ */
+export const DECLARABLE_429 = {
+  "cli-handover": [{ method: "POST", path: "/v1/auth/device/token" }],
+};
+
+/**
+ * A suite's declaration, one line on its standard output around the one
+ * request: the check it is for, the request, and when it was made (epoch
+ * milliseconds, just before and just after).
+ *
+ *   EXPECTED-429  [<check id>] <METHOD> <path> <start> <end>
+ */
+const DECLARATION = /^EXPECTED-429 {2}\[([a-z0-9][a-z0-9.-]*)\] ([A-Z]+) (\S+) (\d+) (\d+)$/;
+
+/**
+ * The 429 declarations in a suite's output, each allowing at most one
+ * refusal of that request between its start and end; `errors` names any a
+ * suite may not make (DECLARABLE_429), which fail the run.
+ */
+export function declared429(suite, output) {
+  const declarations = [];
+  const errors = [];
+  for (const line of String(output).split("\n")) {
+    if (!line.startsWith("EXPECTED-429")) continue;
+    const m = DECLARATION.exec(line.replace(/\r$/, ""));
+    if (!m) {
+      errors.push(`${suite}: a malformed 429 declaration: ${line.slice(0, 200)}`);
+      continue;
+    }
+    const [, check, method, path, start, end] = m;
+    if (!(DECLARABLE_429[suite] ?? []).some((r) => r.method === method && r.path === path)) {
+      errors.push(`${suite} may not declare a 429 for ${method} ${path}`);
+      continue;
+    }
+    declarations.push({ suite, check, method, path, start: Number(start), end: Number(end) });
+  }
+  return { declarations, errors };
+}
+
 const resolutionOf = (r) => Math.max(r.resolutionMs ?? 0, 0);
 
 /** Whether a record falls in a time window ({ start, end }), allowing for its clock's resolution. */
@@ -69,8 +114,16 @@ export function expectedRefusal(record, windows, rules = EXPECTED_429) {
  * client whose completion times fall in one window plus the clock's
  * resolution.
  */
-export function assess(records, { windows = {}, rules = EXPECTED_429 } = {}) {
-  const refusals = records.filter((r) => r.status === 429 && !expectedRefusal(r, windows, rules));
+export function assess(records, { windows = {}, rules = EXPECTED_429, declared = [] } = {}) {
+  // Each declaration takes at most one refusal: its request, in its window.
+  const unused = [...declared];
+  const refusals = records.filter((r) => {
+    if (r.status !== 429 || expectedRefusal(r, windows, rules)) return false;
+    const at = unused.findIndex((d) => d.method === r.method && d.path === r.path && within(r, d));
+    if (at < 0) return true;
+    unused.splice(at, 1);
+    return false;
+  });
   const resolution = records.reduce((m, r) => Math.max(m, resolutionOf(r)), 0);
   const span = WINDOW_MS + resolution;
   let busiest = { client: null, start: null, count: 0 };

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TRANSCRIPT_DIR, bundleCli, recordArea, writeOrCompare } from "./goKit.js";
 import { AREAS } from "./goTranscriptCases.js";
+import { RECORD_WINDOWS } from "./goWindows.js";
 
 /**
  * The Go CLI's transcripts (internal docs/design/go-cli.md, decision 3):
@@ -29,7 +30,9 @@ beforeAll(async () => {
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-describe("Go CLI transcripts", () => {
+// Recorded on Linux; on Windows, go-transcripts-windows.test.ts records the
+// cases that differ there.
+describe.skipIf(RECORD_WINDOWS)("Go CLI transcripts", () => {
   for (const [area, cases] of Object.entries(AREAS)) {
     it(`${area} is recorded from the TypeScript CLI as it is`, async () => {
       const text = await recordArea(bundle, area, cases);

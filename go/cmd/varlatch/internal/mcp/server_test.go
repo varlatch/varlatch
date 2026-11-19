@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
 )
@@ -415,5 +416,28 @@ func TestAHandlerThatPanicsIsAnInternalError(t *testing.T) {
 	}
 	if _, ok := answers[2]["result"]; !ok {
 		t.Errorf("the ping after it: %v", answers[2])
+	}
+}
+
+// TestAnswersFromTheServerFollowTheChunk: an answer that waited on the
+// server goes out only after the chunk it came in has been handled, as
+// Node.js runs an I/O callback only after the chunk: here a whoami that
+// calls the server, then a list_projects refused at once, with a pause
+// between the two starts in which the server has long answered. The
+// refusal still comes first (the 5.6b-mcp whoami.empty-flag case).
+func TestAnswersFromTheServerFollowTheChunk(t *testing.T) {
+	client, requests := fakeServer(t, map[string]any{"/v1/meta": map[string]any{"apiMajor": 1, "serverVersion": "0.22.0", "capabilities": []string{}}})
+	betweenStarts = func() { time.Sleep(100 * time.Millisecond) }
+	defer func() { betweenStarts = nil }()
+	lines := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"varlatch_whoami","arguments":{}}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"varlatch_list_projects","arguments":{}}}` + "\n"
+	var out strings.Builder
+	New(Options{Client: client}).Serve(context.Background(), strings.NewReader(lines), func(l string) { out.WriteString(l) })
+	answers := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(answers) != 2 || !strings.HasSuffix(answers[0], `"id":2}`) || !strings.HasSuffix(answers[1], `"id":1}`) {
+		t.Fatalf("answers in another order:\n%s", out.String())
+	}
+	if got := requests(); len(got) != 1 || got[0].path != "/v1/meta" {
+		t.Fatalf("requests %v", got)
 	}
 }

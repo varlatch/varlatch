@@ -212,9 +212,12 @@
       ]
     },
     "cli-handover": {
-      "title": "the hand-over between the Go CLI and the TypeScript CLI: token and device sign-in both ways (internal docs/design/go-cli.md, decision 11)",
+      "title": "the hand-over between the Go CLI and the TypeScript CLI: token and device sign-in both ways, the shared store, and run (internal docs/design/go-cli.md, decision 11)",
       "script": "scripts/conformance/suites/cli-handover.mjs",
       "client": "go",
+      "needs": [
+        "probe:expire-pending-device-sign-ins"
+      ],
       "operations": [
         "admin-recover",
         "seed",
@@ -1122,6 +1125,63 @@
       "kind": "go-client",
       "feature": "login-device",
       "title": "inside an agent-safe run, both CLIs refuse to start a device sign-in (64) and write no pending sign-in"
+    },
+    "cli-handover.ts-login-go-runs": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "run",
+      "title": "signed in with the TypeScript CLI, the Go CLI runs a command with the development environment's values (varlatch run)"
+    },
+    "cli-handover.store-holds-both": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "after interleaved logins (the TypeScript CLI to one address of the server, the Go CLI to another), the store holds both entries, the first byte for byte, and both CLIs read both: status --json alike, whoami of each"
+    },
+    "cli-handover.default-server-both-ways": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "a default server set with `server use` by one CLI is the one the other uses (whoami outside a repository), both ways, and both write settings.json alike"
+    },
+    "cli-handover.corrupt-store-both": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "a corrupt credentials.json and settings.json are an empty store to both CLIs (status --json and whoami alike: no server, not authenticated), and a login by either replaces them with a store the other reads"
+    },
+    "cli-handover.device-ts-start-go-expired": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "expired before approval, a device sign-in started with the TypeScript CLI ends for the other with 77, the entry removed and the stored credential kept"
+    },
+    "cli-handover.device-ts-slow-down-go-keeps": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a slow_down the TypeScript CLI was answered (a longer interval) is kept by the other: its --wait reaches its deadline (75) without polling, the entry as it was; the file 0600 in a 0700 directory"
+    },
+    "cli-handover.device-ts-collects-go-recovers": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a credential the TypeScript CLI collected but could not store is named for revocation by the other: --wait ends with 77 naming it, the entry removed, nothing stored"
+    },
+    "cli-handover.device-go-start-ts-expired": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "expired before approval, a device sign-in started with the Go CLI ends for the other with 77, the entry removed and the stored credential kept"
+    },
+    "cli-handover.device-go-slow-down-ts-keeps": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a slow_down the Go CLI was answered (a longer interval) is kept by the other: its --wait reaches its deadline (75) without polling, the entry as it was; the file 0600 in a 0700 directory"
+    },
+    "cli-handover.device-go-collects-ts-recovers": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a credential the Go CLI collected but could not store is named for revocation by the other: --wait ends with 77 naming it, the entry removed, nothing stored"
     },
     "dashboard.enrollment-dashboard-origin": {
       "suite": "dashboard",
