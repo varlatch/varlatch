@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 
 /**
@@ -41,4 +42,15 @@ export function goLacks(...slices: string[]): boolean {
 /** goLacks for the slices that build `commands` (the first word of each command line). */
 export function goLacksCommand(...commands: string[]): boolean {
   return goLacks(...commands.map((command) => inventory.commands[command]?.slice ?? `an unknown command ${command}`));
+}
+
+/**
+ * The release the CLI under test names (its User-Agent, its generated
+ * files): the TypeScript bundle's `fallback`, or what the Go binary's
+ * `--version` prints.
+ */
+export function releaseUnderTest(fallback: string): string {
+  const go = process.env.VARLATCH_TEST_CLI;
+  if (!go) return fallback;
+  return execFileSync(go, ["--version"], { encoding: "utf8" }).trim().split(" ")[1] ?? fallback;
 }
