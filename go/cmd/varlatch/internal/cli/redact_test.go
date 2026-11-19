@@ -91,10 +91,30 @@ func TestOutJSONTakesOnlyARedactedDocument(t *testing.T) {
 	if got := reflect.TypeOf((*Run).outJSON).In(1); got != reflect.TypeOf(redactedJSON{}) {
 		t.Fatalf("outJSON takes %v, want redactedJSON", got)
 	}
-	doc := redactJSON(jsjson.Object{{Key: "list", Value: []string{"vlt_cli_listAAAA", "https://u:pass@h.example"}}, {Key: "n", Value: 5}})
+	doc, err := redactJSON(jsjson.Object{{Key: "list", Value: []string{"vlt_cli_listAAAA", "https://u:pass@h.example"}}, {Key: "n", Value: 5}})
 	want := "{\n  \"list\": [\n    \"[redacted]\",\n    \"https:[redacted]@h.example\"\n  ],\n  \"n\": 5\n}"
-	if doc.document != want {
-		t.Errorf("redactJSON:\n%s\nwant\n%s", doc.document, want)
+	if err != nil || doc.document != want {
+		t.Errorf("redactJSON: %v\n%s\nwant\n%s", err, doc.document, want)
+	}
+}
+
+// TestJSONOfAnotherTypeIsRefused: a --json document holding a type the
+// fail-safe does not walk is an error, and printJSON prints nothing of it.
+func TestJSONOfAnotherTypeIsRefused(t *testing.T) {
+	type leak struct{ Secret string }
+	for _, doc := range []any{
+		leak{"vlt_cli_structAAAA"},
+		jsjson.Object{{Key: "nested", Value: []any{map[string]string{"k": "vlt_cli_mapAAAA"}}}},
+		jsjson.Object{{Key: "bytes", Value: []byte("vlt_cli_bytesAAAA")}},
+	} {
+		if _, err := redactJSON(doc); err == nil {
+			t.Errorf("redactJSON(%T) made a document", doc)
+		}
+		var out, errOut strings.Builder
+		r := &Run{IO: IO{Stdout: &out, Stderr: &errOut}}
+		if err := r.printJSON(doc); err == nil || out.Len() != 0 || strings.Contains(err.Error(), "vlt_cli_") {
+			t.Errorf("printJSON(%T): %v, wrote %q", doc, err, out.String())
+		}
 	}
 }
 
@@ -167,8 +187,11 @@ func TestNoPasswordInOutput(t *testing.T) {
 		scheme := []string{"https", "http", "postgres", "foo"}[r.IntN(4)]
 		at := []string{"@", "%40", `\u0040`}[r.IntN(3)]
 		in := contexts[r.IntN(len(contexts))](scheme, userinfo, at)
-		doc := redactJSON(jsjson.Object{{Key: "value", Value: in}, {Key: "list", Value: []string{in}}}).document
-		for name, got := range map[string]string{"--json": doc, "stderr": RedactDiagnostic("varlatch: " + in + ": refused")} {
+		redacted, err := redactJSON(jsjson.Object{{Key: "value", Value: in}, {Key: "list", Value: []string{in}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, got := range map[string]string{"--json": redacted.document, "stderr": RedactDiagnostic("varlatch: " + in + ": refused")} {
 			for _, run := range runs {
 				if strings.Contains(got, run) {
 					t.Fatalf("%s of %q: %q shows %q of the secret %q", name, in, got, run, pass)

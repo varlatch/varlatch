@@ -51,7 +51,11 @@ func TestInFlightValuesNeverDisableTheFailSafe(t *testing.T) {
 			t.Errorf("output, value %q: %q", value, got)
 		}
 		doc := jsjson.Object{{Key: "server", Value: failsafeURL}, {Key: "token", Value: failsafeToken}, {Key: "both", Value: value + failsafeToken + value}}
-		for _, m := range RedactValue(doc, value).(jsjson.Object) {
+		redacted, err := RedactValue(doc, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range redacted.(jsjson.Object) {
 			if s := m.Value.(string); len(leaked(s, value)) > 0 {
 				t.Errorf("JSON, value %q: %s = %q leaks %q", value, m.Key, s, leaked(s, value))
 			}

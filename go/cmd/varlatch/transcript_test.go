@@ -283,6 +283,47 @@ var differences = map[string]transcript.Difference{
 		if recordedActivation.MatchString(o.Stdout) && got.Stdout == "Activated the revision.\n" {
 			o.Stdout = got.Stdout
 		}
+		// `types` names a revision, the server's or --revision's, only by
+		// an id of the server's shape, and its --check hint repeats only
+		// such a --revision.
+		unshaped := func(text string) string {
+			text = recordedRevisionName.ReplaceAllStringFunc(text, func(m string) string {
+				if id := strings.TrimPrefix(m, "Contract Revision "); !revisionShape.MatchString(id) {
+					return "Contract Revision " + cli.UnrecognizedID
+				}
+				return m
+			})
+			return recordedRevisionHint.ReplaceAllStringFunc(text, func(m string) string {
+				if id := strings.TrimSuffix(strings.TrimPrefix(m, " --revision "), ".\n"); !revisionShape.MatchString(id) {
+					return " --revision <revision-id>.\n"
+				}
+				return m
+			})
+		}
+		if accepted := unshaped(o.Stdout); accepted == got.Stdout {
+			o.Stdout = accepted
+		}
+		if accepted := unshaped(o.Stderr); accepted == got.Stderr {
+			o.Stderr = accepted
+		}
+	},
+	// `types` shows a semantics version only as a whole number from 1 to
+	// 999 (else "an unrecognized version"), and escapes the control
+	// characters and bidirectional overrides of a refusal that quotes the
+	// server's answer (go/README.md, "types shows the server's text
+	// safely"). Accepted only where Go's stderr is the recorded one with
+	// exactly that done.
+	"types-printable": func(o *transcript.Outcome, got transcript.Outcome) {
+		message, ok := strings.CutSuffix(o.Stderr, "\n")
+		if !ok {
+			return
+		}
+		if m := recordedSemanticsVersion.FindStringSubmatchIndex(message); m != nil && !wholeVersion.MatchString(message[m[2]:m[3]]) {
+			message = message[:m[2]] + cli.UnrecognizedVersion + message[m[3]:]
+		}
+		if accepted := cli.Printable(message) + "\n"; accepted == got.Stderr {
+			o.Stderr = accepted
+		}
 	},
 	// `contract show` shows a sensitive item's default as [redacted]
 	// (go/README.md, "No message holds a value"). Accepted only where Go's
@@ -308,6 +349,22 @@ var recordedActivation = regexp.MustCompile(`^Activated .+\.\n$`)
 // recordedSpawnError is a recorded spawn failure, as the recorder keeps an
 // error that escaped.
 var recordedSpawnError = regexp.MustCompile(`^\{\{uncaught Error: (spawn \S+ [A-Z]+)\}\}\n$`)
+
+// recordedRevisionName is a revision `types` names; recordedRevisionHint is
+// the --revision its --check hint repeats; revisionShape is the server's
+// revision ids' shape.
+var (
+	recordedRevisionName = regexp.MustCompile(`Contract Revision [A-Za-z0-9_-]+`)
+	recordedRevisionHint = regexp.MustCompile(` --revision \S+\.\n$`)
+	revisionShape        = regexp.MustCompile(`^rev_[a-z2-7]{26}$`)
+)
+
+// recordedSemanticsVersion is the version a recorded `types` refusal
+// names; wholeVersion is one Go shows as it is.
+var (
+	recordedSemanticsVersion = regexp.MustCompile(`(?s)uses Contract Semantics version (.*?), which this CLI does not implement`)
+	wholeVersion             = regexp.MustCompile(`^[1-9][0-9]{0,2}$`)
+)
 
 // recordedVersion is the version a recorded `values set` names.
 var recordedVersion = regexp.MustCompile(` set \(version (.*)\)\.\n$`)

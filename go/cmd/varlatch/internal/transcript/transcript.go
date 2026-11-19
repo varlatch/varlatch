@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,6 +36,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
@@ -173,6 +175,87 @@ func Load(path string) (*File, error) {
 // directory, environment and streams.
 type Command func(args []string) *exec.Cmd
 
+// caseDirLetters are the letters a case directory's name is drawn from:
+// consonants only, so a name holds no digit and spells no word.
+const caseDirLetters = "bcdfghjklmnpqrstvwxz"
+
+// maskableLength is the shortest value a run's masking replaces wherever
+// it occurs: matcher.MinLength, the redaction engine's, and
+// cli.MinMaskedLength, the stored Secrets'.
+const maskableLength = 8
+
+// CaseValues are the texts a case gives the CLI that it may treat as
+// values: values are its variables, its stdin and its arguments (a value in
+// flight, such as `values set PORT 8080`'s, is masked whatever its
+// length); maskable are its variables and stdin of maskableLength bytes or
+// more, which masking replaces wherever they occur. A PORT=8080 case once
+// ran in a directory whose random name held 8080, and masking the value
+// rewrote the path.
+func CaseValues(c Case) (values, maskable []string) {
+	add := func(v string, from bool) {
+		if len(v) < 2 || strings.Contains(v, "{{") {
+			return
+		}
+		values = append(values, v)
+		if from && len(v) >= maskableLength {
+			maskable = append(maskable, v)
+		}
+	}
+	for _, v := range c.Env {
+		add(v, true)
+	}
+	add(c.Stdin, true)
+	for _, a := range c.Args {
+		add(a, false)
+	}
+	return values, maskable
+}
+
+// CaseDir makes a new directory in base for one case, named
+// varlatch-transcript- and sixteen random consonants (no digit, no word),
+// and gives its real path (macOS's temporary directory is behind a
+// symbolic link). Only the random name is the harness's: one that any of
+// the case's values overlaps is discarded and another drawn. The rest of
+// the path is the system's (C:\Users\runneradmin\AppData\Local\Temp on a
+// Windows runner holds "run" and "admin"): it fails only when it holds a
+// maskable value, which would rewrite it on every run.
+func CaseDir(base string, values, maskable []string) (string, error) {
+	for range 100 {
+		name := make([]byte, 16)
+		for i := range name {
+			name[i] = caseDirLetters[rand.IntN(len(caseDirLetters))]
+		}
+		dir := filepath.Join(base, "varlatch-transcript-"+string(name))
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return "", err
+		}
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			_ = os.RemoveAll(dir)
+			return "", err
+		}
+		if slices.ContainsFunc(maskable, func(v string) bool { return strings.Contains(real, v) }) {
+			_ = os.RemoveAll(dir)
+			return "", fmt.Errorf("the temporary directory %s holds one of the case's variables or its stdin", base)
+		}
+		if !slices.ContainsFunc(values, func(v string) bool { return overlapsEnd(real, v, len(name)) }) {
+			return real, nil
+		}
+		_ = os.RemoveAll(dir)
+	}
+	return "", fmt.Errorf("no name in %s that none of the case's values overlaps", base)
+}
+
+// overlapsEnd is whether v occurs in path in a place that takes in any of
+// its last n bytes.
+func overlapsEnd(path, v string, n int) bool {
+	from := max(0, len(path)-n-len(v)+1)
+	return strings.Contains(path[from:], v)
+}
+
 // Difference rewrites a recording's expectation where the Go CLI differs on
 // purpose (go/README.md, the Go CLI's accepted differences), given what the
 // Go CLI did.
@@ -181,15 +264,12 @@ type Difference func(want *Outcome, got Outcome)
 // Replay runs c against the CLI and returns what it did and every way that
 // differs from the recording.
 func Replay(c Case, start Command, differences map[string]Difference) (Outcome, []string, error) {
-	dir, err := os.MkdirTemp("", "varlatch-transcript-")
+	values, maskable := CaseValues(c)
+	dir, err := CaseDir(os.TempDir(), values, maskable)
 	if err != nil {
 		return Outcome{}, nil, err
 	}
 	defer os.RemoveAll(dir)
-	dir, err = filepath.EvalSymlinks(dir)
-	if err != nil {
-		return Outcome{}, nil, err
-	}
 	srv, err := newServer(c.Server, dir)
 	if err != nil {
 		return Outcome{}, nil, err
@@ -198,9 +278,13 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	fill := func(s string) string {
 		return strings.ReplaceAll(strings.ReplaceAll(s, "{{server}}", srv.origin), "{{dir}}", dir)
 	}
+	release := slices.Contains(c.Patterns, "release")
 	// Inputs get Node.js's default modes (0666 and 0777, less the umask), as
 	// the recorder's writeFileSync and mkdirSync give them.
 	for rel, content := range c.Files {
+		if release {
+			content = ReleaseFill(content)
+		}
 		p := filepath.Join(dir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(p), 0o777); err != nil {
 			return Outcome{}, nil, err
@@ -397,6 +481,19 @@ var generatorSpec = regexp.MustCompile(`^(hex|base64|base64url|alnum):([0-9]+)$`
 // isoTimestamp is Date.prototype.toISOString's form.
 var isoTimestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z`)
 
+// ReleaseFill and ReleaseUnfill are goKit.ts's releasePattern, the
+// "release" pattern, for this build's release: `{{release}}` in a case's
+// files is the version, and `varlatch <version>` in what the CLI did is
+// `varlatch {{release}}`. Another release a case names stays as it is.
+func ReleaseFill(text string) string {
+	return strings.ReplaceAll(text, "{{release}}", buildinfo.Version)
+}
+
+// ReleaseUnfill is the "release" pattern on what the CLI did.
+func ReleaseUnfill(text string) string {
+	return strings.ReplaceAll(text, "varlatch "+buildinfo.Version, "varlatch {{release}}")
+}
+
 // NowPattern is goKit.ts's nowPattern, the "now" pattern: each ISO 8601
 // timestamp with milliseconds from start to end (Unix milliseconds) as
 // {{now}}. A case lists the patterns it needs; a timestamp outside the
@@ -436,8 +533,9 @@ var callbackPort = regexp.MustCompile(`(callback=http%3A%2F%2F127\.0\.0\.1%3A)\d
 var laterName = regexp.MustCompile(`^now\+(\d+)$`)
 
 // ApplyPatterns is goKit.ts's applyPatterns: the patterns a case names,
-// in order: "now", "now+<s>" and "callback" (the loopback port as
-// {{port}}); "generated" applies to request bodies (GeneratedPattern).
+// in order: "now", "now+<s>", "callback" (the loopback port as {{port}})
+// and "release" (ReleaseUnfill); "generated" applies to request bodies
+// (GeneratedPattern).
 func ApplyPatterns(patterns []string, text string, start, end int64) (string, error) {
 	for _, name := range patterns {
 		switch m := laterName.FindStringSubmatch(name); {
@@ -448,6 +546,8 @@ func ApplyPatterns(patterns []string, text string, start, end int64) (string, er
 			text = LaterPattern(text, start, end, seconds)
 		case name == "callback":
 			text = callbackPort.ReplaceAllString(text, "${1}{{port}}${2}")
+		case name == "release":
+			text = ReleaseUnfill(text)
 		case name == "generated":
 			// Applies to request bodies (GeneratedPattern), not to text.
 		default:
