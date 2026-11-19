@@ -8,6 +8,7 @@
     "test/device-login.test.ts",
     "test/login-token-stdin.test.ts",
     "test/machine-interface.test.ts",
+    "test/mcp-cli.test.ts",
     "test/server-text-cli.test.ts",
     "test/token-expiry-warning.test.ts",
     "test/typesCli.test.ts"
