@@ -46,6 +46,17 @@ fixes.
   authority is a Grant scoped to a Project or an environment, and the
   Organization's own machines are not affected.
 
+### Documentation
+
+- **Sharing the host with other workloads.** [Host requirements](docs/self-hosting/requirements.md#sharing-the-host-with-other-workloads)
+  explains how a host's other containers can take CPU from Varlatch, with
+  a measurement on a small host shared with Coolify, whose scheduler does
+  its periodic work at the start of every minute. It also explains how to
+  give varlatchd and PostgreSQL a higher CPU weight in
+  `docker-compose.override.yml` (`cpu_shares: 4096`, the value that raises
+  the weight under every runtime's conversion), and why the shipped Compose
+  files set none. The weight's effect has not been measured yet.
+
 ## 0.22.0 (2026-11-13)
 
 ### Sign-in

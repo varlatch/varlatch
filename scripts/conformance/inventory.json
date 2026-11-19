@@ -2380,10 +2380,7 @@
     "broker.agent-identity-created-no-credential": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "agent identity created with no credential",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "agent identity created with no credential"
     },
     "broker.run-untargeted-secret-refuses-start-naming": {
       "suite": "broker",
@@ -2562,114 +2559,72 @@
     "broker.issuance-without-targets-refused-naming-minimum": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "issuance without targets is refused, naming the minimum CLI version",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "issuance without targets is refused, naming the minimum CLI version"
     },
     "broker.issuance-records-returns-targets": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "issuance records and returns the targets",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "issuance records and returns the targets"
     },
     "broker.exercise-naming-target-capability-does-not": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "an exercise naming a target the Capability does not hold is denied",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "an exercise naming a target the Capability does not hold is denied"
     },
     "broker.exercise-succeeds-grant-stands": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "exercise succeeds while the Grant stands",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "exercise succeeds while the Grant stands"
     },
     "broker.revoking-secret-use-denies-very-next-exercise": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "revoking secret.use denies the very next exercise",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "revoking secret.use denies the very next exercise"
     },
     "broker.revoking-capability-denies-next-exercise": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "revoking the Capability denies the next exercise",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "revoking the Capability denies the next exercise"
     },
     "broker.expired-capability-fails-closed": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "expired Capability fails closed",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "expired Capability fails closed"
     },
     "broker.rotation-picked-up-next-exercise-model": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "rotation is picked up at the next exercise (Model B)",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "rotation is picked up at the next exercise (Model B)"
     },
     "broker.unbound-secret-reference-denies-exercise": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "unbound secret reference denies the exercise",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "unbound secret reference denies the exercise"
     },
     "broker.plain-reference-without-config-value-read-denies": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "plain reference without config.value.read denies the exercise",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "plain reference without config.value.read denies the exercise"
     },
     "broker.bound-secret-authorized-plain-references-expand": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "bound-secret and authorized plain references expand at exercise",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "bound-secret and authorized plain references expand at exercise"
     },
     "broker.only-placed-secret-returned-bound-dependency": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "only the placed Secret is returned; the bound dependency is not",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "only the placed Secret is returned; the bound dependency is not"
     },
     "broker.exercise-audit-identifies-agent-broker-destination": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "exercise audit identifies agent, broker, destination, item@version",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "exercise audit identifies agent, broker, destination, item@version"
     },
     "broker.denial-audit-records-internal-reason": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "denial audit records the internal reason",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "denial audit records the internal reason"
     },
     "broker.issuance-audit-records-targets-exercise-audit": {
       "suite": "broker",
@@ -2680,18 +2635,12 @@
     "broker.bound-dependency-audited-reference-expansion-before": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "a bound dependency is audited as a reference expansion before it is decrypted",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "a bound dependency is audited as a reference expansion before it is decrypted"
     },
     "broker.audit-export-contains-no-secret-plaintext": {
       "suite": "broker",
       "kind": "conformance",
-      "title": "audit export contains no secret plaintext",
-      "cliNeeds": [
-        "agent-safe-run"
-      ]
+      "title": "audit export contains no secret plaintext"
     },
     "broker.convex-down-throughout": {
       "suite": "broker",

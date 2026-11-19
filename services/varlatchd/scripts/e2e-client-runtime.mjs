@@ -365,14 +365,22 @@ if (identities && kit.supports("run-export-context")) {
     before = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
   }
   const r = await record(noContractWs, ["--export-context"]);
+  // The refusal both checks are about, observed: nothing started, and the
+  // run named contract.read.
+  const refusedForContract = r.code !== 0 && r.received === null && /contract\.read/.test(r.out);
   check(
     "client-runtime.export-context-without-contract-read-starts", "--export-context without contract.read starts nothing and says why",
-    r.code !== 0 && r.received === null && /contract\.read/.test(r.out),
+    refusedForContract,
     `exit ${r.code}: ${r.out}`,
+    { after: r },
   );
   if (audited) {
+    // No disclosure is evidence only after that refusal: a run that failed
+    // any other way disclosed nothing either, and proves nothing.
     const after = (await auditEvents()).events.filter((e) => e.actorIdentityId === noContract.id && e.eventType === "secret.disclosed");
-    check("client-runtime.export-context-run-cannot-export-context", "--export-context: a run that cannot export its context discloses no Secret", before.length === 0 && after.length === 0, `${after.length} disclosure(s)`);
+    check("client-runtime.export-context-run-cannot-export-context", "--export-context: a run that cannot export its context discloses no Secret",
+      refusedForContract && before.length === 0 && after.length === 0,
+      `refused for contract.read: ${refusedForContract}, ${after.length} disclosure(s)`, { after: r });
   }
   const plain = await record(noContractWs, []);
   check("client-runtime.same-identity-default-run-without-flag", "the same identity's default run, without the flag, gets no context", plain.code === 0 && plain.received?.context === null, plain.out);
@@ -476,19 +484,21 @@ async function startApp(ws) {
   const compiled = await compile();
   check("client-runtime.types-module-application-using-compile-under", "types: the module and an application using it compile under strict settings", compiled.code === 0 && compiled.out === "", compiled.out);
   const r = await startApp(admin);
-  check("client-runtime.types-application-starts-under-export-context", "types: the application starts under --export-context", r.code === 0 && r.report?.ok === true, r.out);
+  check("client-runtime.types-application-starts-under-export-context", "types: the application starts under --export-context", r.code === 0 && r.report?.ok === true, r.out, { after: r });
   check(
     "client-runtime.types-accessor-returns-typed-values-number", "types: the accessor returns typed values (number, boolean, enum)",
     canonical(r.report?.values) === canonical({ PORT: 8080, DEBUG: true, LEVEL: "warn" }) &&
       canonical(r.report?.types) === canonical({ PORT: "number", DEBUG: "boolean", LEVEL: "string", RT_SECRET: "string" }),
     JSON.stringify(r.report),
+    { after: r },
   );
   check(
     "client-runtime.types-accessor-reads-exported-context-same", "types: the accessor reads the exported context of the same revision, without warnings",
     r.report?.context === "exported" && r.report?.warnings?.length === 0 && r.report?.generatedFrom?.revisionId === active.id,
     JSON.stringify(r.report),
+    { after: r },
   );
-  check("client-runtime.types-application-output-holds-no-secret", "types: the application's output holds no Secret", r.report !== null && !r.out.includes(SECRET), r.out);
+  check("client-runtime.types-application-output-holds-no-secret", "types: the application's output holds no Secret", r.report !== null && !r.out.includes(SECRET), r.out, { after: r });
 }
 
 // --- varlatch types for Python, and the module it writes -------------------------------
@@ -549,8 +559,9 @@ print(json.dumps({
       canonical(report?.values) === canonical({ PORT: 8080, DEBUG: true, LEVEL: "warn" }) &&
       canonical(report?.types) === canonical({ PORT: "int", DEBUG: "bool", LEVEL: "str", RT_SECRET: "str" }),
     r.out,
+    { after: r },
   );
-  check("client-runtime.types-python-output-holds-no-secret", "types (Python): the application's output holds no Secret", r.stdout.length > 0 && !r.out.includes(SECRET));
+  check("client-runtime.types-python-output-holds-no-secret", "types (Python): the application's output holds no Secret", r.stdout.length > 0 && !r.out.includes(SECRET), r.out, { after: r });
 }
 
 // A changed Contract: --check fails, and the old module reports stale types at runtime.
@@ -563,6 +574,7 @@ active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Adde
     "client-runtime.types-old-module-warns-types-stale", "types: the old module warns that its types are stale for this run",
     r.code === 0 && r.report?.ok === true && r.report?.warnings?.length === 1 && /types are stale/.test(r.report.warnings[0]),
     r.out,
+    { after: r },
   );
   const wrote = await admin.cli(["types", "--out", OUT]);
   const current = await admin.cli(["types", "--out", OUT, "--check"]);
@@ -578,6 +590,7 @@ active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Adde
       fresh.report?.warnings?.length === 0 &&
       fresh.report?.generatedFrom?.revisionId === active.id,
     fresh.out,
+    { after: fresh },
   );
 }
 
@@ -589,6 +602,7 @@ if (identities) {
     "client-runtime.types-required-secret-withheld-server-one", "types: a required Secret withheld by the server is one ConfigError issue",
     r.code === 3 && r.report?.ok === false && issues.length === 1 && issues[0]?.name === "RT_SECRET" && /withheld/.test(issues[0]?.reason ?? ""),
     r.out,
+    { after: r },
   );
 }
 
@@ -603,6 +617,7 @@ await setValue("LEVEL", BAD.LEVEL);
     "client-runtime.types-invalid-values-throw-one-configerror", "types: invalid values throw one ConfigError listing every item",
     r.code === 3 && r.report?.ok === false && r.report?.name === "ConfigError" && canonical(names) === canonical(["DEBUG", "LEVEL", "PORT"]),
     r.out,
+    { after: r },
   );
   check(
     "client-runtime.types-error-names-items-reasons-never", "types: the error names items and reasons, never a value",
@@ -610,6 +625,7 @@ await setValue("LEVEL", BAD.LEVEL);
       Object.values(BAD).every((v) => !r.out.includes(v)) &&
       !r.out.includes(SECRET),
     r.out,
+    { after: r },
   );
 }
 await setValue("PORT", "8080");
@@ -692,7 +708,9 @@ if (kit.supports("scan")) {
   if (kit.group("audit-export")) {
     const { ndjson, events } = await auditEvents();
     const runDisclosures = events.filter((e) => e.eventType === "secret.disclosed" && e.resource?.projectId === projectId && e.metadata?.purpose === undefined);
-    check("client-runtime.run-disclosures-audited-without-purpose", "run disclosures are audited without a purpose", runDisclosures.length > 0);
+    // The runs disclosed nothing when the CLI has no run (the Go CLI before
+    // slice 5.4b): no verdict then, so the runner reports client-lacks.
+    if (kit.supports("run")) check("client-runtime.run-disclosures-audited-without-purpose", "run disclosures are audited without a purpose", runDisclosures.length > 0);
     check("client-runtime.audit-export-holds-no-value", "the audit export holds no value", noValueIn(ndjson) && Object.values(BAD).every((v) => !ndjson.includes(v)));
   }
   // The target's `logs` operation: the server's own logs, whatever runs it.

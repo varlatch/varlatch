@@ -11,19 +11,42 @@ name: Conformance
 #            operations declared in scripts/conformance/expect/go-binary.json
 #            (ADR-0059 step 3)
 #   CLIs     source (this checkout), 0.21.0 and 0.22.0 (pinned in
-#            scripts/conformance/clients.json, verified before use)
+#            scripts/conformance/clients.json, verified before use); go (the
+#            Go CLI, built here) against both TypeScript targets, its
+#            missing features declared in scripts/conformance/client-go.json
+#            (internal docs/design/go-cli.md, decision 3). go.yml runs
+#            go-binary x go.
 #
 # The source images are built once, in the images job, and handed to the
 # ts-source cells as an artifact. Each cell uploads its conformance report.
 # A known failure is listed in scripts/conformance/expect/<target>.json with
 # its reason; anything else that fails, fails the cell. Weekly, and on
 # manual dispatch (GitHub accepts a dispatch only once this file is on the
-# default branch; it can then run on any branch that has it). Hosted runners
-# only; no secret beyond the read-only job token.
+# default branch; it can then run on any branch that has it). A dispatch
+# runs every cell, or the one its `cell` input names: a Go CLI slice links a
+# dispatched `ts-release:0.22.0 x go` run (gh workflow run conformance.yml
+# --ref <branch> -f "cell=ts-release:0.22.0 x go"). Hosted runners only; no
+# secret beyond the read-only job token.
 on:
   schedule:
     - cron: "23 4 * * 1"
   workflow_dispatch:
+    inputs:
+      cell:
+        description: The cell to run (target x CLI), or all
+        type: choice
+        default: all
+        options:
+          - all
+          - ts-source x source
+          - ts-source x 0.21.0
+          - ts-source x 0.22.0
+          - ts-source x go
+          - ts-release:0.22.0 x source
+          - ts-release:0.22.0 x 0.21.0
+          - ts-release:0.22.0 x 0.22.0
+          - ts-release:0.22.0 x go
+          - go-binary x source
 
 permissions:
   contents: read
@@ -33,7 +56,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The cells of this run: every one, or the one a dispatch names.
+  cells:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.cells.outputs.matrix }}
+      images: ${{ steps.cells.outputs.images }}
+    steps:
+      - name: Choose the cells
+        id: cells
+        env:
+          CELL: ${{ inputs.cell || 'all' }}
+        run: |
+          all=$(jq -cn '
+            [(["ts-source", "ts-release:0.22.0"][] as $t | ["source", "0.21.0", "0.22.0", "go"][] | {target: $t, cli: .}),
+             {target: "go-binary", cli: "source"}]')
+          if [ "$CELL" = all ]; then
+            cells=$all
+          else
+            cells=$(jq -c --arg cell "$CELL" '[.[] | select("\(.target) x \(.cli)" == $cell)]' <<< "$all")
+          fi
+          [ "$cells" != "[]" ] || { echo "::error::No cell is named $CELL."; exit 1; }
+          jq -r '.[] | "\(.target) x CLI \(.cli)"' <<< "$cells"
+          echo "matrix={\"include\":$cells}" >> "$GITHUB_OUTPUT"
+          echo "images=$(jq 'any(.[]; .target == "ts-source")' <<< "$cells")" >> "$GITHUB_OUTPUT"
+
   images:
+    needs: cells
+    if: needs.cells.outputs.images == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
@@ -58,19 +109,16 @@ jobs:
           if-no-files-found: error
 
   cell:
-    needs: images
+    needs: [cells, images]
+    # images is skipped when no ts-source cell runs.
+    if: always() && needs.cells.result == 'success' && (needs.images.result == 'success' || needs.images.result == 'skipped')
     name: ${{ matrix.target }} x CLI ${{ matrix.cli }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 3
-      matrix:
-        target: [ts-source, "ts-release:0.22.0"]
-        cli: [source, "0.21.0", "0.22.0"]
-        include:
-          - target: go-binary
-            cli: source
+      matrix: ${{ fromJSON(needs.cells.outputs.matrix) }}
     # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
     defaults:
       run:
@@ -89,7 +137,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: matrix.target == 'go-binary'
+        if: matrix.target == 'go-binary' || matrix.cli == 'go'
         with:
           go-version: 1.27.4
           cache: false
@@ -103,6 +151,13 @@ jobs:
           cd go
           go generate ./server/web
           go build -tags conformance -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+      - name: Build the Go CLI
+        if: matrix.cli == 'go'
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          cd go
+          go build -o "$RUNNER_TEMP/varlatch" ./cmd/varlatch
       - name: Install Chromium
         run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -126,6 +181,7 @@ jobs:
           CONFORMANCE_SOURCE_IMAGES: ${{ matrix.target == 'ts-source' && 'ci' || '' }}
         run: |
           if [ "$TARGET" = go-binary ]; then TARGET="go-binary:$RUNNER_TEMP/varlatchd"; fi
+          if [ "$CLI" = go ]; then CLI="go:$RUNNER_TEMP/varlatch"; fi
           node scripts/conformance/run.mjs --target "$TARGET" --cli "$CLI" --report conformance-report.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

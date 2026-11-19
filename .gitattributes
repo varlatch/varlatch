@@ -1,5 +1,17 @@
-# The Typed Accessor runtimes the Go CLI's `types` embeds are byte-exact
-# copies of what the TypeScript CLI embeds in every generated module: never
-# converted at checkout (Git for Windows converts text to CRLF by default,
-# core.autocrlf).
+# Line ends are part of what the Go CLI prints and checks, so they must not
+# depend on the checkout (Git for Windows converts text to CRLF by default,
+# core.autocrlf). Without these, a Windows checkout embeds a CRLF help text,
+# generates CRLF skill files, and breaks the signatures over the release
+# fixtures.
+#
+# Sources the CLI embeds or generates from: LF everywhere.
+go/cmd/varlatch/internal/cli/usage.txt text eol=lf
+apps/cli/skill/** text eol=lf
+# Fixtures compared byte for byte (transcripts, vectors, the inventory,
+# signed release files): never converted.
+go/cmd/varlatch/testdata/** -text
+go/lib/**/testdata/** -text
+# The Typed Accessor runtimes the Go CLI's `types` embeds: byte-exact
+# copies of what the TypeScript CLI embeds in every generated module, never
+# converted.
 go/cmd/varlatch/internal/typegen/embedded/** -text

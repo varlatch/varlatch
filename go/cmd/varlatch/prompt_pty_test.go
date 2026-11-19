@@ -64,9 +64,15 @@ func newPTYRun(t *testing.T) *ptyRun {
 }
 
 // start runs `varlatch values set API_KEY` on a new pseudo-terminal and
-// returns its master side, the terminal (held, to read its state), the
-// state the terminal had before, and the command.
-func (p *ptyRun) start(extraEnv ...string) (*os.File, *os.File, *term.State, *exec.Cmd, *bytes.Buffer, *sync.Mutex) {
+// returns its master side, the state the terminal had before, and the
+// command. The terminal stays open until the test ends.
+//
+// The terminal's state is read through the master side, which shares the
+// terminal's termios on Linux and on macOS. The terminal's own descriptor
+// cannot be used after the command ends there: macOS revokes a session
+// leader's controlling terminal when it exits, and the descriptor then
+// answers every ioctl with ENOTTY.
+func (p *ptyRun) start(extraEnv ...string) (*os.File, *term.State, *exec.Cmd, *bytes.Buffer, *sync.Mutex) {
 	p.t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
@@ -77,7 +83,7 @@ func (p *ptyRun) start(extraEnv ...string) (*os.File, *os.File, *term.State, *ex
 		p.t.Skipf("no pseudo-terminal: %v", err)
 	}
 	p.t.Cleanup(func() { _ = master.Close(); _ = tty.Close() })
-	before, err := term.GetState(int(tty.Fd()))
+	before, err := term.GetState(int(master.Fd()))
 	if err != nil {
 		p.t.Fatal(err)
 	}
@@ -103,7 +109,7 @@ func (p *ptyRun) start(extraEnv ...string) (*os.File, *os.File, *term.State, *ex
 			}
 		}
 	}()
-	return master, tty, before, cmd, &out, &mu
+	return master, before, cmd, &out, &mu
 }
 
 // waitFor waits until the terminal shows text.
@@ -146,9 +152,9 @@ func finish(t *testing.T, cmd *exec.Cmd, out *bytes.Buffer, mu *sync.Mutex) (int
 	return status.ExitStatus(), 0, out.String()
 }
 
-func restored(t *testing.T, tty *os.File, before *term.State) {
+func restored(t *testing.T, master *os.File, before *term.State) {
 	t.Helper()
-	after, err := term.GetState(int(tty.Fd()))
+	after, err := term.GetState(int(master.Fd()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +182,7 @@ func TestHiddenPromptOnATerminal(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			p := newPTYRun(t)
-			master, tty, before, cmd, out, mu := p.start()
+			master, before, cmd, out, mu := p.start()
 			waitFor(t, out, mu, prompt)
 			if _, err := master.Write([]byte(c.typed)); err != nil {
 				t.Fatal(err)
@@ -192,7 +198,7 @@ func TestHiddenPromptOnATerminal(t *testing.T) {
 					t.Errorf("the terminal showed %q: %q", part, shown)
 				}
 			}
-			restored(t, tty, before)
+			restored(t, master, before)
 			p.mu.Lock()
 			defer p.mu.Unlock()
 			if c.value == "" {
@@ -236,11 +242,11 @@ func TestHiddenPromptRestoresTheTerminalOnASignal(t *testing.T) {
 			if c.pause != "" {
 				extra = append(extra, promptPause+"="+c.pause)
 			}
-			master, tty, before, cmd, out, mu := p.start(extra...)
+			master, before, cmd, out, mu := p.start(extra...)
 			if c.pause != "" {
 				waitFor(t, out, mu, "PAUSED "+c.pause)
 				if c.pause == "raw" {
-					if state, err := term.GetState(int(tty.Fd())); err == nil && reflect.DeepEqual(state, before) {
+					if state, err := term.GetState(int(master.Fd())); err == nil && reflect.DeepEqual(state, before) {
 						t.Fatal("the terminal is not in raw mode at the pause")
 					}
 				}
@@ -261,7 +267,7 @@ func TestHiddenPromptRestoresTheTerminalOnASignal(t *testing.T) {
 			if strings.Contains(shown, "s3cr3t") || strings.Contains(shown, "goroutine") {
 				t.Errorf("the terminal showed %q", shown)
 			}
-			restored(t, tty, before)
+			restored(t, master, before)
 			p.mu.Lock()
 			defer p.mu.Unlock()
 			if len(p.bodies) != 0 {
