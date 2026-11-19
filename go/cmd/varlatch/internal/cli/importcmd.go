@@ -261,6 +261,7 @@ type source struct {
 func (s *source) close() {
 	if s != nil && s.open != nil {
 		_ = s.open.Close()
+		s.open = nil
 	}
 }
 
@@ -524,7 +525,13 @@ func finishSource(file string, src *source) (bool, error) {
 	if err != nil || !now.Mode().IsRegular() || !os.SameFile(src.info, now) {
 		return false, nil
 	}
-	if err := os.Remove(file); err != nil {
+	// Removed while still open, so the file checked is the file removed (on
+	// Windows the handle shares deletion: nofollow_windows.go).
+	err = os.Remove(file)
+	// Closed before the path is checked: where deletion waits for the last
+	// handle (Windows without POSIX deletion), the name goes only then.
+	src.close()
+	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return false, nil
 		}

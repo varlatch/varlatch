@@ -27,8 +27,8 @@ import (
 //   - outJSON, which writes a document printJSON redacted, called by
 //     anything but printJSON, and a redactedJSON made anywhere but
 //     redactJSON;
-//   - os.NewFile (a stream by its descriptor), syscall.Write and
-//     unix.Write;
+//   - os.NewFile (a stream by its descriptor) outside newFileSites,
+//     syscall.Write and unix.Write;
 //   - a stream's Write, WriteString, WriteByte or WriteRune, called or
 //     taken as a method value (`w := r.Stdout.Write`).
 //
@@ -52,6 +52,12 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		"internal/cli/cli.go:ask":         true, // the hidden prompt's question (5.3a)
 		"internal/cli/cli.go:out":         true,
 		"internal/cli/cli.go:outJSON":     false,
+	}
+	// newFileSites may call os.NewFile: each wraps a handle it opened
+	// itself for reading, never a stream.
+	newFileSites := map[string]bool{
+		// The --delete-source file, opened read-only with FILE_SHARE_DELETE.
+		"internal/cli/nofollow_windows.go:openNoFollow": true,
 	}
 	fset := token.NewFileSet()
 	refs := 0
@@ -107,7 +113,7 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 							}
 						}
 						if pkg, ok := sel.X.(*ast.Ident); ok {
-							if pkg.Name == "os" && sel.Sel.Name == "NewFile" {
+							if pkg.Name == "os" && sel.Sel.Name == "NewFile" && !newFileSites[site] {
 								t.Errorf("%s: os.NewFile opens a stream by its descriptor", fset.Position(x.Pos()))
 							}
 							if (pkg.Name == "syscall" || pkg.Name == "unix") && sel.Sel.Name == "Write" {
