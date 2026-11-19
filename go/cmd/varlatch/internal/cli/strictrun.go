@@ -147,7 +147,7 @@ func joinedReferences(references any) string {
 // planStrictRun is planStrictRun for a run that is not agent-safe: env
 // starts as the parent's environment (parent, read as process.env reads
 // it), without an inherited run context or an omitted item.
-func planStrictRun(retrieval any, env *orderedEnv, parent map[string]string, allowInherited, omitted map[string]bool) strictPlan {
+func planStrictRun(retrieval any, env *orderedEnv, parent parentVars, allowInherited, omitted map[string]bool) strictPlan {
 	plan := strictPlan{env: env}
 	env.Delete(runContextName)
 	for name := range omitted {
@@ -249,7 +249,7 @@ func planStrictRun(retrieval any, env *orderedEnv, parent map[string]string, all
 		case isDenied || !delivered:
 			server = "withheld"
 		}
-		inherited, isSet := lookupEnv(parent, it.Name)
+		inherited, isSet := parent.lookup(it.Name)
 		required := semantics.RequiredApplies(it, envCtx)
 		if !isDenied {
 			requires := "config.value.read"
@@ -425,7 +425,7 @@ func (r *Run) strictRun(ctx *clientctx.Context, c *apiclient.Client, pre []strin
 	for _, n := range allowInherited {
 		allowed[n] = true
 	}
-	parent := r.Environ()
+	parent := r.parentVars()
 	plan := planStrictRun(retrieval, r.parentEnv(), parent, allowed, omitted)
 	if len(plan.violations) > 0 {
 		for _, line := range formatViolations(plan.violations) {

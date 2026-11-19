@@ -44,6 +44,12 @@ type Lister interface {
 	Environ() map[string]string
 }
 
+// OrderedLister is a Lister that also gives its variables' names in the
+// order the process got them (the first of names that repeat).
+type OrderedLister interface {
+	EnvironNames() []string
+}
+
 // IO is where a run reads and writes.
 type IO struct {
 	Stdin  io.Reader
@@ -88,6 +94,21 @@ func (r *Run) Environ() map[string]string {
 		return l.Environ()
 	}
 	return map[string]string{}
+}
+
+// parentVars is the run's environment with its names in order: the
+// process's own (OrderedLister), else sorted.
+func (r *Run) parentVars() parentVars {
+	values := r.Environ()
+	if o, ok := r.Env.(OrderedLister); ok {
+		return parentVars{names: o.EnvironNames(), values: values}
+	}
+	names := make([]string, 0, len(values))
+	for n := range values {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return parentVars{names: names, values: values}
 }
 
 // Getenv is the variable's value, "" when unset.

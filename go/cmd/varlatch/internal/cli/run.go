@@ -360,7 +360,7 @@ func (r *Run) defaultRun(ctx *clientctx.Context, c *apiclient.Client, cwd string
 	if len(withheld) > 0 {
 		r.eprintln("varlatch: " + itoa(len(withheld)) + " value(s) withheld by policy: " + Printable(strings.Join(withheld, ", ")))
 	}
-	parent := r.Environ()
+	parent := r.parentVars()
 	env := buildEnv(r.parentEnv(), effective, omitted)
 	if got.encode != nil {
 		encoded, err := got.encode(effective, parent, omitted)
