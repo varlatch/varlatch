@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/rand/v2"
 	"runtime"
 	"strings"
@@ -200,16 +201,16 @@ func TestPushNeverKeepsTheCallersBuffer(t *testing.T) {
 
 // growth times the small and the large work: each runs once untimed first
 // (a cold or still clocking-up CPU would make whichever runs first look
-// slow), then they are timed in turn, small, large, small, large, small,
-// large, each run after a garbage collection, and the fastest of each is
-// given. Noise (a shared runner's pauses, another job's load) only ever
-// adds time, and timing the two in turn makes a busy spell slow both alike
-// instead of one.
-func growth(small, large func()) (time.Duration, time.Duration) {
+// slow), then they are timed in turn, small, large, small, large, for the
+// given rounds, each run after a garbage collection, and the fastest of
+// each is given. Noise (a shared runner's pauses, another job's load) only
+// ever adds time, and timing the two in turn makes a busy spell slow both
+// alike instead of one.
+func growth(small, large func(), rounds int) (time.Duration, time.Duration) {
 	small()
 	large()
 	var bestSmall, bestLarge time.Duration
-	for i := range 3 {
+	for i := range rounds {
 		for _, f := range []struct {
 			run  func()
 			best *time.Duration
@@ -230,10 +231,12 @@ func growth(small, large func()) (time.Duration, time.Duration) {
 // eightfold and quadratic about 64-fold (on CI runners, where caches and
 // load flatten the curve, nearer 38-fold), so 24 sits near the geometric
 // middle, with room for noise on either side. It judges growth only, never
-// a machine's absolute speed; 20 ms of slack keeps a shape that takes a
-// few milliseconds from failing on jitter.
+// a machine's absolute speed. A little slack keeps a shape that takes a few
+// milliseconds from failing on jitter: 20 ms, but never more than twice the
+// small run, so it cannot hide growth where the runs are short (the race
+// detector's smaller inputs).
 func growsLinearly(small, large time.Duration) bool {
-	return large <= 24*small+20*time.Millisecond
+	return large <= 24*small+min(20*time.Millisecond, 2*small)
 }
 
 // TestTheLinearityCriterion: growth an eighth of the input to all of it
@@ -253,6 +256,7 @@ func TestTheLinearityCriterion(t *testing.T) {
 		{100 * ms, 4000 * ms, false}, // 40 times
 		{50 * ms, 1900 * ms, false},  // 38 times
 		{100 * ms, 6400 * ms, false}, // 64 times
+		{2 * ms, 60 * ms, false},     // 30 times, at a few milliseconds: the slack is at most twice the small run
 	} {
 		if growsLinearly(c.small, c.large) != c.linear {
 			t.Errorf("%v then %v: judged linear %v", c.small, c.large, !c.linear)
@@ -275,20 +279,19 @@ func TestTheLinearityCriterion(t *testing.T) {
 			}
 		}
 	}
-	// Sized on this machine: n doubles from 2000 until the small run takes
-	// at least 50 ms (capped), so the 20 ms slack is negligible and the
-	// growth decides.
-	n := 2000
-	for n < 32000 {
-		runtime.GC()
-		start := time.Now()
-		quadratic(n)()
-		if time.Since(start) >= 50*time.Millisecond {
-			break
-		}
-		n *= 2
-	}
-	small, large := growth(quadratic(n), quadratic(8*n))
+	// Sized on this machine from one probe: a quadratic run's time goes with
+	// n squared, so n = probe * sqrt(55 ms / its time) makes the small run
+	// about 55 ms and the large one about 3.5 s (within 2000 to 32000). The
+	// slack is then negligible, and the margin (64 against 24 times) does
+	// not depend on the size.
+	const probe = 4000
+	quadratic(probe)() // warm up
+	runtime.GC()
+	start := time.Now()
+	quadratic(probe)()
+	took := max(time.Since(start), time.Microsecond)
+	n := min(max(int(float64(probe)*math.Sqrt(float64(55*time.Millisecond)/float64(took))), 2000), 32000)
+	small, large := growth(quadratic(n), quadratic(8*n), 2)
 	// Per operation (n(n-1)/2 steps each): equal when nothing biases one
 	// size, so the growth is the work's own.
 	perOp := func(d time.Duration, items int) float64 {
@@ -355,7 +358,7 @@ func TestMatcherIsLinear(t *testing.T) {
 		}
 		small := large / 8
 		for _, chunk := range []int{64 * 1024, 4 << 20} { // a pipe's reads, and one huge chunk
-			tSmall, tLarge := growth(stream(small, chunk), stream(large, chunk))
+			tSmall, tLarge := growth(stream(small, chunk), stream(large, chunk), 3)
 			t.Logf("%s, %d-byte chunks: %d bytes %v, %d bytes %v (%.1fx)", c.name, chunk, small, tSmall, large, tLarge, float64(tLarge)/float64(tSmall))
 			if !growsLinearly(tSmall, tLarge) {
 				t.Errorf("%s, %d-byte chunks: %d bytes %v, %d bytes %v: not linear", c.name, chunk, small, tSmall, large, tLarge)
@@ -385,7 +388,11 @@ func FuzzStreamEqualsWhole(f *testing.F) {
 			if !bytes.Equal(got, want) {
 				t.Fatalf("got %q, want %q", got, want)
 			}
-			noFormSurvives(t, got, entries)
+			// The oracle finds the markers in the output by their text, so an
+			// input that holds marker text itself would confuse it.
+			if !bytes.Contains(input, []byte("[REDACTED:")) {
+				noFormSurvives(t, got, entries)
+			}
 		}
 		st, _, _ := scan(entries, input, randomCuts(r, len(input), r.IntN(12)))
 		var found []Occurrence

@@ -276,6 +276,8 @@ func (m *StreamMatcher) addMatch(match key) {
 	// In place: tail is the scratch space, built before anything is
 	// overwritten, and the head (every segment before i) stays where it is.
 	m.segments = append(m.segments[:i], tail...)
+	// The scratch space keeps no segment: none may hold on to a chunk.
+	clear(tail)
 	m.scratch = tail[:0]
 }
 
