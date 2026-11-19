@@ -147,8 +147,8 @@ func serverStatus(server string, credential any, now float64) (jsjson.Object, er
 
 // repoStatus is status.ts's repoStatus. The cached tier belongs to the
 // locally selected Environment only: a flag or variable selects another,
-// whose tier is unknown.
-func repoStatus(ctx *clientctx.Context, local any) (jsjson.Object, error) {
+// whose tier is unknown. The tier is masked as it is read (maskedTier).
+func (r *Run) repoStatus(ctx *clientctx.Context, local any) (jsjson.Object, error) {
 	tier, tierGiven, err := clientctx.LocalField(local, "selectedTier")
 	if err != nil {
 		return nil, err
@@ -160,7 +160,7 @@ func repoStatus(ctx *clientctx.Context, local any) (jsjson.Object, error) {
 	}
 	var shownTier, cachedAt any
 	if applies {
-		shownTier = tier
+		shownTier = r.maskedTier(tier)
 		cachedAt, _, _ = clientctx.LocalField(local, "tierCachedAt")
 	}
 	return jsjson.Object{
@@ -174,6 +174,20 @@ func repoStatus(ctx *clientctx.Context, local any) (jsjson.Object, error) {
 		{Key: "tierCachedAt", Value: cachedAt},
 		{Key: "serverSource", Value: ctx.ServerSource},
 	}, nil
+}
+
+// maskedTier is a cached tier as status and context show it: what a
+// server answered once, kept by `env use`, possibly by an older CLI that
+// stored it as it came. Every credential the run knows (VARLATCH_TOKEN,
+// the stored ones, Secrets.Mask) and every value it holds is taken out
+// before it is shown, so a bearer a server once echoed there never shows,
+// offline included; a URL's user name and password are masked where it
+// is printed, as before.
+func (r *Run) maskedTier(tier any) any {
+	if text, ok := tier.(string); ok {
+		return RedactOutput(r.Secrets.Mask(text), r.inFlight...)
+	}
+	return RedactValue(tier, r.inFlight...)
 }
 
 // statusCommand is `varlatch status [--json]`: the stored credentials and
@@ -223,7 +237,7 @@ func statusCommand(r *Run) error {
 	if root := clientctx.FindRepoRoot(cwd); root != "" {
 		// Inside a repository with incomplete context, the user-level status still prints.
 		if ctx, err := r.resolveFromArgs(cwd); err == nil {
-			if status, err := repoStatus(ctx, clientctx.LoadLocalState(root)); err == nil {
+			if status, err := r.repoStatus(ctx, clientctx.LoadLocalState(root)); err == nil {
 				repo = status
 			}
 		}
@@ -409,7 +423,7 @@ func (r *Run) useServer(server string, asJSON bool) error {
 	if !slices.Contains(signedIn, key) {
 		shown := clientctx.DisplayServer(key)
 		list := strings.Join(clientctx.DisplayServers(signedIn), ", ")
-		command := "varlatch login --server " + shown
+		command := "varlatch login --server " + shellWord(shown)
 		if shown != key {
 			command = "varlatch login --server and its URL" // a command naming what is shown would not work
 		}
@@ -455,7 +469,7 @@ func contextCommand(r *Run) error {
 	if err != nil {
 		return contextError(err)
 	}
-	repo, err := repoStatus(ctx, clientctx.LoadLocalState(ctx.RepoRoot))
+	repo, err := r.repoStatus(ctx, clientctx.LoadLocalState(ctx.RepoRoot))
 	if err != nil {
 		return err
 	}

@@ -59,10 +59,11 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  * passed); 1 otherwise; 64 on a usage error.
  */
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
 import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
 import { judgeGate } from "./lib/gate.mjs";
@@ -71,7 +72,8 @@ import { clientLackingChecks, loadClientLacks, validateClientLacks, withoutLacki
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
-import { parseSuiteOutput, resultLine } from "./lib/results.mjs";
+import { endProblem, parseSuiteOutput, resultLine } from "./lib/results.mjs";
+import { NOT_BUILT } from "./suite-kit.mjs";
 import { PLAN } from "./plan.mjs";
 import { loadWeights, parseShard, shardSuites } from "./shard.mjs";
 import { loadTarget } from "./targets/index.mjs";
@@ -140,11 +142,32 @@ function loadExpectations(targetName, inventory, openapi) {
 }
 
 /** Runs one suite as its own process group; streams its output and returns it. */
+const END_PRELOAD = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "lib", "end-preload.mjs")).href;
+
 function runSuite(script, args, env, cwd) {
   return new Promise((resolvePromise) => {
-    const child = spawn(process.execPath, [script, ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    // The end-of-suite channel: fd 3, a pipe of this suite's alone, and a
+    // nonce made for this suite (suite-kit's finish() writes both). The
+    // nonce goes on fd 4, never in the environment: the preload reads it
+    // and closes fd 4 before any module of the suite runs.
+    const nonce = randomBytes(16).toString("hex");
+    const child = spawn(process.execPath, ["--import", END_PRELOAD, script, ...args], {
+      cwd,
+      // Not a secret: tells the preload that fd 4 is the runner's.
+      env: { ...env, CONFORMANCE_NONCE_FD: "4" },
+      stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
+      detached: true,
+    });
+    child.stdio[4].on("error", () => {
+      // The suite exited before reading it; its end is judged without it.
+    });
+    child.stdio[4].end(nonce);
     let stdout = "";
     let stderr = "";
+    let endChannel = "";
+    child.stdio[3].on("data", (d) => {
+      endChannel += d;
+    });
     child.stdout.on("data", (d) => {
       stdout += d;
       process.stdout.write(d);
@@ -164,7 +187,7 @@ function runSuite(script, args, env, cwd) {
       running.delete(child.pid);
       // Browsers and CLIs a suite started go with it.
       killGroup(child.pid);
-      resolvePromise({ code, signal, timedOut, stdout, stderr });
+      resolvePromise({ code, signal, timedOut, stdout, stderr, endChannel, nonce });
     });
     child.on("error", (err) => {
       stderr += String(err);
@@ -266,7 +289,7 @@ async function main() {
     // Which shard this is; a shard of one is a full run, recorded as one.
     shard: options.shard?.count > 1 ? `${options.shard.index}/${options.shard.count}` : null,
     lacks: { declared: Object.fromEntries(lacks), stale: [] },
-    clientLacks: { declared: Object.fromEntries(clientLacks), stale: [] },
+    clientLacks: { declared: Object.fromEntries(clientLacks), stale: [], notBuilt: [] },
     startedAt: new Date().toISOString(),
     suites: [],
   };
@@ -396,9 +419,17 @@ async function main() {
       // A check needing a CLI feature the client lacks: client-lacks, from
       // the runner, unless the target already lacks what it needs.
       const clientLacked = new Set(ids.filter((id) => clientLacking.has(id) && !lacked.has(id) && !(missing.length > 0 && inventory.checks[id].kind in TARGET_SPECIFIC)));
-      const reportLacks = () => {
+      // A lacking check that ran and failed keeps its FAIL (`failed`): only
+      // a check that gave no verdict reports client-lacks. A check the suite
+      // never reported counts as lacking only when the runner did not start
+      // the suite or the suite ended (its end-of-suite marker); after a
+      // crash it is not reported here, and fails as unreported
+      // (`unreported`, the checks that gave no verdict of their own).
+      const reportLacks = (failed = new Set(), unreported = new Set()) => {
         for (const id of lacked) reports.push({ suite: entry.suite, id, status: "TARGET-LACKS", text: `the target lacks ${lacking.get(id).join(", ")}`, runner: true });
-        for (const id of clientLacked) reports.push({ suite: entry.suite, id, status: "CLIENT-LACKS", text: `the CLI lacks ${clientLacking.get(id).join(", ")}`, runner: true });
+        for (const id of clientLacked) {
+          if (!failed.has(id) && !unreported.has(id)) reports.push({ suite: entry.suite, id, status: "CLIENT-LACKS", text: `the CLI lacks ${clientLacking.get(id).join(", ")}`, runner: true });
+        }
       };
       if (missing.length > 0) {
         console.log(`--- ${suite.title}: not run, the target lacks ${missing.join(", ")}`);
@@ -432,10 +463,39 @@ async function main() {
       (windows[entry.suite] ??= []).push({ start, end });
       if (around) await around.finish();
       const parsed = parseSuiteOutput(`${out.stdout}\n${out.stderr}`);
-      // A lacking check's result is replaced by the runner's client-lacks;
-      // one that passed shows a stale entry in client-go.json.
+      // A check whose step the Go CLI refused as not built yet (suite-kit's
+      // NOT-BUILT, with the CLI's exact refusal) observed nothing: it
+      // reports client-lacks, from the runner, like every check of a
+      // feature client-go.json lists. Never a pass, so never a stale entry.
+      // Only for --cli go: a TypeScript CLI never gives that refusal, and a
+      // NOT-BUILT under one fails the run. A refused check that needs no
+      // listed feature fails: client-lacks never covers a check whose
+      // features the Go CLI claims to have (decision 3), so its feature
+      // goes in its cliNeeds and client-go.json, or gets built.
+      const notBuiltRefused = [];
+      const observedNotBuilt = new Set();
+      for (const r of parsed.results.filter((r) => r.status === "NOT-BUILT")) {
+        if (cli.spec !== "go") {
+          errors.push({ suite: entry.suite, message: `${r.id} reported NOT-BUILT, which only the Go CLI's refusal gives; the CLI under test is ${cli.spec}` });
+        } else if (!NOT_BUILT.test(r.text)) {
+          errors.push({ suite: entry.suite, message: `${r.id} reported NOT-BUILT with ${JSON.stringify(r.text.slice(0, 200))}, which is not the Go CLI's not-built refusal` });
+        } else if (lacked.has(r.id) || clientLacked.has(r.id)) {
+          observedNotBuilt.add(r.id);
+          report.clientLacks.notBuilt.push({ id: r.id, refusal: r.text });
+        } else {
+          notBuiltRefused.push({
+            status: "FAIL",
+            id: r.id,
+            text: `client-go.json lists no feature this check needs, but the Go CLI refused a step it needs as not built: name the feature in its cliNeeds and list it, or build it (${r.text})`,
+          });
+        }
+      }
+      parsed.results = [...parsed.results.filter((r) => r.status !== "NOT-BUILT"), ...notBuiltRefused];
+      // A lacking check that gave no verdict reports the runner's
+      // client-lacks; one that passed shows a stale entry in client-go.json;
+      // one that failed stays a failure, whatever client-go.json lists.
       const anyFailed = parsed.results.some((r) => r.status === "FAIL");
-      const { kept, stale } = withoutLacking(parsed.results, clientLacked, clientLacking);
+      const { kept, stale, failed } = withoutLacking(parsed.results, clientLacked, clientLacking);
       parsed.results = kept;
       for (const { id, features } of stale) {
         report.clientLacks.stale.push({ id, features });
@@ -461,9 +521,22 @@ async function main() {
         }
         reports.push({ suite: entry.suite, ...r });
       }
-      reportLacks();
+      // The suite finished only when its own end-of-suite channel (fd 3)
+      // carried one marker with its name and this run's nonce, and it then
+      // exited normally with the code the marker names (suite-kit's
+      // finish()). Anything else, whatever it reported before: the run
+      // fails, and the lacking checks it did not report are not counted as
+      // lacking.
+      const unfinished = out.timedOut ? "timed out" : endProblem(out.endChannel, { suite: entry.suite, nonce: out.nonce, code: out.code, signal: out.signal });
+      const ended = unfinished === null;
+      if (!ended && !out.timedOut) {
+        errors.push({ suite: entry.suite, message: `did not finish: ${unfinished}; the checks it did not report fail` });
+      }
+      const reportedIds = new Set(parsed.results.map((r) => r.id));
+      const unreported = ended ? new Set() : new Set([...clientLacked].filter((id) => !reportedIds.has(id) && !observedNotBuilt.has(id)));
+      reportLacks(failed, unreported);
       for (const message of parsed.errors) errors.push({ suite: entry.suite, message });
-      // A FAIL replaced by client-lacks still explains a non-zero exit.
+      // A failed check explains a non-zero exit.
       const failedResults = anyFailed;
       if (out.timedOut) errors.push({ suite: entry.suite, message: `did not finish within ${SUITE_TIMEOUT_MS / 60_000} minutes` });
       else if (out.code !== 0 && !failedResults && parsed.errors.length === 0) {

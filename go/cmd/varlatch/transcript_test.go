@@ -3,11 +3,14 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -195,6 +198,15 @@ var differences = map[string]transcript.Difference{
 	// Accepted only where Go's stdout and stderr are the recording with each
 	// fixture server, where TypeScript shows it, shown through DisplayServer
 	// instead (serverDisplayFixtures).
+	// The browser sign-in's loopback callback: Go's has a random path
+	// (internal/cli's callbackNonce), so only a POST to exactly it is the
+	// sign-in's; TypeScript's is "/". Accepted only where Go's stdout, with
+	// that path taken out of the printed address, is the recording.
+	"loopback-nonce": func(o *transcript.Outcome, got transcript.Outcome) {
+		if shown := loopbackNonce.ReplaceAllString(got.Stdout, "${1}"); shown == o.Stdout {
+			o.Stdout = got.Stdout
+		}
+	},
 	"server-display": func(o *transcript.Outcome, got transcript.Outcome) {
 		stdout, stderr := o.Stdout, o.Stderr
 		for _, f := range serverDisplayFixtures {
@@ -372,6 +384,7 @@ var serverDisplayFixtures = []struct {
 	{`"detail": "Failed to parse URL from not a url/v1/meta"`, `"detail": "Failed to parse URL from %[1]s"`, []string{"not a url/v1/meta"}},
 	{"for https://x.example/p q. Commit", "for %[1]s. Commit", []string{"https://x.example/p q"}},
 	{"not authenticated to http://[redacted]@127.0.0.1:9;", "not authenticated to %[1]s;", []string{"http://user:pw-canary@127.0.0.1:9"}},
+	{"login: varlatch.example.com is not a URL", "login: %[1]s is not a URL", []string{"varlatch.example.com"}},
 }
 
 // verbatimTOMLLine is a line init writes, `key = "<value as given>"`.
@@ -382,6 +395,10 @@ var mcpServerInfo = regexp.MustCompile(`("serverInfo":\{"name":"varlatch","versi
 
 // recordedUserAgent is the TypeScript CLI's User-Agent in a recording.
 var recordedUserAgent = regexp.MustCompile(`^varlatch-(cli|mcp)/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)
+
+// loopbackNonce is the Go callback's random path in a printed sign-in
+// address, the port already a pattern.
+var loopbackNonce = regexp.MustCompile(`(callback=http%3A%2F%2F127\.0\.0\.1%3A\{\{port\}\}%2F)[A-Za-z0-9_-]{32}`)
 
 // goFailure is one line of the Go CLI's own failure.
 var goFailure = regexp.MustCompile(`^varlatch: [^\n]+\n$`)
@@ -415,6 +432,17 @@ func TestTranscripts(t *testing.T) {
 		}
 		for _, c := range f.Cases {
 			t.Run(f.Area+"/"+c.ID, func(t *testing.T) {
+				// Skipped before it joins the parallel cases or takes a
+				// slot: on Windows, a case whose outcome names a path below
+				// its directory is not compared until step 5.9.
+				if runtime.GOOS == "windows" {
+					if expectsPath(t, c) {
+						t.Skip(windowsPathSkip)
+					}
+					if expectsDirInJSON(c) {
+						t.Skip(windowsJSONDirSkip)
+					}
+				}
 				t.Parallel()
 				slots <- struct{}{}
 				defer func() { <-slots }()
@@ -427,6 +455,9 @@ func TestTranscripts(t *testing.T) {
 					c.Files = files
 				}
 				_, problems, err := transcript.Replay(c, start, differences)
+				if errors.Is(err, transcript.ErrUnsupported) {
+					t.Skip(err)
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -436,6 +467,58 @@ func TestTranscripts(t *testing.T) {
 			})
 		}
 	}
+}
+
+// windowsPathSkip is why a case that expects a path is skipped on Windows
+// (internal docs/design/go-cli.md, step 5.9).
+const windowsPathSkip = "path separators: Windows expectations not recorded yet (step 5.9)"
+
+// expectsPath reports whether a case's recorded outcome names a path below
+// its directory: the directory's placeholder followed by a separator
+// (pathBelowDir). TypeScript recorded it on Linux; on Windows both CLIs
+// join such a path with backslashes, so until Windows outcomes are recorded
+// (step 5.9) such a case is not compared there. Every other case, the
+// directory itself named alone included, still replays byte for byte.
+func expectsPath(t *testing.T, c transcript.Case) bool {
+	t.Helper()
+	b, err := json.Marshal(c.Expect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pathBelowDir.Match(b)
+}
+
+// pathBelowDir matches a path below a placeholder directory. {{dir}} is the
+// only one the recorder writes today; {{home}} is matched too, so a
+// recorder that adds it is covered.
+var pathBelowDir = regexp.MustCompile(`\{\{(dir|home)\}\}[/\\]`)
+
+// windowsJSONDirSkip is why a case that names its directory inside a JSON
+// string is skipped on Windows (step 5.9).
+const windowsJSONDirSkip = "a directory inside a JSON string: Windows expectations not recorded yet (step 5.9)"
+
+// dirInJSONString matches a placeholder directory inside a JSON string.
+var dirInJSONString = regexp.MustCompile(`"[^"\n]*\{\{(dir|home)\}\}[^"\n]*"`)
+
+// expectsDirInJSON reports whether a case's recorded outcome names its
+// directory inside a JSON string (stdout, stderr, a file it writes, or a
+// request body). The replayer gives the directory back as {{dir}} as it is
+// printed; on Windows JSON escapes its backslashes, so until Windows
+// outcomes are recorded (step 5.9) such a case is not compared there.
+func expectsDirInJSON(c transcript.Case) bool {
+	texts := []string{c.Expect.Stdout, c.Expect.Stderr}
+	for _, f := range c.Expect.Files {
+		texts = append(texts, f.Content)
+	}
+	for _, r := range c.Expect.Requests {
+		texts = append(texts, string(r.Body))
+	}
+	for _, text := range texts {
+		if dirInJSONString.MatchString(text) {
+			return true
+		}
+	}
+	return false
 }
 
 func withMarker(env map[string]string) map[string]string {
@@ -469,6 +552,37 @@ func TestServerDisplayDifferenceIsExact(t *testing.T) {
 	differences["server-display"](&want, transcript.Outcome{Stderr: "varlatch server use: not a URL: b.example\n", Stdout: "x"})
 	if want.Stdout == "x" {
 		t.Error("accepted a stdout the recording does not have")
+	}
+}
+
+// TestWindowsPathSkipIsNarrow: on Windows only a recorded outcome that names
+// a path below the case's directory is skipped; the directory alone, or any
+// other placeholder, is still compared.
+func TestWindowsPathSkipIsNarrow(t *testing.T) {
+	for text, skipped := range map[string]bool{
+		`"repoRoot": "{{dir}}/repo"`:  true,
+		`"root": "{{dir}}\\project"`:  true,
+		`"home": "{{home}}/.config"`:  true,
+		`outside {{dir}}, so nothing`: false,
+		`"root": "{{dir}}"`:           false,
+		`{{server}}/v1/whoami`:        false,
+		`{{skill}}/SKILL.md`:          false,
+	} {
+		if got := pathBelowDir.MatchString(text); got != skipped {
+			t.Errorf("%s: skipped %v, want %v", text, got, skipped)
+		}
+	}
+	// A directory inside a JSON string is skipped too; outside one, alone,
+	// it is compared.
+	for text, skipped := range map[string]bool{
+		`{"offline": "No varlatch.toml found from {{dir}} upward"}`: true,
+		`{"root": "{{dir}}"}`:                         true,
+		`No varlatch.toml found from {{dir}} upward.`: false,
+		`{"server": "{{server}}"}`:                    false,
+	} {
+		if got := expectsDirInJSON(transcript.Case{Expect: transcript.Outcome{Stdout: text}}); got != skipped {
+			t.Errorf("%s: skipped %v, want %v", text, got, skipped)
+		}
 	}
 }
 

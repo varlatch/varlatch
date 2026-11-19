@@ -66,12 +66,16 @@ type Options struct {
 	// read.
 	OnCredentialExpires func(expiresAt string)
 	// OnStepUp handles STEP_UP_REQUIRED (ADR-0054 Decision 3; the CLI's
-	// handler is slice 5.2): true once the person approved, and the client
-	// repeats the request once with the approval.
+	// handler is approvals.go's): true once the person approved, and the
+	// client repeats the request once with the approval.
 	OnStepUp func(approval any) (bool, error)
 	// Approval is sent as the Varlatch-Approval header with every request
 	// that is not a GET (`--approval <id>`).
 	Approval string
+	// Ready is called with each request's method before it is sent (the
+	// CLI's resuming fetch: before the first change request it waits for
+	// the approval); an error is the request's.
+	Ready func(method string) error
 	// Env is where the transport reads NODE_EXTRA_CA_CERTS.
 	Env Env
 	// For tests: the clock, the wait, and Math.random.
@@ -282,6 +286,11 @@ func isMaintenance(res *Response) bool {
 // User-Agent when there is one, Content-Type for a body, then the extra
 // headers (which replace those of the same name).
 func (c *Client) requestOnce(ctx context.Context, method, path string, body any, headers []Header) (*Response, error) {
+	if c.opts.Ready != nil {
+		if err := c.opts.Ready(method); err != nil {
+			return nil, err
+		}
+	}
 	var list [][2]string
 	if c.opts.Token != "" {
 		list = append(list, [2]string{"Authorization", "Bearer " + c.opts.Token})
@@ -426,4 +435,11 @@ func get(v any, key string) (any, bool) {
 		return nil, false
 	}
 	return jsval.Get(v, key)
+}
+
+// HeaderRefused is the SDK's refusedHeader: whether fetch would refuse the
+// header value (not a ByteString, or a NUL, CR or LF in it).
+func HeaderRefused(name, value string) bool {
+	_, err := headerValue(name, value)
+	return err != nil
 }

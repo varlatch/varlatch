@@ -25,14 +25,40 @@
  * when the target lacks an operation every check of the group needs (the
  * runner says which checks lack, in CONFORMANCE_LACKING, and reports them
  * target-lacks itself), and the suite skips the group.
+ *
+ * A check that depends on a CLI step names that step's result (`check(...,
+ * { after })`). When the CLI under test is the Go CLI and it refused the
+ * step as not built yet (exit 64, NOT_BUILT's exact message), the check
+ * reports `NOT-BUILT  [<id>] <the refusal>` instead of a verdict it could
+ * not have observed, and the runner reports it client-lacks (never a pass,
+ * so never a stale client-go.json entry). `notBuilt(ids, result)` does the
+ * same for the checks that depend on that step and that the suite will not
+ * judge, so it can skip their work: each check's NOT-BUILT comes from its
+ * own step. A TypeScript CLI never takes this path, whatever it prints.
+ *
+ * A suite ends only through the reporter's `finish()`. It writes
+ * `END <suite> <nonce> <exit code>` to fd 3, a pipe the runner opens for the
+ * suite alone (never stdout or stderr, so no output of the suite or of a
+ * process it starts can stand for it), with the nonce the runner made for
+ * this suite, and exits with that code. A suite that never calls finish() (a
+ * crash, a stalled await, a process.exit elsewhere) writes nothing there,
+ * and the runner fails the run: what the suite did not report then never
+ * counts as lacking. The nonce is never in the environment: the runner
+ * writes it to fd 4, and a preload (lib/end-preload.mjs, `node --import`)
+ * reads it and closes fd 4 before any module of the suite runs. A process
+ * started with the default stdio receives neither fd.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DEADLINE_ENV, GRACE_MS } from "./lib/deadline.mjs";
+import { endNonce } from "./lib/end-channel.mjs";
 import { predates } from "./lib/inventory.mjs";
 
 const TARGET_OP = fileURLToPath(new URL("./target-op.mjs", import.meta.url));
+
+/** The fd of the runner's end-of-suite channel. */
+export const END_FD = 3;
 const ID = /^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9.-]*$/;
 let inventoryCache = null;
 const inventory = () => (inventoryCache ??= JSON.parse(readFileSync(new URL("./inventory.json", import.meta.url), "utf8")));
@@ -57,12 +83,57 @@ export function cliVersion() {
 /** The checks of this suite the runner reports target-lacks (CONFORMANCE_LACKING). */
 const lacking = () => new Set(JSON.parse(process.env.CONFORMANCE_LACKING || "[]"));
 
+/**
+ * The Go CLI's refusal of a command or mode it does not build yet
+ * (go/cmd/varlatch/internal/cli: UsageError, exit 64), one whole line:
+ *
+ *   varlatch <command>: not in this build of the Go CLI yet (slice 5.4b); use the TypeScript CLI for it until then
+ *   varlatch login: <what> is not in this build of the Go CLI yet (slice 5.2); use ...
+ *   varlatch init: guided init on a terminal is not in this build of the Go CLI yet (slice 5.8a); pass --org and --project, or use ...
+ *   varlatch <command>: not in this build of the Go CLI yet (ADR-0059 step 6); use ...
+ */
+export const NOT_BUILT = /^varlatch [a-z][a-z -]*: (?:[^\n]* )?not in this build of the Go CLI yet \((?:slice 5\.[1-9][a-z]?|ADR-0059 step [0-9])\); (?:[^\n]*, or )?use the TypeScript CLI for it until then$/;
+
+/** The exit status of the Go CLI's NOT_BUILT refusal (a usage error). */
+export const NOT_BUILT_EXIT = 64;
+
+/**
+ * The Go CLI's not-built refusal in a CLI step's result, or null: the line
+ * when the CLI under test is the Go CLI (VARLATCH_CLI_NATIVE=1), the step
+ * exited 64 and one line of its output is exactly NOT_BUILT. Null for any
+ * other step and for every TypeScript CLI. `result` is `{ code | status,
+ * out | stdout + stderr }`, as the suites' run helpers return it.
+ */
+export function notBuiltRefusal(result) {
+  if (process.env.VARLATCH_CLI_NATIVE !== "1" || !result) return null;
+  const code = result.code ?? result.status;
+  if (code !== NOT_BUILT_EXIT) return null;
+  const out = result.out ?? `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  return out.split("\n").map((l) => l.replace(/\r$/, "")).find((l) => NOT_BUILT.test(l)) ?? null;
+}
+
 export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
   let failures = 0;
   const skipped = new Set();
   const skippedGroups = new Set();
-  const check = (id, name, ok, detail = "") => {
+  const reported = new Set();
+  const refusedAsNotBuilt = (after) => {
+    for (const r of [after ?? []].flat()) {
+      const line = notBuiltRefusal(r);
+      if (line) return line;
+    }
+    return null;
+  };
+  const check = (id, name, ok, detail = "", { after } = {}) => {
     if (!ID.test(id)) throw new Error(`not a check ID: ${id}`);
+    reported.add(id);
+    // A step the check depends on was refused as not built: the check
+    // observed nothing, so it gives no verdict.
+    const refusal = refusedAsNotBuilt(after);
+    if (refusal) {
+      console.log(`NOT-BUILT  [${id}] ${refusal}`);
+      return false;
+    }
     const feature = inventory().checks[id]?.feature;
     if (feature && skipped.has(feature)) {
       error(`${id} reported a result after its feature group ${feature} was reported as predating the CLI`);
@@ -128,21 +199,66 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
     if (inventory().checks[id]?.suite !== suite) throw new Error(`${id} is not a check of ${suite} in the inventory`);
     return !lacking().has(id);
   };
+  /**
+   * When `result` is the Go CLI's not-built refusal: each of `ids`, the
+   * checks of this suite that depend on that step, reports NOT-BUILT, and
+   * true is returned, so the suite skips their work. False otherwise
+   * (always, for a TypeScript CLI). A check reported already is an error:
+   * it gave its verdict, or depends on another step.
+   */
+  const notBuilt = (ids, result) => {
+    const refusal = notBuiltRefusal(result);
+    if (!refusal) return false;
+    const suite = process.env.CONFORMANCE_SUITE;
+    if (!suite) throw new Error("CONFORMANCE_SUITE is not set: run the suite through scripts/conformance/run.mjs");
+    for (const id of ids) {
+      if (inventory().checks[id]?.suite !== suite) throw new Error(`${id} is not a check of ${suite} in the inventory`);
+      if (reported.has(id)) {
+        error(`${id} was reported already, so its step's not-built refusal cannot stand for it`);
+        continue;
+      }
+      reported.add(id);
+      console.log(`NOT-BUILT  [${id}] ${refusal}`);
+    }
+    return true;
+  };
   return {
     check,
     error,
+    notBuilt,
     supports,
     group,
     runs,
     get failures() {
       return failures;
     },
+    /**
+     * Ends the suite: the end-of-suite marker on the runner's channel (fd 3),
+     * then exit with the code it names, 1 when a check failed, else 0. The
+     * only way a suite ends as finished.
+     */
     finish(summary) {
-      if (failures > 0) {
-        if (summary) console.error(`${failures} ${summary} failed`);
-        process.exit(1);
+      const code = failures > 0 ? 1 : 0;
+      if (failures > 0 && summary) console.error(`${failures} ${summary} failed`);
+      const nonce = endNonce();
+      if (nonce) {
+        // The whole marker, or the suite did not end: a short write leaves
+        // a line the runner refuses, and the exit is never 0.
+        const marker = Buffer.from(`END ${process.env.CONFORMANCE_SUITE || ""} ${nonce} ${code}\n`);
+        let written = -1;
+        try {
+          written = writeSync(END_FD, marker);
+        } catch (err) {
+          console.error(`the end-of-suite channel (fd ${END_FD}) is not open: ${err.message}`);
+        }
+        if (written !== marker.length) {
+          if (written >= 0) console.error(`the end-of-suite marker was cut short: ${written} of ${marker.length} bytes written`);
+          process.exit(code || 1);
+        }
+      } else {
+        console.error("no end-of-suite nonce: not started by the conformance runner");
       }
-      process.exit(0);
+      process.exit(code);
     },
   };
 }

@@ -29,6 +29,10 @@ import { build } from "esbuild";
  * `{{server}}` in a case stands for the fake server's origin and `{{dir}}`
  * for the case's directory, in every string the case gives and in what is
  * recorded, so a recording does not depend on the port or the path.
+ *
+ * A case can also act while the CLI runs: answer the browser sign-in's
+ * loopback callback the way the sign-in page does (callback), and send
+ * Ctrl-C once standard error says something (signal).
  */
 
 /** 2: the whole final tree, inputs and directories included. */
@@ -72,9 +76,21 @@ export interface TranscriptCase {
    * ISO 8601 timestamp with milliseconds (Date.prototype.toISOString's
    * form) between the start and the end of the run, written as {{now}};
    * "generated": the value `--generate` made, in each request body,
-   * written as `{{generated <spec>}}` (generatedPattern).
+   * written as `{{generated <spec>}}` (generatedPattern);
+   * "now+<s>": one between the start and the end plus <s> seconds, written
+   * as {{now+<s>}}; "callback": the browser sign-in's loopback port in its
+   * printed address, written as {{port}}.
    */
   patterns?: string[];
+  /**
+   * The browser sign-in's callback: once standard output holds the printed
+   * address (a line with `callback=`), POST `body` to the callback it names,
+   * as the sign-in page does, and `times` times in all (1 by default), each
+   * on a connection of its own; what each got is recorded.
+   */
+  callback?: { body: string; times?: number };
+  /** Ctrl-C: SIGINT once standard error holds `after`. */
+  signal?: { after: string };
 }
 
 export interface RecordedRequest {
@@ -89,6 +105,8 @@ export interface RecordedCase extends TranscriptCase {
     status: number;
     stdout: string;
     stderr: string;
+    /** What each callback POST got: its status, or "refused" when nothing took the connection. */
+    callbacks?: string[];
     requests: RecordedRequest[];
     /**
      * The case directory's final tree (listTree): a file's content (UTF-8)
@@ -107,7 +125,7 @@ export interface TranscriptFile {
 }
 
 /** The request headers a recording keeps (internal docs/design/go-cli.md, decision 2). */
-export const RECORDED_HEADERS = ["authorization", "user-agent", "content-type", "accept", "idempotency-key"];
+export const RECORDED_HEADERS = ["authorization", "user-agent", "content-type", "accept", "idempotency-key", "varlatch-approval"];
 
 /** Bundles apps/cli/src/main.ts as the release build does, into `dir`. */
 export async function bundleCli(dir: string): Promise<string> {
@@ -235,6 +253,47 @@ function generatedBy(spec: string, value: string): boolean {
   return new RegExp(shape).test(value);
 }
 
+/** The "now+<s>" pattern: each timestamp from `start` to `end` plus `seconds`, as {{now+<s>}}. */
+export function laterPattern(text: string, start: number, end: number, seconds: number): string {
+  return text.replace(ISO_TIMESTAMP, (t) => {
+    const at = Date.parse(t) - seconds * 1000;
+    return at >= start && at <= end ? `{{now+${seconds}}}` : t;
+  });
+}
+
+/** The loopback callback's port in a printed sign-in address. */
+const CALLBACK_PORT = /(callback=http%3A%2F%2F127\.0\.0\.1%3A)\d+(%2F)/g;
+
+/** The "callback" pattern: the loopback port as {{port}}. */
+export function callbackPattern(text: string): string {
+  return text.replace(CALLBACK_PORT, "$1{{port}}$2");
+}
+
+/** The patterns a case names, applied in order to a recorded text. */
+export function applyPatterns(patterns: readonly string[], text: string, start: number, end: number): string {
+  let out = text;
+  for (const name of patterns) {
+    const later = /^now\+(\d+)$/.exec(name);
+    if (name === "now") out = nowPattern(out, start, end);
+    else if (later) out = laterPattern(out, start, end, Number(later[1]));
+    else if (name === "callback") out = callbackPattern(out);
+    else if (name !== "generated") throw new Error(`no pattern ${name}`); // generated applies to request bodies (generatedPattern)
+  }
+  return out;
+}
+
+/** POSTs `body` to `url` on a connection of its own: the status, or "refused". */
+function postOnce(url: string, body: string): Promise<string> {
+  return new Promise((resolve) => {
+    const req = http.request(url, { method: "POST", agent: false, headers: { "Content-Type": "application/json", Connection: "close" } }, (res) => {
+      res.resume();
+      res.on("end", () => resolve(String(res.statusCode)));
+    });
+    req.on("error", () => resolve("refused"));
+    req.end(body);
+  });
+}
+
 /** Runs one case against the bundle and records it. */
 export async function recordCase(bundle: string, c: TranscriptCase): Promise<RecordedCase> {
   if (process.platform !== "win32") process.umask(TRANSCRIPT_UMASK);
@@ -290,19 +349,40 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
     for (const name of c.unset ?? []) delete env[name];
     for (const [k, v] of Object.entries(c.env ?? {})) env[k] = fill(v, origin, dir);
     const start = Date.now();
+    const callbacks: string[] = [];
     const result = await new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(process.execPath, [bundle, ...c.args.map((a) => fill(a, origin, dir))], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
-      child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
-      child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+      let called = false;
+      let signalled = false;
+      child.stdout.on("data", (d: Buffer) => {
+        stdout += d.toString("utf8");
+        const address = /callback=([^\s]+)\n/.exec(stdout);
+        if (c.callback && address && !called) {
+          called = true;
+          const url = decodeURIComponent(address[1] as string);
+          void (async () => {
+            for (let i = 0; i < (c.callback?.times ?? 1); i++) callbacks.push(await postOnce(url, c.callback?.body ?? ""));
+          })();
+        }
+      });
+      child.stderr.on("data", (d: Buffer) => {
+        stderr += d.toString("utf8");
+        if (c.signal && !signalled && stderr.includes(c.signal.after)) {
+          signalled = true;
+          child.kill("SIGINT");
+        }
+      });
       child.on("error", reject);
-      child.on("close", (code, signal) => resolve({ status: code ?? (signal ? 128 : 1), stdout, stderr }));
+      // A process ended by a signal it did not handle reports 128 + the signal's number, as a shell does.
+      child.on("close", (code, signal) => resolve({ status: code ?? (signal === "SIGINT" ? 130 : signal ? 128 : 1), stdout, stderr }));
       child.stdin.end(c.stdin ?? "");
     });
+    // The callbacks' answers, before the result is read.
+    for (let i = 0; c.callback && callbacks.length < (c.callback.times ?? 1) && i < 100; i++) await new Promise((r) => setTimeout(r, 50));
     const end = Date.now();
-    const now = c.patterns?.includes("now") ? (t: string) => nowPattern(t, start, end) : (t: string) => t;
-    for (const name of c.patterns ?? []) if (name !== "now" && name !== "generated") throw new Error(`case ${c.id}: no pattern ${name}`);
+    const now = (t: string) => applyPatterns(c.patterns ?? [], t, start, end);
     const generated = (r: RecordedRequest[]) => (c.patterns?.includes("generated") ? generatedPattern(c.args, r, result.stdout + result.stderr) : r);
     const files = listTree(dir, (t) => now(unfill(t, origin, dir)));
     return {
@@ -313,6 +393,7 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
         stderr: now(unfill(result.status === 1 && UNCAUGHT.test(result.stderr) ? uncaught(result.stderr) : result.stderr, origin, dir)),
         requests: generated(JSON.parse(now(JSON.stringify(unfillDeep(requests, origin, dir)))) as RecordedRequest[]),
         files,
+        ...(c.callback ? { callbacks } : {}),
       },
     };
   } finally {

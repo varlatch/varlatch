@@ -18,9 +18,11 @@
  * A check lacks when its feature, or a feature its suite's setup uses
  * (inventory `suites.<name>.cliNeeds`), is listed. The runner reports it
  * `client-lacks` itself; no suite can. A suite runs as long as one of its
- * checks does not lack, and a result a suite still prints for a lacking
- * check is replaced, except a PASS: that means the entry is stale, and the
- * run fails until the pull request that built the feature removes it.
+ * checks does not lack. A lacking check that gave no verdict (not run, or
+ * NOT-BUILT: it observed the Go CLI's not-built refusal on its own step)
+ * reports client-lacks. A PASS means the entry is stale, and the run fails
+ * until the pull request that built the feature removes it; a FAIL stays a
+ * failure, whatever client-go.json lists.
  * Only the `go` client has lacks; a TypeScript CLI has every feature its
  * version introduced.
  */
@@ -76,19 +78,32 @@ export function clientLackingChecks(inventory, lacksFeatures) {
 }
 
 /**
- * A suite's results with the lacking checks' taken out, and every stale
- * entry they reveal: a lacking check that passed shows that the client has
- * what the entry says it lacks.
+ * A suite's results with the lacking checks' taken out, every stale entry
+ * they reveal, and every lacking check that failed.
+ *
+ * A lacking check reports client-lacks only when it gave no verdict: the
+ * suite never ran it, or it observed the Go CLI's not-built refusal on its
+ * own step (NOT-BUILT, which the runner reads before this). A PASS shows
+ * that the client has what the entry says it lacks (stale). A FAIL is
+ * kept: the check ran and something went wrong, which client-go.json
+ * never excuses. `failed` names those checks, which report no
+ * client-lacks.
  */
 export function withoutLacking(results, lacked, clientLacking) {
   const kept = [];
   const stale = [];
+  const failed = new Set();
   for (const r of results) {
     if (!lacked.has(r.id)) {
       kept.push(r);
       continue;
     }
-    if (r.status === "PASS" && clientLacking.has(r.id)) stale.push({ id: r.id, features: clientLacking.get(r.id) });
+    if (r.status === "FAIL") {
+      kept.push(r);
+      failed.add(r.id);
+    } else if (r.status === "PASS" && clientLacking.has(r.id)) {
+      stale.push({ id: r.id, features: clientLacking.get(r.id) });
+    }
   }
-  return { kept, stale };
+  return { kept, stale, failed };
 }

@@ -121,6 +121,12 @@ func TestEveryClientHoldsItsBearer(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		// Under another name, apiclient.New would hide from the check below.
+		for _, imp := range file.Imports {
+			if strings.Trim(imp.Path.Value, `"`) == "github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient" && imp.Name != nil && imp.Name.Name != "apiclient" {
+				t.Errorf("%s: apiclient imported as %s", fset.Position(imp.Pos()), imp.Name.Name)
+			}
+		}
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			site := filepath.ToSlash(rel) + ":"
@@ -152,5 +158,45 @@ func TestEveryClientHoldsItsBearer(t *testing.T) {
 	}
 	if found != 1 {
 		t.Fatalf("found apiclient.New %d times, want once (in newClient)", found)
+	}
+}
+
+// TestPoisonedTierNeverShown: a .varlatch/local.json an older CLI wrote
+// with a tier a server echoed the bearer in is masked as status and
+// context read it, offline, whether the bearer is VARLATCH_TOKEN or a
+// stored credential (#297's review).
+func TestPoisonedTierNeverShown(t *testing.T) {
+	const token = "plainword_bearer_canary_9f3a"
+	const server = "https://repo.example"
+	for name, stored := range map[string]bool{"environment": false, "stored": true} {
+		t.Run(name, func(t *testing.T) {
+			repo, config := t.TempDir(), t.TempDir()
+			files := map[string]string{
+				filepath.Join(repo, "varlatch.toml"):           "server = \"" + server + "\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+				filepath.Join(repo, ".varlatch", "local.json"): `{"selectedEnvironment":"dev","selectedTier":"development ` + token + `","tierCachedAt":"2026-11-01T00:00:00.000Z"}`,
+			}
+			env := MapEnv{"HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": config}
+			if stored {
+				files[filepath.Join(config, "credentials.json")] = `{"servers": {"` + server + `": {"token": "` + token + `"}}}`
+			} else {
+				env["VARLATCH_TOKEN"] = token
+			}
+			for path, content := range files {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Chdir(repo)
+			for _, args := range [][]string{{"status", "--json"}, {"status"}, {"context"}, {"context", "--json"}} {
+				var stdout, stderr bytes.Buffer
+				code := Main(args, env, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+				if !strings.Contains(stdout.String(), "development") || strings.Contains(stdout.String()+stderr.String(), token) {
+					t.Errorf("%v: status %d\nstdout %q\nstderr %q", args, code, stdout.String(), stderr.String())
+				}
+			}
+		})
 	}
 }

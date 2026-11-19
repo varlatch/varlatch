@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +22,7 @@ import (
 // `login --token` and `login --token-stdin`, `logout` (revoke.ts),
 // `whoami` (whoami.ts), `env list` and `env use`, ported from main.ts at
 // v0.22.0. The other ways of signing in (the browser, --oidc, --start and
-// --wait) are slice 5.2's.
+// --wait) are slice 5.2's: signin.go and devicelogin.go.
 
 // shownServer is a server URL as the Go CLI prints it: its allow-listed
 // display form (clientctx.DisplayServer; go/README.md, the accepted
@@ -51,12 +53,6 @@ func serverString(server any) (string, error) {
 		return s, nil
 	}
 	return "", &clientctx.TypeError{Message: "server.replace is not a function"}
-}
-
-// notInThisBuild is the usage error of a part of a command that a later
-// slice builds.
-func notInThisBuild(what, slice string) error {
-	return UsageError("varlatch login: " + what + " is not in this build of the Go CLI yet (slice " + slice + "); use the TypeScript CLI for it until then")
 }
 
 // loginOptions is main.ts's LOGIN_OPTIONS: login is parsed strictly, so a
@@ -114,9 +110,52 @@ func loginCommand(r *Run) error {
 		return UsageError("varlatch login: give one of --token-stdin, --token, --oidc, --start, or --wait, not more than one (" + strings.Join(given, ", ") + ")")
 	}
 	// Assisted mode: with no method given, a coding agent cannot wait for
-	// the browser, so login starts a device sign-in (slice 5.2).
-	if len(given) == 1 && (given[0] == "--start" || given[0] == "--wait") || len(given) == 0 && r.Assisted.On {
-		return notInThisBuild("device sign-in (--start and --wait)", "5.2")
+	// the browser loopback, so login starts a device sign-in.
+	device := ""
+	if len(given) == 1 && (given[0] == "--start" || given[0] == "--wait") {
+		device = given[0]
+	} else if len(given) == 0 && r.Assisted.On {
+		device = "--start"
+	}
+	ttlFlag, hasTTL := login.Value("--ttl")
+	if device != "" {
+		for _, option := range []string{"--org", "--audience", "--oidc-token"} {
+			if _, ok := login.Value(option); ok {
+				return UsageErrorWithUsage("varlatch login: "+option+" applies to --oidc, not to "+device, "\n"+usage)
+			}
+		}
+		io := deviceIO{json: login.Has("--json"), cli: "varlatch", assisted: r.Assisted.On}
+		if r.Assisted.On {
+			io.cli = "varlatch --assisted"
+		}
+		serverText, err := serverString(server)
+		if err != nil {
+			return err
+		}
+		if device == "--start" {
+			if _, ok := login.Value("--timeout"); ok {
+				return UsageError("varlatch login: --timeout applies to --wait")
+			}
+			var ttl *float64
+			if hasTTL {
+				n, err := loginSeconds(ttlFlag, 60, 86_400, "--ttl")
+				if err != nil {
+					return err
+				}
+				ttl = &n
+			}
+			return r.startDeviceLogin(serverText, ttl, io)
+		}
+		if hasTTL {
+			return UsageError("varlatch login: --ttl applies to --start; the sign-in's lifetime was set when it started")
+		}
+		timeout := float64(waitDefaultSeconds)
+		if value, ok := login.Value("--timeout"); ok {
+			if timeout, err = loginSeconds(value, 1, waitMaxSeconds, "--timeout"); err != nil {
+				return err
+			}
+		}
+		return r.waitDeviceLogin(serverText, int(timeout), io)
 	}
 	if login.Has("--json") {
 		return UsageError("varlatch login: --json applies to --start and --wait")
@@ -130,17 +169,97 @@ func loginCommand(r *Run) error {
 			return err
 		}
 	}
-	// A server echoing the credential back gets it masked (issue #119),
-	// wherever it is shown, whatever its length (the person gave it).
-	r.holdCredential(token, true)
-	if token == "" {
-		if login.Has("--oidc") {
-			return notInThisBuild("OIDC sign-in (--oidc)", "5.2")
-		}
-		return notInThisBuild("sign-in through the browser", "5.2")
+	// A server echoing the credential back in an error message gets it
+	// masked (issue #119), and no output or diagnostic shows it.
+	r.holdSecret(token)
+	// Issuance metadata (ADR-0032): stored so expiry is knowable offline.
+	// An explicit --token has none: its entry stays metadata-free.
+	var issued any
+	ttlInput := jsjson.Object{}
+	if hasTTL && ttlFlag != "" {
+		ttlInput = jsjson.Object{{Key: "ttlSeconds", Value: apiclient.Number(ttlFlag)}}
 	}
-	return r.loginWithToken(server, token)
+	if token == "" && login.Has("--oidc") {
+		// CI federation (capability auth.oidc): exchange the platform's OIDC
+		// ID token for a short-lived credential; nothing stored in the
+		// pipeline's secrets at all.
+		organization, ok := login.Value("--org")
+		if !ok {
+			return UsageError("OIDC login requires --org <organization>")
+		}
+		explicit, _ := login.Value("--oidc-token")
+		audience, _ := login.Value("--audience")
+		idToken, err := r.oidcIDToken(explicit, audience)
+		if err != nil {
+			return err
+		}
+		r.holdSecret(idToken)
+		serverText, err := serverString(server)
+		if err != nil {
+			return err
+		}
+		input := append(jsjson.Object{{Key: "token", Value: idToken}, {Key: "organization", Value: organization}}, ttlInput...)
+		if issued, err = r.plainClient(serverText, "").ExchangeOidcToken(context.Background(), input); err != nil {
+			return err
+		}
+		if token, err = r.issuedToken(issued); err != nil {
+			return err
+		}
+		if err := r.println("OIDC exchange succeeded (credential expires " + templateTime(jsUndefinedOr(jsval.Get(issued, "expiresAt"))) + ")."); err != nil {
+			return err
+		}
+	}
+	if token == "" {
+		// Browser hand-off (ADR-0017): loopback listener and passkey sign-in.
+		// The callback delivers a 15-minute session bearer, exchanged at once
+		// for a longer-lived CLI credential (ADR-0024; the exchange revokes
+		// the bearer).
+		serverText, err := serverString(server)
+		if err != nil {
+			return err
+		}
+		handoff, err := r.browserLogin(serverText)
+		if err != nil {
+			return err
+		}
+		r.holdSecret(handoff)
+		// The CLI's User-Agent lets the server label the credential.
+		if issued, err = r.plainClient(serverText, handoff).ExchangeCliCredential(context.Background(), ttlInput); err != nil {
+			return err
+		}
+		if token, err = r.issuedToken(issued); err != nil {
+			return err
+		}
+		if err := r.println("Issued CLI credential (expires " + templateTime(jsUndefinedOr(jsval.Get(issued, "expiresAt"))) + ")."); err != nil {
+			return err
+		}
+	}
+	return r.loginWithToken(server, token, issued)
 }
+
+// issuedToken is an issued credential's token, held as a secret in flight.
+func (r *Run) issuedToken(issued any) (string, error) {
+	token, ok, err := read(issued, issued != apiclient.Undefined, "token")
+	if err != nil {
+		return "", err
+	}
+	text := jsTemplate(token, ok)
+	r.holdSecret(text)
+	return text, nil
+}
+
+// loginSeconds is --ttl and --timeout's check: whole seconds from low to
+// high, else a usage error naming the option.
+func loginSeconds(value string, low, high float64, option string) (float64, error) {
+	n := apiclient.Number(value)
+	if !digitsOnly.MatchString(value) || n < low || n > high {
+		return 0, UsageError("varlatch login: " + option + " takes whole seconds from " + strconv.FormatFloat(low, 'f', -1, 64) + " to " +
+			strconv.FormatFloat(high, 'f', -1, 64) + ", not " + shownValue(value))
+	}
+	return n, nil
+}
+
+var digitsOnly = regexp.MustCompile(`^\d+$`)
 
 // readTokenStdin is --token-stdin: a credential from a pipe or a file,
 // never the command line, where process lists, shell history and a coding
@@ -185,7 +304,7 @@ func isJSWhitespace(c rune) bool {
 // the server the default when none is set, and revokes the credential it
 // replaced, only after the new one is stored: a failed or abandoned login
 // never leaves the person signed out.
-func (r *Run) loginWithToken(serverValue any, token string) error {
+func (r *Run) loginWithToken(serverValue any, token string, issued any) error {
 	server, err := serverString(serverValue)
 	if err != nil {
 		return err
@@ -205,27 +324,22 @@ func (r *Run) loginWithToken(serverValue any, token string) error {
 	}
 	replaced := replacedCredential(previous, token, nowMS())
 	// A credential given with --token carries no issuance metadata: its
-	// entry is the token and the time of the sign-in.
+	// entry is the token and the time of the sign-in. An issued one names
+	// its expiry and id.
 	entry := jsjson.Object{{Key: "token", Value: token}, {Key: "issuedAt", Value: isoString(time.Now().UTC())}}
+	if issued != nil {
+		for _, field := range [][2]string{{"expiresAt", "expiresAt"}, {"id", "credentialId"}} {
+			if v, ok := jsval.Get(issued, field[0]); ok && v != apiclient.Undefined {
+				entry = append(entry, jsjson.Member{Key: field[1], Value: v})
+			}
+		}
+	}
 	if err := clientctx.SaveCredential(server, entry, r.Env); err != nil {
 		return err
 	}
-	// Only fields of the expected shape (issue #119): a server could put anything in them.
-	major, _, err := read(meta, meta != apiclient.Undefined, "apiMajor")
+	shownVersion, api, err := r.serverSummary(meta)
 	if err != nil {
 		return err
-	}
-	version, _, err := read(meta, true, "serverVersion")
-	if err != nil {
-		return err
-	}
-	shownVersion, ok := r.Secrets.SafeVersion(version)
-	if !ok {
-		shownVersion = UnrecognizedVersion
-	}
-	api := "an unrecognized API version"
-	if n, ok := SafeAPIMajor(major); ok {
-		api = fmt.Sprintf("API v%d", n)
 	}
 	if err := r.println("Logged in to " + shownServer(server) + " (server " + shownVersion + ", " + api + ")."); err != nil {
 		return err
@@ -243,6 +357,29 @@ func (r *Run) loginWithToken(serverValue any, token string) error {
 	}
 	_ = r.warn("varlatch: previous credential not revoked (" + failure + ") — it may remain live" + liveUntil(replaced) + ".")
 	return nil
+}
+
+// serverSummary is the server's version and API major as a sign-in names
+// them: only fields of the expected shape (issue #119), since a server
+// could put anything in them.
+func (r *Run) serverSummary(meta any) (version, api string, err error) {
+	major, _, err := read(meta, meta != apiclient.Undefined, "apiMajor")
+	if err != nil {
+		return "", "", err
+	}
+	raw, _, err := read(meta, true, "serverVersion")
+	if err != nil {
+		return "", "", err
+	}
+	version, ok := r.Secrets.SafeVersion(raw)
+	if !ok {
+		version = UnrecognizedVersion
+	}
+	api = "an unrecognized API version"
+	if n, ok := SafeAPIMajor(major); ok {
+		api = fmt.Sprintf("API v%d", n)
+	}
+	return version, api, nil
 }
 
 // liveUntil is ` until <time>` for a credential with a truthy expiresAt.
@@ -293,6 +430,12 @@ func replacedCredential(previous any, next string, now float64) any {
 // as it is; callers never stop on it. A credential that is not an object
 // fails as TypeScript's property read does.
 func (r *Run) revokeStored(server string, credential any) (string, error) {
+	return r.revokeStoredWith(context.Background(), r.plainClient, server, credential)
+}
+
+// revokeStoredWith is revokeStored with the request's context and client
+// (a device sign-in's are bounded by its deadline).
+func (r *Run) revokeStoredWith(ctx context.Context, client func(server, token string) *apiclient.Client, server string, credential any) (string, error) {
 	id, idOK, err := read(credential, true, "credentialId")
 	if err != nil {
 		return "", err
@@ -305,7 +448,7 @@ func (r *Run) revokeStored(server string, credential any) (string, error) {
 	if tokenOK && jsjson.Truthy(token) {
 		bearer = jsjson.String(token)
 	}
-	if _, err := r.plainClient(server, bearer).RevokeMyCredential(context.Background(), jsjson.String(id)); err != nil {
+	if _, err := client(server, bearer).RevokeMyCredential(ctx, jsjson.String(id)); err != nil {
 		if api, ok := err.(*apiclient.APIError); ok {
 			return safeCode(api.Code), nil
 		}
@@ -876,4 +1019,28 @@ func (r *Run) selectedTier(cwd, name string) (any, bool) {
 		}
 	}
 	return nil, false
+}
+
+// shellSafe is members.ts's shellWord's set of characters a POSIX shell
+// reads as they are.
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,-]+$`)
+
+// shellWord is members.ts's shellWord: word as one POSIX shell word, as it
+// is when it holds only characters a shell reads as they are, else in
+// single quotes.
+func shellWord(word string) string {
+	if shellSafe.MatchString(word) {
+		return word
+	}
+	return "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
+}
+
+// commandServer is a server as a suggested command names it: its display
+// form (shownServer), as one shell word, so a command copied from the
+// message runs as shown (an IPv6 address's brackets are quoted).
+func commandServer(server string) string { return shellWord(shownServer(server)) }
+
+// loginCommandFor is `varlatch login --server <server>` and suffix.
+func loginCommandFor(server, suffix string) string {
+	return "varlatch login --server " + commandServer(server) + suffix
 }

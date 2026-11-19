@@ -10,14 +10,6 @@
       "reason": "varlatch doctor: not ported to the Go CLI yet",
       "slice": "step 6"
     },
-    "login-browser": {
-      "reason": "varlatch login: sign-in through the browser: not ported to the Go CLI yet",
-      "slice": "5.2"
-    },
-    "login-device": {
-      "reason": "varlatch login --start and --wait: device sign-in: not ported to the Go CLI yet",
-      "slice": "5.2"
-    },
     "run": {
       "reason": "varlatch run: a default run: not ported to the Go CLI yet",
       "slice": "5.4b"

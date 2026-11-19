@@ -2,8 +2,28 @@
 
 package cli
 
-import "os"
+import (
+	"os"
+	"syscall"
+)
 
-// openNoFollow opens a file for reading. Windows has no O_NOFOLLOW; the
-// caller compares what was opened with the Lstat it made first.
-func openNoFollow(path string) (*os.File, error) { return os.Open(path) }
+// openNoFollow opens a file for reading, for `import --delete-source`, as
+// O_NOFOLLOW does elsewhere: a symbolic link or other reparse point at the
+// path is opened itself, not followed (FILE_FLAG_OPEN_REPARSE_POINT), so
+// the caller's Stat of what was opened sees it and refuses it. The handle
+// shares deletion (FILE_SHARE_DELETE): Windows removes no file that is
+// open without it, and the caller removes the file while it still holds
+// it open, so the file it checked is the file it removes.
+func openNoFollow(path string) (*os.File, error) {
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	h, err := syscall.CreateFile(p, syscall.GENERIC_READ,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+		nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL|syscall.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(h), path), nil
+}
