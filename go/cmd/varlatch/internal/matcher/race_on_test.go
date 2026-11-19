@@ -4,5 +4,6 @@
 
 package matcher
 
-// raceSlowdown scales the timing tests' bounds under the race detector.
+// raceSlowdown is how much slower the race detector makes the timing
+// tests' work: their inputs are smaller under it.
 const raceSlowdown = 10
