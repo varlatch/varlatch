@@ -6,13 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cliCommand } from "./cliUnderTest.js";
 import { ITEMS, revision } from "./fixtures.js";
 
 /**
- * The shipped CLI bundle against a local HTTP server that records every
- * request: `varlatch types` makes exactly one, to fetch the Contract, uses no
- * temporary directory, and its output does not depend on the selected
- * Environment.
+ * The shipped CLI bundle (or the Go CLI, VARLATCH_TEST_CLI: cliUnderTest.ts)
+ * against a local HTTP server that records every request: `varlatch types`
+ * makes exactly one, to fetch the Contract, uses no temporary directory,
+ * and its output does not depend on the selected Environment.
  */
 
 const CLI = fileURLToPath(new URL("../dist/varlatch.cjs", import.meta.url));
@@ -24,7 +25,7 @@ let served = revision(ITEMS);
 const requests: string[] = [];
 
 beforeAll(async () => {
-  if (!existsSync(CLI)) throw new Error("the CLI bundle is not built: run pnpm --filter @varlatch/cli build");
+  if (!process.env.VARLATCH_TEST_CLI && !existsSync(CLI)) throw new Error("the CLI bundle is not built: run pnpm --filter @varlatch/cli build");
   server = createServer((req, res) => {
     requests.push(`${req.method} ${req.url} ${req.headers.authorization ?? "(no credential)"}`);
     if (req.method === "GET" && req.url === "/v1/organizations/acme/projects/api/contract") {
@@ -50,9 +51,10 @@ afterAll(async () => {
 
 function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
+    const [command, argv] = cliCommand(CLI, args);
     execFile(
-      process.execPath,
-      [CLI, ...args],
+      command,
+      argv,
       {
         cwd: repo,
         env: {
