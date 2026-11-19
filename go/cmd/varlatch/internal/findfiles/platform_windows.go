@@ -7,13 +7,15 @@ package findfiles
 import (
 	"io/fs"
 	"syscall"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/longpath"
 )
 
 // links is lstat's nlink: the file's link count, read through a handle
 // opened for its attributes only (never its contents), on the link itself
 // when it is one.
 func links(path string, _ fs.FileInfo) uint64 {
-	p, err := syscall.UTF16PtrFromString(path)
+	p, err := syscall.UTF16PtrFromString(longpath.Of(path))
 	if err != nil {
 		return 1
 	}
