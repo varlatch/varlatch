@@ -65,7 +65,7 @@ func (s *Service) TestBucket(ctx context.Context) (backup.BucketReport, error) {
 	if err := writeConfiguration(configuration, cfg); err != nil {
 		return backup.BucketReport{}, err
 	}
-	manifest, err := s.manifest(id, iso(s.o.Now()), meta, marker, configuration)
+	manifest, err := s.manifest(ctx, id, iso(s.o.Now()), meta, marker, configuration)
 	if err != nil {
 		return backup.BucketReport{}, err
 	}

@@ -123,6 +123,17 @@ func TestSettingsOnEveryConnection(t *testing.T) {
 	}
 }
 
+// A snapshot's default pacing is 256 pages every 100 ms: the throughput of
+// the ADR-0059 benchmark's 1,024 pages every 400 ms, in steps that hold the
+// writer a quarter as long (G9's measurements, 2026-11-19). The settings
+// report it, and the g9a build compares its own with them.
+func TestSnapshotDefaultPacing(t *testing.T) {
+	db := open(t, Options{})
+	if st := db.Settings(); st.SnapshotStepPages != 256 || st.SnapshotPauseMs != 100 {
+		t.Fatalf("snapshot pacing %d pages every %d ms, want 256 every 100", st.SnapshotStepPages, st.SnapshotPauseMs)
+	}
+}
+
 func TestPathWithSpace(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data dir")
 	if err := os.Mkdir(dir, 0o700); err != nil {

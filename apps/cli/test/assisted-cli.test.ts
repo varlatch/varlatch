@@ -10,6 +10,7 @@ import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EMBEDDED_RELEASE } from "@varlatch/backup";
 import { agentsBlock } from "../src/agents/install.js";
+import { cliCommand } from "./cliUnderTest.js";
 import { contractItem, revision } from "./fixtures.js";
 
 /**
@@ -70,6 +71,10 @@ function defaultItems(): StoredItem[] {
 
 const ENV_PATH = "/v1/organizations/acme/projects/web/environments/development";
 
+/** An identifier of the server's shape (a prefix and 26 characters of lower-case base32), named after an item. */
+const serverId = (prefix: string, name: string): string => `${prefix}_${(name.toLowerCase().replace(/[^a-z2-7]/g, "q") + "a".repeat(26)).slice(0, 26)}`;
+const IMPORTED = serverId("rev", "imported");
+
 function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
   let raw = "";
   req.on("data", (d: Buffer) => (raw += d.toString()));
@@ -86,7 +91,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (url === "/v1/organizations/acme/projects/web/contract" && req.method === "GET") return json(200, active);
     if (url === `/v1/organizations/acme/projects/web/contract/revisions/${active.id}` && req.method === "GET") return json(200, active);
     if (url === "/v1/organizations/acme/projects/web/contract/revisions" && req.method === "POST") {
-      return json(201, { ...active, id: "crv_imported", active: false });
+      return json(201, { ...active, id: IMPORTED, active: false });
     }
     const effectiveIn = /^\/v1\/organizations\/acme\/projects\/web\/environments\/([a-z]+)\/effective-configuration/.exec(url);
     if (effectiveIn) {
@@ -146,7 +151,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
         const before = stored.find((i) => i.name === put[1]);
         stored = [...stored.filter((i) => i.name !== put[1]), { name: put[1]!, sensitive: before?.sensitive ?? true, value: (body as { value: string }).value }];
       }
-      return json(200, { versionId: `ver_new_${put[1]}` });
+      return json(200, { versionId: serverId("ver", `new_${put[1]}`) });
     }
     // Any environment; development's stored values change, as the server would.
     const del = /^\/v1\/organizations\/acme\/projects\/web\/environments\/([a-z]+)\/values\/([A-Z0-9_]+)$/.exec(url);
@@ -208,7 +213,8 @@ interface Result {
 
 function cli(args: string[], opts: { env?: Record<string, string>; input?: string; cwd?: string } = {}): Promise<Result> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], { cwd: opts.cwd ?? repo, env: baseEnv(opts.env), stdio: ["pipe", "pipe", "pipe"] });
+    const [command, argv] = cliCommand(bundle, args);
+    const child = spawn(command, argv, { cwd: opts.cwd ?? repo, env: baseEnv(opts.env), stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
@@ -809,7 +815,8 @@ const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 function underTerminal(args: string[], extra: Record<string, string> = {}, input?: { after: string; text: string }): Promise<{ code: number | null; terminal: string }> {
   return new Promise((resolve) => {
-    const command = [process.execPath, bundle, ...args].map(shellQuote).join(" ");
+    const [cli, argv] = cliCommand(bundle, args);
+    const command = [cli, ...argv].map(shellQuote).join(" ");
     const child = spawn("script", ["-qec", command, "/dev/null"], { cwd: repo, env: { ...baseEnv(extra), SHELL: "/bin/sh" }, stdio: ["pipe", "pipe", "pipe"] });
     let terminal = "";
     let typed = false;
@@ -856,7 +863,7 @@ describe.skipIf(!hasScript)("assisted run on a pseudo-terminal", () => {
     const hidden = "typed-hidden-value-5521";
     const { code, terminal } = await underTerminal(["values", "set", "API_TOKEN"], {}, { after: "(input hidden): ", text: `${hidden}\r` });
     expect(code).toBe(0);
-    expect(terminal).toContain("API_TOKEN set (version ver_new_API_TOKEN).");
+    expect(terminal).toContain(`API_TOKEN set (version ${serverId("ver", "new_API_TOKEN")}).`);
     expect(terminal).not.toContain(hidden);
     expect(requests.find((r) => r.method === "PUT")?.body).toEqual({ value: hidden });
   });
@@ -864,7 +871,7 @@ describe.skipIf(!hasScript)("assisted run on a pseudo-terminal", () => {
   it("Backspace after an astral character stores the exact remaining value, and arrow keys are ignored", async () => {
     const { code, terminal } = await underTerminal(["values", "set", "API_TOKEN"], {}, { after: "(input hidden): ", text: "abcdefgh😀\u007f\u001b[Dij\r" });
     expect(code).toBe(0);
-    expect(terminal).toContain("API_TOKEN set (version ver_new_API_TOKEN).");
+    expect(terminal).toContain(`API_TOKEN set (version ${serverId("ver", "new_API_TOKEN")}).`);
     expect(requests.find((r) => r.method === "PUT")?.body).toEqual({ value: "abcdefghij" });
   });
 });
@@ -913,7 +920,7 @@ describe("values set and values rotate: Secret input", () => {
     const [a, b, c] = puts().map((p) => (p.body as { value: string }).value);
     expect([a, b]).toEqual(["from-stdin-value-18", "from-file-value-39"]);
     expect(c).toMatch(/^[0-9a-f]{64}$/);
-    expect(viaGenerate.stdout).toBe("API_TOKEN set (version ver_new_API_TOKEN) to a generated value (hex, 32 random bytes; not shown).\n");
+    expect(viaGenerate.stdout).toBe(`API_TOKEN set (version ${serverId("ver", "new_API_TOKEN")}) to a generated value (hex, 32 random bytes; not shown).\n`);
     for (const r of [viaStdin, viaFile, viaGenerate]) {
       expect(r.stdout + r.stderr).not.toMatch(/from-stdin-value-18|from-file-value-39/);
       expect(r.stdout + r.stderr).not.toContain(c);
@@ -1069,7 +1076,8 @@ describe("values set and values rotate in assisted mode: replacing an existing v
     requests = [];
     const other = await cli(["--assisted", "values", "set", "API_TOKEN", "--replace", "PORT", "--generate", "hex:32"]);
     expect(other.code).toBe(64);
-    expect(other.stderr).toMatch(/--replace names PORT, but this command sets API_TOKEN; approval for one item never covers another\./);
+    // The Go CLI does not repeat the name given (go/README.md, "No message holds a value").
+    expect(other.stderr).toMatch(/--replace names (PORT|another item), but this command sets API_TOKEN; approval for one item never covers another\./);
     expect(requests).toEqual([]);
     const fresh = await cli(["--assisted", "values", "set", "BRAND_NEW_ITEM", "--generate", "hex:32"]);
     expect(fresh.code, fresh.stderr).toBe(0);
@@ -1174,8 +1182,9 @@ describe("values delete: in assisted mode, every deletion needs the item named w
 
   it.each([
     ["an unknown option (the --env typo)", ["--env", "production"], /unknown option --env/],
-    ["--environment=, which is not parsed", ["--environment=production"], /unknown option --environment=production/],
-    ["--confirm=, which is not parsed", ["--confirm=API_TOKEN"], /unknown option --confirm=API_TOKEN/],
+    // The Go CLI shows an attached option value as [redacted] (go/README.md).
+    ["--environment=, which is not parsed", ["--environment=production"], /unknown option --environment=(production|\[redacted\])/],
+    ["--confirm=, which is not parsed", ["--confirm=API_TOKEN"], /unknown option --confirm=(API_TOKEN|\[redacted\])/],
     ["--confirm without a value", ["--confirm"], /--confirm needs a value/],
     ["--confirm twice", ["--confirm", "API_TOKEN", "--confirm", "API_TOKEN"], /--confirm given twice/],
     ["-e and --environment both", ["-e", "development", "--environment", "development"], /--environment \(or -e\) given twice/],
@@ -1202,10 +1211,15 @@ describe("values set and values rotate: a strict command line", () => {
   // Each exits 64 before anything is read, prompted, or written: no request
   // reaches the server. Before, `values set STRIPE_KEY --env production` in
   // a terminal stored the literal "--env" in the default environment.
+  // The Go CLI never repeats an argument these commands refuse, whatever
+  // its spelling, since it may be the value or part of it (go/README.md,
+  // "No message holds a value"): it names the argument's place instead.
+  const refused = (ts: RegExp): RegExp =>
+    new RegExp(`${ts.source}|unknown option at argument \\d+, not shown since it may be a value|unexpected argument \\d+, not shown since it may be part of a value`);
   const both: [string, string[], RegExp][] = [
-    ["an unknown option", ["--env", "production"], /unknown option --env/],
-    ["--environment=, which is not parsed", ["--environment=production"], /unknown option --environment=production/],
-    ["--json, which these commands do not take", ["--json"], /unknown option --json/],
+    ["an unknown option", ["--env", "production"], refused(/unknown option --env/)],
+    ["--environment=, which is not parsed", ["--environment=production"], refused(/unknown option --environment=production/)],
+    ["--json, which these commands do not take", ["--json"], refused(/unknown option --json/)],
     ["-e without a value", ["-e"], /--environment needs a value/],
     ["--from-file without a path", ["--from-file"], /--from-file needs a value/],
     ["--generate without a spec", ["--generate"], /--generate needs a value/],
@@ -1213,15 +1227,15 @@ describe("values set and values rotate: a strict command line", () => {
     ["-e and --environment both", ["-e", "production", "--environment", "development"], /--environment \(or -e\) given twice/],
     ["-e twice", ["-e", "development", "-e", "development"], /--environment \(or -e\) given twice/],
     ["--from-file twice", ["--from-file", "a", "--from-file", "b"], /--from-file given twice/],
-    ["an extra argument", ["value", "extra"], /unexpected argument extra/],
-    ["a value that begins with a dash, before --", ["-x9-value"], /unknown option -x9-value \(a value that begins with "-" goes after --\)/],
+    ["an extra argument", ["value", "extra"], refused(/unexpected argument extra/)],
+    ["a value that begins with a dash, before --", ["-x9-value"], refused(/unknown option -x9-value \(a value that begins with "-" goes after --\)/)],
   ];
   const cases: [string, string, string[], RegExp][] = [
     ...both.flatMap(([name, extra, message]): [string, string, string[], RegExp][] => [["set", name, extra, message], ["rotate", name, extra, message]]),
     ["rotate", "--grace without a value", ["--grace"], /--grace needs a value/],
-    ["rotate", "--grace that is not a number", ["--grace", "soon"], /--grace needs a whole number of seconds, not soon/],
+    ["rotate", "--grace that is not a number", ["--grace", "soon"], /--grace needs a whole number of seconds(, not soon)?\r?\n/],
     ["rotate", "--grace twice", ["--grace", "60", "--grace", "60"], /--grace given twice/],
-    ["set", "--grace, which only rotate takes", ["--grace", "60"], /unknown option --grace/],
+    ["set", "--grace, which only rotate takes", ["--grace", "60"], refused(/unknown option --grace/)],
   ];
 
   it.each(cases)("values %s, %s: assisted, exit 64 and nothing sent", async (sub, _name, extra, message) => {
@@ -1421,7 +1435,7 @@ describe("varlatch import", () => {
     expect(byName.DEBUG).toMatchObject({ sensitive: false, type: "boolean" });
     expect(pushed.provenance).toEqual({ adapter: "varlatch-import" });
     expect(r.stdout).toMatch(/Contract: 3 new item\(s\); 2 already in the Contract keep their definition\./);
-    expect(r.stdout).toMatch(/Activate with: varlatch contract activate crv_imported/);
+    expect(r.stdout).toContain(`Activate with: varlatch contract activate ${IMPORTED}`);
     noValues(r);
   });
 

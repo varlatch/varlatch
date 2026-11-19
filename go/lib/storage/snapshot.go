@@ -12,14 +12,19 @@ import (
 	"modernc.org/sqlite"
 )
 
-// A snapshot's default pacing: 1,024 pages every 400 ms.
+// A snapshot's default pacing: 256 pages every 100 ms, about 10 MiB/s with
+// 4 KiB pages. That is the throughput of the ADR-0059 benchmark's 1,024
+// pages every 400 ms, in steps a quarter as long. Each step holds the
+// writer, so writes that queue behind one wait a quarter as long: in G9's
+// measurements on the experiments server (2026-11-19, 1.7 times W1's
+// writes), a 53 MB snapshot in 1,024-page steps had a p95 of 132.5 ms.
 const (
-	defaultStepPages = 1024
-	defaultStepPause = 400 * time.Millisecond
+	defaultStepPages = 256
+	defaultStepPause = 100 * time.Millisecond
 )
 
-// SnapshotOptions paces a snapshot. Zero values take the defaults (1,024
-// pages every 400 ms, as measured in the ADR-0059 benchmark).
+// SnapshotOptions paces a snapshot. Zero values take the defaults (256
+// pages every 100 ms).
 type SnapshotOptions struct {
 	StepPages int
 	Pause     time.Duration

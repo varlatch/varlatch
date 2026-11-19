@@ -49,6 +49,7 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		"verify_release.go:verifyRelease": true,
 		"internal/cli/cli.go:finish":      true,
 		"internal/cli/cli.go:warn":        true,
+		"internal/cli/cli.go:ask":         true, // the hidden prompt's question (5.3a)
 		"internal/cli/cli.go:out":         true,
 		"internal/cli/cli.go:outJSON":     false,
 	}

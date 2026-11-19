@@ -354,3 +354,13 @@ func valueSpans(v string) [][2]int {
 	}
 	return spans
 }
+
+// FailSafeSpans are the spans MaskUserinfoInText replaces, each by
+// "[redacted]@", in text's own bytes: for a caller that adds spans of its
+// own (cli's values in flight and token formats) and replaces the union
+// once, on the original text.
+func FailSafeSpans(text string) [][2]int { return failSafeSpans(text) }
+
+// ValueSpans are the spans MaskURLInValue replaces, each by "[redacted]@",
+// in v's own bytes, for the same use.
+func ValueSpans(v string) [][2]int { return valueSpans(v) }
