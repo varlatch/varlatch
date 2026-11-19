@@ -38,7 +38,9 @@ const (
 //     or the destination failed, they are discarded.
 //   - Nothing the child writes can switch masking off.
 type OutputRedaction struct {
-	entries     []SecretEntry
+	entries []SecretEntry
+	// compiled is the entries registered once, shared by every stream.
+	compiled    *compiled
 	mode        RedactionMode
 	interrupted atomic.Bool
 	// Skipped are the items whose value is too short to register, sorted
@@ -48,8 +50,8 @@ type OutputRedaction struct {
 
 // NewOutputRedaction is new OutputRedaction(entries, mode).
 func NewOutputRedaction(entries []SecretEntry, mode RedactionMode) *OutputRedaction {
-	r := &OutputRedaction{entries: entries, mode: mode}
-	skipped := slices.Clone(NewStreamMatcher(entries, Marker).Skipped)
+	r := &OutputRedaction{entries: entries, compiled: compile(entries), mode: mode}
+	skipped := slices.Clone(r.compiled.skipped)
 	slices.Sort(skipped)
 	r.Skipped = slices.Compact(skipped)
 	return r
@@ -106,7 +108,7 @@ func (r *OutputRedaction) Relay(pairs []Pair) {
 }
 
 func (r *OutputRedaction) relayOne(p Pair) {
-	matcher := NewStreamMatcher(r.entries, Marker)
+	matcher := r.compiled.matcher(Marker)
 	closed := false
 	write := func(b []byte) {
 		if closed || len(b) == 0 {

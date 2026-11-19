@@ -277,9 +277,11 @@ func FuzzStreamEqualsWhole(f *testing.F) {
 		r := rand.New(rand.NewPCG(uint64(seed), 1))
 		for range 4 {
 			steps, end, _ := stream(entries, input, randomCuts(r, len(input), r.IntN(12)))
-			if got := joined(steps, end); !bytes.Equal(got, want) {
+			got := joined(steps, end)
+			if !bytes.Equal(got, want) {
 				t.Fatalf("got %q, want %q", got, want)
 			}
+			noFormSurvives(t, got, entries)
 		}
 		st, _, _ := scan(entries, input, randomCuts(r, len(input), r.IntN(12)))
 		var found []Occurrence
@@ -290,4 +292,47 @@ func FuzzStreamEqualsWhole(f *testing.F) {
 			t.Fatal("the scanner and the reference differ")
 		}
 	})
+}
+
+// noFormSurvives: no registered form of any entry is in the output, except
+// where it overlaps a replacement marker. Bytes outside the markers are
+// contiguous input, so a form there would have been an unreplaced match;
+// a form overlapping a marker is the markers' own text (a Secret such as
+// "D:A][RED", which two markers side by side spell). This holds whatever
+// ScrubWhole does, which shares FormsOf with the matcher.
+func noFormSurvives(t *testing.T, out []byte, entries []SecretEntry) {
+	t.Helper()
+	var spans [][2]int
+	for _, e := range entries {
+		marker := Marker(e.Item)
+		for at := 0; ; at++ {
+			i := bytes.Index(out[at:], marker)
+			if i < 0 {
+				break
+			}
+			at += i
+			spans = append(spans, [2]int{at, at + len(marker)})
+		}
+	}
+	for _, e := range entries {
+		for _, form := range FormsOf(e.Value) {
+			for at := 0; ; at++ {
+				i := bytes.Index(out[at:], form)
+				if i < 0 {
+					break
+				}
+				at += i
+				overlaps := false
+				for _, sp := range spans {
+					if sp[0] < at+len(form) && at < sp[1] {
+						overlaps = true
+						break
+					}
+				}
+				if !overlaps {
+					t.Fatalf("a form of %s survived at %d: %q", e.Item, at, out)
+				}
+			}
+		}
+	}
 }

@@ -95,23 +95,41 @@ type pattern struct {
 	length int
 }
 
-// NewStreamMatcher registers every form of every entry.
-func NewStreamMatcher(entries []SecretEntry, replacement func(item string) []byte) *StreamMatcher {
-	m := &StreamMatcher{replacement: replacement, Replaced: map[string]int{}}
+// compiled is a set of entries registered once: the automaton (read-only
+// once built, so streams may share it), its patterns, and the items too
+// short to register.
+type compiled struct {
+	automaton *automaton
+	patterns  []pattern
+	skipped   []string
+}
+
+func compile(entries []SecretEntry) *compiled {
+	c := &compiled{}
 	var forms [][]byte
 	for _, e := range entries {
 		fs := FormsOf(e.Value)
 		if len(fs) == 0 {
-			m.Skipped = append(m.Skipped, e.Item)
+			c.skipped = append(c.skipped, e.Item)
 			continue
 		}
 		for _, f := range fs {
 			forms = append(forms, f)
-			m.patterns = append(m.patterns, pattern{e.Item, len(f)})
+			c.patterns = append(c.patterns, pattern{e.Item, len(f)})
 		}
 	}
-	m.automaton = newAutomaton(forms)
-	return m
+	c.automaton = newAutomaton(forms)
+	return c
+}
+
+// NewStreamMatcher registers every form of every entry.
+func NewStreamMatcher(entries []SecretEntry, replacement func(item string) []byte) *StreamMatcher {
+	return compile(entries).matcher(replacement)
+}
+
+// matcher is a fresh stream over the compiled entries.
+func (c *compiled) matcher(replacement func(item string) []byte) *StreamMatcher {
+	return &StreamMatcher{automaton: c.automaton, patterns: c.patterns, replacement: replacement, Replaced: map[string]int{}, Skipped: slices.Clone(c.skipped)}
 }
 
 // PendingRegions is the number of pending regions (the bound of ADR-0039
@@ -170,8 +188,10 @@ func (m *StreamMatcher) Push(chunk []byte) ([]byte, error) {
 	m.found = found[:0]
 	var out []byte
 	m.emitFinal(m.now-m.automaton.hold(state), &out)
+	// What stays held of this chunk still aliases the caller's buffer: copy
+	// it (the segments from earlier chunks are copies already).
 	for i := range m.segments {
-		if !m.segments[i].region {
+		if !m.segments[i].region && m.segments[i].start >= base {
 			m.segments[i].bytes = slices.Clone(m.segments[i].bytes)
 		}
 	}
