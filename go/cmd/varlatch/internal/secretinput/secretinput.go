@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"syscall"
 	"unicode/utf8"
@@ -211,9 +212,22 @@ func IsWellFormed(text string) bool { return utf8.ValidString(text) }
 func ReadFile(path string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", &Error{Message: "cannot read " + path + " (" + errnoCode(err) + ")"}
+		return "", &Error{Message: "cannot read " + path + " (" + readErrorCode(path, err) + ")"}
 	}
 	return FromBytes(b, path)
+}
+
+// readErrorCode is errnoCode for a failed read of path, the same on every
+// system: on Windows, where a directory fails with an error that has no
+// POSIX code, a directory is EISDIR, as libuv reports it there.
+func readErrorCode(path string, err error) string {
+	code := errnoCode(err)
+	if runtime.GOOS == "windows" && code != "ENOENT" {
+		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+			return "EISDIR"
+		}
+	}
+	return code
 }
 
 // errnoCode is the code Node gives a failed readFileSync ("ENOENT",
