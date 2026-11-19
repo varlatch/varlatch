@@ -5,6 +5,37 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## 0.22.4 (2026-11-19)
+
+A CLI release: a fix to the agent-safe Broker's response scrubbing. The
+server is unchanged apart from its version and the CLI its image carries
+(for the backup job and `/cli/varlatch.cjs`).
+
+### CLI
+
+- **A destination's reset ends a scrubbed response as an abort.** When a
+  destination reset its connection during a scrubbed response that has no
+  declared length, the Broker treated the reset as the end of the body, so
+  a destination reset could release held bytes. The Broker now treats it
+  as an abort: it releases nothing it holds, closes the Agent's
+  connection, and reports the abort. A response that ends cleanly is
+  unchanged.
+- An abort after the response headers is reported once, not twice.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.22.4.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`.
+- The server: nothing changes but its version and the CLI in its image.
+  To move an installation to 0.22.4, follow the 0.22.1 notes below with
+  the 0.22.4 CLI and version.
+
+Backups: archives of 0.22.3 and earlier still restore into this release.
+
 ## 0.22.3 (2026-11-19)
 
 A security release for the web image. Nothing else changes.
