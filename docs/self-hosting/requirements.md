@@ -248,6 +248,67 @@ one core: `convex-backend` 0.044, `postgres` 0.031, `varlatchd` 0.028, and
 the database dump while the installation keeps serving, and that costs CPU
 and I/O. The capture measurements gave PostgreSQL 2 CPUs.
 
+### Sharing the host with other workloads
+
+The figures above are for a host that runs Varlatch alone. On a host shared
+with other containers, they all compete for the same cores. When the cores
+are busy, the kernel shares CPU time between containers by their CPU
+weight, and every container has the same weight unless it sets one.
+
+This matters most on a small host that also runs Coolify. Coolify's
+scheduler does its periodic work at the start of every minute.
+- **What was measured:** a 2-core host on 2026-11-19, with a Varlatch
+  server under a benchmark load of 50 requests a second plus extra writes.
+- **Coolify:** its container used about 0.7 of a core for the first 7 to
+  9 seconds of each minute, and the host's two cores were over 90 % busy.
+- **The Varlatch server** got less CPU in those seconds and its requests
+  waited: p95 latency over 0.8 s in them, against under 30 ms in the rest
+  of the minute.
+
+To give Varlatch priority, give its services a higher CPU weight than the
+other containers, in `docker-compose.override.yml`
+([Files you do not edit](configuration.md#files-you-do-not-edit) says how
+that file applies):
+
+```yaml
+services:
+  varlatchd:
+    cpu_shares: 2048
+  postgres:
+    cpu_shares: 2048
+```
+
+Then run `varlatch setup` again with the public or tailnet ingress, or
+`docker compose up -d` with the external ingress.
+
+- **Raise `postgres` with `varlatchd`.** Every request varlatchd answers
+  reads or writes the database, and a weight on varlatchd alone can leave
+  PostgreSQL waiting instead. Add `convex-backend` and `varlatch-web` too if
+  the dashboard must stay responsive in those seconds.
+- **It changes nothing on an idle host.** The weight counts only while the
+  cores are busy.
+- **Check the weight you get.** Docker converts `cpu_shares` to the
+  kernel's CPU weight, and the conversion depends on the container runtime:
+  - with runc 1.5, 2048 gives 174, against 100 for a container that sets
+    nothing;
+  - with older runtimes, 1024 gave 39, below the default. So do not set
+    1024 expecting no change.
+
+  Read the result with
+  `docker exec <the varlatchd container> cat /sys/fs/cgroup/cpu.weight`.
+- **A dedicated core** (`cpuset`) keeps varlatchd and PostgreSQL on that
+  core, but other containers still run there unless they are pinned to the
+  other cores. On a 2-core host, a weight is the simpler choice.
+
+The shipped Compose files set no CPU weight. There are two reasons:
+- whether Varlatch should take CPU from the other workloads on a host is
+  the operator's choice;
+- the effect of a given number depends on the runtime, as above.
+
+A Varlatch stack deployed as a Coolify resource runs the repository's
+Compose file, so an override file does not apply there: see
+[Deploying on Coolify](../../infra/coolify/README.md#sharing-the-host).
+
 ### Disk
 
 The images of one release, as Docker 29.7.2 reports them for linux/amd64

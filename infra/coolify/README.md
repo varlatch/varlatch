@@ -176,6 +176,20 @@ Never public: PostgreSQL, `varlatch-migrate`, the Convex dashboard.
    passkey, `admin bootstrap` names the affected admin and the
    `admin recover --identity …` command to run.
 
+## Sharing the host
+
+Coolify's scheduler does its periodic work at the start of every minute.
+On a 2-core host it can take most of a core for several seconds, and a
+Varlatch stack on the same host then waits for CPU in those seconds.
+[Sharing the host with other workloads](../../docs/self-hosting/requirements.md#sharing-the-host-with-other-workloads)
+has the measurements and the CPU weight to set.
+
+A Coolify resource deploys the repository's Compose file as it is, and that
+file sets no CPU weight. On a small host shared with Coolify, either
+install with `varlatch setup` and set the weight in
+`docker-compose.override.yml`, or give the host enough cores that Coolify's
+minute work does not take Varlatch's.
+
 ## Adopting an existing installation
 
 An installation deployed before 0.10.0, with passwords and
