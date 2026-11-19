@@ -242,6 +242,10 @@ func TestFailSafeGuardPathsOnWindows(t *testing.T) {
 		{`internal\cli`, "internal/cli", false},
 		{`internal\transcript\transcript.go`, "internal/transcript/transcript.go", false},
 		{`internal\cli\cli.go`, "internal/cli/cli.go", false},
+		// Only those directories themselves: a deeper one with the same
+		// name, or a longer name, is walked like any other.
+		{`x\internal\transcript`, "x/internal/transcript", false},
+		{`internal\transcriptfoo`, "internal/transcriptfoo", false},
 	} {
 		got := slashed(c.path, '\\')
 		if got != c.want {

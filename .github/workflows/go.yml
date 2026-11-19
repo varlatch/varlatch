@@ -14,12 +14,14 @@ name: Go
 # TypeScript tests unless they change Go test data a package's tests
 # produce or read. The main ruleset requires go-ok, which every
 # pull request and merge group reports: when the changes job finds no Go
-# path, the Go jobs are skipped and go-ok passes. The Go CLI's own jobs
-# (internal docs/design/go-cli.md, decision 14: its tests on macOS and
-# Windows, and the go-binary x go conformance cell) are selected by paths
-# of their own, the CLI's code and every file its tests read and, for the
-# cell, the conformance harness: in a pull request or merge group that
-# touches them, and nightly. They run on
+# path, the Go jobs are skipped and go-ok passes. The Go CLI's platform
+# runs (internal docs/design/go-cli.md, decision 14: its tests on macOS and
+# Windows) are selected by the CLI's code and every file its tests read.
+# The conformance cells (go-binary x source, go-binary x go) are selected by
+# everything they build and read: the Go paths, the workspace they install
+# and build, the dashboard, the CLI and SDK sources, and the conformance
+# harness. Each in a pull request or merge group that touches them, and
+# nightly. They run on
 # GitHub-hosted runners only, never on the self-hosted varlatch-ci runner the
 # TypeScript release uses, and with no fallback to it. When hosted minutes
 # are out these jobs wait or fail; the checks then run locally, outside the
@@ -36,7 +38,9 @@ on:
   # Main gets no push run: each merge commit was tested in the merge queue.
   push:
     branches: [rewrite/go]
-    # The same paths as the changes job's patterns.
+    # The same paths as the changes job's patterns (PATTERNS, CLI_PATTERNS
+    # and CONFORMANCE_PATTERNS; scripts/conformance/test/routing.test.mjs
+    # checks it).
     paths:
       - "go/**"
       - ".github/workflows/go.yml"
@@ -75,6 +79,29 @@ on:
       - "scripts/conformance/client-go.json"
       # Line ends on checkout (the Windows jobs).
       - ".gitattributes"
+      # CONFORMANCE_PATTERNS: what the conformance cells build and read.
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "services/*/package.json"
+      - "convex/package.json"
+      - ".npmrc"
+      - ".pnpmfile.cjs"
+      - "tsconfig.base.json"
+      - "apps/web/**"
+      - "apps/cli/**"
+      - "packages/**"
+      - "scripts/conformance/**"
+      - "scripts/ci-e2e.sh"
+      - "services/varlatchd/scripts/e2e-*.mjs"
+      - "services/varlatchd/src/**"
+      - "services/varlatchd/test/go-*"
+      - "services/varlatchd/test/helpers/**"
+      - "services/varlatchd/vitest.config.ts"
+      - "services/varlatchd/tsconfig.json"
+      - "scripts/ci-shell.sh"
+      - "scripts/redact-output.mjs"
+      - "scripts/redact-tokens.mjs"
   workflow_dispatch:
   # Nightly on main: every Go job, and the cache every pull request restores.
   schedule:
@@ -97,7 +124,7 @@ jobs:
     outputs:
       go: ${{ steps.filter.outputs.go }}
       cli: ${{ steps.filter.outputs.cli }}
-      cli-conformance: ${{ steps.filter.outputs.cli-conformance }}
+      conformance: ${{ steps.filter.outputs.conformance }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -157,24 +184,55 @@ jobs:
             apps/cli/src/agents/skillFiles.generated.ts
             scripts/conformance/client-go.json
             .gitattributes
-          # The same, plus the conformance harness as ci.yml's conformance
-          # tier defines it (the runner, its libraries and data, clients.json
-          # included, the suites and the e2e scripts they run), the shell
-          # and the redaction the job's steps run through, and the
-          # TypeScript process tests run against Go. These select the
-          # go-binary x go cell (go-binary-go-cli).
-          CLI_CONFORMANCE_PATTERNS: |
+          # What the conformance cells (go-binary x source and go-binary x
+          # go) build and read beyond PATTERNS and CLI_PATTERNS (varlatchd,
+          # the Go CLI and their tests): the workspace they install and build
+          # (pnpm install, pnpm build); varlatchd's dashboard, built from
+          # apps/web by go generate ./server/web; the CLI from source (x
+          # source) and the TypeScript process tests run against Go with the
+          # CLI source they import (x go); the SDK suite's bundle of
+          # packages/sdk with its workspace dependencies, from their sources;
+          # the conformance harness as ci.yml's conformance tier defines it
+          # (the runner, its libraries and data, clients.json included, the
+          # suites and the e2e scripts they run, and the TypeScript server
+          # source one of them imports); go-binary's G3 steps, which run the
+          # TypeScript server's own code (vitest in services/varlatchd: its
+          # go-* tests, their helpers and setup, its config and the server's
+          # source); and the shell and the redaction the jobs' steps run
+          # through. Only Convex's source (convex/) is read by neither: pnpm
+          # build compiles it, and ci.yml's test job fails on a build that
+          # breaks. The workspace's manifests are its packages' alone
+          # (pnpm-workspace.yaml; apps/docs is a workspace of its own). These,
+          # PATTERNS and CLI_PATTERNS select both cells (go-binary,
+          # go-binary-go-cli); scripts/conformance/test/routing.test.mjs
+          # checks that every file the suites and the G3 steps import or
+          # load is selected.
+          CONFORMANCE_PATTERNS: |
+            pnpm-lock.yaml
+            pnpm-workspace.yaml
+            package.json
+            services/*/package.json
+            convex/package.json
+            .npmrc
+            .pnpmfile.cjs
+            tsconfig.base.json
+            apps/web/*
+            apps/cli/*
+            packages/*
             scripts/conformance/*
             scripts/ci-e2e.sh
-            apps/web/scripts/e2e-*.mjs
             services/varlatchd/scripts/e2e-*.mjs
+            services/varlatchd/src/*
+            services/varlatchd/test/go-*
+            services/varlatchd/test/helpers/*
+            services/varlatchd/vitest.config.ts
+            services/varlatchd/tsconfig.json
             scripts/ci-shell.sh
             scripts/redact-output.mjs
             scripts/redact-tokens.mjs
-            apps/cli/test/*
         run: |
           if [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; then
-            printf '%s\n' go=true cli=true cli-conformance=true >> "$GITHUB_OUTPUT"
+            printf '%s\n' go=true cli=true conformance=true >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed=$(git diff --no-renames --name-only "$BASE" HEAD)
@@ -201,10 +259,12 @@ jobs:
               echo "No path of theirs changed: $what are skipped."
             fi
           }
+          go=$(matching "$PATTERNS")
           cli=$(matching "$CLI_PATTERNS")
-          select_jobs go "The Go jobs" "$(matching "$PATTERNS")"
+          select_jobs go "The Go jobs" "$go"
           select_jobs cli "The Go CLI's platform runs" "$cli"
-          select_jobs cli-conformance "The go-binary x go cell" "$cli$(matching "$CLI_CONFORMANCE_PATTERNS")"
+          select_jobs conformance "The conformance cells (go-binary x source, go-binary x go)" \
+            "$(printf '%s\n%s\n%s\n' "$go" "$cli" "$(matching "$CONFORMANCE_PATTERNS")" | sed '/^$/d' | sort -u)"
 
   go:
     # Drafts run nothing, as in ci.yml.
@@ -698,9 +758,11 @@ jobs:
   # one shard; every shard checks its own server's request budget and logs.
   # The checks that are not the conformance run (the G3 fixtures and the
   # adapter test) run once, in shard 1. go-ok fails when any shard fails.
+  # Selected by everything it builds and reads (the changes job's
+  # conformance output), not by the Go paths alone.
   go-binary:
     needs: changes
-    if: needs.changes.outputs.go == 'true'
+    if: needs.changes.outputs.conformance == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -1031,13 +1093,14 @@ jobs:
   # passes fails the run as a stale entry, and any other failure fails it.
   # Shard 1 also runs the TypeScript process tests that must pass against Go
   # (apps/cli/test/go-cli-files.json). Split into three shards as go-binary
-  # is. A pull request or merge group runs it when it touches the CLI's code
-  # (CLI_PATTERNS) or the conformance harness (CLI_CONFORMANCE_PATTERNS);
-  # the nightly run always does. The weekly matrix (conformance.yml) runs the Go CLI against
+  # is. A pull request or merge group runs it, as go-binary, when it touches
+  # anything the cell builds or reads (the changes job's conformance output:
+  # PATTERNS, CLI_PATTERNS and CONFORMANCE_PATTERNS); the nightly run always
+  # does. The weekly matrix (conformance.yml) runs the Go CLI against
   # both TypeScript targets.
   go-binary-go-cli:
     needs: changes
-    if: needs.changes.outputs.cli-conformance == 'true'
+    if: needs.changes.outputs.conformance == 'true'
     name: go-binary x go (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
