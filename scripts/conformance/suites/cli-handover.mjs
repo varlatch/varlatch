@@ -505,7 +505,11 @@ async function deviceHandover() {
       const firstPoll = run(waiter, ["login", "--server", origin, "--wait", "--timeout", "3"], { config: slow, cwd: outside });
       const copy = mkdtempSync(join(scratch, `${starter}-early-`));
       writeFileSync(join(copy, "pending-sign-ins.json"), before, { mode: 0o600 });
+      // The one poll answered 429 (slow_down) on purpose: declared to the
+      // runner's request budget (lib/request-log.mjs, declared429).
+      const pollStart = Date.now();
       const tooEarly = run(starter, ["login", "--server", origin, "--wait", "--timeout", "3"], { config: copy, cwd: outside });
+      console.log(`EXPECTED-429  [${IDS[starter].slowDown}] POST /v1/auth/device/token ${pollStart} ${Date.now()}`);
       const slowed = pending(copy);
       const slowBegan = Date.now();
       const slowKept = run(waiter, ["login", "--server", origin, "--wait", "--timeout", "3"], { config: copy, cwd: outside });
