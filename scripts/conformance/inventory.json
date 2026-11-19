@@ -137,6 +137,22 @@
         "release": "0.14.0",
         "quote": "The MCP server ships inside the CLI as `varlatch mcp`, in every release and under the CLI's version."
       }
+    },
+    "audit-export": {
+      "title": "varlatch audit-export: an Organization's audit log copied to a bucket it controls",
+      "introducedIn": "0.22.0",
+      "changelog": {
+        "release": "0.22.0",
+        "quote": "`varlatch audit-export create`, the Security page, or the API"
+      }
+    },
+    "incident-freeze": {
+      "title": "varlatch org freeze and org unfreeze: the incident freeze",
+      "introducedIn": "0.22.0",
+      "changelog": {
+        "release": "0.22.0",
+        "quote": "(`varlatch org freeze <slug> --reason <text> --confirm <slug>`)"
+      }
     }
   },
   "operations": {
@@ -813,6 +829,37 @@
         "refusedDestinations",
         "listRequirements",
         "getAuditExport"
+      ]
+    },
+    "audit-cli": {
+      "title": "The audit export, deletion and freezes with the CLI under test (slice 5.7c): each command against a real installation and a local S3 server with Object Lock, each destructive one refused unconfirmed with nothing changed, each approval-gated step stopping for its approval",
+      "script": "scripts/conformance/suites/audit-cli.mjs",
+      "needs": [
+        "object-store"
+      ],
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "whoami",
+        "createOrganization",
+        "createProject",
+        "listProjects",
+        "deleteProject",
+        "exportAuditEvents",
+        "exportDeletedOrganizationAuditEvents",
+        "getOrganization",
+        "getOrganizationDeletion",
+        "scheduleOrganizationDeletion",
+        "cancelOrganizationDeletion",
+        "getIncidentFreeze",
+        "freezeOrganization",
+        "liftIncidentFreeze",
+        "cancelApproval",
+        "getAuditExport",
+        "checkAuditExport",
+        "createAuditExport",
+        "changeAuditExport",
+        "removeAuditExport"
       ]
     },
     "deletion": {
@@ -3832,6 +3879,106 @@
       "suite": "security-cli",
       "kind": "conformance",
       "title": "security report --json shows it"
+    },
+    "audit-cli.project-delete-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "project delete without --confirm refuses (64) and deletes nothing"
+    },
+    "audit-cli.project-delete": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "project delete --confirm deletes the Project"
+    },
+    "audit-cli.audit-export-ndjson": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit export prints the log as NDJSON"
+    },
+    "audit-cli.audit-export-deleted-unknown": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit export --deleted-org of an unknown id fails with the server's 404 (1)"
+    },
+    "audit-cli.org-delete-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org delete without --confirm refuses (64) and schedules nothing"
+    },
+    "audit-cli.org-delete-schedule": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org delete --confirm schedules the deletion"
+    },
+    "audit-cli.org-deletion-json": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org deletion --json shows it"
+    },
+    "audit-cli.org-delete-cancel": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org delete --cancel cancels it"
+    },
+    "audit-cli.org-freeze-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org freeze without --confirm refuses (64) and freezes nothing",
+      "feature": "incident-freeze"
+    },
+    "audit-cli.org-freeze": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org freeze --confirm freezes it",
+      "feature": "incident-freeze"
+    },
+    "audit-cli.org-unfreeze-waits": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org unfreeze in assisted mode stops for the passkey approval (75), still frozen",
+      "feature": "incident-freeze"
+    },
+    "audit-cli.audit-export-show-json": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export show --json shows no export yet",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-check": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export check passes a destination, saves nothing, never shows the key",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-create": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export create --json makes the export, never showing the key",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-change": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export change --retention longer applies at once",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-show": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export show shows it active",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-remove-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export remove without --confirm refuses (64), the export kept",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-remove-waits": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export remove in assisted mode stops for the passkey approval (75), the export kept",
+      "feature": "audit-export"
     },
     "deletion.project-deleted": {
       "suite": "deletion",

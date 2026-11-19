@@ -35,11 +35,6 @@ const (
 
 var bg = context.Background()
 
-// laterSubcommand is the refusal of a subcommand a later slice builds.
-func laterSubcommand(command, slice string) error {
-	return UsageError("varlatch " + command + ": not in this build of the Go CLI yet (slice " + slice + "); use the TypeScript CLI for it until then")
-}
-
 // lazyAPI is main.ts's client(ctx): the client of ctx's server, connected
 // on its first request, so a command's own usage errors come first (64)
 // whether or not a credential is stored.
@@ -534,11 +529,12 @@ func stringifyOr(v any, ok bool) string {
 // ---------------------------------------------------------------------------
 // audit
 
-// auditCommand is `varlatch audit list [--json]`; `audit export` is 5.7c.
+// auditCommand is `varlatch audit list [--json]` and `audit export
+// [--deleted-org <id>]` (auditexport.go).
 func auditCommand(r *Run) error {
 	sub, _ := arg(r.Args, 0)
 	if sub == "export" {
-		return laterSubcommand("audit export", "5.7c")
+		return r.auditExportEvents()
 	}
 	ctx, lazy, err := r.repoContext()
 	if err != nil {
@@ -591,13 +587,15 @@ func auditCommand(r *Run) error {
 
 const orgUsage = "Usage: varlatch org <list|create|delete|deletion|freeze|unfreeze>"
 
-// orgCommand is `varlatch org list|create`; delete, deletion, freeze and
-// unfreeze are 5.7c.
+// orgCommand is `varlatch org list|create`, and delete, deletion, freeze
+// and unfreeze (deletion.go).
 func orgCommand(r *Run) error {
 	sub, _ := arg(r.Args, 0)
 	switch sub {
-	case "delete", "deletion", "freeze", "unfreeze":
-		return laterSubcommand("org "+sub, "5.7c")
+	case "delete", "deletion":
+		return r.orgDeletion(sub, r.Args)
+	case "freeze", "unfreeze":
+		return r.orgFreeze(sub, r.Args)
 	case "list", "create":
 	default:
 		return UsageOnly(orgUsage)
@@ -670,11 +668,11 @@ func orgCommand(r *Run) error {
 // ---------------------------------------------------------------------------
 // project
 
-// projectCommand is `varlatch project create|list|rename`; delete is 5.7c.
+// projectCommand is `varlatch project create|list|rename|delete`.
 func projectCommand(r *Run) error {
 	sub, _ := arg(r.Args, 0)
 	if sub == "delete" {
-		return laterSubcommand("project delete", "5.7c")
+		return r.projectDelete(r.Args)
 	}
 	if sub == "create" {
 		slug, ok := arg(r.Args, 1)

@@ -27,6 +27,7 @@
     "security": 1,
     "admin-cli": 4,
     "security-cli": 2,
+    "audit-cli": 10,
     "deletion": 30,
     "webhooks": 180,
     "audit-export": 34,
