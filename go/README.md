@@ -470,7 +470,9 @@ comes. `verify-release`, which the installers run, is Go's own.
   `apps/cli/skill/varlatch` into `skillfiles.gen.go` by `gen_skill.go`
   (`go generate ./...`); `TestSkillFilesCurrent` fails when it is stale,
   and checks it against the TypeScript CLI's own embedded copy. `agents
-  hook` (the guardrail hook itself) is slice 5.6a. `internal/cli`'s
+  hook` (the guardrail hook itself, slice 5.6a) is `hook.go`: the event
+  read, the small shell reader, the three denials, and the searches it
+  follows (grep and its kin, rg, ag, git grep, jq, the Grep tool). `internal/cli`'s
   `agentscmd.go` is the commands and `init` with its flags (`--org`,
   `--project`, `--server`, `--default-environment`, `--no-agent-files`);
   `init` on a terminal without them (guided) is slice 5.8a.
@@ -483,6 +485,15 @@ comes. `verify-release`, which the installers run, is Go's own.
   and without `--guardrails` and `--mcp`, in both scopes: each run's
   result or error, its lines, and the whole tree afterwards
   (`internal/agents`' `TestInstallVectors`).
+- `testdata/vectors/hook.json` (`apps/cli/test/go-vectors-hook.test.ts`):
+  1,294 pre-tool-use events through `hook.ts`'s `runHook`, each with its
+  answer's exact bytes: every event of `agents-hook.test.ts` and
+  `agents-guardrails.test.ts`, projects (files, a directory called
+  `.env`, git repositories with ignored and tracked files) for the globs
+  and recursive searches, and a command for each option of another
+  program the inventory lists for the hook (`internal/agents`'
+  `TestHookVectors`; `TestInventoryCoverage` checks that a vector uses
+  each).
 - Values and import (slice 5.3a): `internal/cli`'s `values.go` (`values
   set`, `list`, `delete`, `rotate`, `rotate-complete`, with assisted mode's
   `--replace` and `--confirm`), `validate.go` (`validate [--json]`, 0
@@ -578,6 +589,7 @@ it to the recording.
 | `skill-version` (how transcripts compare, not a behaviour) | the skill files `agents install` writes name `varlatch 0.22.0` (`SKILL.md`'s `metadata.generator`, each reference's first line) | this build's version | Each CLI names itself, so `--check` after an upgrade reports the skill as changed; the replay puts this build's version in a case's inputs and expected files alike |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
 | `agents install` never writes or removes through a symbolic link | not compared | a directory below the project root (or the home directory, for `--scope user`) that is a symbolic link or a Windows junction, on the way to a file the run reads, writes, removes or prunes, refuses the run before anything is touched, `--check` included: `<path> is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. Replace it with a directory, then run this again`, 78; a refused `--remove` also lists the skill files it would have removed, for removing by hand | Installing agent files never changes anything outside the project or the home directory; `internal/agents` `TestNothingThroughALinkBelowTheRoot` |
+| The guardrail hook reads every command alike | not compared | `agents hook` reads each word of a command line the same way: a command named like a property every JavaScript object has (`toString`, `constructor`, `valueOf`) and a glob whose class is no regular expression (`[z-a]`) are words like any other, and the rest of the line is checked: `toString x; cat .env` is denied | The hook reads a whole command line, and no word ends the reading early. Pinned by `internal/agents`' `TestHookReadsEveryCommandAlike` |
 | `init` and a server URL with a user name or password | not compared | refused from any source (`--server`, `VARLATCH_SERVER`, the default server, the only stored credential), judged on the server as `varlatch.toml` will give it back: a user name or password as `new URL` reads it, an at-sign in any form in a text that does not parse, or a backslash with an at-sign in any form (`\u0040`, `%40`, ...) after it: `varlatch init: a server URL with a user name or password can't be written to varlatch.toml; give the server's address without them. Nothing was written.`, 64, nothing written and the URL not repeated | `varlatch.toml` is committed; `cmd/varlatch` `TestInitRefusesServerCredentials`, `clientctx` `TestHasUserinfo` |
 | `toml-escaped`: how `init` writes `varlatch.toml`'s values | not compared | each value as an escaped TOML basic string (`\"`, `\\`, control characters), so the file reads back as exactly what was given | A value with a quote, a backslash or a control character means what it says; transcripts compare the escaped form (`init.raw-values`); `TestInitValuesReadBackAsGiven` |
 | How `agents install` replaces a file | in place (`writeFileSync`) | a temporary file in the same directory, readable by its owner only until it is complete, synced, given the file's mode, then renamed over it; the names of a hard-linked `AGENTS.md`/`CLAUDE.md` pair are each renamed onto the new file; a file with any other name is refused (78) | A crash or a full disk never leaves a settings file empty or half written, and no other file shares the change; bytes and modes are the same |

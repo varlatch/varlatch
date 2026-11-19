@@ -5,14 +5,17 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/term"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/agents"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/toml"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -21,10 +24,43 @@ import (
 // The commands of slice 5.1d (internal docs/design/go-cli.md): `agents
 // guide`, `agents install` with every option, and `init` with its flags
 // off a terminal, ported from apps/cli/src/main.ts over internal/agents.
-// `agents hook` is slice 5.6a; `init` on a terminal (guided) is 5.8a.
+// `agents hook` is slice 5.6a's (agents/hook.go); `init` on a terminal
+// (guided) is 5.8a.
 
 const agentsUsage = "Usage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]" +
 	"|hook --format <claude|codex>>"
+
+// agentsHook is `varlatch agents hook --format <claude|codex>` (ADR-0043
+// Decision 8): the handler every guardrail hook calls. It reads one
+// pre-tool-use event on stdin and answers on stdout; an event it cannot
+// read gets no decision, so the tool call proceeds.
+func (r *Run) agentsHook(args []string) error {
+	opts, err := strictOptions("agents hook", args, OptionSpec{Values: []string{"--format"}}, agentsUsage)
+	if err != nil {
+		return err
+	}
+	format, ok := opts.Value("--format")
+	if !ok || !slices.Contains(agents.HookFormats, format) {
+		return UsageErrorWithUsage("varlatch agents hook: --format must be one of "+strings.Join(agents.HookFormats, ", "), "\n"+agentsUsage)
+	}
+	data, err := io.ReadAll(r.Stdin)
+	if err != nil {
+		return err
+	}
+	cwd, err := Cwd()
+	if err != nil {
+		return err
+	}
+	answer, err := agents.RunHook(format, jsval.DecodeUTF8(data), r.Env, cwd)
+	if err != nil {
+		_ = r.warn("varlatch agents hook: " + err.Error() + "; no decision")
+		return nil
+	}
+	if answer == "" {
+		return nil
+	}
+	return r.out(answer)
+}
 
 // agentsCommand is `varlatch agents` (ADR-0043 Decision 7): the
 // agent-neutral skill, printed or installed.
@@ -58,7 +94,7 @@ func agentsCommand(r *Run) error {
 		}
 		return r.out(text)
 	case "hook":
-		return UsageError("varlatch agents hook: not in this build of the Go CLI yet (slice 5.6a); use the TypeScript CLI for it until then")
+		return r.agentsHook(rest)
 	case "install":
 		return r.agentsInstall(rest)
 	}
