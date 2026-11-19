@@ -277,13 +277,17 @@ func TestTheLinearityCriterion(t *testing.T) {
 	}
 	// Sized on this machine: n doubles from 2000 until the small run takes
 	// at least 50 ms (capped), so the 20 ms slack is negligible and the
-	// growth decides.
+	// growth decides. The faster of two probes decides: one stalled probe
+	// never stops the sizing early and shrinks the control's margin.
 	n := 2000
 	for n < 32000 {
-		runtime.GC()
-		start := time.Now()
-		quadratic(n)()
-		if time.Since(start) >= 50*time.Millisecond {
+		probe := func() time.Duration {
+			runtime.GC()
+			start := time.Now()
+			quadratic(n)()
+			return time.Since(start)
+		}
+		if min(probe(), probe()) >= 50*time.Millisecond {
 			break
 		}
 		n *= 2
@@ -438,5 +442,32 @@ func noFormSurvives(t *testing.T, out []byte, entries []SecretEntry) {
 				}
 			}
 		}
+	}
+}
+
+// TestNoStaleSegments: once addMatch rewrites the pending segments, and
+// once emitFinal hands them on, no slot outside the live segments (past
+// their length, or in the scratch space) still holds a segment, so none
+// keeps a caller's chunk alive (#298's review).
+func TestNoStaleSegments(t *testing.T) {
+	entries := []SecretEntry{{Item: "A", Value: "abababab"}, {Item: "B", Value: "babababa"}}
+	m := NewStreamMatcher(entries, Marker)
+	stale := func(where string, slots []segment) {
+		t.Helper()
+		for i, s := range slots {
+			if s.bytes != nil || s.region || s.start != 0 {
+				t.Fatalf("%s: slot %d holds %+v", where, i, s)
+			}
+		}
+	}
+	for _, chunk := range []string{"xxabab", "ababab", "abxx yy abab", "abababababab", "zz"} {
+		if _, err := m.Push([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+		stale("past the segments", m.segments[len(m.segments):cap(m.segments)])
+		stale("the scratch space", m.scratch[:cap(m.scratch)])
+	}
+	if _, err := m.End(); err != nil {
+		t.Fatal(err)
 	}
 }
