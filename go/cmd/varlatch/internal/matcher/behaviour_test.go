@@ -198,49 +198,61 @@ func TestPushNeverKeepsTheCallersBuffer(t *testing.T) {
 	}
 }
 
-// bestOf3 is the fastest of three runs of f, each after a garbage
-// collection: noise (a shared runner's pauses, another job's load) only
-// ever adds time, so the minimum is the closest to the work itself.
-func bestOf3(f func()) time.Duration {
-	var fastest time.Duration
+// growth times the small and the large work: each runs once untimed first
+// (a cold or still clocking-up CPU would make whichever runs first look
+// slow), then they are timed in turn, small, large, small, large, small,
+// large, each run after a garbage collection, and the fastest of each is
+// given. Noise (a shared runner's pauses, another job's load) only ever
+// adds time, and timing the two in turn makes a busy spell slow both alike
+// instead of one.
+func growth(small, large func()) (time.Duration, time.Duration) {
+	small()
+	large()
+	var bestSmall, bestLarge time.Duration
 	for i := range 3 {
-		runtime.GC()
-		start := time.Now()
-		f()
-		if took := time.Since(start); i == 0 || took < fastest {
-			fastest = took
+		for _, f := range []struct {
+			run  func()
+			best *time.Duration
+		}{{small, &bestSmall}, {large, &bestLarge}} {
+			runtime.GC()
+			start := time.Now()
+			f.run()
+			if took := time.Since(start); i == 0 || took < *f.best {
+				*f.best = took
+			}
 		}
 	}
-	return fastest
+	return bestSmall, bestLarge
 }
 
-// growsLinearly is the timing tests' criterion: for an input four times as
-// large, the time may grow at most tenfold. Linear work grows about
-// fourfold and quadratic about sixteenfold, so the limit separates them
-// with room for noise on either side; it judges growth only, never a
-// machine's absolute speed. 20 ms of slack keeps a shape that takes a few
-// milliseconds from failing on jitter.
+// growsLinearly is the timing tests' criterion: for an input eight times
+// as large, the time may grow at most 24-fold. Linear work grows about
+// eightfold and quadratic about 64-fold (on CI runners, where caches and
+// load flatten the curve, nearer 38-fold), so 24 sits near the geometric
+// middle, with room for noise on either side. It judges growth only, never
+// a machine's absolute speed; 20 ms of slack keeps a shape that takes a
+// few milliseconds from failing on jitter.
 func growsLinearly(small, large time.Duration) bool {
-	return large <= 10*small+20*time.Millisecond
+	return large <= 24*small+20*time.Millisecond
 }
 
-// TestTheLinearityCriterion: today's slow but linear CI runs pass it (macOS
-// 630 ms and 4.19 s, 6.65 times; Windows 4.5 times; Linux 1.06 s and
-// 3.31 s, and 0.94 s and 3.24 s), quadratic growth fails it, and so does a
-// deliberately quadratic implementation timed the way TestMatcherIsLinear
-// times the matcher.
+// TestTheLinearityCriterion: growth an eighth of the input to all of it
+// judged by growsLinearly. Linear growth, eight to thirteen times, passes;
+// quadratic growth, forty to 64 times, fails; and so does a deliberately
+// quadratic implementation, sized on this machine and timed the way
+// TestMatcherIsLinear times the matcher.
 func TestTheLinearityCriterion(t *testing.T) {
 	ms := time.Millisecond
 	for _, c := range []struct {
 		small, large time.Duration
 		linear       bool
 	}{
-		{630 * ms, 4190 * ms, true},
-		{200 * ms, 900 * ms, true},
-		{1060 * ms, 3310 * ms, true},
-		{940 * ms, 3240 * ms, true},
-		{250 * ms, 4000 * ms, false},
-		{1000 * ms, 16000 * ms, false},
+		{100 * ms, 800 * ms, true},   // 8 times
+		{100 * ms, 1300 * ms, true},  // 13 times
+		{500 * ms, 6500 * ms, true},  // 13 times
+		{100 * ms, 4000 * ms, false}, // 40 times
+		{50 * ms, 1900 * ms, false},  // 38 times
+		{100 * ms, 6400 * ms, false}, // 64 times
 	} {
 		if growsLinearly(c.small, c.large) != c.linear {
 			t.Errorf("%v then %v: judged linear %v", c.small, c.large, !c.linear)
@@ -263,11 +275,27 @@ func TestTheLinearityCriterion(t *testing.T) {
 			}
 		}
 	}
-	// Large enough that its growth, not the 20 ms slack, decides (the race
-	// detector only makes it slower, which helps).
-	n := 6000
-	small, large := bestOf3(quadratic(n)), bestOf3(quadratic(4*n))
-	t.Logf("a quadratic merge: %d items %v, %d items %v (%.1fx)", n, small, 4*n, large, float64(large)/float64(small))
+	// Sized on this machine: n doubles from 2000 until the small run takes
+	// at least 50 ms (capped), so the 20 ms slack is negligible and the
+	// growth decides.
+	n := 2000
+	for n < 32000 {
+		runtime.GC()
+		start := time.Now()
+		quadratic(n)()
+		if time.Since(start) >= 50*time.Millisecond {
+			break
+		}
+		n *= 2
+	}
+	small, large := growth(quadratic(n), quadratic(8*n))
+	// Per operation (n(n-1)/2 steps each): equal when nothing biases one
+	// size, so the growth is the work's own.
+	perOp := func(d time.Duration, items int) float64 {
+		return float64(d.Nanoseconds()) / (float64(items) * float64(items-1) / 2)
+	}
+	t.Logf("a quadratic merge, n = %d chosen: %d items %v (%.3f ns per step), %d items %v (%.3f ns per step), %.1fx",
+		n, n, small, perOp(small, n), 8*n, large, perOp(large, 8*n), float64(large)/float64(small))
 	if growsLinearly(small, large) {
 		t.Errorf("a quadratic merge (%v then %v) was judged linear", small, large)
 	}
@@ -276,9 +304,10 @@ func TestTheLinearityCriterion(t *testing.T) {
 // TestMatcherIsLinear: every adversarial shape (a match at every byte, a
 // chain of overlaps, a hold that never completes, a chunk holding
 // thousands of matches, many Secrets, every encoded form) takes time
-// linear in the input, by growsLinearly: each size timed as the best of
-// three runs (bestOf3). No absolute time bound: a slow runner is not a
-// failure. Under the race detector the inputs are a quarter the size.
+// linear in the input, by growsLinearly: an eighth of the input against
+// all of it, warmed up, then timed in turn, best of three each (growth). No absolute
+// time bound: a slow runner is not a failure. Under the race detector the
+// inputs are a quarter the size.
 func TestMatcherIsLinear(t *testing.T) {
 	many := make([]SecretEntry, 400)
 	for i := range many {
@@ -320,16 +349,16 @@ func TestMatcherIsLinear(t *testing.T) {
 				_, _ = m.End()
 			}
 		}
-		size := 1 << 20
+		large := 4 << 20
 		if raceSlowdown > 1 {
-			size /= 4
+			large /= 4
 		}
+		small := large / 8
 		for _, chunk := range []int{64 * 1024, 4 << 20} { // a pipe's reads, and one huge chunk
-			stream(size/4, chunk)() // warm up
-			small, large := bestOf3(stream(size, chunk)), bestOf3(stream(4*size, chunk))
-			t.Logf("%s, %d-byte chunks: %d bytes %v, %d bytes %v (%.1fx)", c.name, chunk, size, small, 4*size, large, float64(large)/float64(small))
-			if !growsLinearly(small, large) {
-				t.Errorf("%s, %d-byte chunks: %d bytes %v, %d bytes %v: not linear", c.name, chunk, size, small, 4*size, large)
+			tSmall, tLarge := growth(stream(small, chunk), stream(large, chunk))
+			t.Logf("%s, %d-byte chunks: %d bytes %v, %d bytes %v (%.1fx)", c.name, chunk, small, tSmall, large, tLarge, float64(tLarge)/float64(tSmall))
+			if !growsLinearly(tSmall, tLarge) {
+				t.Errorf("%s, %d-byte chunks: %d bytes %v, %d bytes %v: not linear", c.name, chunk, small, tSmall, large, tLarge)
 			}
 		}
 	}

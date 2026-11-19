@@ -179,6 +179,9 @@ type Request struct {
 	URL     string
 	Headers [][2]string // in order; a later one replaces an earlier one of the same name
 	Body    []byte      // nil for none
+	// Manual is fetch's redirect: "manual": a redirect is the answer, never
+	// followed (device sign-in sends a bearer in its body).
+	Manual bool
 }
 
 // Do sends req as fetch(url, {method, headers, body}) and reads the whole
@@ -202,7 +205,7 @@ func (t *Transport) Do(ctx context.Context, req Request) (*Response, error) {
 			return nil, err
 		}
 		location := res.Header.Get("Location")
-		if !isRedirect(res.StatusCode) || location == "" {
+		if !isRedirect(res.StatusCode) || location == "" || req.Manual {
 			return read(ctx, res, t.bodyTimeout), nil
 		}
 		_ = res.Body.Close()
@@ -328,6 +331,9 @@ func (t *Transport) once(ctx context.Context, method string, target whatwg.URL, 
 	}
 	res, err := t.client.Do(req)
 	if err != nil {
+		if abort := aborted(ctx); abort != nil {
+			return nil, abort
+		}
 		return nil, fetchFailed(networkCode(err), err)
 	}
 	return res, nil
@@ -377,7 +383,7 @@ func read(ctx context.Context, res *http.Response, bodyTimeout time.Duration) *R
 			timer.Stop()
 			_ = res.Body.Close()
 			<-results
-			out.Body, out.BodyErr = buf.Bytes(), &BodyError{Message: "terminated"}
+			out.Body, out.BodyErr = buf.Bytes(), aborted(ctx)
 			return out
 		}
 		buf.Write(chunk[:r.n])
