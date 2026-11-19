@@ -64,10 +64,13 @@ import (
 // Dir is the backups' directory in the data directory.
 const Dir = "backups"
 
-// DefaultSealRate is the backup's pace after the snapshot: 32 MiB/s, for
+// DefaultSealRate is the backup's pace after the snapshot: 16 MiB/s, for
 // the manifest's hashing, the sealing and the archive's check alike, so a
-// backup never takes the disk, or a CPU, from the requests.
-const DefaultSealRate = 32 << 20
+// backup never takes the disk, or a CPU, from the requests. At 32 MiB/s the
+// three, beside 1.7 times W1's writes, kept varlatchd at 0.91 to 0.95 of its
+// one CPU and throttled (G9's measurements on the experiments server,
+// 2026-11-19).
+const DefaultSealRate = 16 << 20
 
 // APIMajor is the /v1 API's major version, recorded in an archive.
 const APIMajor = 1

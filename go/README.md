@@ -629,14 +629,15 @@ daemon's maintenance admission and its one backup at a time.
   a BEK that is the Root KEK, and when the data directory has less free
   space than `RequiredSpace`: three times the database and its WAL (the
   snapshot, then the archive and its unpacked copy while it is checked)
-  plus 64 MiB. It then takes the paced snapshot on the writer's
-  connection (`lib/storage` `Snapshot`, with the `TRUNCATE` after it),
+  plus 64 MiB. It then takes the paced snapshot (256 pages every 100 ms)
+  on the writer's connection (`lib/storage` `Snapshot`, with the
+  `TRUNCATE` after it),
   reads the archive's metadata from the snapshot itself (the
   installation, its Root KEK version and canary, the schema version),
   refusing an incomplete Root KEK rotation as `archiveMetadata` does and
   a canary the loaded Root KEK does not open, hashes the components for
   the manifest, seals the snapshot and `configuration.json`, and opens the
-  archive again to record its check, each at 32 MiB/s and with the archive
+  archive again to record its check, each at 16 MiB/s and with the archive
   key derived once for the run, then uploads it, records the delivery, and
   removes the archives beyond `backup_keep` from this host. A stop ends a
   run at its next snapshot step or paced MiB, and leaves no archive.
