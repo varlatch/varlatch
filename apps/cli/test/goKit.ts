@@ -272,24 +272,40 @@ function generatedBy(spec: string, value: string): boolean {
 }
 
 /**
- * The texts a case gives the CLI that it may treat as values (its
- * variables, its stdin, its arguments): the case directory's path must hold
- * none of them, or masking a value would rewrite the path (a PORT=8080 case
- * once ran in a directory whose random name held 8080). The Go replay's
- * transcript.CaseValues is the same.
+ * The shortest value a run's masking replaces wherever it occurs (the
+ * matcher's MIN_LENGTH, and the stored Secrets' minimum).
  */
-export function caseValues(c: TranscriptCase): string[] {
-  return [...Object.values(c.env ?? {}), c.stdin ?? "", ...c.args].filter((v) => v.length >= 2 && !v.includes("{{"));
+const MASKABLE_LENGTH = 8;
+
+/**
+ * The texts a case gives the CLI that it may treat as values: `values` are
+ * its variables, its stdin and its arguments (a value in flight, such as
+ * `values set PORT 8080`'s, is masked whatever its length); `maskable` are
+ * its variables and stdin of MASKABLE_LENGTH bytes or more, which masking
+ * replaces wherever they occur. A PORT=8080 case once ran in a directory
+ * whose random name held 8080, and masking the value rewrote the path. The
+ * Go replay's transcript.CaseValues is the same.
+ */
+export function caseValues(c: TranscriptCase): { values: string[]; maskable: string[] } {
+  const usable = (v: string) => v.length >= 2 && !v.includes("{{");
+  const own = [...Object.values(c.env ?? {}), c.stdin ?? ""].filter(usable);
+  return {
+    values: [...own, ...c.args.filter(usable)],
+    maskable: own.filter((v) => Buffer.byteLength(v) >= MASKABLE_LENGTH),
+  };
 }
 
 /**
  * A new directory for one case, varlatch-transcript- and sixteen random
  * consonants (no digit, no word), as its real path (macOS's temporary
- * directory is behind a symbolic link). A path that holds any of `values`
- * is discarded and another name drawn; a base that holds one fails, never
- * flakes. The Go replay's transcript.CaseDir is the same.
+ * directory is behind a symbolic link). Only the random name is the
+ * harness's: one that any of the case's values overlaps is discarded and
+ * another drawn. The rest of the path is the system's
+ * (C:\Users\runneradmin\AppData\Local\Temp on a Windows runner holds "run"
+ * and "admin"): it fails only when it holds a maskable value, which would
+ * rewrite it on every run. The Go replay's transcript.CaseDir is the same.
  */
-export function caseDir(values: string[]): string {
+export function caseDir({ values, maskable }: { values: string[]; maskable: string[] }): string {
   const letters = "bcdfghjklmnpqrstvwxz";
   for (let attempt = 0; attempt < 100; attempt++) {
     const name = Array.from(randomBytes(16), (b) => letters[b % letters.length]).join("");
@@ -301,10 +317,15 @@ export function caseDir(values: string[]): string {
       throw err;
     }
     const real = realpathSync(dir);
-    if (!values.some((v) => real.includes(v))) return real;
+    if (maskable.some((v) => real.includes(v))) {
+      rmSync(dir, { recursive: true, force: true });
+      throw new Error(`the temporary directory ${tmpdir()} holds one of the case's variables or its stdin`);
+    }
+    // An occurrence that takes in any of the name's characters.
+    if (!values.some((v) => real.slice(Math.max(0, real.length - name.length - v.length + 1)).includes(v))) return real;
     rmSync(dir, { recursive: true, force: true });
   }
-  throw new Error(`no directory in ${tmpdir()} whose path holds none of the case's values`);
+  throw new Error(`no name in ${tmpdir()} that none of the case's values overlaps`);
 }
 
 /** The "now+<s>" pattern: each timestamp from `start` to `end` plus `seconds`, as {{now+<s>}}. */

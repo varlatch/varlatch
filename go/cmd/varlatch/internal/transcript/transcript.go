@@ -172,33 +172,47 @@ type Command func(args []string) *exec.Cmd
 // consonants only, so a name holds no digit and spells no word.
 const caseDirLetters = "bcdfghjklmnpqrstvwxz"
 
+// maskableLength is the shortest value a run's masking replaces wherever
+// it occurs: matcher.MinLength, the redaction engine's, and
+// cli.MinMaskedLength, the stored Secrets'.
+const maskableLength = 8
+
 // CaseValues are the texts a case gives the CLI that it may treat as
-// values (its variables, its stdin, its arguments): the case directory's
-// path must hold none of them, or masking a value would rewrite the path
-// (a PORT=8080 case once ran in a directory whose random name held 8080).
-func CaseValues(c Case) []string {
-	var values []string
-	add := func(v string) {
-		if len(v) >= 2 && !strings.Contains(v, "{{") {
-			values = append(values, v)
+// values: values are its variables, its stdin and its arguments (a value in
+// flight, such as `values set PORT 8080`'s, is masked whatever its
+// length); maskable are its variables and stdin of maskableLength bytes or
+// more, which masking replaces wherever they occur. A PORT=8080 case once
+// ran in a directory whose random name held 8080, and masking the value
+// rewrote the path.
+func CaseValues(c Case) (values, maskable []string) {
+	add := func(v string, from bool) {
+		if len(v) < 2 || strings.Contains(v, "{{") {
+			return
+		}
+		values = append(values, v)
+		if from && len(v) >= maskableLength {
+			maskable = append(maskable, v)
 		}
 	}
 	for _, v := range c.Env {
-		add(v)
+		add(v, true)
 	}
-	add(c.Stdin)
+	add(c.Stdin, true)
 	for _, a := range c.Args {
-		add(a)
+		add(a, false)
 	}
-	return values
+	return values, maskable
 }
 
 // CaseDir makes a new directory in base for one case, named
-// varlatch-transcript- and sixteen random consonants, and gives its real
-// path (macOS's temporary directory is behind a symbolic link). A path that
-// holds any of values is discarded and another name drawn; a base that
-// holds one fails, never flakes.
-func CaseDir(base string, values []string) (string, error) {
+// varlatch-transcript- and sixteen random consonants (no digit, no word),
+// and gives its real path (macOS's temporary directory is behind a
+// symbolic link). Only the random name is the harness's: one that any of
+// the case's values overlaps is discarded and another drawn. The rest of
+// the path is the system's (C:\Users\runneradmin\AppData\Local\Temp on a
+// Windows runner holds "run" and "admin"): it fails only when it holds a
+// maskable value, which would rewrite it on every run.
+func CaseDir(base string, values, maskable []string) (string, error) {
 	for range 100 {
 		name := make([]byte, 16)
 		for i := range name {
@@ -216,12 +230,23 @@ func CaseDir(base string, values []string) (string, error) {
 			_ = os.RemoveAll(dir)
 			return "", err
 		}
-		if !slices.ContainsFunc(values, func(v string) bool { return strings.Contains(real, v) }) {
+		if slices.ContainsFunc(maskable, func(v string) bool { return strings.Contains(real, v) }) {
+			_ = os.RemoveAll(dir)
+			return "", fmt.Errorf("the temporary directory %s holds one of the case's variables or its stdin", base)
+		}
+		if !slices.ContainsFunc(values, func(v string) bool { return overlapsEnd(real, v, len(name)) }) {
 			return real, nil
 		}
 		_ = os.RemoveAll(dir)
 	}
-	return "", fmt.Errorf("no directory in %s whose path holds none of the case's values", base)
+	return "", fmt.Errorf("no name in %s that none of the case's values overlaps", base)
+}
+
+// overlapsEnd is whether v occurs in path in a place that takes in any of
+// its last n bytes.
+func overlapsEnd(path, v string, n int) bool {
+	from := max(0, len(path)-n-len(v)+1)
+	return strings.Contains(path[from:], v)
 }
 
 // Difference rewrites a recording's expectation where the Go CLI differs on
@@ -232,7 +257,8 @@ type Difference func(want *Outcome, got Outcome)
 // Replay runs c against the CLI and returns what it did and every way that
 // differs from the recording.
 func Replay(c Case, start Command, differences map[string]Difference) (Outcome, []string, error) {
-	dir, err := CaseDir(os.TempDir(), CaseValues(c))
+	values, maskable := CaseValues(c)
+	dir, err := CaseDir(os.TempDir(), values, maskable)
 	if err != nil {
 		return Outcome{}, nil, err
 	}
