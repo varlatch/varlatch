@@ -22,14 +22,6 @@
       "reason": "varlatch mcp: not ported to the Go CLI yet",
       "slice": "5.6b"
     },
-    "run": {
-      "reason": "varlatch run: a default run: not ported to the Go CLI yet",
-      "slice": "5.4b"
-    },
-    "run-export-context": {
-      "reason": "varlatch run --export-context: not ported to the Go CLI yet",
-      "slice": "5.4b"
-    },
     "run-redact": {
       "reason": "varlatch run --redact: not ported to the Go CLI yet",
       "slice": "5.4c"

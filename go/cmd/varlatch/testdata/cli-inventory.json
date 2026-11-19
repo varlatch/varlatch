@@ -8,7 +8,8 @@
     "5.1d",
     "5.1e",
     "5.3a",
-    "5.3b"
+    "5.3b",
+    "5.4b"
   ],
   "commands": {
     "login": {
@@ -214,7 +215,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.5b"
     },
     "--all": {
       "sources": [
@@ -1965,7 +1967,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.4c"
     },
     "--reenroll-hours": {
       "sources": [
@@ -2359,7 +2362,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.4f"
     },
     "--tags": {
       "sources": [

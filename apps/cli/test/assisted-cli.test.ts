@@ -10,7 +10,7 @@ import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EMBEDDED_RELEASE } from "@varlatch/backup";
 import { agentsBlock } from "../src/agents/install.js";
-import { cliCommand } from "./cliUnderTest.js";
+import { cliCommand, goLacks, releaseUnderTest } from "./cliUnderTest.js";
 import { contractItem, revision } from "./fixtures.js";
 
 /**
@@ -269,8 +269,10 @@ function leaked(r: Result): string[] {
 describe("the User-Agent says whether assisted mode is on", () => {
   // varlatchd records it on every audit event, so the audit log tells a
   // coding agent driving the CLI from the human; it never authorizes anything.
-  const plain = `varlatch-cli/${EMBEDDED_RELEASE.version} (${process.platform}; ${process.arch})`;
-  const assisted = `varlatch-cli/${EMBEDDED_RELEASE.version} (${process.platform}; ${process.arch}; assisted)`;
+  // The CLI under test names its own release (the Go binary its own).
+  const release = releaseUnderTest(EMBEDDED_RELEASE.version);
+  const plain = `varlatch-cli/${release} (${process.platform}; ${process.arch})`;
+  const assisted = `varlatch-cli/${release} (${process.platform}; ${process.arch}; assisted)`;
 
   it.each([
     ["no signal", [], {}, plain],
@@ -316,14 +318,14 @@ describe("assisted run: output protection and precedence", () => {
     expect(r.stderr).not.toMatch(/refused in assisted mode/);
   });
 
-  it("negative control for inherited-value filtering: --redact outside assisted mode masks the delivered Secret but not the inherited ones", async () => {
+  it.skipIf(goLacks("5.4c"))("negative control for inherited-value filtering: --redact outside assisted mode masks the delivered Secret but not the inherited ones", async () => {
     const r = await cli(["run", "--redact", "--", process.execPath, printer()], { env: INHERITED });
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("token=[REDACTED:API_TOKEN]\n");
     expect(leaked(r)).toEqual(["legacy", "withheld"]);
   });
 
-  it("works with --strict: delivered and allowed inherited Secrets are masked", async () => {
+  it.skipIf(goLacks("5.4f"))("works with --strict: delivered and allowed inherited Secrets are masked", async () => {
     const r = await cli(["--assisted", "run", "--strict", "--allow-inherited", "LEGACY_KEY", "--", process.execPath, printer()], { env: { LEGACY_KEY: LEGACY } });
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("token=[REDACTED:API_TOKEN]\n");
@@ -391,7 +393,7 @@ describe("assisted run: output protection and precedence", () => {
     expect(r.stdout).toContain(`[REDACTED:API_TOKEN] ${PIN}`);
   });
 
-  it("the refusal's handoff keeps the run's policy: run as printed, a strict override still validates strictly", async () => {
+  it.skipIf(goLacks("5.4f"))("the refusal's handoff keeps the run's policy: run as printed, a strict override still validates strictly", async () => {
     stored.push({ name: "PIN", sensitive: true, value: PIN });
     // Only LEGACY_KEY is inherited, and allowed: strict startup refuses any other inherited Secret.
     const refused = await cli(["--assisted", "run", "--strict", "--allow-inherited", "LEGACY_KEY", "--allow-unmasked", "PIN", "--", "true"], { env: { LEGACY_KEY: LEGACY } });
@@ -435,7 +437,8 @@ describe("run: a strict command line before --", () => {
     ["the misspelled override (the review's reproduction)", ["--allow-unmask", "PIN"], /varlatch run: unknown option --allow-unmask/],
     ["an unknown option", ["--bogus"], /unknown option --bogus/],
     ["--json, which run does not take", ["--json"], /unknown option --json/],
-    ["--environment=, which is not parsed", ["--environment=development"], /unknown option --environment=development/],
+    // The Go CLI never shows an option's attached value (go/README.md, option-value).
+    ["--environment=, which is not parsed", ["--environment=development"], /unknown option --environment=(development|\[redacted\])/],
     ["-e without a value", ["-e"], /--environment needs a value/],
     ["--server followed by another option", ["--server", "--strict"], /--server needs a value/],
     ["-e and --environment both", ["-e", "development", "--environment", "development"], /--environment \(or -e\) given twice/],
@@ -484,13 +487,15 @@ describe("run: a strict command line before --", () => {
       ["strict", ["run", "--strict", "--allow-inherited", "LEGACY_KEY"], { LEGACY_KEY: LEGACY }],
       ["nested", ["run"], { VARLATCH_AGENT_RUN: "run_0123456789abcdef" }],
     ] as [string, string[], Record<string, string>][]) {
+      // A run the Go CLI under test does not build yet (strict: 5.4f; nested: 5.5b).
+      if ((name === "strict" && goLacks("5.4f")) || (name === "nested" && goLacks("5.5b"))) continue;
       const r = await cli([...args, "--", process.execPath, argv, ...childArgs], { env });
       expect(r.code, `${name}: ${r.stderr}`).toBe(0);
       expect(JSON.parse(r.stdout.trim().split("\n").at(-1) as string), name).toEqual(childArgs);
     }
   });
 
-  it("every documented option is accepted, repeatable ones repeated", async () => {
+  it.skipIf(goLacks("5.4c", "5.4f"))("every documented option is accepted, repeatable ones repeated", async () => {
     const r = await cli(["run", "-e", "development", "--server", origin, "--export-context", "--redact", "--omit", "PORT", "--omit", "API_TOKEN", "--", "true"]);
     expect(r.code, r.stderr).toBe(0);
     stored.push({ name: "PIN", sensitive: true, value: PIN }, { name: "PIN_TWO", sensitive: true, value: "abcdefg" });
@@ -562,6 +567,7 @@ describe("assisted run: a value too short to mask", () => {
     ["a default run", []],
     ["a strict run", ["--strict"]],
   ])("%s exits 78 naming the item, before the command starts", async (_name, mode) => {
+    if (mode.length > 0 && goLacks("5.4f")) return; // strict runs: slice 5.4f
     const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
     const r = await cli(["--assisted", "run", ...mode, "--", process.execPath, printer()], { env: { MARKER: marker } });
     expect(r.code).toBe(78);
@@ -708,7 +714,7 @@ describe("run --omit: an item left out of the run", () => {
     expect(plain.stderr).toContain("pin=undefined");
   });
 
-  it("--strict: an omitted item the Contract does not require is left out, and the run starts", async () => {
+  it.skipIf(goLacks("5.4f"))("--strict: an omitted item the Contract does not require is left out, and the run starts", async () => {
     const r = await cli(["--assisted", "run", "--strict", "--omit", "PIN", "--", ...reporter("PIN", "API_TOKEN")], { env: { PIN: SHELL_PIN } });
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("PIN=absent\nAPI_TOKEN=present\n");
@@ -717,6 +723,7 @@ describe("run --omit: an item left out of the run", () => {
 
   it("a name neither stored nor in the Contract is refused (64) before anything starts, and before any Secret is disclosed in a default run", async () => {
     for (const [mode, flags] of [["default", []], ["strict", ["--strict"]], ["human", []]] as const) {
+      if (mode === "strict" && goLacks("5.4f")) continue;
       const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
       requests = [];
       const r = await cli([...(mode === "human" ? [] : ["--assisted"]), "run", ...flags, "--omit", "PIM", "--", ...leaky(marker)]);
@@ -800,7 +807,7 @@ describe("run --omit: an item left out of the run", () => {
     expect(disclosures()).toEqual([]);
   });
 
-  it("a nested run inside an agent-safe run removes the omitted names too", async () => {
+  it.skipIf(goLacks("5.5b"))("a nested run inside an agent-safe run removes the omitted names too", async () => {
     const r = await cli(["run", "--omit", "API_TOKEN", "--", ...reporter("API_TOKEN", "PORT")], {
       env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef", API_TOKEN: "vlt_ph_placeholder", PORT: "8080" },
     });
@@ -1218,7 +1225,7 @@ describe("values set and values rotate: a strict command line", () => {
     new RegExp(`${ts.source}|unknown option at argument \\d+, not shown since it may be a value|unexpected argument \\d+, not shown since it may be part of a value`);
   const both: [string, string[], RegExp][] = [
     ["an unknown option", ["--env", "production"], refused(/unknown option --env/)],
-    ["--environment=, which is not parsed", ["--environment=production"], refused(/unknown option --environment=production/)],
+    ["--environment=, which is not parsed", ["--environment=production"], refused(/unknown option --environment=(production|\[redacted\])/)],
     ["--json, which these commands do not take", ["--json"], refused(/unknown option --json/)],
     ["-e without a value", ["-e"], /--environment needs a value/],
     ["--from-file without a path", ["--from-file"], /--from-file needs a value/],

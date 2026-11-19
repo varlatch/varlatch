@@ -1034,6 +1034,130 @@ const contracts53b: TranscriptCase[] = [
   v({ id: "contract.unknown", title: "an unknown subcommand", args: ["contract", "list"] }),
 ];
 
+// varlatch run (5.4b): a default run, --export-context, --omit, and assisted
+// masking. The command is `node -e PRINT`, which prints its arguments and the
+// variables it was given (fake values only), so each case shows what the
+// command received; an assisted run's output is the masked one.
+const RUN_SECRET = "s3cr3t-run-api-key-value";
+const RUN_PIN = "1234";
+const RUN_PRINT =
+  "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))";
+const runChildArgs = (...args: string[]) => ["--", "node", "-e", RUN_PRINT, ...args];
+const DISCLOSURES = `${ENV}/disclosures`;
+const PROD_ENV = "/v1/organizations/acme/projects/web/environments/prod";
+const RUN_REV = sid("rev", "run");
+const RUN_HASH = `sha256:${"ab".repeat(32)}`;
+const runItems = (extra: unknown[] = []) => [
+  { name: "API_KEY", sensitive: true, source: "self", value: null },
+  { name: "PORT", sensitive: false, source: "self", value: "8080" },
+  ...extra,
+];
+const PIN_ITEM = { name: "PIN", sensitive: true, source: "self", value: null };
+const effectiveAt = (base: string, items: unknown[], extra: Record<string, unknown> = {}): Exchange =>
+  ok(`${base}/effective-configuration?include=values`, { environmentId: "env_1", items, ...extra });
+const disclosed = (items: { name: string; value: string }[], extra: Record<string, unknown> = {}, path = DISCLOSURES): Exchange => ({
+  method: "POST",
+  path,
+  status: 200,
+  answer: { items: items.map((i) => ({ ...i, versionId: sid("ver", i.name) })), withheld: [], ...extra },
+});
+const API_KEY_DISCLOSED = disclosed([{ name: "API_KEY", value: RUN_SECRET }]);
+const MANIFEST = {
+  manifestVersion: 1,
+  projectId: "prj_1",
+  environment: { id: "env_1", rootId: "env_root", parentId: null, tier: "development", expiresAt: null },
+  contract: { revisionId: RUN_REV, contentHash: RUN_HASH, semanticsVersion: 2 },
+  items: [],
+};
+const DIGEST_A = `sha256:${"a".repeat(64)}`;
+const DIGEST_B = `sha256:${"b".repeat(64)}`;
+const RUN_CONTRACT = {
+  schemaVersion: 1,
+  semanticsVersion: 2,
+  items: [item("API_KEY"), item("PORT", { sensitive: false }), item("REGION", { sensitive: false }), item("VARLATCH_RUN_CONTEXT", { sensitive: false })],
+};
+const revisionAnswer = (extra: Record<string, unknown> = {}): Exchange =>
+  ok(`${CONTRACT_PATH}/revisions/${RUN_REV}`, { id: RUN_REV, contentHash: RUN_HASH, semanticsVersion: 2, active: true, contract: RUN_CONTRACT, ...extra });
+const exportedEffective = (digest = DIGEST_A) => effectiveAt(ENV, runItems(), { stateDigest: digest, manifest: MANIFEST });
+const ASSISTED = { VARLATCH_ASSISTED: "1" };
+const CONTRACT_NONE = denied(CONTRACT_PATH, "GET", 404, "NOT_FOUND");
+
+const run54b: TranscriptCase[] = [
+  // The command line
+  v({ id: "usage.no-separator", title: "run without --", args: ["run", "node"] }),
+  v({ id: "usage.separator-last", title: "run with nothing after --", args: ["run", "--"] }),
+  v({ id: "usage.unknown-option", title: "an unknown option before --: refused, nothing fetched", args: ["run", "--bogus", ...runChildArgs()] }),
+  v({ id: "usage.allow-unmasked-equals", title: "--allow-unmasked=NAME is not parsed", args: ["run", "--allow-unmasked=PIN", ...runChildArgs()] }),
+  v({ id: "usage.no-redact-equals", title: "--no-redact=... is not parsed", args: ["run", "--no-redact=1", ...runChildArgs()] }),
+  v({ id: "usage.allow-unmasked-no-name", title: "--allow-unmasked followed by an option", args: ["run", "--allow-unmasked", "--omit", "PIN", ...runChildArgs()] }),
+  v({ id: "usage.allow-unmasked-bad-name", title: "--allow-unmasked with a name no item can have", args: ["run", "--allow-unmasked", "pin", ...runChildArgs()] }),
+  v({ id: "usage.omit-bad-name", title: "--omit with a name no item can have", args: ["run", "--omit", "pin", ...runChildArgs()] }),
+  v({ id: "usage.omit-and-allow", title: "--omit and --allow-unmasked naming the same item", args: ["run", "--omit", "PIN", "--allow-unmasked", "PIN", ...runChildArgs()] }),
+  v({ id: "usage.omit-and-inherit", title: "--omit and --allow-inherited naming the same item", args: ["run", "--omit", "PIN", "--allow-inherited", "PIN", ...runChildArgs()] }),
+  v({ id: "usage.redact-and-no-redact", title: "--redact with --no-redact", args: ["run", "--redact", "--no-redact", ...runChildArgs()] }),
+  v({ id: "usage.target", title: "--target outside an agent-safe run", args: ["run", "--target", "API_KEY=header:authorization", ...runChildArgs()] }),
+  v({ id: "usage.allow-inherited", title: "--allow-inherited outside a strict run", args: ["run", "--allow-inherited", "PIN", ...runChildArgs()] }),
+  v({ id: "usage.export-and-strict", title: "--export-context with --strict", args: ["run", "--export-context", "--strict", ...runChildArgs()] }),
+  v({ id: "usage.twice", title: "--export-context given twice", args: ["run", "--export-context", "--export-context", ...runChildArgs()] }),
+  v({ id: "usage.allow-and-no-redact", title: "outside assisted mode, --allow-unmasked does not combine with --no-redact", args: ["run", "--allow-unmasked", "PIN", "--no-redact", ...runChildArgs()] }),
+  // A default run
+  v({ id: "run.plain", title: "a default run: the stored values over the inherited ones, the arguments as given", args: ["run", ...runChildArgs("a", "b c", "--", "-e")], env: { PORT: "1", REGION: "inherited" }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.environment", title: "-e names the environment", args: ["run", "-e", "prod", ...runChildArgs()], server: [effectiveAt(PROD_ENV, runItems()), disclosed([{ name: "API_KEY", value: RUN_SECRET }], {}, `${PROD_ENV}/disclosures`)] }),
+  v({ id: "run.environment-long", title: "--environment names the environment", args: ["run", "--environment", "prod", ...runChildArgs()], server: [effectiveAt(PROD_ENV, runItems()), disclosed([{ name: "API_KEY", value: RUN_SECRET }], {}, `${PROD_ENV}/disclosures`)] }),
+  v({ id: "run.server", title: "--server names the server", args: ["run", "--server", "{{server}}", ...runChildArgs()], files: { ...repoFiles('organization = "acme"\nproject = "web"\ndefault_environment = "dev"\n'), ...storeAt({ "{{server}}": { token: VTOKEN, ...OK } }) }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.exit-status", title: "the command's own status", args: ["run", "--", "node", "-e", "process.exit(3)"], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.no-redact", title: "--no-redact outside assisted mode: a default run", args: ["run", "--no-redact", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.agent-options-ignored", title: "agent-safe options without --agent-safe change nothing", args: ["run", "--agent", "coder", "--allow-host", "api.example.com", "--broker-credential-file", "broker.json", "--agent-network", "strict", "--ttl", "60", "--agent-metadata", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.inherited-context", title: "an inherited VARLATCH_RUN_CONTEXT is removed, and none is injected", args: ["run", ...runChildArgs()], env: { VARLATCH_RUN_CONTEXT: '{"v":1,"mode":"exported"}' }, server: [effectiveAt(ENV, runItems([{ name: "VARLATCH_RUN_CONTEXT", sensitive: false, source: "self", value: "stored" }])), API_KEY_DISCLOSED] }),
+  v({ id: "run.disclosure-denied", title: "the disclosure refused: the plain values only, said", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), { ...denied(DISCLOSURES, "POST") }] }),
+  v({ id: "run.disclosure-tailnet", title: "the disclosure refused for the tailnet: the plain values only", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), denied(DISCLOSURES, "POST", 403, "TAILNET_CONTEXT_REQUIRED")] }),
+  v({ id: "run.disclosure-error", title: "any other refusal stops the run", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), denied(DISCLOSURES, "POST", 500, "INTERNAL")] }),
+  v({ id: "run.withheld", title: "a value the server withholds is named", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, runItems([{ name: "REGION", sensitive: false, source: "self", value: null }])), API_KEY_DISCLOSED] }),
+  v({ id: "run.empty", title: "nothing stored: the command still starts", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, []), disclosed([])] }),
+  v({ id: "run.not-signed-in", title: "no credential: 77, nothing started", args: ["run", ...runChildArgs()], files: NOT_SIGNED_IN }),
+  v({ id: "run.no-command", title: "a command that does not exist (TypeScript lets the spawn error escape)", args: ["run", "--", "varlatch-no-such-command-5-4b"], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED], differences: ["uncaught"] }),
+  // --omit
+  v({ id: "omit.secret", title: "--omit a Secret: never asked for, and the inherited copy removed", args: ["run", "--omit", "API_KEY", ...runChildArgs()], env: { API_KEY: "inherited" }, server: [effectiveAt(ENV, runItems())] }),
+  v({ id: "omit.secret-one-of-two", title: "--omit one Secret: the disclosure names the others", args: ["run", "--omit", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }])] }),
+  v({ id: "omit.plain", title: "--omit a plain item, twice", args: ["run", "--omit", "PORT", "--omit", "PORT", ...runChildArgs()], env: { PORT: "1" }, server: [effectiveAt(ENV, runItems()), disclosed([{ name: "API_KEY", value: RUN_SECRET }])] }),
+  v({ id: "omit.contract-item", title: "--omit a Contract item that is not stored: the Contract is read", args: ["run", "--omit", "REGION", ...runChildArgs()], env: { REGION: "inherited" }, server: [effectiveAt(ENV, runItems()), contractAnswer({ ...ACTIVE, contract: RUN_CONTRACT }), disclosed([{ name: "API_KEY", value: RUN_SECRET }])] }),
+  v({ id: "omit.unknown", title: "--omit a name neither stored nor in the Contract: 64, nothing disclosed", args: ["run", "--omit", "NOPE", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), CONTRACT_NONE] }),
+  v({ id: "omit.unknown-no-contract", title: "--omit, and the manifest says no Contract is active: not read", args: ["run", "--omit", "NOPE", ...runChildArgs()], server: [effectiveAt(ENV, runItems(), { manifest: { ...MANIFEST, contract: null } })] }),
+  // --export-context
+  v({ id: "export.context", title: "--export-context: the command gets the run context", args: ["run", "--export-context", ...runChildArgs()], env: { REGION: "inherited" }, server: [exportedEffective(), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_A })] }),
+  v({ id: "export.omit", title: "--export-context with --omit: an omitted item is absent", args: ["run", "--export-context", "--omit", "API_KEY", "--omit", "REGION", ...runChildArgs()], env: { REGION: "inherited" }, server: [exportedEffective(), contractAnswer({ ...ACTIVE, contract: RUN_CONTRACT }), revisionAnswer()] }),
+  v({ id: "export.retry", title: "the state changed once: both read again, then the run starts", args: ["run", "--export-context", ...runChildArgs()], server: [exportedEffective(), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_B }), exportedEffective(DIGEST_B), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_B })] }),
+  v({
+    id: "export.inconsistent",
+    title: "the state changed on every attempt: refused before the command starts",
+    args: ["run", "--export-context", ...runChildArgs()],
+    server: [1, 2, 3].flatMap(() => [exportedEffective(), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_B })]),
+  }),
+  v({ id: "export.no-digest", title: "a disclosure without a digest is not agreement", args: ["run", "--export-context", ...runChildArgs()], server: [1, 2, 3].flatMap(() => [exportedEffective(), revisionAnswer(), API_KEY_DISCLOSED]) }),
+  v({ id: "export.disclosure-denied", title: "nothing disclosed: the context describes the values delivered", args: ["run", "--export-context", ...runChildArgs()], server: [exportedEffective(), revisionAnswer(), denied(DISCLOSURES, "POST")] }),
+  v({ id: "export.no-manifest", title: "a server without a manifest: refused, nothing disclosed", args: ["run", "--export-context", ...runChildArgs()], server: [effectiveAt(ENV, runItems())] }),
+  v({ id: "export.no-contract", title: "no active Contract: refused", args: ["run", "--export-context", ...runChildArgs()], server: [effectiveAt(ENV, runItems(), { stateDigest: DIGEST_A, manifest: { ...MANIFEST, contract: null } })] }),
+  v({ id: "export.contract-denied", title: "no contract.read: refused, nothing disclosed", args: ["run", "--export-context", ...runChildArgs()], server: [exportedEffective(), denied(`${CONTRACT_PATH}/revisions/${RUN_REV}`)] }),
+  v({ id: "export.contract-mismatch", title: "a revision of another hash: refused", args: ["run", "--export-context", ...runChildArgs()], server: [exportedEffective(), revisionAnswer({ contentHash: HASH })] }),
+  // Assisted mode
+  v({ id: "assisted.masked", title: "assisted mode masks the delivered Secret in the command's output", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, contractAnswer({ ...ACTIVE, contract: RUN_CONTRACT })] }),
+  v({ id: "assisted.option", title: "--assisted masks too", args: ["--assisted", "run", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "assisted.inherited", title: "an inherited value under a Contract Secret's name is masked too", args: ["run", ...runChildArgs()], env: { ...ASSISTED, LEGACY_KEY: "inherited-legacy-value" }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, contractAnswer({ ...ACTIVE, contract: { ...RUN_CONTRACT, items: [...RUN_CONTRACT.items, item("LEGACY_KEY")] } })] }),
+  v({ id: "assisted.contract-denied", title: "no contract.read: masked under stored names only, said", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, denied(CONTRACT_PATH)] }),
+  v({ id: "assisted.short", title: "a Secret too short to mask: 78, the remedies, nothing started", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }]), CONTRACT_NONE] }),
+  v({ id: "assisted.short-two", title: "two Secrets too short: both named", args: ["run", "-e", "dev", "--omit", "PORT", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems([PIN_ITEM, { name: "PIN2", sensitive: true, source: "self", value: null }])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }, { name: "PIN2", value: "5678" }]), CONTRACT_NONE] }),
+  v({ id: "assisted.short-server", title: "the remedies name an overridden server", args: ["run", "--server", "{{server}}", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }]), CONTRACT_NONE] }),
+  v({ id: "assisted.allow-refused", title: "--allow-unmasked in assisted mode: refused, the human's command printed", args: ["run", "--allow-unmasked", "PIN", "--omit", "PORT", ...runChildArgs()], env: ASSISTED }),
+  v({ id: "assisted.no-redact-refused", title: "--no-redact in assisted mode: refused", args: ["run", "--no-redact", "--export-context", ...runChildArgs()], env: ASSISTED }),
+  v({ id: "assisted.no-values", title: "nothing stored: said as a fact", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, []), disclosed([]), CONTRACT_NONE] }),
+  v({ id: "assisted.dotenv", title: "a .env file is named, never read", args: ["run", ...runChildArgs()], env: ASSISTED, files: { ...SIGNED_IN, "repo/.env": "API_KEY=never-read-value\n" }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "assisted.omit", title: "--omit in assisted mode: the agent is told to name it", args: ["run", "--omit", "PORT", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), disclosed([{ name: "API_KEY", value: RUN_SECRET }]), CONTRACT_NONE] }),
+  // The human's override outside assisted mode
+  v({ id: "override.allow-unmasked", title: "--allow-unmasked PIN: PIN shown, every other Secret masked", args: ["run", "--allow-unmasked", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }]), CONTRACT_NONE] }),
+  v({ id: "override.unused", title: "an allowance that names no short Secret: said, ignored", args: ["run", "--allow-unmasked", "PORT", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "override.short-other", title: "another short Secret still stops the run", args: ["run", "--allow-unmasked", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM, { name: "PIN2", sensitive: true, source: "self", value: null }])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }, { name: "PIN2", value: "5678" }]), CONTRACT_NONE] }),
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
@@ -1042,4 +1166,5 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1e-session": session51e,
   "5.3a-values": values53a,
   "5.3b-contracts": contracts53b,
+  "5.4b-run": run54b,
 };

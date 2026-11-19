@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { contractItem, revision } from "./fixtures.js";
 import { EXIT } from "../src/exitCodes.js";
 import { commandHelp } from "../src/usage.js";
-import { cliCommand, goLacksCommand } from "./cliUnderTest.js";
+import { cliCommand, goLacks, goLacksCommand } from "./cliUnderTest.js";
 
 /** A new revision's id, of the server's shape (a prefix and 26 characters of lower-case base32). */
 const NEW_REVISION = `rev_${"new".padEnd(26, "a")}`;
@@ -311,7 +311,9 @@ describe("exit statuses", () => {
     ["values list", ["values", "list"]],
     ["an agent-safe run", ["run", "--agent-safe", "--agent", "coder", "--allow-host", "api.example.com", "--", "true"]],
     ["an agent-safe strict run", ["run", "--agent-safe", "--strict", "--agent", "coder", "--allow-host", "api.example.com", "--", "true"]],
-  ].filter(([, args]) => !goLacksCommand((args as string[])[0] as string)) as [string, string[]][])("a server that cannot be reached: 69 for %s, naming the cause, without a stack trace", async (_name, args) => {
+  ]
+    // An agent-safe run is slice 5.5b of the Go CLI.
+    .filter(([name, args]) => !goLacksCommand((args as string[])[0] as string) && !(String(name).startsWith("an agent-safe") && goLacks("5.5b"))) as [string, string[]][])("a server that cannot be reached: 69 for %s, naming the cause, without a stack trace", async (_name, args) => {
     const port = await closedPort();
     const sep = args.indexOf("--");
     const withServer = sep < 0 ? [...args, "--server", `http://127.0.0.1:${port}`] : [...args.slice(0, sep), "--server", `http://127.0.0.1:${port}`, ...args.slice(sep)];

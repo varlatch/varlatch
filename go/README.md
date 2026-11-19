@@ -547,6 +547,39 @@ comes. `verify-release`, which the installers run, is Go's own.
   occurrences likewise, and 12 relays. Matching is linear in the input,
   however many matches one chunk holds (`TestMatcherIsLinear`; the
   TypeScript merge is quadratic per chunk, step 5 defect 29).
+- `run` (slice 5.4b): `internal/cli`'s `run.go`, `runchild.go`,
+  `exportcontext.go` and `assistedrun.go` (main.ts's `run` case,
+  `inject.ts`, `exportContext.ts`, `assistedRun.ts`):
+  - **A default run.** The command gets this process's environment with
+    every delivered value over it. An inherited `VARLATCH_RUN_CONTEXT` is
+    removed. `--omit` leaves items out, delivered or inherited, and is
+    checked before any Secret is disclosed. A disclosure refused for
+    permission or the tailnet continues with the plain values, and says so.
+  - **`--export-context`.** The run context, after the two reads agree on
+    their state digest (three attempts).
+  - **Assisted mode.** The command's stdout and stderr go through
+    `internal/matcher`. A Secret too short to mask stops the run (78), with
+    its remedies. `--allow-unmasked` and `--no-redact` are refused there.
+  - **The human's override.** `--allow-unmasked NAME`, outside assisted
+    mode.
+  - **Signals.** `SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`, `SIGUSR1` and
+    `SIGUSR2` are forwarded to the command; Windows has only Ctrl-C and a
+    stop. An interrupting one makes the relay discard what it holds. The
+    status is the command's own, or 128 plus the number of the signal that
+    ended it.
+  - **Held output.** A clean end of the command's stream releases the bytes
+    held as a possible start of a value unchanged, as TypeScript does: they
+    can no longer complete a match.
+  - **A closed stdout or stderr.** It fails the relay's write (EPIPE)
+    instead of ending the CLI: SIGPIPE is handled while the relay runs, and
+    the command starts with SIGPIPE's default
+    (`TestRunSurvivesAClosedStdout`).
+  - **Finding the command.** As libuv does: in the command's own `PATH` on
+    POSIX; on Windows, `.com` or `.exe` only, a `.bat` or `.cmd` file
+    refused (decision 4, `TestLookCommandAsLibuv`).
+  - **Not built yet.** `--strict` (5.4f), `--redact` outside assisted mode
+    (5.4c), `--agent-safe` and a run inside an agent-safe run (5.5b) refuse
+    with the CLI's not-built message (64).
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden
@@ -604,6 +637,7 @@ it to the recording.
 | `contract` and secret values (`contract-show-sensitive-default`, `unrecognized-id`) | not compared | the default of each item a Contract does not mark `sensitive: false`, in a pushed Contract or the one `contract show` prints, is a value in flight (redacted wherever output repeats it), and `contract show` prints it as `[redacted]`, every string and every object key of the document through the composed masker (the bearer, the run's secrets, token formats; a masked key kept unique as `[redacted] (2)`, ...); a sensitive default of a `--schema` file is in flight from the moment it is parsed; `contract activate` repeats the id only when it has the server's shape, else `Activated the revision.`; a push answer's `active` counts only as a boolean, and an environment list whose items lack a string id or name is refused before the push (status 1) | A Contract's sensitive default is a Secret; a server or a mistyped argument never puts one on the terminal (`TestContractNeverShowsASecret`, `TestContractPushReadsTheProtocolsTypes`) |
 | `.env.schema` errors never quote the file (`env-schema-value-free`) | the package's message, with part of the line it cannot read | `.env.schema line <n>: Unrecognized line (not shown, since it may hold a value)`, and the same for text after a value, a malformed decorator, and an unsupported `@required`, `@sensitive` or `@type` form; every other message as the package words it, except that a reason holding a decorator (`@rotationGrace appears twice for this item`) is put before the line's place, `<reason> (.env.schema line <n>)`, and two reasons say "as in" where the package puts a colon before a decorator, so the fail-safe never reads the colon and the at-sign as a password (`TestErrorsReadAfterTheFailSafe`) | A file given as `--schema` by mistake may be a `.env` holding values; the status (1) is the same (`internal/envschema` `TestErrorsNeverQuoteTheFile`, and the vectors with these six messages mapped) |
 | A server's identifier or hash of another shape (`unrecognized-id`) | shown as it is (escaped) | a version or revision id that is not the server's shape (a prefix and 26 characters of lower-case base32) is shown as `an unrecognized id`, a revision's content hash that is not `sha256:` and 64 hex digits as `an unrecognized hash`, and `contract push`'s answer the same way (its semantics version, when it is not a whole number from 1 to 999, as `an unrecognized version`). An id or hash that holds a value in flight is not shown either, since redaction would rewrite it: `contract push` prints `null` for it in `--json` and the placeholder in text, with a note on stderr, and no activation hint without an id; `values set`/`rotate` and `import` show the placeholder (`TestContractIdentifiersAreNeverRewritten`) | A server never puts free text where the CLI shows an id; the status is the same |
+| The order of the command's environment (`run`) | the parent's variables in the order the process got them, then the delivered ones | the parent's variables sorted by name, then the delivered ones (a variable set again keeps its place) | No program reads its environment's order; the values are the same (`5.4b-run` transcripts) |
 | `validate` and `import` show only documented fields | not compared | `validate` refuses a report whose lists are not the protocol's shape (each an array of names, or of objects whose documented members are strings; `valid` and `complete` booleans; a present `null` for any of them is not that shape, while an omitted `complete` or list, from a server before it, keeps its fallback) before judging or printing anything: `varlatch validate: the server's answer is not a validation report (<where> has an unexpected shape); nothing was judged.`, status 1; of a report of that shape it shows the documented members only, a requirement or reason outside the protocol's enumerations as `an unrecognized requirement` or `an unrecognized reason`; `import` shows a Contract item's type outside the Contract's types as `an unrecognized type` and its sensitivity as a boolean, in `--json`, human text and `--dry-run` alike | A server never puts an extra field, or a value, into what the CLI prints; a report or Contract of the protocol's shape gives the same bytes (`TestServerFieldsNeverPassThrough`, `TestValidateRefusesAReportOfAnotherShape`) |
 | `import --delete-source` and its source | not compared | the source must be a regular file named directly: a symbolic link (deleting it would leave the values in the file it points to), a directory, a device or a pipe is refused before anything is read or sent (1); the file is opened without following a link and read from what was opened, and deleted only if it still holds those bytes and the path still names that same file, so a file put in its place while importing is never removed; `deleted` is true only when the path is gone | `--delete-source` removes exactly the copy of the values that was imported, or says it did not (`TestDeleteSourceRemovesOnlyTheFileRead`) |
 | `generated` (a pattern of the transcripts, not a behaviour) | the value `--generate` made, recorded by its generator as `{{generated <spec>}}` | the value Go sent, recorded the same way when it has exactly the alphabet and length the spec gives and appears nowhere in the output; otherwise a value-free note (`{{generated value of another shape}}`, `{{generated value shown in the output}}`), so neither a recording nor a failing comparison holds the value | Random in both CLIs (`internal/transcript` `TestGeneratedPatternIsExact`) |
