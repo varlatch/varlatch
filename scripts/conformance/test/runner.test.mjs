@@ -75,6 +75,7 @@ before(() => {
   writeFileSync(join(dst, "stub-handover.mjs"), `
 const ok = Boolean(process.env.VARLATCH_HANDOVER_CLI) && process.env.VARLATCH_CLI_NATIVE === "1";
 console.log(\`\${process.env.STUB_MODE === "handover-na" ? "N/A" : ok ? "PASS" : "FAIL"}  [handover.both] handover.both\`);
+console.log("END  [handover]");
 `);
 
   // The suite: what it prints and how it ends, by STUB_MODE.
@@ -84,11 +85,24 @@ const line = (status, id) => console.log(\`\${status}  [\${id}] \${id}\`);
 // A CLI step and the checks that depend on it, judged through suite-kit.
 // A refused agent-safe run, as in the broker suite: the claim "the refused
 // run issued nothing" holds only once the refusal itself was observed.
-if (mode.startsWith("step-") || mode.startsWith("raw-")) {
+const kitMode = mode.startsWith("step-") || mode.startsWith("raw-");
+if (mode === "step-kit-natural") {
+  // Every check but the lacking one, and no finish(): the script's natural
+  // end prints the marker (beforeExit).
+  const { reporter } = await import("./suite-kit.mjs");
+  const kit = reporter();
+  for (const id of ${JSON.stringify(coreChecks)}) kit.check(id, id, true);
+  kit.check("stub.base", "stub.base", true);
+} else if (kitMode) {
   const { reporter, cliCommand } = await import("./suite-kit.mjs");
   const { spawnSync } = await import("node:child_process");
   const kit = reporter();
   for (const id of ${JSON.stringify(coreChecks)}) kit.check(id, id, true);
+  if (mode === "step-kit-fail-then-crash") {
+    // An expected FAIL, then a crash before the lacking check.
+    kit.check("stub.base", "stub.base", false);
+    throw new Error("the stub suite crashed after a failure");
+  }
   if (mode === "raw-not-built") {
     // A suite that prints NOT-BUILT itself, whatever the CLI did.
     console.log(\`NOT-BUILT  [stub.base] \${process.env.STUB_RAW_LINE}\`);
@@ -121,14 +135,20 @@ if (mode.startsWith("step-") || mode.startsWith("raw-")) {
   }
   kit.finish();
 }
-if (mode === "crash") throw new Error("the stub suite crashed");
-if (mode === "exit-early") process.exit(3);
-for (const id of ${JSON.stringify(coreChecks)}) line("PASS", id);
-line(mode === "base-fails" ? "FAIL" : "PASS", "stub.base");
-if (mode !== "scan-silent") line(mode === "scan-fails" ? "FAIL" : "PASS", "stub.scanned");
-if (mode === "predates") { line("PREDATES-CLI", "stub.featured"); }
-if (mode === "predates-plain") { line("PREDATES-CLI", "stub.plain"); }
-if (mode === "pass-skipped") { line("PASS", "stub.plain"); }
+if (!kitMode) {
+  if (mode === "crash") throw new Error("the stub suite crashed");
+  if (mode === "exit-early") process.exit(3);
+  for (const id of ${JSON.stringify(coreChecks)}) line("PASS", id);
+  line(mode === "base-fails" || mode === "fail-then-crash" ? "FAIL" : "PASS", "stub.base");
+  if (mode === "fail-then-crash") throw new Error("the stub suite crashed after a failure");
+  if (!mode.startsWith("scan-silent")) line(mode === "scan-fails" ? "FAIL" : "PASS", "stub.scanned");
+  if (mode === "predates") { line("PREDATES-CLI", "stub.featured"); }
+  if (mode === "predates-plain") { line("PREDATES-CLI", "stub.plain"); }
+  if (mode === "pass-skipped") { line("PASS", "stub.plain"); }
+  // The end-of-suite marker, as suite-kit's reporter prints it; never in the
+  // modes that end without it.
+  if (!mode.endsWith("no-end")) console.log("END  [stub]");
+}
 `);
 
   // The target: a local server answering 501 to everything.
@@ -402,4 +422,37 @@ test("the runner: a TypeScript CLI never takes the not-built path, whatever it p
   const raw = run("raw-not-built", "", "source", undefined, { STUB_RAW_LINE: NOT_BUILT_LINE });
   assert.equal(raw.status, 1, raw.out);
   assert.match(raw.out, /stub\.base reported NOT-BUILT, which only the Go CLI's refusal gives; the CLI under test is source/);
+});
+
+// The end-of-suite marker (suite-kit's reporter prints END  [<suite>]): a
+// suite that did not end never counts its unreported checks as lacking.
+
+test("the runner: a crash after an expected FAIL fails the run, and the unreported lacking check is no client-lacks", () => {
+  for (const mode of ["fail-then-crash", "step-kit-fail-then-crash"]) {
+    const r = run(mode, "", "go:/stub/varlatch");
+    assert.equal(r.status, 1, `${mode}: ${r.out}`);
+    assert.match(r.out, /stub: did not finish: no end-of-suite marker/, mode);
+    assert.notEqual(outcomeOf(r.report, "stub.scanned"), "client-lacks", mode);
+    assert.equal(outcomeOf(r.report, "stub.scanned"), "fail", mode);
+  }
+});
+
+test("the runner: a suite that ends normally gets client-lacks for its unreported lacking checks", () => {
+  for (const mode of ["scan-silent", "step-kit-natural"]) {
+    const r = run(mode, "", "go:/stub/varlatch");
+    assert.equal(r.status, 0, `${mode}: ${r.out}`);
+    assert.equal(outcomeOf(r.report, "stub.scanned"), "client-lacks", mode);
+    assert.equal(outcomeOf(r.report, "stub.base"), "pass", mode);
+  }
+});
+
+test("the runner: a suite without its end-of-suite marker fails the run, even with no crash and no failure", () => {
+  // Every check reported and passed, the exit is 0: still no marker, no pass.
+  const ts = run("plain-no-end");
+  assert.equal(ts.status, 1, ts.out);
+  assert.match(ts.out, /stub: did not finish: no end-of-suite marker/);
+  // The Go CLI: the lacking check it did not report is not client-lacks.
+  const go = run("scan-silent-no-end", "", "go:/stub/varlatch");
+  assert.equal(go.status, 1, go.out);
+  assert.equal(outcomeOf(go.report, "stub.scanned"), "fail");
 });

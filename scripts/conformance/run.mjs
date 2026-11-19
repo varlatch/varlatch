@@ -398,11 +398,15 @@ async function main() {
       // the runner, unless the target already lacks what it needs.
       const clientLacked = new Set(ids.filter((id) => clientLacking.has(id) && !lacked.has(id) && !(missing.length > 0 && inventory.checks[id].kind in TARGET_SPECIFIC)));
       // A lacking check that ran and failed keeps its FAIL (`failed`): only
-      // a check that gave no verdict reports client-lacks.
-      const reportLacks = (failed = new Set()) => {
+      // a check that gave no verdict reports client-lacks. A check the suite
+      // never reported counts as lacking only when the runner did not start
+      // the suite or the suite ended (its end-of-suite marker); after a
+      // crash it is not reported here, and fails as unreported
+      // (`unreported`, the checks that gave no verdict of their own).
+      const reportLacks = (failed = new Set(), unreported = new Set()) => {
         for (const id of lacked) reports.push({ suite: entry.suite, id, status: "TARGET-LACKS", text: `the target lacks ${lacking.get(id).join(", ")}`, runner: true });
         for (const id of clientLacked) {
-          if (!failed.has(id)) reports.push({ suite: entry.suite, id, status: "CLIENT-LACKS", text: `the CLI lacks ${clientLacking.get(id).join(", ")}`, runner: true });
+          if (!failed.has(id) && !unreported.has(id)) reports.push({ suite: entry.suite, id, status: "CLIENT-LACKS", text: `the CLI lacks ${clientLacking.get(id).join(", ")}`, runner: true });
         }
       };
       if (missing.length > 0) {
@@ -447,12 +451,14 @@ async function main() {
       // features the Go CLI claims to have (decision 3), so its feature
       // goes in its cliNeeds and client-go.json, or gets built.
       const notBuiltRefused = [];
+      const observedNotBuilt = new Set();
       for (const r of parsed.results.filter((r) => r.status === "NOT-BUILT")) {
         if (cli.spec !== "go") {
           errors.push({ suite: entry.suite, message: `${r.id} reported NOT-BUILT, which only the Go CLI's refusal gives; the CLI under test is ${cli.spec}` });
         } else if (!NOT_BUILT.test(r.text)) {
           errors.push({ suite: entry.suite, message: `${r.id} reported NOT-BUILT with ${JSON.stringify(r.text.slice(0, 200))}, which is not the Go CLI's not-built refusal` });
         } else if (lacked.has(r.id) || clientLacked.has(r.id)) {
+          observedNotBuilt.add(r.id);
           report.clientLacks.notBuilt.push({ id: r.id, refusal: r.text });
         } else {
           notBuiltRefused.push({
@@ -493,7 +499,22 @@ async function main() {
         }
         reports.push({ suite: entry.suite, ...r });
       }
-      reportLacks(failed);
+      // The suite ended only when it printed its own end-of-suite marker
+      // (suite-kit's reporter does). Without it, it crashed or exited
+      // before its end, whatever it reported before: the run fails, and
+      // the lacking checks it did not report are not counted as lacking.
+      const ended = parsed.ended === entry.suite;
+      if (!ended && !out.timedOut) {
+        errors.push({
+          suite: entry.suite,
+          message: parsed.ended
+            ? `ended with the marker of another suite (${parsed.ended})`
+            : `did not finish: no end-of-suite marker (it crashed, or exited before its end); the checks it did not report fail`,
+        });
+      }
+      const reportedIds = new Set(parsed.results.map((r) => r.id));
+      const unreported = ended ? new Set() : new Set([...clientLacked].filter((id) => !reportedIds.has(id) && !observedNotBuilt.has(id)));
+      reportLacks(failed, unreported);
       for (const message of parsed.errors) errors.push({ suite: entry.suite, message });
       // A failed check explains a non-zero exit.
       const failedResults = anyFailed;

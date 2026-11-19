@@ -35,6 +35,12 @@
  * same for the checks that depend on that step and that the suite will not
  * judge, so it can skip their work: each check's NOT-BUILT comes from its
  * own step. A TypeScript CLI never takes this path, whatever it prints.
+ *
+ * A suite that ends prints `END  [<suite>]` after its last result: the
+ * reporter does it in `finish()`, and when the script runs to its natural
+ * end without calling it. A crash (an uncaught exception or rejection) or a
+ * `process.exit` elsewhere prints none, and the runner fails the run: what
+ * the suite did not report then never counts as lacking.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -98,6 +104,16 @@ export function notBuiltRefusal(result) {
 
 export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
   let failures = 0;
+  // The end-of-suite marker, once: from finish(), or when the event loop
+  // empties at the script's natural end (beforeExit, which neither a crash
+  // nor process.exit emits).
+  let ended = false;
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    console.log(`END  [${process.env.CONFORMANCE_SUITE || "suite"}]`);
+  };
+  process.once("beforeExit", end);
   const skipped = new Set();
   const skippedGroups = new Set();
   const reported = new Set();
@@ -217,6 +233,7 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
       return failures;
     },
     finish(summary) {
+      end();
       if (failures > 0) {
         if (summary) console.error(`${failures} ${summary} failed`);
         process.exit(1);

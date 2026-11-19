@@ -47,3 +47,13 @@ test("resultLine writes what parseSuiteOutput reads, and only known statuses", (
   assert.deepEqual(parseSuiteOutput(line).results, [{ status: "PASS", id: "request-budget.no-unexpected-429", text: "no 429" }]);
   assert.throws(() => resultLine("SKIP", "a.b", "x"));
 });
+
+test("the end-of-suite marker names the suite that ended; without it, none did", () => {
+  assert.equal(parseSuiteOutput("PASS  [a.one] one\nEND  [a]\n").ended, "a");
+  assert.equal(parseSuiteOutput("PASS  [a.one] one\n").ended, null);
+  // A marker is not a result, and an ill-formed one is the suite's own output.
+  const parsed = parseSuiteOutput("END  [a]\r\nEND [b]\n");
+  assert.equal(parsed.ended, "a");
+  assert.deepEqual(parsed.results, []);
+  assert.deepEqual(parsed.errors, []);
+});

@@ -12,6 +12,9 @@
  *                                    --cli go, and fails the run for any other
  *                                    CLI, so it never reaches a verdict
  *   ERROR  <message>                 a problem outside any one check
+ *   END  [<suite>]                   the suite ended (suite-kit's reporter prints
+ *                                    it); without it the suite crashed or exited
+ *                                    early, and the run fails
  *
  * Any other line is the suite's own output. A line that starts with FAIL but
  * names no check is a failure nobody can attribute, so it counts as an error.
@@ -28,12 +31,15 @@ export const RUNNER_STATUSES = ["TARGET-LACKS", "CLIENT-LACKS"];
 const RUNNER_ONLY = /^(?:TARGET|CLIENT)-LACKS\b/;
 const RESULT = /^(PASS|FAIL|N\/A|PREDATES-CLI|NOT-BUILT) {2}\[([^\]\s]+)\](?: (.*))?$/;
 const ERROR = /^ERROR {2}(.*)$/;
+const END = /^END {2}\[([^\]\s]+)\]$/;
 const UNNAMED_FAILURE = /^FAIL\b/;
 
 /** Parses one suite's whole output. */
 export function parseSuiteOutput(text) {
   const results = [];
   const errors = [];
+  // The suite named by its end-of-suite marker; null without one.
+  let ended = null;
   for (const raw of text.split("\n")) {
     const line = raw.replace(/\r$/, "");
     const result = RESULT.exec(line);
@@ -41,12 +47,17 @@ export function parseSuiteOutput(text) {
       results.push({ status: result[1], id: result[2], text: result[3] ?? "" });
       continue;
     }
+    const end = END.exec(line);
+    if (end) {
+      ended = end[1];
+      continue;
+    }
     const error = ERROR.exec(line);
     if (error) errors.push(error[1]);
     else if (RUNNER_ONLY.test(line)) errors.push(`only the runner reports target-lacks and client-lacks: ${line.slice(0, 300)}`);
     else if (UNNAMED_FAILURE.test(line)) errors.push(`a failure that names no check: ${line.slice(0, 300)}`);
   }
-  return { results, errors };
+  return { results, errors, ended };
 }
 
 /** A result line, as a suite prints it; the runner uses it for the checks it reports itself. */

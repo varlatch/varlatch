@@ -82,6 +82,8 @@ const suite = process.env.CONFORMANCE_SUITE;
 const line = (status, id) => console.log(\`\${status}  [\${id}] \${id}\`);
 for (const id of ${JSON.stringify(reported)}[suite]) line("PASS", id);
 if (suite === "alpha") line(process.env.STUB_MODE === "alpha-passes" ? "PASS" : "FAIL", "alpha.flaky");
+// The end-of-suite marker, as suite-kit's reporter prints it.
+console.log(\`END  [\${suite}]\`);
 `);
 
   writeFileSync(join(dst, "targets/stub.mjs"), `
