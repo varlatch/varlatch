@@ -38,7 +38,9 @@ on:
   # Main gets no push run: each merge commit was tested in the merge queue.
   push:
     branches: [rewrite/go]
-    # The same paths as the changes job's patterns.
+    # The same paths as the changes job's patterns (PATTERNS, CLI_PATTERNS
+    # and CONFORMANCE_PATTERNS; scripts/conformance/test/routing.test.mjs
+    # checks it).
     paths:
       - "go/**"
       - ".github/workflows/go.yml"
@@ -77,6 +79,29 @@ on:
       - "scripts/conformance/client-go.json"
       # Line ends on checkout (the Windows jobs).
       - ".gitattributes"
+      # CONFORMANCE_PATTERNS: what the conformance cells build and read.
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "services/*/package.json"
+      - "convex/package.json"
+      - ".npmrc"
+      - ".pnpmfile.cjs"
+      - "tsconfig.base.json"
+      - "apps/web/**"
+      - "apps/cli/**"
+      - "packages/**"
+      - "scripts/conformance/**"
+      - "scripts/ci-e2e.sh"
+      - "services/varlatchd/scripts/e2e-*.mjs"
+      - "services/varlatchd/src/**"
+      - "services/varlatchd/test/go-*"
+      - "services/varlatchd/test/helpers/**"
+      - "services/varlatchd/vitest.config.ts"
+      - "services/varlatchd/tsconfig.json"
+      - "scripts/ci-shell.sh"
+      - "scripts/redact-output.mjs"
+      - "scripts/redact-tokens.mjs"
   workflow_dispatch:
   # Nightly on main: every Go job, and the cache every pull request restores.
   schedule:
@@ -169,17 +194,25 @@ jobs:
           # packages/sdk with its workspace dependencies, from their sources;
           # the conformance harness as ci.yml's conformance tier defines it
           # (the runner, its libraries and data, clients.json included, the
-          # suites and the e2e scripts they run); and the shell and the
-          # redaction the jobs' steps run through. Neither cell reads the
-          # TypeScript server's or Convex's sources (services/varlatchd/src,
-          # convex/): pnpm build compiles them, and ci.yml's test job fails
-          # on a build that breaks. These, PATTERNS and CLI_PATTERNS select
-          # both cells (go-binary, go-binary-go-cli).
+          # suites and the e2e scripts they run, and the TypeScript server
+          # source one of them imports); go-binary's G3 steps, which run the
+          # TypeScript server's own code (vitest in services/varlatchd: its
+          # go-* tests, their helpers and setup, its config and the server's
+          # source); and the shell and the redaction the jobs' steps run
+          # through. Only Convex's source (convex/) is read by neither: pnpm
+          # build compiles it, and ci.yml's test job fails on a build that
+          # breaks. The workspace's manifests are its packages' alone
+          # (pnpm-workspace.yaml; apps/docs is a workspace of its own). These,
+          # PATTERNS and CLI_PATTERNS select both cells (go-binary,
+          # go-binary-go-cli); scripts/conformance/test/routing.test.mjs
+          # checks that every file the suites and the G3 steps import or
+          # load is selected.
           CONFORMANCE_PATTERNS: |
             pnpm-lock.yaml
             pnpm-workspace.yaml
             package.json
-            */package.json
+            services/*/package.json
+            convex/package.json
             .npmrc
             .pnpmfile.cjs
             tsconfig.base.json
@@ -189,6 +222,11 @@ jobs:
             scripts/conformance/*
             scripts/ci-e2e.sh
             services/varlatchd/scripts/e2e-*.mjs
+            services/varlatchd/src/*
+            services/varlatchd/test/go-*
+            services/varlatchd/test/helpers/*
+            services/varlatchd/vitest.config.ts
+            services/varlatchd/tsconfig.json
             scripts/ci-shell.sh
             scripts/redact-output.mjs
             scripts/redact-tokens.mjs
