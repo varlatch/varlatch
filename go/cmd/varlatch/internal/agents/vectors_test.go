@@ -258,12 +258,13 @@ func TestInstallVectors(t *testing.T) {
 			// Linux; on Windows both CLIs join them with backslashes, so a
 			// scenario whose outcomes name a path below its directory is
 			// compared there with TypeScript's Windows recording.
+			windowsRecorded := false
 			if runtime.GOOS == "windows" && pathBelowDir.MatchString(js(s.Value("steps"))) {
 				w, ok := windows[name]
 				if !ok {
 					t.Fatal("no Windows expectation: record one (apps/cli/test/goWindows.ts)")
 				}
-				s = w
+				s, windowsRecorded = w, true
 			}
 			dir := filepath.Join(scratch, "s"+jsjson.Number(float64(i)))
 			for _, sub := range []string{"project", "home"} {
@@ -283,9 +284,9 @@ func TestInstallVectors(t *testing.T) {
 						got = want
 					}
 				}
-				if runtime.GOOS == "windows" {
-					// go/README.md, `skill-order`: the skill's files as a
-					// multiset in each run.
+				if runtime.GOOS == "windows" && !windowsRecorded {
+					// go/README.md, `skill-order`: against a Linux recording,
+					// the skill's files as a multiset in each run.
 					got, want = skillOrderFree(got), skillOrderFree(want)
 				}
 				if js(got) != js(want) {
@@ -443,8 +444,9 @@ func treeOf(t *testing.T, dir, version string) jsjson.Object {
 }
 
 // skillOrderFree is a step's outcome with the skill's files in sorted runs,
-// for Windows (go/README.md, `skill-order`): its result's changes, by path,
-// and its lines (transcript.SkillOrderFree's rule).
+// for a scenario replayed on Windows against its Linux recording
+// (go/README.md, `skill-order`): its result's changes, by path, and its
+// lines (transcript.SkillOrderFree's rule).
 func skillOrderFree(v any) any {
 	o, ok := v.(jsjson.Object)
 	if !ok {
@@ -474,17 +476,4 @@ func skillOrderFree(v any) any {
 		out[i] = jsjson.Member{Key: m.Key, Value: value}
 	}
 	return out
-}
-
-// TestWindowsAgentVectorsKeepSkillFilesSorted: the Windows recording holds
-// each run of the skill's files sorted, as skillOrderFree leaves it.
-func TestWindowsAgentVectorsKeepSkillFilesSorted(t *testing.T) {
-	for name, s := range windowsScenarios(t) {
-		for i, raw := range asList(s.Value("steps")) {
-			outcome := raw.(jsjson.Object).Value("outcome")
-			if js(skillOrderFree(outcome)) != js(outcome) {
-				t.Errorf("%s step %d: the skill's files are not in sorted runs", name, i)
-			}
-		}
-	}
 }

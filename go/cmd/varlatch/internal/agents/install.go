@@ -727,7 +727,7 @@ func pruneEmpty(w *writer, root, base string) error {
 		if err != nil || !info.IsDir() {
 			return nil
 		}
-		entries, err := os.ReadDir(dir)
+		entries, err := readDir(dir)
 		if err != nil {
 			return err
 		}
@@ -738,7 +738,7 @@ func pruneEmpty(w *writer, root, base string) error {
 				}
 			}
 		}
-		if entries, err = os.ReadDir(dir); err != nil {
+		if entries, err = readDir(dir); err != nil {
 			return err
 		}
 		if len(entries) == 0 {
@@ -753,7 +753,7 @@ func pruneEmpty(w *writer, root, base string) error {
 		if !exists(dir) {
 			break
 		}
-		entries, err := os.ReadDir(dir)
+		entries, err := readDir(dir)
 		if err != nil {
 			return err
 		}

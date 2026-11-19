@@ -59,11 +59,13 @@ var versionLine = regexp.MustCompile(`^varlatch \S+ \(migration \d+\)\n$`)
 // differences are the Go CLI's accepted differences (go/README.md), by the
 // name a recorded case gives.
 var differences = map[string]transcript.Difference{
-	// On Windows the TypeScript CLI's order of the skill's files in
-	// `agents install`'s changes varies between runs; Go lists them sorted.
-	// Accepted only where the two stdouts are the same with each run of
+	// On Windows both CLIs walk the skill directories in NTFS's order, not
+	// the sorted order a Linux recording holds. For a case replayed on
+	// Windows against its Linux recording (no Windows expectation), Go's
+	// stdout is accepted where the two are the same with each run of
 	// skill-file entries sorted (transcript.SkillOrderFree): nothing added
-	// or dropped, everything else in place.
+	// or dropped, everything else in place. A Windows-recorded case is
+	// compared exactly.
 	"skill-order": func(want *transcript.Outcome, got transcript.Outcome) {
 		if transcript.SkillOrderFree(want.Stdout) == transcript.SkillOrderFree(got.Stdout) {
 			want.Stdout = got.Stdout
@@ -509,15 +511,16 @@ func TestTranscripts(t *testing.T) {
 				// paths with backslashes there. Every other case replays
 				// against its Linux recording, the directory inside a JSON
 				// string included (transcript.UnfillDir).
-				if runtime.GOOS == "windows" && expectsPath(t, c) {
-					w, ok := windows[f.Area][c.ID]
-					if !ok {
-						t.Fatal("no Windows expectation: record one (apps/cli/test/goWindows.ts)")
-					}
-					c.Expect = w
-				}
 				if runtime.GOOS == "windows" {
-					c.Differences = append(slices.Clone(c.Differences), "skill-order")
+					if expectsPath(t, c) {
+						w, ok := windows[f.Area][c.ID]
+						if !ok {
+							t.Fatal("no Windows expectation: record one (apps/cli/test/goWindows.ts)")
+						}
+						c.Expect = w
+					} else {
+						c.Differences = append(slices.Clone(c.Differences), "skill-order")
+					}
 				}
 				t.Parallel()
 				slots <- struct{}{}
@@ -717,20 +720,6 @@ func TestValueFreeUsageIsExact(t *testing.T) {
 		differences["value-free-usage"](&want, transcript.Outcome{Stderr: got})
 		if (want.Stderr == got) != accepted {
 			t.Errorf("%q: accepted %v, want %v", got, want.Stderr == got, accepted)
-		}
-	}
-}
-
-// TestWindowsRecordingsKeepSkillFilesSorted: the Windows recordings hold
-// each run of the skill's files sorted (goWindows.ts's skillOrderFree), so
-// the recorder and transcript.SkillOrderFree agree and a recording does not
-// depend on the order the TypeScript CLI walked in.
-func TestWindowsRecordingsKeepSkillFilesSorted(t *testing.T) {
-	for area, cases := range windowsExpectations(t) {
-		for id, want := range cases {
-			if transcript.SkillOrderFree(want.Stdout) != want.Stdout {
-				t.Errorf("windows/%s.json %s: the skill's files are not in sorted runs", area, id)
-			}
 		}
 	}
 }

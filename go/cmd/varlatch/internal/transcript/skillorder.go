@@ -10,13 +10,14 @@ import (
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
-// The order of the varlatch skill's files in `agents install`'s changes is
-// the order the TypeScript CLI walks the skill directories in: sorted on
-// Linux and macOS, but on Windows it varies between runs, while the Go CLI
-// lists them sorted everywhere (go/README.md, `skill-order`). Windows
-// recordings and replays compare these lines as a multiset: each run of
-// consecutive skill-file entries is sorted before the comparison, nothing
-// added or dropped. apps/cli/test/goWindows.ts's skillOrderFree is the same.
+// The TypeScript CLI walks the skill directories in the file system's
+// order: sorted on Linux and macOS, NTFS's case-insensitive order on
+// Windows (references/ before SKILL.md), and the Go CLI walks them the same
+// way. A case recorded on Linux and replayed on Windows therefore lists the
+// skill's files in another order; such a case compares them as a multiset
+// (go/README.md, `skill-order`): each run of consecutive skill-file entries
+// is sorted before the comparison, nothing added or dropped. A case
+// recorded on Windows is compared exactly.
 
 // skillFile matches a path, or a line, that names one of the skill's files.
 var skillFile = regexp.MustCompile(`\.(agents|claude)[/\\]skills[/\\]varlatch[/\\]`)

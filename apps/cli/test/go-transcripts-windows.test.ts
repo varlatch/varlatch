@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TRANSCRIPT_DIR, TRANSCRIPT_SCHEMA, type RecordedCase, type TranscriptFile, bundleCli, recordCase, writeOrCompare } from "./goKit.js";
 import { AREAS } from "./goTranscriptCases.js";
-import { PATH_BELOW_DIR, RECORD_WINDOWS, WINDOWS_COMMENT, readRecording, skillOrderFree, windowsFile } from "./goWindows.js";
+import { PATH_BELOW_DIR, RECORD_WINDOWS, WINDOWS_COMMENT, readRecording, windowsFile } from "./goWindows.js";
 
 /**
  * The transcripts' Windows expectations (goWindows.ts): on Windows, each
@@ -45,8 +45,7 @@ describe.runIf(RECORD_WINDOWS)("Go CLI transcripts, Windows expectations", () =>
       for (const c of cases) {
         if (!needed.has(c.id)) continue;
         const { expect: outcome } = await recordCase(bundle, c);
-        // The skill's files in sorted runs: their order varies between runs on Windows.
-        recorded.push({ id: c.id, expect: { ...outcome, stdout: skillOrderFree(outcome.stdout) } });
+        recorded.push({ id: c.id, expect: outcome });
       }
       const file: WindowsTranscriptFile = { schema: TRANSCRIPT_SCHEMA, comment: WINDOWS_COMMENT, area, platform: "windows", cases: recorded };
       const result = writeOrCompare(windowsFile(linuxFile), `${JSON.stringify(file, null, 2)}\n`);
