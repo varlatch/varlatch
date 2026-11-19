@@ -6,6 +6,11 @@
  *   FAIL  [<check id>] ...
  *   N/A  [<check id>] ...            the check does not apply to this target
  *   PREDATES-CLI  [<check id>] ...   the CLI under test is older than the feature
+ *   NOT-BUILT  [<check id>] <line>   the Go CLI refused a step the check depends
+ *                                    on as not built yet (suite-kit's NOT_BUILT);
+ *                                    the runner turns it into client-lacks for
+ *                                    --cli go, and fails the run for any other
+ *                                    CLI, so it never reaches a verdict
  *   ERROR  <message>                 a problem outside any one check
  *
  * Any other line is the suite's own output. A line that starts with FAIL but
@@ -21,7 +26,7 @@ export const STATUSES = ["PASS", "FAIL", "N/A", "PREDATES-CLI"];
 /** The results only the runner reports. */
 export const RUNNER_STATUSES = ["TARGET-LACKS", "CLIENT-LACKS"];
 const RUNNER_ONLY = /^(?:TARGET|CLIENT)-LACKS\b/;
-const RESULT = /^(PASS|FAIL|N\/A|PREDATES-CLI) {2}\[([^\]\s]+)\](?: (.*))?$/;
+const RESULT = /^(PASS|FAIL|N\/A|PREDATES-CLI|NOT-BUILT) {2}\[([^\]\s]+)\](?: (.*))?$/;
 const ERROR = /^ERROR {2}(.*)$/;
 const UNNAMED_FAILURE = /^FAIL\b/;
 

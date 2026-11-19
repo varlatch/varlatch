@@ -25,6 +25,16 @@
  * when the target lacks an operation every check of the group needs (the
  * runner says which checks lack, in CONFORMANCE_LACKING, and reports them
  * target-lacks itself), and the suite skips the group.
+ *
+ * A check that depends on a CLI step names that step's result (`check(...,
+ * { after })`). When the CLI under test is the Go CLI and it refused the
+ * step as not built yet (exit 64, NOT_BUILT's exact message), the check
+ * reports `NOT-BUILT  [<id>] <the refusal>` instead of a verdict it could
+ * not have observed, and the runner reports it client-lacks (never a pass,
+ * so never a stale client-go.json entry). `notBuilt(feature, result)`
+ * does the same for every check of a feature the suite has not reported
+ * yet, so the suite can skip the rest of the feature's work. A TypeScript
+ * CLI never takes this path, whatever it prints.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -57,12 +67,57 @@ export function cliVersion() {
 /** The checks of this suite the runner reports target-lacks (CONFORMANCE_LACKING). */
 const lacking = () => new Set(JSON.parse(process.env.CONFORMANCE_LACKING || "[]"));
 
+/**
+ * The Go CLI's refusal of a command or mode it does not build yet
+ * (go/cmd/varlatch/internal/cli: UsageError, exit 64), one whole line:
+ *
+ *   varlatch <command>: not in this build of the Go CLI yet (slice 5.4b); use the TypeScript CLI for it until then
+ *   varlatch login: <what> is not in this build of the Go CLI yet (slice 5.2); use ...
+ *   varlatch init: guided init on a terminal is not in this build of the Go CLI yet (slice 5.8a); pass --org and --project, or use ...
+ *   varlatch <command>: not in this build of the Go CLI yet (ADR-0059 step 6); use ...
+ */
+export const NOT_BUILT = /^varlatch [a-z][a-z -]*: (?:[^\n]* )?not in this build of the Go CLI yet \((?:slice 5\.[1-9][a-z]?|ADR-0059 step [0-9])\); (?:[^\n]*, or )?use the TypeScript CLI for it until then$/;
+
+/** The exit status of the Go CLI's NOT_BUILT refusal (a usage error). */
+export const NOT_BUILT_EXIT = 64;
+
+/**
+ * The Go CLI's not-built refusal in a CLI step's result, or null: the line
+ * when the CLI under test is the Go CLI (VARLATCH_CLI_NATIVE=1), the step
+ * exited 64 and one line of its output is exactly NOT_BUILT. Null for any
+ * other step and for every TypeScript CLI. `result` is `{ code | status,
+ * out | stdout + stderr }`, as the suites' run helpers return it.
+ */
+export function notBuiltRefusal(result) {
+  if (process.env.VARLATCH_CLI_NATIVE !== "1" || !result) return null;
+  const code = result.code ?? result.status;
+  if (code !== NOT_BUILT_EXIT) return null;
+  const out = result.out ?? `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  return out.split("\n").map((l) => l.replace(/\r$/, "")).find((l) => NOT_BUILT.test(l)) ?? null;
+}
+
 export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
   let failures = 0;
   const skipped = new Set();
   const skippedGroups = new Set();
-  const check = (id, name, ok, detail = "") => {
+  const reported = new Set();
+  const refusedAsNotBuilt = (after) => {
+    for (const r of [after ?? []].flat()) {
+      const line = notBuiltRefusal(r);
+      if (line) return line;
+    }
+    return null;
+  };
+  const check = (id, name, ok, detail = "", { after } = {}) => {
     if (!ID.test(id)) throw new Error(`not a check ID: ${id}`);
+    reported.add(id);
+    // A step the check depends on was refused as not built: the check
+    // observed nothing, so it gives no verdict.
+    const refusal = refusedAsNotBuilt(after);
+    if (refusal) {
+      console.log(`NOT-BUILT  [${id}] ${refusal}`);
+      return false;
+    }
     const feature = inventory().checks[id]?.feature;
     if (feature && skipped.has(feature)) {
       error(`${id} reported a result after its feature group ${feature} was reported as predating the CLI`);
@@ -128,9 +183,30 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
     if (inventory().checks[id]?.suite !== suite) throw new Error(`${id} is not a check of ${suite} in the inventory`);
     return !lacking().has(id);
   };
+  /**
+   * When `result` is the Go CLI's not-built refusal: every check of this
+   * suite in `feature` not reported yet reports NOT-BUILT, and true is
+   * returned, so the suite skips the rest of the feature's work. False
+   * otherwise (always, for a TypeScript CLI).
+   */
+  const notBuilt = (feature, result) => {
+    const refusal = notBuiltRefusal(result);
+    if (!refusal) return false;
+    const suite = process.env.CONFORMANCE_SUITE;
+    if (!suite) throw new Error("CONFORMANCE_SUITE is not set: run the suite through scripts/conformance/run.mjs");
+    const ids = Object.entries(inventory().checks).filter(([, c]) => c.suite === suite && c.feature === feature).map(([id]) => id);
+    if (ids.length === 0) throw new Error(`${suite} has no checks of feature ${feature} in the inventory`);
+    for (const id of ids) {
+      if (reported.has(id)) continue;
+      reported.add(id);
+      console.log(`NOT-BUILT  [${id}] ${refusal}`);
+    }
+    return true;
+  };
   return {
     check,
     error,
+    notBuilt,
     supports,
     group,
     runs,

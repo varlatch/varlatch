@@ -17,6 +17,11 @@
  *
  * The Go CLI (`--cli go:<path>`, lib/client-lacks.mjs): the copy's
  * client-go.json says it lacks scan, so stub.scanned reports client-lacks.
+ *
+ * The CLI under test is a fake: it prints STUB_CLI_OUT on stderr and exits
+ * STUB_CLI_EXIT, run with Node (a TypeScript CLI) or directly (the Go CLI).
+ * The stub suite's step-* modes use suite-kit as a real suite does: they run
+ * one CLI step and judge checks that depend on it (`check(..., { after })`).
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -76,6 +81,42 @@ console.log(\`\${process.env.STUB_MODE === "handover-na" ? "N/A" : ok ? "PASS" :
   writeFileSync(join(dst, "stub-suite.mjs"), `
 const mode = process.env.STUB_MODE;
 const line = (status, id) => console.log(\`\${status}  [\${id}] \${id}\`);
+// A CLI step and the checks that depend on it, judged through suite-kit.
+// A refused agent-safe run, as in the broker suite: the claim "the refused
+// run issued nothing" holds only once the refusal itself was observed.
+if (mode.startsWith("step-") || mode.startsWith("raw-")) {
+  const { reporter, cliCommand } = await import("./suite-kit.mjs");
+  const { spawnSync } = await import("node:child_process");
+  const kit = reporter();
+  for (const id of ${JSON.stringify(coreChecks)}) kit.check(id, id, true);
+  if (mode === "raw-not-built") {
+    // A suite that prints NOT-BUILT itself, whatever the CLI did.
+    console.log(\`NOT-BUILT  [stub.base] \${process.env.STUB_RAW_LINE}\`);
+    kit.check("stub.scanned", "stub.scanned", false);
+    kit.finish();
+  }
+  const [cmd, args] = cliCommand(["run", "--agent-safe", "--", "node", "-e", "0"]);
+  const r = spawnSync(cmd, args, { encoding: "utf8" });
+  const step = { code: r.status, out: (r.stdout ?? "") + (r.stderr ?? "") };
+  const refused = step.code !== 0 && step.out.includes("DATABASE_URL has no substitution target");
+  const issuedNothing = true; // what a step that never ran leaves behind too
+  if (mode === "step-observed") {
+    kit.check("stub.base", "the refused run issued nothing", refused && issuedNothing, step.out, { after: step });
+    kit.check("stub.scanned", "the run refused, naming the item", refused, step.out, { after: step });
+  } else if (mode === "step-vacuous") {
+    // The shape that passed vacuously: the absence alone, no dependency.
+    kit.check("stub.base", "stub.base", true);
+    kit.check("stub.scanned", "the refused run issued nothing", issuedNothing, step.out);
+  } else if (mode === "step-vacuous-after") {
+    kit.check("stub.base", "stub.base", true);
+    kit.check("stub.scanned", "the refused run issued nothing", issuedNothing, step.out, { after: step });
+  } else if (mode === "step-group") {
+    // The rest of a feature's checks, after a step refused as not built.
+    if (!kit.notBuilt("scan", step)) kit.check("stub.scanned", "the run refused, naming the item", refused, step.out);
+    kit.check("stub.base", "stub.base", true);
+  }
+  kit.finish();
+}
 if (mode === "crash") throw new Error("the stub suite crashed");
 if (mode === "exit-early") process.exit(3);
 for (const id of ${JSON.stringify(coreChecks)}) line("PASS", id);
@@ -126,7 +167,7 @@ export async function requestLog() { return []; }
     "export async function resolveCli(spec, {",
     `export async function resolveCli(spec, { workDir }) {
   const path = (await import("node:path")).join(workDir, "stub-cli.cjs");
-  (await import("node:fs")).writeFileSync(path, "");
+  (await import("node:fs")).writeFileSync(path, "#!/usr/bin/env node\\nprocess.stderr.write((process.env.STUB_CLI_OUT ?? \\"\\") + \\"\\\\n\\");\\nprocess.exit(Number(process.env.STUB_CLI_EXIT ?? 0));\\n", { mode: 0o755 });
   const go = spec.startsWith("go:");
   return { spec: go ? "go" : spec, path, version: process.env.STUB_CLI_VERSION || null, commit: null, sha256: "0".repeat(64), verified: null, native: go };
 }
@@ -140,12 +181,12 @@ export async function resolveCliReal(spec, {`,
 after(() => rmSync(root, { recursive: true, force: true }));
 
 /** Runs the copied runner on the stub suite: its exit status, output and report. */
-function run(mode, cliVersion = "", cli = "source", extra = ["--suite", "stub"]) {
+function run(mode, cliVersion = "", cli = "source", extra = ["--suite", "stub"], env = {}) {
   const report = join(root, `report-${mode}-${cliVersion || "source"}-${cli === "source" ? "ts" : "go"}-${extra.join("_").replace(/\W/g, "")}.json`);
   const r = spawnSync(process.execPath, [join(root, "scripts/conformance/run.mjs"), "--target", "stub", "--cli", cli, ...extra, "--report", report], {
     encoding: "utf8",
     timeout: 120_000,
-    env: { ...process.env, STUB_MODE: mode, STUB_CLI_VERSION: cliVersion },
+    env: { ...process.env, STUB_MODE: mode, STUB_CLI_VERSION: cliVersion, ...env },
   });
   let parsed = null;
   try {
@@ -254,4 +295,85 @@ test("the runner: --handover-cli pairs the Go CLI with a TypeScript CLI only", (
     assert.equal(r.status, 64, r.out);
     assert.match(r.out, why);
   }
+});
+
+// A step the CLI refused as not built yet (suite-kit's NOT_BUILT, the Go
+// CLI's exact refusal on a usage exit): its checks observed nothing.
+
+const NOT_BUILT_LINE = "varlatch run: not in this build of the Go CLI yet (slice 5.4b); use the TypeScript CLI for it until then";
+const refusedAsNotBuilt = { STUB_CLI_OUT: NOT_BUILT_LINE, STUB_CLI_EXIT: "64" };
+const refusedForTarget = { STUB_CLI_OUT: "varlatch run: DATABASE_URL has no substitution target: add --target DATABASE_URL=header:authorization", STUB_CLI_EXIT: "1" };
+const failedOtherwise = { STUB_CLI_OUT: "varlatch run: could not reach the server", STUB_CLI_EXIT: "1" };
+
+test("the runner: a check of what a refused step left behind passes only after observing the refusal", () => {
+  for (const cli of ["source", "go:/stub/varlatch"]) {
+    // The refusal the checks are about, observed: both pass (scan is lacking for Go).
+    const honest = run("step-observed", "", cli, undefined, refusedForTarget);
+    assert.equal(outcomeOf(honest.report, "stub.base"), "pass", `${cli}: ${honest.out}`);
+    // Any other outcome of the step: "nothing was issued" holds too, and
+    // proves nothing, so the check fails on any client.
+    const vacuous = run("step-observed", "", cli, undefined, failedOtherwise);
+    assert.equal(vacuous.status, 1, `${cli}: ${vacuous.out}`);
+    assert.equal(outcomeOf(vacuous.report, "stub.base"), "fail", cli);
+  }
+});
+
+test("the runner: the Go CLI's not-built refusal makes a lacking feature's checks client-lacks, never stale", () => {
+  // A check after the refusal whose verdict would have been a vacuous pass
+  // reports NOT-BUILT, so the stale-entry probe never sees a pass ...
+  const after = run("step-vacuous-after", "", "go:/stub/varlatch", undefined, refusedAsNotBuilt);
+  assert.equal(after.status, 0, after.out);
+  assert.equal(outcomeOf(after.report, "stub.scanned"), "client-lacks");
+  assert.deepEqual(after.report.clientLacks.notBuilt, [{ id: "stub.scanned", refusal: NOT_BUILT_LINE }]);
+  assert.deepEqual(after.report.clientLacks.stale, []);
+  // ... where the same check without its dependency passed, and failed the run as stale.
+  const vacuous = run("step-vacuous", "", "go:/stub/varlatch", undefined, refusedAsNotBuilt);
+  assert.equal(vacuous.status, 1, vacuous.out);
+  assert.deepEqual(vacuous.report.clientLacks.stale, [{ id: "stub.scanned", features: ["scan"] }]);
+  // A feature's remaining checks, after the refusal (kit.notBuilt).
+  const group = run("step-group", "", "go:/stub/varlatch", undefined, refusedAsNotBuilt);
+  assert.equal(group.status, 0, group.out);
+  assert.equal(outcomeOf(group.report, "stub.scanned"), "client-lacks");
+  assert.equal(outcomeOf(group.report, "stub.base"), "pass");
+});
+
+test("the runner: a check refused as not built that needs no listed feature fails, naming the fix", () => {
+  // stub.base needs no feature client-go.json lists: the refusal shows
+  // the inventory or client-go.json is wrong, and client-lacks never covers
+  // a check the Go CLI claims to have.
+  const r = run("step-observed", "", "go:/stub/varlatch", undefined, refusedAsNotBuilt);
+  assert.equal(r.status, 1, r.out);
+  assert.equal(outcomeOf(r.report, "stub.base"), "fail");
+  assert.match(r.report.checks.find((c) => c.id === "stub.base").why, /^client-go\.json lists no feature this check needs, but the Go CLI refused a step it needs as not built: .*\(varlatch run: not in this build/);
+  assert.equal(outcomeOf(r.report, "stub.scanned"), "client-lacks");
+});
+
+test("the runner: only the Go CLI's exact refusal, on a usage exit, counts as not built", () => {
+  for (const [why, env] of [
+    ["another message on exit 64", { STUB_CLI_OUT: "varlatch run: not in this build yet; use the TypeScript CLI", STUB_CLI_EXIT: "64" }],
+    ["the refusal on another exit", { STUB_CLI_OUT: NOT_BUILT_LINE, STUB_CLI_EXIT: "1" }],
+    ["the refusal inside a longer line", { STUB_CLI_OUT: `error: ${NOT_BUILT_LINE}`, STUB_CLI_EXIT: "64" }],
+  ]) {
+    const r = run("step-observed", "", "go:/stub/varlatch", undefined, env);
+    assert.equal(r.status, 1, `${why}: ${r.out}`);
+    assert.equal(outcomeOf(r.report, "stub.base"), "fail", why);
+    assert.deepEqual(r.report.clientLacks.notBuilt, [], why);
+  }
+  // A NOT-BUILT line the suite printed with anything but the refusal fails the run.
+  const raw = run("raw-not-built", "", "go:/stub/varlatch", undefined, { STUB_RAW_LINE: "varlatch run: not built" });
+  assert.equal(raw.status, 1, raw.out);
+  assert.match(raw.out, /stub\.base reported NOT-BUILT with "varlatch run: not built", which is not the Go CLI's not-built refusal/);
+});
+
+test("the runner: a TypeScript CLI never takes the not-built path, whatever it prints", () => {
+  // The very refusal, from a TypeScript CLI: the checks judge it as any
+  // other output, and fail.
+  const r = run("step-observed", "", "source", undefined, refusedAsNotBuilt);
+  assert.equal(r.status, 1, r.out);
+  assert.equal(outcomeOf(r.report, "stub.base"), "fail");
+  assert.deepEqual(r.report.clientLacks.notBuilt, []);
+  // A suite that prints NOT-BUILT under a TypeScript CLI fails the run.
+  const raw = run("raw-not-built", "", "source", undefined, { STUB_RAW_LINE: NOT_BUILT_LINE });
+  assert.equal(raw.status, 1, raw.out);
+  assert.match(raw.out, /stub\.base reported NOT-BUILT, which only the Go CLI's refusal gives; the CLI under test is source/);
 });

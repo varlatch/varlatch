@@ -72,6 +72,7 @@ import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblem
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
 import { parseSuiteOutput, resultLine } from "./lib/results.mjs";
+import { NOT_BUILT } from "./suite-kit.mjs";
 import { PLAN } from "./plan.mjs";
 import { loadWeights, parseShard, shardSuites } from "./shard.mjs";
 import { loadTarget } from "./targets/index.mjs";
@@ -266,7 +267,7 @@ async function main() {
     // Which shard this is; a shard of one is a full run, recorded as one.
     shard: options.shard?.count > 1 ? `${options.shard.index}/${options.shard.count}` : null,
     lacks: { declared: Object.fromEntries(lacks), stale: [] },
-    clientLacks: { declared: Object.fromEntries(clientLacks), stale: [] },
+    clientLacks: { declared: Object.fromEntries(clientLacks), stale: [], notBuilt: [] },
     startedAt: new Date().toISOString(),
     suites: [],
   };
@@ -432,6 +433,32 @@ async function main() {
       (windows[entry.suite] ??= []).push({ start, end });
       if (around) await around.finish();
       const parsed = parseSuiteOutput(`${out.stdout}\n${out.stderr}`);
+      // A check whose step the Go CLI refused as not built yet (suite-kit's
+      // NOT-BUILT, with the CLI's exact refusal) observed nothing: it
+      // reports client-lacks, from the runner, like every check of a
+      // feature client-go.json lists. Never a pass, so never a stale entry.
+      // Only for --cli go: a TypeScript CLI never gives that refusal, and a
+      // NOT-BUILT under one fails the run. A refused check that needs no
+      // listed feature fails: client-lacks never covers a check whose
+      // features the Go CLI claims to have (decision 3), so its feature
+      // goes in its cliNeeds and client-go.json, or gets built.
+      const notBuiltRefused = [];
+      for (const r of parsed.results.filter((r) => r.status === "NOT-BUILT")) {
+        if (cli.spec !== "go") {
+          errors.push({ suite: entry.suite, message: `${r.id} reported NOT-BUILT, which only the Go CLI's refusal gives; the CLI under test is ${cli.spec}` });
+        } else if (!NOT_BUILT.test(r.text)) {
+          errors.push({ suite: entry.suite, message: `${r.id} reported NOT-BUILT with ${JSON.stringify(r.text.slice(0, 200))}, which is not the Go CLI's not-built refusal` });
+        } else if (lacked.has(r.id) || clientLacked.has(r.id)) {
+          report.clientLacks.notBuilt.push({ id: r.id, refusal: r.text });
+        } else {
+          notBuiltRefused.push({
+            status: "FAIL",
+            id: r.id,
+            text: `client-go.json lists no feature this check needs, but the Go CLI refused a step it needs as not built: name the feature in its cliNeeds and list it, or build it (${r.text})`,
+          });
+        }
+      }
+      parsed.results = [...parsed.results.filter((r) => r.status !== "NOT-BUILT"), ...notBuiltRefused];
       // A lacking check's result is replaced by the runner's client-lacks;
       // one that passed shows a stale entry in client-go.json.
       const anyFailed = parsed.results.some((r) => r.status === "FAIL");
