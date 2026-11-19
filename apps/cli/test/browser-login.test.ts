@@ -8,6 +8,7 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch login --server <url>`, the browser sign-in, as a desktop app
@@ -75,7 +76,7 @@ async function browserLogin(noBrowser: string | undefined) {
   const run = join(dir, `run-${n++}`);
   mkdirSync(run);
   const opened = join(run, "opened.txt");
-  const child = spawn(process.execPath, [bundle, "login", "--server", origin], {
+  const child = spawn(...cliCommand(bundle, ["login", "--server", origin]), {
     cwd: dir,
     env: {
       PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
@@ -126,7 +127,8 @@ describe("browser login", () => {
   it("with VARLATCH_NO_BROWSER, prints the address in the documented two lines and signs in when the page calls back", async () => {
     const r = await browserLogin("1");
     expect(r.first).toBe("Complete passkey sign-in in your browser:");
-    expect(r.second).toMatch(/^ {2}http:\/\/127\.0\.0\.1:\d+\/enroll\?callback=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F$/);
+    // The Go CLI's callback has a random path, so only the sign-in's own page can deliver to it (go/README.md, "loopback-nonce").
+    expect(r.second).toMatch(/^ {2}http:\/\/127\.0\.0\.1:\d+\/enroll\?callback=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F(?:[A-Za-z0-9_-]{32})?$/);
     expect(r.second.startsWith(`  ${origin}/enroll?callback=`)).toBe(true);
     expect(r.callbackStatus).toBe(200);
     expect(r.code, r.stderr).toBe(0);

@@ -59,6 +59,9 @@ type Run struct {
 	Assisted AssistedMode
 	// Approval is the global --approval <id>, or "" (ADR-0054 Decision 3).
 	Approval string
+	// argv is the command and its arguments, the global options taken out:
+	// the command an approval's rerun line repeats.
+	argv []string
 	// Secrets is what the run masks in a server's free text.
 	Secrets *Secrets
 	// Command is the command's name, Args what follows it.
@@ -67,9 +70,10 @@ type Run struct {
 	// clients is what main.ts keeps per process for its API clients.
 	clients clientState
 	// inFlight are the secret values this run handles (the value `values
-	// set` or `values rotate` sends, the Secrets `import` reads): every
-	// output and diagnostic has each exact occurrence of them redacted,
-	// whatever their length (holdValue).
+	// set` or `values rotate` sends, the Secrets `import` reads, a
+	// credential given or issued, a device code, an OIDC token, a sign-in
+	// hand-off bearer): every output and diagnostic has each exact
+	// occurrence of them redacted, whatever their length (holdValue).
 	inFlight []string
 	// everyFailureIsOne: `varlatch scan` documents 1 for every failure, finding
 	// or not (usage, authentication, permission, server), and that meaning is
@@ -142,6 +146,7 @@ func Main(args []string, env Env, streams IO) int {
 		return run.finish(UsageError("varlatch: " + problem))
 	}
 	run.Approval = approval
+	run.argv = resumed
 	if len(resumed) > 0 {
 		run.Command, run.Args = resumed[0], resumed[1:]
 	}

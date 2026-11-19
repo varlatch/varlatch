@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -184,6 +185,15 @@ var differences = map[string]transcript.Difference{
 	// Accepted only where Go's stdout and stderr are the recording with each
 	// fixture server, where TypeScript shows it, shown through DisplayServer
 	// instead (serverDisplayFixtures).
+	// The browser sign-in's loopback callback: Go's has a random path
+	// (internal/cli's callbackNonce), so only a POST to exactly it is the
+	// sign-in's; TypeScript's is "/". Accepted only where Go's stdout, with
+	// that path taken out of the printed address, is the recording.
+	"loopback-nonce": func(o *transcript.Outcome, got transcript.Outcome) {
+		if shown := loopbackNonce.ReplaceAllString(got.Stdout, "${1}"); shown == o.Stdout {
+			o.Stdout = got.Stdout
+		}
+	},
 	"server-display": func(o *transcript.Outcome, got transcript.Outcome) {
 		stdout, stderr := o.Stdout, o.Stderr
 		for _, f := range serverDisplayFixtures {
@@ -318,6 +328,7 @@ var serverDisplayFixtures = []struct {
 	{`"server": "not a url",`, `"server": "%[1]s",`, []string{"not a url"}},
 	{`"detail": "Failed to parse URL from not a url/v1/meta"`, `"detail": "Failed to parse URL from %[1]s"`, []string{"not a url/v1/meta"}},
 	{"for https://x.example/p q. Commit", "for %[1]s. Commit", []string{"https://x.example/p q"}},
+	{"login: varlatch.example.com is not a URL", "login: %[1]s is not a URL", []string{"varlatch.example.com"}},
 }
 
 // verbatimTOMLLine is a line init writes, `key = "<value as given>"`.
@@ -325,6 +336,10 @@ var verbatimTOMLLine = regexp.MustCompile(`^([a-z_]+) = "(.*)"$`)
 
 // recordedUserAgent is the TypeScript CLI's User-Agent in a recording.
 var recordedUserAgent = regexp.MustCompile(`^varlatch-cli/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)
+
+// loopbackNonce is the Go callback's random path in a printed sign-in
+// address, the port already a pattern.
+var loopbackNonce = regexp.MustCompile(`(callback=http%3A%2F%2F127\.0\.0\.1%3A\{\{port\}\}%2F)[A-Za-z0-9_-]{32}`)
 
 // goFailure is one line of the Go CLI's own failure.
 var goFailure = regexp.MustCompile(`^varlatch: [^\n]+\n$`)
@@ -370,6 +385,9 @@ func TestTranscripts(t *testing.T) {
 					c.Files = files
 				}
 				_, problems, err := transcript.Replay(c, start, differences)
+				if errors.Is(err, transcript.ErrUnsupported) {
+					t.Skip(err)
+				}
 				if err != nil {
 					t.Fatal(err)
 				}

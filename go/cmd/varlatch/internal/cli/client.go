@@ -81,9 +81,9 @@ func ExpiryWarning(server string, credential any, now float64) string {
 	}
 	switch state {
 	case "expired":
-		return "varlatch: credential for " + server + " expired " + templateTime(expiresAt) + " — run `varlatch login --server " + server + "`"
+		return "varlatch: credential for " + server + " expired " + templateTime(expiresAt) + " — run `varlatch login --server " + shellWord(server) + "`"
 	case "expiring":
-		return "varlatch: credential for " + server + " expires " + templateTime(expiresAt) + " — run `varlatch login --server " + server + "` to renew"
+		return "varlatch: credential for " + server + " expires " + templateTime(expiresAt) + " — run `varlatch login --server " + shellWord(server) + "` to renew"
 	}
 	return ""
 }
@@ -169,9 +169,9 @@ func (r *Run) loadToken(server string) (string, error) {
 // talks to its context's server, made when the command first does, so a
 // malformed command line exits 64 whether or not a credential is stored.
 // No credential is refused (77); inside an agent-safe run the operator's is
-// never used. Step-up approvals (onStepUp and --approval's resuming fetch)
-// are slice 5.2's: until then a STEP_UP_REQUIRED answer surfaces as its
-// error, with the approval's address.
+// never used. Step-up approvals are handled (approvals.go): a
+// STEP_UP_REQUIRED answer is waited for (or, in assisted mode, stops with
+// 75), and --approval <id> waits for its approval before the first change.
 func (r *Run) connectClient(server string) (*apiclient.Client, error) {
 	token, err := r.loadToken(server)
 	if err != nil {
@@ -194,24 +194,39 @@ func (r *Run) connectClient(server string) (*apiclient.Client, error) {
 			"adding --start to approve in a browser on any device, or --token-stdin to pipe a credential", ExitDenied)
 	}
 	if token == "" {
-		return nil, Fail("Not authenticated to "+shown+".\nSign in: varlatch login --server "+shown+" (in a browser on this machine), "+
-			"varlatch login --server "+shown+" --start (approve in a browser on any device), "+
-			"or pipe a credential to varlatch login --server "+shown+" --token-stdin", ExitDenied)
+		word := shellWord(shown)
+		return nil, Fail("Not authenticated to "+shown+".\nSign in: varlatch login --server "+word+" (in a browser on this machine), "+
+			"varlatch login --server "+word+" --start (approve in a browser on any device), "+
+			"or pipe a credential to varlatch login --server "+word+" --token-stdin", ExitDenied)
 	}
 	if err := r.warnIfExpiring(server); err != nil {
 		return nil, err
 	}
 	// A server echoing the bearer back in an error message gets it masked (issue #119).
 	r.Secrets.Remember(token)
-	return apiclient.New(apiclient.Options{
+	// Polls and cancels approvals: the same credential, without the step-up
+	// handling or the resumed approval of the command's own client.
+	var poller *apiclient.Client
+	polling := func() *apiclient.Client {
+		if poller == nil {
+			poller = r.plainClient(server, token)
+		}
+		return poller
+	}
+	options := apiclient.Options{
 		Server:              server,
 		Token:               token,
 		UserAgent:           r.UserAgent(),
 		OnMaintenance:       r.maintenanceNotice,
 		OnCredentialExpires: r.credentialExpiryNotice(server, token),
-		Approval:            r.Approval,
+		OnStepUp:            r.stepUpHandler(polling),
 		Env:                 r.Env,
-	}), nil
+	}
+	if r.Approval != "" {
+		options.Approval = r.Approval
+		options.Ready = r.resumeReady(r.Approval, polling)
+	}
+	return apiclient.New(options), nil
 }
 
 // apiErrorLine is safeText.ts's apiErrorLine: the checked code, the masked
