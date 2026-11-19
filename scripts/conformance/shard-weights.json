@@ -25,6 +25,7 @@
     "mcp": 1,
     "sdk": 1,
     "security": 1,
+    "admin-cli": 4,
     "deletion": 30,
     "webhooks": 180,
     "audit-export": 34,

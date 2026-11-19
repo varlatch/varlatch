@@ -27,3 +27,7 @@ func openNoFollow(path string) (*os.File, error) {
 	}
 	return os.NewFile(uintptr(h), path), nil
 }
+
+// createNoFollow is 0 on Windows: O_EXCL (CREATE_NEW) already fails on any
+// existing name, a symbolic link or other reparse point included.
+const createNoFollow = 0

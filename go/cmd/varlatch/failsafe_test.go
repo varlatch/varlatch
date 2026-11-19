@@ -52,6 +52,9 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		"internal/cli/cli.go:ask":         true, // the hidden prompt's question (5.3a)
 		"internal/cli/cli.go:out":         true,
 		"internal/cli/cli.go:outJSON":     false,
+		// invite's enrollment link: the one token it prints on purpose
+		// (RedactOutputShowing keeps exactly that one, redacts the rest).
+		"internal/cli/cli.go:outShowing": true,
 	}
 	// newFileSites may call os.NewFile: each wraps a handle it opened
 	// itself for reading, never a stream.
@@ -200,7 +203,7 @@ func redacts(call *ast.CallExpr) bool {
 				case *ast.SelectorExpr:
 					name = f.Sel.Name
 				}
-				if name == "RedactDiagnostic" || name == "RedactOutput" {
+				if name == "RedactDiagnostic" || name == "RedactOutput" || name == "RedactOutputShowing" {
 					found = true
 				}
 			}

@@ -4,9 +4,12 @@
     "test/agents-install.test.ts",
     "test/agents-mcp.test.ts",
     "test/browser-login.test.ts",
+    "test/credential-issue.test.ts",
     "test/device-login.test.ts",
+    "test/identity-reach-cli.test.ts",
     "test/login-token-stdin.test.ts",
     "test/machine-interface.test.ts",
+    "test/member-cli.test.ts",
     "test/server-text-cli.test.ts",
     "test/token-expiry-warning.test.ts"
   ]
