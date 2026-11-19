@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cliCommand, goLacks, goLacksCommand } from "./cliUnderTest.js";
 
 /**
  * The CLI prints only checked text from server responses (issue #119), end
@@ -137,7 +138,7 @@ function freshStore(): void {
 
 function cli(args: string[], env: Record<string, string> = {}): Promise<Result> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd: repo,
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: config, VARLATCH_TOKEN: BEARER, VARLATCH_ASSISTED: "0", ...env },
       stdio: ["ignore", "pipe", "pipe"],
@@ -152,7 +153,7 @@ function cli(args: string[], env: Record<string, string> = {}): Promise<Result> 
 
 /** The browser sign-in to the end, answering the callback as the sign-in page does. */
 async function browserLogin(): Promise<Result> {
-  const child = spawn(process.execPath, [bundle, "login", "--server", origin], {
+  const child = spawn(...cliCommand(bundle, ["login", "--server", origin]), {
     cwd: dir,
     env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: config, VARLATCH_ASSISTED: "0", VARLATCH_NO_BROWSER: "1" },
     stdio: ["ignore", "pipe", "pipe"],
@@ -192,7 +193,8 @@ function leaks(r: Result): string[] {
   ];
 }
 
-describe("varlatch login prints only checked fields", () => {
+// Browser sign-in is slice 5.2 of the Go CLI.
+describe.skipIf(goLacks("5.2"))("varlatch login prints only checked fields", () => {
   it("an expiry, a version and an API major of the wrong shape become fixed phrases", async () => {
     freshStore();
     evil = true;
@@ -213,7 +215,7 @@ describe("varlatch login prints only checked fields", () => {
   });
 });
 
-describe("an API error prints only checked text", () => {
+describe.skipIf(goLacksCommand("values"))("an API error prints only checked text", () => {
   it("the code if the protocol defines it, the message escaped with every known secret masked, a request id only in the server's format", async () => {
     freshStore();
     evil = true;
@@ -247,25 +249,33 @@ describe("an API error prints only checked text", () => {
 });
 
 describe("names from the server are escaped", () => {
-  it("organizations, projects, environments and identities", async () => {
+  it("environments", async () => {
+    freshStore();
+    evil = true;
+    const envs = await cli(["env", "list"]);
+    expect(envs.code, envs.stderr).toBe(0);
+    expect(leaks(envs)).toEqual([]);
+    expect(envs.stdout).toBe(
+      "development\\u000aError FAKE_LINE: a line the server forged\\u001b[31m\\u202e  (development, shared)\nproduction  (production, shared\\u001b[31m)\n",
+    );
+  });
+
+  // org, project and identity list are slice 5.7a of the Go CLI.
+  it.skipIf(goLacksCommand("org", "project", "identity"))("organizations, projects and identities", async () => {
     freshStore();
     evil = true;
     const results = await Promise.all([
       cli(["org", "list", "--server", origin]),
       cli(["project", "list"]),
-      cli(["env", "list"]),
       cli(["identity", "list"]),
     ]);
     for (const r of results) {
       expect(r.code, r.stderr).toBe(0);
       expect(leaks(r)).toEqual([]);
     }
-    const [orgs, projects, envs, identities] = results as [Result, Result, Result, Result];
+    const [orgs, projects, identities] = results as [Result, Result, Result];
     expect(orgs.stdout).toBe("acme  (Acme\\u000aError FAKE_LINE: a line the server forged\\u001b[31m\\u202e)\n");
     expect(projects.stdout).toBe("web\\u000aError FAKE_LINE: a line the server forged\\u001b[31m\\u202e  (Web \\u001b[31m, git)\n");
-    expect(envs.stdout).toBe(
-      "development\\u000aError FAKE_LINE: a line the server forged\\u001b[31m\\u202e  (development, shared)\nproduction  (production, shared\\u001b[31m)\n",
-    );
     expect(identities.stdout).toBe(
       "idn_1  ci\\u000aError FAKE_LINE: a line the server forged\\u001b[31m\\u202e  (service, active, last seen an unrecognized time)\n" +
         "idn_2  old  (service, retired, last seen never)\n",
@@ -275,15 +285,20 @@ describe("names from the server are escaped", () => {
   it("control: ordinary names print exactly as before, the frozen env list format included", async () => {
     freshStore();
     evil = false;
-    const [orgs, projects, envs, identities] = await Promise.all([
+    const envs = await cli(["env", "list"]);
+    expect(envs.stdout).toBe("development  (development, shared, selected)\nproduction  (production, shared)\n");
+  });
+
+  it.skipIf(goLacksCommand("org", "project", "identity"))("control: ordinary organization, project and identity names print exactly as before", async () => {
+    freshStore();
+    evil = false;
+    const [orgs, projects, identities] = await Promise.all([
       cli(["org", "list", "--server", origin]),
       cli(["project", "list"]),
-      cli(["env", "list"]),
       cli(["identity", "list"]),
     ]);
     expect(orgs.stdout).toBe("acme  (Acme)\n");
     expect(projects.stdout).toBe("web  (Web, git)\n");
-    expect(envs.stdout).toBe("development  (development, shared, selected)\nproduction  (production, shared)\n");
     expect(identities.stdout).toBe("idn_1  ci  (service, active, last seen 2026-09-30T10:00:00.000Z)\nidn_2  old  (service, retired, last seen never)\n");
   });
 });

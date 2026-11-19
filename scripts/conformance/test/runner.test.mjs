@@ -50,18 +50,27 @@ before(() => {
         title: "a stub suite", script: "scripts/conformance/stub-suite.mjs", operations: [],
         groups: { audit: { title: "the audit log", operations: ["exportAuditEvents"] } },
       },
+      handover: { title: "a stub hand-over suite", script: "scripts/conformance/stub-handover.mjs", client: "go", operations: [] },
     },
     checks: {
       "stub.base": { suite: "stub", kind: "conformance", title: "the base check" },
       "stub.scanned": { suite: "stub", kind: "conformance", feature: "scan", title: "a scan check outside the group" },
       "stub.featured": { suite: "stub", kind: "conformance", group: "audit", feature: "scan", title: "a scan check in the group" },
       "stub.plain": { suite: "stub", kind: "conformance", group: "audit", title: "a plain check in the group" },
+      "handover.both": { suite: "handover", kind: "go-client", title: "the Go CLI and the TypeScript CLI hand over" },
       ...Object.fromEntries(Object.keys(features).filter((f) => f !== "scan").map((f) => [`stub.core-${f}`, { suite: "stub", kind: "conformance", feature: f, title: f }])),
     },
   };
   writeFileSync(join(dst, "inventory.json"), JSON.stringify(inventory, null, 2));
   const coreChecks = Object.keys(inventory.checks).filter((id) => id.startsWith("stub.core-"));
-  writeFileSync(join(dst, "plan.mjs"), 'export const PLAN = [{ suite: "stub", args: () => [] }];\n');
+  writeFileSync(join(dst, "plan.mjs"), 'export const PLAN = [{ suite: "stub", args: () => [] }, { suite: "handover", args: () => [] }];\n');
+
+  // The hand-over suite: PASS when the runner named the TypeScript CLI beside
+  // the Go CLI, else a failure; N/A on its own in mode handover-na.
+  writeFileSync(join(dst, "stub-handover.mjs"), `
+const ok = Boolean(process.env.VARLATCH_HANDOVER_CLI) && process.env.VARLATCH_CLI_NATIVE === "1";
+console.log(\`\${process.env.STUB_MODE === "handover-na" ? "N/A" : ok ? "PASS" : "FAIL"}  [handover.both] handover.both\`);
+`);
 
   // The suite: what it prints and how it ends, by STUB_MODE.
   writeFileSync(join(dst, "stub-suite.mjs"), `
@@ -131,9 +140,9 @@ export async function resolveCliReal(spec, {`,
 after(() => rmSync(root, { recursive: true, force: true }));
 
 /** Runs the copied runner on the stub suite: its exit status, output and report. */
-function run(mode, cliVersion = "", cli = "source") {
-  const report = join(root, `report-${mode}-${cliVersion || "source"}-${cli === "source" ? "ts" : "go"}.json`);
-  const r = spawnSync(process.execPath, [join(root, "scripts/conformance/run.mjs"), "--target", "stub", "--cli", cli, "--suite", "stub", "--report", report], {
+function run(mode, cliVersion = "", cli = "source", extra = ["--suite", "stub"]) {
+  const report = join(root, `report-${mode}-${cliVersion || "source"}-${cli === "source" ? "ts" : "go"}-${extra.join("_").replace(/\W/g, "")}.json`);
+  const r = spawnSync(process.execPath, [join(root, "scripts/conformance/run.mjs"), "--target", "stub", "--cli", cli, ...extra, "--report", report], {
     encoding: "utf8",
     timeout: 120_000,
     env: { ...process.env, STUB_MODE: mode, STUB_CLI_VERSION: cliVersion },
@@ -208,4 +217,41 @@ test("the runner: a TypeScript CLI lacks nothing, whatever client-go.json says",
   const r = run("scan-fails");
   assert.equal(r.status, 1, r.out);
   assert.equal(outcomeOf(r.report, "stub.scanned"), "fail");
+});
+
+// The hand-over (kind go-client): the Go CLI under test with a TypeScript CLI beside it.
+
+test("the runner: a hand-over suite is not applicable with a TypeScript CLI under test, and is not started", () => {
+  const r = run("handover-na", "", "source", ["--suite", "handover"]);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(outcomeOf(r.report, "handover.both"), "not-applicable");
+  assert.match(r.out, /not run, the CLI under test is not the Go CLI/);
+  assert.equal(r.report.handoverCli, null);
+});
+
+test("the runner: with the Go CLI, a hand-over suite runs with the TypeScript CLI named beside it", () => {
+  const r = run("plain", "", "go:/stub/varlatch", ["--suite", "handover"]);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(outcomeOf(r.report, "handover.both"), "pass");
+  assert.equal(r.report.handoverCli.spec, "0.22.0");
+  const chosen = run("plain", "", "go:/stub/varlatch", ["--suite", "handover", "--handover-cli", "source"]);
+  assert.equal(chosen.status, 0, chosen.out);
+  assert.equal(chosen.report.handoverCli.spec, "source");
+});
+
+test("the runner: with the Go CLI, a hand-over check that says not applicable fails the run", () => {
+  const r = run("handover-na", "", "go:/stub/varlatch", ["--suite", "handover"]);
+  assert.equal(r.status, 1, r.out);
+  assert.equal(outcomeOf(r.report, "handover.both"), "fail");
+});
+
+test("the runner: --handover-cli pairs the Go CLI with a TypeScript CLI only", () => {
+  for (const [cli, extra, why] of [
+    ["source", ["--handover-cli", "0.22.0"], /--handover-cli pairs the Go CLI/],
+    ["go:/stub/varlatch", ["--handover-cli", "go:/x"], /--handover-cli names a TypeScript CLI/],
+  ]) {
+    const r = run("plain", "", cli, ["--suite", "handover", ...extra]);
+    assert.equal(r.status, 64, r.out);
+    assert.match(r.out, why);
+  }
 });

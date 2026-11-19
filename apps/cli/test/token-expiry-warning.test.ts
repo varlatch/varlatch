@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cliCommand, goLacksCommand } from "./cliUnderTest.js";
 
 /**
  * The expiry warning for a VARLATCH_TOKEN credential (ADR-0054 Decision 8),
@@ -96,7 +97,7 @@ interface Result {
 
 function cli(args: string[], env: Record<string, string> = { VARLATCH_TOKEN: "vlt_svc_runner" }): Promise<Result> {
   return new Promise((resolve) => {
-    const proc = spawn(process.execPath, [bundle, ...args], {
+    const proc = spawn(...cliCommand(bundle, args), {
       cwd: repo,
       // Explicit mode for this suite: no coding-agent marker reaches the CLI.
       env: { PATH: process.env.PATH ?? "", HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_ASSISTED: "0", ...env },
@@ -124,7 +125,7 @@ const warning = (server: string) =>
 const count = (text: string, part: string) => text.split(part).length - 1;
 
 describe("VARLATCH_TOKEN expiry warning", () => {
-  it("varlatch run: once on stderr, before the command starts, and stdout unchanged", async () => {
+  it.skipIf(goLacksCommand("run"))("varlatch run: once on stderr, before the command starts, and stdout unchanged", async () => {
     const args = ["run", "--", process.execPath, child];
     const before = requests;
     const warned = await withHeader(EXPIRES, () => cli(args));
@@ -151,7 +152,7 @@ describe("VARLATCH_TOKEN expiry warning", () => {
     expect(plain.stderr).toBe("");
   });
 
-  it("is on stderr for a refused request too, and says when the credential already expired", async () => {
+  it.skipIf(goLacksCommand("org"))("is on stderr for a refused request too, and says when the credential already expired", async () => {
     const past = EXPIRED;
     // The fake server answers GET /v1/organizations with 404.
     const refused = await withHeader(past, () => cli(["org", "list"]));

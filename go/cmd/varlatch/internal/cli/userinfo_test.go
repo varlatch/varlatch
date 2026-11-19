@@ -181,7 +181,7 @@ func TestFailuresNeverEchoUserinfo(t *testing.T) {
 		if c.toml && !strings.Contains(out, linesNotShown) {
 			t.Errorf("%q quotes varlatch.toml:\n%s", c.args, out)
 		}
-		if !c.toml && !strings.Contains(out, "[redacted]@") {
+		if !c.toml && !strings.Contains(out, "[redacted]@") && !strings.Contains(out, "=[redacted]") {
 			t.Errorf("%q shows no redacted URL:\n%s", c.args, out)
 		}
 	}

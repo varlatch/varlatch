@@ -17,6 +17,7 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
+	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
 // Env is the environment a run sees.
@@ -148,7 +149,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 		if topic != "" {
 			help, ok := CommandHelp(topic)
 			if !ok {
-				return UsageErrorWithUsage("varlatch: no help for "+clientctx.MaskURLInValue(topic)+": not a command", "\n\n"+Usage)
+				return UsageErrorWithUsage("varlatch: no help for "+shownArgument(topic)+": not a command", "\n\n"+Usage)
 			}
 			return r.println(help)
 		}
@@ -177,7 +178,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 	}
 	c := lookup(r.Command)
 	if c == nil {
-		shown := clientctx.MaskURLInValue(r.Command)
+		shown := shownArgument(r.Command)
 		if clientctx.HasAtSign(shown) {
 			return UsageErrorWithUsage("varlatch: "+shown+": unknown command", "\n\n"+Usage) // the explanation follows the URL
 		}
@@ -208,17 +209,67 @@ func (r *Run) finish(err error) int {
 		// was instead (go/README.md, the Go CLI's accepted differences).
 		e = &exitError{message: "varlatch: " + err.Error(), code: ExitFailure}
 	}
-	// The fail-safe on every failure, whatever it echoes: no URL's user name
-	// and password reaches stderr even where an echo site did not mask its
-	// value (go/README.md, "Diagnostics never print credential values"). A
-	// line with no ":"...at-sign pair keeps its bytes.
+	// The fail-safe on every failure, whatever it echoes and whichever path
+	// made it (RedactDiagnostic): no URL's user name and password and no
+	// Varlatch token reaches stderr (go/README.md, "Diagnostics never print
+	// credential values").
 	if !e.silent {
-		fmt.Fprintln(r.Stderr, jsval.NodeText(clientctx.MaskUserinfoInText(e.message)+e.usage))
+		fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(e.message)+e.usage))
 	}
 	if r.everyFailureIsOne {
 		return ExitFailure
 	}
 	return e.code
+}
+
+// RedactDiagnostic is the fail-safe every diagnostic goes through before it
+// is written, failures (Run.finish) and warnings (Run.warn) alike: a URL's
+// user name and password (clientctx.MaskUserinfoInText, from the first
+// scheme colon to the last at-sign), then every text in Varlatch's token
+// format, as [redacted]. Text with neither keeps its bytes.
+func RedactDiagnostic(text string) string {
+	return varlatchToken.ReplaceAllLiteralString(clientctx.MaskUserinfoInText(text), Redacted)
+}
+
+// warn writes one diagnostic line on stderr through the fail-safe
+// (RedactDiagnostic). Every line the CLI writes on stderr outside
+// Run.finish goes through it.
+func (r *Run) warn(text string) error {
+	_, err := fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(text)))
+	return err
+}
+
+// RedactOutput is the fail-safe on everything the CLI writes on stdout:
+// every text in Varlatch's token format as [redacted]. The values that hold
+// a URL are masked where they are shown (and, in a --json document, by
+// RedactValue), so ordinary output keeps its bytes.
+func RedactOutput(text string) string {
+	return varlatchToken.ReplaceAllLiteralString(text, Redacted)
+}
+
+// RedactValue is a JSON value with the fail-safe applied to every string
+// in it, keys untouched: a URL's user name and password masked (precisely,
+// clientctx.MaskURLInValue, so a value without them keeps its bytes) and
+// every text in Varlatch's token format as [redacted]. printJSON applies it
+// to every --json document.
+func RedactValue(v any) any {
+	switch x := v.(type) {
+	case string:
+		return RedactOutput(clientctx.MaskURLInValue(x))
+	case jsjson.Object:
+		out := make(jsjson.Object, len(x))
+		for i, m := range x {
+			out[i] = jsjson.Member{Key: m.Key, Value: RedactValue(m.Value)}
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = RedactValue(e)
+		}
+		return out
+	}
+	return v
 }
 
 // storedTokens is safeText.ts's heldCredentials' stored half: every stored
@@ -245,7 +296,13 @@ func storedTokens(env Env) []string {
 // println writes one line on stdout, as console.log does (a lone
 // surrogate as U+FFFD, as Node.js writes it).
 func (r *Run) println(text string) error {
-	_, err := io.WriteString(r.Stdout, jsval.NodeText(text)+"\n")
+	return r.out(text + "\n")
+}
+
+// out is the one place the CLI writes stdout: through the fail-safe
+// (RedactOutput). TestEveryWriteGoesThroughTheFailSafe fails on any other.
+func (r *Run) out(text string) error {
+	_, err := io.WriteString(r.Stdout, jsval.NodeText(RedactOutput(text)))
 	return err
 }
 

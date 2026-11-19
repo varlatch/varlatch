@@ -56,9 +56,12 @@ func (r *Run) resolveFromArgs(cwd string) (*clientctx.Context, error) {
 	return clientctx.ResolveContext(options, r.Env)
 }
 
-// printJSON writes JSON.stringify(doc, null, 2) and a newline.
+// printJSON writes JSON.stringify(doc, null, 2) and a newline, every
+// string of the document through the fail-safe first (RedactValue). Every
+// --json document goes through it; TestEveryWriteGoesThroughTheFailSafe
+// fails on a document serialised for stdout anywhere else.
 func (r *Run) printJSON(doc jsjson.Object) error {
-	return r.println(string(jsjson.StringifyIndent(doc, 2)))
+	return r.println(string(jsjson.StringifyIndent(RedactValue(doc), 2)))
 }
 
 // statusSchemaVersion is status.ts's STATUS_SCHEMA_VERSION, the version of

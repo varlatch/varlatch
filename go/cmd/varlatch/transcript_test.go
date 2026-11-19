@@ -99,6 +99,14 @@ var differences = map[string]transcript.Difference{
 		}
 		o.Files = files
 	},
+	// An unknown option given with its value attached (`--name=value`,
+	// `-Xvalue`): the TypeScript CLI echoes the value, the Go CLI shows it
+	// as [redacted] (go/README.md, "Diagnostics never print credential
+	// values"). The rest of stderr, the status and stdout are compared as
+	// recorded.
+	"option-value": func(o *transcript.Outcome, _ transcript.Outcome) {
+		o.Stderr = cli.OptionValueDifference(o.Stderr)
+	},
 	// An error the TypeScript CLI lets escape (recorded as {{uncaught ...}}):
 	// Node.js prints a stack and exits 1; the Go CLI exits 1 too, with one
 	// line saying what went wrong. Only that stderr is accepted; the status

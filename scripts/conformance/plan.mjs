@@ -39,6 +39,10 @@ export const PLAN = [
   // The CLI's compatibility core that no other suite reports on its own:
   // token sign-in, whoami and env list, before anything changes the seed.
   { suite: "cli-core", args: (ctx) => [ctx.origin, ctx.token, ctx.seededSecret] },
+  // The hand-over between the Go CLI and the TypeScript CLI (go-client
+  // checks): each signs in with a credential of its own, issued for it, so
+  // its logout never touches the token later suites use.
+  { suite: "cli-handover", args: async (ctx) => [ctx.origin, await ctx.cliCredential(), await ctx.cliCredential()] },
   { suite: "dashboard", args: async (ctx) => [await ctx.grant()] },
   // The enroll page's next steps against a stub server (ADR-0058 Decision 4).
   { suite: "enroll-steps", args: () => [] },

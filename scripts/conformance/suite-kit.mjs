@@ -29,6 +29,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { DEADLINE_ENV, GRACE_MS } from "./lib/deadline.mjs";
 import { predates } from "./lib/inventory.mjs";
 
 const TARGET_OP = fileURLToPath(new URL("./target-op.mjs", import.meta.url));
@@ -173,17 +174,39 @@ export function cliCommand(args) {
 }
 
 /**
+ * The program and arguments that run the hand-over's TypeScript CLI with
+ * `args` (VARLATCH_HANDOVER_CLI, set by the runner with --cli go only):
+ * the CLI the Go CLI under test hands over to and from (internal
+ * docs/design/go-cli.md, decision 11). It always runs with Node.
+ */
+export function handoverCliCommand(args) {
+  const path = process.env.VARLATCH_HANDOVER_CLI;
+  if (!path) {
+    throw new Error("VARLATCH_HANDOVER_CLI is not set: the runner sets it with --cli go:<path> (and --handover-cli)");
+  }
+  return [process.execPath, [path, ...args]];
+}
+
+/**
  * Runs one operation of the target under test (scripts/conformance/target-op.mjs)
  * and returns its standard output; throws when the operation fails.
  * `input` is passed on standard input, `env` is added to the environment.
+ * `timeoutMs` bounds the call: the operation gets that deadline
+ * (lib/deadline.mjs), so its own child processes stop at it, with theirs;
+ * the wrapper itself is killed a few seconds later as a backstop. Past the
+ * deadline the call throws, saying it timed out.
  */
-export function targetOp(operation, args = [], { input, env } = {}) {
+export function targetOp(operation, args = [], { input, env, timeoutMs } = {}) {
   const r = spawnSync(process.execPath, [TARGET_OP, operation, ...args], {
     encoding: "utf8",
     input: input ?? "",
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...env, ...(timeoutMs ? { [DEADLINE_ENV]: String(Date.now() + timeoutMs) } : {}) },
     maxBuffer: 256 * 1024 * 1024,
+    ...(timeoutMs ? { timeout: timeoutMs + GRACE_MS + 3000, killSignal: "SIGKILL" } : {}),
   });
+  if (timeoutMs && (r.error?.code === "ETIMEDOUT" || /timed out at the operation's deadline/.test(r.stderr ?? ""))) {
+    throw new Error(`target operation ${[operation, ...args].join(" ")} timed out after ${timeoutMs} ms`);
+  }
   if (r.status !== 0) {
     throw new Error(`target operation ${[operation, ...args].join(" ")} failed (exit ${r.status}): ${(r.stderr || r.stdout).trim().slice(-500)}`);
   }

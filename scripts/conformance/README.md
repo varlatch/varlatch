@@ -85,7 +85,16 @@ Every check has a **kind**:
   without it, and must run and pass on one with it. A gate run on
   `go-binary` refuses it not applicable. Each is listed in the inventory's
   `goServerChecks` with why the TypeScript server cannot pass it, so making
-  a check go-server is visible in review.
+  a check go-server is visible in review;
+- `go-client`: about the Go CLI together with the TypeScript CLI, the
+  hand-over of internal `docs/design/go-cli.md` (decision 11). Its suite
+  says `"client": "go"` and holds only go-client checks. With `--cli
+  go:<path>` the runner pairs the Go CLI with a TypeScript CLI
+  (`--handover-cli source|<version>`, verified as `--cli` is; 0.22.0 by
+  default) and hands its path to the suite (`VARLATCH_HANDOVER_CLI`,
+  suite-kit's `handoverCliCommand`); the check must run and pass on every
+  target. With a TypeScript CLI under test the suite is not started and its
+  checks are not applicable, which a gate run accepts only then.
 
 A run fails on any of these:
 
@@ -94,7 +103,8 @@ A run fails on any of these:
 - a failed check, unless the target's expectations list it (see
   [Expected failures](#expected-failures)); an expected failure that passes;
 - a conformance or component check reported not applicable (a ts-stack or
-  go-server check may be);
+  go-server check may be, and a go-client check when the CLI under test is
+  not the Go CLI);
 - a `PREDATES-CLI` result the runner cannot confirm. It is accepted only for
   a check whose feature names the version that introduced it
   (`introducedIn`), never for a compatibility-core feature, and only when
@@ -172,6 +182,7 @@ of reaching into Compose or the database:
 | `probe:github-app-pending-expired` | `probe github-app-pending-expired <ghr_...>`: a pending GitHub App conversion's hour over (converted two hours ago, expired a second ago), so the registration sweep's next pass, within a minute, ends it. The conversion's material is written once by a trigger, which the probe sets aside for this one update (the TypeScript stacks: the superuser's replica role in one transaction; go-binary: the trigger dropped and created again from its own SQL in one transaction, in the conformance build's probe) |
 | `probe:audit-export-drain-due` | `probe audit-export-drain-due <org_...>`: a deleted Organization's draining audit export past its deadline (a second ago), so the deletion loop's next pass, within a minute, abandons it (ADR-0056 Decision 10; the TypeScript stacks: SQL in the database container; go-binary: the conformance build's probe) |
 | `probe:deletion-teardown` | `probe deletion-teardown <org_...>`: read only, the Organization's Sync Targets, Platform Connections and webhooks, each `{ id, revoked }`, and its GitHub Apps, each `{ id, removed, keyKept }`, as stored, also once the Organization is deleted (the TypeScript stacks: SQL in the database container; go-binary: the conformance build's probe) |
+| `probe:sync-runs` | `probe sync-runs <snt_...>`: read only, `{ runs, generations }`, the Sync Target's runs in progress (its `sync_runs` rows, by generation; a run deletes its own when it ends, fenced or not), so a suite can follow one run by its generation and wait for it to finish (the TypeScript stacks: SQL in the database container; go-binary: the conformance build's probe) |
 | `probe:sync-trigger-position` | `probe sync-trigger-position`: `{"cursor", "latest"}`, where the converge engine's trigger scan stands (`sync_cursor.cursor_order`) and the last audit event it reads (not `sync.*`): a value change reaches the engine once the cursor passes its event (the TypeScript stacks: SQL in the database container; go-binary: the conformance build's probe) |
 | `maintenance` | `maintenance <ttl ms>`: the `503 MAINTENANCE` admission a restore uses, for a lease |
 | `serve-cli` | `serve-cli on\|off`: the server serves the CLI and install scripts, or not (ADR-0058 Decision 3) |
@@ -588,8 +599,8 @@ own, one its `cliNeeds` lists, is in the file:
 names a slice the Go CLI's inventory says is built. `cliNeeds` is recorded
 conservatively for the checks without a feature (every feature of their
 suite); a slice that finds a check needing less narrows it. The setup's
-`init --org --project --server` (slice 5.1d) comes before `login-token`
-(slice 5.1e), so `login-token`'s entry covers it.
+`init --org --project --server` (slice 5.1d) and token sign-in (slice
+5.1e) are built, so every suite's setup runs on the Go CLI.
 
 ### Features, groups and the compatibility core
 

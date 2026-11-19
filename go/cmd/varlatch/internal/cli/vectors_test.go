@@ -160,8 +160,12 @@ func TestOptionsVectors(t *testing.T) {
 	for _, c := range f.Options {
 		got, err := ParseOptions(c.Args, all[c.Spec])
 		if c.Result.Error != nil {
-			if err == nil || err.Error() != *c.Result.Error {
-				t.Errorf("%s %q: error %v, want %q", c.Spec, c.Args, err, *c.Result.Error)
+			// The Go CLI never echoes an attached option value (go/README.md,
+			// "Diagnostics never print credential values"): TypeScript's
+			// message, with that value as [redacted].
+			want := OptionValueDifference(*c.Result.Error)
+			if err == nil || err.Error() != want {
+				t.Errorf("%s %q: error %v, want %q", c.Spec, c.Args, err, want)
 			}
 			continue
 		}

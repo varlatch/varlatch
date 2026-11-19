@@ -8,7 +8,7 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  * against inventory.json.
  *
  *   node scripts/conformance/run.mjs --target <target> --cli source|<version>|go:<path>
- *        [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]
+ *        [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]
  *        [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]
  *
  *   --target   the server under test (targets/index.mjs): ts-source,
@@ -22,6 +22,11 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *              the Go CLI (ADR-0059 step 5) at <path>, run as a native
  *              binary; the features it lacks yet (client-go.json,
  *              lib/client-lacks.mjs) report client-lacks.
+ *   --handover-cli  with --cli go:<path>, the TypeScript CLI the hand-over
+ *              suite pairs it with (internal docs/design/go-cli.md, decision
+ *              11): `source` or a pinned version, verified as --cli is;
+ *              0.22.0 when not given. Its checks (kind go-client) are not
+ *              applicable when the CLI under test is not the Go CLI.
  *   --report   also write the report as JSON to this file
  *   --suite    run only these suites (and the setup they need); the report
  *              then covers only their checks
@@ -79,7 +84,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function usage(message) {
   console.error(
-    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version>|go:<path> [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
+    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version>|go:<path> [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
       " [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]",
   );
   process.exit(64);
@@ -92,6 +97,7 @@ function parseArgs(argv) {
     const value = () => argv[++i] ?? usage(`${flag} needs a value`);
     if (flag === "--target") options.target = value();
     else if (flag === "--cli") options.cli = value();
+    else if (flag === "--handover-cli") options.handoverCli = value();
     else if (flag === "--report") options.report = value();
     else if (flag === "--suite") options.suites.push(value());
     else if (flag === "--shard") {
@@ -105,6 +111,8 @@ function parseArgs(argv) {
   }
   if (!options.target) usage("--target is required");
   if (!options.cli) usage("--cli is required");
+  if (options.handoverCli !== undefined && !options.cli.startsWith("go:")) usage("--handover-cli pairs the Go CLI (--cli go:<path>) with a TypeScript CLI");
+  if (options.handoverCli !== undefined && options.handoverCli.startsWith("go:")) usage("--handover-cli names a TypeScript CLI: source or a pinned version");
   if (!options.gate && (options.walkthrough || options.recentCliReport)) usage("--walkthrough and --recent-cli-report belong to --gate");
   if (options.gate && options.suites.length > 0) usage("--gate judges a whole run: --suite is not allowed");
   if (options.shard && options.suites.length > 0) usage("--shard selects the suites itself: --suite is not allowed");
@@ -222,8 +230,14 @@ async function main() {
   // verification or reports another version stops the run here.
   let cli;
   let sdk;
+  let handover = null;
   try {
     cli = await resolveCli(options.cli, { repoRoot: REPO_ROOT, workDir: scratch });
+    // The hand-over suites (client "go") pair the Go CLI with a TypeScript one.
+    const handoverSuites = Object.entries(inventory.suites).filter(([name, suite]) => suite.client === "go" && inScope(name));
+    if (cli.spec === "go" && handoverSuites.length > 0) {
+      handover = await resolveCli(options.handoverCli ?? "0.22.0", { repoRoot: REPO_ROOT, workDir: scratch });
+    }
     if (!options.suites.length || options.suites.some((s) => s === "sdk")) {
       sdk = await buildSdk(cli, { repoRoot: REPO_ROOT, workDir: scratch });
     }
@@ -246,6 +260,7 @@ async function main() {
     target: options.target,
     expectKey,
     cli: { spec: cli.spec, version: cli.version, commit: cli.commit, sha256: cli.sha256, verified: cli.verified },
+    handoverCli: handover ? { spec: handover.spec, version: handover.version, commit: handover.commit, sha256: handover.sha256, verified: handover.verified } : null,
     sdk: sdk ? { from: cli.commit ? `release ${cli.version} (${cli.commit})` : "this checkout", commit: sdk.commit, sha256: sdk.sha256 } : null,
     partial: options.suites.length > 0 ? options.suites : false,
     // Which shard this is; a shard of one is a full run, recorded as one.
@@ -282,6 +297,7 @@ async function main() {
     console.log(`--- target ${options.target}, CLI ${cli.spec} (${cli.path}, sha256 ${cli.sha256})`);
     if (report.shard) console.log(`--- shard ${report.shard}: ${report.partial ? report.partial.join(", ") : "every suite"}`);
     if (sdk) console.log(`--- sdk from ${report.sdk.from}: ${sdk.path}, sha256 ${sdk.sha256}`);
+    if (handover) console.log(`--- hand-over with the TypeScript CLI ${handover.spec} (${handover.path}, sha256 ${handover.sha256})`);
     try {
       // `onState` hands over the state before up creates anything, so a
       // signal during startup still removes what up has created so far.
@@ -303,6 +319,8 @@ async function main() {
       VARLATCH_CLI_VERSION: cli.version ?? "",
       // A native binary (the Go CLI) runs directly, a TypeScript one with Node (suite-kit cliCommand).
       VARLATCH_CLI_NATIVE: cli.native ? "1" : "",
+      // The hand-over's TypeScript CLI (suite-kit handoverCliCommand), with --cli go only.
+      VARLATCH_HANDOVER_CLI: handover?.path ?? "",
       VARLATCH_SDK: sdk?.path ?? "",
       CONFORMANCE_TARGET_STATE: stateFile,
     };
@@ -359,6 +377,14 @@ async function main() {
       if (!inScope(entry.suite) && !entry.always) continue;
       if (entry.runner) {
         if (entry.suite === "request-budget") await requestBudget();
+        continue;
+      }
+      // A hand-over suite (client "go") with a TypeScript CLI under test: not applicable.
+      if (suite.client === "go" && cli.spec !== "go") {
+        console.log(`--- ${suite.title}: not run, the CLI under test is not the Go CLI`);
+        for (const [id, check] of Object.entries(inventory.checks)) {
+          if (check.suite === entry.suite) reports.push({ suite: entry.suite, id, status: "N/A", text: "the CLI under test is not the Go CLI" });
+        }
         continue;
       }
       const missing = (suite.needs ?? []).filter((c) => !capabilities.includes(c));
@@ -531,6 +557,7 @@ async function main() {
       reports: reports.filter((r) => inScope(r.suite)),
       errors: errors.filter((e) => e.suite === "runner" || inScope(e.suite)),
       cliVersion: cli.version,
+      cliSpec: cli.spec,
       lacking,
       clientLacking,
     });
@@ -547,6 +574,7 @@ async function main() {
         inventory,
         run: {
           target: options.target,
+          cli: cli.spec,
           partial: report.partial,
           ok: judged.ok,
           checks: judged.checks,
