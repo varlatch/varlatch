@@ -241,7 +241,7 @@ func isProtectedEnvPath(path string, ctx hookContext) bool {
 }
 
 func entriesOf(dir string) []string {
-	entries, err := os.ReadDir(dir)
+	entries, err := readDir(dir)
 	if err != nil {
 		return nil
 	}
@@ -1255,7 +1255,7 @@ func searchReadsEnvUnder(root string, s *search) bool {
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		entries, err := os.ReadDir(cur.dir)
+		entries, err := readDir(cur.dir)
 		if err != nil {
 			continue
 		}
