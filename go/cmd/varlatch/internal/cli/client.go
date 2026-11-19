@@ -139,8 +139,7 @@ func (r *Run) credentialExpiryNotice(server, token string) func(string) {
 // server, token, userAgent: cliUserAgent() })`, the client of login,
 // logout and status --probe.
 func (r *Run) plainClient(server, token string) *apiclient.Client {
-	r.holdCredential(token)
-	return apiclient.New(apiclient.Options{
+	return r.newClient(apiclient.Options{
 		Server:        server,
 		Token:         token,
 		UserAgent:     r.UserAgent(),
@@ -203,9 +202,9 @@ func (r *Run) connectClient(server string) (*apiclient.Client, error) {
 		return nil, err
 	}
 	// A server echoing the bearer back gets it masked (issue #119), in an
-	// answer printed on stdout as in an error message, whatever its shape.
-	r.holdCredential(token)
-	return apiclient.New(apiclient.Options{
+	// answer printed on stdout as in an error message, whatever its shape
+	// (newClient).
+	return r.newClient(apiclient.Options{
 		Server:              server,
 		Token:               token,
 		UserAgent:           r.UserAgent(),
