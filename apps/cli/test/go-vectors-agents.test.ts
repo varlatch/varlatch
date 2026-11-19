@@ -22,7 +22,8 @@ import {
 } from "../src/agents/install.js";
 import { GuideTopicError, guide, skillFiles } from "../src/agents/skill.js";
 import { withTomlPart, withoutTomlPart } from "../src/agents/toml.js";
-import { writeOrCompare } from "./goKit.js";
+import { unfillDir, writeOrCompare } from "./goKit.js";
+import { PATH_BELOW_DIR, RECORD_WINDOWS, WINDOWS_COMMENT, readRecording, windowsFile } from "./goWindows.js";
 
 /**
  * Vectors for the Go CLI's agent files (internal docs/design/go-cli.md,
@@ -314,7 +315,7 @@ function tree(dir: string): Record<string, unknown> {
       const path = rel ? `${rel}/${name}` : name;
       const at = join(dir, path);
       const stat = lstatSync(at);
-      if (stat.isSymbolicLink()) out[path] = { link: readlinkSync(at).split(dir).join("{{dir}}") };
+      if (stat.isSymbolicLink()) out[path] = { link: unfillDir(readlinkSync(at), dir) };
       else if (stat.isDirectory()) {
         out[`${path}/`] = {};
         walk(path);
@@ -341,7 +342,7 @@ function runStep(dir: string, step: Step, withLines: boolean): unknown {
   const { init, scope = "project", agents = [], mode = "install", ...rest } = step;
   const root = scope === "user" ? join(dir, "home") : join(dir, "project");
   const options: InstallOptions = { scope, root, version: VERSION, agents, mode: mode as Mode, ...rest };
-  const sub = (s: string) => s.split(dir).join("{{dir}}");
+  const sub = (s: string) => unfillDir(s, dir);
   try {
     const result = runInstall(options);
     return JSON.parse(
@@ -537,7 +538,7 @@ function special(): Scenario[] {
 }
 
 describe("Go vectors for the agent files", () => {
-  it("are what the TypeScript code answers", () => {
+  it.skipIf(RECORD_WINDOWS)("are what the TypeScript code answers", () => {
     process.umask(0o022);
     // The install scenarios are many: one compact line each.
     const head = JSON.stringify({ version: VERSION, ...pureEdits() }, null, 2);
@@ -545,4 +546,19 @@ describe("Go vectors for the agent files", () => {
     const result = writeOrCompare(VECTORS, `${head.slice(0, -2)},\n  "install": [\n${install}\n]\n}\n`);
     expect(result.current, "agents.json is stale: regenerate it (see this file's comment)").toBe(true);
   }, 120_000);
+
+  // On Windows: the install scenarios whose Linux recording names a path
+  // below the directory, recorded again (goWindows.ts), into
+  // vectors/windows/agents.json.
+  it.runIf(RECORD_WINDOWS)("install scenarios that name a path, recorded on Windows", () => {
+    const linux = readRecording<{ install: Array<{ name: string; steps: unknown }> }>(VECTORS);
+    const needed = new Set(linux.install.filter((s) => PATH_BELOW_DIR.test(JSON.stringify(s.steps))).map((s) => s.name));
+    const install = [...matrix(), ...special()]
+      .filter((s) => needed.has(s.name))
+      .map((s) => JSON.stringify(record(s)))
+      .join(",\n");
+    const head = JSON.stringify({ comment: WINDOWS_COMMENT, platform: "windows", version: VERSION }, null, 2);
+    const result = writeOrCompare(windowsFile(VECTORS), `${head.slice(0, -2)},\n  "install": [\n${install}\n]\n}\n`);
+    expect(result.current, "windows/agents.json is stale: record it again (goWindows.ts)").toBe(true);
+  }, 300_000);
 });

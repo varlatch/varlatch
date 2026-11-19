@@ -149,7 +149,20 @@ export async function bundleCli(dir: string): Promise<string> {
 }
 
 const fill = (text: string, server: string, dir: string): string => text.split("{{server}}").join(server).split("{{dir}}").join(dir);
-const unfill = (text: string, server: string, dir: string): string => text.split(server).join("{{server}}").split(dir).join("{{dir}}");
+const unfill = (text: string, server: string, dir: string): string => unfillDir(text.split(server).join("{{server}}"), dir);
+
+/**
+ * The case directory as {{dir}}, both as it is printed and as a JSON string
+ * holds it (each backslash doubled: on Windows `C:\\Users\\...` in a --json
+ * document or a JSON file the CLI wrote is the directory too). On Linux and
+ * macOS a directory holds no backslash, so the two forms are the same. The Go
+ * replay's transcript.UnfillDir is the same.
+ */
+export function unfillDir(text: string, dir: string): string {
+  const escaped = dir.split("\\").join("\\\\");
+  const out = escaped === dir ? text : text.split(escaped).join("{{dir}}");
+  return out.split(dir).join("{{dir}}");
+}
 
 function fillDeep(value: unknown, server: string, dir: string): unknown {
   if (typeof value === "string") return fill(value, server, dir);

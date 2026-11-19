@@ -14,6 +14,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/transcript"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
@@ -40,12 +41,78 @@ func loadAgentVectors(t *testing.T) jsjson.Object {
 
 func js(v any) string { return string(jsjson.Stringify(v)) }
 
-// windowsPathSkip is why a recorded case that names a path is skipped on
-// Windows (internal docs/design/go-cli.md, step 5.9).
-const windowsPathSkip = "path separators: Windows expectations not recorded yet (step 5.9)"
-
-// pathBelowDir matches a path below the scenario's directory placeholder.
+// pathBelowDir matches a path below the scenario's directory placeholder:
+// a scenario whose recorded steps hold one has a Windows expectation
+// (apps/cli/test/goWindows.ts's PATH_BELOW_DIR).
 var pathBelowDir = regexp.MustCompile(`\{\{(dir|home)\}\}[/\\]`)
+
+// windowsAgentVectors holds the install scenarios as TypeScript recorded
+// them on Windows: those whose Linux recording names a path below the
+// directory, which both CLIs join with backslashes there.
+const windowsAgentVectors = "../../testdata/vectors/windows/agents.json"
+
+// windowsScenarios is the Windows recording's scenarios by name.
+func windowsScenarios(t *testing.T) map[string]jsjson.Object {
+	t.Helper()
+	data, err := os.ReadFile(windowsAgentVectors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := jsjson.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]jsjson.Object{}
+	for _, s := range cases(t, v.(jsjson.Object), "install", 0) {
+		out[s.Value("name").(string)] = s
+	}
+	return out
+}
+
+// TestWindowsAgentVectorsComplete: the Windows recording holds exactly the
+// scenarios whose Linux recording names a path below the directory, with
+// the same setup and steps; checked on every platform, so a scenario that
+// needs a Windows expectation and has none fails before Windows runs.
+func TestWindowsAgentVectorsComplete(t *testing.T) {
+	linux := cases(t, loadAgentVectors(t), "install", 250)
+	windows := windowsScenarios(t)
+	if v, _ := jsjson.Parse(must(os.ReadFile(windowsAgentVectors))); v.(jsjson.Object).Value("version") != loadAgentVectors(t).Value("version") {
+		t.Error("windows/agents.json was recorded from another version: record it again (apps/cli/test/goWindows.ts)")
+	}
+	needed := 0
+	for _, s := range linux {
+		name := s.Value("name").(string)
+		w, ok := windows[name]
+		switch {
+		case !pathBelowDir.MatchString(js(s.Value("steps"))):
+			if ok {
+				t.Errorf("%s: a Windows expectation for a scenario that names no path: record again (apps/cli/test/goWindows.ts)", name)
+			}
+			continue
+		case !ok:
+			t.Errorf("%s: names a path and has no Windows expectation: record one (apps/cli/test/goWindows.ts)", name)
+		case js(w.Value("setup")) != js(s.Value("setup")) || len(asList(w.Value("steps"))) != len(asList(s.Value("steps"))):
+			t.Errorf("%s: the Windows recording has another setup or other steps: record again", name)
+		default:
+			for i, step := range asList(s.Value("steps")) {
+				if js(step.(jsjson.Object).Value("step")) != js(asList(w.Value("steps"))[i].(jsjson.Object).Value("step")) {
+					t.Errorf("%s: step %d differs from the Linux recording's: record again", name, i)
+				}
+			}
+		}
+		needed++
+	}
+	if len(windows) > needed {
+		t.Errorf("windows/agents.json holds %d scenarios, %d are needed", len(windows), needed)
+	}
+}
+
+func must(data []byte, err error) []byte {
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
 
 func optional(v any) desired {
 	if s, ok := v.(string); ok {
@@ -172,6 +239,10 @@ func TestInstallVectors(t *testing.T) {
 	v := loadAgentVectors(t)
 	version := v.Value("version").(string)
 	scenarios := cases(t, v, "install", 250)
+	var windows map[string]jsjson.Object
+	if runtime.GOOS == "windows" {
+		windows = windowsScenarios(t)
+	}
 	syncWrites = false
 	defer func() { syncWrites = true }()
 	scratch, err := filepath.EvalSymlinks(t.TempDir())
@@ -182,12 +253,15 @@ func TestInstallVectors(t *testing.T) {
 		name := s.Value("name").(string)
 		t.Run(name, func(t *testing.T) {
 			// The recorded outcomes name paths as TypeScript printed them on
-			// Linux; on Windows both CLIs join them with backslashes. Until
-			// Windows outcomes are recorded (step 5.9), a scenario whose
-			// outcomes name a path below its directory is not compared
-			// there; every other one is.
+			// Linux; on Windows both CLIs join them with backslashes, so a
+			// scenario whose outcomes name a path below its directory is
+			// compared there with TypeScript's Windows recording.
 			if runtime.GOOS == "windows" && pathBelowDir.MatchString(js(s.Value("steps"))) {
-				t.Skip(windowsPathSkip)
+				w, ok := windows[name]
+				if !ok {
+					t.Fatal("no Windows expectation: record one (apps/cli/test/goWindows.ts)")
+				}
+				s = w
 			}
 			dir := filepath.Join(scratch, "s"+jsjson.Number(float64(i)))
 			for _, sub := range []string{"project", "home"} {
@@ -268,7 +342,7 @@ func runVectorStep(dir, version string, step jsjson.Object, withLines bool) any 
 	}
 	opts.Guardrails = step.Value("guardrails") == true
 	opts.MCP = step.Value("mcp") == true
-	sub := func(s string) string { return strings.ReplaceAll(s, dir, "{{dir}}") }
+	sub := func(s string) string { return transcript.UnfillDir(s, dir) }
 	result, err := RunInstall(opts)
 	if err != nil {
 		var e *Error

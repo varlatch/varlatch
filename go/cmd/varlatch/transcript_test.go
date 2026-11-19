@@ -481,6 +481,10 @@ func TestTranscripts(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := func(args []string) *exec.Cmd { return exec.Command(exe, args...) }
+	var windows map[string]map[string]transcript.Outcome
+	if runtime.GOOS == "windows" {
+		windows = windowsExpectations(t)
+	}
 	slots := make(chan struct{}, transcriptParallelism)
 	for _, path := range files {
 		f, err := transcript.Load(path)
@@ -489,16 +493,18 @@ func TestTranscripts(t *testing.T) {
 		}
 		for _, c := range f.Cases {
 			t.Run(f.Area+"/"+c.ID, func(t *testing.T) {
-				// Skipped before it joins the parallel cases or takes a
-				// slot: on Windows, a case whose outcome names a path below
-				// its directory is not compared until step 5.9.
-				if runtime.GOOS == "windows" {
-					if expectsPath(t, c) {
-						t.Skip(windowsPathSkip)
+				// On Windows, a case whose outcome names a path below its
+				// directory is compared with TypeScript's Windows recording
+				// (testdata/transcripts/windows), since both CLIs join such
+				// paths with backslashes there. Every other case replays
+				// against its Linux recording, the directory inside a JSON
+				// string included (transcript.UnfillDir).
+				if runtime.GOOS == "windows" && expectsPath(t, c) {
+					w, ok := windows[f.Area][c.ID]
+					if !ok {
+						t.Fatal("no Windows expectation: record one (apps/cli/test/goWindows.ts)")
 					}
-					if expectsDirInJSON(c) {
-						t.Skip(windowsJSONDirSkip)
-					}
+					c.Expect = w
 				}
 				t.Parallel()
 				slots <- struct{}{}
@@ -526,16 +532,13 @@ func TestTranscripts(t *testing.T) {
 	}
 }
 
-// windowsPathSkip is why a case that expects a path is skipped on Windows
-// (internal docs/design/go-cli.md, step 5.9).
-const windowsPathSkip = "path separators: Windows expectations not recorded yet (step 5.9)"
-
 // expectsPath reports whether a case's recorded outcome names a path below
 // its directory: the directory's placeholder followed by a separator
 // (pathBelowDir). TypeScript recorded it on Linux; on Windows both CLIs
-// join such a path with backslashes, so until Windows outcomes are recorded
-// (step 5.9) such a case is not compared there. Every other case, the
-// directory itself named alone included, still replays byte for byte.
+// join such a path with backslashes, so such a case has a Windows
+// recording too (apps/cli/test/goWindows.ts). Every other case, the
+// directory itself named alone included, replays its Linux recording on
+// every platform.
 func expectsPath(t *testing.T, c transcript.Case) bool {
 	t.Helper()
 	b, err := json.Marshal(c.Expect)
@@ -550,32 +553,84 @@ func expectsPath(t *testing.T, c transcript.Case) bool {
 // recorder that adds it is covered.
 var pathBelowDir = regexp.MustCompile(`\{\{(dir|home)\}\}[/\\]`)
 
-// windowsJSONDirSkip is why a case that names its directory inside a JSON
-// string is skipped on Windows (step 5.9).
-const windowsJSONDirSkip = "a directory inside a JSON string: Windows expectations not recorded yet (step 5.9)"
+// windowsFile is the Windows expectations of an area (goWindows.ts):
+// each case that names a path below its directory, as TypeScript did it on
+// Windows.
+type windowsFile struct {
+	Schema   int    `json:"schema"`
+	Area     string `json:"area"`
+	Platform string `json:"platform"`
+	Cases    []struct {
+		ID     string             `json:"id"`
+		Expect transcript.Outcome `json:"expect"`
+	} `json:"cases"`
+}
 
-// dirInJSONString matches a placeholder directory inside a JSON string.
-var dirInJSONString = regexp.MustCompile(`"[^"\n]*\{\{(dir|home)\}\}[^"\n]*"`)
-
-// expectsDirInJSON reports whether a case's recorded outcome names its
-// directory inside a JSON string (stdout, stderr, a file it writes, or a
-// request body). The replayer gives the directory back as {{dir}} as it is
-// printed; on Windows JSON escapes its backslashes, so until Windows
-// outcomes are recorded (step 5.9) such a case is not compared there.
-func expectsDirInJSON(c transcript.Case) bool {
-	texts := []string{c.Expect.Stdout, c.Expect.Stderr}
-	for _, f := range c.Expect.Files {
-		texts = append(texts, f.Content)
+// windowsExpectations is every area's Windows expectations, by area and
+// case id.
+func windowsExpectations(t *testing.T) map[string]map[string]transcript.Outcome {
+	t.Helper()
+	files, err := filepath.Glob("testdata/transcripts/windows/*.json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, r := range c.Expect.Requests {
-		texts = append(texts, string(r.Body))
-	}
-	for _, text := range texts {
-		if dirInJSONString.MatchString(text) {
-			return true
+	out := map[string]map[string]transcript.Outcome{}
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var w windowsFile
+		if err := json.Unmarshal(data, &w); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if w.Platform != "windows" || w.Schema != transcript.Schema || filepath.Base(path) != w.Area+".json" {
+			t.Fatalf("%s: platform %q, schema %d, area %q", path, w.Platform, w.Schema, w.Area)
+		}
+		out[w.Area] = map[string]transcript.Outcome{}
+		for _, c := range w.Cases {
+			out[w.Area][c.ID] = c.Expect
 		}
 	}
-	return false
+	return out
+}
+
+// TestWindowsExpectationsComplete: each area's Windows recording holds
+// exactly the cases whose Linux recording names a path below their
+// directory, in the area's order, and no area without one has a file.
+// Checked on every platform, so a case that needs a Windows expectation and
+// has none fails before Windows runs it.
+func TestWindowsExpectationsComplete(t *testing.T) {
+	files, err := filepath.Glob("testdata/transcripts/*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	windows := windowsExpectations(t)
+	for _, path := range files {
+		f, err := transcript.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var needed []string
+		for _, c := range f.Cases {
+			if expectsPath(t, c) {
+				needed = append(needed, c.ID)
+			}
+		}
+		have := windows[f.Area]
+		delete(windows, f.Area)
+		for _, id := range needed {
+			if _, ok := have[id]; !ok {
+				t.Errorf("%s/%s names a path and has no Windows expectation: record one (apps/cli/test/goWindows.ts)", f.Area, id)
+			}
+		}
+		if len(have) > len(needed) {
+			t.Errorf("windows/%s.json holds %d cases, %d are needed: record again", f.Area, len(have), len(needed))
+		}
+	}
+	for area := range windows {
+		t.Errorf("windows/%s.json is for an area with no recording", area)
+	}
 }
 
 func withMarker(env map[string]string) map[string]string {
@@ -612,33 +667,22 @@ func TestServerDisplayDifferenceIsExact(t *testing.T) {
 	}
 }
 
-// TestWindowsPathSkipIsNarrow: on Windows only a recorded outcome that names
-// a path below the case's directory is skipped; the directory alone, or any
-// other placeholder, is still compared.
-func TestWindowsPathSkipIsNarrow(t *testing.T) {
-	for text, skipped := range map[string]bool{
-		`"repoRoot": "{{dir}}/repo"`:  true,
-		`"root": "{{dir}}\\project"`:  true,
-		`"home": "{{home}}/.config"`:  true,
-		`outside {{dir}}, so nothing`: false,
-		`"root": "{{dir}}"`:           false,
-		`{{server}}/v1/whoami`:        false,
-		`{{skill}}/SKILL.md`:          false,
+// TestWindowsExpectationsAreNarrow: only a recorded outcome that names a
+// path below the case's directory has a Windows expectation; the directory
+// alone, or any other placeholder, replays its Linux recording.
+func TestWindowsExpectationsAreNarrow(t *testing.T) {
+	for text, needed := range map[string]bool{
+		`"repoRoot": "{{dir}}/repo"`:                                true,
+		`"root": "{{dir}}\\project"`:                                true,
+		`"home": "{{home}}/.config"`:                                true,
+		`outside {{dir}}, so nothing`:                               false,
+		`"root": "{{dir}}"`:                                         false,
+		`{"offline": "No varlatch.toml found from {{dir}} upward"}`: false,
+		`{{server}}/v1/whoami`:                                      false,
+		`{{skill}}/SKILL.md`:                                        false,
 	} {
-		if got := pathBelowDir.MatchString(text); got != skipped {
-			t.Errorf("%s: skipped %v, want %v", text, got, skipped)
-		}
-	}
-	// A directory inside a JSON string is skipped too; outside one, alone,
-	// it is compared.
-	for text, skipped := range map[string]bool{
-		`{"offline": "No varlatch.toml found from {{dir}} upward"}`: true,
-		`{"root": "{{dir}}"}`:                         true,
-		`No varlatch.toml found from {{dir}} upward.`: false,
-		`{"server": "{{server}}"}`:                    false,
-	} {
-		if got := expectsDirInJSON(transcript.Case{Expect: transcript.Outcome{Stdout: text}}); got != skipped {
-			t.Errorf("%s: skipped %v, want %v", text, got, skipped)
+		if got := pathBelowDir.MatchString(text); got != needed {
+			t.Errorf("%s: needs a Windows expectation %v, want %v", text, got, needed)
 		}
 	}
 }

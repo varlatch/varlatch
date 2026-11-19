@@ -6,7 +6,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { FIND_LIMITS, FindFilesError, findCopies, findFilesJson, formatFindFilesHuman, type FindLimits } from "../src/findFiles.js";
-import { writeOrCompare } from "./goKit.js";
+import { unfillDir, writeOrCompare } from "./goKit.js";
+import { RECORD_WINDOWS, WINDOWS_COMMENT, readRecording, windowsFile } from "./goWindows.js";
 
 /**
  * Vectors for the Go CLI's `scan --find-files` (internal
@@ -208,7 +209,7 @@ async function record(c: Case, dir: string): Promise<NonNullable<Case["expect"]>
     for (const k of VARS) delete process.env[k];
     process.env.HOME = join(dir, "home");
     for (const [k, v] of Object.entries(c.env ?? {})) process.env[k] = v.split("{{dir}}").join(dir);
-    const unfill = (s: string) => s.split(dir).join("{{dir}}");
+    const unfill = (s: string) => unfillDir(s, dir);
     const limits = c.limits ?? FIND_LIMITS;
     try {
       const report = await findCopies(c.dir, dir, limits);
@@ -230,7 +231,7 @@ async function record(c: Case, dir: string): Promise<NonNullable<Case["expect"]>
 }
 
 describe("Go CLI find-files vectors", () => {
-  it("are recorded from findFiles.ts as it is", async () => {
+  it.skipIf(RECORD_WINDOWS)("are recorded from findFiles.ts as it is", async () => {
     const ids = new Set<string>();
     const recorded: Case[] = [];
     for (const c of cases) {
@@ -248,5 +249,30 @@ describe("Go CLI find-files vectors", () => {
     for (const marker of ['"git":"ignored"', '"git":"not-ignored"', '"git":"no-repository"', '"gitError"', '"exitCode":0', '"exitCode":1', '"exitCode":2', '"stopped":true', "pathBase64", "does not exist", "is not one"]) {
       expect(all, marker).toContain(marker);
     }
+  }, 300_000);
+
+  // On Windows: the cases Windows runs (no links, modes or names it cannot
+  // hold; internal/findfiles' skipFor) whose Linux recording names a path
+  // below the directory, recorded again (goWindows.ts), into
+  // vectors/windows/findfiles.json.
+  it.runIf(RECORD_WINDOWS)("cases that name a path, recorded on Windows", async () => {
+    const linux = readRecording<{ cases: Array<Case & { rawNames?: boolean; posixNames?: boolean }> }>(VECTORS);
+    const runsOnWindows = (c: Case & { rawNames?: boolean; posixNames?: boolean }) =>
+      !c.rawNames && !c.posixNames && !c.tree.links && !c.tree.hardLinks && !c.tree.modes;
+    const needsPath = (c: Case) => {
+      const text = JSON.stringify(c);
+      return text.includes("{{dir}}/") || text.includes("{{dir}}\\\\");
+    };
+    const needed = new Set(linux.cases.filter((c) => runsOnWindows(c) && needsPath(c)).map((c) => c.id));
+    const recorded: Array<{ id: string; expect: NonNullable<Case["expect"]> }> = [];
+    for (const c of cases) {
+      if (!needed.has(c.id)) continue;
+      const dir = realpathSync(mkdtempSync(join(scratch, "c-")));
+      build(dir, c.tree);
+      recorded.push({ id: c.id, expect: await record(c, dir) });
+    }
+    const text = `${JSON.stringify({ schema: 1, comment: WINDOWS_COMMENT, platform: "windows", cases: recorded }, null, 2)}\n`;
+    const result = writeOrCompare(windowsFile(VECTORS), text);
+    expect(result.current, "windows/findfiles.json is stale: record it again (goWindows.ts)").toBe(true);
   }, 300_000);
 });

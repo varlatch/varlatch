@@ -1,0 +1,86 @@
+name: Windows expectations
+
+# The Go CLI kit's Windows expectations (internal docs/design/go-cli.md,
+# slice 5.9a; apps/cli/test/goWindows.ts): the TypeScript recorder, run on
+# Windows, records the transcript cases and the agents and find-files
+# vectors whose Linux recording names a path below their directory, and
+# compares them with the committed files under testdata/*/windows/. What it
+# recorded is uploaded as the `windows-expectations` artifact either way:
+# when the job fails because they differ, download it and commit the files
+# (scripts/go-windows-expectations.sh <run id> does both).
+#
+# It runs only when asked: on a pull request carrying the `record-windows`
+# label (a draft included; each push records again while the label is on),
+# or by hand (workflow_dispatch). The Go replay on Windows (go.yml's
+# go-cli-platforms) is what checks the Go CLI against these files; the Go
+# test TestWindowsExpectationsComplete, on every platform, fails when a case
+# needs one and has none.
+#
+# The pull request's own code runs here, with a read-only token, no secret,
+# and a GitHub-hosted runner only.
+on:
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-expectations-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'record-windows') }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # The workspace packages the CLI bundles, as ci.yml builds them.
+      - name: Build the CLI's packages
+        run: pnpm --filter @varlatch/protocol generate && pnpm --filter "@varlatch/cli^..." build
+
+      # Written, then compared with what is committed (the next step), so
+      # the artifact always holds a full recording.
+      - name: Record on Windows
+        working-directory: apps/cli
+        env:
+          VARLATCH_WRITE_GO_VECTORS: "1"
+        run: pnpm exec vitest run test/go-transcripts-windows.test.ts test/go-vectors-agents.test.ts test/go-vectors-findfiles.test.ts
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: windows-expectations
+          path: |
+            go/cmd/varlatch/testdata/transcripts/windows/
+            go/cmd/varlatch/testdata/vectors/windows/
+          if-no-files-found: error
+
+      - name: The committed files are current
+        run: |
+          git add -N go/cmd/varlatch/testdata/transcripts/windows go/cmd/varlatch/testdata/vectors/windows
+          if ! git diff --quiet -- go/cmd/varlatch/testdata/transcripts/windows go/cmd/varlatch/testdata/vectors/windows; then
+            git diff --stat -- go/cmd/varlatch/testdata/transcripts/windows go/cmd/varlatch/testdata/vectors/windows
+            echo "::error::The Windows expectations differ from what is committed: commit the windows-expectations artifact (scripts/go-windows-expectations.sh ${{ github.run_id }})."
+            exit 1
+          fi
