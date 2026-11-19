@@ -183,8 +183,8 @@ func TestFailuresToConnect(t *testing.T) {
 		// the original text), so it may read https:[redacted]@h.
 		{"http://u:p@127.0.0.1:2", "http:[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again", ""},
 		{"http://user:hunter2@[::1", "http:[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
-		{"http:/user:hunter2@[::1", "http:[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
-		{"HTTP:\\user:hunter2@[::1", "HTTP:[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
+		{"http:/user:hunter2@[::1", "[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
+		{"HTTP:\\user:hunter2@[::1", "[redacted]@[::1/v1/meta: can't be parsed as a URL", ""},
 	} {
 		_, err := New(Options{Server: c.server}).Meta(context.Background())
 		var f *FetchError

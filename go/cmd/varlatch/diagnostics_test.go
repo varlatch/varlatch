@@ -46,10 +46,10 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	// with [redacted] for a user name and password. The two servers that do
 	// not parse read the same.
 	want := map[string]string{
-		"http://127.0.0.1:2":          "the credential contains a character that is not allowed in an HTTP header",
-		"http://127.0.0.1:3":          "the credential contains a character that is not allowed in an HTTP header",
-		"http:[redacted]@127.0.0.1:2": "http:[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
-		"http:[redacted]@[::1":        "http:[redacted]@[::1/v1/meta: can't be parsed as a URL",
+		"http://127.0.0.1:2":     "the credential contains a character that is not allowed in an HTTP header",
+		"http://127.0.0.1:3":     "the credential contains a character that is not allowed in an HTTP header",
+		"[redacted]@127.0.0.1:2": "[redacted]@127.0.0.1:2/v1/meta: a server URL with a user name or password can't be used; remove them and try again",
+		"[redacted]@[::1":        "[redacted]@[::1/v1/meta: can't be parsed as a URL",
 	}
 	// Nothing printed may hold a token or a URL's password.
 	leaks := func(text string) bool {
@@ -93,7 +93,7 @@ func TestDiagnosticsNeverPrintCredentials(t *testing.T) {
 	}
 	// The human format names each server precisely and keeps each refusal
 	// as the client wrote it.
-	for _, server := range []string{"http://127.0.0.1:2", "http://127.0.0.1:3", "http:[redacted]@127.0.0.1:2", "http:[redacted]@[::1"} {
+	for _, server := range []string{"http://127.0.0.1:2", "http://127.0.0.1:3", "[redacted]@127.0.0.1:2", "[redacted]@[::1"} {
 		if !strings.Contains(human, server+"  (") {
 			t.Errorf("the human format has no line for %s:\n%s", server, human)
 		}
@@ -152,7 +152,16 @@ func TestStatusProbeMasksNestedCredentials(t *testing.T) {
 // --probe (human and --json, its probe detail included) and logout --all's
 // revocation reason with neither credential.
 func TestNestedCredentialsBehindOuterOnes(t *testing.T) {
-	const server = "//outer:outer-pass@gateway.example/?next=//alice1:inner-pass@upstream.example"
+	for _, c := range []struct{ server, host string }{
+		{"//outer:outer-pass@gateway.example/?next=//alice1:inner-pass@upstream.example", "upstream.example"},
+		// #278 round 5: a leading space, and "_" before the colon.
+		{" //ci-bot_:example-password@upstream.example", "upstream.example"},
+	} {
+		t.Run(c.server, func(t *testing.T) { nestedCredentials(t, c.server, c.host) })
+	}
+}
+
+func nestedCredentials(t *testing.T, server, host string) {
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +185,7 @@ func TestNestedCredentialsBehindOuterOnes(t *testing.T) {
 			t.Fatalf("%v: %v\n%s", args, err, stderr.String())
 		}
 		out := stdout.String() + stderr.String()
-		if strings.Contains(out, "pass") || strings.Contains(out, "alice1") || strings.Contains(out, "outer:") || !strings.Contains(out, "[redacted]@upstream.example") {
+		if strings.Contains(out, "pass") || strings.Contains(out, "alice1") || strings.Contains(out, "ci-bot") || strings.Contains(out, "outer:") || !strings.Contains(out, "[redacted]@"+host) {
 			t.Errorf("%v:\n%s", args, out)
 		}
 		if args[0] == "status" && !strings.Contains(out, "can't be parsed as a URL") {

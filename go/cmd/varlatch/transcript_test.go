@@ -165,13 +165,15 @@ var differences = map[string]transcript.Difference{
 	// https://[redacted]@segment. Go shows that URL as it is where it shows
 	// it as a server (it reads the authority WHATWG parses), and in a --json
 	// document, where an at-sign after the authority takes the whole-text
-	// fail-safe, as https:[redacted]@segment (go/README.md, "Diagnostics
+	// fail-safe, as https:[redacted]@segment or, masked once more where a
+	// shown server is redacted again, [redacted]@segment (go/README.md, "Diagnostics
 	// never print credential values"). Accepted only where Go's stdout, with
 	// the fixture URL (as JSON writes it) or its fail-safe form shown as
 	// TypeScript shows it, is the recording.
 	"backslash-path": func(o *transcript.Outcome, got transcript.Outcome) {
 		shown := strings.ReplaceAll(got.Stdout, backslashPathFixture, "https://[redacted]@segment")
 		shown = strings.ReplaceAll(shown, `"https:[redacted]@segment"`, `"https://[redacted]@segment"`)
+		shown = strings.ReplaceAll(shown, `"[redacted]@segment"`, `"https://[redacted]@segment"`)
 		if shown == o.Stdout {
 			o.Stdout = got.Stdout
 		}
@@ -276,6 +278,7 @@ func TestBackslashPathDifferenceIsExact(t *testing.T) {
 	for got, accepted := range map[string]bool{
 		`{"server": "https://example.com\\path@segment"}` + "\n":         true,
 		`{"server": "https:[redacted]@segment"}` + "\n":                  true,
+		`{"server": "[redacted]@segment"}` + "\n":                        true,
 		`{"server": "https:[redacted]@other"}` + "\n":                    false,
 		`{"server": "https://other.example\\path@segment"}` + "\n":       false,
 		`{"server": "https://example.com\\other@segment"}` + "\n":        false,

@@ -6,7 +6,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -92,5 +95,58 @@ func TestOutJSONTakesOnlyARedactedDocument(t *testing.T) {
 	want := "{\n  \"list\": [\n    \"[redacted]\",\n    \"https:[redacted]@h.example\"\n  ],\n  \"n\": 5\n}"
 	if doc.document != want {
 		t.Errorf("redactJSON:\n%s\nwant\n%s", doc.document, want)
+	}
+}
+
+// TestNoPasswordInOutput is the output side of clientctx's property test,
+// with a fixed seed: generated user names and passwords (RFC 3986 userinfo
+// characters, digits, letters of other scripts) in a URL, nested in
+// another's query, scheme-relative, quoted, in prose, with each at-sign
+// form, go through a --json document (redactJSON) and the stderr
+// fail-safe (RedactDiagnostic); the password never shows.
+func TestNoPasswordInOutput(t *testing.T) {
+	r := rand.New(rand.NewPCG(7, 278))
+	const ascii = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;="
+	letters := []string{"é", "ü", "ж", "字"}
+	gen := func(password bool) string {
+		var b strings.Builder
+		for range 1 + r.IntN(20) {
+			switch k := r.IntN(10); {
+			case k == 0:
+				fmt.Fprintf(&b, "%%%02X", r.IntN(256))
+			case k == 1:
+				b.WriteString(letters[r.IntN(len(letters))])
+			case k == 2 && password:
+				b.WriteByte(':')
+			default:
+				b.WriteByte(ascii[r.IntN(len(ascii))])
+			}
+		}
+		return b.String()
+	}
+	contexts := []string{"%s://%s:%s%sh.example/x", "//%[2]s:%[3]s%[4]sh.example", "https://a.example/?next=%s://%s:%s%sh.example",
+		"see %s://%s:%s%sh.example here", " //%[2]s:%[3]s%[4]sup.example", "//outer:o-pw@gw/?next=//%[2]s:%[3]s%[4]sh"}
+	judged := 0
+	for range 4000 {
+		user, pass := gen(false), gen(true)
+		scheme := []string{"https", "http", "postgres", "foo"}[r.IntN(4)]
+		at := []string{"@", "%40", `\u0040`}[r.IntN(3)]
+		format := contexts[r.IntN(len(contexts))]
+		in := fmt.Sprintf(format, scheme, user, pass, at)
+		// The fixed text around it (the context, the message, the JSON keys)
+		// must not hold the password, or there is nothing to judge.
+		if strings.Contains(fmt.Sprintf(format, scheme, user, "", at)+"varlatch: : refused value list {}[]\",\n", pass) {
+			continue
+		}
+		judged++
+		doc := redactJSON(jsjson.Object{{Key: "value", Value: in}, {Key: "list", Value: []string{in}}}).document
+		for name, got := range map[string]string{"--json": doc, "stderr": RedactDiagnostic("varlatch: " + in + ": refused")} {
+			if strings.Contains(strings.ReplaceAll(got, "[redacted]", "\x00"), pass) {
+				t.Fatalf("%s of %q: %q shows the password %q", name, in, got, pass)
+			}
+		}
+	}
+	if judged < 3000 {
+		t.Fatalf("only %d cases judged", judged)
 	}
 }

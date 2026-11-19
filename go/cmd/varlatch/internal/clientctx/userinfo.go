@@ -3,6 +3,8 @@
 package clientctx
 
 import (
+	"bytes"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -154,56 +156,110 @@ func MaskServer(v any) any {
 //     the only defence.
 
 // MaskUserinfoInText is the fail-safe: one linear pass over the whole
-// message, with no quoting, scheme, list or line rules. For detection, tab,
-// CR and LF are dropped (as WHATWG drops them from a URL), and "@", "\u0040",
-// "\x40", "\U00000040" and "%40" are at-signs. If the message has a ":" that
-// follows a letter or a digit (any script) and an at-sign anywhere after it, everything from just
-// after the FIRST such ":" up to and including the LAST at-sign of the
-// message, newlines included, becomes "[redacted]@"; what comes before and
-// after is kept. A message with no such pair keeps its bytes.
-//
-// Error output may over-mask: the whole message is masked from the first
-// scheme colon to the last at-sign, so an email after a colon, or a second
-// already-masked URL, takes the text between them with it. That is
-// accepted for failure text, where never leaking comes before byte parity;
-// ordinary output keeps the precise layer's exact bytes.
+// text, with no scheme, list or line rules. For detection, tab, CR and LF
+// are dropped (as WHATWG drops them from a URL), and "@", "\u0040", "\x40",
+// "\U00000040" and "%40" are at-signs. For each at-sign, it looks back
+// within the same run of the text (a run ends at whitespace or a quote).
+// When that stretch holds any colon, it is masked from just after the
+// nearest preceding "//", or from the run's start when there is none, up
+// to the at-sign. The at-sign is kept, and nothing about what precedes the
+// colon matters. On top of these per-at-sign spans, the whole-text span:
+// from just after the first colon of the text, whatever precedes it, to
+// its last at-sign (so a password holding "//", whitespace, quotes or line
+// breaks is covered too). The union is replaced once, each span with
+// "[redacted]@". Error text may be over-masked, never under-masked. A
+// stretch without a colon (an email, `@AGENTS.md`) keeps its bytes;
+// `mailto:a@b` reads `[redacted]@b`, an accepted over-mask.
 func MaskUserinfoInText(text string) string {
-	from, _, atEnd, ok := failSafeSpan(text)
-	if !ok {
-		return text
-	}
-	return text[:from] + "[redacted]@" + text[atEnd:]
+	return replaceSpans(text, failSafeSpans(text))
 }
 
-// failSafeSpan is what the fail-safe masks, in text's own bytes: from just
-// after the first ":" that follows a letter or a digit (any script) to the
-// last at-sign of any form after it, which starts at atStart and ends at
-// atEnd; false when the text has no such pair.
-func failSafeSpan(text string) (from, atStart, atEnd int, ok bool) {
+// failSafeSpans is what the fail-safe masks, in text's own bytes, each
+// span ending just after an at-sign, possibly overlapping.
+func failSafeSpans(text string) [][2]int {
 	kept, at := forAtSigns(text)
 	if kept == nil {
-		return 0, 0, 0, false // no at-sign of any form
+		return nil // no at-sign of any form
 	}
-	colon := -1
-	for i := 1; i < len(kept); i++ {
-		if kept[i] == ':' {
-			if r, _ := utf8.DecodeLastRune(kept[:i]); unicode.IsLetter(r) || unicode.IsDigit(r) {
-				colon = i
-				break
+	var spans [][2]int
+	runStart := 0     // where the current run starts, in kept
+	lastSlashes := -1 // the latest "//" of the run (its first byte)
+	lastColon := -1   // the latest colon of the run
+	for i := 0; i < len(kept); {
+		c := kept[i]
+		if c == '"' || c == '\'' || c == '`' {
+			runStart, lastSlashes, lastColon = i+1, -1, -1
+			i++
+			continue
+		}
+		if r, size := utf8.DecodeRune(kept[i:]); unicode.IsSpace(r) {
+			runStart, lastSlashes, lastColon = i+size, -1, -1
+			i += size
+			continue
+		}
+		if n := atSignAt(kept, i); n > 0 {
+			from := -1
+			if lastColon >= runStart { // any colon before it in the run
+				from = runStart
+				if lastSlashes >= runStart {
+					from = lastSlashes + 2 // just after the nearest "//"
+				}
 			}
+			if from >= 0 && from < i {
+				spans = append(spans, [2]int{at[from], at[i+n-1] + 1})
+			}
+			i += n
+			continue
+		}
+		switch {
+		case c == '/' && i+1 < len(kept) && kept[i+1] == '/':
+			lastSlashes = i
+			i += 2
+			continue
+		case c == ':':
+			lastColon = i
+		}
+		i++
+	}
+	// And the whole-text span: from just after the first colon of the text,
+	// whatever precedes it, to the last at-sign after it, so a password
+	// holding whitespace, quotes or line breaks is masked too.
+	colon := bytes.IndexByte(kept, ':')
+	if colon >= 0 {
+		last, size := -1, 0
+		for i, n := nextAtSign(kept, colon+1); i >= 0; i, n = nextAtSign(kept, i+n) {
+			last, size = i, n
+		}
+		if last >= 0 {
+			spans = append(spans, [2]int{at[colon] + 1, at[last+size-1] + 1})
 		}
 	}
-	if colon < 0 {
-		return 0, 0, 0, false
+	return spans
+}
+
+// replaceSpans is text with the union of spans (byte offsets, in any order,
+// possibly overlapping, each ending just after an at-sign) each replaced
+// once by "[redacted]@".
+func replaceSpans(text string, spans [][2]int) string {
+	if len(spans) == 0 {
+		return text
 	}
-	last, size := -1, 0
-	for i, n := nextAtSign(kept, colon+1); i >= 0; i, n = nextAtSign(kept, i+n) {
-		last, size = i, n
+	sorted := slices.Clone(spans)
+	slices.SortFunc(sorted, func(a, b [2]int) int { return a[0] - b[0] })
+	var b strings.Builder
+	at := 0
+	for i := 0; i < len(sorted); {
+		start, end := sorted[i][0], sorted[i][1]
+		for i++; i < len(sorted) && sorted[i][0] <= end; i++ {
+			end = max(end, sorted[i][1])
+		}
+		start = max(start, at)
+		b.WriteString(text[at:start])
+		b.WriteString("[redacted]@")
+		at = end
 	}
-	if last < 0 {
-		return 0, 0, 0, false
-	}
-	return at[colon] + 1, at[last], at[last+size-1] + 1, true
+	b.WriteString(text[at:])
+	return b.String()
 }
 
 // HasAtSign is whether s holds an at-sign as the fail-safe sees one, by
@@ -270,46 +326,42 @@ func atSignAt(s []byte, i int) int {
 
 // MaskURLInValue is the masker for every string the CLI shows that comes
 // from outside it: a server's answer, stored configuration, the command
-// line, the environment, an API client's refusal. It composes both
-// maskers on the original value, never one on the other's output: the
-// precise authority span (MaskUserinfo's, when the value parses as a URL
-// or is scheme-relative, starting with "//") and the whole-text
-// fail-safe's span (from the first ":" after a letter or a digit to the
-// last at-sign). Their union is replaced once with [redacted], each
-// at-sign kept, so a credentialed URL anywhere in the value (a query, a
-// fragment, text around it) is masked, whatever the other masker removed.
+// line, the environment, an API client's refusal. It composes both maskers'
+// spans on the original value, never one on the other's output, and
+// replaces their union once with [redacted], each at-sign kept:
+//   - the precise authority span (MaskUserinfo's), when the value, with its
+//     leading and trailing whitespace trimmed, parses as a URL or starts
+//     with "//" (offsets mapped back to the original);
+//   - the fail-safe's spans (MaskUserinfoInText's), always.
+//
 // Token redaction is the output's own last step (cli.RedactOutput,
-// cli.RedactDiagnostic). Already-masked text may be masked again
-// (`https://[redacted]@h` reads `https:[redacted]@h`): cosmetic, never a
-// leak. A value without an at-sign keeps its bytes.
+// cli.RedactDiagnostic). Already-masked text may be masked again:
+// cosmetic, never a leak. A value without an at-sign keeps its bytes.
 func MaskURLInValue(v string) string {
-	// Both maskers' spans, each computed on the original value, never on
-	// the other's output; their union is replaced once.
-	var spans [][2]int
-	if _, ok := whatwg.ParseURL(v); ok || strings.HasPrefix(v, "//") {
-		if start, end, ok := userinfoSpan(v); ok {
-			spans = append(spans, [2]int{start, end})
+	return replaceSpans(v, valueSpans(v))
+}
+
+// valueSpans is MaskURLInValue's spans.
+func valueSpans(v string) [][2]int {
+	spans := failSafeSpans(v)
+	trimmed := strings.TrimSpace(v)
+	off := strings.Index(v, trimmed)
+	if _, ok := whatwg.ParseURL(trimmed); ok || strings.HasPrefix(trimmed, "//") {
+		if start, end, ok := userinfoSpan(trimmed); ok {
+			spans = append(spans, [2]int{off + start, off + end + 1}) // the "@" after it included
 		}
 	}
-	if from, atStart, _, ok := failSafeSpan(v); ok {
-		spans = append(spans, [2]int{from, atStart})
+	return spans
+}
+
+// MaskRefusedURL is a URL an API client refuses, as its refusal shows it:
+// MaskURLInValue's spans and the malformed-authority mask's (MaskUserinfo's
+// span, which reads a URL that does not parse conservatively), all on the
+// original text, their union replaced once.
+func MaskRefusedURL(raw string) string {
+	spans := valueSpans(raw)
+	if start, end, ok := userinfoSpan(raw); ok {
+		spans = append(spans, [2]int{start, end + 1})
 	}
-	if len(spans) == 0 {
-		return v
-	}
-	if len(spans) == 2 && spans[1][0] < spans[0][0] {
-		spans[0], spans[1] = spans[1], spans[0]
-	}
-	if len(spans) == 2 && spans[1][0] <= spans[0][1] {
-		spans = [][2]int{{spans[0][0], max(spans[0][1], spans[1][1])}}
-	}
-	var b strings.Builder
-	at := 0
-	for _, sp := range spans {
-		b.WriteString(v[at:sp[0]])
-		b.WriteString("[redacted]")
-		at = sp[1]
-	}
-	b.WriteString(v[at:])
-	return b.String()
+	return replaceSpans(raw, spans)
 }

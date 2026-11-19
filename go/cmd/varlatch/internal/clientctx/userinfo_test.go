@@ -3,6 +3,8 @@
 package clientctx
 
 import (
+	"fmt"
+	"math/rand/v2"
 	"regexp"
 	"strconv"
 	"strings"
@@ -179,15 +181,17 @@ func TestFailSafeMasksEveryReproducer(t *testing.T) {
 		if strings.Contains(got, c.secret) {
 			t.Errorf("MaskUserinfoInText(%q) = %q shows %q", c.text, got, c.secret)
 		}
-		if again := MaskUserinfoInText(got); again != got {
-			t.Errorf("MaskUserinfoInText is not stable on %q: %q then %q", c.text, got, again)
+		// A second pass may mask more (cosmetic), never less.
+		if again := MaskUserinfoInText(got); strings.Contains(again, c.secret) {
+			t.Errorf("MaskUserinfoInText(%q) twice shows %q: %q", c.text, c.secret, again)
 		}
 	}
 }
 
-// TestFailSafeRule: what the fail-safe does, exactly: from just after the
-// first ":" that follows a letter (tab, CR and LF passed over) to the last
-// at-sign of the whole message.
+// TestFailSafeRule: what the fail-safe does, exactly: the whole-text span
+// (from just after the first colon, whatever precedes it, tab, CR and LF
+// passed over, to the last at-sign) and, per at-sign, the span of its run
+// (from just after the nearest "//", or the run's start).
 func TestFailSafeRule(t *testing.T) {
 	for in, want := range map[string]string{
 		"https://u:p@h":                     "https:[redacted]@h",
@@ -196,10 +200,11 @@ func TestFailSafeRule(t *testing.T) {
 		"https://alice:fake%40h":        "https:[redacted]@h",
 		`https://alice:fake\x40h`:       "https:[redacted]@h",
 		`https://alice:fake\U00000040h`: "https:[redacted]@h",
-		"ht\ttps:/alice:pw@h":           "ht\ttps:[redacted]@h",
-		"https\t:/alice:pw@h":           "https\t:[redacted]@h",
-		"https\n:/alice:pw@h":           "https\n:[redacted]@h",
-		"line https://alice:fa\nke@h":   "line https:[redacted]@h",
+		// No "//" in the run: masked from the run's start.
+		"ht\ttps:/alice:pw@h":         "[redacted]@h",
+		"https\t:/alice:pw@h":         "[redacted]@h",
+		"https\n:/alice:pw@h":         "[redacted]@h",
+		"line https://alice:fa\nke@h": "line https:[redacted]@h",
 		// The whole message: newlines inside the span go too.
 		"a: b\n\nc@d":     "a:[redacted]@d",
 		"Usage: x\n  y@z": "Usage:[redacted]@z",
@@ -208,10 +213,12 @@ func TestFailSafeRule(t *testing.T) {
 		"contact: ops@example.net": "contact:[redacted]@example.net",
 		"Multiple servers stored (http:///[redacted]@127.0.0.1:2, http:\\\\[redacted]@127.0.0.1:3). Pass --server <url> or --all.": "Multiple servers stored (http:[redacted]@127.0.0.1:3). Pass --server <url> or --all.",
 		"https://u:p[redacted]@h": "https:[redacted]@h",
-		// Kept: no ":" after a letter before an at-sign, or no at-sign.
+		// Over-masking, accepted: a colon anywhere before an at-sign (here a
+		// usage line; the CLI appends usage text after the fail-safe).
+		"  varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]": "  varlatch request [-X <method>] [-H '<name>:[redacted]@-]",
+		// Kept: no colon before an at-sign, or no at-sign.
 		"me@example.com and then: more":      "me@example.com and then: more",
 		"3:  server = \"https://h.example\"": "3:  server = \"https://h.example\"",
-		"  varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]": "  varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]",
 	} {
 		if got := MaskUserinfoInText(in); got != want {
 			t.Errorf("MaskUserinfoInText(%q) =\n %q, want\n %q", in, got, want)
@@ -320,13 +327,33 @@ func FuzzMaskUserinfoInText(f *testing.F) {
 	for _, c := range failSafeReproducers {
 		f.Add(c.text)
 	}
+	for _, r := range maskRegressions {
+		f.Add(r)
+	}
 	f.Fuzz(func(t *testing.T, text string) {
-		once := MaskUserinfoInText(text)
-		if twice := MaskUserinfoInText(once); twice != once {
-			t.Fatalf("not stable: %q -> %q -> %q", text, once, twice)
-		}
 		_ = MaskUserinfo(text)
+		_ = MaskRefusedURL(text)
+		for _, masked := range []string{MaskUserinfoInText(text), MaskURLInValue(text)} {
+			// A text without an at-sign of any form keeps its bytes.
+			if !HasAtSign(text) && masked != text {
+				t.Fatalf("no at-sign, yet changed: %q -> %q", text, masked)
+			}
+			// A second pass may mask more, never panic.
+			_ = MaskUserinfoInText(masked)
+		}
 	})
+}
+
+// maskRegressions are the strings reviews of #278 found (rounds 3 to 5),
+// each holding "hunter2"/"pass" only where a password or user name is.
+var maskRegressions = []string{
+	"https://h.example/?next=https://a:hunter2@b.example#https://c:hunter2@d.example",
+	"//u:hunter2@h.example/p?x=http://a:hunter2@c.example",
+	"//outer:outer-pass@gateway.example/?next=//alice1:inner-pass@upstream.example",
+	" //ci-bot_:example-password@upstream.example",
+	"u1:pass@h.example",
+	"é:pass@h.example",
+	"https://u:hunter2[redacted]@h.example",
 }
 
 // TestMaskingIsLinear: inputs that made the earlier scanners rescan (a tab
@@ -401,7 +428,7 @@ func TestMaskURLInValueNeverShowsUserinfo(t *testing.T) {
 		// One URL: precise.
 		"https://u:p@h.example":               "https:[redacted]@h.example",
 		"https://example.com\\path@segment":   "https:[redacted]@segment", // an at-sign after the authority: the fail-safe
-		"http:u:p@h":                          "http:[redacted]@h",
+		"http:u:p@h":                          "[redacted]@h",
 		"postgres://user:pass@db.example/app": "postgres:[redacted]@db.example/app",
 		"//u:p@h.example":                     "//[redacted]@h.example",
 		"https://u:p@h.example,":              "https:[redacted]@h.example,",
@@ -413,7 +440,7 @@ func TestMaskURLInValueNeverShowsUserinfo(t *testing.T) {
 		"https://a.example, https://u:p@h.example":              "https:[redacted]@h.example",
 		"a list: https://u:p@a.example,https://v:q@b.example":   "a list:[redacted]@b.example",
 		"contact ada@example.com at https://u:p@h.example":      "contact ada@example.com at https:[redacted]@h.example",
-		`{"url":"https://u:p@h.example"}`:                       `{"url":"https:[redacted]@h.example"}`,
+		`{"url":"https://u:p@h.example"}`:                       `{"url":[redacted]@h.example"}`,
 		"user's https://u:p'q@h.example":                        "user's https:[redacted]@h.example",
 		// No at-sign, or no URL before it: kept.
 		"ada@example.com":            "ada@example.com",
@@ -442,7 +469,7 @@ func TestMaskURLInValueTrustsNoContent(t *testing.T) {
 		`https://a.example/?next="https://u:hunter2@b.example"`:         `https:[redacted]@b.example"`,
 		"https://a.example/path/https://u:hunter2@b.example":            "https:[redacted]@b.example",
 		"https://a.example/#https://u:hunter2@b.example":                "https:[redacted]@b.example",
-		"http:[redacted]@a.example/v1/meta: a server URL can't be used": "http:[redacted]@a.example/v1/meta: a server URL can't be used",
+		"http:[redacted]@a.example/v1/meta: a server URL can't be used": "[redacted]@a.example/v1/meta: a server URL can't be used",
 	} {
 		got := MaskURLInValue(in)
 		if got != want {
@@ -480,10 +507,10 @@ func TestMaskURLInValueUnionOfSpans(t *testing.T) {
 	for in, want := range map[string]string{
 		"//outer:outer-pass@gateway.example/?next=//alice1:inner-pass@upstream.example": "//[redacted]@upstream.example",
 		"https://outer:outer-pass@gateway.example/?next=//alice1:inner-pass@up.example": "https:[redacted]@up.example",
-		"u1:p@h.example":                 "u1:[redacted]@h.example",
+		"u1:p@h.example":                 "[redacted]@h.example",
 		"https://h.example/?x=//u1:p@h2": "https:[redacted]@h2",
-		"é:secret@h.example":             "é:[redacted]@h.example",
-		"see //ünï:secret@h.example":     "see //ünï:[redacted]@h.example",
+		"é:secret@h.example":             "[redacted]@h.example",
+		"see //ünï:secret@h.example":     "see //[redacted]@h.example",
 		"ada@example.com":                "ada@example.com",
 		"add the line @AGENTS.md":        "add the line @AGENTS.md",
 	} {
@@ -498,12 +525,89 @@ func TestMaskURLInValueUnionOfSpans(t *testing.T) {
 		}
 	}
 	for in, want := range map[string]string{
-		"x u1:p@h": "x u1:[redacted]@h",
-		"x é:p@h":  "x é:[redacted]@h",
-		"x -:p@h":  "x -:p@h",
+		"x u1:p@h": "x [redacted]@h",
+		"x é:p@h":  "x [redacted]@h",
+		"x -:p@h":  "x [redacted]@h",
 	} {
 		if got := MaskUserinfoInText(in); got != want {
 			t.Errorf("MaskUserinfoInText(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// genUserinfo draws a user name or password of 1 to 20 characters from
+// RFC 3986's userinfo characters (unreserved, sub-delims and %-escapes;
+// a password may also hold ":"), digits and letters of other scripts.
+func genUserinfo(r *rand.Rand, password bool) string {
+	const ascii = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;="
+	unicodeLetters := []string{"é", "ü", "ж", "字", "ß", "ø", "Ω"}
+	n := 1 + r.IntN(20)
+	var b strings.Builder
+	for range n {
+		switch k := r.IntN(10); {
+		case k == 0:
+			fmt.Fprintf(&b, "%%%02X", r.IntN(256))
+		case k == 1:
+			b.WriteString(unicodeLetters[r.IntN(len(unicodeLetters))])
+		case k == 2 && password:
+			b.WriteByte(':')
+		default:
+			b.WriteByte(ascii[r.IntN(len(ascii))])
+		}
+	}
+	return b.String()
+}
+
+// userinfoContexts are the places a credentialed URL appears, each a
+// function of the URL's scheme, user name, password and at-sign form.
+var userinfoContexts = []func(scheme, user, pass, at string) string{
+	func(s, u, p, at string) string { return s + "://" + u + ":" + p + at + "h.example/path" },
+	func(s, u, p, at string) string { return "//" + u + ":" + p + at + "h.example" },
+	func(s, u, p, at string) string {
+		return "https://a.example/?next=" + s + "://" + u + ":" + p + at + "h.example"
+	},
+	func(s, u, p, at string) string {
+		return "https://a.example/#" + s + "://" + u + ":" + p + at + "h.example"
+	},
+	func(s, u, p, at string) string { return "  " + s + "://" + u + ":" + p + at + "h.example  " },
+	func(s, u, p, at string) string { return `"` + s + "://" + u + ":" + p + at + `h.example"` },
+	func(s, u, p, at string) string { return strconv.Quote(s + "://" + u + ":" + p + at + "h.example") },
+	func(s, u, p, at string) string {
+		return "see " + s + "://" + u + ":" + p + at + "h.example for details"
+	},
+	func(s, u, p, at string) string {
+		return "//outer:outer-pw@gw.example/?next=//" + u + ":" + p + at + "h.example"
+	},
+	func(s, u, p, at string) string { return " //" + u + ":" + p + at + "upstream.example" },
+}
+
+// TestNoPasswordEverShows is a property test with a fixed seed: thousands
+// of generated user names and passwords, in every context and at-sign
+// form, through MaskURLInValue and the stderr fail-safe; the password
+// never shows (where the context itself does not hold it).
+func TestNoPasswordEverShows(t *testing.T) {
+	r := rand.New(rand.NewPCG(5, 278))
+	schemes := []string{"https", "http", "ftp", "postgres", "foo", "HTTPS"}
+	ats := []string{"@", "%40", `@`}
+	judged := 0
+	for i := 0; i < 6000; i++ {
+		user, pass := genUserinfo(r, false), genUserinfo(r, true)
+		scheme := schemes[r.IntN(len(schemes))]
+		at := ats[r.IntN(len(ats))]
+		context := userinfoContexts[r.IntN(len(userinfoContexts))]
+		in := context(scheme, user, pass, at)
+		if strings.Contains(context(scheme, user, "", at), pass) {
+			continue // the password is also elsewhere in the text: nothing to judge
+		}
+		judged++
+		for name, got := range map[string]string{"MaskURLInValue": MaskURLInValue(in), "MaskUserinfoInText": MaskUserinfoInText(in), "MaskRefusedURL": MaskRefusedURL(in)} {
+			// The marker itself is not the password ("t" is in "[redacted]").
+			if strings.Contains(strings.ReplaceAll(got, "[redacted]", "\x00"), pass) {
+				t.Fatalf("%s(%q) = %q shows the password %q", name, in, got, pass)
+			}
+		}
+	}
+	if judged < 5000 {
+		t.Fatalf("only %d of 6000 cases judged", judged)
 	}
 }

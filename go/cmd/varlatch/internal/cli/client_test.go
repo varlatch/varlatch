@@ -259,7 +259,7 @@ func TestNotAuthenticatedReadsAfterTheFailSafe(t *testing.T) {
 	if !errors.As(err, &exit) {
 		t.Fatalf("%v", err)
 	}
-	want := "Not authenticated to https:[redacted]@v.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
+	want := "Not authenticated to [redacted]@v.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
 		"adding --start to approve in a browser on any device, or --token-stdin to pipe a credential"
 	if got := clientctx.MaskUserinfoInText(exit.message); got != want {
 		t.Errorf("%q, want %q", got, want)

@@ -333,7 +333,7 @@ func TestFailureExplanationsSurvive(t *testing.T) {
 		{"not authenticated", func(r *Run) error {
 			_, err := r.connectClient("https://alice:fake@n.example")
 			return err
-		}, "Not authenticated to https:[redacted]@n.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
+		}, "Not authenticated to [redacted]@n.example: sign in with varlatch login --server and this server's URL (in a browser on this machine), " +
 			"adding --start to approve in a browser on any device, or --token-stdin to pipe a credential\n"},
 		{"credentials refused", func(r *Run) error {
 			_, err := r.plainClient("https://alice:fake@n.example", "vlt_cli_fake").Meta(context.Background())
