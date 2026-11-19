@@ -329,7 +329,10 @@ export function caseDir({ values, maskable }: { values: string[]; maskable: stri
       if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
       throw err;
     }
-    const real = realpathSync(dir);
+    // The native realpath: on Windows it gives the long name of each part
+    // (C:\Users\runneradmin, not RUNNER~1), as the CLI prints it and Go's
+    // filepath.EvalSymlinks gives it.
+    const real = realpathSync.native(dir);
     if (maskable.some((v) => real.includes(v))) {
       rmSync(dir, { recursive: true, force: true });
       throw new Error(`the temporary directory ${tmpdir()} holds one of the case's variables or its stdin`);
@@ -435,6 +438,9 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       // that records, and the Go CLI has none: never part of a recording.
       VARLATCH_NODE_CHECK: "off",
     };
+    // On Windows the home directory is USERPROFILE (os.homedir()), as the
+    // Go replay sets it.
+    if (process.platform === "win32") env.USERPROFILE = env.HOME;
     for (const name of c.unset ?? []) delete env[name];
     for (const [k, v] of Object.entries(c.env ?? {})) env[k] = fill(v, origin, dir);
     const start = Date.now();

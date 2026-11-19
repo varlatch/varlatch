@@ -164,7 +164,7 @@ add("unusual.two-repos-one-unusual", { repos: ["good", "bad"], files: { "good/.e
 
 // ---- Building and recording -------------------------------------------------------------
 
-const scratch = realpathSync(mkdtempSync(join(tmpdir(), "varlatch-go-vectors-findfiles-")));
+const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "varlatch-go-vectors-findfiles-")));
 afterAll(() => {
   spawnSync("chmod", ["-R", "u+rwx", scratch]);
   rmSync(scratch, { recursive: true, force: true });
@@ -201,13 +201,15 @@ function build(dir: string, tree: Tree): void {
   for (const [path, mode] of Object.entries(tree.modes ?? {})) chmodSync(join(dir, path), mode);
 }
 
-const VARS = ["HOME", "XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL"] as const;
+const VARS = ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL"] as const;
 
 async function record(c: Case, dir: string): Promise<NonNullable<Case["expect"]>> {
   const saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
   try {
     for (const k of VARS) delete process.env[k];
     process.env.HOME = join(dir, "home");
+    // On Windows os.homedir() reads USERPROFILE (the Go test sets it too).
+    if (process.platform === "win32") process.env.USERPROFILE = process.env.HOME;
     for (const [k, v] of Object.entries(c.env ?? {})) process.env[k] = v.split("{{dir}}").join(dir);
     const unfill = (s: string) => unfillDir(s, dir);
     const limits = c.limits ?? FIND_LIMITS;
@@ -237,7 +239,7 @@ describe("Go CLI find-files vectors", () => {
     for (const c of cases) {
       if (ids.has(c.id)) throw new Error(`case ${c.id} twice`);
       ids.add(c.id);
-      const dir = realpathSync(mkdtempSync(join(scratch, "c-")));
+      const dir = realpathSync.native(mkdtempSync(join(scratch, "c-")));
       build(dir, c.tree);
       recorded.push({ ...c, expect: await record(c, dir) });
     }
@@ -267,7 +269,7 @@ describe("Go CLI find-files vectors", () => {
     const recorded: Array<{ id: string; expect: NonNullable<Case["expect"]> }> = [];
     for (const c of cases) {
       if (!needed.has(c.id)) continue;
-      const dir = realpathSync(mkdtempSync(join(scratch, "c-")));
+      const dir = realpathSync.native(mkdtempSync(join(scratch, "c-")));
       build(dir, c.tree);
       recorded.push({ id: c.id, expect: await record(c, dir) });
     }

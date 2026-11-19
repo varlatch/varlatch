@@ -49,7 +49,7 @@ import { PATH_BELOW_DIR, RECORD_WINDOWS, WINDOWS_COMMENT, readRecording, windows
 const VECTORS = fileURLToPath(new URL("../../../go/cmd/varlatch/testdata/vectors/agents.json", import.meta.url));
 const VERSION = "9.9.9-vector";
 
-const scratch = realpathSync(mkdtempSync(join(tmpdir(), "varlatch-go-vectors-agents-")));
+const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "varlatch-go-vectors-agents-")));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 const LS = String.fromCharCode(0x2028);
